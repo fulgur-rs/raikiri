@@ -53,7 +53,9 @@ use crate::taffy_impl::content_limits::ContentLimits;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
+mod border_state;
 pub(super) mod cache;
+use border_state::BorderState;
 mod cell_index;
 pub(crate) mod headers;
 pub(crate) mod row_moves;
@@ -3799,19 +3801,6 @@ impl CollapsedLines {
     }
 }
 
-/// Border-box side widths of one cell's `style.border`.
-fn cell_border_sides(doc: &Document, cell_id: usize, basis: Option<f32>) -> Rect<f32> {
-    let s = doc
-        .layout_style_for_key(cell_id)
-        .expect("table cell layout style");
-    Rect {
-        left: resolve_length(s.border.left, basis),
-        right: resolve_length(s.border.right, basis),
-        top: resolve_length(s.border.top, basis),
-        bottom: resolve_length(s.border.bottom, basis),
-    }
-}
-
 /// The cell covering grid position (`row`, `col`), following spans.
 fn cell_at<'a>(
     grid: &'a TableGrid,
@@ -3926,72 +3915,17 @@ fn border_side(sides: &mut Sides<ComputedBorder>, side: CellBorderSide) -> &mut 
     }
 }
 
-/// Give `node_id`'s `side` the used collapsed border `border`: its layout
-/// width and the style and color it paints.
-fn set_collapsed_side(
-    doc: &mut Document,
-    node_id: usize,
-    side: CellBorderSide,
-    border: ComputedBorder,
-    taffy_width: LengthPercentage,
-) {
-    let style = doc
-        .layout_style_for_key_mut(node_id)
-        .expect("table box layout style");
-    match side {
-        CellBorderSide::Top => style.border.top = taffy_width,
-        CellBorderSide::Right => style.border.right = taffy_width,
-        CellBorderSide::Bottom => style.border.bottom = taffy_width,
-        CellBorderSide::Left => style.border.left = taffy_width,
-    }
-    let node = doc.table_layout_node_mut(node_id);
-    let Some(computed) = node.computed_border else {
-        return; // cov:ignore: callers only reach here after border_candidate found computed borders.
-    };
-    let painted = node.collapsed_border.get_or_insert(computed);
-    *border_side(painted, side) = border;
-}
-
-/// Resolve the shared border between two adjacent cells. Both cells take the
-/// winner's width, and both paint the winner's style and color, so the later
-/// cell no longer paints its losing border over the winning one.
-#[cfg(test)]
-fn resolve_collapsed_border_pair(
-    doc: &mut Document,
-    leading_id: usize,
-    leading_side: CellBorderSide,
-    trailing_id: usize,
-    trailing_side: CellBorderSide,
-) {
-    let (Some(leading), Some(trailing)) = (
-        border_candidate(doc, leading_id, leading_side),
-        border_candidate(doc, trailing_id, trailing_side),
-    ) else {
-        return;
-    };
-    let winner = collapsed_border_winner(leading, trailing);
-    set_collapsed_side(
-        doc,
-        leading_id,
-        leading_side,
-        winner.border,
-        winner.taffy_width,
-    );
-    set_collapsed_side(
-        doc,
-        trailing_id,
-        trailing_side,
-        winner.border,
-        winner.taffy_width,
-    );
-}
-
 /// Resolve every shared border between adjacent cells. Each segment's winner
 /// is decided from the cells' borders before any segment is resolved, so a
 /// cell spanning several neighbours does not carry one segment's winner into
 /// the next. A spanning cell paints the strongest winner along its side;
 /// each neighbour paints its own segment's winner.
-fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &CellIndex) {
+fn resolve_collapsed_cell_borders(
+    doc: &Document,
+    state: &mut BorderState,
+    grid: &TableGrid,
+    index: &CellIndex,
+) {
     const SIDES: [CellBorderSide; 4] = [
         CellBorderSide::Top,
         CellBorderSide::Right,
@@ -4004,11 +3938,11 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
         .map(|cell| {
             (
                 cell.node_id,
-                SIDES.map(|side| border_candidate(doc, cell.node_id, side)),
+                SIDES.map(|side| state.candidate(doc, cell.node_id, side)),
             )
         })
         .collect();
-    let resolve = |doc: &mut Document,
+    let resolve = |state: &mut BorderState,
                    leading_id: usize,
                    leading_side: CellBorderSide,
                    trailing_id: usize,
@@ -4023,8 +3957,8 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
             return;
         };
         let winner = collapsed_border_winner(leading, trailing);
-        keep_stronger_side(doc, leading_id, leading_side, winner);
-        keep_stronger_side(doc, trailing_id, trailing_side, winner);
+        keep_stronger_side(doc, state, leading_id, leading_side, winner);
+        keep_stronger_side(doc, state, trailing_id, trailing_side, winner);
     };
 
     let column_count = grid.n_cols as usize;
@@ -4037,7 +3971,7 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
                 .filter(|(_, cell)| cell.col_start == boundary as u16);
             if let (Some((_, left)), Some((_, right))) = (left, right) {
                 resolve(
-                    doc,
+                    state,
                     left.node_id,
                     CellBorderSide::Right,
                     right.node_id,
@@ -4057,7 +3991,7 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
                 cell_at(grid, index, boundary, column).filter(|(_, cell)| cell.row == boundary);
             if let (Some((_, above)), Some((_, below))) = (above, below) {
                 resolve(
-                    doc,
+                    state,
                     above.node_id,
                     CellBorderSide::Bottom,
                     below.node_id,
@@ -4071,18 +4005,19 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
 /// Give `node_id`'s `side` the stronger of the border it already paints and
 /// `winner`.
 fn keep_stronger_side(
-    doc: &mut Document,
+    doc: &Document,
+    state: &mut BorderState,
     node_id: usize,
     side: CellBorderSide,
     winner: CollapsedBorderCandidate,
 ) {
     // The pair winner is passed first so it wins ties: a cell's own border
     // must not beat the winner of its segment by equality alone.
-    let stronger = match border_candidate(doc, node_id, side) {
+    let stronger = match state.candidate(doc, node_id, side) {
         Some(current) => collapsed_border_winner(winner, current),
         None => winner, // cov:ignore: the pair's own candidate came from this side.
     };
-    set_collapsed_side(doc, node_id, side, stronger.border, stronger.taffy_width);
+    state.set_side(node_id, side, stronger.border, stronger.taffy_width);
 }
 
 /// Resolve each cell's sides against the borders of the rows they lie on
@@ -4090,7 +4025,7 @@ fn keep_stronger_side(
 /// its last row, and an edge cell's left and right against its row. A cell
 /// wins ties over a row. Rows then paint nothing themselves; their borders
 /// live on in the cells that took them.
-fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
+fn resolve_collapsed_row_borders(doc: &Document, state: &mut BorderState, grid: &TableGrid) {
     let last_col = grid.n_cols;
     for index in 0..grid.cells.len() {
         let cell = &grid.cells[index];
@@ -4123,13 +4058,13 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
                 continue;
             };
             let (Some(own), Some(row_border)) = (
-                border_candidate(doc, node_id, side),
-                border_candidate(doc, row, side),
+                state.candidate(doc, node_id, side),
+                state.candidate(doc, row, side),
             ) else {
                 continue;
             };
             let winner = collapsed_border_winner(own, row_border);
-            set_collapsed_side(doc, node_id, side, winner.border, winner.taffy_width);
+            state.set_side(node_id, side, winner.border, winner.taffy_width);
         }
     }
     for &row in &grid.rows {
@@ -4139,14 +4074,7 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
         {
             continue;
         }
-        if let Some(computed) = doc.nodes[row].computed_border {
-            doc.nodes[row].collapsed_border = Some(Sides {
-                top: computed.top.without_line(),
-                right: computed.right.without_line(),
-                bottom: computed.bottom.without_line(),
-                left: computed.left.without_line(),
-            });
-        }
+        state.suppress_row(doc, row);
     }
 }
 
@@ -4154,7 +4082,12 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
 /// that side (CSS 2.1 §17.6.2.1). A cell wins ties over the table. When the
 /// table's border wins, the table paints that edge, so the cell's side takes
 /// no width and paints nothing.
-fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx: usize) {
+fn resolve_collapsed_table_edges(
+    doc: &Document,
+    state: &mut BorderState,
+    grid: &TableGrid,
+    table_idx: usize,
+) {
     let last_row = grid.rows.len() as u16;
     let last_col = grid.n_cols;
     for index in 0..grid.cells.len() {
@@ -4179,8 +4112,8 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
                 continue;
             }
             let (Some(own), Some(table)) = (
-                border_candidate(doc, node_id, side),
-                border_candidate(doc, table_idx, side),
+                state.candidate(doc, node_id, side),
+                state.candidate(doc, table_idx, side),
             ) else {
                 continue;
             };
@@ -4188,8 +4121,7 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
             if winner.border == own.border && winner.taffy_width == own.taffy_width {
                 continue;
             }
-            set_collapsed_side(
-                doc,
+            state.set_side(
                 node_id,
                 side,
                 own.border.without_line(),
@@ -4202,55 +4134,17 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
 /// Resolve the borders of `grid` (CSS 2.1 §17.6.2.1): rows against their
 /// cells, adjoining cells against each other, and edge cells against the table.
 fn resolve_collapsed_borders(
-    doc: &mut Document,
+    doc: &Document,
+    state: &mut BorderState,
     grid: &TableGrid,
     index: &CellIndex,
     table_idx: usize,
 ) {
-    doc.layout_cache_context.invalidate();
     #[cfg(test)]
     BORDER_RESOLUTIONS.with(|count| count.set(count.get() + 1));
-    resolve_collapsed_row_borders(doc, grid);
-    resolve_collapsed_cell_borders(doc, grid, index);
-    resolve_collapsed_table_edges(doc, grid, table_idx);
-}
-
-/// Give every cell and row of `grid` the borders it has before any
-/// resolution: the widths of its computed border, as the bridge sets them
-/// (it has already reported any warning for those widths), and no collapsed
-/// border. A grid resolved next then does not inherit what an earlier
-/// resolution of another grid left on them.
-fn reset_collapsed_borders(doc: &mut Document, grid: &TableGrid) {
-    doc.layout_cache_context.invalidate();
-    for cell in &grid.cells {
-        doc.table_layout_node_mut(cell.node_id).collapsed_border = None;
-        let border = authored_border(doc, cell.node_id);
-        doc.layout_style_for_key_mut(cell.node_id)
-            .expect("table cell layout style")
-            .border = border;
-    }
-    for &row in &grid.rows {
-        doc.nodes[row].collapsed_border = None;
-    }
-}
-
-/// The layout widths of `cell`'s computed border, as the bridge sets them (it
-/// has already reported any warning for those widths).
-fn authored_border(doc: &mut Document, cell: usize) -> Rect<LengthPercentage> {
-    let border = doc
-        .table_layout_node_mut(cell)
-        .computed_border
-        .expect("table cell computed border");
-    super::bridge::taffy_border_widths(&border, &mut Vec::new())
-}
-
-/// The borders the cells and rows of a grid have at one point of border
-/// resolution: the layout width of each cell's sides and the collapsed borders
-/// the cells and rows paint.
-#[derive(Debug)]
-struct BorderState {
-    cells: Vec<(usize, Rect<LengthPercentage>, Option<Sides<ComputedBorder>>)>,
-    rows: Vec<(usize, Option<Sides<ComputedBorder>>)>,
+    resolve_collapsed_row_borders(doc, state, grid);
+    resolve_collapsed_cell_borders(doc, state, grid, index);
+    resolve_collapsed_table_edges(doc, state, grid, table_idx);
 }
 
 /// The two border states of a table with collapsed columns in the collapsed
@@ -4283,38 +4177,26 @@ impl ColumnsInPlace {
     /// has been resolved since, so the cells now have the borders of the grid
     /// that remains.
     fn new(
-        doc: &mut Document,
-        grid: &TableGrid,
         shown: &TableGrid,
         border_width: f32,
-        in_place: BorderState,
+        mut in_place: BorderState,
+        remaining: BorderState,
     ) -> Self {
-        let remaining = snapshot_borders(doc, grid);
-        let remains: std::collections::HashSet<usize> =
+        let remains: std::collections::HashSet<_> =
             shown.cells.iter().map(|cell| cell.node_id).collect();
-        let cells = in_place
-            .cells
-            .into_iter()
-            .zip(&remaining.cells)
-            .map(|((cell, mut border, painted), kept)| {
-                // The cells of the collapsed columns are not part of the grid
-                // that remains, which resolves nothing for them: they keep the
-                // block sides they resolved to, and the row lines they share
-                // are in `row_overlaps`.
-                if remains.contains(&cell) {
-                    border.top = kept.1.top;
-                    border.bottom = kept.1.bottom;
-                }
-                (cell, border, painted)
-            })
-            .collect();
+        for cell in &mut in_place.cells {
+            if remains.contains(&cell.node_id) {
+                let kept = remaining
+                    .cell(cell.node_id)
+                    .expect("both states retain every original cell");
+                cell.widths.top = kept.widths.top;
+                cell.widths.bottom = kept.widths.bottom;
+            }
+        }
         Self {
             border_width,
             row_overlaps: Vec::new(),
-            in_place: BorderState {
-                cells,
-                rows: in_place.rows,
-            },
+            in_place,
             remaining,
         }
     }
@@ -4327,7 +4209,7 @@ impl ColumnsInPlace {
     /// more from a row than the cell was measured with.
     fn with_row_overlaps(
         mut self,
-        doc: &mut Document,
+        doc: &Document,
         grid: &TableGrid,
         collapsed_rows: &[bool],
         table_border: &Rect<f32>,
@@ -4337,11 +4219,16 @@ impl ColumnsInPlace {
         if rows_shown.rows.is_empty() {
             return self;
         }
-        apply_borders(doc, &self.in_place);
         let index = CellIndex::new(&rows_shown);
-        self.row_overlaps =
-            compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis).row_overlaps;
-        apply_borders(doc, &self.remaining);
+        self.row_overlaps = compute_collapsed_lines(
+            doc,
+            &self.in_place,
+            &rows_shown,
+            &index,
+            table_border,
+            basis,
+        )
+        .row_overlaps;
         self
     }
 
@@ -4369,7 +4256,7 @@ impl ColumnsInPlace {
     ) -> Result<(), raikiri_traits::LayoutError> {
         let states = self.in_place.cells.iter().zip(&self.remaining.cells);
         for (cell, (in_place, remaining)) in grid.cells.iter_mut().zip(states) {
-            if in_place.1 != remaining.1 {
+            if in_place.widths != remaining.widths {
                 let columns = cell_column_range(cell, column_widths.len())?;
                 measure_cell(doc, cell, spanned_size(&column_widths[columns], spacing.0));
             }
@@ -4395,53 +4282,45 @@ fn measured_in_place<R>(
     measured
 }
 
-/// Record the borders the cells and rows of `grid` have now.
-fn snapshot_borders(doc: &mut Document, grid: &TableGrid) -> BorderState {
-    let cells = grid
-        .cells
-        .iter()
-        .map(|cell| {
-            let border = doc
-                .layout_style_for_key(cell.node_id)
-                .expect("table cell layout style")
-                .border;
-            let painted = doc.table_layout_node_mut(cell.node_id).collapsed_border;
-            (cell.node_id, border, painted)
-        })
-        .collect();
-    let rows = grid
-        .rows
-        .iter()
-        .map(|&row| (row, doc.nodes[row].collapsed_border))
-        .collect();
-    BorderState { cells, rows }
+#[cfg(test)]
+fn snapshot_borders(doc: &Document, grid: &TableGrid) -> BorderState {
+    BorderState::retained(doc, grid)
 }
 
-/// Give the cells and rows the borders `state` recorded, and drop the layouts
-/// the cells cached under other borders.
+/// Publish a completed state for the transitional table callers.
 fn apply_borders(doc: &mut Document, state: &BorderState) {
-    if state.cells.iter().any(|(cell, border, _)| {
-        doc.layout_style_for_key(*cell)
-            .expect("table cell layout style")
-            .border
-            != *border
-    }) {
+    let entries = state.entries(doc);
+    let changed: Vec<_> = state
+        .cells
+        .iter()
+        .filter(|cell| {
+            doc.layout_style_for_key(cell.node_id)
+                .expect("table cell layout style")
+                .border
+                != cell.widths
+        })
+        .map(|cell| cell.node_id)
+        .collect();
+    if !changed.is_empty() {
         doc.layout_cache_context.invalidate();
     }
-    for &(cell, border, painted) in &state.cells {
-        let style = doc
-            .layout_style_for_key_mut(cell)
-            .expect("table cell layout style");
-        let changed = style.border != border;
-        style.border = border;
-        let node = doc.table_layout_node_mut(cell);
-        node.collapsed_border = painted;
-        if changed {
-            node.cache.clear();
-        }
+    for (key, entry) in entries {
+        let idx = doc.nodes.layout_index(key).expect("border key is live");
+        let _previous = entry
+            .apply_legacy_sizing(
+                doc.layout_style_for_key_mut(idx)
+                    .expect("border has a retained style"),
+            )
+            .expect("validated border entry");
     }
-    for &(row, painted) in &state.rows {
-        doc.nodes[row].collapsed_border = painted;
+    for cell in &state.cells {
+        doc.table_layout_node_mut(cell.node_id).collapsed_border = cell.paint;
+    }
+    for &(row, paint) in &state.rows {
+        doc.nodes[row].collapsed_border = paint;
+    }
+    for cell in changed {
+        doc.table_layout_node_mut(cell).cache.clear();
     }
 }
 
@@ -4457,34 +4336,33 @@ fn apply_borders(doc: &mut Document, state: &BorderState) {
 /// the cells of the collapsed columns keep the borders they resolved to, which
 /// they are measured with.
 fn border_width_with_columns_in_place(
-    doc: &mut Document,
+    doc: &Document,
+    state: &mut BorderState,
     grid: &TableGrid,
     collapsed_rows: &[bool],
     shown: &TableGrid,
     table_idx: usize,
-    table_border: &Rect<f32>,
-    basis: Option<f32>,
+    metrics: (&Rect<f32>, Option<f32>),
 ) -> (f32, BorderState) {
+    let (table_border, basis) = metrics;
     let rows_shown = without_collapsed_rows(grid, collapsed_rows);
     if rows_shown.rows.is_empty() {
         // Nothing shows, so no cell border meets the table's own.
-        reset_collapsed_borders(doc, grid);
-        return (
-            table_border.left + table_border.right,
-            snapshot_borders(doc, grid),
-        );
+        state.reset_authored(doc, grid);
+        return (table_border.left + table_border.right, state.clone());
     }
     let index = CellIndex::new(&rows_shown);
-    reset_collapsed_borders(doc, grid);
-    resolve_collapsed_borders(doc, &rows_shown, &index, table_idx);
-    let lines = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis);
-    let in_place = snapshot_borders(doc, grid);
-    reset_collapsed_borders(doc, shown);
+    state.reset_authored(doc, grid);
+    resolve_collapsed_borders(doc, state, &rows_shown, &index, table_idx);
+    let lines = compute_collapsed_lines(doc, state, &rows_shown, &index, table_border, basis);
+    let in_place = state.clone();
+    state.reset_authored(doc, shown);
     (lines.inline_border_width(), in_place)
 }
 
 fn compute_collapsed_lines(
-    doc: &Document,
+    _doc: &Document,
+    state: &BorderState,
     grid: &TableGrid,
     index: &CellIndex,
     table_border: &Rect<f32>,
@@ -4497,7 +4375,13 @@ fn compute_collapsed_lines(
     let borders: Vec<Rect<f32>> = grid
         .cells
         .iter()
-        .map(|c| cell_border_sides(doc, c.node_id, basis))
+        .map(|c| {
+            state
+                .cell(c.node_id)
+                .expect("line cell belongs to border state")
+                .widths
+                .map(|width| resolve_length(width, basis))
+        })
         .collect();
 
     // Vertical boundaries 0..=n. Boundary i separates column i-1 and i;

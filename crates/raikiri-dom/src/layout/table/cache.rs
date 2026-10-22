@@ -120,6 +120,7 @@ pub(super) fn prepared_borders(
         return prepared;
     }
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
+    let mut borders = collapse.then(|| BorderState::authored(doc, grid));
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
     let cell_index =
         (collapse && !grid.rows.is_empty() && grid.n_cols > 0).then(|| CellIndex::new(grid));
@@ -157,12 +158,12 @@ pub(super) fn prepared_borders(
         .map(|shown| {
             border_width_with_columns_in_place(
                 doc,
+                borders.as_mut().expect("collapsed border state"),
                 grid,
                 &collapsed_rows,
                 shown,
                 table_idx,
-                &table_border,
-                parent_width,
+                (&table_border, parent_width),
             )
         });
     if let Some(index) = cell_index.as_ref() {
@@ -172,7 +173,13 @@ pub(super) fn prepared_borders(
             (None, _) => (Some(grid), index),
         };
         if let Some(resolved) = resolved {
-            resolve_collapsed_borders(doc, resolved, index, table_idx);
+            resolve_collapsed_borders(
+                doc,
+                borders.as_mut().expect("collapsed border state"),
+                resolved,
+                index,
+                table_idx,
+            );
         }
     }
     let columns_in_place =
@@ -180,7 +187,13 @@ pub(super) fn prepared_borders(
             .as_ref()
             .zip(borders_in_place)
             .map(|(shown, (border_width, in_place))| {
-                ColumnsInPlace::new(doc, grid, shown, border_width, in_place).with_row_overlaps(
+                ColumnsInPlace::new(
+                    shown,
+                    border_width,
+                    in_place,
+                    borders.as_ref().expect("collapsed border state").clone(),
+                )
+                .with_row_overlaps(
                     doc,
                     grid,
                     &collapsed_rows,
@@ -200,12 +213,23 @@ pub(super) fn prepared_borders(
         .collect();
     let collapsed = match (cell_index.as_ref(), shown.as_ref(), shown_index.as_ref()) {
         (None, ..) => CollapsedLines::separate(&table_border),
-        (Some(index), None, _) => {
-            compute_collapsed_lines(doc, grid, index, &table_border, parent_width)
-        }
+        (Some(index), None, _) => compute_collapsed_lines(
+            doc,
+            borders.as_ref().expect("collapsed border state"),
+            grid,
+            index,
+            &table_border,
+            parent_width,
+        ),
         (Some(_), Some(shown), Some(shown_index)) => {
-            let lines =
-                compute_collapsed_lines(doc, shown, shown_index, &table_border, parent_width);
+            let lines = compute_collapsed_lines(
+                doc,
+                borders.as_ref().expect("collapsed border state"),
+                shown,
+                shown_index,
+                &table_border,
+                parent_width,
+            );
             let kept_cols: Vec<usize> = (0..collapsed_cols.len())
                 .filter(|&column| !collapsed_cols[column])
                 .collect();
@@ -242,7 +266,6 @@ pub(super) fn prepared_borders(
             }
         }
     };
-    let borders = collapse.then(|| snapshot_borders(doc, grid));
     let prepared = Rc::new(PreparedBorders {
         collapsed_rows,
         collapsed_cols,
@@ -254,5 +277,8 @@ pub(super) fn prepared_borders(
         .table_cache
         .borders
         .insert(table_idx, (key, epoch, Rc::clone(&prepared)));
+    if let Some(borders) = &prepared.borders {
+        apply_borders(doc, borders);
+    }
     prepared
 }
