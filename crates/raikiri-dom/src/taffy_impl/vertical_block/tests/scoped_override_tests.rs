@@ -10,6 +10,7 @@ fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> Transp
     TransposedBlock {
         id: next_transposed_frame_id(tree),
         container,
+        right_to_left: true,
         block_space: None,
         container_style: transpose_style(tree.layout_style_for_key(container).unwrap(), true),
         child_styles: HashMap::from([(child, style)]),
@@ -238,4 +239,93 @@ fn snapshot_apply_rejects_a_different_frame_before_changing_fields() {
     );
     assert_eq!(block.container_style.size, original);
     assert!(undo.previous.is_none());
+}
+
+#[test]
+fn border_scope_transposes_opposite_frames() {
+    let (mut doc, cascade, child, _) = fixture();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let outer = frame(&mut tree, parent, child);
+    let mut inner = frame(&mut tree, child, child);
+    inner.right_to_left = false;
+    inner.container_style = transpose_style(tree.layout_style_for_key(child).unwrap(), false);
+    inner.child_styles.insert(
+        child,
+        transpose_style(tree.layout_style_for_key(child).unwrap(), false),
+    );
+    push_transposed_frame(&mut tree, outer);
+    push_transposed_frame(&mut tree, inner);
+    let originals: Vec<_> = tree
+        .context
+        .transposed_blocks
+        .iter()
+        .map(|b| b.child_styles[&child].border)
+        .collect();
+    let key = tree.nodes.box_key(child).unwrap();
+    tree.with_overrides(
+        vec![
+            (
+                key,
+                OwnedPropertyOverride::length(LengthProperty::BorderTop, L::Px(11.0), true)
+                    .unwrap(),
+            ),
+            (
+                key,
+                OwnedPropertyOverride::length(LengthProperty::BorderRight, L::Px(12.0), true)
+                    .unwrap(),
+            ),
+            (
+                key,
+                OwnedPropertyOverride::length(LengthProperty::BorderBottom, L::Px(13.0), true)
+                    .unwrap(),
+            ),
+            (
+                key,
+                OwnedPropertyOverride::length(LengthProperty::BorderLeft, L::Px(14.0), true)
+                    .unwrap(),
+            ),
+            (key, OwnedPropertyOverride::flex_shrink(0.5)),
+        ],
+        |tree| {
+            let physical = tree.layout_style_for_key(child).unwrap().border;
+            assert_eq!(
+                physical,
+                Rect {
+                    top: LengthPercentage::length(11.0),
+                    right: LengthPercentage::length(12.0),
+                    bottom: LengthPercentage::length(13.0),
+                    left: LengthPercentage::length(14.0)
+                }
+            );
+            for (block, (top, bottom)) in tree
+                .context
+                .transposed_blocks
+                .iter()
+                .zip([(12.0, 14.0), (14.0, 12.0)])
+            {
+                assert_eq!(
+                    block.child_styles[&child].border,
+                    Rect {
+                        left: LengthPercentage::length(11.0),
+                        right: LengthPercentage::length(13.0),
+                        top: LengthPercentage::length(top),
+                        bottom: LengthPercentage::length(bottom)
+                    }
+                );
+                assert_eq!(block.child_styles[&child].flex_shrink, 0.5);
+            }
+            assert_eq!(
+                tree.context.transposed_blocks[1].container_style.border,
+                transpose_rect(physical, false)
+            );
+        },
+    );
+    assert_eq!(tree.override_checkpoint(), 0);
+    for (block, original) in tree.context.transposed_blocks.iter().zip(originals) {
+        assert_eq!(block.child_styles[&child].border, original);
+        assert_eq!(block.child_styles[&child].flex_shrink, 1.0);
+    }
 }

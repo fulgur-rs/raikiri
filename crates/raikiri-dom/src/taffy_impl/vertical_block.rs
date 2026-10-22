@@ -45,6 +45,7 @@ use raikiri_style::property::{DisplayValue, WritingMode};
 pub(crate) struct TransposedBlock {
     id: u64,
     container: usize,
+    right_to_left: bool,
     /// The physical width of the container's content box, when definite.
     block_space: Option<f32>,
     container_style: Style,
@@ -174,9 +175,15 @@ impl TransposedSizingUndo {
         blocks: &mut [TransposedBlock],
         entry: &raikiri_layout_style::OwnedPropertyOverride,
     ) {
+        let block = &blocks[self.frame];
+        assert_eq!(
+            block.id, self.id,
+            "scope restores the same transposed frame"
+        );
+        let right_to_left = block.right_to_left;
         self.previous = Some(
             entry
-                .apply_transposed_legacy_sizing(self.target(blocks))
+                .apply_transposed_legacy_sizing(self.target(blocks), right_to_left)
                 .expect("validated sizing entry"),
         );
     }
@@ -531,6 +538,7 @@ pub(super) fn compute_vertical_block(
     let block = TransposedBlock {
         id: next_transposed_frame_id(tree),
         container: idx,
+        right_to_left,
         block_space,
         container_style,
         child_styles,

@@ -122,7 +122,7 @@ fn transposed_legacy_sizing_swaps_physical_targets_and_undoes_only_the_target() 
     ] {
         let undo = OwnedPropertyOverride::length(property, L::Px(expected), true)
             .unwrap()
-            .apply_transposed_legacy_sizing(&mut style)
+            .apply_transposed_legacy_sizing(&mut style, false)
             .unwrap();
         match property {
             LengthProperty::Width => assert_eq!(style.size.height, Dimension::length(11.0)),
@@ -141,7 +141,7 @@ fn transposed_legacy_sizing_swaps_physical_targets_and_undoes_only_the_target() 
     }
     for ratio in [None, Some(3.0), Some(0.0)] {
         let undo = OwnedPropertyOverride::aspect_ratio(ratio)
-            .apply_transposed_legacy_sizing(&mut style)
+            .apply_transposed_legacy_sizing(&mut style, false)
             .unwrap();
         assert_eq!(style.aspect_ratio, ratio.map(|r| 1.0 / r));
         undo.restore(&mut style);
@@ -157,10 +157,10 @@ fn transposed_legacy_sizing_rejects_unrelated_entries_without_mutation() {
     };
     for entry in [
         OwnedPropertyOverride::length(LengthProperty::MarginLeft, L::Px(7.0), true).unwrap(),
-        OwnedPropertyOverride::flex_shrink(0.5),
+        OwnedPropertyOverride::clear(raikiri_style::property::ClearValue::None),
     ] {
         assert!(matches!(
-            entry.apply_transposed_legacy_sizing(&mut style),
+            entry.apply_transposed_legacy_sizing(&mut style, false),
             Err(OverrideError::UnsupportedLegacySizing)
         ));
         assert_eq!(style.aspect_ratio, Some(3.0));
@@ -168,5 +168,118 @@ fn transposed_legacy_sizing_rejects_unrelated_entries_without_mutation() {
         assert!(style.size.height.is_auto());
         assert_eq!(style.flex_shrink, 1.0);
         assert_eq!(style.margin.left, Lpa::length(0.0));
+    }
+}
+
+#[test]
+fn scope_projection_restores_border_and_shrink_fields() {
+    use taffy::LengthPercentage as Lp;
+    let mut style = Style::<raikiri_style::SmolStr> {
+        border: taffy::Rect {
+            top: Lp::length(1.0),
+            right: Lp::length(2.0),
+            bottom: Lp::length(3.0),
+            left: Lp::length(4.0),
+        },
+        flex_shrink: 0.0,
+        ..Style::default()
+    };
+    let original = style.border;
+    let mut undos = Vec::new();
+    for (property, px) in [
+        (LengthProperty::BorderTop, 11.0),
+        (LengthProperty::BorderRight, 12.0),
+        (LengthProperty::BorderBottom, 13.0),
+        (LengthProperty::BorderLeft, 14.0),
+    ] {
+        undos.push(
+            OwnedPropertyOverride::length(property, L::Px(px), true)
+                .unwrap()
+                .apply_legacy_sizing(&mut style)
+                .unwrap(),
+        );
+    }
+    undos.push(
+        OwnedPropertyOverride::flex_shrink(1.0)
+            .apply_legacy_sizing(&mut style)
+            .unwrap(),
+    );
+    assert_eq!(
+        style.border,
+        taffy::Rect {
+            top: Lp::length(11.0),
+            right: Lp::length(12.0),
+            bottom: Lp::length(13.0),
+            left: Lp::length(14.0)
+        }
+    );
+    assert_eq!(style.flex_shrink, 1.0);
+    style.margin.left = Lpa::length(91.0);
+    for undo in undos.into_iter().rev() {
+        undo.restore(&mut style);
+    }
+    assert_eq!(style.border, original);
+    assert_eq!(style.flex_shrink, 0.0);
+    assert_eq!(style.margin.left, Lpa::length(91.0));
+}
+
+#[test]
+fn scope_projection_keeps_border_calc_owner_identity() {
+    use taffy::LengthPercentage as Lp;
+    let mut style = Style::<raikiri_style::SmolStr>::default();
+    let entry = OwnedPropertyOverride::length(
+        LengthProperty::BorderLeft,
+        L::Calc(CalcLengthPercentage {
+            px: -10.0,
+            percent: 25.0,
+        }),
+        false,
+    )
+    .unwrap();
+    let owner = entry.calc_owner().unwrap().clone();
+    let undo = entry.apply_legacy_sizing(&mut style).unwrap();
+    drop(entry);
+    assert_eq!(style.border.left, Lp::calc(owner.pointer()));
+    assert!(owner.non_negative());
+    undo.restore(&mut style);
+    assert_eq!(style.border.left, Lp::length(0.0));
+}
+
+#[test]
+fn scope_projection_transposes_all_edges() {
+    use taffy::LengthPercentage as Lp;
+    for right_to_left in [false, true] {
+        for property in [
+            LengthProperty::BorderTop,
+            LengthProperty::BorderRight,
+            LengthProperty::BorderBottom,
+            LengthProperty::BorderLeft,
+        ] {
+            let mut style = Style::<raikiri_style::SmolStr>::default();
+            let original = style.border;
+            let undo = OwnedPropertyOverride::length(property, L::Px(17.0), true)
+                .unwrap()
+                .apply_transposed_legacy_sizing(&mut style, right_to_left)
+                .unwrap();
+            let edge = match property {
+                LengthProperty::BorderTop => style.border.left,
+                LengthProperty::BorderBottom => style.border.right,
+                LengthProperty::BorderLeft if right_to_left => style.border.bottom,
+                LengthProperty::BorderRight if right_to_left => style.border.top,
+                LengthProperty::BorderLeft => style.border.top,
+                LengthProperty::BorderRight => style.border.bottom,
+                _ => unreachable!(),
+            };
+            assert_eq!(edge, Lp::length(17.0));
+            undo.restore(&mut style);
+            assert_eq!(style.border, original);
+        }
+        let mut style = Style::<raikiri_style::SmolStr>::default();
+        let undo = OwnedPropertyOverride::flex_shrink(0.0)
+            .apply_transposed_legacy_sizing(&mut style, right_to_left)
+            .unwrap();
+        assert_eq!(style.flex_shrink, 0.0);
+        undo.restore(&mut style);
+        assert_eq!(style.flex_shrink, 1.0);
     }
 }
