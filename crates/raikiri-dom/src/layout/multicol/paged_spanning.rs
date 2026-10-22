@@ -18,15 +18,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<f32, LayoutError> {
     let old_groups = tree.nodes[owner].multicol_groups.clone();
-    if old_groups.is_empty()
-        || !tree
-            .layout_node_with_style(owner)
-            .unwrap()
-            .style
-            .size
-            .height
-            .is_auto()
-    {
+    if old_groups.is_empty() || !tree.block_axis_style(owner).height.is_auto() {
         return Ok(0.0);
     }
     let Some(container) = edits.first(owner) else {

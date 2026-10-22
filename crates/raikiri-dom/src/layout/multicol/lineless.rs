@@ -176,8 +176,8 @@ fn is_plain_block_with_display(
             && node.taffy_position() != defaults.position
         || node.style.float.is_floated()
         || node.style.clear != defaults.clear
-        || block_margins(node.style).is_none()
-        || node.style.overflow != defaults.overflow
+        || block_margins(tree.block_axis_style(child).margin).is_none()
+        || tree.block_axis_style(child).overflow != defaults.overflow
         || node.tag_name().is_some_and(|tag| {
             ATOMIC_TAGS.contains(&tag)
                 || REPLACED_BOX_TAGS.contains(&tag)
@@ -403,9 +403,8 @@ fn is_horizontal(node: &crate::Node) -> bool {
 
 /// The block-start and block-end margins of a child, when they are
 /// non-negative lengths and its inline margins are zero.
-fn block_margins(style: &crate::LayoutStyle) -> Option<(f32, f32)> {
+fn block_margins(margin: Rect<LengthPercentageAuto>) -> Option<(f32, f32)> {
     let zero = LengthPercentageAuto::length(0.0);
-    let margin = style.margin;
     if margin.left != zero || margin.right != zero {
         return None;
     }
@@ -443,7 +442,7 @@ fn wrapper_layout(
 ) -> WrapperLayout {
     let node = &tree.layout_node_with_style(wrapper).unwrap();
     let style = node.style;
-    let (margin_top, margin_bottom) = block_margins(style).unwrap_or_default();
+    let (margin_top, margin_bottom) = block_margins(style.margin).unwrap_or_default();
     let top_inset = super::multicol_resolve_inset(tree, style.padding.top, column_width)
         + super::multicol_resolve_inset(tree, style.border.top, column_width);
     let bottom_inset = super::multicol_resolve_inset(tree, style.padding.bottom, column_width)
@@ -1411,7 +1410,7 @@ enum Insets {
 /// slice them.
 fn item(tree: &Document, child: usize, height: f32, slice: Option<Insets>) -> Item {
     let node = &tree.layout_node_with_style(child).unwrap();
-    let (margin_top, margin_bottom) = block_margins(node.style).unwrap_or_default();
+    let (margin_top, margin_bottom) = block_margins(node.style.margin).unwrap_or_default();
     let slice = slice
         .filter(|_| slices_decorations(node))
         .map(|insets| match insets {

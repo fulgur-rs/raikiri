@@ -596,6 +596,7 @@ fn block_border_box_end(
 /// committed content.
 fn grows_with_paginated_content(document: &Document, node_id: usize) -> bool {
     let node = &document.layout_node_with_style(node_id).unwrap();
+    let block_axis = document.block_axis_style(node_id);
     let ordinary_block = node.formatting_context == FormattingContext::Block
         && matches!(
             node.display(),
@@ -605,7 +606,7 @@ fn grows_with_paginated_content(document: &Document, node_id: usize) -> bool {
     // A row-flex item can have a used stretch height even when its
     // auto-sized flex line must still grow around paginated content.
     let assigned_height = node.percent_basis_height.is_some()
-        && (node.style.aspect_ratio.is_some()
+        && (block_axis.aspect_ratio.is_some()
             || node.taffy_position() == TaffyPosition::Absolute
             || document.taffy_parent_of(node_id).is_some_and(|parent| {
                 let parent_node = &document.layout_node_with_style(parent).unwrap();
@@ -624,8 +625,7 @@ fn grows_with_paginated_content(document: &Document, node_id: usize) -> bool {
         && !assigned_height
         && node.multicol.is_none()
         && !node.size_containment.height
-        && (node.style.size.height.is_auto()
-            || definite_content_height(document, node_id).is_none())
+        && (block_axis.height.is_auto() || definite_content_height(document, node_id).is_none())
 }
 
 /// How far the content of each flex item that
@@ -941,15 +941,8 @@ fn fits_decorated_paper(
 
 /// Whether `node_id` has a definite, non-negative `height` length.
 fn has_fixed_height(document: &Document, node_id: usize) -> bool {
-    style_dimension_length(
-        document
-            .layout_node_with_style(node_id)
-            .unwrap()
-            .style
-            .size
-            .height,
-    )
-    .is_some_and(|value| value >= 0.0)
+    style_dimension_length(document.block_axis_style(node_id).height)
+        .is_some_and(|value| value >= 0.0)
 }
 
 /// Whether a box that took its page position holds content in the columns
@@ -3338,14 +3331,7 @@ fn grow_spanning_column_ancestors(
         }
         let _ = follow_moved_ifc_block(document, child, delta);
         sibling_shifts.record(document, parent, child, delta, column_work)?;
-        if !document
-            .layout_node_with_style(parent)
-            .unwrap()
-            .style
-            .size
-            .height
-            .is_auto()
-        {
+        if !document.block_axis_style(parent).height.is_auto() {
             break;
         }
         document.nodes[parent].unrounded_layout.size.height += delta;
@@ -4140,15 +4126,11 @@ fn has_explicit_block_axis_inset(document: &Document, node_id: usize) -> bool {
     if document.nodes[node_id].kind() != NodeKind::Element {
         return false;
     }
-    let inset = &document
-        .layout_node_with_style(node_id)
-        .unwrap()
-        .style
-        .inset;
+    let block_axis = document.block_axis_style(node_id);
     matches!(
         document.nodes[node_id].position(),
         PositionValue::Absolute | PositionValue::Fixed
-    ) && (!inset.top.is_auto() || !inset.bottom.is_auto())
+    ) && (!block_axis.inset_top.is_auto() || !block_axis.inset_bottom.is_auto())
 }
 
 fn in_inset_out_of_flow_subtree(document: &Document, node_id: usize) -> bool {
@@ -4683,10 +4665,11 @@ fn grown_auto_height(
 ) -> Option<GrownHeight> {
     let node = &document.layout_node_with_style(parent).unwrap();
     let style = &node.style;
+    let block_axis = document.block_axis_style(parent);
     // A percentage height against an indefinite containing block behaves
     // as `auto` (CSS 2.1 §10.5).
     let can_grow =
-        style.size.height.is_auto() || definite_content_height(document, parent).is_none();
+        block_axis.height.is_auto() || definite_content_height(document, parent).is_none();
     let layout = &node.unrounded_layout;
     let vertical_edges =
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
@@ -4706,8 +4689,8 @@ fn grown_auto_height(
         resolve_length_percentage_auto(value, containing_height)
             .map_or(auto, |value| value + box_sizing_edges)
     };
-    let min = bound(style.min_size.height, 0.0);
-    let max = bound(style.max_size.height, f32::INFINITY).max(min);
+    let min = bound(block_axis.min_height, 0.0);
+    let max = bound(block_axis.max_height, f32::INFINITY).max(min);
     let old = layout.size.height;
     // The content extent before and after the shift, from the in-flow
     // children's margin boxes when bottom padding or border, or a formatting
@@ -5045,7 +5028,7 @@ fn visit_same_bfc_floats_in_subtree(
 /// being definite (CSS 2.1 §10.5).
 fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
     let node = &document.layout_node_with_style(block).unwrap();
-    let raw = node.style.size.height.into_raw();
+    let raw = document.block_axis_style(block).height.into_raw();
     let definite = if raw.is_plain_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {
         BoxTree::for_layout(document)
             .parent(block, BoxParentScope::Document)
@@ -6197,13 +6180,13 @@ fn break_margins(
     node_id: usize,
     content_width: f32,
 ) -> (f32, f32) {
-    let style = &document.layout_node_with_style(node_id).unwrap().style;
+    let block_axis = document.block_axis_style(node_id);
     let computed = &cascade.computed[node_id];
-    let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
+    let margin_top = used_style_length_percentage_auto(block_axis.margin.top, content_width)
         .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
         .unwrap_or(0.0);
     let trailing_margin = if is_floating_box_for_pagination(document, cascade, node_id) {
-        used_style_length_percentage_auto(style.margin.bottom, content_width)
+        used_style_length_percentage_auto(block_axis.margin.bottom, content_width)
             .or_else(|| {
                 used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
             })
@@ -6468,9 +6451,8 @@ fn grow_float_context_to_moved_float(
     flow_page: u32,
 ) {
     let context = float_context_root(document, cascade, node_id, body_id);
-    let context_style = &document.layout_node_with_style(context).unwrap().style;
     if context != body_id
-        && (context_style.size.height.is_auto()
+        && (document.block_axis_style(context).height.is_auto()
             || definite_content_height(document, context).is_none())
     {
         let context_top = current_abs_y(document, context);
@@ -6861,10 +6843,11 @@ fn shift_later_flex_lines(document: &mut Document, container: usize, item: usize
 /// ignores the content.
 fn height_follows_content(document: &Document, block: usize) -> bool {
     let node = &document.layout_node_with_style(block).unwrap();
-    let min_height = node.style.min_size.height;
-    node.style.size.height.is_auto()
+    let block_axis = document.block_axis_style(block);
+    let min_height = block_axis.min_height;
+    block_axis.height.is_auto()
         && (min_height.is_auto() || style_dimension_length(min_height.into()) == Some(0.0))
-        && node.style.max_size.height.is_auto()
+        && block_axis.max_height.is_auto()
         && !node.size_containment.height
 }
 
@@ -7458,7 +7441,7 @@ fn in_inline_context(document: &Document, node_id: usize) -> bool {
 /// context (CSS 2.1 §9.4.1), which holds the floats inside it.
 fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let computed = &cascade.computed[node_id];
-    let style = &document.layout_node_with_style(node_id).unwrap().style;
+    let overflow = document.block_axis_style(node_id).overflow;
     let item = BoxTree::for_layout(document)
         .parent(node_id, BoxParentScope::Document)
         .is_some_and(|container| {
@@ -7475,8 +7458,8 @@ fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) ->
             ))
         || matches!(computed.float, FloatValue::Left | FloatValue::Right)
         || document.nodes[node_id].taffy_position() == taffy::Position::Absolute
-        || style.overflow.x.is_scroll_container()
-        || style.overflow.y.is_scroll_container()
+        || overflow.x.is_scroll_container()
+        || overflow.y.is_scroll_container()
         || document.nodes[node_id].multicol.is_some()
         || establishes_containment_context(computed)
 }
@@ -7550,10 +7533,11 @@ fn max_height_is_reached(document: &Document, cascade: &CascadeResult, node_id: 
 /// stretched into it, so that item cannot grow to hold a moved box.
 fn grid_stacks_items(document: &Document, grid: usize) -> bool {
     let node = &document.layout_node_with_style(grid).unwrap();
+    let block_axis = document.block_axis_style(grid);
     if node.grid_column_count != 1
         || !grid_rows_size_to_content(document, grid)
-        || !node.style.size.height.is_auto() && definite_content_height(document, grid).is_some()
-        || !node.style.min_size.height.is_auto()
+        || !block_axis.height.is_auto() && definite_content_height(document, grid).is_some()
+        || !block_axis.min_height.is_auto()
     {
         return false;
     }

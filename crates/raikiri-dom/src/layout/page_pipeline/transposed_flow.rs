@@ -12,6 +12,10 @@
 //!   top edge, with the inline axis across;
 //! - the computed values the paginator reads and the page geometry are
 //!   reflected the same way;
+//! - the style facts the paginator reads from a box's retained style are
+//!   read on those axes through [`Document::block_axis_style`], from a style
+//!   view whose layout writing mode is the root's, so the retained styles
+//!   themselves stay on physical axes;
 //! - after pagination, the boxes are mapped back to physical axes. A box
 //!   keeps its distance from the block-start edge of its parent, which for
 //!   `vertical-rl` is the parent's right edge, so content that pagination
@@ -25,6 +29,7 @@
 //! or an orthogonal flow) is not broken: pagination treats it as monolithic.
 
 use super::*;
+use crate::layout::block_axis_style::BlockAxisStyle;
 use crate::layout::context::LayoutSession;
 
 /// How the physical sides of a box map onto the transposed view.
@@ -162,32 +167,15 @@ impl FlowAxes {
         }
     }
 
-    /// A taffy style with its physical sizes and sides on transposed axes,
-    /// for the properties the paginator reads.
-    fn style(self, style: &crate::LayoutStyle) -> crate::LayoutStyle {
-        let mut style = style.clone();
-        style.size = Size {
-            width: style.size.height,
-            height: style.size.width,
-        };
-        style.min_size = Size {
-            width: style.min_size.height,
-            height: style.min_size.width,
-        };
-        style.max_size = Size {
-            width: style.max_size.height,
-            height: style.max_size.width,
-        };
-        style.overflow = Point {
-            x: style.overflow.y,
-            y: style.overflow.x,
-        };
-        style.aspect_ratio = style.aspect_ratio.map(f32::recip);
-        style.margin = self.rect(style.margin);
-        style.padding = self.rect(style.padding);
-        style.border = self.rect(style.border);
-        style.inset = self.rect(style.inset);
-        style
+    /// The writing mode whose axes a style view returns its sizes and sides
+    /// on, so that the root's block axis is the vertical one: the one the
+    /// root has, as far as the axes go.
+    fn layout_wm(self) -> raikiri_style::property::WritingMode {
+        if self.right_to_left {
+            raikiri_style::property::WritingMode::VerticalRl
+        } else {
+            raikiri_style::property::WritingMode::VerticalLr
+        }
     }
 
     /// The computed values of `idx` with their physical sizes and sides on
@@ -265,7 +253,6 @@ pub(super) struct TransposedDocument {
     physical: Vec<TaffyLayout>,
     /// The layout of each key as it was handed to the paginator.
     transposed: Vec<TaffyLayout>,
-    styles: Vec<crate::LayoutStyle>,
     live_keys: Vec<(usize, crate::node::arena::BoxKey)>,
     generated_generation: u64,
     prepared_stamp: crate::layout::box_style_data::PreparedStamp,
@@ -296,7 +283,8 @@ impl TransposedDocument {
     }
 
     /// Put `document` on transposed axes. [`Self::with_transposed`] restores
-    /// the retained geometry and styles after the pagination body exits.
+    /// the retained geometry after the pagination body exits; the retained
+    /// styles are not touched.
     pub(super) fn transpose(
         document: &mut LayoutSession<'_>,
         flow_root: usize,
@@ -347,26 +335,24 @@ impl TransposedDocument {
                 }
             })
             .collect();
-        let mut projected_styles: Vec<_> = (0..keys)
+        // The styles are read from the physical computed values on the axes
+        // of the root's writing mode. Reading them off the transposed computed
+        // values below instead would swap them a second time.
+        let block_styles: Vec<BlockAxisStyle> = (0..keys)
             .map(|key| {
-                axes.style(
-                    document
-                        .layout_style_for_key(key)
-                        .expect("transposed box has a retained style"),
-                )
+                let view = document.style_view(key);
+                let context = raikiri_layout_style::ViewContext {
+                    layout_wm: axes.layout_wm(),
+                    ..view.context()
+                };
+                BlockAxisStyle::of_view(&view.with_context(context))
             })
             .collect();
         document.document.layout_cache_context.invalidate();
         for (key, &layout) in transposed.iter().enumerate() {
             document.table_layout_node_mut(key).unrounded_layout = layout;
-            std::mem::swap(
-                document
-                    .layout_style_for_key_mut(key)
-                    .expect("validated retained style"),
-                &mut projected_styles[key],
-            );
         }
-        let styles = projected_styles;
+        document.document.pagination_block_styles = block_styles;
         document.context.table_cache.clear();
         document.context.pagination_on_transposed_axes = true;
         Self {
@@ -376,7 +362,6 @@ impl TransposedDocument {
             frames,
             physical,
             transposed,
-            styles,
             live_keys,
             generated_generation,
             prepared_stamp,
@@ -409,22 +394,20 @@ impl TransposedDocument {
                     )
                 }));
         document.document.layout_cache_context.invalidate();
+        document.document.pagination_block_styles = Vec::new();
         document.context.pagination_on_transposed_axes = false;
         document.context.table_cache.clear();
         if !unchanged {
             // Identity violations cannot use the old numeric coordinate frames.
             // Restore surviving typed keys before reporting the boundary failure.
-            for (old_index, style) in self.styles.into_iter().enumerate() {
+            for (old_index, physical) in self.physical.iter().enumerate() {
                 let key = self
                     .live_keys
                     .iter()
                     .find(|(index, _)| *index == old_index)
                     .map(|(_, key)| *key);
                 if let Some(index) = key.and_then(|key| document.nodes.layout_index(key)) {
-                    document.nodes[index].unrounded_layout = self.physical[old_index];
-                    if let Some(retained) = document.layout_style_for_key_mut(index) {
-                        *retained = style;
-                    }
+                    document.nodes[index].unrounded_layout = *physical;
                 }
             }
             return false;
@@ -433,7 +416,7 @@ impl TransposedDocument {
         let current: Vec<TaffyLayout> = (0..keys)
             .map(|key| document.table_layout_node_mut(key).unrounded_layout)
             .collect();
-        for (key, style) in self.styles.into_iter().enumerate() {
+        for key in 0..keys {
             let frame = self.frames[key];
             let frame_kept = frame.is_none_or(|frame| {
                 current[frame].size.height == self.transposed[frame].size.height
@@ -448,9 +431,6 @@ impl TransposedDocument {
                 self.axes.physical_layout(current[key], parent_width)
             };
             document.table_layout_node_mut(key).unrounded_layout = layout;
-            *document
-                .layout_style_for_key_mut(key)
-                .expect("transposed box has a retained style") = style;
         }
         document.context.table_cache.clear();
         document.context.pagination_on_transposed_axes = false;

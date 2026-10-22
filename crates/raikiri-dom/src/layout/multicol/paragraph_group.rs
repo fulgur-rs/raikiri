@@ -92,6 +92,7 @@ fn collect(
     let mut high = 0.0;
     for &(child, ref output, _, margin_top, margin_bottom, _) in entries {
         let node = &tree.layout_node_with_style(child).unwrap();
+        let overflow = tree.block_axis_style(child).overflow;
         // Source whitespace between block elements has no formatting box.
         if node.kind() == NodeKind::Text && output.size.height == 0.0 && node.ifc.is_none() {
             paragraphs.push(None);
@@ -113,8 +114,8 @@ fn collect(
             && node
                 .authored_writing_mode
                 .is_none_or(|mode| !mode.is_vertical())
-            && node.style.overflow.x == taffy::Overflow::Visible
-            && node.style.overflow.y == taffy::Overflow::Visible;
+            && overflow.x == taffy::Overflow::Visible
+            && overflow.y == taffy::Overflow::Visible;
         if !can_balance_paragraph_box(tree, child)
             || (!empty
                 && !if atomics {
