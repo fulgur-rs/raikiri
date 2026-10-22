@@ -18,18 +18,7 @@ use iterators::{
     CheckedAreas, CheckedIter, CheckedNames, CheckedRepeat, CheckedTemplate, CheckedTracks,
 };
 
-#[derive(Clone, Copy, Debug)]
-#[repr(usize)]
-pub(crate) enum ReadRole {
-    FlexContainer,
-    FlexItem,
-    GridContainer,
-    GridItem,
-    CoreContainer,
-    BlockContainer,
-    BlockItem,
-    Oof,
-}
+pub(crate) use super::ReadRole;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReadContext {

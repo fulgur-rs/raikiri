@@ -4,19 +4,19 @@ use crate::{
     LayoutStyle,
     layout::{
         context::LayoutSession,
-        style_views::checked::{CheckedStyle, ReadRole},
+        style_views::{NativeStyle, ReadRole},
     },
 };
 use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle};
 
 pub(crate) fn container(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
-    materialize(tree.checked_query(idx, ReadRole::BlockContainer))
+    materialize(tree.native_style(idx, ReadRole::BlockContainer))
 }
 pub(crate) fn child(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
-    materialize(tree.checked_query(idx, ReadRole::BlockItem))
+    materialize(tree.native_style(idx, ReadRole::BlockItem))
 }
 
-fn materialize(query: CheckedStyle<'_>) -> LayoutStyle {
+fn materialize(query: NativeStyle<'_>) -> LayoutStyle {
     // Primitives distinguish only hidden, block and non-block display here.
     let display = if query.box_generation_mode() == taffy::BoxGenerationMode::None {
         taffy::Display::None

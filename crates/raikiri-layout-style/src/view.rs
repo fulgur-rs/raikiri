@@ -133,6 +133,7 @@ impl<'a> LayoutStyleView<'a> {
         }
         if property == MinHeight
             && !self.vertical()
+            && !flags.contains(StyleFlags::SOURCE_VERTICAL_DIRECTION)
             && self.prepared.values.cssom_writing_mode.is_vertical()
             && self.prepared.values.min_height == L::Auto
             && self.prepared.values.min_block_size.is_some()

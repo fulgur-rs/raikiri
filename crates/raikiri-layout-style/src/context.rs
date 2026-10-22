@@ -137,6 +137,10 @@ impl StyleFlags {
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
+    /// Remove prepared facts before publishing refreshed adapter inputs.
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
     /// Whether a fact is set.
     pub const fn contains(self, flag: Self) -> bool {
         self.0 & flag.0 == flag.0
@@ -157,6 +161,8 @@ pub struct StyleMetadata {
     pub used_writing_mode: WritingMode,
     /// Explicit containing-block policy; None uses positioning.
     pub claims: Option<taffy::ContainingBlockClaims>,
+    /// Adapter-supplied scrollbar thickness, independent of CSS computed values.
+    pub scrollbar_width: f32,
 }
 impl Default for StyleMetadata {
     fn default() -> Self {
@@ -164,6 +170,7 @@ impl Default for StyleMetadata {
             flags: StyleFlags::default(),
             used_writing_mode: WritingMode::HorizontalTb,
             claims: None,
+            scrollbar_width: 0.0,
         }
     }
 }

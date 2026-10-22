@@ -90,13 +90,14 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     #[inline]
     fn scrollbar_width(&self) -> f32 {
-        0.0
+        self.prepared.metadata.scrollbar_width
     }
     #[inline]
     fn position(&self) -> taffy::Position {
         match self.prepared.values.position {
             PositionValue::Absolute | PositionValue::Fixed => taffy::Position::Absolute,
-            PositionValue::Relative | PositionValue::Sticky => taffy::Position::Relative,
+            PositionValue::Relative => taffy::Position::Relative,
+            PositionValue::Sticky => taffy::Position::Sticky,
             _ => taffy::Position::Static,
         }
     }

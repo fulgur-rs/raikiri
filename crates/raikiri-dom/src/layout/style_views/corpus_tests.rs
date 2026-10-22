@@ -305,7 +305,7 @@ fn flex_grid_baseline_getters_agree() {
             "review stale WPT resource exceptions"
         );
         assert!(totals.documents >= ids.len());
-        assert!(totals.roles[..4].iter().all(|count| *count > 0));
+        assert!(totals.roles.iter().all(|count| *count > 0));
         assert!(
             totals.iterators > 0
                 && totals.calcs > 0

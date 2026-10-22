@@ -129,6 +129,10 @@ impl LayoutSession<'_> {
                 &self.context.transposed_style_index,
                 index,
             );
+            if !transposed.is_empty() && self.style_views.is_some() {
+                // A primitive can outlive both the late override and its frame.
+                self.retain_snapshot_calcs(entry.calc_owner().cloned());
+            }
             self.document.layout_cache_context.override_changed(key);
             let state = self
                 .scoped_overrides

@@ -305,3 +305,82 @@ pub(super) fn assert_all_new_roles(tree: &LayoutSession<'_>, idx: usize) {
         );
     }
 }
+
+#[test]
+fn block_view_preserves_each_box_scrollbar_input_across_preparation() {
+    let (mut doc, cascade, child, text) = fixture_with_styles("display:block", "display:block");
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    for (idx, width) in [(child, 20.0), (text, 13.0)] {
+        tree.layout_style_for_key_mut(idx).unwrap().scrollbar_width = width;
+    }
+    for _ in 0..2 {
+        tree.prepare_style_views();
+        for (idx, width) in [(child, 20.0), (text, 13.0)] {
+            assert_eq!(tree.style_view(idx).scrollbar_width(), width);
+            assert_eq!(
+                tree.checked_query(idx, ReadRole::BlockItem)
+                    .scrollbar_width(),
+                width
+            );
+        }
+    }
+}
+
+#[test]
+fn native_sticky_flex_grid_insets_keep_the_bridge_position() {
+    for display in ["flex", "grid"] {
+        let (mut doc, cascade, child, _) = fixture_with_styles(
+            &format!("display:{display};width:100px"),
+            "display:block;position:sticky;left:13px;top:17px;width:10px;height:10px",
+        );
+        crate::layout::test_support::with_ahem(&mut doc);
+        crate::layout::page_pipeline::layout_single_page_checked(
+            &mut doc,
+            &cascade,
+            crate::layout::test_support::page_box_800x600(),
+        )
+        .unwrap();
+        assert_eq!(
+            doc.nodes[child].unrounded_layout.location,
+            taffy::Point::ZERO
+        );
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        tree.prepare_style_views();
+        for role in [
+            ReadRole::FlexContainer,
+            ReadRole::FlexItem,
+            ReadRole::GridContainer,
+            ReadRole::GridItem,
+            ReadRole::CoreContainer,
+            ReadRole::BlockContainer,
+            ReadRole::BlockItem,
+            ReadRole::Oof,
+        ] {
+            assert_eq!(
+                tree.checked_query(child, role).position(),
+                taffy::Position::Sticky
+            );
+        }
+    }
+}
+
+#[test]
+fn block_view_keeps_programmatic_table_identity_distinct_from_css_tables() {
+    let (mut doc, cascade, child, text) = fixture_with_styles("display:block", "display:block");
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    for table in [true, false] {
+        for idx in [child, text] {
+            tree.layout_style_for_key_mut(idx).unwrap().item_is_table = table;
+        }
+        tree.prepare_style_views();
+        for idx in [child, text] {
+            assert_eq!(
+                BI::is_table(&tree.checked_query(idx, ReadRole::BlockItem)),
+                table
+            );
+            assert_eq!(OI::is_table(&tree.checked_query(idx, ReadRole::Oof)), table);
+        }
+    }
+}

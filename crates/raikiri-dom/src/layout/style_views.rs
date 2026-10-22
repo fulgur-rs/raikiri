@@ -16,6 +16,24 @@ pub(super) mod metadata;
 mod overrides;
 pub(crate) use overrides::ScopedOverrides;
 
+#[derive(Clone, Copy, Debug)]
+#[repr(usize)]
+pub(crate) enum ReadRole {
+    FlexContainer,
+    FlexItem,
+    GridContainer,
+    GridItem,
+    CoreContainer,
+    BlockContainer,
+    BlockItem,
+    Oof,
+}
+
+#[cfg(not(test))]
+pub(crate) type NativeStyle<'a> = LayoutStyleView<'a>;
+#[cfg(test)]
+pub(crate) type NativeStyle<'a> = checked::CheckedStyle<'a>;
+
 pub(crate) struct PreparedBox<'a> {
     prepared: PreparedStyle<'a>,
     context: ViewContext,
@@ -189,6 +207,26 @@ impl<'a> StyleViews<'a> {
                     );
                 }
             }
+            // Constructors supply these facts outside CSS. Capture each box's
+            // own projection after recipe refresh, including synthetic boxes.
+            let style = doc
+                .layout_style_for_key(idx)
+                .expect("foundation has retained adapter inputs");
+            let (scrollbar_width, is_table) = (style.scrollbar_width, style.item_is_table);
+            let metadata = &mut doc
+                .box_style_data
+                .get_mut(key)
+                .expect("foundation exists")
+                .metadata;
+            metadata.scrollbar_width = scrollbar_width;
+            metadata.flags = metadata
+                .flags
+                .without(raikiri_layout_style::StyleFlags::BLOCK_TABLE);
+            if is_table {
+                metadata.flags = metadata
+                    .flags
+                    .union(raikiri_layout_style::StyleFlags::BLOCK_TABLE);
+            }
             if let Some(pending) = doc.box_style_data.pending.remove(&key) {
                 doc.box_style_data
                     .get_mut(key)
@@ -346,9 +384,18 @@ impl LayoutSession<'_> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn query_style(&self, idx: usize, role: checked::ReadRole) -> LayoutStyleView<'_> {
-        use checked::ReadRole;
+    pub(crate) fn native_style(&self, idx: usize, role: ReadRole) -> NativeStyle<'_> {
+        #[cfg(test)]
+        {
+            self.checked_query(idx, role)
+        }
+        #[cfg(not(test))]
+        {
+            self.query_style(idx, role)
+        }
+    }
+
+    pub(crate) fn query_style(&self, idx: usize, role: ReadRole) -> LayoutStyleView<'_> {
         use raikiri_layout_style::ClaimsPolicy;
         self.assert_style_queries_allowed();
         let transposed = match role {
@@ -385,15 +432,6 @@ impl LayoutSession<'_> {
                 .and_then(|&(_, basis)| basis);
         }
         self.style_view(idx).with_context(context)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn checked_style(
-        &self,
-        idx: usize,
-        role: checked::ReadRole,
-    ) -> checked::CheckedStyle<'_> {
-        self.checked_query(idx, role)
     }
 
     #[cfg(test)]

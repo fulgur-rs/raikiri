@@ -898,6 +898,7 @@ fn comparison_unwind_restores_transposed_stack_and_percentage_padding() {
         container: parent,
         right_to_left: true,
         block_space: Some(200.0),
+        children: vec![child],
         container_style: tree.layout_style_for_key(parent).unwrap().clone(),
         child_styles: [(child, tree.layout_style_for_key(child).unwrap().clone())].into(),
         container_view: None,

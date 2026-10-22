@@ -68,6 +68,7 @@ pub(in crate::layout) fn node_metadata(
         flags
     };
     StyleMetadata {
+        scrollbar_width: 0.0,
         flags,
         used_writing_mode: node.used_writing_mode,
         claims: Some(taffy::ContainingBlockClaims {

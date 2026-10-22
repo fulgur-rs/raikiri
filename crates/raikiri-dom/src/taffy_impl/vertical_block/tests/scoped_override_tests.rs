@@ -12,6 +12,7 @@ fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> Transp
         container,
         right_to_left: true,
         block_space: None,
+        children: vec![child],
         container_style: transpose_style(tree.layout_style_for_key(container).unwrap(), true),
         child_styles: HashMap::from([(child, style)]),
         container_view: None,

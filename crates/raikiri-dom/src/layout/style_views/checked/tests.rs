@@ -222,12 +222,29 @@ fn named_area_items_are_compared_when_consumed() {
 }
 
 #[test]
-fn actual_taffy_layout_reads_all_four_roles_in_scoped_and_pass_states() {
+fn native_block_view_is_used_without_retained_clone_and_reads_all_eight_roles() {
     let (mut doc, _, grid, _) = fixture_with_styles(
         "display:flex;overflow:hidden;max-width:100px",
         "display:grid;min-width:max-content;grid-template-columns:repeat(2,10px)",
     );
-    doc.append_element(Some(grid), "div", LayoutStyle::default(), Some("width:7px"));
+    let block = doc.append_element(
+        Some(grid),
+        "div",
+        LayoutStyle::default(),
+        Some("display:block;position:relative;width:70px;height:40px"),
+    );
+    let flow = doc.append_element(
+        Some(block),
+        "div",
+        LayoutStyle::default(),
+        Some("display:block;width:7px;height:3px;align-self:center"),
+    );
+    let absolute = doc.append_element(
+        Some(block),
+        "div",
+        LayoutStyle::default(),
+        Some("display:block;position:absolute;left:2px;top:3px;width:5px;height:6px"),
+    );
     crate::layout::test_support::with_ahem(&mut doc);
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
@@ -235,9 +252,41 @@ fn actual_taffy_layout_reads_all_four_roles_in_scoped_and_pass_states() {
     page.width = 200.0;
     page.height = 100.0;
     crate::layout::page_pipeline::layout_single_page_checked(&mut doc, &cascade, page).unwrap();
+    assert_eq!(
+        doc.nodes[flow].unrounded_layout.size,
+        taffy::Size {
+            width: 7.0,
+            height: 3.0
+        }
+    );
+    assert_eq!(
+        doc.nodes[absolute].unrounded_layout.size,
+        taffy::Size {
+            width: 5.0,
+            height: 6.0
+        }
+    );
+    assert_eq!(
+        doc.nodes[absolute].unrounded_layout.location,
+        taffy::Point { x: 2.0, y: 3.0 }
+    );
     let stats = &doc.style_view_comparisons;
+    for helper in [
+        "Bridge::align_self",
+        "Bridge::justify_self",
+        "Bridge::align_content",
+    ] {
+        assert!(
+            stats
+                .properties
+                .borrow()
+                .get(helper)
+                .is_some_and(|reads| *reads > 0),
+            "{helper}: {stats:?}"
+        );
+    }
     assert!(
-        stats.getter_reads[..4].iter().all(|count| count.get() > 0),
+        stats.getter_reads.iter().all(|count| count.get() > 0),
         "{stats:?}"
     );
     assert!(stats.iterator_reads.get() > 0, "{stats:?}");

@@ -16,6 +16,7 @@ fn frame(
         container,
         right_to_left,
         block_space: None,
+        children: vec![child],
         container_style: transpose_style(
             tree.layout_style_for_key(container).unwrap(),
             right_to_left,
@@ -107,6 +108,10 @@ fn frame_snapshot_ignores_later_pass_and_metadata() {
     let parent = doc.nodes[child].parent.unwrap();
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    tree.layout_style_for_key_mut(child)
+        .unwrap()
+        .scrollbar_width = 20.0;
+    tree.prepare_style_views();
     let block = frame(&mut tree, parent, child, true);
     with_transposed_frame(&mut tree, block, |tree| {
         tree.record_pass_override(
@@ -114,10 +119,19 @@ fn frame_snapshot_ignores_later_pass_and_metadata() {
             OwnedPropertyOverride::length(LengthProperty::Width, L::Px(99.0), true).unwrap(),
         );
         tree.nodes[child].claims_fixed_oof = true;
+        tree.layout_style_for_key_mut(child)
+            .unwrap()
+            .scrollbar_width = 30.0;
         tree.prepare_style_views();
         let live = tree.checked_query(child, ReadRole::CoreContainer);
         assert_eq!(live.size().width, taffy::Dimension::length(99.0));
         assert!(live.is_containing_block().fixed);
+        assert_eq!(live.scrollbar_width(), 30.0);
+        assert_eq!(
+            tree.checked_query(child, ReadRole::BlockItem)
+                .scrollbar_width(),
+            20.0
+        );
         assert_eq!(
             tree.checked_query(child, ReadRole::BlockItem).size().height,
             taffy::Dimension::length(31.0)
@@ -381,5 +395,56 @@ fn frame_capture_keeps_publication_and_foundation_stamps() {
         assert_eq!(tree.layout_cache_context.publication_epoch(), publication);
         assert_eq!(tree.box_style_data.stamp(), stamp);
         assert_eq!(tree.document.layout_dirty, dirty);
+    }
+}
+
+#[test]
+fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
+    use std::sync::Arc;
+    use taffy::MaybeResolve;
+    for batched in [false, true] {
+        let (mut doc, cascade, child, _) =
+            fixture_with_styles("display:block", "display:block;width:31px;height:7px");
+        let parent = doc.nodes[child].parent.unwrap();
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        let entry = OwnedPropertyOverride::length(
+            LengthProperty::Width,
+            L::Calc(raikiri_style::property::CalcLengthPercentage {
+                px: 1.0,
+                percent: 10.0,
+            }),
+            false,
+        )
+        .unwrap();
+        let owner = Arc::downgrade(entry.calc_owner().unwrap());
+        let key = tree.nodes.box_key(child).unwrap();
+        let block = frame(&mut tree, parent, child, true);
+        let (materialized, block) = with_transposed_frame(&mut tree, block, |tree| {
+            tree.with_overrides(vec![(key, entry)], |tree| {
+                crate::taffy_impl::block_flow::style_input::child(tree, child)
+            })
+        });
+        drop(block);
+        if batched {
+            tree.with_style_preparation_batch(|tree| {
+                crate::layout::apply_computed_to_style_in_session(tree, &cascade)
+            })
+            .unwrap();
+        } else {
+            crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        }
+        let _retained = owner
+            .upgrade()
+            .expect("escaped late calc survives scope, frame and bridge retirement");
+        for (basis, expected) in [(100.0, 11.0), (200.0, 21.0)] {
+            assert_eq!(
+                materialized
+                    .size
+                    .height
+                    .maybe_resolve(Some(basis), crate::taffy_impl::resolve_calc),
+                Some(expected)
+            );
+        }
     }
 }

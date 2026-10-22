@@ -30,7 +30,7 @@ use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
     AbsoluteAxis, AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, BoxSizing,
-    CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, LengthPercentage, Line, NodeId, Point,
+    CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, Line, NodeId, Point,
     Position as TaffyPosition, Rect, Size, SizingMode, TraversePartialTree,
 };
 
@@ -40,6 +40,8 @@ use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
 use raikiri_style::property::{DisplayValue, WritingMode};
 use taffy::CoreStyle;
+#[cfg(test)]
+use taffy::LengthPercentage;
 
 /// A vertical block container being laid out on transposed axes.
 #[derive(Clone, Debug)]
@@ -49,12 +51,28 @@ pub(crate) struct TransposedBlock {
     right_to_left: bool,
     /// The physical width of the container's content box, when definite.
     block_space: Option<f32>,
+    children: Vec<usize>,
+    #[cfg(test)]
     container_style: Style,
+    #[cfg(test)]
     child_styles: HashMap<usize, Style>,
     container_view: Option<crate::layout::style_views::frozen::FrozenViewInput>,
     child_views: HashMap<usize, crate::layout::style_views::frozen::FrozenViewInput>,
     /// The children taffy stored a transposed layout for.
     placed: Vec<usize>,
+}
+
+impl TransposedBlock {
+    fn has_child(&self, idx: usize) -> bool {
+        #[cfg(test)]
+        {
+            self.child_styles.contains_key(&idx)
+        }
+        #[cfg(not(test))]
+        {
+            self.child_views.contains_key(&idx)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +95,7 @@ impl TransposedStyleIndex {
                 id: block.id,
                 child: None,
             });
-        for &child in block.child_styles.keys() {
+        for &child in &block.children {
             self.0.entry(child).or_default().push(TransposedLocation {
                 frame,
                 id: block.id,
@@ -99,7 +117,7 @@ impl TransposedStyleIndex {
     }
 
     fn unregister(&mut self, block: &TransposedBlock, frame: usize) {
-        for &child in block.child_styles.keys() {
+        for &child in &block.children {
             self.remove(
                 child,
                 TransposedLocation {
@@ -134,7 +152,7 @@ fn prepare_frame_views(tree: &mut LayoutSession<'_>, block: &mut TransposedBlock
         ..ViewContext::default()
     };
     block.container_view = FrozenViewInput::capture(tree, block.container, context);
-    for &child in block.child_styles.keys() {
+    for &child in &block.children {
         if let Some(input) = FrozenViewInput::capture(tree, child, context) {
             block.child_views.insert(child, input);
         }
@@ -153,6 +171,7 @@ pub(crate) struct TransposedSizingUndo {
     frame: usize,
     id: u64,
     child: Option<usize>,
+    #[cfg(test)]
     previous: Option<raikiri_layout_style::LegacySizingUndo>,
     view_previous: Option<raikiri_layout_style::OwnedOverrideUndo>,
 }
@@ -173,6 +192,7 @@ impl TransposedSizingUndo {
                     frame: location.frame,
                     id: location.id,
                     child: location.child,
+                    #[cfg(test)]
                     previous: None,
                     view_previous: None,
                 });
@@ -181,6 +201,7 @@ impl TransposedSizingUndo {
         undo
     }
 
+    #[cfg(test)]
     fn target<'a>(&self, blocks: &'a mut [TransposedBlock]) -> &'a mut Style {
         let block = &mut blocks[self.frame];
         assert_eq!(
@@ -223,12 +244,15 @@ impl TransposedSizingUndo {
             block.id, self.id,
             "scope restores the same transposed frame"
         );
-        let right_to_left = block.right_to_left;
-        self.previous = Some(
-            entry
-                .apply_transposed_legacy_sizing(self.target(blocks), right_to_left)
-                .expect("validated sizing entry"),
-        );
+        #[cfg(test)]
+        {
+            let right_to_left = block.right_to_left;
+            self.previous = Some(
+                entry
+                    .apply_transposed_legacy_sizing(self.target(blocks), right_to_left)
+                    .expect("validated sizing entry"),
+            );
+        }
         self.view_previous = self
             .view_target(blocks)
             .map(|input| entry.replace_in(&mut input.late));
@@ -243,6 +267,7 @@ impl TransposedSizingUndo {
                     .late,
             );
         }
+        #[cfg(test)]
         if let Some(previous) = self.previous.take() {
             previous.restore(self.target(blocks));
         }
@@ -305,6 +330,7 @@ fn is_vertical(tree: &Document, idx: usize) -> bool {
 impl LayoutSession<'_> {
     /// The transposed style of the container being laid out, when `idx` is
     /// that container.
+    #[cfg(test)]
     pub(crate) fn transposed_container_style(&self, idx: usize) -> Option<&Style> {
         self.context
             .transposed_blocks
@@ -315,6 +341,7 @@ impl LayoutSession<'_> {
 
     /// The transposed style of `idx`, when it is a child of the container
     /// being laid out.
+    #[cfg(test)]
     pub(crate) fn transposed_child_style(&self, idx: usize) -> Option<&Style> {
         self.context
             .transposed_blocks
@@ -322,7 +349,6 @@ impl LayoutSession<'_> {
             .and_then(|block| block.child_styles.get(&idx))
     }
 
-    #[cfg(test)]
     pub(crate) fn transposed_container_view(
         &self,
         idx: usize,
@@ -339,7 +365,6 @@ impl LayoutSession<'_> {
                     .view()
             })
     }
-    #[cfg(test)]
     pub(crate) fn transposed_child_view(
         &self,
         idx: usize,
@@ -347,7 +372,7 @@ impl LayoutSession<'_> {
         self.context
             .transposed_blocks
             .last()
-            .filter(|block| block.child_styles.contains_key(&idx))
+            .filter(|block| block.has_child(idx))
             .map(|block| {
                 block
                     .child_views
@@ -360,7 +385,7 @@ impl LayoutSession<'_> {
     /// Record that taffy stored a transposed layout for `idx`.
     pub(super) fn note_transposed_layout(&mut self, idx: usize) {
         if let Some(block) = self.context.transposed_blocks.last_mut()
-            && block.child_styles.contains_key(&idx)
+            && block.has_child(idx)
         {
             block.placed.push(idx);
         }
@@ -383,7 +408,7 @@ impl LayoutSession<'_> {
         self.context
             .transposed_blocks
             .last()
-            .filter(|block| block.child_styles.contains_key(&idx))?;
+            .filter(|block| block.has_child(idx))?;
         let block = self.context.transposed_blocks.pop()?;
         let right_to_left = block_right_to_left(self, block.container).unwrap_or(false);
         let share_context =
@@ -536,15 +561,6 @@ fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
         .transposed_blocks
         .last_mut()
         .expect("the container's block is pushed");
-    let padding = block
-        .container_style
-        .padding
-        .resolve_or_zero(None, resolve_calc);
-    let border = block
-        .container_style
-        .border
-        .resolve_or_zero(None, resolve_calc);
-    let inline_size = (width - padding.left - padding.right - border.left - border.right).max(0.0);
     if let Some(container) = &block.container_view {
         let padding = container
             .view()
@@ -560,11 +576,24 @@ fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
             input.resolve_padding(Some(candidate_inline_size));
         }
     }
-    for style in block.child_styles.values_mut() {
-        style.padding = style
+    #[cfg(test)]
+    {
+        let padding = block
+            .container_style
             .padding
-            .resolve_or_zero(Some(inline_size), resolve_calc)
-            .map(LengthPercentage::length);
+            .resolve_or_zero(None, resolve_calc);
+        let border = block
+            .container_style
+            .border
+            .resolve_or_zero(None, resolve_calc);
+        let inline_size =
+            (width - padding.left - padding.right - border.left - border.right).max(0.0);
+        for style in block.child_styles.values_mut() {
+            style.padding = style
+                .padding
+                .resolve_or_zero(Some(inline_size), resolve_calc)
+                .map(LengthPercentage::length);
+        }
     }
 }
 
@@ -599,6 +628,7 @@ pub(super) fn compute_vertical_block(
     block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    #[cfg(test)]
     let mut container_style = transpose_style(
         tree.layout_node_with_style(idx).unwrap().style,
         right_to_left,
@@ -615,10 +645,15 @@ pub(super) fn compute_vertical_block(
     } else {
         inputs.parent_size.width.or(flex_basis.width)
     };
-    container_style.padding = container_style
-        .padding
-        .resolve_or_zero(containing_inline_size, resolve_calc)
-        .map(LengthPercentage::length);
+    #[cfg(test)]
+    {
+        container_style.padding = container_style
+            .padding
+            .resolve_or_zero(containing_inline_size, resolve_calc)
+            .map(LengthPercentage::length);
+    }
+    let children: Vec<_> = tree.child_ids(node_id).map(usize::from).collect();
+    #[cfg(test)]
     let child_styles = tree
         .child_ids(node_id)
         .map(usize::from)
@@ -634,17 +669,15 @@ pub(super) fn compute_vertical_block(
         .collect();
     let shares_parent_context = block_ctx.is_some();
     let mut inputs = transpose_inputs(inputs, shares_parent_context);
-    let block_space = inputs.known_dimensions.height.map(|height| {
-        let padding = container_style.padding.resolve_or_zero(None, resolve_calc);
-        let border = container_style.border.resolve_or_zero(None, resolve_calc);
-        (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
-    });
     let mut block = TransposedBlock {
         id: next_transposed_frame_id(tree),
         container: idx,
         right_to_left,
-        block_space,
+        block_space: None,
+        children,
+        #[cfg(test)]
         container_style,
+        #[cfg(test)]
         child_styles,
         container_view: None,
         child_views: HashMap::default(),
@@ -654,6 +687,22 @@ pub(super) fn compute_vertical_block(
     if let Some(container) = &mut block.container_view {
         container.resolve_padding(containing_inline_size);
     }
+    block.block_space = inputs.known_dimensions.height.map(|height| {
+        #[cfg(not(test))]
+        let (padding, border) = {
+            let view = block
+                .container_view
+                .as_ref()
+                .expect("production frame input")
+                .view();
+            (view.padding(), view.border())
+        };
+        #[cfg(test)]
+        let (padding, border) = (block.container_style.padding, block.container_style.border);
+        let padding = padding.resolve_or_zero(None, resolve_calc);
+        let border = border.resolve_or_zero(None, resolve_calc);
+        (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
+    });
     let (output, mut block) = with_transposed_frame(tree, block, |tree| {
         if inputs.known_dimensions.width.is_none() && shrinks_to_fit(tree, idx, &inputs) {
             inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));
@@ -746,6 +795,7 @@ fn fit_content_inline_size(
 /// `rect` with its physical sides moved to the transposed sides they map
 /// to: top and bottom become left and right, and the block-start side
 /// becomes the top.
+#[cfg(test)]
 fn transpose_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
     let (block_start, block_end) = if right_to_left {
         (rect.right, rect.left)
@@ -760,7 +810,7 @@ fn transpose_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
     }
 }
 
-/// The inverse of [`transpose_rect`].
+/// Map sides from the transposed geometry back to physical coordinates.
 fn physical_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
     let (left, right) = if right_to_left {
         (rect.bottom, rect.top)
@@ -782,6 +832,7 @@ fn swap<T>(size: Size<T>) -> Size<T> {
     }
 }
 
+#[cfg(test)]
 fn transpose_style(style: &Style, right_to_left: bool) -> Style {
     Style {
         size: swap(style.size),

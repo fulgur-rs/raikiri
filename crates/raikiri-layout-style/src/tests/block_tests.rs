@@ -92,3 +92,34 @@ fn block_float_and_clear_keep_authored_and_override_values() {
         assert_eq!(BI::clear(&view), taffy::Clear::Both);
     }
 }
+
+#[test]
+fn sticky_position_and_source_vertical_minimum_preserve_bridge_policy() {
+    use raikiri_style::ComputedLengthPercentageOrAuto as L;
+    use raikiri_style::property::{PositionValue, WritingMode};
+    let mut cv = ComputedValues::initial();
+    cv.position = PositionValue::Sticky;
+    let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(view.position(), taffy::Position::Sticky);
+    cv.cssom_writing_mode = WritingMode::VerticalRl;
+    cv.min_height = L::Auto;
+    cv.min_block_size = Some(L::Px(64.0));
+    for (flags, expected) in [
+        (StyleFlags::BLOCK, taffy::LengthPercentageAuto::length(64.0)),
+        (
+            StyleFlags::BLOCK.union(StyleFlags::SOURCE_VERTICAL_DIRECTION),
+            taffy::LengthPercentageAuto::auto(),
+        ),
+    ] {
+        let prepared = PreparedStyle::prepare(
+            &cv,
+            StyleMetadata {
+                flags,
+                ..StyleMetadata::default()
+            },
+        );
+        let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+        assert_eq!(view.min_size().height, expected);
+    }
+}
