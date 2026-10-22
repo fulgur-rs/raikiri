@@ -775,13 +775,7 @@ pub(super) fn layout_values_of<'a>(
     match vertical_logical_sized(cascade, idx) {
         None => layout_values(doc, cascade, idx, None),
         Some(sized) => {
-            // The sized copy is already owned; it stands for the values
-            // when normalization leaves them as they are.
-            let normalized = match layout_values(doc, cascade, idx, Some(&sized)) {
-                std::borrow::Cow::Owned(values) => Some(values),
-                std::borrow::Cow::Borrowed(_) => None,
-            };
-            std::borrow::Cow::Owned(normalized.unwrap_or(sized))
+            std::borrow::Cow::Owned(layout_values(doc, cascade, idx, Some(&sized)).into_owned())
         }
     }
 }

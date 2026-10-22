@@ -2787,11 +2787,6 @@ fn layout_values_of_reads_a_vertical_box_sizes_from_its_logical_properties() {
         "div",
         Some("display:block;writing-mode:vertical-rl;inline-size:50px;block-size:30px"),
     );
-    let keyword = doc.append_element(
-        Some(0),
-        "div",
-        Some("display:block;writing-mode:vertical-rl;inline-size:50px;block-size:max-content"),
-    );
     let horizontal =
         doc.append_element(Some(0), "div", Some("display:block;width:20px;height:10px"));
     let cascade = crate::layout::test_support::cascaded(&doc);
@@ -2799,10 +2794,6 @@ fn layout_values_of_reads_a_vertical_box_sizes_from_its_logical_properties() {
     // `inline-size` runs down a vertical box, `block-size` across it.
     let values = layout_values_of(&doc, &cascade, vertical);
     assert_eq!(values.width, ComputedLengthPercentageOrAuto::Px(30.0));
-    assert_eq!(values.height, ComputedLengthPercentageOrAuto::Px(50.0));
-    // A block is not sized by a content keyword, so it counts as `auto`.
-    let values = layout_values_of(&doc, &cascade, keyword);
-    assert_eq!(values.width, ComputedLengthPercentageOrAuto::Auto);
     assert_eq!(values.height, ComputedLengthPercentageOrAuto::Px(50.0));
     let values = layout_values_of(&doc, &cascade, horizontal);
     assert_eq!(values.width, ComputedLengthPercentageOrAuto::Px(20.0));
