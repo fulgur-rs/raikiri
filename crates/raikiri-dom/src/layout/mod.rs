@@ -44,6 +44,7 @@ use taffy::{
     RunMode, Size, SizingMode, TrackSizingFunction, style_helpers as taffy_style_helpers,
 };
 
+pub(crate) mod block_axis_style;
 pub(crate) mod box_style_data;
 pub(crate) mod context;
 pub(crate) mod retained_styles;

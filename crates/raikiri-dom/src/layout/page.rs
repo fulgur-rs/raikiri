@@ -1266,14 +1266,10 @@ pub(crate) fn is_static_position_absolute(document: &Document, node_id: usize) -
 }
 
 fn static_absolute_with_boxes(document: &Document, node_id: usize, boxes: BoxTree<'_>) -> bool {
-    let inset = &document
-        .layout_node_with_style(node_id)
-        .unwrap()
-        .style
-        .inset;
+    let block_axis = document.block_axis_style(node_id);
     matches!(boxes.identity(node_id).position(), PositionValue::Absolute)
-        && inset.top.is_auto()
-        && inset.bottom.is_auto()
+        && block_axis.inset_top.is_auto()
+        && block_axis.inset_bottom.is_auto()
 }
 
 /// Whether pagination treats the box of `node_id` as monolithic: a replaced

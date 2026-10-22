@@ -486,7 +486,8 @@ fn pagination_axis_changes_discard_cached_table_preparation() {
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut session = LayoutSession::new(&mut doc);
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
     let input = taffy::LayoutInput {
         run_mode: taffy::RunMode::PerformLayout,
         sizing_mode: taffy::SizingMode::InherentSize,
@@ -643,14 +644,15 @@ fn pagination_error_and_panic_restore_binding() {
     let result: Result<(), u8> =
         TransposedDocument::with_transposed(&mut session, root, axes, 800.0, |s, _| {
             assert!(s.context.pagination_on_transposed_axes);
-            assert_eq!(
-                s.layout_style_for_key(root).unwrap().size.width,
-                size.height
-            );
+            // The retained style stays physical; the paginator's height is
+            // the physical width.
+            assert_eq!(s.layout_style_for_key(root).unwrap().size, size);
+            assert_eq!(s.block_axis_style(root).height, size.width);
             Err(19)
         });
     assert_eq!(result, Err(19));
     assert_eq!(session.layout_style_for_key(root).unwrap().size, size);
+    assert_eq!(session.block_axis_style(root).height, size.height);
     assert!(!session.context.pagination_on_transposed_axes);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         TransposedDocument::with_transposed(&mut session, root, axes, 800.0, |_, _| {
@@ -660,6 +662,7 @@ fn pagination_error_and_panic_restore_binding() {
     .unwrap_err();
     assert_eq!(panic.downcast_ref::<u64>(), Some(&719));
     assert_eq!(session.layout_style_for_key(root).unwrap().size, size);
+    assert_eq!(session.block_axis_style(root).height, size.height);
     assert!(!session.context.pagination_on_transposed_axes);
     session.assert_style_queries_allowed();
     assert_eq!(taffy::CoreStyle::size(&session.style_view(root)), size);
@@ -678,7 +681,10 @@ fn pagination_identity_change_is_rejected() {
         let mut doc = Document::new();
         let root = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         doc.append_element(Some(root), "div", Style::default(), None::<&str>);
-        let mut session = LayoutSession::new(&mut doc);
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        session.prepare_style_views();
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             TransposedDocument::with_transposed(
                 &mut session,
@@ -735,4 +741,117 @@ fn pagination_entry_rejects_active_edge_scope() {
     assert!(panic.is_err());
     assert!(session.context.resolved_edge_bases.is_empty());
     assert!(!session.context.pagination_on_transposed_axes);
+}
+
+/// The facts of a retained style the paginator reads along its flow, with
+/// the physical sizes and sides exchanged onto transposed axes.
+fn swapped_block_axis_style(axes: FlowAxes, style: &Style) -> BlockAxisStyle {
+    let margin = axes.rect(style.margin);
+    let inset = axes.rect(style.inset);
+    BlockAxisStyle {
+        height: style.size.width,
+        min_height: style.min_size.width,
+        max_height: style.max_size.width,
+        margin_top: margin.top,
+        margin_bottom: margin.bottom,
+        inset_top: inset.top,
+        inset_bottom: inset.bottom,
+        overflow: Point {
+            x: style.overflow.y,
+            y: style.overflow.x,
+        },
+        aspect_ratio: style.aspect_ratio.map(f32::recip),
+    }
+}
+
+#[test]
+fn block_axis_styles_are_the_retained_styles_on_transposed_axes() {
+    // Boxes of every kind a vertical root can hold: physical and logical
+    // sizes and margins, insets, a box on horizontal axes inside the vertical
+    // flow, sideways text and a table.
+    let children = [
+        (
+            "div",
+            "width:10px;height:20px;min-width:3px;min-height:5px;max-width:40%;max-height:50px;margin:1px 2px 3px 4px",
+        ),
+        (
+            "div",
+            "position:absolute;top:1px;right:2px;bottom:auto;left:4px;overflow-x:hidden;overflow-y:scroll;aspect-ratio:3/2;height:50%",
+        ),
+        (
+            "div",
+            "margin-top:auto;margin-bottom:30%;width:auto;min-height:10%;max-height:none",
+        ),
+        (
+            "div",
+            "inline-size:30px;block-size:40px;min-block-size:7px;max-inline-size:90%;margin-block-start:5px;margin-inline-end:6px",
+        ),
+        (
+            "div",
+            "position:absolute;inset-block-start:3px;inset-inline-end:9px;aspect-ratio:2",
+        ),
+        (
+            "div",
+            "writing-mode:horizontal-tb;width:100px;height:60px;margin:2px 3px 4px 5px;overflow:hidden",
+        ),
+        (
+            "div",
+            "writing-mode:sideways-rl;width:40px;height:80px;padding:3px",
+        ),
+        ("table", "display:table;width:70px;margin:3px"),
+    ];
+    for root_css in ["writing-mode:vertical-rl", "writing-mode:vertical-lr"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some(format!("display:block;{root_css}").as_str()),
+        );
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        for (tag, css) in children {
+            let child = doc.append_element(
+                Some(body),
+                tag,
+                Style::default(),
+                Some(format!("display:block;{css}").as_str()),
+            );
+            doc.append_text(child, "text");
+        }
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        session.prepare_style_views();
+        let axes = FlowAxes::of_root(&session, &cascade).expect("a vertical root");
+        let keys: Vec<usize> = session.nodes.layout_keys().collect();
+        let physical: Vec<BlockAxisStyle> = keys
+            .iter()
+            .map(|&key| BlockAxisStyle::of_retained(session.layout_style_for_key(key).unwrap()))
+            .collect();
+        for (&key, physical) in keys.iter().zip(&physical) {
+            // The style view of a box has the facts of its retained style.
+            assert_eq!(
+                BlockAxisStyle::of_view(&session.style_view(key)),
+                *physical,
+                "key {key}"
+            );
+            assert_eq!(session.block_axis_style(key), *physical);
+        }
+        TransposedDocument::with_transposed(&mut session, body, axes, 800.0, |s, _| {
+            let mut differs = false;
+            for &key in &keys {
+                let retained = s.layout_style_for_key(key).unwrap().clone();
+                // Pagination leaves the retained style on physical axes.
+                assert_eq!(BlockAxisStyle::of_retained(&retained), physical[key]);
+                let expected = swapped_block_axis_style(axes, &retained);
+                assert_eq!(s.block_axis_style(key), expected, "key {key}");
+                differs |= expected != physical[key];
+            }
+            assert!(differs, "the exchange of axes is observable");
+        });
+        for (&key, physical) in keys.iter().zip(&physical) {
+            assert_eq!(session.block_axis_style(key), *physical);
+        }
+    }
 }
