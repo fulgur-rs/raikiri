@@ -3343,6 +3343,7 @@ fn a_block_outside_the_laid_out_root_is_not_a_block_flow_paragraph() {
     page.width = 100.0;
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).expect("pages");
+    let doc = super::paginating(&mut doc, &cascade);
     assert!(super::super::is_block_flow_paragraph(
         &doc, &cascade, paragraph, body
     ));

@@ -28,7 +28,7 @@ pub(crate) fn page_fragment_events_from_pages(
     let mut hrefs = HashMap::<usize, String>::new();
     let mut stack = vec![(body_id, None::<usize>)];
     while let Some((node_id, inherited_owner)) = stack.pop() {
-        let node = &document.layout_node_with_style(node_id).unwrap();
+        let node = &document.nodes[node_id];
         if !node.is_in_document() || node.is_non_rendered_html_element() || node.is_display_none() {
             continue;
         }

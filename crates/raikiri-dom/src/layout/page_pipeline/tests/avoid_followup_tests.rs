@@ -153,7 +153,7 @@ fn a_second_line_inline_branch_does_not_add_its_origin_to_float_end() {
     let mut paragraph = 0;
     let mut inline = 0;
     let mut float = 0;
-    let (doc, _) = paged_body_with_ifc(|doc, body| {
+    let (mut doc, _) = paged_body_with_ifc(|doc, body| {
         let root = block(doc, body, "display:flow-root");
         paragraph = block(
             doc,
@@ -173,6 +173,7 @@ fn a_second_line_inline_branch_does_not_add_its_origin_to_float_end() {
     });
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let doc = super::paginating(&mut doc, &cascade);
     let branch_top = super::super::pagination_child_parent_y(
         &doc,
         paragraph,
@@ -203,7 +204,7 @@ fn a_relative_inline_child_offset_is_removed_from_float_end() {
     let mut paragraph = 0;
     let mut inline = 0;
     let mut float = 0;
-    let (doc, _) = paged_body_with_ifc(|doc, body| {
+    let (mut doc, _) = paged_body_with_ifc(|doc, body| {
         root = block(doc, body, "display:flow-root");
         paragraph = block(
             doc,
@@ -223,6 +224,7 @@ fn a_relative_inline_child_offset_is_removed_from_float_end() {
     });
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let doc = super::paginating(&mut doc, &cascade);
     let body = doc.parent_of(root).unwrap();
     let inline_top = super::super::pagination_child_parent_y(
         &doc,
@@ -253,7 +255,7 @@ fn a_relative_inline_child_offset_is_removed_from_float_end() {
 fn a_nested_float_in_a_footnote_is_excluded_from_bfc_extent() {
     let mut wrapper = 0;
     let mut footnote = 0;
-    let (doc, _) = paged_body(|doc, body| {
+    let (mut doc, _) = paged_body(|doc, body| {
         wrapper = block(doc, body, "display:block");
         footnote = block(
             doc,
@@ -265,6 +267,7 @@ fn a_nested_float_in_a_footnote_is_excluded_from_bfc_extent() {
     });
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let doc = super::paginating(&mut doc, &cascade);
 
     assert_eq!(cascade.computed[footnote].float, FloatValue::Footnote);
     assert_eq!(
@@ -424,13 +427,14 @@ fn a_footnote_float_on_contents_does_not_hide_its_child_float() {
     let mut wrapper = 0;
     let mut contents = 0;
     let mut float = 0;
-    let (doc, _) = paged_body(|doc, body| {
+    let (mut doc, _) = paged_body(|doc, body| {
         wrapper = block(doc, body, "display:block");
         contents = block(doc, wrapper, "display:contents;float:footnote");
         float = block(doc, contents, "float:left;width:20px;height:80px");
     });
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let doc = super::paginating(&mut doc, &cascade);
     let branch_top = doc.nodes[wrapper].unrounded_layout.location.y;
     let expected = branch_top
         + doc.nodes[float].unrounded_layout.location.y
@@ -795,7 +799,7 @@ fn a_moved_ifc_block_child_keeps_its_origin_in_ancestor_float_extent() {
     let mut paragraph = 0;
     let mut moved = 0;
     let mut following = 0;
-    let (doc, _) = paged_body_with_ifc(|doc, body| {
+    let (mut doc, _) = paged_body_with_ifc(|doc, body| {
         block(doc, body, "display:block;height:60px");
         root = block(doc, body, "display:flow-root");
         paragraph = block(
@@ -812,6 +816,7 @@ fn a_moved_ifc_block_child_keeps_its_origin_in_ancestor_float_extent() {
     assert!(doc.nodes[paragraph].is_ifc_root());
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let doc = super::paginating(&mut doc, &cascade);
     assert_eq!(
         super::super::same_bfc_float_end_in_subtree(
             &doc,
@@ -968,7 +973,7 @@ fn a_one_column_grid_grows_from_its_items_in_row_order() {
 #[test]
 fn grid_items_sharing_a_row_do_not_stack() {
     let mut grids = Vec::new();
-    let (doc, _) = paged_body(|doc, body| {
+    let (mut doc, _) = paged_body(|doc, body| {
         let stacked = block(doc, body, "display:grid");
         block(doc, stacked, "display:block;height:20px");
         block(doc, stacked, "display:block;height:20px");
@@ -996,6 +1001,9 @@ fn grid_items_sharing_a_row_do_not_stack() {
         );
         grids.extend([stacked, shared, spanning]);
     });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let doc = super::paginating(&mut doc, &cascade);
     let stacks: Vec<bool> = grids
         .iter()
         .map(|&id| grid_stacks_items(&doc, id))

@@ -114,6 +114,16 @@ fn committed_column_projection(style: &str) -> (Document, CascadeResult) {
     (doc, cascade)
 }
 
+/// A session with prepared style views, as the paginator reads a laid-out document.
+fn paginating<'a>(
+    doc: &'a mut Document,
+    cascade: &'a raikiri_style::CascadeResult,
+) -> crate::layout::context::LayoutSession<'a> {
+    let mut session = crate::layout::context::LayoutSession::with_cascade(doc, cascade);
+    session.prepare_style_views();
+    session
+}
+
 fn set_committed_column_fragments(doc: &mut Document, root: usize) {
     use crate::fragment::{FragmentRect, LayoutFragment};
     use crate::node::MulticolTextFragment;
@@ -17574,12 +17584,13 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
 
 #[test]
 fn a_moved_float_records_its_shift_and_its_margin_box_edge() {
-    let (doc, cascade, float, root) = crate::layout::test_support::ahem_paragraph_with_float(
+    let (mut doc, cascade, float, root) = crate::layout::test_support::ahem_paragraph_with_float(
         "a",
         "float:left;width:20px;height:10px",
         "b",
         "",
     );
+    let doc = paginating(&mut doc, &cascade);
     let body = doc.parent_of(root).unwrap();
     let context = float_context_root(&doc, &cascade, float, body);
     let moved = |side, forced_transition| MovedFloat {
@@ -18175,6 +18186,7 @@ fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
         height: 10.0,
     };
     doc.nodes[floater].unrounded_layout.margin.top = 4.0;
+    let doc = paginating(&mut doc, &cascade);
     let mut shifts = FloatShifts {
         later: 20.0,
         ..Default::default()
@@ -20495,4 +20507,169 @@ fn forced_line_breaks_before_the_same_line_are_one_break() {
     ];
     merge_forced_line_breaks(&mut breaks);
     assert_eq!(breaks, [forced(2, 6.0, 3.0), forced(4, 0.0, 0.0)]);
+}
+
+#[test]
+fn block_axis_insets_are_the_physical_top_and_bottom_whatever_the_boxs_writing_mode() {
+    // (declarations, explicit block-axis inset, static position)
+    let cases = [
+        ("", false, true),
+        ("top:5px", true, false),
+        ("bottom:5px", true, false),
+        ("left:5px", false, true),
+        ("right:5px;top:auto", false, true),
+        ("top:5px;bottom:5px", true, false),
+        ("top:10%", true, false),
+        ("top:calc(1px + 2px)", true, false),
+    ];
+    for writing_mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
+        for (insets, explicit, static_position) in cases {
+            let mut doc = crate::Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+            let body =
+                doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+            let css = format!(
+                "position:absolute;width:20px;height:20px;writing-mode:{writing_mode};{insets}"
+            );
+            let positioned = doc.append_element(Some(body), "div", Style::default(), Some(&css));
+            doc.mark_in_document_flags();
+            let rules = raikiri_style::build_rule_tree(&doc);
+            let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+            layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+            assert_eq!(
+                has_explicit_block_axis_inset(&doc, &cascade, positioned),
+                explicit,
+                "{writing_mode}; {insets}"
+            );
+            assert_eq!(
+                is_static_position_absolute(&doc, &cascade, positioned),
+                static_position,
+                "{writing_mode}; {insets}"
+            );
+        }
+    }
+}
+
+#[test]
+fn only_lengths_and_percentages_are_explicit_insets() {
+    use raikiri_style::ComputedLengthPercentageOrAuto as Inset;
+    for explicit in [Inset::Px(0.0), Inset::Px(5.0), Inset::Percent(10.0)] {
+        assert!(
+            !crate::layout::page::inset_is_auto(explicit),
+            "{explicit:?}"
+        );
+    }
+    for auto in [
+        Inset::Auto,
+        Inset::MinContent,
+        Inset::MaxContent,
+        Inset::FitContent,
+    ] {
+        assert!(crate::layout::page::inset_is_auto(auto), "{auto:?}");
+    }
+}
+
+#[test]
+fn pagination_reads_are_compared_with_the_retained_style() {
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    for _ in 0..3 {
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:120px;break-inside:avoid;float:none;overflow:hidden"),
+        );
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 200.0;
+    page.height = 200.0;
+    assert!(layout_pages(&mut doc, &cascade, page).unwrap().len() > 1);
+    let reads = &doc.style_view_comparisons.getter_reads
+        [crate::layout::style_views::ReadRole::Pagination as usize];
+    assert!(reads.get() > 0, "the paginator read no style");
+}
+
+#[test]
+fn block_axis_insets_of_the_transposed_cascade_match_a_view_on_the_roots_axes() {
+    use super::transposed_flow::{FlowAxes, TransposedDocument};
+    let insets = [
+        "",
+        "top:5px",
+        "bottom:5px",
+        "left:5px",
+        "right:5px",
+        "top:5px;bottom:5px",
+        "left:5px;right:5px",
+        "top:auto;left:5px",
+        "inset-block-start:3px",
+        "inset-inline-end:9px",
+        "top:10%;right:calc(1px + 2px)",
+    ];
+    for root_wm in ["vertical-rl", "vertical-lr"] {
+        let mut doc = crate::Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some(format!("display:block;writing-mode:{root_wm}").as_str()),
+        );
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        for writing_mode in ["horizontal-tb", "vertical-rl", "vertical-lr", "sideways-rl"] {
+            for position in ["absolute", "fixed"] {
+                for inset in insets {
+                    let css = format!(
+                        "position:{position};width:20px;height:20px;writing-mode:{writing_mode};{inset}"
+                    );
+                    doc.append_element(Some(body), "div", Style::default(), Some(css.as_str()));
+                }
+            }
+        }
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let mut session = crate::layout::context::LayoutSession::with_cascade(&mut doc, &cascade);
+        session.prepare_style_views();
+        let axes = FlowAxes::of_root(&session, &cascade).expect("a vertical root");
+        let keys: Vec<usize> = session
+            .nodes
+            .layout_keys()
+            .filter(|&key| key < cascade.computed.len())
+            .collect();
+        // What a style view reads for the sides along the flow, on the axes
+        // of the root's writing mode.
+        let expected: Vec<(bool, bool)> = keys
+            .iter()
+            .map(|&key| {
+                use taffy::CoreStyle;
+                let view = session.style_view(key);
+                let context = raikiri_layout_style::ViewContext {
+                    layout_wm: axes.layout_wm(),
+                    ..view.context()
+                };
+                let inset = view.with_context(context).inset();
+                (inset.top.is_auto(), inset.bottom.is_auto())
+            })
+            .collect();
+        TransposedDocument::with_transposed(&mut session, body, axes, 800.0, |_, transposed| {
+            let transposed_cascade = transposed.cascade(&cascade);
+            let mut differs = false;
+            for (&key, &expected) in keys.iter().zip(&expected) {
+                let computed = &transposed_cascade.computed[key];
+                assert_eq!(
+                    (inset_is_auto(computed.top), inset_is_auto(computed.bottom)),
+                    expected,
+                    "{root_wm}: key {key}"
+                );
+                let physical = &cascade.computed[key];
+                differs |= inset_is_auto(physical.top) != inset_is_auto(computed.top);
+            }
+            assert!(differs, "the exchange of axes is observable");
+        });
+    }
 }

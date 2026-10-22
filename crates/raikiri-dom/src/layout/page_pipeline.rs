@@ -31,6 +31,7 @@ use crate::page_projection::records::OverflowClipSource;
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use taffy::{BlockItemStyle, CoreStyle};
 
 type ProjectedSlices = (
     Vec<PageFragment>,
@@ -106,7 +107,7 @@ fn content_overflow_end(
     // outside the columns, `Some(false)` content where it does not.
     let mut stack = vec![(body_id, 0.0_f32, None::<bool>)];
     while let Some((node_id, parent_y, in_columns)) = stack.pop() {
-        let node = &document.layout_node_with_style(node_id).unwrap();
+        let node = &document.nodes[node_id];
         if !node.is_in_document()
             || node.is_display_none()
             || node.is_non_rendered_html_element()
@@ -422,7 +423,7 @@ fn block_border_box_end(
         }
         .map(|value| value.max(0.0))
     };
-    let root = &document.layout_node_with_style(flow_root).unwrap();
+    let root = &document.nodes[flow_root];
     let layout = &root.unrounded_layout;
     let edges_top = layout.padding.top + layout.border.top;
     let edges_bottom = layout.padding.bottom + layout.border.bottom;
@@ -505,7 +506,7 @@ fn block_border_box_end(
         .map(|&child| (child, top, false))
         .collect();
     while let Some((child, offset, nested)) = children.pop() {
-        let node = &document.layout_node_with_style(child).unwrap();
+        let node = &document.nodes[child];
         let child_computed = &cascade.computed[child];
         if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
             continue;
@@ -594,9 +595,12 @@ fn block_border_box_end(
 
 /// Whether pagination may extend the auto height of `node_id` around its
 /// committed content.
-fn grows_with_paginated_content(document: &Document, node_id: usize) -> bool {
-    let node = &document.layout_node_with_style(node_id).unwrap();
-    let block_axis = document.block_axis_style(node_id);
+fn grows_with_paginated_content(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+) -> bool {
+    let node = &document.nodes[node_id];
+    let block_axis = document.block_axis(node_id);
     let ordinary_block = node.formatting_context == FormattingContext::Block
         && matches!(
             node.display(),
@@ -606,10 +610,10 @@ fn grows_with_paginated_content(document: &Document, node_id: usize) -> bool {
     // A row-flex item can have a used stretch height even when its
     // auto-sized flex line must still grow around paginated content.
     let assigned_height = node.percent_basis_height.is_some()
-        && (block_axis.aspect_ratio.is_some()
+        && (block_axis.aspect_ratio().is_some()
             || node.taffy_position() == TaffyPosition::Absolute
             || document.taffy_parent_of(node_id).is_some_and(|parent| {
-                let parent_node = &document.layout_node_with_style(parent).unwrap();
+                let parent_node = &document.nodes[parent];
                 match parent_node.formatting_context {
                     FormattingContext::Flex => parent_node.percent_basis_height.is_some(),
                     FormattingContext::Grid => {
@@ -625,7 +629,7 @@ fn grows_with_paginated_content(document: &Document, node_id: usize) -> bool {
         && !assigned_height
         && node.multicol.is_none()
         && !node.size_containment.height
-        && (block_axis.height.is_auto() || definite_content_height(document, node_id).is_none())
+        && (block_axis.height().is_auto() || definite_content_height(document, node_id).is_none())
 }
 
 /// How far the content of each flex item that
@@ -925,7 +929,7 @@ impl LastNamedBox {
 /// must not make such a box manufacture a second page merely to expose its
 /// overflow into the page decoration area.
 fn fits_decorated_paper(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     node_id: usize,
     insets: PageContentInsets,
     page_top: f32,
@@ -940,9 +944,8 @@ fn fits_decorated_paper(
 }
 
 /// Whether `node_id` has a definite, non-negative `height` length.
-fn has_fixed_height(document: &Document, node_id: usize) -> bool {
-    style_dimension_length(document.block_axis_style(node_id).height)
-        .is_some_and(|value| value >= 0.0)
+fn has_fixed_height(document: &super::context::LayoutSession<'_>, node_id: usize) -> bool {
+    style_dimension_length(document.block_axis(node_id).height()).is_some_and(|value| value >= 0.0)
 }
 
 /// Whether a box that took its page position holds content in the columns
@@ -2463,7 +2466,7 @@ fn clear_floats_at_forced_breaks<'name>(
     let has_named_pages = super::page::has_named_pages(cascade);
     let pagination_on_transposed_axes = document.context.pagination_on_transposed_axes;
     let in_flow = |document: &Document, id: usize| {
-        let node = &document.layout_node_with_style(id).unwrap();
+        let node = &document.nodes[id];
         node.kind() == NodeKind::Element
             && node.is_in_document()
             && !node.is_non_rendered_html_element()
@@ -2497,7 +2500,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 boxes.push(None);
                 continue;
             };
-            let node = &document.layout_node_with_style(child).unwrap();
+            let node = &document.nodes[child];
             if let crate::node::NodeData::Text(text) = &node.data {
                 if node.is_in_document() && !text.text_content.trim().is_empty() {
                     boxes.push(None);
@@ -2536,7 +2539,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 && node.is_in_document()
                 && !node.is_non_rendered_html_element()
                 && document.nodes[child].display() != DisplayValue::None
-                && is_static_position_absolute(document, child)
+                && is_static_position_absolute(document, cascade, child)
             {
                 boxes.push(Some(child));
             } else if in_flow(document, child) {
@@ -2637,7 +2640,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 previous_page_name = Some(inherited);
                 continue;
             };
-            if is_static_position_absolute(document, child) {
+            if is_static_position_absolute(document, cascade, child) {
                 if !has_named_pages {
                     continue;
                 }
@@ -2812,7 +2815,7 @@ fn page_edge_child(
         } else {
             children.len() - 1 - offset
         }];
-        let node = &document.layout_node_with_style(child).unwrap();
+        let node = &document.nodes[child];
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
             || document.nodes[child].display() == DisplayValue::None
@@ -2855,7 +2858,7 @@ fn page_edge_constraint(
     let mut forced = false;
     let mut avoided = false;
     for _ in 0..128 {
-        let node = &document.layout_node_with_style(id).unwrap();
+        let node = &document.nodes[id];
         let computed = &cascade.computed[id];
         if document.nodes[id].display() != DisplayValue::Contents {
             let edge = if before {
@@ -3316,12 +3319,7 @@ fn grow_spanning_column_ancestors(
     let mut walk = AncestorCursor::new(document.layout_parent_of(owner), ParentRelation::Layout);
     while let Some(parent) = walk.current() {
         if document.nodes[child].taffy_position() == TaffyPosition::Absolute
-            || document
-                .layout_node_with_style(child)
-                .unwrap()
-                .style
-                .float
-                .is_floated()
+            || document.pagination_style(child).float().is_floated()
         {
             break;
         }
@@ -3331,7 +3329,7 @@ fn grow_spanning_column_ancestors(
         }
         let _ = follow_moved_ifc_block(document, child, delta);
         sibling_shifts.record(document, parent, child, delta, column_work)?;
-        if !document.block_axis_style(parent).height.is_auto() {
+        if !document.block_axis(parent).height().is_auto() {
             break;
         }
         document.nodes[parent].unrounded_layout.size.height += delta;
@@ -4069,7 +4067,7 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
         let siblings = document.nodes[parent].layout_children();
         let child_index = siblings.iter().position(|&sibling| sibling == child);
         let renders_before = siblings.iter().enumerate().any(|(index, &sibling)| {
-            let node = &document.layout_node_with_style(sibling).unwrap();
+            let node = &document.nodes[sibling];
             let renders = match node.kind() {
                 NodeKind::Element => {
                     node.is_in_document()
@@ -4122,29 +4120,44 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
     moved
 }
 
-fn has_explicit_block_axis_inset(document: &Document, node_id: usize) -> bool {
+/// Whether `node_id` is out of flow with a block-start or block-end inset.
+/// Insets come straight from the computed values: nothing overrides them,
+/// and the cascade of a transposed pagination carries them on its axes.
+fn has_explicit_block_axis_inset(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     if document.nodes[node_id].kind() != NodeKind::Element {
         return false;
     }
-    let block_axis = document.block_axis_style(node_id);
+    let computed = &cascade.computed[node_id];
     matches!(
         document.nodes[node_id].position(),
         PositionValue::Absolute | PositionValue::Fixed
-    ) && (!block_axis.inset_top.is_auto() || !block_axis.inset_bottom.is_auto())
+    ) && (!inset_is_auto(computed.top) || !inset_is_auto(computed.bottom))
 }
 
-fn in_inset_out_of_flow_subtree(document: &Document, node_id: usize) -> bool {
+fn in_inset_out_of_flow_subtree(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     document.inclusive_ancestors(node_id).any(|id| {
         document.nodes[id].kind() == NodeKind::Element
             && (matches!(document.nodes[id].position(), PositionValue::Fixed)
-                || has_explicit_block_axis_inset(document, id))
+                || has_explicit_block_axis_inset(document, cascade, id))
     })
 }
 
-fn has_explicit_positioned_block_ancestor(document: &Document, node_id: usize) -> bool {
+fn has_explicit_positioned_block_ancestor(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     document
         .inclusive_ancestors(document.ifc_source_owner(node_id))
-        .any(|id| has_explicit_block_axis_inset(document, id))
+        .any(|id| has_explicit_block_axis_inset(document, cascade, id))
 }
 
 fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) -> IfcBoxShifts {
@@ -4384,7 +4397,7 @@ fn has_in_flow_content(
         push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
     }
     boxes.into_iter().any(|child| {
-        let node = &document.layout_node_with_style(child).unwrap();
+        let node = &document.nodes[child];
         let display = document.nodes[child].display();
         if node.kind() == NodeKind::Text || display.is_inline_level() {
             // Text and inline-level boxes are content only through the lines
@@ -4663,17 +4676,17 @@ fn grown_auto_height(
     body_id: usize,
     ifc_boxes: &IfcBoxShifts,
 ) -> Option<GrownHeight> {
-    let node = &document.layout_node_with_style(parent).unwrap();
-    let style = &node.style;
-    let block_axis = document.block_axis_style(parent);
+    let node = &document.nodes[parent];
+    let style = document.pagination_style(parent);
+    let block_axis = document.block_axis(parent);
     // A percentage height against an indefinite containing block behaves
     // as `auto` (CSS 2.1 §10.5).
     let can_grow =
-        block_axis.height.is_auto() || definite_content_height(document, parent).is_none();
+        block_axis.height().is_auto() || definite_content_height(document, parent).is_none();
     let layout = &node.unrounded_layout;
     let vertical_edges =
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
-    let box_sizing_edges = if style.box_sizing == taffy::BoxSizing::ContentBox {
+    let box_sizing_edges = if style.box_sizing() == taffy::BoxSizing::ContentBox {
         vertical_edges
     } else {
         0.0
@@ -4689,8 +4702,8 @@ fn grown_auto_height(
         resolve_length_percentage_auto(value, containing_height)
             .map_or(auto, |value| value + box_sizing_edges)
     };
-    let min = bound(block_axis.min_height, 0.0);
-    let max = bound(block_axis.max_height, f32::INFINITY).max(min);
+    let min = bound(block_axis.min_height(), 0.0);
+    let max = bound(block_axis.max_height(), f32::INFINITY).max(min);
     let old = layout.size.height;
     // The content extent before and after the shift, from the in-flow
     // children's margin boxes when bottom padding or border, or a formatting
@@ -4749,7 +4762,7 @@ fn grown_auto_height(
     let mut children = pagination_child_order(document, cascade, parent);
     children.reverse();
     while let Some(child) = children.pop() {
-        let child_node = &document.layout_node_with_style(child).unwrap();
+        let child_node = &document.nodes[child];
         if document.nodes[child].display() == DisplayValue::Contents {
             children.extend(child_node.children.iter().rev().copied());
             continue;
@@ -4907,7 +4920,7 @@ fn grown_auto_height(
 /// represented by its border box.
 #[cfg(test)]
 fn same_bfc_float_end_in_subtree(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     branch: usize,
@@ -4929,7 +4942,7 @@ fn same_bfc_float_end_in_subtree(
 /// coordinates. Traversal stops at an independent BFC so its floats stay
 /// represented by its border box.
 fn visit_same_bfc_floats_in_subtree(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     branch: usize,
@@ -5026,9 +5039,12 @@ fn visit_same_bfc_floats_in_subtree(
 /// The content-box height of `block` when it is definite: a length, or a
 /// percentage of a definite containing block, the initial containing block
 /// being definite (CSS 2.1 §10.5).
-fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
-    let node = &document.layout_node_with_style(block).unwrap();
-    let raw = document.block_axis_style(block).height.into_raw();
+fn definite_content_height(
+    document: &super::context::LayoutSession<'_>,
+    block: usize,
+) -> Option<f32> {
+    let node = &document.nodes[block];
+    let raw = document.block_axis(block).height().into_raw();
     let definite = if raw.is_plain_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {
         BoxTree::for_layout(document)
             .parent(block, BoxParentScope::Document)
@@ -5082,7 +5098,7 @@ fn adjoins_previous_sibling(
 /// Whether `node_id` is a block box that takes no block space, so that only
 /// margins lie between the boxes on either side of it.
 fn takes_no_block_space(document: &Document, node_id: usize) -> bool {
-    let node = &document.layout_node_with_style(node_id).unwrap();
+    let node = &document.nodes[node_id];
     let layout = &node.unrounded_layout;
     node.kind() == NodeKind::Element
         && matches!(
@@ -5103,7 +5119,7 @@ fn push_in_flow_boxes_rev(
     node_id: usize,
     boxes: &mut Vec<usize>,
 ) {
-    let node = &document.layout_node_with_style(node_id).unwrap();
+    let node = &document.nodes[node_id];
     // White space that `white-space` preserves still generates lines.
     let collapse = cascade.computed[node_id].effective_white_space_collapse;
     let collapsed_text = node.kind() == NodeKind::Text
@@ -5617,7 +5633,7 @@ impl CheckedParagraphs {
 /// block whose checks have all run, or for a nested block that is not in
 /// plain block flow or that lies inside a float or an out-of-flow box.
 fn line_block_parent(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     roots: &candidates::FlowRoots,
     candidate: &PageCandidate,
@@ -5663,7 +5679,7 @@ fn block_effective_y(
 /// as a unit, but its later lines can move down inside it. Text placed by
 /// positioned insets, or inside a float or an out-of-flow box, has none.
 fn flex_line_paragraph(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     candidate: &PageCandidate,
@@ -5794,7 +5810,7 @@ fn first_line_overflows(
 /// Whether later lines of the paragraph `block_id` can move down inside it:
 /// its height grows with them (a box with a definite height keeps it), and it
 /// holds nothing but text in one column.
-fn lines_can_shift_inside(document: &Document, block_id: usize) -> bool {
+fn lines_can_shift_inside(document: &super::context::LayoutSession<'_>, block_id: usize) -> bool {
     height_follows_content(document, block_id)
         && document
             .ifc_layout_node(block_id)
@@ -6175,18 +6191,18 @@ impl SubtreeShifts {
 /// Fragmentation 3 §5.2), so it does not break the box and counts as zero.
 /// A float's margin box stays whole.
 fn break_margins(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
     content_width: f32,
 ) -> (f32, f32) {
-    let block_axis = document.block_axis_style(node_id);
+    let block_axis = document.block_axis(node_id);
     let computed = &cascade.computed[node_id];
-    let margin_top = used_style_length_percentage_auto(block_axis.margin.top, content_width)
+    let margin_top = used_style_length_percentage_auto(block_axis.margin_top(), content_width)
         .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
         .unwrap_or(0.0);
     let trailing_margin = if is_floating_box_for_pagination(document, cascade, node_id) {
-        used_style_length_percentage_auto(block_axis.margin.bottom, content_width)
+        used_style_length_percentage_auto(block_axis.margin_bottom(), content_width)
             .or_else(|| {
                 used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
             })
@@ -6452,7 +6468,7 @@ fn grow_float_context_to_moved_float(
 ) {
     let context = float_context_root(document, cascade, node_id, body_id);
     if context != body_id
-        && (document.block_axis_style(context).height.is_auto()
+        && (document.block_axis(context).height().is_auto()
             || definite_content_height(document, context).is_none())
     {
         let context_top = current_abs_y(document, context);
@@ -6675,7 +6691,7 @@ fn shrink_ancestors_after_margin_truncation(
 /// [`height_follows_content`]), so moving `block` down moves the boxes after
 /// it and grows its ancestors to hold it.
 fn is_block_flow_paragraph(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
@@ -6698,7 +6714,7 @@ fn is_block_flow_paragraph(
 /// absolutely positioned, so a box growing below `block` pushes the boxes
 /// after it down.
 fn placed_in_block_flow(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     block: usize,
     body_id: usize,
@@ -6735,7 +6751,7 @@ fn placed_in_block_flow(
 /// its flex line without moving another item beside it, and the lines after
 /// it follow.
 fn flex_container_of_item_alone_on_its_line(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     item: usize,
     body_id: usize,
@@ -6841,13 +6857,13 @@ fn shift_later_flex_lines(document: &mut Document, container: usize, item: usize
 /// Whether the height of `block` is that of its content: no `height`,
 /// `max-height` or non-zero `min-height` sets it and no size containment
 /// ignores the content.
-fn height_follows_content(document: &Document, block: usize) -> bool {
-    let node = &document.layout_node_with_style(block).unwrap();
-    let block_axis = document.block_axis_style(block);
-    let min_height = block_axis.min_height;
-    block_axis.height.is_auto()
+fn height_follows_content(document: &super::context::LayoutSession<'_>, block: usize) -> bool {
+    let node = &document.nodes[block];
+    let block_axis = document.block_axis(block);
+    let min_height = block_axis.min_height();
+    block_axis.height().is_auto()
         && (min_height.is_auto() || style_dimension_length(min_height.into()) == Some(0.0))
-        && block_axis.max_height.is_auto()
+        && block_axis.max_height().is_auto()
         && !node.size_containment.height
 }
 
@@ -7154,7 +7170,7 @@ impl FloatShifts {
     /// when it does not.
     fn clearance_for(
         &self,
-        document: &Document,
+        document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         body_id: usize,
         candidate: &PageCandidate,
@@ -7218,7 +7234,7 @@ impl FloatShifts {
     /// boxes that follow it in the same formatting context.
     fn record_moved_float(
         &mut self,
-        document: &Document,
+        document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         body_id: usize,
         moved: &MovedFloat,
@@ -7339,7 +7355,7 @@ impl FloatShifts {
     /// float shift is pending.
     fn edges_for(
         &self,
-        document: &Document,
+        document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         node_id: usize,
         body_id: usize,
@@ -7387,7 +7403,7 @@ impl FloatShifts {
     /// leaves the outer flow where it was, so its floors stay.
     fn drop_edges_for_in_flow_candidate(
         &mut self,
-        document: &Document,
+        document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         node_id: usize,
         body_id: usize,
@@ -7407,7 +7423,7 @@ impl FloatShifts {
 /// (CSS 2.1 §9.4.1), or `body_id`. Floats in different contexts do not
 /// interact.
 fn float_context_root(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
     body_id: usize,
@@ -7439,9 +7455,12 @@ fn in_inline_context(document: &Document, node_id: usize) -> bool {
 
 /// Whether the box `node_id` establishes an independent block formatting
 /// context (CSS 2.1 §9.4.1), which holds the floats inside it.
-fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+fn holds_floats(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     let computed = &cascade.computed[node_id];
-    let overflow = document.block_axis_style(node_id).overflow;
     let item = BoxTree::for_layout(document)
         .parent(node_id, BoxParentScope::Document)
         .is_some_and(|container| {
@@ -7458,10 +7477,39 @@ fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) ->
             ))
         || matches!(computed.float, FloatValue::Left | FloatValue::Right)
         || document.nodes[node_id].taffy_position() == taffy::Position::Absolute
-        || overflow.x.is_scroll_container()
-        || overflow.y.is_scroll_container()
+        || scrolls_overflow(document, computed, node_id)
         || document.nodes[node_id].multicol.is_some()
         || establishes_containment_context(computed)
+}
+
+/// Whether the box `node_id` is a scroll container on either axis.
+///
+/// The only override of `overflow` hands a viewport-propagated value back as
+/// `visible`, so a box whose computed `overflow` does not scroll never does.
+/// The override-aware view is read for the other boxes only, which keeps the
+/// common case out of the hot ancestor walks. Style comparison builds assert
+/// the shortcut against the view for every box they lay out, so an override
+/// that made a `visible` box scroll has to teach this function first.
+fn scrolls_overflow(
+    document: &super::context::LayoutSession<'_>,
+    computed: &raikiri_style::ComputedValues,
+    node_id: usize,
+) -> bool {
+    use raikiri_style::property::OverflowValue;
+    let scrolls = || {
+        let overflow = document.pagination_style(node_id).overflow();
+        overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
+    };
+    let may_scroll = [computed.overflow.x, computed.overflow.y]
+        .into_iter()
+        .any(|value| {
+            matches!(
+                value,
+                OverflowValue::Hidden | OverflowValue::Scroll | OverflowValue::Auto
+            )
+        });
+    debug_assert!(may_scroll || !scrolls(), "a visible box scrolls");
+    may_scroll && scrolls()
 }
 
 /// Whether layout or paint containment makes the box an independent
@@ -7498,7 +7546,7 @@ fn clears_float_side(clear: ClearValue, side: FloatValue) -> bool {
 /// The border-box height that the `max-height` of `node_id` allows, when
 /// it resolves. A percentage needs a containing block of definite height.
 fn max_border_box_height(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> Option<f32> {
@@ -7509,9 +7557,8 @@ fn max_border_box_height(
         ComputedLengthPercentageOrAuto::Px(max) => Some(max),
         value => basis.and_then(|basis| used_computed_length_percentage_or_auto(value, basis)),
     }?;
-    let node = &document.layout_node_with_style(node_id).unwrap();
-    let layout = &node.unrounded_layout;
-    let edges = if node.style.box_sizing == taffy::BoxSizing::ContentBox {
+    let layout = &document.nodes[node_id].unrounded_layout;
+    let edges = if document.pagination_style(node_id).box_sizing() == taffy::BoxSizing::ContentBox {
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
     } else {
         0.0
@@ -7520,7 +7567,11 @@ fn max_border_box_height(
 }
 
 /// Whether the `max-height` of `node_id` already limits its height.
-fn max_height_is_reached(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+fn max_height_is_reached(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     max_border_box_height(document, cascade, node_id)
         .is_some_and(|max| document.nodes[node_id].unrounded_layout.size.height >= max - 0.01)
 }
@@ -7531,13 +7582,13 @@ fn max_height_is_reached(document: &Document, cascade: &CascadeResult, node_id: 
 /// size to their content, and its items sit in rows that follow one
 /// another without overlapping. A sized row fixes the height of the item
 /// stretched into it, so that item cannot grow to hold a moved box.
-fn grid_stacks_items(document: &Document, grid: usize) -> bool {
-    let node = &document.layout_node_with_style(grid).unwrap();
-    let block_axis = document.block_axis_style(grid);
+fn grid_stacks_items(document: &super::context::LayoutSession<'_>, grid: usize) -> bool {
+    let node = &document.nodes[grid];
+    let block_axis = document.block_axis(grid);
     if node.grid_column_count != 1
         || !grid_rows_size_to_content(document, grid)
-        || !block_axis.height.is_auto() && definite_content_height(document, grid).is_some()
-        || !block_axis.min_height.is_auto()
+        || !block_axis.height().is_auto() && definite_content_height(document, grid).is_some()
+        || !block_axis.min_height().is_auto()
     {
         return false;
     }
@@ -7562,28 +7613,27 @@ fn grid_stacks_items(document: &Document, grid: usize) -> bool {
 /// Whether the rows of `grid` all size to their content: every explicit
 /// and implicit row track is intrinsic and uncapped, so its items grow
 /// with what they hold.
-fn grid_rows_size_to_content(document: &Document, grid: usize) -> bool {
-    let style = &document.layout_node_with_style(grid).unwrap().style;
+fn grid_rows_size_to_content(document: &super::context::LayoutSession<'_>, grid: usize) -> bool {
+    use taffy::{GenericGridTemplateComponent as Component, GenericRepetition, GridContainerStyle};
+    let style = document.pagination_style(grid);
     // `auto`, `min-content` and `max-content` grow with the content;
     // `fit-content()` caps it.
-    let auto = |track: &taffy::TrackSizingFunction| {
+    let auto = |track: taffy::TrackSizingFunction| {
         track.min.is_intrinsic()
             && (track.max.is_auto() || track.max.is_min_content() || track.max.is_max_content())
     };
-    style
-        .grid_template_rows
-        .iter()
-        .all(|component| match component {
-            taffy::GridTemplateComponent::Single(track) => auto(track),
-            taffy::GridTemplateComponent::Repeat(repetition) => repetition.tracks.iter().all(auto),
+    GridContainerStyle::grid_template_rows(&style).is_none_or(|mut components| {
+        components.all(|component| match component {
+            Component::Single(track) => auto(track),
+            Component::Repeat(repetition) => repetition.tracks().all(auto),
         })
-        && style.grid_auto_rows.iter().all(auto)
+    }) && GridContainerStyle::grid_auto_rows(&style).all(auto)
 }
 
 /// Find both ancestor conditions that prevent moving a nested candidate with one walk.
 /// The body can make siblings side by side, but its own clipping is not bounded here.
 fn candidate_ancestor_constraints(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
     body_id: usize,
@@ -7632,7 +7682,7 @@ fn ifc_paragraph_of_block(document: &Document, block: usize) -> Option<usize> {
 /// Whether `id` stacks its children in block order, so that the boxes
 /// after a moved one follow it: a block container, or a grid whose items
 /// stack like blocks.
-fn stacks_children_in_block_flow(document: &Document, id: usize) -> bool {
+fn stacks_children_in_block_flow(document: &super::context::LayoutSession<'_>, id: usize) -> bool {
     moves_later_siblings(document, id)
         || document.nodes[id].formatting_context == FormattingContext::Grid
             && grid_stacks_items(document, id)
@@ -7662,7 +7712,7 @@ fn collapses_with_previous_block(
     candidate: &PageCandidate,
     participates_in_margin_adjacency: bool,
 ) -> bool {
-    let node = &document.layout_node_with_style(candidate.node_id).unwrap();
+    let node = &document.nodes[candidate.node_id];
     is_block_level_flow_box(node.display())
         && matches!(node.position(), PositionValue::Static)
         && !candidate.context.is_text()
@@ -7681,7 +7731,7 @@ fn collapses_with_previous_block(
 /// follows the same way, also when the moved box sits deeper inside that
 /// block.
 fn shift_block_flow_after(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     node_id: usize,
     body_id: usize,
     flow_delta: f32,

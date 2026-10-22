@@ -380,7 +380,7 @@ pub struct Document {
     pub(crate) nodes: crate::node::arena::NodeArena,
     pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
     /// The style facts pagination reads, by layout key, while it runs on
-    /// transposed axes (see [`Self::block_axis_style`]); empty otherwise.
+    /// transposed axes (see `LayoutSession::block_axis`); empty otherwise.
     pub(crate) pagination_block_styles: Vec<crate::layout::block_axis_style::BlockAxisStyle>,
     pub(crate) box_style_data: crate::layout::box_style_data::BoxStyleStore,
     pub(crate) layout_cache_context: crate::layout::cache_context::LayoutCacheContext,

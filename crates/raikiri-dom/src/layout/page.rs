@@ -30,7 +30,7 @@ pub(crate) fn has_named_pages(cascade: &CascadeResult) -> bool {
 /// inserted into the head, say) or in another namespace is not the body.
 pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
     const HTML: Option<&str> = Some("http://www.w3.org/1999/xhtml");
-    let node = &doc.layout_node_with_style(id).unwrap();
+    let node = &doc.nodes[id];
     match node.tag_name() {
         Some("body") => true,
         Some("frameset") => node.parent.is_some_and(|parent| {
@@ -63,7 +63,7 @@ pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
-        let node = &doc.layout_node_with_style(node_idx).unwrap();
+        let node = &doc.nodes[node_idx];
         if node.kind() == NodeKind::Element && is_body_element(doc, node_idx) {
             return Some(node_idx);
         }
@@ -614,7 +614,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
                 // keeps the page names of its in-flow descendants, so a named
                 // first descendant selects the initial page as it does in the
                 // page pipeline. Its own `page` value is ignored.
-                if static_absolute_with_boxes(document, child_id, boxes) {
+                if static_absolute_with_boxes(cascade, child_id, boxes) {
                     let child_order = if resolved_layout {
                         pagination_child_order_borrowed(document, cascade, child_id)
                     } else {
@@ -848,7 +848,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
     let mut projection_changed = false;
     let grid_details_stale = doc.layout_dirty;
     for parent_idx in 0..doc.nodes.len() {
-        let parent = &doc.layout_node_with_style(parent_idx).unwrap();
+        let parent = &doc.nodes[parent_idx];
         // The items of a flex or grid container include the children of its
         // `display: contents` children (see `TaffyChildIter`), so `order`
         // sorts that flattened sequence. Taffy takes no `order` input, so the
@@ -857,7 +857,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
         if parent.formatting_context.is_flex_or_grid() {
             let mut pending: Vec<usize> = parent.children.iter().rev().copied().collect();
             while let Some(child) = pending.pop() {
-                let node = &doc.layout_node_with_style(child).unwrap();
+                let node = &doc.nodes[child];
                 if node.kind() == NodeKind::Element
                     && node.display() == DisplayValue::Contents
                     && !node.is_ifc_root()
@@ -927,7 +927,7 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
     parent_id: usize,
     child_id: usize,
 ) -> bool {
-    let child = &document.layout_node_with_style(child_id).unwrap();
+    let child = &document.nodes[child_id];
     child.is_in_document()
         && !child.is_display_none()
         && child.taffy_position() != TaffyPosition::Absolute
@@ -965,7 +965,7 @@ fn flex_pagination_child_order(
         }
     }
     let is_in_flow = |child_id: usize| {
-        let child = &document.layout_node_with_style(child_id).unwrap();
+        let child = &document.nodes[child_id];
         child.is_in_document()
             && boxes.identity(child_id).display() != DisplayValue::None
             && !matches!(
@@ -1073,7 +1073,7 @@ fn grid_pagination_children(document: &Document, parent_id: usize) -> Vec<usize>
         .collect();
     let mut children = Vec::new();
     while let Some(child) = pending.pop() {
-        let node = &document.layout_node_with_style(child).unwrap();
+        let node = &document.nodes[child];
         if node.kind() == NodeKind::Element
             && node.display() == DisplayValue::Contents
             && !node.is_ifc_root()
@@ -1175,7 +1175,7 @@ fn table_pagination_child_order(
         .collect();
     let mut children = Vec::new();
     while let Some(child) = pending.pop() {
-        let node = &document.layout_node_with_style(child).unwrap();
+        let node = &document.nodes[child];
         // Table layout drops these without a box, as it does for any
         // non-rendered element whatever its `display`.
         if !node.is_in_document()
@@ -1261,15 +1261,36 @@ fn page_applies_with_boxes(boxes: BoxTree<'_>, node_id: usize) -> bool {
 /// Whether `node_id` is an absolutely positioned box whose block-start and
 /// block-end insets are both `auto`, which leaves it at its static position
 /// in the page flow.
-pub(crate) fn is_static_position_absolute(document: &Document, node_id: usize) -> bool {
-    static_absolute_with_boxes(document, node_id, BoxTree::for_layout(document))
+pub(crate) fn is_static_position_absolute(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    static_absolute_with_boxes(cascade, node_id, BoxTree::for_layout(document))
 }
 
-fn static_absolute_with_boxes(document: &Document, node_id: usize, boxes: BoxTree<'_>) -> bool {
-    let block_axis = document.block_axis_style(node_id);
+/// Insets come straight from the computed values: nothing overrides them, and
+/// the cascade handed to a transposed pagination carries them on its axes, so
+/// `top` and `bottom` are the sides the flow starts and ends at whichever way
+/// the document is paginated.
+fn static_absolute_with_boxes(cascade: &CascadeResult, node_id: usize, boxes: BoxTree<'_>) -> bool {
+    let computed = &cascade.computed[node_id];
     matches!(boxes.identity(node_id).position(), PositionValue::Absolute)
-        && block_axis.inset_top.is_auto()
-        && block_axis.inset_bottom.is_auto()
+        && inset_is_auto(computed.top)
+        && inset_is_auto(computed.bottom)
+}
+
+/// Whether an inset is `auto` once layout has read it: only lengths,
+/// percentages and `calc()` constrain a box. This is the mapping of
+/// `LayoutStyleView::inset`; the sizing keywords cannot be authored for an
+/// inset and read as `auto` there too.
+pub(crate) fn inset_is_auto(inset: ComputedLengthPercentageOrAuto) -> bool {
+    !matches!(
+        inset,
+        ComputedLengthPercentageOrAuto::Px(_)
+            | ComputedLengthPercentageOrAuto::Percent(_)
+            | ComputedLengthPercentageOrAuto::Calc(_)
+    )
 }
 
 /// Whether pagination treats the box of `node_id` as monolithic: a replaced
@@ -1300,7 +1321,7 @@ fn monolithic_with_boxes(
     pagination_on_transposed_axes: bool,
 ) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
-    let node = &document.layout_node_with_style(node_id).unwrap();
+    let node = &document.nodes[node_id];
     let replaced = node
         .flags
         .contains(crate::node::NodeFlags::IS_INLINE_SVG_ROOT)

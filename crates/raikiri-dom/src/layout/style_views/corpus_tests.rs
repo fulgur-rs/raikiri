@@ -90,7 +90,7 @@ impl raikiri_traits::ReplacedResolver for BrokenImageFallback<'_> {
 #[derive(Default, Debug)]
 struct Totals {
     documents: usize,
-    roles: [usize; 9],
+    roles: [usize; 10],
     iterators: usize,
     calcs: usize,
     pass: usize,
@@ -222,6 +222,8 @@ fn compare_document(
     page.height = 600.0;
     crate::layout::page_pipeline::layout_single_page_checked(&mut document, &cascade, page)
         .unwrap();
+    // The paginator's own reads only happen when the document is split into pages.
+    crate::layout::page_pipeline::layout_pages(&mut document, &cascade, page).unwrap();
     let stats = &document.style_view_comparisons;
     totals.documents += 1;
     for (count, reads) in totals.roles.iter_mut().zip(&stats.getter_reads) {

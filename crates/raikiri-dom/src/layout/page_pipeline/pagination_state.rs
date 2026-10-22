@@ -335,7 +335,7 @@ impl PaginationState {
         // Explicit positioned insets follow their containing box, not margin
         // changes in a parallel normal flow. Both-auto boxes keep static placement.
         let uses_positioned_coordinates = candidate.context.is_out_of_flow_descendant()
-            && has_explicit_positioned_block_ancestor(document, node_id);
+            && has_explicit_positioned_block_ancestor(document, env.cascade, node_id);
         Ok(Some(CandidateEntry {
             name_context_seen,
             comparison_page_name,

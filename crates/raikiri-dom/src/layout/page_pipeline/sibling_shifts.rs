@@ -1,7 +1,8 @@
 //! Deferred moves of the boxes that follow a paginated column container.
 
 use super::{Document, FragmentEdits, HashMap, LayoutError, ProjectionWork};
-use taffy::Position as TaffyPosition;
+use crate::layout::context::LayoutSession;
+use taffy::{BlockItemStyle, Position as TaffyPosition};
 
 /// Moves of the siblings that follow each paginated column container and
 /// its ancestors. A container that grows moves every later sibling at each
@@ -43,19 +44,19 @@ impl SiblingShifts {
 
     /// A following sibling moves with the flow unless it is out of flow or
     /// placed by its parent's paragraph.
-    fn moves(document: &Document, parent: usize, sibling: usize) -> bool {
-        let node = &document.layout_node_with_style(sibling).unwrap();
+    fn moves(document: &LayoutSession<'_>, parent: usize, sibling: usize) -> bool {
+        let node = &document.nodes[sibling];
         node.taffy_position() != TaffyPosition::Absolute
-            && !node.style.float.is_floated()
             && !node.in_ifc_subtree()
             && !document.nodes[parent]
                 .ifc
                 .as_ref()
                 .is_some_and(|root| root.boxes.iter().any(|b| b.node == sibling))
+            && !document.pagination_style(sibling).float().is_floated()
     }
 
     /// The move recorded for `child` of `parent` and not applied yet.
-    fn pending_for(&self, document: &Document, parent: usize, child: usize) -> f32 {
+    fn pending_for(&self, document: &LayoutSession<'_>, parent: usize, child: usize) -> f32 {
         let Some(moves) = self.pending.get(&parent) else {
             return 0.0;
         };
@@ -74,7 +75,7 @@ impl SiblingShifts {
 
     /// The moves not applied yet to `node` and its layout ancestors: what
     /// their summed offsets lack.
-    pub(super) fn offset(&self, document: &Document, node: usize) -> f32 {
+    pub(super) fn offset(&self, document: &LayoutSession<'_>, node: usize) -> f32 {
         if self.pending.is_empty() {
             return 0.0;
         }
@@ -90,7 +91,7 @@ impl SiblingShifts {
     /// Apply the moves recorded for the children of `parent`.
     pub(super) fn apply(
         &mut self,
-        document: &mut Document,
+        document: &mut LayoutSession<'_>,
         edits: &mut FragmentEdits,
         parent: usize,
     ) {
@@ -117,7 +118,11 @@ impl SiblingShifts {
     }
 
     /// Apply every recorded move.
-    pub(super) fn apply_all(&mut self, document: &mut Document, edits: &mut FragmentEdits) {
+    pub(super) fn apply_all(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        edits: &mut FragmentEdits,
+    ) {
         let parents: Vec<usize> = self.pending.keys().copied().collect();
         for parent in parents {
             self.apply(document, edits, parent);
