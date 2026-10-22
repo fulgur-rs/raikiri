@@ -78,6 +78,7 @@ impl Default for RuleTreeLimits {
 /// What the parsers of one rule tree may still spend, and the first limit
 /// its stylesheets passed. Once a limit is passed every later charge fails,
 /// so nothing more is retained.
+#[derive(Clone)]
 pub(crate) struct ParseBudget {
     /// Serialized selector bytes contextual revalidation may still spend.
     pub(crate) selector_revalidation: usize,

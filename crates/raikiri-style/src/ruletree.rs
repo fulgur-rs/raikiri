@@ -35,6 +35,9 @@ use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorP
 
 mod budget;
 mod nesting;
+mod prepared;
+
+pub use prepared::PreparedStylesheet;
 
 pub(crate) use budget::ParseBudget;
 pub use budget::RuleTreeLimits;
@@ -1524,6 +1527,7 @@ const MAX_NESTED_OPAQUE_NODES: usize = 1 << 19;
 
 /// What nested opaque inspection may still retain, over every stylesheet of a
 /// tree. A node past either budget is left out of the inspection view.
+#[derive(Clone)]
 struct OpaqueBudget {
     body_bytes: usize,
     nodes: usize,
