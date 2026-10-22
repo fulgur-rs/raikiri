@@ -212,20 +212,30 @@ impl<'a> StyleViews<'a> {
             let style = doc
                 .layout_style_for_key(idx)
                 .expect("foundation has retained adapter inputs");
-            let (scrollbar_width, is_table) = (style.scrollbar_width, style.item_is_table);
+            let (scrollbar_width, is_table, legacy_text_align, compressible_replaced) = (
+                style.scrollbar_width,
+                style.item_is_table,
+                style.text_align,
+                taffy::CoreStyle::is_compressible_replaced(style),
+            );
             let metadata = &mut doc
                 .box_style_data
                 .get_mut(key)
                 .expect("foundation exists")
                 .metadata;
             metadata.scrollbar_width = scrollbar_width;
-            metadata.flags = metadata
-                .flags
-                .without(raikiri_layout_style::StyleFlags::BLOCK_TABLE);
-            if is_table {
-                metadata.flags = metadata
-                    .flags
-                    .union(raikiri_layout_style::StyleFlags::BLOCK_TABLE);
+            metadata.legacy_text_align = legacy_text_align;
+            for (flag, enabled) in [
+                (raikiri_layout_style::StyleFlags::BLOCK_TABLE, is_table),
+                (
+                    raikiri_layout_style::StyleFlags::COMPRESSIBLE_REPLACED,
+                    compressible_replaced,
+                ),
+            ] {
+                metadata.flags = metadata.flags.without(flag);
+                if enabled {
+                    metadata.flags = metadata.flags.union(flag);
+                }
             }
             if let Some(pending) = doc.box_style_data.pending.remove(&key) {
                 doc.box_style_data

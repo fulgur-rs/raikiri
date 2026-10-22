@@ -24,6 +24,7 @@ fn facts(direction: taffy::Direction, block: bool) -> BoxFacts {
             used_writing_mode: WritingMode::VerticalRl,
             claims: None,
             scrollbar_width: 0.0,
+            legacy_text_align: taffy::TextAlign::Auto,
         },
     }
 }

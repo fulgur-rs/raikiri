@@ -384,3 +384,68 @@ fn block_view_keeps_programmatic_table_identity_distinct_from_css_tables() {
         }
     }
 }
+
+#[test]
+fn block_view_preserves_constructor_text_alignment_and_contents_neutralization() {
+    for (display, expected) in [
+        ("block", taffy::TextAlign::LegacyRight),
+        ("contents", taffy::TextAlign::Auto),
+    ] {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "html",
+            LayoutStyle::default(),
+            Some("display:block"),
+        );
+        let child = doc.append_element(
+            Some(root),
+            "div",
+            LayoutStyle {
+                text_align: taffy::TextAlign::LegacyRight,
+                ..LayoutStyle::default()
+            },
+            Some(format!("display:{display};text-align:center")),
+        );
+        doc.mark_in_document_flags();
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                BC::text_align(&tree.checked_query(child, ReadRole::BlockContainer)),
+                expected
+            );
+            tree.prepare_style_views();
+        }
+    }
+}
+
+#[test]
+fn block_view_preserves_constructor_compressible_replaced_supplement() {
+    let mut doc = Document::new();
+    let child = doc.append_element(
+        Some(0),
+        "div",
+        LayoutStyle {
+            item_is_compressible_replaced: true,
+            ..LayoutStyle::default()
+        },
+        Some("display:block;width:31px;height:7px"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    for compressible in [true, false] {
+        tree.layout_style_for_key_mut(child)
+            .unwrap()
+            .item_is_compressible_replaced = compressible;
+        tree.prepare_style_views();
+        for role in [ReadRole::CoreContainer, ReadRole::BlockItem, ReadRole::Oof] {
+            let query = tree.checked_query(child, role);
+            assert!(!query.is_replaced());
+            assert_eq!(query.is_compressible_replaced(), compressible);
+        }
+    }
+}

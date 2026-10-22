@@ -111,6 +111,7 @@ fn frame_snapshot_ignores_later_pass_and_metadata() {
     tree.layout_style_for_key_mut(child)
         .unwrap()
         .scrollbar_width = 20.0;
+    tree.layout_style_for_key_mut(child).unwrap().text_align = taffy::TextAlign::LegacyRight;
     tree.prepare_style_views();
     let block = frame(&mut tree, parent, child, true);
     with_transposed_frame(&mut tree, block, |tree| {
@@ -122,11 +123,20 @@ fn frame_snapshot_ignores_later_pass_and_metadata() {
         tree.layout_style_for_key_mut(child)
             .unwrap()
             .scrollbar_width = 30.0;
+        tree.layout_style_for_key_mut(child).unwrap().text_align = taffy::TextAlign::LegacyCenter;
         tree.prepare_style_views();
         let live = tree.checked_query(child, ReadRole::CoreContainer);
         assert_eq!(live.size().width, taffy::Dimension::length(99.0));
         assert!(live.is_containing_block().fixed);
         assert_eq!(live.scrollbar_width(), 30.0);
+        assert_eq!(
+            taffy::BlockContainerStyle::text_align(&live),
+            taffy::TextAlign::LegacyCenter
+        );
+        assert_eq!(
+            taffy::BlockContainerStyle::text_align(&tree.checked_query(child, ReadRole::BlockItem)),
+            taffy::TextAlign::LegacyRight
+        );
         assert_eq!(
             tree.checked_query(child, ReadRole::BlockItem)
                 .scrollbar_width(),
@@ -447,4 +457,38 @@ fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
             );
         }
     }
+}
+
+#[test]
+fn frozen_sizing_undo_rejects_reused_frame_generation() {
+    let (mut doc, cascade, child, _) =
+        fixture_with_styles("display:block", "display:block;width:31px;height:7px");
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut blocks = vec![frame(&mut tree, parent, child, true)];
+    prepare_frame_views(&mut tree, &mut blocks[0]);
+    let mut index = TransposedStyleIndex::default();
+    index.register(&blocks[0], 0);
+    let mut undo = TransposedSizingUndo::prepare(&blocks, &index, child)
+        .pop()
+        .unwrap();
+    undo.apply(
+        &mut blocks,
+        &OwnedPropertyOverride::length(LengthProperty::Width, L::Px(20.0), true).unwrap(),
+    );
+    blocks[0].id += 1;
+    let panic =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| undo.restore(&mut blocks)))
+            .unwrap_err();
+    assert!(
+        panic
+            .downcast_ref::<String>()
+            .unwrap()
+            .contains("scope restores the same transposed frame")
+    );
+    assert_eq!(
+        blocks[0].child_views[&child].view().size().height,
+        taffy::Dimension::length(20.0)
+    );
 }

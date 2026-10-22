@@ -513,19 +513,21 @@ fn pagination_axis_changes_discard_cached_table_preparation() {
         1
     );
     let physical_cell = session.nodes[cell].unrounded_layout.size;
-    let transposed = TransposedDocument::transpose(
+    TransposedDocument::with_transposed(
         &mut session,
         root,
         FlowAxes {
             right_to_left: false,
         },
         800.0,
+        |session, _| {
+            assert!(session.context.pagination_on_transposed_axes);
+            // Pagination consumes geometry; native layout cannot re-enter here.
+            let rejected =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(session)));
+            assert!(rejected.is_err());
+        },
     );
-    assert!(session.context.pagination_on_transposed_axes);
-    // Pagination consumes retained geometry; it must not re-enter table layout.
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(&mut session)));
-    assert!(rejected.is_err());
-    transposed.restore(&mut session);
     assert_eq!(layout(&mut session).size, original);
     assert_eq!(
         crate::layout::table::GRID_BUILDS.with(|count| count.get()),
@@ -665,9 +667,17 @@ fn pagination_error_and_panic_restore_binding() {
 
 #[test]
 fn pagination_identity_change_is_rejected() {
-    for (panic_body, add_key) in [(false, false), (true, false), (false, true), (true, true)] {
+    for (panic_body, mutation) in [
+        (false, 0),
+        (true, 0),
+        (false, 1),
+        (true, 1),
+        (false, 2),
+        (true, 2),
+    ] {
         let mut doc = Document::new();
         let root = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        doc.append_element(Some(root), "div", Style::default(), None::<&str>);
         let mut session = LayoutSession::new(&mut doc);
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             TransposedDocument::with_transposed(
@@ -679,10 +689,15 @@ fn pagination_identity_change_is_rejected() {
                 800.0,
                 |s, _| {
                     // Even replacing an empty generated range advances its identity.
-                    if add_key {
-                        s.append_element(Some(root), "div", Style::default(), None::<&str>);
-                    } else {
-                        s.nodes.set_anonymous_cells(Vec::new());
+                    match mutation {
+                        0 => s.nodes.set_anonymous_cells(Vec::new()),
+                        1 => {
+                            s.append_element(Some(root), "div", Style::default(), None::<&str>);
+                        }
+                        _ => {
+                            s.nodes.pop();
+                            s.document.invalidate_layout_cache();
+                        }
                     }
                     if panic_body {
                         std::panic::panic_any(719_u64);

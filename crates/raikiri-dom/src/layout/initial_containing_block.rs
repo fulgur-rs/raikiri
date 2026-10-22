@@ -67,6 +67,7 @@ pub(super) fn recipe_facts(
                 }),
             claims: None,
             scrollbar_width: 0.0,
+            legacy_text_align: taffy::TextAlign::Auto,
         },
     }
 }

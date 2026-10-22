@@ -395,14 +395,6 @@ impl TransposedDocument {
     /// Map the paginated `document` back to physical axes. A box that
     /// pagination left alone, in a parent that kept its size, gets its
     /// original layout back exactly.
-    #[cfg(test)]
-    pub(super) fn restore(self, document: &mut LayoutSession<'_>) {
-        assert!(
-            self.restore_inner(document),
-            "pagination must preserve box identities and generations"
-        );
-    }
-
     fn restore_inner(self, document: &mut LayoutSession<'_>) -> bool {
         let unchanged = self.generated_generation == document.nodes.generated_generation()
             && self.prepared_stamp == document.box_style_data.stamp()
