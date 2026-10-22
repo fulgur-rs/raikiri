@@ -212,10 +212,7 @@ pub fn build_rule_tree_with_consumer_properties(
     doc: &UncascadedDocument,
     consumer_properties: &[ConsumerPropertyRegistration],
 ) -> RuleTree {
-    fill_rule_tree(
-        RuleTree::empty_with_consumer_properties(consumer_properties),
-        doc,
-    )
+    fill_rule_tree(doc, consumer_properties, RuleTreeLimits::default())
 }
 
 /// Build a rule tree configured for the supplied consumer-owned properties,
@@ -230,25 +227,42 @@ pub fn build_rule_tree_with_limits(
     consumer_properties: &[ConsumerPropertyRegistration],
     limits: &RuleTreeLimits,
 ) -> Result<RuleTree, CascadeError> {
-    let tree = fill_rule_tree(
-        RuleTree::empty_with_consumer_properties(consumer_properties).with_limits(*limits),
-        doc,
-    );
+    let tree = fill_rule_tree(doc, consumer_properties, *limits);
     match tree.limit_exceeded() {
         Some(error) => Err(error),
         None => Ok(tree),
     }
 }
 
-/// Adds the document's stylesheets to `tree`, each with its origin.
-fn fill_rule_tree(mut tree: RuleTree, doc: &UncascadedDocument) -> RuleTree {
-    // Map every stylesheet associated with the Document to an Origin by kind.
-    // Call order (insertion order) determines cascade source_order.
-    let mut dom_stylesheets = doc.dom.stylesheets();
-    for (source, kind) in dom_stylesheets
-        .by_ref()
-        .take(doc.user_stylesheet_insertion_index)
-    {
+/// Builds the document's rule tree, keeping each stylesheet's origin and order.
+fn fill_rule_tree(
+    doc: &UncascadedDocument,
+    consumer_properties: &[ConsumerPropertyRegistration],
+    limits: RuleTreeLimits,
+) -> RuleTree {
+    // Only a fresh, default-context tree can use the fixed UA seed. Other
+    // contexts must parse from the start to preserve partial retention and
+    // the first exceeded limit, as well as consumer property name collisions.
+    let mut dom_stylesheets = doc.dom.stylesheets().peekable();
+    let mut before_user = doc.user_stylesheet_insertion_index;
+    let seed = (consumer_properties.is_empty()
+        && limits == RuleTreeLimits::default()
+        && before_user > 0
+        && dom_stylesheets.peek().is_some_and(|(source, kind)| {
+            *source == crate::MINIMAL_UA_CSS && matches!(kind, StylesheetKind::UserAgent)
+        }))
+    .then(crate::ua::prepared_rule_tree)
+    .flatten();
+    let mut tree = if let Some(tree) = seed {
+        dom_stylesheets.next();
+        before_user -= 1;
+        tree
+    } else {
+        RuleTree::empty_with_consumer_properties(consumer_properties).with_limits(limits)
+    };
+    // Call order determines cascade source_order, including sheets added to
+    // the DOM before or after the parsed consumer stylesheets.
+    for (source, kind) in dom_stylesheets.by_ref().take(before_user) {
         let origin = stylesheet_kind_to_origin(kind);
         tree.add_stylesheet(source, origin);
     }

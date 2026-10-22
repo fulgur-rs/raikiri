@@ -169,3 +169,140 @@ fn build_cascaded_with_options_reports_a_passed_limit() {
     .expect("no selector test limit");
     assert_eq!(result.computed.len(), doc.dom.node_count());
 }
+
+fn uncached_rule_tree(
+    doc: &UncascadedDocument,
+    consumer: &[ConsumerPropertyRegistration],
+    limits: RuleTreeLimits,
+) -> RuleTree {
+    let mut tree = RuleTree::empty_with_consumer_properties(consumer).with_limits(limits);
+    let mut sheets = doc.dom.stylesheets();
+    for (source, kind) in sheets.by_ref().take(doc.user_stylesheet_insertion_index) {
+        tree.add_stylesheet(source, stylesheet_kind_to_origin(kind));
+    }
+    for sheet in &doc.user_stylesheet_sources {
+        add_sheet(&mut tree, sheet, Origin::User);
+    }
+    for (source, kind) in sheets {
+        tree.add_stylesheet(source, stylesheet_kind_to_origin(kind));
+    }
+    for sheet in &doc.stylesheet_sources {
+        add_sheet(&mut tree, sheet, Origin::Author);
+    }
+    tree
+}
+
+fn assert_same_cascade(doc: &UncascadedDocument, actual: &RuleTree, expected: &RuleTree) {
+    use cssparser::ToCss;
+    assert_eq!(actual.rules(), expected.rules());
+    assert_eq!(actual.style_rules().len(), expected.style_rules().len());
+    for (a, b) in actual.style_rules().iter().zip(expected.style_rules()) {
+        assert_eq!(a.selectors.to_css_string(), b.selectors.to_css_string());
+        assert_eq!(a.declarations(), b.declarations());
+        assert_eq!((a.source_order, a.origin), (b.source_order, b.origin));
+    }
+    for media in [MediaContext::print(), MediaContext::default()] {
+        let a = raikiri_style::cascade_with_media_context(&doc.dom, actual, &media).unwrap();
+        let b = raikiri_style::cascade_with_media_context(&doc.dom, expected, &media).unwrap();
+        assert_eq!(a.computed, b.computed);
+        assert_eq!(a.page_values, b.page_values);
+    }
+}
+
+#[test]
+fn prepared_ua_preserves_author_namespace_media_layer_and_user_precedence() {
+    let doc = crate::parse(
+        b"<!doctype html><style>@namespace svg 'http://www.w3.org/2000/svg'; svg|rect {display:block}</style><style>@layer a,b; @layer b {p {color:red}} @layer a {p {color:blue}} @media print {p {font-size:24px}}</style><p>x</p><svg><rect/></svg>".as_slice(),
+        &crate::ParseOptions {extra_stylesheets: &["p {color:green !important}"], network: None, base_url: None},
+    ).unwrap();
+    let expected = uncached_rule_tree(&doc, &[], RuleTreeLimits::default());
+    for _ in 0..2 {
+        assert_same_cascade(&doc, &build_rule_tree(&doc), &expected);
+    }
+}
+
+#[test]
+fn prepared_ua_does_not_mix_consumer_registrations() {
+    let doc = parsed_extra_stylesheet("p {display:none}");
+    for registrations in [
+        vec![ConsumerPropertyRegistration::keyword(
+            "display",
+            &["block", "none"],
+        )],
+        vec![ConsumerPropertyRegistration::integer("display")],
+        vec![],
+    ] {
+        let actual = build_rule_tree_with_consumer_properties(&doc, &registrations);
+        let expected = uncached_rule_tree(&doc, &registrations, RuleTreeLimits::default());
+        assert_same_cascade(&doc, &actual, &expected);
+        assert_eq!(actual.consumer_property_registrations(), registrations);
+    }
+}
+
+#[test]
+fn prepared_ua_preserves_low_and_nondefault_limit_errors() {
+    let doc = parsed_extra_stylesheet("p {color:green; margin:2px}");
+    for limit in [0, 1, 86, 87, 88, 100, 200] {
+        for field in 0..4 {
+            let mut limits = RuleTreeLimits::default();
+            match field {
+                0 => limits.max_rules = Some(limit),
+                1 => limits.max_selectors = Some(limit),
+                2 => limits.max_declarations = Some(limit),
+                _ => {
+                    limits.max_rules = Some(limit);
+                    limits.max_selectors = Some(limit);
+                    limits.max_declarations = Some(limit);
+                }
+            }
+            let expected = uncached_rule_tree(&doc, &[], limits);
+            match (
+                build_rule_tree_with_limits(&doc, &[], &limits),
+                expected.limit_exceeded(),
+            ) {
+                (Ok(actual), None) => assert_same_cascade(&doc, &actual, &expected),
+                (Err(a), Some(b)) => assert_eq!(format!("{a:?}"), format!("{b:?}")),
+                _ => panic!("limit outcome changed"),
+            }
+        }
+    }
+}
+
+#[test]
+fn prepared_ua_trees_are_independent_and_preceding_sources_keep_their_order() {
+    let doc = parsed_extra_stylesheet("p {color:green}");
+    let mut a = build_rule_tree(&doc);
+    let b = build_rule_tree(&doc);
+    a.add_stylesheet("p {color:blue}", Origin::Author);
+    let expected = uncached_rule_tree(&doc, &[], RuleTreeLimits::default());
+    assert_same_cascade(&doc, &b, &expected);
+    assert!(a.style_rules().len() > b.style_rules().len());
+
+    for (sources, before_user) in [
+        (
+            vec![
+                ("p {color:red}", StylesheetKind::UserAgent),
+                (crate::MINIMAL_UA_CSS, StylesheetKind::UserAgent),
+            ],
+            2,
+        ),
+        (vec![(crate::MINIMAL_UA_CSS, StylesheetKind::Author)], 1),
+        (vec![(crate::MINIMAL_UA_CSS, StylesheetKind::UserAgent)], 0),
+        (vec![], 1),
+    ] {
+        let mut doc = parsed_extra_stylesheet("p {color:green}");
+        let mut dom = raikiri_dom::Document::new();
+        let p = dom.create_detached_element("p").unwrap();
+        dom.append_child(dom.root_index(), p).unwrap();
+        for (source, kind) in sources {
+            dom.add_stylesheet(source, kind);
+        }
+        doc.dom = dom;
+        doc.user_stylesheet_insertion_index = before_user;
+        assert_same_cascade(
+            &doc,
+            &build_rule_tree(&doc),
+            &uncached_rule_tree(&doc, &[], RuleTreeLimits::default()),
+        );
+    }
+}
