@@ -258,12 +258,20 @@ impl<'a> StyleViews<'a> {
 impl LayoutSession<'_> {
     #[inline]
     pub(crate) fn assert_style_queries_allowed(&self) {
+        self.assert_native_style_access_allowed();
         assert!(
             !self
                 .style_views
                 .as_ref()
                 .is_some_and(|views| views.preparation_batch),
             "style queries run after the preparation batch"
+        );
+    }
+
+    pub(crate) fn assert_native_style_access_allowed(&self) {
+        assert!(
+            !self.context.pagination_on_transposed_axes,
+            "native style queries and updates are forbidden during transposed pagination"
         );
     }
 
@@ -457,6 +465,7 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn begin_style_bridge(&mut self) {
+        self.assert_native_style_access_allowed();
         self.assert_preparation_outside_legacy_scopes();
         if let Some(views) = &mut self.style_views {
             views.boxes.clear();

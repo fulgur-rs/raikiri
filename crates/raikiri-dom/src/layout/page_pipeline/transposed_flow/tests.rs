@@ -521,17 +521,203 @@ fn pagination_axis_changes_discard_cached_table_preparation() {
         },
         800.0,
     );
-    let rotated = layout(&mut session).size;
-    assert_eq!(
-        crate::layout::table::GRID_BUILDS.with(|count| count.get()),
-        2
-    );
-    assert_ne!(rotated, original);
+    assert!(session.context.pagination_on_transposed_axes);
+    // Pagination consumes retained geometry; it must not re-enter table layout.
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(&mut session)));
+    assert!(rejected.is_err());
     transposed.restore(&mut session);
     assert_eq!(layout(&mut session).size, original);
     assert_eq!(
         crate::layout::table::GRID_BUILDS.with(|count| count.get()),
-        3
+        2
     );
     assert_eq!(session.nodes[cell].unrounded_layout.size, physical_cell);
+}
+
+#[test]
+fn pagination_queries_and_updates_are_rejected() {
+    use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+    use raikiri_style::ComputedLengthPercentageOrAuto as Length;
+    use taffy::{
+        LayoutBlockContainer, LayoutContainingBlock, LayoutFlexboxContainer, LayoutGridContainer,
+        LayoutPartialTree,
+    };
+    let mut doc = Document::new();
+    let root = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;width:10px;height:20px"),
+    );
+    let mut session = LayoutSession::new(&mut doc);
+    session.context.pagination_on_transposed_axes = true;
+    type Attempt = Box<dyn Fn(&mut LayoutSession<'_>)>;
+    let attempts: Vec<Attempt> = vec![
+        Box::new(move |s| {
+            let _ = s.get_core_container_style(root.into());
+        }),
+        Box::new(move |s| {
+            let _ = s.get_block_container_style(root.into());
+        }),
+        Box::new(move |s| {
+            let _ = s.get_block_child_style(root.into());
+        }),
+        Box::new(move |s| {
+            let _ = s.get_oof_item_style(root.into());
+        }),
+        Box::new(move |s| {
+            let _ = s.get_flexbox_container_style(root.into());
+        }),
+        Box::new(move |s| {
+            let _ = s.get_flexbox_child_style(root.into());
+        }),
+        Box::new(move |s| {
+            let _ = s.get_grid_container_style(root.into());
+        }),
+        Box::new(move |s| {
+            let _ = s.get_grid_child_style(root.into());
+        }),
+        Box::new(move |s| {
+            s.record_pass_override(
+                root,
+                OwnedPropertyOverride::length(LengthProperty::Width, Length::Px(99.0), false)
+                    .unwrap(),
+            )
+        }),
+        Box::new(|s| s.push_overrides(Vec::new())),
+        Box::new(move |s| {
+            s.begin_edge_recording(root, 100.0);
+        }),
+        Box::new(|s| s.prepare_style_views()),
+        Box::new(|s| s.begin_style_bridge()),
+        Box::new(move |s| {
+            s.compute_child_layout(
+                root.into(),
+                taffy::LayoutInput {
+                    run_mode: taffy::RunMode::PerformLayout,
+                    sizing_mode: taffy::SizingMode::InherentSize,
+                    axis: taffy::RequestedAxis::Horizontal,
+                    known_dimensions: taffy::Size::NONE,
+                    parent_size: taffy::Size::NONE,
+                    available_space: taffy::Size {
+                        width: taffy::AvailableSpace::MaxContent,
+                        height: taffy::AvailableSpace::MaxContent,
+                    },
+                    known_dimensions_are_definite: taffy::Size {
+                        width: false,
+                        height: false,
+                    },
+                    vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+                },
+            );
+        }),
+    ];
+    for (i, attempt) in attempts.into_iter().enumerate() {
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| attempt(&mut session)))
+                .is_err(),
+            "pagination operation {i} was accepted"
+        );
+    }
+}
+
+#[test]
+fn pagination_error_and_panic_restore_binding() {
+    let mut doc = Document::new();
+    let root = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;width:10px;height:20px"),
+    );
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    let size = session.layout_style_for_key(root).unwrap().size;
+    let axes = FlowAxes {
+        right_to_left: true,
+    };
+    let result: Result<(), u8> =
+        TransposedDocument::with_transposed(&mut session, root, axes, 800.0, |s, _| {
+            assert!(s.context.pagination_on_transposed_axes);
+            assert_eq!(
+                s.layout_style_for_key(root).unwrap().size.width,
+                size.height
+            );
+            Err(19)
+        });
+    assert_eq!(result, Err(19));
+    assert_eq!(session.layout_style_for_key(root).unwrap().size, size);
+    assert!(!session.context.pagination_on_transposed_axes);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        TransposedDocument::with_transposed(&mut session, root, axes, 800.0, |_, _| {
+            std::panic::panic_any(719_u64)
+        });
+    }))
+    .unwrap_err();
+    assert_eq!(panic.downcast_ref::<u64>(), Some(&719));
+    assert_eq!(session.layout_style_for_key(root).unwrap().size, size);
+    assert!(!session.context.pagination_on_transposed_axes);
+    session.assert_style_queries_allowed();
+    assert_eq!(taffy::CoreStyle::size(&session.style_view(root)), size);
+}
+
+#[test]
+fn pagination_identity_change_is_rejected() {
+    for (panic_body, add_key) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut doc = Document::new();
+        let root = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let mut session = LayoutSession::new(&mut doc);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            TransposedDocument::with_transposed(
+                &mut session,
+                root,
+                FlowAxes {
+                    right_to_left: false,
+                },
+                800.0,
+                |s, _| {
+                    // Even replacing an empty generated range advances its identity.
+                    if add_key {
+                        s.append_element(Some(root), "div", Style::default(), None::<&str>);
+                    } else {
+                        s.nodes.set_anonymous_cells(Vec::new());
+                    }
+                    if panic_body {
+                        std::panic::panic_any(719_u64);
+                    }
+                },
+            );
+        }))
+        .unwrap_err();
+        if panic_body {
+            assert_eq!(panic.downcast_ref::<u64>(), Some(&719));
+        }
+        assert!(!session.context.pagination_on_transposed_axes);
+        session.assert_style_queries_allowed();
+    }
+}
+
+#[test]
+fn pagination_entry_rejects_active_edge_scope() {
+    let mut doc = Document::new();
+    let root = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let mut session = LayoutSession::new(&mut doc);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session.with_resolved_edges(root, 100.0, false, |s| {
+            TransposedDocument::with_transposed(
+                s,
+                root,
+                FlowAxes {
+                    right_to_left: true,
+                },
+                800.0,
+                |_, _| (),
+            );
+        });
+    }));
+    assert!(panic.is_err());
+    assert!(session.context.resolved_edge_bases.is_empty());
+    assert!(!session.context.pagination_on_transposed_axes);
 }

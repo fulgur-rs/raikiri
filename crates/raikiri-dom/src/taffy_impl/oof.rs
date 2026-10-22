@@ -20,6 +20,7 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         Self: 'a;
 
     fn get_oof_item_style(&self, node: NodeId) -> Self::OofItemStyle<'_> {
+        self.assert_style_queries_allowed();
         let index = usize::from(node);
         let style = self
             .transposed_child_style(index)

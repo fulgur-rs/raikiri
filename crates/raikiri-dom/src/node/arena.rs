@@ -40,9 +40,21 @@ pub(crate) struct NodeArena {
     /// the DOM.
     anonymous_base: usize,
     initial_containing_block: Option<Box<Node>>,
+    generated_generation: u64,
 }
 
 impl NodeArena {
+    pub(crate) fn generated_generation(&self) -> u64 {
+        self.generated_generation
+    }
+
+    fn advance_generated_generation(&mut self) {
+        self.generated_generation = self
+            .generated_generation
+            .checked_add(1)
+            .expect("generated box identity generation exhausted");
+    }
+
     /// Snapshot the current source and generated key ranges without allocating.
     pub(crate) fn layout_keys(&self) -> impl Iterator<Item = usize> + use<> {
         let tables = self.anonymous_base..self.anonymous_base + self.anonymous_tables.len();
@@ -120,6 +132,7 @@ impl NodeArena {
 
     /// Replace the page-area root without adding a source DOM node.
     pub(crate) fn set_initial_containing_block(&mut self, node: Node) -> usize {
+        self.advance_generated_generation();
         self.initial_containing_block = Some(Box::new(node));
         INITIAL_CONTAINING_BLOCK_KEY
     }
@@ -134,6 +147,7 @@ impl NodeArena {
     /// Replace the anonymous cells of the previous pass. Their keys follow
     /// the source nodes there are now.
     pub(crate) fn set_anonymous_cells(&mut self, cells: Vec<Node>) {
+        self.advance_generated_generation();
         self.anonymous_cells = cells;
         self.anonymous_base = self.source.len();
     }
@@ -142,6 +156,7 @@ impl NodeArena {
     /// the keys of the anonymous cells, so table fixup sets the tables
     /// before it creates any cell.
     pub(crate) fn set_anonymous_tables(&mut self, tables: Vec<Node>) {
+        self.advance_generated_generation();
         self.anonymous_tables = tables;
         self.anonymous_base = self.source.len();
     }
@@ -170,6 +185,7 @@ impl From<Vec<Node>> for NodeArena {
             anonymous_tables: Vec::new(),
             anonymous_cells: Vec::new(),
             initial_containing_block: None,
+            generated_generation: 0,
         }
     }
 }

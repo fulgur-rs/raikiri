@@ -223,6 +223,7 @@ impl LayoutSession<'_> {
         idx: usize,
         basis: f32,
     ) -> Option<raikiri_layout_style::PercentBasis> {
+        self.assert_style_queries_allowed();
         use raikiri_layout_style::PercentBasis;
         let key = self.nodes.box_key(idx).expect("edge scope has a box key");
         self.style_views.as_mut().and_then(|views| {

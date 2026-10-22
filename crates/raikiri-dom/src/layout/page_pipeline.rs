@@ -3062,28 +3062,28 @@ fn layout_pages_core(
     // area from the flow. The paginator breaks along y, so it runs on the
     // transposed document. The pages keep the inline size of the first page
     // area.
-    let transposed = transposed_flow::TransposedDocument::transpose(
+    transposed_flow::TransposedDocument::with_transposed(
         &mut session,
         body_id,
         axes,
         insets.page_area_width(margins, page_box),
-    );
-    let transposed_cascade = transposed.cascade(cascade);
-    let pages = paginate_flow(
-        &mut session,
-        &transposed_cascade,
-        body_id,
-        PageFlowGeometry {
-            page_box: axes.page_box(page_box),
-            margins: axes.margins(margins),
-            insets: axes.insets(insets),
+        |session, transposed| {
+            let transposed_cascade = transposed.cascade(cascade);
+            paginate_flow(
+                session,
+                &transposed_cascade,
+                body_id,
+                PageFlowGeometry {
+                    page_box: axes.page_box(page_box),
+                    margins: axes.margins(margins),
+                    insets: axes.insets(insets),
+                },
+                page_widths,
+                &[],
+                control,
+            )
         },
-        page_widths,
-        &[],
-        control,
-    );
-    transposed.restore(&mut session);
-    pages
+    )
 }
 
 /// The direction in which the pages of `document` continue, when they follow

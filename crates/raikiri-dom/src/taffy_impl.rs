@@ -605,6 +605,7 @@ impl LayoutPartialTree for LayoutSession<'_> {
         Self: 'a;
 
     fn get_core_container_style(&self, node_id: NodeId) -> Self::CoreContainerStyle<'_> {
+        self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
         let style = self.layout_node_with_style(idx).unwrap().style;
         BlockChildStyle::for_container(
@@ -644,6 +645,7 @@ impl LayoutPartialTree for LayoutSession<'_> {
     }
 
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
         if inputs.run_mode == RunMode::PerformLayout
             && let Some(capture) = self.context.oof_content_limit_inputs.last_mut()
@@ -673,6 +675,7 @@ impl LayoutSession<'_> {
         mut inputs: LayoutInput,
         mut block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
+        self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
@@ -3557,6 +3560,7 @@ impl LayoutBlockContainer for LayoutSession<'_> {
         Self: 'a;
 
     fn get_block_container_style(&self, node_id: NodeId) -> Self::BlockContainerStyle<'_> {
+        self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
         self.transposed_container_style(idx)
             .unwrap_or(self.layout_node_with_style(idx).unwrap().style)
@@ -3571,6 +3575,7 @@ impl LayoutBlockContainer for LayoutSession<'_> {
     /// float, say): taffy sizes such a container from its contents only
     /// afterwards, and a zero inset fixed now could not follow that width.
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
+        self.assert_style_queries_allowed();
         let child = usize::from(child_node_id);
         if let Some(style) = self.transposed_child_style(child) {
             return BlockChildStyle::new(style, None);

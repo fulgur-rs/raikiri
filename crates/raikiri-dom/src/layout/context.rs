@@ -152,6 +152,7 @@ impl<'doc> LayoutSession<'doc> {
     }
 
     pub(crate) fn cache_override_changed(&mut self, idx: usize) {
+        self.assert_native_style_access_allowed();
         let key = self
             .nodes
             .box_key(idx)
