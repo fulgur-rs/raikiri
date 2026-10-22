@@ -263,7 +263,7 @@ fn built_grid_clips_spans_at_row_groups_before_indexing() {
             let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
             crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
         }
-        let grid = super::super::build_table_grid(&doc, table).unwrap();
+        let grid = super::build_table_grid_in_document(&mut doc, table).unwrap();
         let index = CellIndex::new(&grid);
         assert_eq!(grid.n_cols, 3);
         assert_eq!(grid.cells[0].row_span, 2);
@@ -370,7 +370,7 @@ fn collapsed_boundary_search_work_grows_with_grid_area() {
         TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.set(0));
         super::resolve_collapsed_cell_borders_in_document(&mut doc, &grid, &index);
         let lines =
-            super::compute_collapsed_lines_in_document(&doc, &grid, &index, &Rect::ZERO, None);
+            super::compute_collapsed_lines_in_document(&mut doc, &grid, &index, &Rect::ZERO, None);
         let visits = TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.get());
         let area = usize::from(side).pow(2);
         eprintln!("{side}x{side}: {visits} cell lookup steps");

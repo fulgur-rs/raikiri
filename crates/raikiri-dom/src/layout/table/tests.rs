@@ -6,6 +6,7 @@ use raikiri_style::property::{
 };
 use raikiri_style::{ComputedLength, ResolveContext, build_rule_tree, cascade, resolve_border};
 use raikiri_traits::PageBox;
+use taffy::CoreStyle;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size};
 
@@ -29,6 +30,49 @@ fn with_layout_session<R>(
 ) -> R {
     let mut session = LayoutSession::new(document);
     layout(&mut session)
+}
+
+pub(super) fn build_table_grid_in_document(
+    document: &mut Document,
+    table: usize,
+) -> Result<super::TableGrid, raikiri_traits::LayoutError> {
+    with_layout_session(document, |session| super::build_table_grid(session, table))
+}
+
+/// A length written as a pass override: it persists across every style scope,
+/// as the authored value of a box does.
+fn length_override(
+    property: raikiri_layout_style::LengthProperty,
+    value: raikiri_style::ComputedLengthPercentageOrAuto,
+) -> raikiri_layout_style::OwnedPropertyOverride {
+    raikiri_layout_style::OwnedPropertyOverride::length(property, value, false).unwrap()
+}
+
+fn width_override(
+    width: raikiri_style::ComputedLengthPercentageOrAuto,
+) -> raikiri_layout_style::OwnedPropertyOverride {
+    length_override(raikiri_layout_style::LengthProperty::Width, width)
+}
+
+fn margin_left_override(
+    margin: raikiri_style::ComputedLengthPercentageOrAuto,
+) -> raikiri_layout_style::OwnedPropertyOverride {
+    length_override(raikiri_layout_style::LengthProperty::MarginLeft, margin)
+}
+
+/// The border widths each of `boxes` has right now, read the way table layout
+/// reads them: through the style view with scoped overrides.
+fn borders_in_document(document: &mut Document, boxes: &[usize]) -> Vec<Rect<LengthPercentage>> {
+    with_layout_session(document, |session| {
+        boxes
+            .iter()
+            .map(|&idx| session.table_style(idx).border())
+            .collect()
+    })
+}
+
+fn border_in_document(document: &mut Document, idx: usize) -> Rect<LengthPercentage> {
+    borders_in_document(document, &[idx])[0]
 }
 
 fn compute_table_layout_in_session(
@@ -154,7 +198,7 @@ fn rowspans_reserve_columns_in_native_and_prepared_grids() {
             let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
             crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
         }
-        let grid = super::build_table_grid(&doc, table).unwrap();
+        let grid = build_table_grid_in_document(&mut doc, table).unwrap();
         assert_eq!(grid.n_cols, 2);
         assert_eq!(
             grid.cells
@@ -204,7 +248,7 @@ fn a_rowspan_that_fills_the_column_limit_rejects_a_cell_beyond_it() {
         "display:table-cell",
     );
     doc.mark_in_document_flags();
-    let error = super::build_table_grid(&doc, table).unwrap_err();
+    let error = build_table_grid_in_document(&mut doc, table).unwrap_err();
     assert!(
         matches!(error, raikiri_traits::LayoutError::Internal { message } if message == "table column grid exceeds supported bounds")
     );
@@ -324,7 +368,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
         // Native callers may supply typed styles without running the CSS bridge.
         // Keep their real-cell grid identical to the prepared CSS path.
         assert_eq!(doc.table_objects.rows.contains_key(&table), prepared);
-        let grid = super::build_table_grid(&doc, table).unwrap();
+        let grid = build_table_grid_in_document(&mut doc, table).unwrap();
         assert_eq!(grid.n_cols, 2);
         assert_eq!(grid.rows.len(), 1);
         assert_eq!(
@@ -585,7 +629,7 @@ fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-    let mut grid = super::build_table_grid(&doc, table).unwrap();
+    let mut grid = build_table_grid_in_document(&mut doc, table).unwrap();
     let heights = with_layout_session(&mut doc, |session| {
         resolve_row_heights_in_session(session, &mut grid, &[40.0], (0.0, 0.0))
     })
@@ -669,7 +713,7 @@ fn table_column_grid_accepts_exact_representable_boundary() {
         let attribute = if columns { "span" } else { "colspan" };
         doc.set_element_attributes(last, vec![(attribute.into(), "535".into())]);
         crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
-        let grid = super::build_table_grid(&doc, table).unwrap();
+        let grid = build_table_grid_in_document(&mut doc, table).unwrap();
         assert_eq!(grid.n_cols, u16::MAX);
         if columns {
             assert_eq!(grid.col_widths.len(), usize::from(u16::MAX));
@@ -681,7 +725,7 @@ fn table_column_grid_accepts_exact_representable_boundary() {
             );
         }
         doc.set_element_attributes(last, vec![(attribute.into(), "536".into())]);
-        assert!(super::build_table_grid(&doc, table).is_err());
+        assert!(build_table_grid_in_document(&mut doc, table).is_err());
     }
 }
 
@@ -879,38 +923,15 @@ fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
 
     resolve_collapsed_cell_borders_in_document(&mut doc, &grid, &super::CellIndex::new(&grid));
 
-    assert_eq!(
-        doc.layout_style_for_key(cells[0]).unwrap().border.right,
-        LengthPercentage::length(5.0)
-    );
-    assert_eq!(
-        doc.layout_style_for_key(cells[1]).unwrap().border.left,
-        LengthPercentage::length(5.0)
-    );
-    assert_eq!(
-        doc.layout_style_for_key(cells[2]).unwrap().border.right,
-        LengthPercentage::length(9.0)
-    );
-    assert_eq!(
-        doc.layout_style_for_key(cells[3]).unwrap().border.left,
-        LengthPercentage::length(9.0)
-    );
-    assert_eq!(
-        doc.layout_style_for_key(cells[0]).unwrap().border.bottom,
-        LengthPercentage::length(7.0)
-    );
-    assert_eq!(
-        doc.layout_style_for_key(cells[2]).unwrap().border.top,
-        LengthPercentage::length(7.0)
-    );
-    assert_eq!(
-        doc.layout_style_for_key(cells[1]).unwrap().border.bottom,
-        LengthPercentage::length(9.0)
-    );
-    assert_eq!(
-        doc.layout_style_for_key(cells[3]).unwrap().border.top,
-        LengthPercentage::length(9.0)
-    );
+    let borders = borders_in_document(&mut doc, &cells);
+    assert_eq!(borders[0].right, LengthPercentage::length(5.0));
+    assert_eq!(borders[1].left, LengthPercentage::length(5.0));
+    assert_eq!(borders[2].right, LengthPercentage::length(9.0));
+    assert_eq!(borders[3].left, LengthPercentage::length(9.0));
+    assert_eq!(borders[0].bottom, LengthPercentage::length(7.0));
+    assert_eq!(borders[2].top, LengthPercentage::length(7.0));
+    assert_eq!(borders[1].bottom, LengthPercentage::length(9.0));
+    assert_eq!(borders[3].top, LengthPercentage::length(9.0));
 
     resolve_collapsed_border_pair_in_document(
         &mut doc,
@@ -1021,17 +1042,11 @@ fn an_edge_cell_side_yields_to_a_winning_table_border() {
 
     resolve_collapsed_table_edges_in_document(&mut doc, &grid, table);
 
+    let losing_bottom_border = border_in_document(&mut doc, losing).bottom;
     let losing_sides = doc.nodes[losing].collapsed_border().expect("resolved");
     assert_eq!(losing_sides.bottom.style(), BorderStyle::None);
     assert_eq!(losing_sides.bottom.width().px(), 0.0);
-    assert_eq!(
-        doc.layout_node_with_style(losing)
-            .unwrap()
-            .style
-            .border
-            .bottom,
-        LengthPercentage::length(0.0)
-    );
+    assert_eq!(losing_bottom_border, LengthPercentage::length(0.0));
     // The right side is an inner boundary, not a table edge.
     assert_eq!(losing_sides.right.style(), BorderStyle::Outset);
     // A cell wins a tie with the table.
@@ -1077,11 +1092,7 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
     assert_eq!(bottom.color, BorderColor::Resolved(red));
     assert_eq!(bottom.width().px(), 5.0);
     assert_eq!(
-        doc.layout_node_with_style(spanning)
-            .unwrap()
-            .style
-            .border
-            .bottom,
+        border_in_document(&mut doc, spanning).bottom,
         LengthPercentage::length(5.0)
     );
     for row in rows {
@@ -1248,7 +1259,7 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
     assert!(doc.nodes[bare_cell].collapsed_border().is_none());
     assert!(doc.nodes[bare_row].collapsed_border().is_none());
     assert_eq!(
-        doc.layout_node_with_style(cell).unwrap().style.border.top,
+        border_in_document(&mut doc, cell).top,
         LengthPercentage::length(3.0)
     );
 }
@@ -2636,7 +2647,12 @@ fn first_cell_baseline_descends_through_multiple_block_containers() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-    assert_eq!(super::first_cell_baseline(&doc, cell, 0.0), Some(22.0));
+    assert_eq!(
+        with_layout_session(&mut doc, |session| super::first_cell_baseline(
+            session, cell, 0.0
+        )),
+        Some(22.0)
+    );
 }
 
 #[test]
@@ -2708,16 +2724,18 @@ fn table_oof_candidates_use_the_rtl_border_and_scrollbar_area() {
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
 
-    let output = super::table_layout_output(
-        &doc,
-        table,
-        Size {
-            width: 100.0,
-            height: 100.0,
-        },
-        taffy::OofCandidates::new(),
-        taffy::RunMode::PerformLayout,
-    );
+    let output = with_layout_session(&mut doc, |session| {
+        super::table_layout_output(
+            session,
+            table,
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            taffy::OofCandidates::new(),
+            taffy::RunMode::PerformLayout,
+        )
+    });
 
     let area = output.oof_positioning_area.unwrap();
     assert_eq!(
@@ -3054,7 +3072,10 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
     doc.set_display(col_c, DisplayValue::TableColumn);
 
     doc.mark_in_document_flags();
-    let sizing = super::collect_col_widths(&doc, table).unwrap();
+    let sizing = with_layout_session(&mut doc, |session| {
+        super::collect_col_widths(session, table)
+    })
+    .unwrap();
 
     assert_eq!(sizing.len(), 4, "col_a + col_b(span=2) + col_c = 4 entries");
     assert_eq!(sizing[0].width, Dimension::length(40.0));
@@ -3079,7 +3100,10 @@ fn collect_rows_wraps_bare_cells_in_anonymous_row() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
+    with_layout_session(&mut doc, |session| {
+        super::collect_rows(session, table, &mut rows, &mut cells, &mut n_cols)
+    })
+    .unwrap();
 
     assert_eq!(rows.len(), 1, "bare cells wrap into a single anonymous row");
     assert_eq!(cells.len(), 2);
@@ -3112,11 +3136,14 @@ fn head_body_fixture() -> (Document, usize, usize, usize) {
 
 #[test]
 fn collect_rows_floats_first_header_group_to_top() {
-    let (doc, table, head_cell, body_cell) = head_body_fixture();
+    let (mut doc, table, head_cell, body_cell) = head_body_fixture();
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
+    with_layout_session(&mut doc, |session| {
+        super::collect_rows(session, table, &mut rows, &mut cells, &mut n_cols)
+    })
+    .unwrap();
 
     assert_eq!(cells.len(), 2);
     assert_eq!(
@@ -3128,11 +3155,14 @@ fn collect_rows_floats_first_header_group_to_top() {
 
 #[test]
 fn collect_rows_inner_no_reorder_keeps_dom_order_for_nested_call() {
-    let (doc, table, head_cell, body_cell) = head_body_fixture();
+    let (mut doc, table, head_cell, body_cell) = head_body_fixture();
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows_inner(&doc, table, &mut rows, &mut cells, &mut n_cols, false).unwrap();
+    with_layout_session(&mut doc, |session| {
+        super::collect_rows_inner(session, table, &mut rows, &mut cells, &mut n_cols, false)
+    })
+    .unwrap();
 
     assert_eq!(cells.len(), 2);
     assert_eq!(
@@ -3161,7 +3191,10 @@ fn collect_rows_inner_skips_character_data_between_rows() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
+    with_layout_session(&mut doc, |session| {
+        super::collect_rows(session, table, &mut rows, &mut cells, &mut n_cols)
+    })
+    .unwrap();
 
     assert_eq!(
         rows.len(),
@@ -3187,7 +3220,10 @@ fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols).unwrap();
+    with_layout_session(&mut doc, |session| {
+        super::collect_rows(session, table, &mut rows, &mut cells, &mut n_cols)
+    })
+    .unwrap();
 
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 1);
@@ -3206,7 +3242,10 @@ fn flush_pending_assigns_sequential_columns_respecting_colspan() {
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols).unwrap();
+    with_layout_session(&mut doc, |session| {
+        super::flush_pending(session, &mut pending, &mut rows, &mut cells, &mut n_cols)
+    })
+    .unwrap();
 
     assert!(pending.is_empty());
     assert_eq!(rows, vec![td_a]);
@@ -3218,12 +3257,15 @@ fn flush_pending_assigns_sequential_columns_respecting_colspan() {
 
 #[test]
 fn flush_pending_on_empty_pending_is_noop() {
-    let doc = Document::new();
+    let mut doc = Document::new();
     let mut pending: Vec<usize> = Vec::new();
     let mut rows = Vec::new();
     let mut cells = Vec::new();
     let mut n_cols = 0u16;
-    super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols).unwrap();
+    with_layout_session(&mut doc, |session| {
+        super::flush_pending(session, &mut pending, &mut rows, &mut cells, &mut n_cols)
+    })
+    .unwrap();
     assert!(rows.is_empty());
     assert!(cells.is_empty());
     assert_eq!(n_cols, 0);
@@ -3303,7 +3345,7 @@ fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
         bottom: 1.0,
     };
     let lines = compute_collapsed_lines_in_document(
-        &doc,
+        &mut doc,
         &grid,
         &super::CellIndex::new(&grid),
         &table_border,
@@ -3353,7 +3395,7 @@ fn compute_collapsed_lines_colspan_cell_only_absorbs_from_its_own_row() {
         col_widths: vec![],
     };
     let lines = compute_collapsed_lines_in_document(
-        &doc,
+        &mut doc,
         &grid,
         &super::CellIndex::new(&grid),
         &Rect::ZERO,
@@ -4367,11 +4409,13 @@ thread_local! {
 fn with_retained_border_state(
     doc: &mut Document,
     grid: &super::TableGrid,
-    resolve: impl FnOnce(&Document, &mut super::BorderState),
+    resolve: impl FnOnce(&LayoutSession<'_>, &mut super::BorderState),
 ) {
-    let mut state = super::BorderState::retained(doc, grid);
-    resolve(doc, &mut state);
-    publish_border_state_for_assertions(doc, &state);
+    with_layout_session(doc, |session| {
+        let mut state = super::BorderState::retained(session, grid);
+        resolve(session, &mut state);
+        publish_border_state_for_assertions(session, &state);
+    });
 }
 fn resolve_collapsed_cell_borders_in_document(
     doc: &mut Document,
@@ -4397,14 +4441,16 @@ fn resolve_collapsed_table_edges_in_document(
     });
 }
 fn compute_collapsed_lines_in_document(
-    doc: &Document,
+    doc: &mut Document,
     grid: &super::TableGrid,
     index: &super::CellIndex,
     border: &Rect<f32>,
     basis: Option<f32>,
 ) -> super::CollapsedLines {
-    let state = super::BorderState::retained(doc, grid);
-    super::compute_collapsed_lines(doc, &state, grid, index, border, basis)
+    with_layout_session(doc, |session| {
+        let state = super::BorderState::retained(session, grid);
+        super::compute_collapsed_lines(session, &state, grid, index, border, basis)
+    })
 }
 fn resolve_collapsed_border_pair_in_document(
     doc: &mut Document,
@@ -4434,39 +4480,32 @@ fn resolve_collapsed_border_pair_in_document(
     });
 }
 
-// Materialize the pure resolver result for legacy mathematical assertions.
-fn publish_border_state_for_assertions(doc: &mut Document, state: &super::BorderState) {
-    let entries = state.entries(doc);
+// Materialize the pure resolver result so assertions can read it back.
+fn publish_border_state_for_assertions(
+    session: &mut LayoutSession<'_>,
+    state: &super::BorderState,
+) {
+    let entries = state.entries(session);
     let changed: Vec<_> = state
         .cells
         .iter()
-        .filter(|cell| {
-            doc.layout_style_for_key(cell.node_id)
-                .expect("table cell layout style")
-                .border
-                != cell.widths
-        })
+        .filter(|cell| session.table_style(cell.node_id).border() != cell.widths)
         .map(|cell| cell.node_id)
         .collect();
     if !changed.is_empty() {
-        doc.layout_cache_context.invalidate();
+        session.layout_cache_context.invalidate();
     }
     for (key, entry) in entries {
-        let idx = doc.nodes.layout_index(key).expect("border key is live");
-        let _previous = entry
-            .apply_legacy_sizing(
-                doc.layout_style_for_key_mut(idx)
-                    .expect("border has a retained style"),
-            )
-            .expect("validated border entry");
+        let idx = session.nodes.layout_index(key).expect("border key is live");
+        session.record_pass_override(idx, entry);
     }
     for cell in &state.cells {
-        doc.table_layout_node_mut(cell.node_id).collapsed_border = cell.paint;
+        session.table_layout_node_mut(cell.node_id).collapsed_border = cell.paint;
     }
     for &(row, paint) in &state.rows {
-        doc.nodes[row].collapsed_border = paint;
+        session.nodes[row].collapsed_border = paint;
     }
     for cell in changed {
-        doc.table_layout_node_mut(cell).cache.clear();
+        session.table_layout_node_mut(cell).cache.clear();
     }
 }

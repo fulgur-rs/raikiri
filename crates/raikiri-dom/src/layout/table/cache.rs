@@ -77,11 +77,7 @@ pub(super) fn table_grid(
     // Intrinsic-size probes temporarily override retained sizes. Keep their
     // current values while sharing only the immutable placement topology.
     for cell in &mut grid.cells {
-        let style = doc
-            .layout_style_for_key(cell.node_id)
-            .expect("table cell layout style");
-        cell.specified_width = style.size.width;
-        cell.specified_min_width = style.min_size.width.into();
+        (cell.specified_width, cell.specified_min_width) = cell_specified_widths(doc, cell.node_id);
     }
     Ok(grid)
 }
