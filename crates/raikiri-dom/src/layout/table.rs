@@ -596,13 +596,10 @@ fn compute_table_layout_checked(
             // (which is only the item's hypothetical basis); otherwise a
             // shrinking table item snaps back to its pre-flex percentage width.
             let mut width = if parent_is_flex_or_grid {
-                effective_known.width.or(specified_w).unwrap_or_else(|| {
-                    let natural = padding_border_size.width;
-                    match effective_known.width {
-                        Some(container) => f32_max_compat(natural.min(container), 0.0),
-                        None => natural,
-                    }
-                })
+                effective_known
+                    .width
+                    .or(specified_w)
+                    .unwrap_or(padding_border_size.width)
             } else {
                 specified_w.unwrap_or_else(|| {
                     let natural = padding_border_size.width;

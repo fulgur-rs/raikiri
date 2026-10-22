@@ -669,3 +669,46 @@ fn border_scope_cache_hit_and_forced_miss_keep_geometry_and_paint() {
         }
     }
 }
+
+#[test]
+fn border_scope_empty_table_keeps_natural_and_assigned_widths() {
+    for (parent_display, parent_css, assigned) in [
+        (DisplayValue::Block, "display:block", false),
+        (DisplayValue::Flex, "display:flex", true),
+        (DisplayValue::Grid, "display:grid", true),
+    ] {
+        for collapse in [false, true] {
+            for known in [None, Some(8.0), Some(80.0)] {
+                let mut doc = Document::new();
+                let parent = append_grid_part(&mut doc, 0, "div", parent_display, parent_css);
+                let table = append_grid_part(
+                    &mut doc,
+                    parent,
+                    "table",
+                    DisplayValue::Table,
+                    if collapse {
+                        "display:table;border-collapse:collapse;padding:5px;border:2px solid black"
+                    } else {
+                        "display:table;padding:5px;border:2px solid black"
+                    },
+                );
+                doc.mark_in_document_flags();
+                let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+                crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+                let mut tree = LayoutSession::new(&mut doc);
+                let mut input = column_probe_input();
+                input.known_dimensions.width = known;
+                let output =
+                    super::super::compute_table_layout_checked(&mut tree, table.into(), input)
+                        .unwrap();
+                let expected = match (assigned, known) {
+                    (true, Some(width)) => width,
+                    (false, Some(width)) => 14.0_f32.min(width),
+                    (_, None) => 14.0,
+                };
+                assert_eq!(output.size.width, expected);
+                assert_eq!(tree.override_checkpoint(), 0);
+            }
+        }
+    }
+}
