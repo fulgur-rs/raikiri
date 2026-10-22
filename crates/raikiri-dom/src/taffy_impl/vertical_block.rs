@@ -25,23 +25,28 @@
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
 
+#[cfg(test)]
 use crate::LayoutStyle as Style;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
-    AbsoluteAxis, AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, BoxSizing,
-    CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, Line, NodeId, Point,
-    Position as TaffyPosition, Rect, Size, SizingMode, TraversePartialTree,
+    AvailableSpace, BlockItemStyle, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, Line, NodeId,
+    Position as TaffyPosition, Size, SizingMode, TraversePartialTree,
 };
+#[cfg(test)]
+use taffy::{LengthPercentage, Point};
 
 use super::block_flow::compute_block_flow;
 use super::resolve_calc;
+use super::transposed_axes::{
+    physical_layout, transpose_child_output_to_vertical, transpose_inputs,
+    transpose_output_to_physical,
+};
+#[cfg(test)]
+use super::transposed_axes::{swap, transpose_rect};
 use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
 use raikiri_style::property::{DisplayValue, WritingMode};
-use taffy::CoreStyle;
-#[cfg(test)]
-use taffy::LengthPercentage;
 
 /// A vertical block container being laid out on transposed axes.
 #[derive(Clone, Debug)]
@@ -483,20 +488,20 @@ fn flows_horizontally(tree: &Document, idx: usize) -> bool {
 /// width of the container's content box, `block_space`, when that is
 /// definite.
 fn orthogonal_child_inputs(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     idx: usize,
     inputs: LayoutInput,
     block_space: Option<f32>,
 ) -> LayoutInput {
-    let style = &tree.layout_node_with_style(idx).unwrap().style;
     if !flows_horizontally(tree, idx)
         || inputs.sizing_mode != SizingMode::InherentSize
         || tree.nodes[idx].taffy_position() == TaffyPosition::Absolute
     {
         return inputs;
     }
+    let style = tree.physical_style(idx);
     let mut inputs = inputs;
-    if style.size.height.is_auto() {
+    if style.size().height.is_auto() {
         inputs.known_dimensions.height = None;
     }
     if let Some(space) = block_space {
@@ -505,11 +510,11 @@ fn orthogonal_child_inputs(
         // would under a horizontal block container; a table still shrinks
         // to fit.
         if inputs.known_dimensions.width.is_none()
-            && style.size.width.is_auto()
-            && style.float == taffy::Float::None
+            && style.size().width.is_auto()
+            && BlockItemStyle::float(&style) == taffy::Float::None
             && !is_table_box(tree.nodes[idx].display())
         {
-            inputs.known_dimensions.width = Some(stretched_width(style, space, inputs));
+            inputs.known_dimensions.width = Some(stretched_width(&style, space, inputs));
         }
     }
     inputs
@@ -520,30 +525,30 @@ fn orthogonal_child_inputs(
 /// min and max widths. Its margins, which the container places like its
 /// other children's, resolve against the container's inline size, its
 /// physical height.
-fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
+fn stretched_width(style: &impl CoreStyle, space: f32, inputs: LayoutInput) -> f32 {
     let inline_size = inputs.parent_size.height;
     let margin = style
-        .margin
+        .margin()
         .map(|margin| margin.resolve_or_zero(inline_size, resolve_calc));
     // Min and max widths are content-box sizes under `box-sizing:
     // content-box`.
-    let edges = match style.box_sizing {
+    let edges = match style.box_sizing() {
         BoxSizing::BorderBox => 0.0,
         BoxSizing::ContentBox => {
             // Against the container's inline size, as the child's own
             // layout resolves them.
             let basis = inputs.parent_size.height;
-            let padding = style.padding.resolve_or_zero(basis, resolve_calc);
-            let border = style.border.resolve_or_zero(basis, resolve_calc);
+            let padding = style.padding().resolve_or_zero(basis, resolve_calc);
+            let border = style.border().resolve_or_zero(basis, resolve_calc);
             padding.left + padding.right + border.left + border.right
         }
     };
     let basis = Some(space);
     let mut width = space - margin.left - margin.right;
-    if let Some(max) = style.max_size.width.maybe_resolve(basis, resolve_calc) {
+    if let Some(max) = style.max_size().width.maybe_resolve(basis, resolve_calc) {
         width = width.min(max + edges);
     }
-    if let Some(min) = style.min_size.width.maybe_resolve(basis, resolve_calc) {
+    if let Some(min) = style.min_size().width.maybe_resolve(basis, resolve_calc) {
         width = width.max(min + edges);
     }
     width.max(0.0)
@@ -730,15 +735,9 @@ pub(super) fn compute_vertical_block(
 /// as the root, it is an orthogonal flow, whose auto inline size is
 /// fit-content (CSS Writing Modes 4 §7.3.1). Under a vertical block
 /// container it fills the parent's inline size like any block-level box.
-fn shrinks_to_fit(tree: &Document, idx: usize, inputs: &LayoutInput) -> bool {
+fn shrinks_to_fit(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> bool {
     inputs.sizing_mode == SizingMode::InherentSize
-        && tree
-            .layout_node_with_style(idx)
-            .unwrap()
-            .style
-            .size
-            .height
-            .is_auto()
+        && tree.physical_style(idx).size().height.is_auto()
         && !tree
             .taffy_parent_of(idx)
             .is_some_and(|parent| is_vertical(tree, parent))
@@ -753,13 +752,10 @@ fn fit_content_inline_size(
     inputs: LayoutInput,
 ) -> f32 {
     let page_height = tree.fixed_page_area.unwrap_or_default().1;
-    let style = &tree
-        .layout_node_with_style(usize::from(node_id))
-        .unwrap()
-        .style;
     // The transposed horizontal margins are the physical top and bottom.
-    let margin = style
-        .margin
+    let margin = tree
+        .physical_style(usize::from(node_id))
+        .margin()
         .map(|margin| margin.resolve_or_zero(inputs.parent_size.height, resolve_calc));
     let mut measure = |available: AvailableSpace| {
         let measure_inputs = LayoutInput {
@@ -792,46 +788,6 @@ fn fit_content_inline_size(
     measure(AvailableSpace::MinContent).max(stretch.max(0.0))
 }
 
-/// `rect` with its physical sides moved to the transposed sides they map
-/// to: top and bottom become left and right, and the block-start side
-/// becomes the top.
-#[cfg(test)]
-fn transpose_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
-    let (block_start, block_end) = if right_to_left {
-        (rect.right, rect.left)
-    } else {
-        (rect.left, rect.right)
-    };
-    Rect {
-        left: rect.top,
-        right: rect.bottom,
-        top: block_start,
-        bottom: block_end,
-    }
-}
-
-/// Map sides from the transposed geometry back to physical coordinates.
-fn physical_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
-    let (left, right) = if right_to_left {
-        (rect.bottom, rect.top)
-    } else {
-        (rect.top, rect.bottom)
-    };
-    Rect {
-        left,
-        right,
-        top: rect.left,
-        bottom: rect.right,
-    }
-}
-
-fn swap<T>(size: Size<T>) -> Size<T> {
-    Size {
-        width: size.height,
-        height: size.width,
-    }
-}
-
 #[cfg(test)]
 fn transpose_style(style: &Style, right_to_left: bool) -> Style {
     Style {
@@ -848,192 +804,6 @@ fn transpose_style(style: &Style, right_to_left: bool) -> Style {
             y: style.overflow.x,
         },
         ..style.clone()
-    }
-}
-
-/// `inputs` with the axes swapped. Margin collapsing is preserved only when
-/// the input and output stay within the same transposed vertical BFC.
-fn transpose_inputs(inputs: LayoutInput, preserve_margin_collapse: bool) -> LayoutInput {
-    LayoutInput {
-        axis: AbsoluteAxis::try_from(inputs.axis)
-            .map_or(RequestedAxis::Both, |axis| axis.other_axis().into()),
-        known_dimensions: swap(inputs.known_dimensions),
-        known_dimensions_are_definite: swap(inputs.known_dimensions_are_definite),
-        parent_size: swap(inputs.parent_size),
-        available_space: swap(inputs.available_space),
-        vertical_margins_are_collapsible: if preserve_margin_collapse {
-            inputs.vertical_margins_are_collapsible
-        } else {
-            Line::FALSE
-        },
-        ..inputs
-    }
-}
-
-/// Convert an output produced on the vertical block's transposed axes back
-/// to physical axes. Its margins are left to the parent, which reads them
-/// from the box's style: they do not collapse with the box's children.
-fn transpose_output_to_physical(
-    mut output: LayoutOutput,
-    right_to_left: bool,
-    reverse_extent: f32,
-    preserve_margin_collapse: bool,
-) -> LayoutOutput {
-    let oof_positioning_area = output
-        .oof_positioning_area
-        .map(|area| taffy::OofPositioningArea {
-            size: swap(area.size),
-            offset: Point {
-                x: if right_to_left {
-                    reverse_extent - area.offset.y - area.size.height
-                } else {
-                    area.offset.y
-                },
-                y: area.offset.x,
-            },
-        });
-    for candidate in output.oof_candidates.as_mut_slice() {
-        let inline_axis = candidate.static_position.x;
-        let block_axis = candidate.static_position.y;
-        candidate.static_position = Point {
-            x: if right_to_left {
-                reverse_static_position(block_axis, reverse_extent)
-            } else {
-                block_axis
-            },
-            y: inline_axis,
-        };
-    }
-    let top_margin = if preserve_margin_collapse {
-        output.top_margin
-    } else {
-        CollapsibleMarginSet::ZERO
-    };
-    let bottom_margin = if preserve_margin_collapse {
-        output.bottom_margin
-    } else {
-        CollapsibleMarginSet::ZERO
-    };
-    LayoutOutput {
-        size: swap(output.size),
-        scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
-        baselines: Baselines::NONE,
-        top_margin,
-        bottom_margin,
-        margins_can_collapse_through: preserve_margin_collapse
-            && output.margins_can_collapse_through,
-        oof_positioning_area,
-        ..output
-    }
-}
-
-/// Convert a child's physical-axis output to the transposed axes used by its
-/// vertical block parent. In `vertical-rl`, the physical block axis is
-/// reversed, while the physical inline axis is not.
-fn transpose_child_output_to_vertical(
-    mut output: LayoutOutput,
-    right_to_left: bool,
-    reverse_extent: f32,
-    preserve_margin_collapse: bool,
-) -> LayoutOutput {
-    let oof_positioning_area = output
-        .oof_positioning_area
-        .map(|area| taffy::OofPositioningArea {
-            size: swap(area.size),
-            offset: Point {
-                x: area.offset.y,
-                y: if right_to_left {
-                    reverse_extent - area.offset.x - area.size.width
-                } else {
-                    area.offset.x
-                },
-            },
-        });
-    for candidate in output.oof_candidates.as_mut_slice() {
-        let physical_inline_axis = candidate.static_position.y;
-        let physical_block_axis = candidate.static_position.x;
-        candidate.static_position = Point {
-            x: physical_inline_axis,
-            y: if right_to_left {
-                reverse_static_position(physical_block_axis, reverse_extent)
-            } else {
-                physical_block_axis
-            },
-        };
-    }
-    let top_margin = if preserve_margin_collapse {
-        output.top_margin
-    } else {
-        CollapsibleMarginSet::ZERO
-    };
-    let bottom_margin = if preserve_margin_collapse {
-        output.bottom_margin
-    } else {
-        CollapsibleMarginSet::ZERO
-    };
-    LayoutOutput {
-        size: swap(output.size),
-        scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
-        baselines: Baselines::NONE,
-        top_margin,
-        bottom_margin,
-        margins_can_collapse_through: preserve_margin_collapse
-            && output.margins_can_collapse_through,
-        oof_positioning_area,
-        ..output
-    }
-}
-
-fn reverse_static_position(position: AxisStaticPosition, extent: f32) -> AxisStaticPosition {
-    let reverse_edge = |edge| match edge {
-        AxisStaticEdge::Start => AxisStaticEdge::End,
-        AxisStaticEdge::Center => AxisStaticEdge::Center,
-        AxisStaticEdge::End => AxisStaticEdge::Start,
-    };
-    AxisStaticPosition {
-        area: Line {
-            start: extent - position.area.end,
-            end: extent - position.area.start,
-        },
-        align: taffy::AxisStaticAlign {
-            keyword: reverse_edge(position.align.keyword),
-            safety: position.align.safety,
-            fallback: reverse_edge(position.align.fallback),
-        },
-    }
-}
-
-/// A scrollable overflow rectangle, measured along the inline and block
-/// axes from the scroll origin, with its axes swapped.
-fn swap_rect_axes(rect: Rect<f32>) -> Rect<f32> {
-    Rect {
-        left: rect.top,
-        right: rect.bottom,
-        top: rect.left,
-        bottom: rect.right,
-    }
-}
-
-/// The physical layout of a child placed by taffy at `layout` in a
-/// transposed container whose physical width is `container_width`.
-fn physical_layout(layout: &Layout, container_width: f32, right_to_left: bool) -> Layout {
-    let block_start = layout.location.y;
-    Layout {
-        order: layout.order,
-        location: Point {
-            x: if right_to_left {
-                container_width - block_start - layout.size.height
-            } else {
-                block_start
-            },
-            y: layout.location.x,
-        },
-        size: swap(layout.size),
-        scrollable_overflow_rect: swap_rect_axes(layout.scrollable_overflow_rect),
-        scrollbar_size: swap(layout.scrollbar_size),
-        border: physical_rect(layout.border, right_to_left),
-        padding: physical_rect(layout.padding, right_to_left),
-        margin: physical_rect(layout.margin, right_to_left),
     }
 }
 

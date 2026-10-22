@@ -16,7 +16,7 @@
 //! aligns them by the axes of the writing mode.
 
 use taffy::util::{MaybeResolve, ResolveOrZero};
-use taffy::{AvailableSpace, LayoutInput, Position as TaffyPosition, Size};
+use taffy::{AvailableSpace, CoreStyle, LayoutInput, Position as TaffyPosition, Size};
 
 use super::resolve_calc;
 use crate::document::Document;
@@ -46,7 +46,7 @@ fn is_absolute(tree: &Document, node: usize) -> bool {
 /// or already has a definite physical height that Taffy uses as the
 /// containing block.
 pub(super) fn containing_block_inline_size(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     node: usize,
     inputs: &LayoutInput,
 ) -> Option<f32> {
@@ -62,9 +62,9 @@ pub(super) fn containing_block_inline_size(
     {
         return None;
     }
-    let style = &tree.layout_node_with_style(node).unwrap().style;
+    let style = tree.physical_style(node);
     if style
-        .size
+        .size()
         .height
         .maybe_resolve(inputs.parent_size.height, resolve_calc)
         .is_some()
@@ -78,17 +78,17 @@ pub(super) fn containing_block_inline_size(
         (None, _) => return None,
     };
     let basis = Some(available);
-    let margin = style.margin.map(|margin| {
+    let margin = style.margin().map(|margin| {
         margin
             .resolve_to_option(available, resolve_calc)
             .unwrap_or(0.0)
     });
-    let border = style.border.resolve_or_zero(basis, resolve_calc);
+    let border = style.border().resolve_or_zero(basis, resolve_calc);
     let mut border_box = (available - margin.top - margin.bottom).max(0.0);
-    if let Some(max) = style.max_size.height.maybe_resolve(basis, resolve_calc) {
+    if let Some(max) = style.max_size().height.maybe_resolve(basis, resolve_calc) {
         border_box = border_box.min(max);
     }
-    if let Some(min) = style.min_size.height.maybe_resolve(basis, resolve_calc) {
+    if let Some(min) = style.min_size().height.maybe_resolve(basis, resolve_calc) {
         border_box = border_box.max(min);
     }
     Some((border_box - border.top - border.bottom).max(0.0))
@@ -114,7 +114,7 @@ pub(super) fn absolute_child_inputs(
     {
         return inputs;
     }
-    let inset = tree.layout_node_with_style(node).unwrap().style.inset;
+    let inset = tree.physical_style(node).inset();
     if !inset.top.is_auto() && !inset.bottom.is_auto() {
         return inputs;
     }
@@ -153,7 +153,11 @@ fn has_inline_content(tree: &Document, node: usize) -> bool {
 /// laid out here has no in-flow content before the child, so that edge is
 /// the static position. A child without inline content keeps the position
 /// the horizontal block path gives the same box in flow.
-pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_box: Size<f32>) {
+pub(super) fn place_static_block_start(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    border_box: Size<f32>,
+) {
     let children = &tree.nodes[node].children;
     let in_flow = |child: usize| {
         tree.nodes[child].kind() == raikiri_traits::NodeKind::Element
@@ -169,13 +173,17 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
     if !mode.is_vertical() {
         return;
     }
-    let style = &tree.layout_node_with_style(node).unwrap().style;
-    let border = style
-        .border
-        .resolve_or_zero(Some(border_box.height), resolve_calc);
-    let padding = style
-        .padding
-        .resolve_or_zero(Some(border_box.height), resolve_calc);
+    let (border, padding) = {
+        let style = tree.physical_style(node);
+        (
+            style
+                .border()
+                .resolve_or_zero(Some(border_box.height), resolve_calc),
+            style
+                .padding()
+                .resolve_or_zero(Some(border_box.height), resolve_calc),
+        )
+    };
     let children: Vec<usize> = tree.nodes[node]
         .children
         .iter()
@@ -183,11 +191,12 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
         .filter(|&child| is_absolute(tree, child) && has_inline_content(tree, child))
         .collect();
     for child in children {
-        let child_style = &tree.layout_node_with_style(child).unwrap().style;
-        if !child_style.inset.left.is_auto() || !child_style.inset.right.is_auto() {
+        let child_style = tree.physical_style(child);
+        let inset = child_style.inset();
+        if !inset.left.is_auto() || !inset.right.is_auto() {
             continue;
         }
-        let margin = child_style.margin.map(|margin| {
+        let margin = child_style.margin().map(|margin| {
             margin
                 .resolve_to_option(border_box.height, resolve_calc)
                 .unwrap_or(0.0)

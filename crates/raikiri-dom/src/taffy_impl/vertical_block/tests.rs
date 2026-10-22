@@ -853,34 +853,6 @@ fn vertical_flex_item_keeps_its_padding_percentages_while_measured() {
 }
 
 #[test]
-fn reversing_a_center_static_position_keeps_its_alignment_centered() {
-    let position = taffy::AxisStaticPosition {
-        area: taffy::Line {
-            start: 10.0,
-            end: 40.0,
-        },
-        align: taffy::AxisStaticAlign {
-            keyword: taffy::AxisStaticEdge::Center,
-            safety: taffy::AlignmentSafety::Safe,
-            fallback: taffy::AxisStaticEdge::End,
-        },
-    };
-
-    let reversed = super::reverse_static_position(position, 100.0);
-
-    assert_eq!(
-        reversed.area,
-        taffy::Line {
-            start: 60.0,
-            end: 90.0
-        }
-    );
-    assert_eq!(reversed.align.keyword, taffy::AxisStaticEdge::Center);
-    assert_eq!(reversed.align.safety, taffy::AlignmentSafety::Safe);
-    assert_eq!(reversed.align.fallback, taffy::AxisStaticEdge::Start);
-}
-
-#[test]
 fn comparison_unwind_restores_transposed_stack_and_percentage_padding() {
     use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
     let (mut doc, cascade, child, _) = fixture_with_styles(
