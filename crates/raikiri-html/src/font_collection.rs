@@ -118,19 +118,24 @@ impl FontCollectionBuilder {
             });
         }
         let system_fonts = self.system_fonts;
-        let collection = raikiri_dom::build_bundled_font_collection(faces.clone(), system_fonts)
-            .map_err(|_| {
+        let collection =
+            raikiri_dom::build_bundled_font_collection(faces, system_fonts).map_err(|_| {
                 // Name the first font the collection refuses on its own.
-                let family = faces
+                // Recreate owned bytes only on failure, from the shared sources.
+                let font = self
+                    .fonts
                     .iter()
-                    .find(|face| {
-                        raikiri_dom::build_bundled_font_collection(vec![(*face).clone()], false)
-                            .is_err()
+                    .find(|font| {
+                        let face = raikiri_dom::BundledFace {
+                            family: font.family.trim().to_owned(),
+                            bytes: font.bytes.to_vec(),
+                        };
+                        raikiri_dom::build_bundled_font_collection(vec![face], false).is_err()
                     })
-                    .unwrap_or(&faces[0])
-                    .family
-                    .clone();
-                FontCollectionBuildError::FontRejected { family }
+                    .unwrap_or(&self.fonts[0]);
+                FontCollectionBuildError::FontRejected {
+                    family: font.family.trim().to_owned(),
+                }
             })?;
         Ok(RenderFonts { collection })
     }
