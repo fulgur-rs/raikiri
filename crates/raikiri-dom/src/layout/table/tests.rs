@@ -14,6 +14,7 @@ mod anonymous_table_tests;
 mod authored_length_tests;
 mod cache_tests;
 mod cell_index_tests;
+pub(super) mod cell_scope_tests;
 mod intrinsic_keyword_tests;
 mod part_containing_block_tests;
 mod rowspan_tests;

@@ -3002,15 +3002,9 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
         .expect("table cell layout style")
         .size
         .height;
-    if !authored_height.is_auto() {
-        doc.cache_override_changed(cell.node_id);
-        doc.layout_style_for_key_mut(cell.node_id)
-            .expect("table cell layout style")
-            .size
-            .height = Dimension::auto();
-        doc.table_layout_node_mut(cell.node_id).cache.clear();
-    }
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let measure = |doc: &mut LayoutSession<'_>| {
+        #[cfg(test)]
+        tests::cell_scope_tests::before_measure(doc, cell.node_id);
         doc.compute_child_layout(
             NodeId::from(cell.node_id),
             LayoutInput {
@@ -3036,13 +3030,25 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         )
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if authored_height.is_auto() {
+            measure(doc)
+        } else {
+            let key = doc.nodes.box_key(cell.node_id).expect("cell has a box key");
+            let entry = raikiri_layout_style::OwnedPropertyOverride::length(
+                raikiri_layout_style::LengthProperty::Height,
+                raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+                false,
+            )
+            .expect("physical cell height");
+            doc.with_overrides(vec![(key, entry)], |doc| {
+                doc.table_layout_node_mut(cell.node_id).cache.clear();
+                measure(doc)
+            })
+        }
     }));
     if !authored_height.is_auto() {
-        doc.cache_override_changed(cell.node_id);
-        doc.layout_style_for_key_mut(cell.node_id)
-            .expect("table cell layout style")
-            .size
-            .height = authored_height;
         doc.table_layout_node_mut(cell.node_id).cache.clear();
     }
     let output = match result {
