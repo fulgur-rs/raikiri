@@ -910,6 +910,7 @@ fn paragraph_boxes_are_atomic(tree: &Document, node_id: usize) -> bool {
 }
 
 fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
+    let block_axis = tree.block_axis_style(child);
     let child = &tree.layout_node_with_style(child).unwrap();
     let layout = child.unrounded_layout;
     // Child block-edge decoration needs slice/clone geometry; keep the existing
@@ -923,9 +924,9 @@ fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
             DisplayValue::Block | DisplayValue::ListItem
         )
         && child.break_inside == raikiri_style::property::BreakInside::Auto
-        && child.style.size.height.is_auto()
-        && child.style.min_size.height.is_auto()
-        && child.style.max_size.height.is_auto()
+        && block_axis.height.is_auto()
+        && block_axis.min_height.is_auto()
+        && block_axis.max_height.is_auto()
 }
 
 /// Whether a right-to-left parent aligns `child` to its right edge, which

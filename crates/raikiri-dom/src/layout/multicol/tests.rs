@@ -4907,26 +4907,28 @@ fn a_block_that_fills_the_column_takes_its_ratio_height_from_the_column_width() 
     );
 }
 
-/// Put `doc` on the transposed axes of a vertical root the way pagination
-/// does: the facts of every box the paginator reads along its flow are its
-/// physical ones with the axes exchanged, top and bottom being the physical
-/// left and right.
+/// Put `doc` on the transposed axes of a `vertical-lr` root the way
+/// pagination does: the facts of every box the paginator reads along its flow
+/// are its physical ones with the axes exchanged, top and bottom being the
+/// physical left and right.
 fn on_transposed_axes(doc: &mut Document) {
     let styles = (0..doc.nodes.len())
         .map(|key| {
-            let mut style = crate::layout::block_axis_style::BlockAxisStyle::of_retained(
-                doc.layout_style_for_key(key).unwrap(),
-            );
-            let physical = style;
-            style.margin = Rect {
-                top: physical.margin.left,
-                right: physical.margin.top,
-                bottom: physical.margin.right,
-                left: physical.margin.bottom,
-            };
-            style.min_width = physical.min_height;
-            style.max_width = physical.max_height;
-            style
+            let style = doc.layout_style_for_key(key).unwrap();
+            crate::layout::block_axis_style::BlockAxisStyle {
+                height: style.size.width,
+                min_height: style.min_size.width,
+                max_height: style.max_size.width,
+                min_width: style.min_size.height,
+                max_width: style.max_size.height,
+                margin: Rect {
+                    top: style.margin.left,
+                    right: style.margin.bottom,
+                    bottom: style.margin.right,
+                    left: style.margin.top,
+                },
+                ..crate::layout::block_axis_style::BlockAxisStyle::of_retained(style)
+            }
         })
         .collect();
     doc.pagination_block_styles = styles;
@@ -4981,4 +4983,31 @@ fn right_alignment_checks_the_width_bounds_across_the_paginated_flow() {
     // flow is across, so it can be narrower than its parent.
     on_transposed_axes(&mut doc);
     assert!(is_right_aligned_in_parent(&doc, child));
+}
+
+#[test]
+fn paragraph_eligibility_checks_the_sizes_along_the_paginated_axes() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let plain = doc.append_element(
+        Some(html),
+        "p",
+        Style::default(),
+        Some("display:block;min-width:30px"),
+    );
+    let tall = doc.append_element(
+        Some(html),
+        "p",
+        Style::default(),
+        Some("display:block;height:20px"),
+    );
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    assert!(can_balance_paragraph_box(&doc, plain));
+    assert!(!can_balance_paragraph_box(&doc, tall));
+    // On transposed axes the physical `min-width` bounds the paginator's
+    // height and the physical `height` is across its flow.
+    on_transposed_axes(&mut doc);
+    assert!(!can_balance_paragraph_box(&doc, plain));
+    assert!(can_balance_paragraph_box(&doc, tall));
 }
