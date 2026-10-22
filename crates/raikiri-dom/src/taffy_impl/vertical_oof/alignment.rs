@@ -21,8 +21,8 @@
 
 use taffy::util::MaybeResolve;
 use taffy::{
-    AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, Direction, LayoutPartialTree, Line,
-    NodeId, OofPositioningArea, Overflow, Point, Rect, Size,
+    AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, CoreStyle, Direction,
+    LayoutPartialTree, Line, NodeId, OofPositioningArea, Overflow, Point, Rect, Size,
 };
 
 use super::super::{block_right_to_left, hoisted_children, resolve_calc};
@@ -220,8 +220,8 @@ fn hoisted_overflow(
         container_overflow.x.is_scroll_container() || container_overflow.y.is_scroll_container();
     let mut rect = Rect::ZERO;
     for &child in children {
-        let node = tree.layout_node_with_style(child).unwrap();
-        let layout = node.unrounded_layout;
+        let layout = tree.nodes[child].unrounded_layout;
+        let style = tree.physical_style(child);
         // The location is measured from the scroll origin, which is the right
         // edge under `direction: rtl`.
         let x = layout.location.x - area.offset.x;
@@ -237,8 +237,8 @@ fn hoisted_overflow(
             location,
             layout.size,
             layout.scrollable_overflow_rect,
-            node.style.overflow,
-            node.style.contain,
+            style.overflow(),
+            style.contain(),
             container_scrolls,
         ));
     }
@@ -317,16 +317,25 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
     // Only a box laid out on vertical axes has the physical axes swapped.
     block_right_to_left(tree, idx)?;
     let mode = used_writing_mode(tree, idx);
-    let container = &tree.layout_node_with_style(idx).unwrap().style;
-    let direction = container.direction;
-    let overflow = container.overflow;
+    let (direction, overflow) = {
+        let container = tree.physical_style(idx);
+        (container.direction(), container.overflow())
+    };
     let children = hoisted_children(tree, idx);
     let mut moved_any = false;
     for &child in &children {
         let child_mode = used_writing_mode(tree, child);
-        let node = tree.layout_node_with_style(child).unwrap();
-        let style = &node.style;
-        let mut layout = node.unrounded_layout;
+        let mut layout = tree.nodes[child].unrounded_layout;
+        let (child_inset, child_margin, child_direction, align_self, justify_self) = {
+            let style = tree.physical_style(child);
+            (
+                style.inset(),
+                style.margin(),
+                style.direction(),
+                style.bridge_align_self(),
+                style.bridge_justify_self(),
+            )
+        };
         let mut moved = false;
         for axis in [Axis::Horizontal, Axis::Vertical] {
             let (area_line, inset, margin, alignment, size, scroll) = match axis {
@@ -337,14 +346,14 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
                         end: area.offset.x + area.size.width,
                     },
                     Line {
-                        start: style.inset.left,
-                        end: style.inset.right,
+                        start: child_inset.left,
+                        end: child_inset.right,
                     },
                     Line {
-                        start: style.margin.left,
-                        end: style.margin.right,
+                        start: child_margin.left,
+                        end: child_margin.right,
                     },
-                    style.align_self,
+                    align_self,
                     layout.size.width,
                     overflow.x,
                 ),
@@ -355,14 +364,14 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
                         end: area.offset.y + area.size.height,
                     },
                     Line {
-                        start: style.inset.top,
-                        end: style.inset.bottom,
+                        start: child_inset.top,
+                        end: child_inset.bottom,
                     },
                     Line {
-                        start: style.margin.top,
-                        end: style.margin.bottom,
+                        start: child_margin.top,
+                        end: child_margin.bottom,
                     },
-                    style.justify_self,
+                    justify_self,
                     layout.size.height,
                     overflow.y,
                 ),
@@ -382,7 +391,7 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
                 Axis::Vertical => (layout.margin.top, layout.margin.bottom),
             };
             let reversed = start_is_end(mode, direction, axis);
-            let own_start_is_end = start_is_end(child_mode, style.direction, axis);
+            let own_start_is_end = start_is_end(child_mode, child_direction, axis);
             let aligned = AxisBox {
                 area: area_line,
                 inset: Line {

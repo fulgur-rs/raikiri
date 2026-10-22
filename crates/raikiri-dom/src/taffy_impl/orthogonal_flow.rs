@@ -19,18 +19,17 @@ use crate::node::FormattingContext;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{AvailableSpace, LayoutInput, LayoutOutput, NodeId, Position as TaffyPosition, Size};
 
-use crate::document::Document;
 use raikiri_style::property::DisplayValue;
+use taffy::{BlockItemStyle, CoreStyle};
 
 /// Whether `idx` is an in-flow block-level box with an auto width in a
 /// vertical writing mode, its own or inherited, under a horizontal block
 /// container.
-pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool {
+pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize) -> bool {
     use super::vertical_oof::used_writing_mode;
-    let node = &tree.layout_node_with_style(idx).unwrap();
-    node.style.size.width.is_auto()
-        && node.taffy_position() != TaffyPosition::Absolute
-        && node.style.float == taffy::Float::None
+    let node = &tree.nodes[idx];
+    // The style is read last: most boxes are settled by the cheaper tests.
+    node.taffy_position() != TaffyPosition::Absolute
         && (node.display().is_block_flex_or_grid_container()
             || matches!(
                 node.display(),
@@ -43,6 +42,10 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool
                 FormattingContext::None | FormattingContext::Flex | FormattingContext::Grid
             ) && !used_writing_mode(tree, parent).is_vertical()
         })
+        && {
+            let style = tree.physical_style(idx);
+            style.size().width.is_auto() && BlockItemStyle::float(&style) == taffy::Float::None
+        }
 }
 
 /// Lay out `node_id` with its content-based width in place of the width

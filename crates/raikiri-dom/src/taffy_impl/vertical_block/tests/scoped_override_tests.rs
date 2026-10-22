@@ -2,7 +2,7 @@ use super::super::*;
 use crate::layout::style_views::tests::fixture;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::Dimension;
+use taffy::{Dimension, Rect};
 
 fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> TransposedBlock {
     let mut style = transpose_style(tree.layout_style_for_key(child).unwrap(), true);

@@ -98,6 +98,46 @@ fn opposite_frames_keep_independent_view_geometry() {
     );
 }
 
+#[test]
+fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:block",
+        "display:block;width:31px;height:7px;margin-left:5px;margin-top:9px",
+    );
+    let parent = doc.nodes[child].parent.unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let physical_before = tree.physical_style(child).size();
+    let block = frame(&mut tree, parent, child, true);
+    with_transposed_frame(&mut tree, block, |tree| {
+        assert_eq!(
+            tree.checked_query(child, ReadRole::BlockItem).size(),
+            Size {
+                width: taffy::Dimension::length(7.0),
+                height: taffy::Dimension::length(31.0)
+            }
+        );
+        let physical = tree.physical_style(child);
+        assert_eq!(physical.size(), physical_before);
+        assert_eq!(
+            physical.size(),
+            Size {
+                width: taffy::Dimension::length(31.0),
+                height: taffy::Dimension::length(7.0)
+            }
+        );
+        assert_eq!(
+            physical.margin().left,
+            taffy::LengthPercentageAuto::length(5.0)
+        );
+        assert_eq!(
+            physical.margin().top,
+            taffy::LengthPercentageAuto::length(9.0)
+        );
+    });
+}
+
 use raikiri_layout_style::{ClaimsPolicy, LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 

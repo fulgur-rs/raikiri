@@ -1139,6 +1139,7 @@ use intrinsic_scopes::{with_flex_intrinsic_probe, with_flex_item_basis_bounds};
 mod oof;
 mod orthogonal_flow;
 mod replaced_size;
+mod transposed_axes;
 mod vertical_block;
 mod vertical_oof;
 pub(crate) use oof::{compute_root_layout_with_content_limits, layout_container_candidates};
