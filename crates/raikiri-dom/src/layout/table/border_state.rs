@@ -22,7 +22,7 @@ pub(super) struct BorderState {
 }
 
 impl BorderState {
-    pub(super) fn authored(doc: &Document, grid: &TableGrid) -> Self {
+    pub(super) fn authored(doc: &LayoutSession<'_>, grid: &TableGrid) -> Self {
         let cells: Vec<_> = grid
             .cells
             .iter()
@@ -51,10 +51,7 @@ impl BorderState {
             .collect();
         let row_widths = rows
             .iter()
-            .filter_map(|&(row, _)| {
-                doc.layout_style_for_key(row)
-                    .map(|style| (row, style.border))
-            })
+            .map(|&(row, _)| (row, doc.table_style(row).border()))
             .collect();
         Self {
             cells,
@@ -65,16 +62,12 @@ impl BorderState {
         }
     }
 
-    fn authored_cell(doc: &Document, node_id: usize) -> CellBorderState {
+    fn authored_cell(doc: &LayoutSession<'_>, node_id: usize) -> CellBorderState {
         let node = doc
             .ifc_layout_node(node_id)
             .expect("table cell layout view");
         let widths = node.computed_border.as_ref().map_or_else(
-            || {
-                doc.layout_style_for_key(node_id)
-                    .expect("table cell layout style")
-                    .border
-            },
+            || doc.table_style(node_id).border(),
             |border| super::super::bridge::taffy_border_widths(border, &mut Vec::new()),
         );
         CellBorderState {
@@ -91,7 +84,7 @@ impl BorderState {
 
     pub(super) fn candidate(
         &self,
-        doc: &Document,
+        doc: &LayoutSession<'_>,
         node: usize,
         side: CellBorderSide,
     ) -> Option<CollapsedBorderCandidate> {
@@ -141,7 +134,7 @@ impl BorderState {
         }
     }
 
-    pub(super) fn reset_authored(&mut self, doc: &Document, grid: &TableGrid) {
+    pub(super) fn reset_authored(&mut self, doc: &LayoutSession<'_>, grid: &TableGrid) {
         for cell in &grid.cells {
             let slot = *self
                 .slots
@@ -204,10 +197,10 @@ impl BorderState {
     }
 
     #[cfg(test)]
-    pub(super) fn retained(doc: &Document, grid: &TableGrid) -> Self {
+    pub(super) fn retained(doc: &LayoutSession<'_>, grid: &TableGrid) -> Self {
         let mut state = Self::authored(doc, grid);
         for cell in &mut state.cells {
-            cell.widths = doc.layout_style_for_key(cell.node_id).unwrap().border;
+            cell.widths = doc.table_style(cell.node_id).border();
             cell.paint = doc.ifc_layout_node(cell.node_id).unwrap().collapsed_border;
         }
         for (row, paint) in &mut state.rows {

@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::ComputedLengthPercentageOrAuto;
 use std::cell::Cell;
 use taffy::CoreStyle;
 
@@ -66,7 +67,7 @@ fn border_scope_table_restores_width_and_commits_paint() {
     fn inspect(tree: &mut LayoutSession<'_>, idx: usize) {
         if FIRST_CELL.get() == Some(idx) {
             assert_eq!(
-                tree.layout_style_for_key(idx).unwrap().border.right,
+                tree.table_style(idx).border().right,
                 LengthPercentage::length(9.0)
             );
             if tree.style_views.is_some() {
@@ -80,7 +81,7 @@ fn border_scope_table_restores_width_and_commits_paint() {
     for views in [false, true] {
         let (mut doc, cascade, table, cells) = fixture(&[2, 9], false);
         let first = cells[0];
-        let authored = doc.layout_style_for_key(first).unwrap().border;
+        let authored = border_in_document(&mut doc, first);
         let mut tree = if views {
             LayoutSession::with_cascade(&mut doc, &cascade)
         } else {
@@ -100,7 +101,7 @@ fn border_scope_table_restores_width_and_commits_paint() {
         })
         .unwrap();
         FIRST_CELL.set(None);
-        assert_eq!(tree.layout_style_for_key(first).unwrap().border, authored);
+        assert_eq!(tree.table_style(first).border(), authored);
         assert_eq!(
             tree.nodes[first]
                 .collapsed_border
@@ -119,7 +120,7 @@ fn border_scope_in_place_panic_restores_remaining() {
     fn fail(tree: &mut LayoutSession<'_>, idx: usize) {
         if FIRST_CELL.get() == Some(idx) {
             assert_eq!(
-                tree.layout_style_for_key(idx).unwrap().border.right,
+                tree.table_style(idx).border().right,
                 LengthPercentage::length(9.0)
             );
             assert_eq!(
@@ -164,7 +165,7 @@ fn border_scope_in_place_panic_restores_remaining() {
         );
         assert!(SAW_IN_PLACE.get());
         assert_eq!(
-            tree.layout_style_for_key(first).unwrap().border.right,
+            tree.table_style(first).border().right,
             LengthPercentage::length(3.0)
         );
         assert_eq!(
@@ -221,7 +222,7 @@ fn border_scope_setup_failure_rolls_back_width_and_paint() {
             .map(|&idx| {
                 (
                     idx,
-                    doc.layout_style_for_key(idx).unwrap().border,
+                    border_in_document(&mut doc, idx),
                     doc.nodes[idx].collapsed_border,
                 )
             })
@@ -259,7 +260,7 @@ fn border_scope_setup_failure_rolls_back_width_and_paint() {
         );
         assert_eq!(tree.override_checkpoint(), 0);
         for (idx, border, painted) in originals {
-            assert_eq!(tree.layout_style_for_key(idx).unwrap().border, border);
+            assert_eq!(tree.table_style(idx).border(), border);
             assert_eq!(tree.nodes[idx].collapsed_border, painted);
         }
         assert_eq!(tree.nodes[row].collapsed_border, row_paint);
@@ -311,8 +312,10 @@ fn border_scope_outer_error_keeps_successful_nested_paint() {
                         column_probe_input(),
                     )
                     .unwrap();
-                    tree.layout_style_for_key_mut(cells[0]).unwrap().margin.left =
-                        LengthPercentageAuto::length(91.0);
+                    tree.record_pass_override(
+                        cells[0],
+                        margin_left_override(ComputedLengthPercentageOrAuto::Px(91.0)),
+                    );
                     if panic_body {
                         panic!("outer table failure");
                     }
@@ -330,11 +333,11 @@ fn border_scope_outer_error_keeps_successful_nested_paint() {
         }
         assert_eq!(tree.nodes[cells[0]].collapsed_border, None);
         assert_eq!(
-            tree.layout_style_for_key(cells[0]).unwrap().border.right,
+            tree.table_style(cells[0]).border().right,
             LengthPercentage::length(2.0)
         );
         assert_eq!(
-            tree.layout_style_for_key(cells[0]).unwrap().margin.left,
+            tree.table_style(cells[0]).margin().left,
             LengthPercentageAuto::length(91.0)
         );
         assert_eq!(
@@ -379,18 +382,18 @@ fn border_scope_temporary_reset_is_explicit_and_restores_outer_values() {
     );
     let result: Result<(), ()> = with_table_borders(&mut tree, &outer, |tree| {
         assert_eq!(
-            tree.layout_style_for_key(first).unwrap().border.right,
+            tree.table_style(first).border().right,
             LengthPercentage::length(17.0)
         );
         with_temporary_borders(tree, &authored, |tree| {
             assert_eq!(
-                tree.layout_style_for_key(first).unwrap().border.right,
+                tree.table_style(first).border().right,
                 LengthPercentage::length(2.0)
             );
             assert_eq!(tree.nodes[first].collapsed_border, None);
             let result: Result<(), ()> = with_temporary_borders(tree, &used, |tree| {
                 assert_eq!(
-                    tree.layout_style_for_key(first).unwrap().border.right,
+                    tree.table_style(first).border().right,
                     LengthPercentage::length(9.0)
                 );
                 assert_eq!(
@@ -402,19 +405,21 @@ fn border_scope_temporary_reset_is_explicit_and_restores_outer_values() {
                         .px(),
                     9.0
                 );
-                tree.layout_style_for_key_mut(first).unwrap().margin.left =
-                    LengthPercentageAuto::length(91.0);
+                tree.record_pass_override(
+                    first,
+                    margin_left_override(ComputedLengthPercentageOrAuto::Px(91.0)),
+                );
                 Err(())
             });
             assert_eq!(result, Err(()));
             assert_eq!(
-                tree.layout_style_for_key(first).unwrap().border.right,
+                tree.table_style(first).border().right,
                 LengthPercentage::length(2.0)
             );
             assert_eq!(tree.nodes[first].collapsed_border, None);
         });
         assert_eq!(
-            tree.layout_style_for_key(first).unwrap().border.right,
+            tree.table_style(first).border().right,
             LengthPercentage::length(17.0)
         );
         assert_eq!(
@@ -430,12 +435,12 @@ fn border_scope_temporary_reset_is_explicit_and_restores_outer_values() {
     });
     assert_eq!(result, Err(()));
     assert_eq!(
-        tree.layout_style_for_key(first).unwrap().border.right,
+        tree.table_style(first).border().right,
         LengthPercentage::length(2.0)
     );
     assert_eq!(tree.nodes[first].collapsed_border, None);
     assert_eq!(
-        tree.layout_style_for_key(first).unwrap().margin.left,
+        tree.table_style(first).margin().left,
         LengthPercentageAuto::length(91.0)
     );
     assert_eq!(tree.override_checkpoint(), 0);
@@ -446,7 +451,7 @@ fn border_scope_native_panic_restores_original_paint() {
     fn fail(tree: &mut LayoutSession<'_>, idx: usize) {
         if FIRST_CELL.get() == Some(idx) {
             assert_eq!(
-                tree.layout_style_for_key(idx).unwrap().border.right,
+                tree.table_style(idx).border().right,
                 LengthPercentage::length(9.0)
             );
             panic!("native table failure");
@@ -458,7 +463,7 @@ fn border_scope_native_panic_restores_original_paint() {
         .map(|&idx| {
             (
                 idx,
-                doc.layout_style_for_key(idx).unwrap().border,
+                border_in_document(&mut doc, idx),
                 doc.nodes[idx].collapsed_border,
             )
         })
@@ -478,7 +483,7 @@ fn border_scope_native_panic_restores_original_paint() {
     FIRST_CELL.set(None);
     assert_eq!(panic.downcast_ref::<&str>(), Some(&"native table failure"));
     for (idx, border, paint) in originals {
-        assert_eq!(tree.layout_style_for_key(idx).unwrap().border, border);
+        assert_eq!(tree.table_style(idx).border(), border);
         assert_eq!(tree.nodes[idx].collapsed_border, paint);
     }
     assert_eq!(tree.override_checkpoint(), 0);
@@ -588,7 +593,7 @@ fn border_scope_publications_keep_linear_entries_and_no_history() {
     thread_local! { static MAX_WIDTH_ENTRIES: Cell<usize> = const { Cell::new(0) }; }
     for (rows, columns) in [(2, 2), (32, 16), (64, 16)] {
         let (mut doc, table, first) = super::cache_tests::fixture(rows, columns);
-        let authored = doc.layout_style_for_key(first).unwrap().border;
+        let authored = border_in_document(&mut doc, first);
         let mut tree = LayoutSession::new(&mut doc);
         let prepared = prepared_state(&mut tree, table);
         let state = prepared.borders.as_ref().unwrap();
@@ -607,7 +612,7 @@ fn border_scope_publications_keep_linear_entries_and_no_history() {
             })
             .unwrap();
             assert_eq!(tree.override_checkpoint(), 0);
-            assert_eq!(tree.layout_style_for_key(first).unwrap().border, authored);
+            assert_eq!(tree.table_style(first).border(), authored);
         }
         assert_eq!(MAX_WIDTH_ENTRIES.get(), 4 * rows * columns);
         eprintln!(
@@ -633,7 +638,7 @@ fn border_scope_cache_hit_and_forced_miss_keep_geometry_and_paint() {
             .iter()
             .map(|&idx| {
                 (
-                    tree.layout_style_for_key(idx).unwrap().border,
+                    tree.table_style(idx).border(),
                     tree.nodes[idx].collapsed_border,
                     tree.nodes[idx].unrounded_layout,
                 )
@@ -652,7 +657,7 @@ fn border_scope_cache_hit_and_forced_miss_keep_geometry_and_paint() {
                 .iter()
                 .map(|&idx| {
                     (
-                        tree.layout_style_for_key(idx).unwrap().border,
+                        tree.table_style(idx).border(),
                         tree.nodes[idx].collapsed_border,
                         tree.nodes[idx].unrounded_layout,
                     )

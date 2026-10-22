@@ -1,6 +1,7 @@
 use super::*;
 use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
+use taffy::CoreStyle;
 
 pub(super) fn record_owner_clone(source: &Node) {
     OWNER_CLONE_ENTRIES.with(|entries| {
@@ -354,7 +355,9 @@ fn column_bounds_are_checked_before_projection_and_recover_without_stale_cells()
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
     assert_eq!(
-        super::super::build_table_grid(&doc, table).unwrap().n_cols,
+        crate::layout::table::tests::build_table_grid_in_document(&mut doc, table)
+            .unwrap()
+            .n_cols,
         u16::MAX
     );
     assert_eq!(doc.anonymous_table_cells(row).count(), 1);
@@ -383,7 +386,9 @@ fn column_bounds_are_checked_before_projection_and_recover_without_stale_cells()
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
     assert_eq!(
-        super::super::build_table_grid(&doc, table).unwrap().n_cols,
+        crate::layout::table::tests::build_table_grid_in_document(&mut doc, table)
+            .unwrap()
+            .n_cols,
         u16::MAX
     );
     assert_eq!(doc.anonymous_table_cells(row).count(), 1);
@@ -415,7 +420,7 @@ fn row_bounds_are_checked_before_projection_at_the_existing_exact_boundary() {
         usize::from(u16::MAX) + 1
     );
     assert_eq!(
-        super::super::build_table_grid(&doc, table)
+        crate::layout::table::tests::build_table_grid_in_document(&mut doc, table)
             .unwrap()
             .rows
             .len(),
@@ -486,12 +491,12 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
         );
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-        assert!(anonymous_prototype(&doc, table).0.ifc.is_none());
+        assert!(anonymous_prototype(&doc, &computed, table).0.ifc.is_none());
         crate::layout::layout_single_page(&mut doc, &computed, raikiri_traits::PageBox::A4)
             .unwrap();
         assert_eq!(doc.anonymous_table_cells(table).count(), 2);
         assert!(doc.table_objects.prototypes_by_owner.is_empty());
-        for (cell_key, cell) in doc.anonymous_table_cells(table) {
+        for (_, cell) in doc.anonymous_table_cells(table) {
             let crate::node::NodeData::Element(element) = &cell.data else {
                 panic!("anonymous cell element");
             };
@@ -499,10 +504,6 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
             assert!(element.canvas_bitmap.is_none());
             assert!(cell.order_modified_children.is_empty());
             assert!(cell.grid_item_row_starts.is_empty());
-            assert_eq!(
-                doc.layout_style_for_key(cell_key).unwrap().display,
-                taffy::Display::Block
-            );
             assert_eq!(
                 cell.authored_writing_mode,
                 doc.nodes[table].authored_writing_mode
@@ -521,6 +522,14 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
         );
         assert_eq!(doc.nodes[block].parent, Some(table));
         assert_eq!(doc.nodes[row].parent, Some(table));
+        let cells: Vec<_> = doc
+            .anonymous_table_cells(table)
+            .map(|(cell, _)| cell)
+            .collect();
+        let session = crate::layout::context::LayoutSession::new(&mut doc);
+        for cell in cells {
+            assert!(session.table_style(cell).is_block());
+        }
     }
 }
 

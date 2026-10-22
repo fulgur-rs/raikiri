@@ -120,7 +120,7 @@ fn oversized_rowspan_reserves_the_remaining_source_group() {
             let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
             crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
         }
-        let grid = super::super::build_table_grid(&doc, table).unwrap();
+        let grid = super::build_table_grid_in_document(&mut doc, table).unwrap();
         assert_eq!(grid.n_cols, 2);
         assert_eq!(
             grid.cells
