@@ -58,6 +58,32 @@ pub(crate) struct TransposedBlock {
 }
 
 impl TransposedBlock {
+    /// A frame for `container` and its `children`, whose block axis runs
+    /// from right to left when `right_to_left` is set. It holds no views
+    /// until `prepare_frame_views` runs, which pushing the frame does.
+    pub(super) fn new(
+        tree: &mut LayoutSession<'_>,
+        container: usize,
+        children: Vec<usize>,
+        right_to_left: bool,
+    ) -> Self {
+        Self {
+            id: next_transposed_frame_id(tree),
+            container,
+            right_to_left,
+            block_space: None,
+            children,
+            container_view: None,
+            child_views: HashMap::default(),
+            placed: Vec::new(),
+        }
+    }
+
+    /// Whether the block axis of the container runs from right to left.
+    pub(super) fn right_to_left(&self) -> bool {
+        self.right_to_left
+    }
+
     fn has_child(&self, idx: usize) -> bool {
         self.child_views.contains_key(&idx)
     }
@@ -325,11 +351,56 @@ impl LayoutSession<'_> {
 }
 
 impl LayoutSession<'_> {
+    /// Run `f` with the frame on top of the stack set aside, when that frame
+    /// holds the child `idx`; `None` otherwise.
+    ///
+    /// The container's view is out of the stack meanwhile, so that the child
+    /// and its own descendants see their physical styles. The frame returns
+    /// to the stack when `f` unwinds too.
+    pub(super) fn with_frame_set_aside<R>(
+        &mut self,
+        idx: usize,
+        f: impl FnOnce(&mut Self, &TransposedBlock) -> R,
+    ) -> Option<R> {
+        self.context
+            .transposed_blocks
+            .last()
+            .filter(|block| block.has_child(idx))?;
+        let block = self.context.transposed_blocks.pop()?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self, &block)));
+        self.context.transposed_blocks.push(block);
+        match result {
+            Ok(result) => Some(result),
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    /// Lay out the child `node_id` of a vertical container, whose `inputs`
+    /// are already on physical axes.
+    ///
+    /// Taffy resolves a box's percentage padding against the width of its
+    /// parent, but the containing block of a child that lays out on
+    /// horizontal axes is the vertical container, whose inline size is its
+    /// physical height (CSS Writing Modes 4 §7.1). That inline size is the
+    /// `padding_basis` such a child is given.
+    pub(super) fn dispatch_physical_child(
+        &mut self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+        padding_basis: Option<f32>,
+        block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
+    ) -> LayoutOutput {
+        if let Some(basis) = padding_basis {
+            self.with_resolved_edges(usize::from(node_id), basis, false, |tree| {
+                tree.compute_child_layout_with_block_ctx(node_id, inputs, block_ctx)
+            })
+        } else {
+            self.compute_child_layout_with_block_ctx(node_id, inputs, block_ctx)
+        }
+    }
+
     /// Lay out `idx` on its physical axes when taffy asks for it as a child
     /// of the transposed container being laid out; `None` otherwise.
-    ///
-    /// The container's view is set aside meanwhile, so that the child and
-    /// its own descendants see their physical styles.
     pub(super) fn compute_transposed_child(
         &mut self,
         node_id: NodeId,
@@ -337,50 +408,31 @@ impl LayoutSession<'_> {
         block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
     ) -> Option<LayoutOutput> {
         let idx = usize::from(node_id);
-        self.context
-            .transposed_blocks
-            .last()
-            .filter(|block| block.has_child(idx))?;
-        let block = self.context.transposed_blocks.pop()?;
-        let right_to_left = block_right_to_left(self, block.container).unwrap_or(false);
-        let share_context =
-            block_ctx.is_some() && same_vertical_block_mode(self, block.container, idx);
-        let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        self.with_frame_set_aside(idx, |tree, block| {
+            let right_to_left = block_right_to_left(tree, block.container).unwrap_or(false);
+            let share_context =
+                block_ctx.is_some() && same_vertical_block_mode(tree, block.container, idx);
             let inputs = orthogonal_child_inputs(
-                self,
+                tree,
                 idx,
                 transpose_inputs(inputs, share_context),
                 block.block_space,
             );
-            // Taffy resolves a box's percentage padding against the width of
-            // its parent, but the containing block of a horizontally flowing
-            // child is the vertical container, whose inline size is its
-            // physical height (CSS Writing Modes 4 §7.1). A vertical child
-            // transposes its own inputs and needs no help.
-            let physical_padding_basis = flows_horizontally(self, idx)
+            // A vertical child transposes its own inputs and needs no help
+            // with its percentage padding.
+            let physical_padding_basis = flows_horizontally(tree, idx)
                 .then_some(inputs.parent_size.height)
                 .flatten();
             let child_block_ctx = if share_context { block_ctx } else { None };
-            if let Some(basis) = physical_padding_basis {
-                self.with_resolved_edges(idx, basis, false, |tree| {
-                    tree.compute_child_layout_with_block_ctx(node_id, inputs, child_block_ctx)
-                })
-            } else {
-                self.compute_child_layout_with_block_ctx(node_id, inputs, child_block_ctx)
-            }
-        }));
-        self.context.transposed_blocks.push(block);
-        let output = match output {
-            Ok(output) => output,
-            Err(payload) => std::panic::resume_unwind(payload),
-        };
-        let reverse_extent = output.size.width;
-        Some(transpose_child_output_to_vertical(
-            output,
-            right_to_left,
-            reverse_extent,
-            share_context,
-        ))
+            let output = tree.dispatch_physical_child(
+                node_id,
+                inputs,
+                physical_padding_basis,
+                child_block_ctx,
+            );
+            let reverse_extent = output.size.width;
+            transpose_child_output_to_vertical(output, right_to_left, reverse_extent, share_context)
+        })
     }
 }
 
@@ -510,7 +562,7 @@ fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
     }
 }
 
-fn with_transposed_frame<R>(
+pub(super) fn with_transposed_frame<R>(
     tree: &mut LayoutSession<'_>,
     block: TransposedBlock,
     f: impl FnOnce(&mut LayoutSession<'_>) -> R,
@@ -556,16 +608,7 @@ pub(super) fn compute_vertical_block(
     let children: Vec<_> = tree.child_ids(node_id).map(usize::from).collect();
     let shares_parent_context = block_ctx.is_some();
     let mut inputs = transpose_inputs(inputs, shares_parent_context);
-    let mut block = TransposedBlock {
-        id: next_transposed_frame_id(tree),
-        container: idx,
-        right_to_left,
-        block_space: None,
-        children,
-        container_view: None,
-        child_views: HashMap::default(),
-        placed: Vec::new(),
-    };
+    let mut block = TransposedBlock::new(tree, idx, children, right_to_left);
     prepare_frame_views(tree, &mut block);
     if let Some(container) = &mut block.container_view {
         container.resolve_padding(containing_inline_size);

@@ -1,3 +1,4 @@
+mod frame_tests;
 mod scoped_override_tests;
 mod view_tests;
 
