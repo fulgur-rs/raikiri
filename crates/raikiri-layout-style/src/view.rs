@@ -76,6 +76,19 @@ impl<'a> LayoutStyleView<'a> {
         self
     }
 
+    /// The query-local context used by diagnostics and role-specific adapters.
+    #[inline]
+    pub const fn context(&self) -> ViewContext {
+        self.context
+    }
+
+    /// Replace query-local context without preparing or allocating input.
+    #[inline]
+    pub const fn with_context(mut self, context: ViewContext) -> Self {
+        self.context = context;
+        self
+    }
+
     pub(crate) fn overrides(&self) -> impl Iterator<Item = OverrideKind<'a>> {
         (0..self.scoped.len())
             .rev()
@@ -120,6 +133,7 @@ impl<'a> LayoutStyleView<'a> {
         }
         if property == MinHeight
             && !self.vertical()
+            && !flags.contains(StyleFlags::SOURCE_VERTICAL_DIRECTION)
             && self.prepared.values.cssom_writing_mode.is_vertical()
             && self.prepared.values.min_height == L::Auto
             && self.prepared.values.min_block_size.is_some()
@@ -159,8 +173,15 @@ impl<'a> LayoutStyleView<'a> {
             resolved: false,
         }
     }
+    pub(crate) fn geometry_transposed(&self) -> bool {
+        self.vertical()
+            != matches!(
+                self.context.bridge_projection,
+                BridgeProjection::BlockTranspose { .. }
+            )
+    }
     pub(crate) fn size_axes<T>(&self, width: T, height: T) -> taffy::Size<T> {
-        if self.vertical() {
+        if self.geometry_transposed() {
             taffy::Size {
                 width: height,
                 height: width,
@@ -171,7 +192,7 @@ impl<'a> LayoutStyleView<'a> {
     }
     pub(crate) fn edges<T>(&self, top: T, right: T, bottom: T, left: T) -> taffy::Rect<T> {
         use raikiri_style::property::WritingMode::*;
-        match self.context.layout_wm {
+        let rect = match self.context.layout_wm {
             VerticalRl | SidewaysRl => taffy::Rect {
                 left: top,
                 right: bottom,
@@ -190,6 +211,40 @@ impl<'a> LayoutStyleView<'a> {
                 bottom,
                 left,
             },
+        };
+        match self.context.bridge_projection {
+            BridgeProjection::Identity => rect,
+            BridgeProjection::BlockTranspose { right_to_left } => {
+                let (top, bottom) = if right_to_left {
+                    (rect.right, rect.left)
+                } else {
+                    (rect.left, rect.right)
+                };
+                taffy::Rect {
+                    left: rect.top,
+                    right: rect.bottom,
+                    top,
+                    bottom,
+                }
+            }
+        }
+    }
+
+    pub(crate) fn percentage_edges(
+        &self,
+        properties: [LengthProperty; 4],
+    ) -> taffy::Rect<taffy::LengthPercentage> {
+        let [top, right, bottom, left] = properties.map(|property| self.length(property));
+        let edges = self.edges(top, right, bottom, left);
+        let vertical_basis = match (self.context.percent_basis, self.context.block_item_basis) {
+            (PercentBasis::Taffy, Some(basis)) => PercentBasis::Definite(basis),
+            (basis, _) => basis,
+        };
+        taffy::Rect {
+            top: edges.top.lp(vertical_basis),
+            bottom: edges.bottom.lp(vertical_basis),
+            left: edges.left.lp(self.context.percent_basis),
+            right: edges.right.lp(self.context.percent_basis),
         }
     }
 }

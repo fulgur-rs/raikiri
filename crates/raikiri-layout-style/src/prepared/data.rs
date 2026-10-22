@@ -37,6 +37,11 @@ impl PreparedData {
         })
     }
 
+    /// Borrow calc owners when capturing inputs that can outlive their binding.
+    pub fn owners(&self) -> impl ExactSizeIterator<Item = &Arc<AlignedCalc>> {
+        self.bindings.iter().map(|(_, owner)| owner)
+    }
+
     pub(super) fn payload(&self, slot: CalcSlot) -> Option<&AlignedCalc> {
         let index = self
             .bindings

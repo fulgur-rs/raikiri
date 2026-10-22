@@ -11,17 +11,18 @@
 use crate::LayoutStyle as Style;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, ContainingBlockClaims,
-    CoreStyle, DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer,
-    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
-    MaybeMath, NodeId, Position as TaffyPosition, Size, TraversePartialTree, TraverseTree,
-    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
+    DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
+    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, MaybeMath, NodeId,
+    Position as TaffyPosition, Size, TraversePartialTree, TraverseTree, compute_cached_layout,
+    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
+use crate::layout::style_views::{NativeStyle, ReadRole};
 use crate::node::{FormattingContext, NodeData, NodeFlags};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::DisplayValue;
@@ -600,22 +601,12 @@ impl CacheTree for LayoutSession<'_> {
 impl LayoutPartialTree for LayoutSession<'_> {
     type CustomIdent = smol_str::SmolStr;
     type CoreContainerStyle<'a>
-        = BlockChildStyle<'a>
+        = NativeStyle<'a>
     where
         Self: 'a;
 
     fn get_core_container_style(&self, node_id: NodeId) -> Self::CoreContainerStyle<'_> {
-        let idx = usize::from(node_id);
-        let style = self.layout_node_with_style(idx).unwrap().style;
-        BlockChildStyle::for_container(
-            style,
-            ContainingBlockClaims {
-                // Preserve Taffy's default for position-established absolute
-                // containing blocks when a caller lays out an unbridged tree.
-                absolute: self.nodes[idx].claims_absolute_oof || style.position.is_positioned(),
-                fixed: self.nodes[idx].claims_fixed_oof,
-            },
-        )
+        self.native_style(usize::from(node_id), ReadRole::CoreContainer)
     }
 
     /// The **only** path by which taffy writes layout into the arena.
@@ -644,6 +635,7 @@ impl LayoutPartialTree for LayoutSession<'_> {
     }
 
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
         if inputs.run_mode == RunMode::PerformLayout
             && let Some(capture) = self.context.oof_content_limit_inputs.last_mut()
@@ -673,6 +665,7 @@ impl LayoutSession<'_> {
         mut inputs: LayoutInput,
         mut block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
+        self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
@@ -3398,194 +3391,22 @@ impl LayoutSession<'_> {
     }
 }
 
-/// A borrowed style query with optional resolved block-child edges.
-///
-/// Project block flow supplies its percentage basis here. The public
-/// out-of-flow adapter uses unresolved edges and captures CSS table identity
-/// for [`taffy::LayoutContainingBlock::get_oof_item_style`].
-#[derive(Clone, Copy)]
-pub struct BlockChildStyle<'a> {
-    style: &'a Style,
-    padding: taffy::Rect<taffy::LengthPercentage>,
-    border: taffy::Rect<taffy::LengthPercentage>,
-    oof_table: bool,
-    claims: Option<ContainingBlockClaims>,
-}
-
-impl<'a> BlockChildStyle<'a> {
-    /// `percent_basis` is the container's content-box width, or `None` to
-    /// keep taffy's own resolution.
-    fn new(style: &'a Style, percent_basis: Option<f32>) -> Self {
-        let resolve_vertical = |edges: taffy::Rect<taffy::LengthPercentage>, basis: f32| {
-            let resolve = |edge: taffy::LengthPercentage| {
-                use taffy::ResolveOrZero;
-                taffy::LengthPercentage::length(edge.resolve_or_zero(Some(basis), resolve_calc))
-            };
-            taffy::Rect {
-                top: resolve(edges.top),
-                bottom: resolve(edges.bottom),
-                ..edges
-            }
-        };
-        match percent_basis {
-            Some(basis) => Self {
-                style,
-                padding: resolve_vertical(style.padding, basis),
-                border: resolve_vertical(style.border, basis),
-                oof_table: taffy::OofItemStyle::is_table(style),
-                claims: None,
-            },
-            None => Self {
-                style,
-                padding: style.padding,
-                border: style.border,
-                oof_table: taffy::OofItemStyle::is_table(style),
-                claims: None,
-            },
-        }
-    }
-
-    fn for_container(style: &'a Style, claims: ContainingBlockClaims) -> Self {
-        Self {
-            claims: Some(claims),
-            ..Self::new(style, None)
-        }
-    }
-}
-
-impl CoreStyle for BlockChildStyle<'_> {
-    type CustomIdent = smol_str::SmolStr;
-
-    fn box_generation_mode(&self) -> BoxGenerationMode {
-        self.style.box_generation_mode()
-    }
-    fn is_block(&self) -> bool {
-        self.style.is_block()
-    }
-    fn is_compressible_replaced(&self) -> bool {
-        self.style.is_compressible_replaced()
-    }
-    fn is_replaced(&self) -> bool {
-        self.style.is_replaced()
-    }
-    fn box_sizing(&self) -> taffy::BoxSizing {
-        self.style.box_sizing()
-    }
-    fn direction(&self) -> taffy::Direction {
-        self.style.direction()
-    }
-    fn overflow(&self) -> taffy::Point<taffy::Overflow> {
-        self.style.overflow()
-    }
-    fn scrollbar_width(&self) -> f32 {
-        self.style.scrollbar_width()
-    }
-    fn position(&self) -> TaffyPosition {
-        self.style.position()
-    }
-    fn inset(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
-        self.style.inset()
-    }
-    fn size(&self) -> Size<taffy::Dimension> {
-        self.style.size()
-    }
-    fn min_size(&self) -> Size<taffy::LengthPercentageAuto> {
-        self.style.min_size()
-    }
-    fn max_size(&self) -> Size<taffy::LengthPercentageAuto> {
-        self.style.max_size()
-    }
-    fn aspect_ratio(&self) -> Option<f32> {
-        self.style.aspect_ratio()
-    }
-    fn margin(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
-        self.style.margin()
-    }
-    fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
-        self.padding
-    }
-    fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
-        self.border
-    }
-    fn contain(&self) -> taffy::Contain {
-        self.style.contain()
-    }
-    fn is_containing_block(&self) -> ContainingBlockClaims {
-        self.claims
-            .unwrap_or_else(|| self.style.is_containing_block())
-    }
-}
-
-impl taffy::BlockItemStyle for BlockChildStyle<'_> {
-    fn is_table(&self) -> bool {
-        taffy::BlockItemStyle::is_table(self.style)
-    }
-    fn float(&self) -> taffy::Float {
-        taffy::BlockItemStyle::float(self.style)
-    }
-    fn clear(&self) -> taffy::Clear {
-        taffy::BlockItemStyle::clear(self.style)
-    }
-}
-
-impl taffy::OofItemStyle for BlockChildStyle<'_> {
-    fn align_self(&self) -> Option<taffy::AlignSelf> {
-        self.style.align_self
-    }
-    fn justify_self(&self) -> Option<taffy::AlignSelf> {
-        self.style.justify_self
-    }
-    fn is_table(&self) -> bool {
-        self.oof_table
-    }
-    fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<smol_str::SmolStr>> {
-        self.style.grid_row.clone()
-    }
-    fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<smol_str::SmolStr>> {
-        self.style.grid_column.clone()
-    }
-}
-
 impl LayoutBlockContainer for LayoutSession<'_> {
     type BlockContainerStyle<'a>
-        = &'a Style
+        = NativeStyle<'a>
     where
         Self: 'a;
     type BlockItemStyle<'a>
-        = BlockChildStyle<'a>
+        = NativeStyle<'a>
     where
         Self: 'a;
 
     fn get_block_container_style(&self, node_id: NodeId) -> Self::BlockContainerStyle<'_> {
-        let idx = usize::from(node_id);
-        self.transposed_container_style(idx)
-            .unwrap_or(self.layout_node_with_style(idx).unwrap().style)
+        self.native_style(usize::from(node_id), ReadRole::BlockContainer)
     }
 
-    /// Taffy also reads a child's style when it places the child as an
-    /// absolutely positioned box, against a different basis (the padding
-    /// box of the containing block), so only in-flow children of the
-    /// container on top of the session's block item percent basis get their
-    /// vertical edges resolved here. Neither do the children of a container
-    /// whose width is not known yet when taffy lists them (an auto-width
-    /// float, say): taffy sizes such a container from its contents only
-    /// afterwards, and a zero inset fixed now could not follow that width.
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
-        let child = usize::from(child_node_id);
-        if let Some(style) = self.transposed_child_style(child) {
-            return BlockChildStyle::new(style, None);
-        }
-        let style = self.layout_node_with_style(child).unwrap().style;
-        let basis = self
-            .context
-            .block_item_percent_bases
-            .last()
-            .filter(|&&(container, _)| {
-                self.nodes[child].taffy_position() != TaffyPosition::Absolute
-                    && self.taffy_parent_of(child) == Some(container)
-            })
-            .and_then(|&(_, basis)| basis);
-        BlockChildStyle::new(style, basis)
+        self.native_style(usize::from(child_node_id), ReadRole::BlockItem)
     }
 }
 
@@ -3612,31 +3433,11 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         Self: 'a;
 
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
-        #[cfg(test)]
-        {
-            self.checked_style(
-                usize::from(node_id),
-                crate::layout::style_views::checked::ReadRole::FlexContainer,
-            )
-        }
-        #[cfg(not(test))]
-        {
-            self.style_view(usize::from(node_id)).for_flex_grid()
-        }
+        self.native_style(usize::from(node_id), ReadRole::FlexContainer)
     }
 
     fn get_flexbox_child_style(&self, child_node_id: NodeId) -> Self::FlexboxItemStyle<'_> {
-        #[cfg(test)]
-        {
-            self.checked_style(
-                usize::from(child_node_id),
-                crate::layout::style_views::checked::ReadRole::FlexItem,
-            )
-        }
-        #[cfg(not(test))]
-        {
-            self.style_view(usize::from(child_node_id)).for_flex_grid()
-        }
+        self.native_style(usize::from(child_node_id), ReadRole::FlexItem)
     }
 }
 
@@ -3663,31 +3464,11 @@ impl LayoutGridContainer for LayoutSession<'_> {
         Self: 'a;
 
     fn get_grid_container_style(&self, node_id: NodeId) -> Self::GridContainerStyle<'_> {
-        #[cfg(test)]
-        {
-            self.checked_style(
-                usize::from(node_id),
-                crate::layout::style_views::checked::ReadRole::GridContainer,
-            )
-        }
-        #[cfg(not(test))]
-        {
-            self.style_view(usize::from(node_id)).for_flex_grid()
-        }
+        self.native_style(usize::from(node_id), ReadRole::GridContainer)
     }
 
     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
-        #[cfg(test)]
-        {
-            self.checked_style(
-                usize::from(child_node_id),
-                crate::layout::style_views::checked::ReadRole::GridItem,
-            )
-        }
-        #[cfg(not(test))]
-        {
-            self.style_view(usize::from(child_node_id)).for_flex_grid()
-        }
+        self.native_style(usize::from(child_node_id), ReadRole::GridItem)
     }
 
     fn set_detailed_grid_info(

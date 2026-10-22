@@ -266,17 +266,62 @@ pub(super) struct TransposedDocument {
     /// The layout of each key as it was handed to the paginator.
     transposed: Vec<TaffyLayout>,
     styles: Vec<crate::LayoutStyle>,
+    live_keys: Vec<(usize, crate::node::arena::BoxKey)>,
+    generated_generation: u64,
+    prepared_stamp: crate::layout::box_style_data::PreparedStamp,
 }
 
 impl TransposedDocument {
-    /// Put `document` on transposed axes. The returned value maps it back
-    /// with [`Self::restore`].
+    pub(super) fn with_transposed<R>(
+        document: &mut LayoutSession<'_>,
+        flow_root: usize,
+        axes: FlowAxes,
+        page_area_width: f32,
+        run: impl FnOnce(&mut LayoutSession<'_>, &Self) -> R,
+    ) -> R {
+        let transposed = Self::transpose(document, flow_root, axes, page_area_width);
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(document, &transposed)));
+        let unchanged = transposed.restore_inner(document);
+        match result {
+            Ok(value) => {
+                assert!(
+                    unchanged,
+                    "pagination must preserve box identities and generations"
+                );
+                value
+            }
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    /// Put `document` on transposed axes. [`Self::with_transposed`] restores
+    /// the retained geometry and styles after the pagination body exits.
     pub(super) fn transpose(
         document: &mut LayoutSession<'_>,
         flow_root: usize,
         axes: FlowAxes,
         page_area_width: f32,
     ) -> Self {
+        document.assert_style_queries_allowed();
+        document.scoped_overrides.assert_inactive();
+        assert!(
+            document.context.transposed_blocks.is_empty()
+                && document.context.resolved_edge_bases.is_empty(),
+            "pagination starts outside native style scopes"
+        );
+        let live_keys = document
+            .nodes
+            .layout_keys()
+            .map(|index| {
+                (
+                    index,
+                    document.nodes.box_key(index).expect("live layout key"),
+                )
+            })
+            .collect();
+        let generated_generation = document.nodes.generated_generation();
+        let prepared_stamp = document.box_style_data.stamp();
         let keys = document.nodes.len()
             + document.table_objects.tables.len()
             + document.table_objects.cells.len();
@@ -302,22 +347,26 @@ impl TransposedDocument {
                 }
             })
             .collect();
+        let mut projected_styles: Vec<_> = (0..keys)
+            .map(|key| {
+                axes.style(
+                    document
+                        .layout_style_for_key(key)
+                        .expect("transposed box has a retained style"),
+                )
+            })
+            .collect();
         document.document.layout_cache_context.invalidate();
-        let mut styles = Vec::with_capacity(keys);
         for (key, &layout) in transposed.iter().enumerate() {
             document.table_layout_node_mut(key).unrounded_layout = layout;
-            let style = axes.style(
-                document
-                    .layout_style_for_key(key)
-                    .expect("transposed box has a retained style"),
-            );
-            styles.push(std::mem::replace(
+            std::mem::swap(
                 document
                     .layout_style_for_key_mut(key)
-                    .expect("transposed box has a retained style"),
-                style,
-            ));
+                    .expect("validated retained style"),
+                &mut projected_styles[key],
+            );
         }
+        let styles = projected_styles;
         document.context.table_cache.clear();
         document.context.pagination_on_transposed_axes = true;
         Self {
@@ -328,6 +377,9 @@ impl TransposedDocument {
             physical,
             transposed,
             styles,
+            live_keys,
+            generated_generation,
+            prepared_stamp,
         }
     }
 
@@ -343,8 +395,40 @@ impl TransposedDocument {
     /// Map the paginated `document` back to physical axes. A box that
     /// pagination left alone, in a parent that kept its size, gets its
     /// original layout back exactly.
-    pub(super) fn restore(self, document: &mut LayoutSession<'_>) {
+    fn restore_inner(self, document: &mut LayoutSession<'_>) -> bool {
+        let unchanged = self.generated_generation == document.nodes.generated_generation()
+            && self.prepared_stamp == document.box_style_data.stamp()
+            && self
+                .live_keys
+                .iter()
+                .copied()
+                .eq(document.nodes.layout_keys().map(|index| {
+                    (
+                        index,
+                        document.nodes.box_key(index).expect("live layout key"),
+                    )
+                }));
         document.document.layout_cache_context.invalidate();
+        document.context.pagination_on_transposed_axes = false;
+        document.context.table_cache.clear();
+        if !unchanged {
+            // Identity violations cannot use the old numeric coordinate frames.
+            // Restore surviving typed keys before reporting the boundary failure.
+            for (old_index, style) in self.styles.into_iter().enumerate() {
+                let key = self
+                    .live_keys
+                    .iter()
+                    .find(|(index, _)| *index == old_index)
+                    .map(|(_, key)| *key);
+                if let Some(index) = key.and_then(|key| document.nodes.layout_index(key)) {
+                    document.nodes[index].unrounded_layout = self.physical[old_index];
+                    if let Some(retained) = document.layout_style_for_key_mut(index) {
+                        *retained = style;
+                    }
+                }
+            }
+            return false;
+        }
         let keys = self.physical.len();
         let current: Vec<TaffyLayout> = (0..keys)
             .map(|key| document.table_layout_node_mut(key).unrounded_layout)
@@ -370,6 +454,7 @@ impl TransposedDocument {
         }
         document.context.table_cache.clear();
         document.context.pagination_on_transposed_axes = false;
+        true
     }
 }
 

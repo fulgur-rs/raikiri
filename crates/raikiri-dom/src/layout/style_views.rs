@@ -11,9 +11,28 @@ use raikiri_traits::NodeKind;
 
 #[cfg(test)]
 pub(crate) mod checked;
+pub(crate) mod frozen;
 pub(super) mod metadata;
 mod overrides;
 pub(crate) use overrides::ScopedOverrides;
+
+#[derive(Clone, Copy, Debug)]
+#[repr(usize)]
+pub(crate) enum ReadRole {
+    FlexContainer,
+    FlexItem,
+    GridContainer,
+    GridItem,
+    CoreContainer,
+    BlockContainer,
+    BlockItem,
+    Oof,
+}
+
+#[cfg(not(test))]
+pub(crate) type NativeStyle<'a> = LayoutStyleView<'a>;
+#[cfg(test)]
+pub(crate) type NativeStyle<'a> = checked::CheckedStyle<'a>;
 
 pub(crate) struct PreparedBox<'a> {
     prepared: PreparedStyle<'a>,
@@ -25,6 +44,9 @@ pub(crate) struct StyleViews<'a> {
     cascade: &'a CascadeResult,
     boxes: HashMap<BoxKey, PreparedBox<'a>>,
     legacy_calcs: HashMap<BoxKey, Vec<Arc<raikiri_layout_style::AlignedCalc>>>,
+    // Primitives may retain snapshot handles after their frame has been popped.
+    // Keep unique payloads across bridge replacement for the rest of the session.
+    snapshot_calcs: HashMap<usize, Arc<raikiri_layout_style::AlignedCalc>>,
     prepared_publication: Option<super::cache_context::CacheEpoch>,
     prepared_stamp: Option<PreparedStamp>,
     preparation_batch: bool,
@@ -37,6 +59,7 @@ impl<'a> StyleViews<'a> {
             cascade,
             boxes: HashMap::default(),
             legacy_calcs: HashMap::default(),
+            snapshot_calcs: HashMap::default(),
             prepared_publication: None,
             prepared_stamp: None,
             preparation_batch: false,
@@ -45,25 +68,7 @@ impl<'a> StyleViews<'a> {
     }
 
     fn prepare(&mut self, doc: &mut Document, scoped: &ScopedOverrides) {
-        use taffy::TraversePartialTree;
-        let mut keys = Vec::new();
-        for idx in doc.nodes.layout_keys() {
-            if doc.nodes[idx].kind() == NodeKind::Element
-                && matches!(
-                    doc.nodes[idx].taffy_display(),
-                    taffy::Display::Flex | taffy::Display::Grid
-                )
-            {
-                if keys.capacity() == 0 {
-                    keys.reserve(doc.nodes.len());
-                }
-                keys.push(idx);
-                // Taffy queries child style before excluding hidden or out-of-flow items.
-                keys.extend(doc.child_ids(taffy::NodeId::from(idx)).map(usize::from));
-            }
-        }
-        keys.sort_unstable();
-        keys.dedup();
+        let keys = doc.nodes.layout_keys().collect();
         self.prepare_keys(doc, keys, scoped);
     }
 
@@ -202,6 +207,36 @@ impl<'a> StyleViews<'a> {
                     );
                 }
             }
+            // Constructors supply these facts outside CSS. Capture each box's
+            // own projection after recipe refresh, including synthetic boxes.
+            let style = doc
+                .layout_style_for_key(idx)
+                .expect("foundation has retained adapter inputs");
+            let (scrollbar_width, is_table, legacy_text_align, compressible_replaced) = (
+                style.scrollbar_width,
+                style.item_is_table,
+                style.text_align,
+                taffy::CoreStyle::is_compressible_replaced(style),
+            );
+            let metadata = &mut doc
+                .box_style_data
+                .get_mut(key)
+                .expect("foundation exists")
+                .metadata;
+            metadata.scrollbar_width = scrollbar_width;
+            metadata.legacy_text_align = legacy_text_align;
+            for (flag, enabled) in [
+                (raikiri_layout_style::StyleFlags::BLOCK_TABLE, is_table),
+                (
+                    raikiri_layout_style::StyleFlags::COMPRESSIBLE_REPLACED,
+                    compressible_replaced,
+                ),
+            ] {
+                metadata.flags = metadata.flags.without(flag);
+                if enabled {
+                    metadata.flags = metadata.flags.union(flag);
+                }
+            }
             if let Some(pending) = doc.box_style_data.pending.remove(&key) {
                 doc.box_style_data
                     .get_mut(key)
@@ -271,12 +306,20 @@ impl<'a> StyleViews<'a> {
 impl LayoutSession<'_> {
     #[inline]
     pub(crate) fn assert_style_queries_allowed(&self) {
+        self.assert_native_style_access_allowed();
         assert!(
             !self
                 .style_views
                 .as_ref()
                 .is_some_and(|views| views.preparation_batch),
             "style queries run after the preparation batch"
+        );
+    }
+
+    pub(crate) fn assert_native_style_access_allowed(&self) {
+        assert!(
+            !self.context.pagination_on_transposed_axes,
+            "native style queries and updates are forbidden during transposed pagination"
         );
     }
 
@@ -301,7 +344,7 @@ impl LayoutSession<'_> {
                 self.publish_layout_cache_mutations();
                 self.prepare_style_views();
                 if let Some(length) = old_prefix {
-                    self.document.box_style_data.calc_values.drain(..length);
+                    self.retire_calc_prefix(length);
                 }
                 Ok(value)
             }
@@ -318,14 +361,91 @@ impl LayoutSession<'_> {
             return;
         }
         self.prepare_style_views();
-        self.document
-            .box_style_data
-            .calc_values
-            .drain(..old_calc_len);
+        self.retire_calc_prefix(old_calc_len);
+    }
+
+    fn retire_calc_prefix(&mut self, length: usize) {
+        // Append after the retiring prefix to preserve escaped snapshot handles.
+        if let Some(views) = &self.style_views {
+            self.document
+                .box_style_data
+                .calc_values
+                .extend(views.snapshot_calcs.values().cloned());
+        }
+        self.document.box_style_data.calc_values.drain(..length);
+    }
+
+    pub(crate) fn retain_snapshot_calcs(
+        &mut self,
+        owners: impl IntoIterator<Item = Arc<raikiri_layout_style::AlignedCalc>>,
+    ) {
+        let views = self
+            .style_views
+            .as_mut()
+            .expect("frozen inputs borrow a prepared session");
+        for owner in owners {
+            let identity = Arc::as_ptr(&owner) as usize;
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                views.snapshot_calcs.entry(identity)
+            {
+                slot.insert(owner.clone());
+                self.document.box_style_data.calc_values.push(owner);
+            }
+        }
+    }
+
+    pub(crate) fn native_style(&self, idx: usize, role: ReadRole) -> NativeStyle<'_> {
+        #[cfg(test)]
+        {
+            self.checked_query(idx, role)
+        }
+        #[cfg(not(test))]
+        {
+            self.query_style(idx, role)
+        }
+    }
+
+    pub(crate) fn query_style(&self, idx: usize, role: ReadRole) -> LayoutStyleView<'_> {
+        use raikiri_layout_style::ClaimsPolicy;
+        self.assert_style_queries_allowed();
+        let transposed = match role {
+            ReadRole::BlockContainer => self.transposed_container_view(idx),
+            ReadRole::BlockItem | ReadRole::Oof => self.transposed_child_view(idx),
+            _ => None,
+        };
+        if let Some(view) = transposed {
+            return view;
+        }
+        let mut context = self
+            .style_views
+            .as_ref()
+            .and_then(|views| {
+                self.nodes
+                    .box_key(idx)
+                    .and_then(|key| views.boxes.get(&key))
+            })
+            .map_or_else(ViewContext::default, |prepared| prepared.context);
+        context.claims_policy = if matches!(role, ReadRole::CoreContainer) {
+            ClaimsPolicy::Prepared
+        } else {
+            ClaimsPolicy::Positioning
+        };
+        if matches!(role, ReadRole::BlockItem) {
+            context.block_item_basis = self
+                .context
+                .block_item_percent_bases
+                .last()
+                .filter(|&&(container, _)| {
+                    self.nodes[idx].taffy_position() != taffy::Position::Absolute
+                        && self.taffy_parent_of(idx) == Some(container)
+                })
+                .and_then(|&(_, basis)| basis);
+        }
+        self.style_view(idx).with_context(context)
     }
 
     #[cfg(test)]
-    pub(crate) fn checked_style(
+    pub(crate) fn checked_query(
         &self,
         idx: usize,
         role: checked::ReadRole,
@@ -338,19 +458,21 @@ impl LayoutSession<'_> {
                 .boxes
                 .get(&key)
                 .unwrap_or_else(|| panic!("missing prepared style for {key:?}"));
-            context.context = prepared.context;
             context.pass_entries = self.document.box_style_data.get(key).unwrap().pass.len();
             context.scope_depth = self.scoped_overrides.depth(key);
             context.was_scoped = prepared.was_scoped || self.scoped_overrides.was_scoped(key);
-            self.style_view(idx).for_flex_grid()
+            let view = self.query_style(idx, role);
+            context.context = view.context();
+            view
         });
+        let legacy = checked::legacy::LegacyQuery::for_role(self, idx, role);
         checked::CheckedStyle::new(
-            self.layout_style_for_key(idx)
-                .expect("style query has a retained style"),
+            legacy.style(),
             view,
             context,
             &self.document.style_view_comparisons,
         )
+        .with_legacy_query(legacy)
     }
 
     pub(crate) fn propagate_viewport_overflow(&mut self, cascade: &CascadeResult, body: usize) {
@@ -391,6 +513,7 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn begin_style_bridge(&mut self) {
+        self.assert_native_style_access_allowed();
         self.assert_preparation_outside_legacy_scopes();
         if let Some(views) = &mut self.style_views {
             views.boxes.clear();

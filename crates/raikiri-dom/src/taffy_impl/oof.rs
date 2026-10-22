@@ -4,9 +4,9 @@
 //! positioning. Resolve immediate-container candidates here so all existing
 //! consumers keep locations relative to their layout parent.
 
-use super::BlockChildStyle;
 use crate::document::OofCoordinate;
 use crate::layout::context::LayoutSession;
+use crate::layout::style_views::{NativeStyle, ReadRole};
 use taffy::CoreStyle;
 use taffy::{
     DetailedLayoutInfo, LayoutContainingBlock, LayoutOutput, LayoutPartialTree, NodeId,
@@ -15,22 +15,12 @@ use taffy::{
 
 impl LayoutContainingBlock for LayoutSession<'_> {
     type OofItemStyle<'a>
-        = BlockChildStyle<'a>
+        = NativeStyle<'a>
     where
         Self: 'a;
 
     fn get_oof_item_style(&self, node: NodeId) -> Self::OofItemStyle<'_> {
-        let index = usize::from(node);
-        let style = self
-            .transposed_child_style(index)
-            .unwrap_or(self.layout_node_with_style(index).unwrap().style);
-        let mut query = BlockChildStyle::new(style, None);
-        query.oof_table |= matches!(
-            self.nodes[index].display(),
-            raikiri_style::property::DisplayValue::Table
-                | raikiri_style::property::DisplayValue::InlineTable
-        );
-        query
+        self.native_style(usize::from(node), ReadRole::Oof)
     }
 
     fn clear_hoisted_children(&mut self, node: NodeId) {

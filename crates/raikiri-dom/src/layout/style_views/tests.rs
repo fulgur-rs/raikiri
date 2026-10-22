@@ -242,7 +242,7 @@ fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, old: 
     );
 }
 
-// These recipe tests inspect boxes outside the production Flex/Grid query set.
+// These recipe tests explicitly refresh the published all-key view set.
 fn prepare_for_inspection(tree: &mut LayoutSession<'_>) {
     let keys = tree.document.nodes.layout_keys().collect();
     tree.style_views
@@ -264,6 +264,7 @@ fn contents_recipe_keeps_only_explicit_inherited_direction() {
         tree.style_view(child),
         tree.layout_style_for_key(child).unwrap(),
     );
+    block_view_tests::assert_all_new_roles(&tree, child);
 }
 
 #[test]
@@ -277,6 +278,7 @@ fn initial_containing_block_recipe_uses_page_dimensions() {
         tree.style_view(icb),
         tree.layout_style_for_key(icb).unwrap(),
     );
+    block_view_tests::assert_all_new_roles(&tree, icb);
 }
 
 #[test]
@@ -321,6 +323,7 @@ fn anonymous_table_and_cell_recipes_inherit_only_selected_facts() {
             tree.style_view(idx),
             tree.layout_style_for_key(idx).unwrap(),
         );
+        block_view_tests::assert_all_new_roles(&tree, idx);
     }
 }
 
@@ -695,3 +698,5 @@ pub(crate) fn prepare_all_layout_views(tree: &mut LayoutSession<'_>) {
         .expect("view-owning test session")
         .prepare_keys(tree.document, keys, &tree.scoped_overrides);
 }
+
+mod block_view_tests;

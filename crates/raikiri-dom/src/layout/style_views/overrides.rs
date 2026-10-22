@@ -129,6 +129,10 @@ impl LayoutSession<'_> {
                 &self.context.transposed_style_index,
                 index,
             );
+            if !transposed.is_empty() && self.style_views.is_some() {
+                // A primitive can outlive both the late override and its frame.
+                self.retain_snapshot_calcs(entry.calc_owner().cloned());
+            }
             self.document.layout_cache_context.override_changed(key);
             let state = self
                 .scoped_overrides
@@ -223,6 +227,7 @@ impl LayoutSession<'_> {
         idx: usize,
         basis: f32,
     ) -> Option<raikiri_layout_style::PercentBasis> {
+        self.assert_style_queries_allowed();
         use raikiri_layout_style::PercentBasis;
         let key = self.nodes.box_key(idx).expect("edge scope has a box key");
         self.style_views.as_mut().and_then(|views| {

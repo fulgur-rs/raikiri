@@ -3,7 +3,7 @@ use crate::node::arena::BoxKey;
 use taffy::CoreStyle;
 
 #[test]
-fn sparse_preparation_includes_hidden_oof_and_flattened_children() {
+fn all_key_preparation_includes_hidden_oof_flattened_and_unrelated_boxes() {
     let (mut doc, _, oof, text) =
         fixture_with_styles("display:flex", "position:absolute;width:31px;height:7px");
     let body = doc.nodes[oof].parent.unwrap();
@@ -57,7 +57,7 @@ fn sparse_preparation_includes_hidden_oof_and_flattened_children() {
             .contains_key(&BoxKey::Source(text))
     );
     assert!(
-        !session
+        session
             .style_views
             .as_ref()
             .unwrap()
@@ -65,7 +65,7 @@ fn sparse_preparation_includes_hidden_oof_and_flattened_children() {
             .contains_key(&BoxKey::Source(unrelated))
     );
     assert!(
-        !session
+        session
             .style_views
             .as_ref()
             .unwrap()
@@ -75,7 +75,7 @@ fn sparse_preparation_includes_hidden_oof_and_flattened_children() {
 }
 
 #[test]
-fn pass_overrides_survive_becoming_a_target_after_reparenting() {
+fn pass_overrides_survive_reparenting_between_block_and_flex() {
     let (mut doc, _, child, _) = fixture_with_styles("display:block", "width:31px;height:7px");
     let body = doc.nodes[child].parent.unwrap();
     let flex = doc.append_element(
@@ -89,7 +89,7 @@ fn pass_overrides_survive_becoming_a_target_after_reparenting() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     assert!(
-        !session
+        session
             .style_views
             .as_ref()
             .unwrap()
@@ -109,7 +109,7 @@ fn pass_overrides_survive_becoming_a_target_after_reparenting() {
     session.document.append_child(body, child).unwrap();
     session.with_cache_frame(child, raikiri_layout_style::ViewContext::default(), |_| {});
     assert!(
-        !session
+        session
             .style_views
             .as_ref()
             .unwrap()
@@ -129,22 +129,21 @@ fn pass_overrides_survive_becoming_a_target_after_reparenting() {
 }
 
 #[test]
-fn non_target_edge_scopes_keep_legacy_restoration_and_epoch_notifications() {
+fn prepared_edge_scopes_keep_both_query_restoration_and_epoch_notifications() {
     let (mut doc, cascade, child, _) =
-        fixture_with_styles("display:block", "width:31px;height:7px");
+        fixture_with_styles("display:block", "width:31px;height:7px;padding-left:10%");
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let marker = session.record_style_overrides(child, Vec::new());
     assert!(marker.is_some());
     session.record_scoped_length(child, LengthProperty::Width, L::Px(99.0), true);
     session.restore_recorded_style_overrides(marker);
-    session
-        .layout_style_for_key_mut(child)
-        .unwrap()
-        .padding
-        .left = taffy::LengthPercentage::percent(0.1);
     let epoch = session.layout_cache_context.epoch();
     session.with_resolved_edges(child, 200.0, false, |session| {
+        assert_eq!(
+            session.style_view(child).padding().left,
+            taffy::LengthPercentage::length(20.0)
+        );
         assert_eq!(
             session.layout_style_for_key(child).unwrap().padding.left,
             taffy::LengthPercentage::length(20.0)
@@ -155,7 +154,11 @@ fn non_target_edge_scopes_keep_legacy_restoration_and_epoch_notifications() {
         taffy::LengthPercentage::percent(0.1)
     );
     assert_ne!(session.layout_cache_context.epoch(), epoch);
-    assert!(session.style_views.as_ref().unwrap().boxes.is_empty());
+    assert!(session.has_style_view(child));
+    assert_eq!(
+        session.style_view(child).padding().left,
+        taffy::LengthPercentage::percent(0.1)
+    );
 }
 
 #[test]

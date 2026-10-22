@@ -4,6 +4,7 @@ mod children;
 pub(crate) mod context;
 mod positioned;
 mod sizing;
+pub(crate) mod style_input;
 
 pub(crate) use positioned::aligned_static_position;
 
@@ -14,9 +15,9 @@ use context::{BlockContext, BlockFormattingContext};
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
 use taffy::{
-    AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutBlockContainer,
-    LayoutInput, LayoutOutput, LayoutPartialTree, Line, MaybeMath, NodeId, Position, Rect,
-    RequestedAxis, ResolveOrZero, RunMode, Size, SizingMode, TraversePartialTree,
+    AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutInput, LayoutOutput,
+    LayoutPartialTree, Line, MaybeMath, NodeId, Position, Rect, RequestedAxis, ResolveOrZero,
+    RunMode, Size, SizingMode, TraversePartialTree,
 };
 
 /// How far block flow moves a child of a left-to-right container to the
@@ -51,11 +52,7 @@ fn shares_context(style: &Style) -> bool {
 }
 
 fn child_style(tree: &LayoutSession<'_>, child: NodeId) -> Style {
-    let query = tree.get_block_child_style(child);
-    let mut style = query.style.clone();
-    style.padding = query.padding();
-    style.border = query.border();
-    style
+    style_input::child(tree, usize::from(child))
 }
 
 fn child_inputs(parent: Size<Option<f32>>, width: Option<f32>, run_mode: RunMode) -> LayoutInput {
@@ -228,7 +225,7 @@ pub(crate) fn compute_block_flow(
     inputs: LayoutInput,
     context: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
-    let style = tree.get_block_container_style(node).clone();
+    let style = style_input::container(tree, usize::from(node));
     let replaced = crate::paint_rules::is_replaced_element(tree, usize::from(node));
     let content_box_ratio = tree.nodes[usize::from(node)].ratio_in_content_box;
     let metrics = Metrics::resolve(&style, replaced, content_box_ratio, inputs);

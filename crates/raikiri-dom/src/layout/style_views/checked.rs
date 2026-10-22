@@ -6,24 +6,19 @@ use std::{
 use crate::{LayoutStyle, node::arena::BoxKey};
 use raikiri_layout_style::{LayoutStyleView, ViewContext};
 use taffy::{
-    CoreStyle, FlexboxContainerStyle, FlexboxItemStyle, GridContainerStyle, GridItemStyle,
+    BlockContainerStyle, BlockItemStyle, CoreStyle, FlexboxContainerStyle, FlexboxItemStyle,
+    GridContainerStyle, GridItemStyle, OofItemStyle,
 };
 
 mod compare;
 mod iterators;
+pub(crate) mod legacy;
 use compare::{CheckedValue, Diagnostic};
 use iterators::{
     CheckedAreas, CheckedIter, CheckedNames, CheckedRepeat, CheckedTemplate, CheckedTracks,
 };
 
-#[derive(Clone, Copy, Debug)]
-#[repr(usize)]
-pub(crate) enum ReadRole {
-    FlexContainer,
-    FlexItem,
-    GridContainer,
-    GridItem,
-}
+pub(crate) use super::ReadRole;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReadContext {
@@ -49,7 +44,7 @@ impl ReadContext {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ComparisonStats {
-    pub(crate) getter_reads: [Cell<usize>; 4],
+    pub(crate) getter_reads: [Cell<usize>; 8],
     pub(crate) iterator_reads: Cell<usize>,
     pub(crate) calc_comparisons: Cell<usize>,
     pub(crate) pass_reads: Cell<usize>,
@@ -66,6 +61,7 @@ impl ComparisonStats {
             self.pass_reads.set(self.pass_reads.get() + 1);
         }
         if context.scope_depth > 0
+            || context.context.block_item_basis.is_some()
             || context.context.percent_basis != raikiri_layout_style::PercentBasis::Taffy
         {
             self.scoped_reads.set(self.scoped_reads.get() + 1);
@@ -78,6 +74,7 @@ impl ComparisonStats {
 #[derive(Clone, Copy)]
 pub(crate) struct CheckedStyle<'a> {
     legacy: &'a LayoutStyle,
+    legacy_query: legacy::LegacyQuery<'a>,
     view: Option<LayoutStyleView<'a>>,
     context: ReadContext,
     stats: &'a ComparisonStats,
@@ -91,10 +88,30 @@ impl<'a> CheckedStyle<'a> {
     ) -> Self {
         Self {
             legacy,
+            legacy_query: legacy::LegacyQuery::plain(legacy),
             view,
             context,
             stats,
         }
+    }
+    pub(crate) fn with_legacy_query(mut self, legacy: legacy::LegacyQuery<'a>) -> Self {
+        self.legacy_query = legacy;
+        self
+    }
+    pub(crate) fn bridge_align_self(&self) -> Option<taffy::AlignSelf> {
+        self.read("Bridge::align_self", self.legacy.align_self, |view| {
+            view.bridge_align_self()
+        })
+    }
+    pub(crate) fn bridge_justify_self(&self) -> Option<taffy::AlignSelf> {
+        self.read("Bridge::justify_self", self.legacy.justify_self, |view| {
+            view.bridge_justify_self()
+        })
+    }
+    pub(crate) fn bridge_align_content(&self) -> taffy::AlignContent {
+        self.read("Bridge::align_content", self.legacy.align_content, |view| {
+            view.bridge_align_content()
+        })
     }
     fn begin(&self, property: &'static str) -> Diagnostic<'a> {
         if self.view.is_some() {
@@ -124,9 +141,17 @@ macro_rules! getters {
     )+ };
 }
 
+macro_rules! query_getters {
+    ($trait:ident; $($method:ident: $value:ty),+ $(,)?) => { $(
+        fn $method(&self) -> $value {
+            self.read(concat!(stringify!($trait), "::", stringify!($method)), $trait::$method(&self.legacy_query), |view| $trait::$method(view))
+        }
+    )+ };
+}
+
 impl CoreStyle for CheckedStyle<'_> {
     type CustomIdent = raikiri_style::SmolStr;
-    getters!(CoreStyle;
+    query_getters!(CoreStyle;
         box_generation_mode: taffy::BoxGenerationMode, is_block: bool,
         is_compressible_replaced: bool, is_replaced: bool, box_sizing: taffy::BoxSizing,
         direction: taffy::Direction, overflow: taffy::Point<taffy::Overflow>,
@@ -263,3 +288,22 @@ impl GridContainerStyle for CheckedStyle<'_> {
 
 #[cfg(test)]
 mod tests;
+
+impl BlockContainerStyle for CheckedStyle<'_> {
+    query_getters!(BlockContainerStyle;
+        text_align: taffy::TextAlign, align_content: taffy::AlignContent, justify_items: taffy::AlignItems
+    );
+}
+impl BlockItemStyle for CheckedStyle<'_> {
+    query_getters!(BlockItemStyle;
+        is_table: bool, align_self: Option<taffy::AlignSelf>, justify_self: Option<taffy::AlignSelf>,
+        align_content: taffy::AlignContent, float: taffy::Float, clear: taffy::Clear
+    );
+}
+impl OofItemStyle for CheckedStyle<'_> {
+    query_getters!(OofItemStyle;
+        align_self: Option<taffy::AlignSelf>, justify_self: Option<taffy::AlignSelf>, is_table: bool,
+        grid_row: taffy::Line<taffy::GridPlacement<raikiri_style::SmolStr>>,
+        grid_column: taffy::Line<taffy::GridPlacement<raikiri_style::SmolStr>>
+    );
+}

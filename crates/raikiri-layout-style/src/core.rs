@@ -82,7 +82,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             overflow(get(Axis::X, c.overflow.x)),
             overflow(get(Axis::Y, c.overflow.y)),
         );
-        if self.vertical() {
+        if self.geometry_transposed() {
             taffy::Point { x: y, y: x }
         } else {
             taffy::Point { x, y }
@@ -90,13 +90,14 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     #[inline]
     fn scrollbar_width(&self) -> f32 {
-        0.0
+        self.prepared.metadata.scrollbar_width
     }
     #[inline]
     fn position(&self) -> taffy::Position {
         match self.prepared.values.position {
             PositionValue::Absolute | PositionValue::Fixed => taffy::Position::Absolute,
-            PositionValue::Relative | PositionValue::Sticky => taffy::Position::Relative,
+            PositionValue::Relative => taffy::Position::Relative,
+            PositionValue::Sticky => taffy::Position::Sticky,
             _ => taffy::Position::Static,
         }
     }
@@ -106,7 +107,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             absolute: self.position().is_positioned(),
             fixed: false,
         };
-        if self.use_prepared_claims {
+        if self.use_prepared_claims && self.context.claims_policy == ClaimsPolicy::Prepared {
             self.prepared.metadata.claims.unwrap_or(positioning)
         } else {
             positioning
@@ -150,7 +151,7 @@ impl CoreStyle for LayoutStyleView<'_> {
                 self.flags().contains(StyleFlags::CONTAIN_WIDTH),
             )
         };
-        if self.vertical() {
+        if self.geometry_transposed() {
             ratio.map(|r| 1.0 / r)
         } else {
             ratio
@@ -178,25 +179,16 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     #[inline]
     fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
+        if let Some(padding) = self.context.resolved_padding {
+            return padding.map(taffy::LengthPercentage::length);
+        }
         use LengthProperty::*;
-        let get = |p| self.length(p).lp(self.context.percent_basis);
-        self.edges(
-            get(PaddingTop),
-            get(PaddingRight),
-            get(PaddingBottom),
-            get(PaddingLeft),
-        )
+        self.percentage_edges([PaddingTop, PaddingRight, PaddingBottom, PaddingLeft])
     }
     #[inline]
     fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
         use LengthProperty::*;
-        let get = |p| self.length(p).lp(self.context.percent_basis);
-        self.edges(
-            get(BorderTop),
-            get(BorderRight),
-            get(BorderBottom),
-            get(BorderLeft),
-        )
+        self.percentage_edges([BorderTop, BorderRight, BorderBottom, BorderLeft])
     }
     #[inline]
     fn contain(&self) -> taffy::Contain {

@@ -127,11 +127,19 @@ impl StyleFlags {
     pub const MULTICOL: Self = Self(1 << 17);
     /// Prepared text leaf classification.
     pub const TEXT: Self = Self(1 << 18);
+    /// The legacy block item table identity.
+    pub const BLOCK_TABLE: Self = Self(1 << 19);
+    /// CSS table identity in out-of-flow layout.
+    pub const OOF_TABLE: Self = Self(1 << 20);
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+    /// Remove prepared facts before publishing refreshed adapter inputs.
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
     }
     /// Whether a fact is set.
     pub const fn contains(self, flag: Self) -> bool {
@@ -153,6 +161,10 @@ pub struct StyleMetadata {
     pub used_writing_mode: WritingMode,
     /// Explicit containing-block policy; None uses positioning.
     pub claims: Option<taffy::ContainingBlockClaims>,
+    /// Adapter-supplied scrollbar thickness, independent of CSS computed values.
+    pub scrollbar_width: f32,
+    /// Adapter-supplied legacy alignment, independent of CSS text alignment.
+    pub legacy_text_align: taffy::TextAlign,
 }
 impl Default for StyleMetadata {
     fn default() -> Self {
@@ -160,6 +172,8 @@ impl Default for StyleMetadata {
             flags: StyleFlags::default(),
             used_writing_mode: WritingMode::HorizontalTb,
             claims: None,
+            scrollbar_width: 0.0,
+            legacy_text_align: taffy::TextAlign::Auto,
         }
     }
 }
@@ -176,9 +190,40 @@ pub enum PercentBasis {
     Indefinite,
 }
 
+/// Geometry conversion applied after the existing bridge policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BridgeProjection {
+    /// Preserve the bridge geometry.
+    #[default]
+    Identity,
+    /// Preserve the existing vertical block snapshot conversion.
+    BlockTranspose {
+        /// Whether physical block-start is the right edge.
+        right_to_left: bool,
+    },
+}
+
+/// Containing-block policy selected by the consuming algorithm.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClaimsPolicy {
+    /// Use the node's prepared containing-block facts.
+    #[default]
+    Prepared,
+    /// Preserve the legacy positioning-only trait result.
+    Positioning,
+}
+
 /// The context in which an algorithm reads a box's style.
 #[derive(Clone, Copy, Debug)]
 pub struct ViewContext {
+    /// Geometry conversion independent of writing-mode policy.
+    pub bridge_projection: BridgeProjection,
+    /// Fully resolved padding captured in the returned geometry.
+    pub resolved_padding: Option<taffy::Rect<f32>>,
+    /// Optional basis for only the returned top and bottom block-item edges.
+    pub block_item_basis: Option<f32>,
+    /// Containing-block policy for the consuming role.
+    pub claims_policy: ClaimsPolicy,
     /// Axes returned by size and edge getters; horizontal preserves physical axes.
     pub layout_wm: WritingMode,
     /// Whether alignment is being queried along the inline axis.
@@ -189,6 +234,10 @@ pub struct ViewContext {
 impl Default for ViewContext {
     fn default() -> Self {
         Self {
+            bridge_projection: BridgeProjection::Identity,
+            resolved_padding: None,
+            block_item_basis: None,
+            claims_policy: ClaimsPolicy::Prepared,
             layout_wm: WritingMode::HorizontalTb,
             align_axis_is_inline: false,
             percent_basis: PercentBasis::Taffy,

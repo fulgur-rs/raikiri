@@ -141,3 +141,6 @@ fn prepared_style_rejects_wrong_bindings() {
     );
 }
 mod pass_tests;
+
+mod block_tests;
+mod bridge_projection_tests;

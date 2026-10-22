@@ -1,5 +1,6 @@
 //! Borrowed style queries for Taffy, independent of the DOM adapter.
 
+mod block;
 mod calc;
 mod context;
 mod core;

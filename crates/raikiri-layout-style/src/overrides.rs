@@ -141,7 +141,43 @@ enum OwnedOverrideKind {
         resolved: bool,
     },
 }
+/// A reversible update of one sparse override property.
+///
+/// Restoring this token preserves changes to every other property.
+#[derive(Debug)]
+pub struct OwnedOverrideUndo {
+    key: OwnedPropertyOverride,
+    previous: Option<OwnedPropertyOverride>,
+}
+impl OwnedOverrideUndo {
+    /// Restore only the property captured by this token.
+    pub fn restore(self, entries: &mut Vec<OwnedPropertyOverride>) {
+        if let Some(previous) = self.previous {
+            previous.install(entries);
+        } else if let Some(index) = entries
+            .iter()
+            .position(|entry| self.key.same_property(entry))
+        {
+            entries.remove(index);
+        }
+    }
+}
+
 impl OwnedPropertyOverride {
+    /// Replace one property, retaining the previous entry for a later restore.
+    pub fn replace_in(&self, entries: &mut Vec<Self>) -> OwnedOverrideUndo {
+        let key = self.clone();
+        let replacement = self.clone();
+        let previous =
+            if let Some(entry) = entries.iter_mut().find(|entry| self.same_property(entry)) {
+                Some(std::mem::replace(entry, replacement))
+            } else {
+                entries.push(replacement);
+                None
+            };
+        OwnedOverrideUndo { key, previous }
+    }
+
     /// Override clearance for a fragmentation pass.
     pub const fn clear(value: ClearValue) -> Self {
         Self(OwnedOverrideKind::Inline(PropertyOverride::clear(value)))

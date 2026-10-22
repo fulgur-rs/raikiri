@@ -88,7 +88,7 @@ use page_pipeline::*;
 use sanitize::*;
 
 #[cfg(test)]
-pub(crate) use bridge::apply_computed_to_style;
+pub(crate) use bridge::{apply_computed_to_style, apply_computed_to_style_in_session};
 pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::spanning::is_spanner;
 pub(crate) use multicol::{
