@@ -13,7 +13,7 @@ use raikiri_traits::NodeKind;
 pub(crate) mod checked;
 pub(super) mod metadata;
 mod overrides;
-pub(crate) use overrides::{OverrideToken, ScopedOverrides};
+pub(crate) use overrides::ScopedOverrides;
 
 pub(crate) struct PreparedBox<'a> {
     prepared: PreparedStyle<'a>,
@@ -446,6 +446,7 @@ impl LayoutSession<'_> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn has_style_view(&self, idx: usize) -> bool {
         self.nodes.box_key(idx).is_some_and(|key| {
             self.style_views

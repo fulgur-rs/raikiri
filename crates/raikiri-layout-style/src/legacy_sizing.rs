@@ -1,7 +1,7 @@
 use crate::overrides::OverrideKind;
 use crate::{LengthProperty, OverrideError, OwnedPropertyOverride};
 use raikiri_style::SmolStr;
-use taffy::{Dimension, LengthPercentageAuto, Style};
+use taffy::{Dimension, LengthPercentage, LengthPercentageAuto, Style};
 
 /// The previous value of one field in the temporary sizing compatibility layer.
 #[must_use]
@@ -15,6 +15,11 @@ enum SizingField {
     MaxWidth(LengthPercentageAuto),
     MaxHeight(LengthPercentageAuto),
     AspectRatio(Option<f32>),
+    FlexShrink(f32),
+    BorderTop(LengthPercentage),
+    BorderRight(LengthPercentage),
+    BorderBottom(LengthPercentage),
+    BorderLeft(LengthPercentage),
 }
 
 impl LegacySizingUndo {
@@ -28,6 +33,11 @@ impl LegacySizingUndo {
             SizingField::MaxWidth(value) => style.max_size.width = value,
             SizingField::MaxHeight(value) => style.max_size.height = value,
             SizingField::AspectRatio(value) => style.aspect_ratio = value,
+            SizingField::FlexShrink(value) => style.flex_shrink = value,
+            SizingField::BorderTop(value) => style.border.top = value,
+            SizingField::BorderRight(value) => style.border.right = value,
+            SizingField::BorderBottom(value) => style.border.bottom = value,
+            SizingField::BorderLeft(value) => style.border.left = value,
         }
     }
 }
@@ -43,6 +53,7 @@ impl OwnedPropertyOverride {
     pub fn apply_transposed_legacy_sizing(
         &self,
         style: &mut Style<SmolStr>,
+        right_to_left: bool,
     ) -> Result<LegacySizingUndo, OverrideError> {
         use crate::LengthProperty::*;
         let kind = match self.as_borrowed().0 {
@@ -54,10 +65,27 @@ impl OwnedPropertyOverride {
                     MinHeight => MinWidth,
                     MaxWidth => MaxHeight,
                     MaxHeight => MaxWidth,
+                    BorderTop => BorderLeft,
+                    BorderBottom => BorderRight,
+                    BorderLeft => {
+                        if right_to_left {
+                            BorderBottom
+                        } else {
+                            BorderTop
+                        }
+                    }
+                    BorderRight => {
+                        if right_to_left {
+                            BorderTop
+                        } else {
+                            BorderBottom
+                        }
+                    }
                     _ => return Err(OverrideError::UnsupportedLegacySizing),
                 },
                 value,
             ),
+            OverrideKind::FlexShrink(value) => OverrideKind::FlexShrink(value),
             OverrideKind::AspectRatio(ratio) => {
                 OverrideKind::AspectRatio(ratio.map(|ratio| 1.0 / ratio))
             }
@@ -108,6 +136,28 @@ fn apply_sizing(
         OverrideKind::Length(LengthProperty::MaxHeight, value) => {
             SizingField::MaxHeight(replace(&mut style.max_size.height, value.auto(false)))
         }
+        OverrideKind::FlexShrink(value) => {
+            SizingField::FlexShrink(replace(&mut style.flex_shrink, value))
+        }
+        OverrideKind::Length(LengthProperty::BorderTop, value) => SizingField::BorderTop(replace(
+            &mut style.border.top,
+            value.lp(crate::PercentBasis::Taffy),
+        )),
+        OverrideKind::Length(LengthProperty::BorderRight, value) => {
+            SizingField::BorderRight(replace(
+                &mut style.border.right,
+                value.lp(crate::PercentBasis::Taffy),
+            ))
+        }
+        OverrideKind::Length(LengthProperty::BorderBottom, value) => {
+            SizingField::BorderBottom(replace(
+                &mut style.border.bottom,
+                value.lp(crate::PercentBasis::Taffy),
+            ))
+        }
+        OverrideKind::Length(LengthProperty::BorderLeft, value) => SizingField::BorderLeft(
+            replace(&mut style.border.left, value.lp(crate::PercentBasis::Taffy)),
+        ),
         OverrideKind::AspectRatio(value) => {
             SizingField::AspectRatio(replace(&mut style.aspect_ratio, value))
         }

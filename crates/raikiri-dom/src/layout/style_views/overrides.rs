@@ -283,6 +283,7 @@ impl LayoutSession<'_> {
             .push(entry);
     }
 
+    #[cfg(test)]
     pub(crate) fn record_style_overrides(
         &mut self,
         idx: usize,
@@ -318,6 +319,7 @@ impl LayoutSession<'_> {
         Some(token)
     }
 
+    #[cfg(test)]
     pub(crate) fn restore_recorded_style_overrides(&mut self, token: Option<OverrideToken>) {
         let Some(token) = token else { return };
         assert_eq!(

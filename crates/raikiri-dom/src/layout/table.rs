@@ -53,7 +53,10 @@ use crate::taffy_impl::content_limits::ContentLimits;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
+mod border_scopes;
+mod border_state;
 pub(super) mod cache;
+use border_state::BorderState;
 mod cell_index;
 pub(crate) mod headers;
 pub(crate) mod row_moves;
@@ -504,8 +507,7 @@ fn compute_table_layout_checked(
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
-    let mut grid = cache::table_grid(doc, table_idx)?;
-    let mut oof_candidates = OofCandidates::new();
+    let grid = cache::table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
@@ -519,749 +521,762 @@ fn compute_table_layout_checked(
         inputs.parent_size.width,
         table_border,
     );
-    let cache::PreparedBorders {
-        collapsed_rows,
-        collapsed_cols,
-        columns_in_place,
-        collapsed,
-        ..
-    } = prepared.as_ref();
-    let columns_collapse = collapsed_cols.contains(&true);
-    // CAPMIN constrains the grid's inline axis before its tracks are assigned;
-    // growing only the wrapper would leave the cells and grid paint too small.
-    let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
-    let caption_minimum = if vertical_writing {
-        0.0
-    } else {
-        caption_inline_minimum
-    };
-
-    // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
-    // The table's outer size caller may have imposed via `apply_page_content_box_to_body` / block layout.
-    // For tables, style.size is already injected via bridge; inputs.known_dimensions carries it.
-    // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
-    // taffy's Dimension::maybe_resolve not directly available; use helper below.
-    let effective_known = Size {
-        width: inputs.known_dimensions.width.or(resolve_dimension(
-            doc.layout_node_with_style(table_idx)
-                .unwrap()
-                .style
-                .size
-                .width,
-            inputs.parent_size.width,
-        )),
-        height: inputs.known_dimensions.height.or(resolve_dimension(
-            doc.layout_node_with_style(table_idx)
-                .unwrap()
-                .style
-                .size
-                .height,
-            inputs.parent_size.height,
-        )),
-    };
-
-    let border_spacing = if collapse {
-        (0.0, 0.0)
-    } else {
-        (
-            doc.nodes[table_idx].border_spacing.horizontal.0.max(0.0),
-            doc.nodes[table_idx].border_spacing.vertical.0.max(0.0),
-        )
-    };
-
-    let padding_border_size = Size {
-        width: pad.left + pad.right + collapsed.outer_left + collapsed.outer_right,
-        height: pad.top + pad.bottom + collapsed.outer_top + collapsed.outer_bottom,
-    };
-
-    if grid.n_cols == 0 || grid.rows.is_empty() {
-        // Empty tables shrink-wrap like the main path below: a specified
-        // width wins; otherwise the container width is only a cap over the
-        // padding/border extents (never stretch-to-fill).
-        let specified_w = resolve_dimension(
-            doc.layout_node_with_style(table_idx)
-                .unwrap()
-                .style
-                .size
-                .width,
-            inputs.parent_size.width,
-        );
-        // A flex/grid parent supplies the table item's used main size after
-        // flexing/tracking. It must override the table's percentage width
-        // (which is only the item's hypothetical basis); otherwise a
-        // shrinking table item snaps back to its pre-flex percentage width.
-        let mut width = if parent_is_flex_or_grid {
-            effective_known.width.or(specified_w).unwrap_or_else(|| {
-                let natural = padding_border_size.width;
-                match effective_known.width {
-                    Some(container) => f32_max_compat(natural.min(container), 0.0),
-                    None => natural,
-                }
-            })
+    let layout = |doc: &mut LayoutSession<'_>| {
+        let mut grid = grid;
+        let mut oof_candidates = OofCandidates::new();
+        let cache::PreparedBorders {
+            collapsed_rows,
+            collapsed_cols,
+            columns_in_place,
+            collapsed,
+            ..
+        } = prepared.as_ref();
+        let columns_collapse = collapsed_cols.contains(&true);
+        // CAPMIN constrains the grid's inline axis before its tracks are assigned;
+        // growing only the wrapper would leave the cells and grid paint too small.
+        let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
+        let caption_minimum = if vertical_writing {
+            0.0
         } else {
-            specified_w.unwrap_or_else(|| {
-                let natural = padding_border_size.width;
-                match effective_known.width {
-                    Some(container) => f32_max_compat(natural.min(container), 0.0),
-                    None => natural,
-                }
-            })
+            caption_inline_minimum
         };
-        let specified_h = resolve_dimension(
+
+        // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
+        // The table's outer size caller may have imposed via `apply_page_content_box_to_body` / block layout.
+        // For tables, style.size is already injected via bridge; inputs.known_dimensions carries it.
+        // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
+        // taffy's Dimension::maybe_resolve not directly available; use helper below.
+        let effective_known = Size {
+            width: inputs.known_dimensions.width.or(resolve_dimension(
+                doc.layout_node_with_style(table_idx)
+                    .unwrap()
+                    .style
+                    .size
+                    .width,
+                inputs.parent_size.width,
+            )),
+            height: inputs.known_dimensions.height.or(resolve_dimension(
+                doc.layout_node_with_style(table_idx)
+                    .unwrap()
+                    .style
+                    .size
+                    .height,
+                inputs.parent_size.height,
+            )),
+        };
+
+        let border_spacing = if collapse {
+            (0.0, 0.0)
+        } else {
+            (
+                doc.nodes[table_idx].border_spacing.horizontal.0.max(0.0),
+                doc.nodes[table_idx].border_spacing.vertical.0.max(0.0),
+            )
+        };
+
+        let padding_border_size = Size {
+            width: pad.left + pad.right + collapsed.outer_left + collapsed.outer_right,
+            height: pad.top + pad.bottom + collapsed.outer_top + collapsed.outer_bottom,
+        };
+
+        if grid.n_cols == 0 || grid.rows.is_empty() {
+            // Empty tables shrink-wrap like the main path below: a specified
+            // width wins; otherwise the container width is only a cap over the
+            // padding/border extents (never stretch-to-fill).
+            let specified_w = resolve_dimension(
+                doc.layout_node_with_style(table_idx)
+                    .unwrap()
+                    .style
+                    .size
+                    .width,
+                inputs.parent_size.width,
+            );
+            // A flex/grid parent supplies the table item's used main size after
+            // flexing/tracking. It must override the table's percentage width
+            // (which is only the item's hypothetical basis); otherwise a
+            // shrinking table item snaps back to its pre-flex percentage width.
+            let mut width = if parent_is_flex_or_grid {
+                effective_known
+                    .width
+                    .or(specified_w)
+                    .unwrap_or(padding_border_size.width)
+            } else {
+                specified_w.unwrap_or_else(|| {
+                    let natural = padding_border_size.width;
+                    match effective_known.width {
+                        Some(container) => f32_max_compat(natural.min(container), 0.0),
+                        None => natural,
+                    }
+                })
+            };
+            let specified_h = resolve_dimension(
+                doc.layout_node_with_style(table_idx)
+                    .unwrap()
+                    .style
+                    .size
+                    .height,
+                inputs.parent_size.height,
+            );
+            let mut height = specified_h.unwrap_or_else(|| {
+                effective_known
+                    .height
+                    .unwrap_or(0.0)
+                    .max(padding_border_size.height)
+            });
+            if vertical_writing {
+                height = height.max(caption_inline_minimum);
+            }
+            let (caption_size, mut caption_candidates) = layout_table_caption(
+                doc,
+                table_idx,
+                if specified_w.is_some() || effective_known.width.is_some() {
+                    width
+                } else {
+                    inputs.parent_size.width.unwrap_or(width).max(width)
+                },
+                if vertical_writing {
+                    Some(height)
+                } else {
+                    inputs.parent_size.height
+                },
+            )
+            .map(|(size, candidates)| (Some(size), candidates))
+            .unwrap_or_else(|| (None, OofCandidates::new()));
+            if !vertical_writing && let Some(size) = caption_size {
+                width = width.max(size.width);
+            }
+            let (wrapper_size, _) = position_table_caption(
+                doc,
+                table_idx,
+                Size { width, height },
+                caption_size,
+                inputs.run_mode,
+            );
+            translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
+            return Ok(table_layout_output(
+                doc,
+                table_idx,
+                wrapper_size,
+                caption_candidates,
+                inputs.run_mode,
+            ));
+        }
+
+        // Overlap totals up front: tracks are sized in pre-overlap space
+        // (origins net the overlaps out afterwards), so the avail/target the
+        // distributors aim at must add the overlaps back — otherwise a stretched
+        // table leaves an `overlap`-wide slack at its end edge. Separate model:
+        // overlaps are zero.
+        let overlap_w: f32 = collapsed.col_overlaps.iter().sum();
+        let overlap_h: f32 = collapsed.row_overlaps.iter().sum();
+        // Separated borders (CSS 2.2 §17.6.1): `border-spacing` sits between
+        // adjoining cells and between the outer cells and the table's padding
+        // edge, so n tracks take n + 1 gaps. The spacing belongs to the table's
+        // content box, so it is part of the extents the tracks share but not of
+        // `padding_border_size`. Collapse zeroes `border_spacing`.
+        // A row whose overlapping cells all hide their empty boxes has zero
+        // height and only one spacing side (CSS 2.2 section 17.6.1.1).
+        let hidden_rows: Vec<bool> = hidden_empty_rows(doc, &grid)
+            .into_iter()
+            .zip(collapsed_rows)
+            .map(|(hidden, collapsed)| hidden || *collapsed)
+            .collect();
+        let row_gaps: Vec<_> = hidden_rows
+            .iter()
+            .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
+            .collect();
+        let shown_columns = collapsed_cols
+            .iter()
+            .filter(|collapsed| !**collapsed)
+            .count();
+        let spacing = Size {
+            // With every column collapsed nothing remains to space apart.
+            width: if shown_columns == 0 {
+                0.0
+            } else {
+                border_spacing.0 * (shown_columns as f32 + 1.0)
+            },
+            // With every row collapsed nothing remains to space apart.
+            height: if collapsed_rows.iter().all(|collapsed| *collapsed) {
+                0.0
+            } else {
+                border_spacing.1
+                    * (hidden_rows.iter().filter(|hidden| !**hidden).count() as f32 + 1.0)
+            },
+        };
+        let distrib_insets = Size {
+            width: padding_border_size.width - overlap_w + spacing.width,
+            height: padding_border_size.height - overlap_h + spacing.height,
+        };
+
+        // Specified (non-auto) table width, resolved against the containing
+        // block. Auto-width tables shrink-wrap their content (CSS 2.1 §17.5.2.2)
+        // and must NOT stretch to fill the containing block: `effective_known`
+        // carries the container-imposed width (800 for top-level blocks), which
+        // is a cap for auto tables, the target only for specified widths.
+        let specified_width = resolve_dimension(
             doc.layout_node_with_style(table_idx)
                 .unwrap()
                 .style
                 .size
-                .height,
-            inputs.parent_size.height,
+                .width,
+            inputs.parent_size.width,
         );
-        let mut height = specified_h.unwrap_or_else(|| {
-            effective_known
-                .height
-                .unwrap_or(0.0)
-                .max(padding_border_size.height)
+        // In fixed mode an unresolvable specified width (auto, or % of an
+        // indefinite container) falls back to the auto algorithm below
+        // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
+        // automatic layout algorithm; §17.5.2: such a table does not fill its
+        // containing block).
+        // Auto and fixed+auto columns use the specified width, or the used width
+        // assigned by a flex/grid parent. Otherwise, with `known_dimensions.width = None` the
+        // resolver takes its cap branch (preferred size capped by the definite
+        // container, §17.5.2.2) instead of stretch-to-fill. A specified width
+        // keeps the previous basis (`effective_known`, the taffy-resolved outer
+        // width — subtracting insets recovers the content box).
+        let wrapper_limits = doc.nodes[table_idx].content_limits;
+        let (wrapper_minimum, wrapper_maximum, constrained_available_space) = if wrapper_limits
+            .min
+            .width
+            .is_auto()
+            && wrapper_limits.max.width.is_auto()
+        {
+            (None, None, inputs.available_space.width)
+        } else {
+            let intrinsic_grid = if columns_collapse {
+                without_collapsed_columns(&grid, collapsed_cols, false)
+            } else {
+                grid.clone()
+            };
+            let intrinsic_inputs = LayoutInput {
+                known_dimensions: Size {
+                    width: None,
+                    height: inputs.known_dimensions.height,
+                },
+                ..inputs
+            };
+            let measure_intrinsic_grid = |doc: &mut LayoutSession<'_>, available_space| {
+                let probe = LayoutInput {
+                    available_space: Size {
+                        width: available_space,
+                        height: intrinsic_inputs.available_space.height,
+                    },
+                    ..intrinsic_inputs
+                };
+                resolve_column_widths(
+                    doc,
+                    &intrinsic_grid,
+                    probe,
+                    Size {
+                        width: distrib_insets.width,
+                        height: 0.0,
+                    },
+                    border_spacing.0,
+                )
+                .iter()
+                .sum::<f32>()
+                    + distrib_insets.width
+            };
+            let grid_minimum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+                measure_intrinsic_grid(doc, AvailableSpace::MinContent)
+            });
+            let grid_maximum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+                measure_intrinsic_grid(doc, AvailableSpace::MaxContent)
+            });
+            let intrinsic_minimum = grid_minimum.max(caption_minimum);
+            let intrinsic_maximum = grid_maximum.max(caption_minimum).max(intrinsic_minimum);
+            let wrapper_context = IntrinsicSizeContext {
+                min_content: intrinsic_minimum,
+                max_content: intrinsic_maximum,
+                inputs: &inputs,
+                available_space: inputs.available_space.width,
+                horizontal: true,
+            };
+            let wrapper_minimum =
+                resolve_intrinsic_limit(doc, table_idx, wrapper_limits.min.width, wrapper_context)
+                    .map(|minimum| minimum.max(intrinsic_minimum));
+            let authored_wrapper_maximum =
+                resolve_intrinsic_limit(doc, table_idx, wrapper_limits.max.width, wrapper_context);
+            let wrapper_maximum = authored_wrapper_maximum
+                .map(|maximum| maximum.min(intrinsic_maximum).max(intrinsic_minimum));
+            let wrapper_maximum = if wrapper_minimum
+                .zip(authored_wrapper_maximum)
+                .is_some_and(|(minimum, maximum)| minimum > maximum)
+            {
+                None
+            } else {
+                wrapper_maximum
+            };
+            let constrained_available_space = match inputs.available_space.width {
+                AvailableSpace::MinContent => {
+                    let target = apply_wrapper_width_bounds(
+                        intrinsic_minimum,
+                        wrapper_minimum,
+                        wrapper_maximum,
+                    );
+                    if target != intrinsic_minimum {
+                        AvailableSpace::Definite(target)
+                    } else {
+                        inputs.available_space.width
+                    }
+                }
+                AvailableSpace::MaxContent => {
+                    let target = apply_wrapper_width_bounds(
+                        intrinsic_maximum,
+                        wrapper_minimum,
+                        wrapper_maximum,
+                    );
+                    if target != intrinsic_maximum {
+                        AvailableSpace::Definite(target)
+                    } else {
+                        inputs.available_space.width
+                    }
+                }
+                AvailableSpace::Definite(room) => {
+                    let target = apply_wrapper_width_bounds(room, wrapper_minimum, wrapper_maximum);
+                    if target != room {
+                        AvailableSpace::Definite(target)
+                    } else {
+                        inputs.available_space.width
+                    }
+                }
+            };
+            (
+                wrapper_minimum,
+                wrapper_maximum,
+                constrained_available_space,
+            )
+        };
+        let inputs_for_columns = LayoutInput {
+            known_dimensions: Size {
+                width: match (specified_width, parent_is_flex_or_grid) {
+                    (Some(_), _) | (_, true) => effective_known.width.map(|width| {
+                        apply_wrapper_width_bounds(
+                            width.max(caption_minimum),
+                            wrapper_minimum,
+                            wrapper_maximum,
+                        )
+                    }),
+                    (None, false) => None,
+                },
+                height: effective_known.height,
+            },
+            available_space: Size {
+                width: constrained_available_space,
+                height: inputs.available_space.height,
+            },
+            ..inputs
+        };
+        let pass = ColumnPass {
+            table_layout,
+            specified_width,
+            caption_minimum,
+            wrapper_minimum,
+            wrapper_maximum,
+            inputs: inputs_for_columns,
+            border_spacing_x: border_spacing.0,
+        };
+        // A collapsed column leaves the table, but its cells still count toward
+        // the row heights, which keep the widths the columns had before the
+        // collapse ("col visibility:collapse doesn't change table height").
+        let natural_insets_width = pad.left
+            + pad.right
+            + columns_in_place.as_ref().map_or_else(
+                || collapsed.inline_border_width(),
+                |columns| columns.border_width,
+            )
+            + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+        let natural_widths = columns_collapse.then(|| {
+            measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+                resolve_table_columns(doc, &mut grid, &pass, natural_insets_width)
+            })
         });
-        if vertical_writing {
-            height = height.max(caption_inline_minimum);
+        let mut column_widths = if columns_collapse {
+            let mut remaining = without_collapsed_columns(&grid, collapsed_cols, false);
+            let mut widths =
+                resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width).into_iter();
+            collapsed_cols
+                .iter()
+                .map(|collapsed| {
+                    if *collapsed {
+                        0.0
+                    } else {
+                        widths.next().unwrap_or(0.0)
+                    }
+                })
+                .collect()
+        } else {
+            resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
+        };
+
+        // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
+        // min-height-table-*, min-max-size-table-content-box). Percentages
+        // resolve against the parent (containing block); unresolvable/Auto
+        // Freeman. With `box-sizing: content-box` (the initial value, and the
+        // content-box test's authored value) min/max apply to the content box;
+        // with `border-box` they apply to the outer box. The engine clamps and
+        // distributes in outer sizes below, so content-box values are lifted by
+        // the padding+border extents. Lifting both the natural size and the max
+        // by the same insets keeps the max-never-shrinks gate (`mx >= v`,
+        // csswg-drafts#5336 / Mozilla bug 1651530) in the same domain, so
+        // max-height/max-width keep leaving sub-intrinsic tables at natural
+        // size. min still wins over max on direct conflict.
+        let st = &doc.layout_node_with_style(table_idx).unwrap().style;
+        let specified_height = resolve_dimension(st.size.height, inputs.parent_size.height);
+        let min_w = resolve_dimension(st.min_size.width.into(), inputs.parent_size.width);
+        let max_w = resolve_dimension(st.max_size.width.into(), inputs.parent_size.width);
+        let min_h = resolve_dimension(st.min_size.height.into(), inputs.parent_size.height);
+        let max_h = resolve_dimension(st.max_size.height.into(), inputs.parent_size.height);
+        let is_content_box = st.box_sizing == taffy::BoxSizing::ContentBox;
+        let lift_w = if is_content_box {
+            padding_border_size.width
+        } else {
+            0.0
+        };
+        let lift_h = if is_content_box {
+            padding_border_size.height
+        } else {
+            0.0
+        };
+        let min_w_outer = min_w.map(|m| m + lift_w);
+        let max_w_outer = max_w.map(|m| m + lift_w);
+        let min_h_outer = min_h.map(|m| m + lift_h);
+        let max_h_outer = max_h.map(|m| m + lift_h);
+
+        // Extra min-width grows columns (mirrors the min-height→rows path
+        // below, and the definite-width distribution above). Must run before
+        // row heights are measured so cells lay out at final column widths.
+        let minimum_table_width = [min_w_outer, wrapper_minimum, Some(caption_minimum)]
+            .into_iter()
+            .flatten()
+            .reduce(f32::max);
+        let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
+            if let Some(minimum) = minimum_table_width {
+                distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
+            }
+        };
+        grow_columns(
+            &mut column_widths,
+            distrib_insets.width,
+            columns_collapse.then_some(&collapsed_cols[..]),
+        );
+        let natural_widths = natural_widths.map(|mut widths| {
+            grow_columns(&mut widths, natural_insets_width, None);
+            widths
+        });
+
+        // Row heights
+        let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
+        let mut row_heights = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+            resolve_row_heights(doc, &mut grid, height_widths, border_spacing)
+        })?;
+        if let Some(columns) = columns_in_place {
+            columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
         }
+        for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
+            if *hidden {
+                *height = 0.0;
+            }
+        }
+        // An authored definite table height also establishes the containing block
+        // for percentage-sized children of a single-row cell. Fragmentation can
+        // impose a definite height on a single-row table without doing so; keep
+        // that free space in the wrapper rather than manufacturing a cell
+        // fragment in that case.
+        if effective_known.height.is_some() && (grid.rows.len() > 1 || specified_height.is_some()) {
+            let known_h = effective_known.height.unwrap(); // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+            let target = f32_max_compat(known_h - distrib_insets.height, 0.0);
+            distribute_extra(&mut row_heights, Some(&hidden_rows), target);
+        }
+
+        // Extra min-height grows rows (same path as a definite height);
+        // max-height only clamps the box (content overflows visibly). The outer
+        // domain keeps content-box correct: `min_outer - distrib_insets` =
+        // `min_content + overlap`, the track sum that yields `min_content`.
+        if let Some(mn) = min_h_outer {
+            let target = f32_max_compat(mn - distrib_insets.height, 0.0);
+            distribute_extra(&mut row_heights, Some(&hidden_rows), target);
+        }
+        if vertical_writing {
+            // Vertical columns stack the same row track along the physical
+            // inline axis. Share CAPMIN across those stacks after removing the
+            // grid's own edges and the intervening inline spacing.
+            let columns = grid.n_cols as f32;
+            let edges = padding_border_size.height + border_spacing.1 * (columns + 1.0);
+            let target = (caption_inline_minimum - edges).max(0.0) / columns;
+            distribute_extra(&mut row_heights, Some(&hidden_rows), target);
+        }
+
+        // Content extents net of collapsed-line overlaps, plus the separated
+        // spacing (one of the two is always zero).
+        let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w + spacing.width;
+        let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
+        // min grows the box; max NEVER shrinks a table below its intrinsic
+        // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
+        // min-max-size-table-content-box and max-height-table check that
+        // max-height/max-width leave sub-intrinsic tables at natural size —
+        // only min-* grow). min still wins over max on direct conflict.
+        let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
+            let mut x = v;
+            if let Some(mn) = mn {
+                x = f32_max_compat(x, mn);
+            }
+            if let Some(mx) = mx
+                && !(mn.is_some_and(|mn| mn > mx))
+                && mx >= v
+            {
+                x = x.min(mx);
+            }
+            x
+        };
+        // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
+        // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
+        // width keeps the fill basis.
+        let table_width_basis = if abspos_table && specified_width.is_none() {
+            // An auto-width absolutely positioned table uses the containing block's
+            // available width for this table-layout path.  Taffy's shrink-to-fit
+            // probe may report the intrinsic cell width as `known_dimensions.width`,
+            // but CSS Tables 3 caps the available size at (and in this case fills)
+            // the containing block; retaining the probe would leave a narrow strip
+            // missing from the table background.
+            inputs.parent_size.width.or(effective_known.width)
+        } else if parent_is_flex_or_grid {
+            // Flex/grid supplies a used item width even when the table's own
+            // width is auto. Keep that width instead of shrink-wrapping again.
+            effective_known.width
+        } else {
+            match specified_width {
+                Some(_) => effective_known.width,
+                None => None,
+            }
+        };
+        // Vertical tables stack each column's inline track along the physical
+        // height, so the physical spacing applies across that stack: the
+        // vertical gap between and around the stacked tracks, the horizontal gap
+        // on both sides of the single physical column.
+        let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32
+            + border_spacing.1 * (grid.n_cols as f32 + 1.0);
+        let vertical_content_width =
+            column_widths.iter().sum::<f32>() - overlap_w + border_spacing.0 * 2.0;
+        // CSS 2.1 §17.5.2: the used table width is at least the columns plus
+        // the spacing and borders, even when the specified width is smaller.
+        let min_table_width = content_width + padding_border_size.width;
+        let final_size = Size {
+            width: if vertical_writing {
+                effective_known
+                    .width
+                    .unwrap_or(vertical_content_width + padding_border_size.width)
+            } else {
+                table_width_basis
+                    .map(|w| {
+                        let width = apply_wrapper_width_bounds(w, wrapper_minimum, wrapper_maximum);
+                        clamp_min_max(
+                            f32_max_compat(width, min_table_width),
+                            min_w_outer,
+                            max_w_outer,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        clamp_min_max(
+                            f32_max_compat(
+                                apply_wrapper_width_bounds(
+                                    content_width + padding_border_size.width,
+                                    wrapper_minimum,
+                                    wrapper_maximum,
+                                ),
+                                min_table_width,
+                            ),
+                            min_w_outer,
+                            max_w_outer,
+                        )
+                    })
+            },
+            height: if vertical_writing {
+                vertical_content_height + padding_border_size.height
+            } else {
+                effective_known
+                    .height
+                    .map(|h| {
+                        // Taffy reports authored definite table heights in the
+                        // outer box-sizing domain. Auto tables retain the legacy
+                        // known-height normalization used by fragmentation.
+                        // CSS 2.2 §17.5.3: a specified height is a minimum; the
+                        // table still holds its rows and the spacing.
+                        let outer_height = if specified_height.is_some() {
+                            f32_max_compat(h, content_height + padding_border_size.height)
+                        } else {
+                            (h - padding_border_size.height).max(0.0) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                        };
+                        clamp_min_max(outer_height, min_h_outer, max_h_outer)
+                    })
+                    .unwrap_or_else(|| {
+                        clamp_min_max(
+                            content_height + padding_border_size.height,
+                            min_h_outer,
+                            max_h_outer,
+                        )
+                    })
+            },
+        };
+
         let (caption_size, mut caption_candidates) = layout_table_caption(
             doc,
             table_idx,
-            if specified_w.is_some() || effective_known.width.is_some() {
-                width
-            } else {
-                inputs.parent_size.width.unwrap_or(width).max(width)
-            },
+            final_size.width,
             if vertical_writing {
-                Some(height)
+                Some(final_size.height)
             } else {
                 inputs.parent_size.height
             },
         )
         .map(|(size, candidates)| (Some(size), candidates))
         .unwrap_or_else(|| (None, OofCandidates::new()));
-        if !vertical_writing && let Some(size) = caption_size {
-            width = width.max(size.width);
-        }
-        let (wrapper_size, _) = position_table_caption(
-            doc,
-            table_idx,
-            Size { width, height },
-            caption_size,
-            inputs.run_mode,
-        );
+        let (wrapper_size, grid_origin) =
+            position_table_caption(doc, table_idx, final_size, caption_size, inputs.run_mode);
         translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
-        return Ok(table_layout_output(
+        oof_candidates.append(&mut caption_candidates);
+        if inputs.run_mode == RunMode::ComputeSize {
+            return Ok(LayoutOutput::from_outer_size(wrapper_size));
+        }
+
+        // Position cells: origin includes padding + collapsed outer border.
+        let x_origin = pad.left
+            + collapsed.outer_left
+            + if shown_columns == 0 {
+                0.0
+            } else {
+                border_spacing.0
+            }
+            + grid_origin.x;
+        let y_origin = pad.top + collapsed.outer_top + border_spacing.1 + grid_origin.y;
+        // A separated gap is a negative overlap between adjoining tracks.
+        // The gap after a column sits before the next column that shows, and
+        // none sits before the first one.
+        let mut seen_shown = false;
+        let col_gaps: Vec<f32> = (0..collapsed_cols.len())
+            .map(|column| {
+                seen_shown |= !collapsed_cols[column];
+                let next_shown = collapsed_cols.get(column + 1).is_some_and(|next| !next);
+                if seen_shown && next_shown {
+                    border_spacing.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let col_steps = if collapse {
+            collapsed.col_overlaps.clone()
+        } else {
+            col_gaps
+                .iter()
+                .take(usize::from(grid.n_cols).saturating_sub(1))
+                .map(|gap| -*gap)
+                .collect()
+        };
+        let row_steps = if collapse {
+            collapsed.row_overlaps.clone()
+        } else {
+            row_gaps.iter().map(|gap| -*gap).collect()
+        };
+        let col_origins = track_origins(&column_widths, &col_steps, x_origin);
+        let row_origins = track_origins(&row_heights, &row_steps, y_origin);
+        place_cells(
+            doc,
+            &mut grid,
+            CellPlacementTracks {
+                column_widths: &column_widths,
+                column_gaps: &col_gaps,
+                collapsed_columns: collapsed_cols,
+                row_heights: &row_heights,
+                row_gaps: &row_gaps,
+                collapsed_rows,
+                column_origins: &col_origins,
+                row_origins: &row_origins,
+                row_spacing: border_spacing.1,
+                vertical_writing,
+            },
+            &mut oof_candidates,
+        )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
+        // The first row the table still shows carries its baseline.
+        let baseline_row = collapsed_rows
+            .iter()
+            .position(|collapsed| !collapsed)
+            .unwrap_or(0);
+        let first_row_baseline = grid
+            .cells
+            .iter()
+            .filter(|cell| {
+                first_shown_row(cell, collapsed_rows) == baseline_row
+                    && !hidden_rows[baseline_row]
+                    && cell_baseline_aligned(
+                        doc.ifc_layout_node(cell.node_id)
+                            .expect("table cell layout view")
+                            .table_vertical_align,
+                    )
+            })
+            .map(|cell| cell.baseline)
+            .reduce(f32::max)
+            .unwrap_or_else(|| {
+                grid.cells
+                    .iter()
+                    .filter(|cell| {
+                        first_shown_row(cell, collapsed_rows) == baseline_row
+                            && !hidden_rows[baseline_row]
+                    })
+                    .map(|cell| {
+                        let layout = doc.table_layout_node_mut(cell.node_id).unrounded_layout;
+                        layout.size.height - layout.padding.bottom - layout.border.bottom
+                    })
+                    .fold(0.0, f32::max)
+            });
+        // With every row collapsed the table has no first row, so it has no
+        // first baseline, like an empty table (CSS Tables 3 §3.10.2).
+        doc.nodes[table_idx].table_first_baseline = collapsed_rows
+            .iter()
+            .any(|collapsed| !collapsed)
+            .then(|| row_origins[baseline_row] + first_row_baseline);
+        if vertical_writing {
+            reposition_cells_for_vertical_writing(
+                doc,
+                &mut grid,
+                &row_heights,
+                (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
+                Point {
+                    x: x_origin,
+                    y: y_origin,
+                },
+                border_spacing.1,
+            );
+        }
+        let projected = projects_source_parts(doc, table_idx, &grid);
+        let part_claimants = table_part_claimants(doc, table_idx, &oof_candidates);
+        let parts = (projected || !part_claimants.is_empty()).then(|| {
+            source_part_boxes(
+                doc,
+                table_idx,
+                &grid,
+                &column_widths,
+                &row_heights,
+                (&col_origins, &row_origins),
+                vertical_writing,
+            )
+        });
+        if let Some(parts) = &parts {
+            dispatch_table_part_oof(doc, &part_claimants, parts, projected, &mut oof_candidates);
+        }
+        position_source_table_parts(doc, table_idx, &grid, parts.filter(|_| projected));
+        Ok(table_layout_output(
             doc,
             table_idx,
             wrapper_size,
-            caption_candidates,
+            oof_candidates,
             inputs.run_mode,
-        ));
-    }
-
-    // Overlap totals up front: tracks are sized in pre-overlap space
-    // (origins net the overlaps out afterwards), so the avail/target the
-    // distributors aim at must add the overlaps back — otherwise a stretched
-    // table leaves an `overlap`-wide slack at its end edge. Separate model:
-    // overlaps are zero.
-    let overlap_w: f32 = collapsed.col_overlaps.iter().sum();
-    let overlap_h: f32 = collapsed.row_overlaps.iter().sum();
-    // Separated borders (CSS 2.2 §17.6.1): `border-spacing` sits between
-    // adjoining cells and between the outer cells and the table's padding
-    // edge, so n tracks take n + 1 gaps. The spacing belongs to the table's
-    // content box, so it is part of the extents the tracks share but not of
-    // `padding_border_size`. Collapse zeroes `border_spacing`.
-    // A row whose overlapping cells all hide their empty boxes has zero
-    // height and only one spacing side (CSS 2.2 section 17.6.1.1).
-    let hidden_rows: Vec<bool> = hidden_empty_rows(doc, &grid)
-        .into_iter()
-        .zip(collapsed_rows)
-        .map(|(hidden, collapsed)| hidden || *collapsed)
-        .collect();
-    let row_gaps: Vec<_> = hidden_rows
-        .iter()
-        .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
-        .collect();
-    let shown_columns = collapsed_cols
-        .iter()
-        .filter(|collapsed| !**collapsed)
-        .count();
-    let spacing = Size {
-        // With every column collapsed nothing remains to space apart.
-        width: if shown_columns == 0 {
-            0.0
-        } else {
-            border_spacing.0 * (shown_columns as f32 + 1.0)
-        },
-        // With every row collapsed nothing remains to space apart.
-        height: if collapsed_rows.iter().all(|collapsed| *collapsed) {
-            0.0
-        } else {
-            border_spacing.1 * (hidden_rows.iter().filter(|hidden| !**hidden).count() as f32 + 1.0)
-        },
+        ))
     };
-    let distrib_insets = Size {
-        width: padding_border_size.width - overlap_w + spacing.width,
-        height: padding_border_size.height - overlap_h + spacing.height,
-    };
-
-    // Specified (non-auto) table width, resolved against the containing
-    // block. Auto-width tables shrink-wrap their content (CSS 2.1 §17.5.2.2)
-    // and must NOT stretch to fill the containing block: `effective_known`
-    // carries the container-imposed width (800 for top-level blocks), which
-    // is a cap for auto tables, the target only for specified widths.
-    let specified_width = resolve_dimension(
-        doc.layout_node_with_style(table_idx)
-            .unwrap()
-            .style
-            .size
-            .width,
-        inputs.parent_size.width,
-    );
-    // In fixed mode an unresolvable specified width (auto, or % of an
-    // indefinite container) falls back to the auto algorithm below
-    // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
-    // automatic layout algorithm; §17.5.2: such a table does not fill its
-    // containing block).
-    // Auto and fixed+auto columns use the specified width, or the used width
-    // assigned by a flex/grid parent. Otherwise, with `known_dimensions.width = None` the
-    // resolver takes its cap branch (preferred size capped by the definite
-    // container, §17.5.2.2) instead of stretch-to-fill. A specified width
-    // keeps the previous basis (`effective_known`, the taffy-resolved outer
-    // width — subtracting insets recovers the content box).
-    let wrapper_limits = doc.nodes[table_idx].content_limits;
-    let (wrapper_minimum, wrapper_maximum, constrained_available_space) = if wrapper_limits
-        .min
-        .width
-        .is_auto()
-        && wrapper_limits.max.width.is_auto()
-    {
-        (None, None, inputs.available_space.width)
+    if let Some(borders) = &prepared.borders {
+        border_scopes::with_table_borders(doc, borders, layout)
     } else {
-        let intrinsic_grid = if columns_collapse {
-            without_collapsed_columns(&grid, collapsed_cols, false)
-        } else {
-            grid.clone()
-        };
-        let intrinsic_inputs = LayoutInput {
-            known_dimensions: Size {
-                width: None,
-                height: inputs.known_dimensions.height,
-            },
-            ..inputs
-        };
-        let measure_intrinsic_grid = |doc: &mut LayoutSession<'_>, available_space| {
-            let probe = LayoutInput {
-                available_space: Size {
-                    width: available_space,
-                    height: intrinsic_inputs.available_space.height,
-                },
-                ..intrinsic_inputs
-            };
-            resolve_column_widths(
-                doc,
-                &intrinsic_grid,
-                probe,
-                Size {
-                    width: distrib_insets.width,
-                    height: 0.0,
-                },
-                border_spacing.0,
-            )
-            .iter()
-            .sum::<f32>()
-                + distrib_insets.width
-        };
-        let grid_minimum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-            measure_intrinsic_grid(doc, AvailableSpace::MinContent)
-        });
-        let grid_maximum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-            measure_intrinsic_grid(doc, AvailableSpace::MaxContent)
-        });
-        let intrinsic_minimum = grid_minimum.max(caption_minimum);
-        let intrinsic_maximum = grid_maximum.max(caption_minimum).max(intrinsic_minimum);
-        let wrapper_context = IntrinsicSizeContext {
-            min_content: intrinsic_minimum,
-            max_content: intrinsic_maximum,
-            inputs: &inputs,
-            available_space: inputs.available_space.width,
-            horizontal: true,
-        };
-        let wrapper_minimum =
-            resolve_intrinsic_limit(doc, table_idx, wrapper_limits.min.width, wrapper_context)
-                .map(|minimum| minimum.max(intrinsic_minimum));
-        let authored_wrapper_maximum =
-            resolve_intrinsic_limit(doc, table_idx, wrapper_limits.max.width, wrapper_context);
-        let wrapper_maximum = authored_wrapper_maximum
-            .map(|maximum| maximum.min(intrinsic_maximum).max(intrinsic_minimum));
-        let wrapper_maximum = if wrapper_minimum
-            .zip(authored_wrapper_maximum)
-            .is_some_and(|(minimum, maximum)| minimum > maximum)
-        {
-            None
-        } else {
-            wrapper_maximum
-        };
-        let constrained_available_space = match inputs.available_space.width {
-            AvailableSpace::MinContent => {
-                let target =
-                    apply_wrapper_width_bounds(intrinsic_minimum, wrapper_minimum, wrapper_maximum);
-                if target != intrinsic_minimum {
-                    AvailableSpace::Definite(target)
-                } else {
-                    inputs.available_space.width
-                }
-            }
-            AvailableSpace::MaxContent => {
-                let target =
-                    apply_wrapper_width_bounds(intrinsic_maximum, wrapper_minimum, wrapper_maximum);
-                if target != intrinsic_maximum {
-                    AvailableSpace::Definite(target)
-                } else {
-                    inputs.available_space.width
-                }
-            }
-            AvailableSpace::Definite(room) => {
-                let target = apply_wrapper_width_bounds(room, wrapper_minimum, wrapper_maximum);
-                if target != room {
-                    AvailableSpace::Definite(target)
-                } else {
-                    inputs.available_space.width
-                }
-            }
-        };
-        (
-            wrapper_minimum,
-            wrapper_maximum,
-            constrained_available_space,
-        )
-    };
-    let inputs_for_columns = LayoutInput {
-        known_dimensions: Size {
-            width: match (specified_width, parent_is_flex_or_grid) {
-                (Some(_), _) | (_, true) => effective_known.width.map(|width| {
-                    apply_wrapper_width_bounds(
-                        width.max(caption_minimum),
-                        wrapper_minimum,
-                        wrapper_maximum,
-                    )
-                }),
-                (None, false) => None,
-            },
-            height: effective_known.height,
-        },
-        available_space: Size {
-            width: constrained_available_space,
-            height: inputs.available_space.height,
-        },
-        ..inputs
-    };
-    let pass = ColumnPass {
-        table_layout,
-        specified_width,
-        caption_minimum,
-        wrapper_minimum,
-        wrapper_maximum,
-        inputs: inputs_for_columns,
-        border_spacing_x: border_spacing.0,
-    };
-    // A collapsed column leaves the table, but its cells still count toward
-    // the row heights, which keep the widths the columns had before the
-    // collapse ("col visibility:collapse doesn't change table height").
-    let natural_insets_width = pad.left
-        + pad.right
-        + columns_in_place.as_ref().map_or_else(
-            || collapsed.inline_border_width(),
-            |columns| columns.border_width,
-        )
-        + border_spacing.0 * (grid.n_cols as f32 + 1.0);
-    let natural_widths = columns_collapse.then(|| {
-        measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-            resolve_table_columns(doc, &mut grid, &pass, natural_insets_width)
-        })
-    });
-    let mut column_widths = if columns_collapse {
-        let mut remaining = without_collapsed_columns(&grid, collapsed_cols, false);
-        let mut widths =
-            resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width).into_iter();
-        collapsed_cols
-            .iter()
-            .map(|collapsed| {
-                if *collapsed {
-                    0.0
-                } else {
-                    widths.next().unwrap_or(0.0)
-                }
-            })
-            .collect()
-    } else {
-        resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
-    };
-
-    // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
-    // min-height-table-*, min-max-size-table-content-box). Percentages
-    // resolve against the parent (containing block); unresolvable/Auto
-    // Freeman. With `box-sizing: content-box` (the initial value, and the
-    // content-box test's authored value) min/max apply to the content box;
-    // with `border-box` they apply to the outer box. The engine clamps and
-    // distributes in outer sizes below, so content-box values are lifted by
-    // the padding+border extents. Lifting both the natural size and the max
-    // by the same insets keeps the max-never-shrinks gate (`mx >= v`,
-    // csswg-drafts#5336 / Mozilla bug 1651530) in the same domain, so
-    // max-height/max-width keep leaving sub-intrinsic tables at natural
-    // size. min still wins over max on direct conflict.
-    let st = &doc.layout_node_with_style(table_idx).unwrap().style;
-    let specified_height = resolve_dimension(st.size.height, inputs.parent_size.height);
-    let min_w = resolve_dimension(st.min_size.width.into(), inputs.parent_size.width);
-    let max_w = resolve_dimension(st.max_size.width.into(), inputs.parent_size.width);
-    let min_h = resolve_dimension(st.min_size.height.into(), inputs.parent_size.height);
-    let max_h = resolve_dimension(st.max_size.height.into(), inputs.parent_size.height);
-    let is_content_box = st.box_sizing == taffy::BoxSizing::ContentBox;
-    let lift_w = if is_content_box {
-        padding_border_size.width
-    } else {
-        0.0
-    };
-    let lift_h = if is_content_box {
-        padding_border_size.height
-    } else {
-        0.0
-    };
-    let min_w_outer = min_w.map(|m| m + lift_w);
-    let max_w_outer = max_w.map(|m| m + lift_w);
-    let min_h_outer = min_h.map(|m| m + lift_h);
-    let max_h_outer = max_h.map(|m| m + lift_h);
-
-    // Extra min-width grows columns (mirrors the min-height→rows path
-    // below, and the definite-width distribution above). Must run before
-    // row heights are measured so cells lay out at final column widths.
-    let minimum_table_width = [min_w_outer, wrapper_minimum, Some(caption_minimum)]
-        .into_iter()
-        .flatten()
-        .reduce(f32::max);
-    let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
-        if let Some(minimum) = minimum_table_width {
-            distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
-        }
-    };
-    grow_columns(
-        &mut column_widths,
-        distrib_insets.width,
-        columns_collapse.then_some(&collapsed_cols[..]),
-    );
-    let natural_widths = natural_widths.map(|mut widths| {
-        grow_columns(&mut widths, natural_insets_width, None);
-        widths
-    });
-
-    // Row heights
-    let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
-    let mut row_heights = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
-        resolve_row_heights(doc, &mut grid, height_widths, border_spacing)
-    })?;
-    if let Some(columns) = columns_in_place {
-        columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
+        layout(doc)
     }
-    for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
-        if *hidden {
-            *height = 0.0;
-        }
-    }
-    // An authored definite table height also establishes the containing block
-    // for percentage-sized children of a single-row cell. Fragmentation can
-    // impose a definite height on a single-row table without doing so; keep
-    // that free space in the wrapper rather than manufacturing a cell
-    // fragment in that case.
-    if effective_known.height.is_some() && (grid.rows.len() > 1 || specified_height.is_some()) {
-        let known_h = effective_known.height.unwrap(); // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-        let target = f32_max_compat(known_h - distrib_insets.height, 0.0);
-        distribute_extra(&mut row_heights, Some(&hidden_rows), target);
-    }
-
-    // Extra min-height grows rows (same path as a definite height);
-    // max-height only clamps the box (content overflows visibly). The outer
-    // domain keeps content-box correct: `min_outer - distrib_insets` =
-    // `min_content + overlap`, the track sum that yields `min_content`.
-    if let Some(mn) = min_h_outer {
-        let target = f32_max_compat(mn - distrib_insets.height, 0.0);
-        distribute_extra(&mut row_heights, Some(&hidden_rows), target);
-    }
-    if vertical_writing {
-        // Vertical columns stack the same row track along the physical
-        // inline axis. Share CAPMIN across those stacks after removing the
-        // grid's own edges and the intervening inline spacing.
-        let columns = grid.n_cols as f32;
-        let edges = padding_border_size.height + border_spacing.1 * (columns + 1.0);
-        let target = (caption_inline_minimum - edges).max(0.0) / columns;
-        distribute_extra(&mut row_heights, Some(&hidden_rows), target);
-    }
-
-    // Content extents net of collapsed-line overlaps, plus the separated
-    // spacing (one of the two is always zero).
-    let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w + spacing.width;
-    let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
-    // min grows the box; max NEVER shrinks a table below its intrinsic
-    // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
-    // min-max-size-table-content-box and max-height-table check that
-    // max-height/max-width leave sub-intrinsic tables at natural size —
-    // only min-* grow). min still wins over max on direct conflict.
-    let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
-        let mut x = v;
-        if let Some(mn) = mn {
-            x = f32_max_compat(x, mn);
-        }
-        if let Some(mx) = mx
-            && !(mn.is_some_and(|mn| mn > mx))
-            && mx >= v
-        {
-            x = x.min(mx);
-        }
-        x
-    };
-    // Auto-width tables (auto layout, and fixed+auto fallback per CSS 2.1
-    // §17.5.2.1) size to content (shrink-wrap, §17.5.2.2); only a specified
-    // width keeps the fill basis.
-    let table_width_basis = if abspos_table && specified_width.is_none() {
-        // An auto-width absolutely positioned table uses the containing block's
-        // available width for this table-layout path.  Taffy's shrink-to-fit
-        // probe may report the intrinsic cell width as `known_dimensions.width`,
-        // but CSS Tables 3 caps the available size at (and in this case fills)
-        // the containing block; retaining the probe would leave a narrow strip
-        // missing from the table background.
-        inputs.parent_size.width.or(effective_known.width)
-    } else if parent_is_flex_or_grid {
-        // Flex/grid supplies a used item width even when the table's own
-        // width is auto. Keep that width instead of shrink-wrapping again.
-        effective_known.width
-    } else {
-        match specified_width {
-            Some(_) => effective_known.width,
-            None => None,
-        }
-    };
-    // Vertical tables stack each column's inline track along the physical
-    // height, so the physical spacing applies across that stack: the
-    // vertical gap between and around the stacked tracks, the horizontal gap
-    // on both sides of the single physical column.
-    let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32
-        + border_spacing.1 * (grid.n_cols as f32 + 1.0);
-    let vertical_content_width =
-        column_widths.iter().sum::<f32>() - overlap_w + border_spacing.0 * 2.0;
-    // CSS 2.1 §17.5.2: the used table width is at least the columns plus
-    // the spacing and borders, even when the specified width is smaller.
-    let min_table_width = content_width + padding_border_size.width;
-    let final_size = Size {
-        width: if vertical_writing {
-            effective_known
-                .width
-                .unwrap_or(vertical_content_width + padding_border_size.width)
-        } else {
-            table_width_basis
-                .map(|w| {
-                    let width = apply_wrapper_width_bounds(w, wrapper_minimum, wrapper_maximum);
-                    clamp_min_max(
-                        f32_max_compat(width, min_table_width),
-                        min_w_outer,
-                        max_w_outer,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    clamp_min_max(
-                        f32_max_compat(
-                            apply_wrapper_width_bounds(
-                                content_width + padding_border_size.width,
-                                wrapper_minimum,
-                                wrapper_maximum,
-                            ),
-                            min_table_width,
-                        ),
-                        min_w_outer,
-                        max_w_outer,
-                    )
-                })
-        },
-        height: if vertical_writing {
-            vertical_content_height + padding_border_size.height
-        } else {
-            effective_known
-                .height
-                .map(|h| {
-                    // Taffy reports authored definite table heights in the
-                    // outer box-sizing domain. Auto tables retain the legacy
-                    // known-height normalization used by fragmentation.
-                    // CSS 2.2 §17.5.3: a specified height is a minimum; the
-                    // table still holds its rows and the spacing.
-                    let outer_height = if specified_height.is_some() {
-                        f32_max_compat(h, content_height + padding_border_size.height)
-                    } else {
-                        (h - padding_border_size.height).max(0.0) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-                    };
-                    clamp_min_max(outer_height, min_h_outer, max_h_outer)
-                })
-                .unwrap_or_else(|| {
-                    clamp_min_max(
-                        content_height + padding_border_size.height,
-                        min_h_outer,
-                        max_h_outer,
-                    )
-                })
-        },
-    };
-
-    let (caption_size, mut caption_candidates) = layout_table_caption(
-        doc,
-        table_idx,
-        final_size.width,
-        if vertical_writing {
-            Some(final_size.height)
-        } else {
-            inputs.parent_size.height
-        },
-    )
-    .map(|(size, candidates)| (Some(size), candidates))
-    .unwrap_or_else(|| (None, OofCandidates::new()));
-    let (wrapper_size, grid_origin) =
-        position_table_caption(doc, table_idx, final_size, caption_size, inputs.run_mode);
-    translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
-    oof_candidates.append(&mut caption_candidates);
-    if inputs.run_mode == RunMode::ComputeSize {
-        return Ok(LayoutOutput::from_outer_size(wrapper_size));
-    }
-
-    // Position cells: origin includes padding + collapsed outer border.
-    let x_origin = pad.left
-        + collapsed.outer_left
-        + if shown_columns == 0 {
-            0.0
-        } else {
-            border_spacing.0
-        }
-        + grid_origin.x;
-    let y_origin = pad.top + collapsed.outer_top + border_spacing.1 + grid_origin.y;
-    // A separated gap is a negative overlap between adjoining tracks.
-    // The gap after a column sits before the next column that shows, and
-    // none sits before the first one.
-    let mut seen_shown = false;
-    let col_gaps: Vec<f32> = (0..collapsed_cols.len())
-        .map(|column| {
-            seen_shown |= !collapsed_cols[column];
-            let next_shown = collapsed_cols.get(column + 1).is_some_and(|next| !next);
-            if seen_shown && next_shown {
-                border_spacing.0
-            } else {
-                0.0
-            }
-        })
-        .collect();
-    let col_steps = if collapse {
-        collapsed.col_overlaps.clone()
-    } else {
-        col_gaps
-            .iter()
-            .take(usize::from(grid.n_cols).saturating_sub(1))
-            .map(|gap| -*gap)
-            .collect()
-    };
-    let row_steps = if collapse {
-        collapsed.row_overlaps.clone()
-    } else {
-        row_gaps.iter().map(|gap| -*gap).collect()
-    };
-    let col_origins = track_origins(&column_widths, &col_steps, x_origin);
-    let row_origins = track_origins(&row_heights, &row_steps, y_origin);
-    place_cells(
-        doc,
-        &mut grid,
-        CellPlacementTracks {
-            column_widths: &column_widths,
-            column_gaps: &col_gaps,
-            collapsed_columns: collapsed_cols,
-            row_heights: &row_heights,
-            row_gaps: &row_gaps,
-            collapsed_rows,
-            column_origins: &col_origins,
-            row_origins: &row_origins,
-            row_spacing: border_spacing.1,
-            vertical_writing,
-        },
-        &mut oof_candidates,
-    )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
-    // The first row the table still shows carries its baseline.
-    let baseline_row = collapsed_rows
-        .iter()
-        .position(|collapsed| !collapsed)
-        .unwrap_or(0);
-    let first_row_baseline = grid
-        .cells
-        .iter()
-        .filter(|cell| {
-            first_shown_row(cell, collapsed_rows) == baseline_row
-                && !hidden_rows[baseline_row]
-                && cell_baseline_aligned(
-                    doc.ifc_layout_node(cell.node_id)
-                        .expect("table cell layout view")
-                        .table_vertical_align,
-                )
-        })
-        .map(|cell| cell.baseline)
-        .reduce(f32::max)
-        .unwrap_or_else(|| {
-            grid.cells
-                .iter()
-                .filter(|cell| {
-                    first_shown_row(cell, collapsed_rows) == baseline_row
-                        && !hidden_rows[baseline_row]
-                })
-                .map(|cell| {
-                    let layout = doc.table_layout_node_mut(cell.node_id).unrounded_layout;
-                    layout.size.height - layout.padding.bottom - layout.border.bottom
-                })
-                .fold(0.0, f32::max)
-        });
-    // With every row collapsed the table has no first row, so it has no
-    // first baseline, like an empty table (CSS Tables 3 §3.10.2).
-    doc.nodes[table_idx].table_first_baseline = collapsed_rows
-        .iter()
-        .any(|collapsed| !collapsed)
-        .then(|| row_origins[baseline_row] + first_row_baseline);
-    if vertical_writing {
-        reposition_cells_for_vertical_writing(
-            doc,
-            &mut grid,
-            &row_heights,
-            (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
-            Point {
-                x: x_origin,
-                y: y_origin,
-            },
-            border_spacing.1,
-        );
-    }
-    let projected = projects_source_parts(doc, table_idx, &grid);
-    let part_claimants = table_part_claimants(doc, table_idx, &oof_candidates);
-    let parts = (projected || !part_claimants.is_empty()).then(|| {
-        source_part_boxes(
-            doc,
-            table_idx,
-            &grid,
-            &column_widths,
-            &row_heights,
-            (&col_origins, &row_origins),
-            vertical_writing,
-        )
-    });
-    if let Some(parts) = &parts {
-        dispatch_table_part_oof(doc, &part_claimants, parts, projected, &mut oof_candidates);
-    }
-    position_source_table_parts(doc, table_idx, &grid, parts.filter(|_| projected));
-    Ok(table_layout_output(
-        doc,
-        table_idx,
-        wrapper_size,
-        oof_candidates,
-        inputs.run_mode,
-    ))
 }
 
 fn table_layout_output(
@@ -3002,15 +3017,9 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
         .expect("table cell layout style")
         .size
         .height;
-    if !authored_height.is_auto() {
-        doc.cache_override_changed(cell.node_id);
-        doc.layout_style_for_key_mut(cell.node_id)
-            .expect("table cell layout style")
-            .size
-            .height = Dimension::auto();
-        doc.table_layout_node_mut(cell.node_id).cache.clear();
-    }
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let measure = |doc: &mut LayoutSession<'_>| {
+        #[cfg(test)]
+        tests::cell_scope_tests::before_measure(doc, cell.node_id);
         doc.compute_child_layout(
             NodeId::from(cell.node_id),
             LayoutInput {
@@ -3036,13 +3045,25 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         )
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if authored_height.is_auto() {
+            measure(doc)
+        } else {
+            let key = doc.nodes.box_key(cell.node_id).expect("cell has a box key");
+            let entry = raikiri_layout_style::OwnedPropertyOverride::length(
+                raikiri_layout_style::LengthProperty::Height,
+                raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+                false,
+            )
+            .expect("physical cell height");
+            doc.with_overrides(vec![(key, entry)], |doc| {
+                doc.table_layout_node_mut(cell.node_id).cache.clear();
+                measure(doc)
+            })
+        }
     }));
     if !authored_height.is_auto() {
-        doc.cache_override_changed(cell.node_id);
-        doc.layout_style_for_key_mut(cell.node_id)
-            .expect("table cell layout style")
-            .size
-            .height = authored_height;
         doc.table_layout_node_mut(cell.node_id).cache.clear();
     }
     let output = match result {
@@ -3793,19 +3814,6 @@ impl CollapsedLines {
     }
 }
 
-/// Border-box side widths of one cell's `style.border`.
-fn cell_border_sides(doc: &Document, cell_id: usize, basis: Option<f32>) -> Rect<f32> {
-    let s = doc
-        .layout_style_for_key(cell_id)
-        .expect("table cell layout style");
-    Rect {
-        left: resolve_length(s.border.left, basis),
-        right: resolve_length(s.border.right, basis),
-        top: resolve_length(s.border.top, basis),
-        bottom: resolve_length(s.border.bottom, basis),
-    }
-}
-
 /// The cell covering grid position (`row`, `col`), following spans.
 fn cell_at<'a>(
     grid: &'a TableGrid,
@@ -3920,72 +3928,17 @@ fn border_side(sides: &mut Sides<ComputedBorder>, side: CellBorderSide) -> &mut 
     }
 }
 
-/// Give `node_id`'s `side` the used collapsed border `border`: its layout
-/// width and the style and color it paints.
-fn set_collapsed_side(
-    doc: &mut Document,
-    node_id: usize,
-    side: CellBorderSide,
-    border: ComputedBorder,
-    taffy_width: LengthPercentage,
-) {
-    let style = doc
-        .layout_style_for_key_mut(node_id)
-        .expect("table box layout style");
-    match side {
-        CellBorderSide::Top => style.border.top = taffy_width,
-        CellBorderSide::Right => style.border.right = taffy_width,
-        CellBorderSide::Bottom => style.border.bottom = taffy_width,
-        CellBorderSide::Left => style.border.left = taffy_width,
-    }
-    let node = doc.table_layout_node_mut(node_id);
-    let Some(computed) = node.computed_border else {
-        return; // cov:ignore: callers only reach here after border_candidate found computed borders.
-    };
-    let painted = node.collapsed_border.get_or_insert(computed);
-    *border_side(painted, side) = border;
-}
-
-/// Resolve the shared border between two adjacent cells. Both cells take the
-/// winner's width, and both paint the winner's style and color, so the later
-/// cell no longer paints its losing border over the winning one.
-#[cfg(test)]
-fn resolve_collapsed_border_pair(
-    doc: &mut Document,
-    leading_id: usize,
-    leading_side: CellBorderSide,
-    trailing_id: usize,
-    trailing_side: CellBorderSide,
-) {
-    let (Some(leading), Some(trailing)) = (
-        border_candidate(doc, leading_id, leading_side),
-        border_candidate(doc, trailing_id, trailing_side),
-    ) else {
-        return;
-    };
-    let winner = collapsed_border_winner(leading, trailing);
-    set_collapsed_side(
-        doc,
-        leading_id,
-        leading_side,
-        winner.border,
-        winner.taffy_width,
-    );
-    set_collapsed_side(
-        doc,
-        trailing_id,
-        trailing_side,
-        winner.border,
-        winner.taffy_width,
-    );
-}
-
 /// Resolve every shared border between adjacent cells. Each segment's winner
 /// is decided from the cells' borders before any segment is resolved, so a
 /// cell spanning several neighbours does not carry one segment's winner into
 /// the next. A spanning cell paints the strongest winner along its side;
 /// each neighbour paints its own segment's winner.
-fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &CellIndex) {
+fn resolve_collapsed_cell_borders(
+    doc: &Document,
+    state: &mut BorderState,
+    grid: &TableGrid,
+    index: &CellIndex,
+) {
     const SIDES: [CellBorderSide; 4] = [
         CellBorderSide::Top,
         CellBorderSide::Right,
@@ -3998,11 +3951,11 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
         .map(|cell| {
             (
                 cell.node_id,
-                SIDES.map(|side| border_candidate(doc, cell.node_id, side)),
+                SIDES.map(|side| state.candidate(doc, cell.node_id, side)),
             )
         })
         .collect();
-    let resolve = |doc: &mut Document,
+    let resolve = |state: &mut BorderState,
                    leading_id: usize,
                    leading_side: CellBorderSide,
                    trailing_id: usize,
@@ -4017,8 +3970,8 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
             return;
         };
         let winner = collapsed_border_winner(leading, trailing);
-        keep_stronger_side(doc, leading_id, leading_side, winner);
-        keep_stronger_side(doc, trailing_id, trailing_side, winner);
+        keep_stronger_side(doc, state, leading_id, leading_side, winner);
+        keep_stronger_side(doc, state, trailing_id, trailing_side, winner);
     };
 
     let column_count = grid.n_cols as usize;
@@ -4031,7 +3984,7 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
                 .filter(|(_, cell)| cell.col_start == boundary as u16);
             if let (Some((_, left)), Some((_, right))) = (left, right) {
                 resolve(
-                    doc,
+                    state,
                     left.node_id,
                     CellBorderSide::Right,
                     right.node_id,
@@ -4051,7 +4004,7 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
                 cell_at(grid, index, boundary, column).filter(|(_, cell)| cell.row == boundary);
             if let (Some((_, above)), Some((_, below))) = (above, below) {
                 resolve(
-                    doc,
+                    state,
                     above.node_id,
                     CellBorderSide::Bottom,
                     below.node_id,
@@ -4065,18 +4018,19 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &
 /// Give `node_id`'s `side` the stronger of the border it already paints and
 /// `winner`.
 fn keep_stronger_side(
-    doc: &mut Document,
+    doc: &Document,
+    state: &mut BorderState,
     node_id: usize,
     side: CellBorderSide,
     winner: CollapsedBorderCandidate,
 ) {
     // The pair winner is passed first so it wins ties: a cell's own border
     // must not beat the winner of its segment by equality alone.
-    let stronger = match border_candidate(doc, node_id, side) {
+    let stronger = match state.candidate(doc, node_id, side) {
         Some(current) => collapsed_border_winner(winner, current),
         None => winner, // cov:ignore: the pair's own candidate came from this side.
     };
-    set_collapsed_side(doc, node_id, side, stronger.border, stronger.taffy_width);
+    state.set_side(node_id, side, stronger.border, stronger.taffy_width);
 }
 
 /// Resolve each cell's sides against the borders of the rows they lie on
@@ -4084,7 +4038,7 @@ fn keep_stronger_side(
 /// its last row, and an edge cell's left and right against its row. A cell
 /// wins ties over a row. Rows then paint nothing themselves; their borders
 /// live on in the cells that took them.
-fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
+fn resolve_collapsed_row_borders(doc: &Document, state: &mut BorderState, grid: &TableGrid) {
     let last_col = grid.n_cols;
     for index in 0..grid.cells.len() {
         let cell = &grid.cells[index];
@@ -4117,13 +4071,13 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
                 continue;
             };
             let (Some(own), Some(row_border)) = (
-                border_candidate(doc, node_id, side),
-                border_candidate(doc, row, side),
+                state.candidate(doc, node_id, side),
+                state.candidate(doc, row, side),
             ) else {
                 continue;
             };
             let winner = collapsed_border_winner(own, row_border);
-            set_collapsed_side(doc, node_id, side, winner.border, winner.taffy_width);
+            state.set_side(node_id, side, winner.border, winner.taffy_width);
         }
     }
     for &row in &grid.rows {
@@ -4133,14 +4087,7 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
         {
             continue;
         }
-        if let Some(computed) = doc.nodes[row].computed_border {
-            doc.nodes[row].collapsed_border = Some(Sides {
-                top: computed.top.without_line(),
-                right: computed.right.without_line(),
-                bottom: computed.bottom.without_line(),
-                left: computed.left.without_line(),
-            });
-        }
+        state.suppress_row(doc, row);
     }
 }
 
@@ -4148,7 +4095,12 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
 /// that side (CSS 2.1 §17.6.2.1). A cell wins ties over the table. When the
 /// table's border wins, the table paints that edge, so the cell's side takes
 /// no width and paints nothing.
-fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx: usize) {
+fn resolve_collapsed_table_edges(
+    doc: &Document,
+    state: &mut BorderState,
+    grid: &TableGrid,
+    table_idx: usize,
+) {
     let last_row = grid.rows.len() as u16;
     let last_col = grid.n_cols;
     for index in 0..grid.cells.len() {
@@ -4173,8 +4125,8 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
                 continue;
             }
             let (Some(own), Some(table)) = (
-                border_candidate(doc, node_id, side),
-                border_candidate(doc, table_idx, side),
+                state.candidate(doc, node_id, side),
+                state.candidate(doc, table_idx, side),
             ) else {
                 continue;
             };
@@ -4182,8 +4134,7 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
             if winner.border == own.border && winner.taffy_width == own.taffy_width {
                 continue;
             }
-            set_collapsed_side(
-                doc,
+            state.set_side(
                 node_id,
                 side,
                 own.border.without_line(),
@@ -4196,55 +4147,17 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
 /// Resolve the borders of `grid` (CSS 2.1 §17.6.2.1): rows against their
 /// cells, adjoining cells against each other, and edge cells against the table.
 fn resolve_collapsed_borders(
-    doc: &mut Document,
+    doc: &Document,
+    state: &mut BorderState,
     grid: &TableGrid,
     index: &CellIndex,
     table_idx: usize,
 ) {
-    doc.layout_cache_context.invalidate();
     #[cfg(test)]
     BORDER_RESOLUTIONS.with(|count| count.set(count.get() + 1));
-    resolve_collapsed_row_borders(doc, grid);
-    resolve_collapsed_cell_borders(doc, grid, index);
-    resolve_collapsed_table_edges(doc, grid, table_idx);
-}
-
-/// Give every cell and row of `grid` the borders it has before any
-/// resolution: the widths of its computed border, as the bridge sets them
-/// (it has already reported any warning for those widths), and no collapsed
-/// border. A grid resolved next then does not inherit what an earlier
-/// resolution of another grid left on them.
-fn reset_collapsed_borders(doc: &mut Document, grid: &TableGrid) {
-    doc.layout_cache_context.invalidate();
-    for cell in &grid.cells {
-        doc.table_layout_node_mut(cell.node_id).collapsed_border = None;
-        let border = authored_border(doc, cell.node_id);
-        doc.layout_style_for_key_mut(cell.node_id)
-            .expect("table cell layout style")
-            .border = border;
-    }
-    for &row in &grid.rows {
-        doc.nodes[row].collapsed_border = None;
-    }
-}
-
-/// The layout widths of `cell`'s computed border, as the bridge sets them (it
-/// has already reported any warning for those widths).
-fn authored_border(doc: &mut Document, cell: usize) -> Rect<LengthPercentage> {
-    let border = doc
-        .table_layout_node_mut(cell)
-        .computed_border
-        .expect("table cell computed border");
-    super::bridge::taffy_border_widths(&border, &mut Vec::new())
-}
-
-/// The borders the cells and rows of a grid have at one point of border
-/// resolution: the layout width of each cell's sides and the collapsed borders
-/// the cells and rows paint.
-#[derive(Debug)]
-struct BorderState {
-    cells: Vec<(usize, Rect<LengthPercentage>, Option<Sides<ComputedBorder>>)>,
-    rows: Vec<(usize, Option<Sides<ComputedBorder>>)>,
+    resolve_collapsed_row_borders(doc, state, grid);
+    resolve_collapsed_cell_borders(doc, state, grid, index);
+    resolve_collapsed_table_edges(doc, state, grid, table_idx);
 }
 
 /// The two border states of a table with collapsed columns in the collapsed
@@ -4277,38 +4190,26 @@ impl ColumnsInPlace {
     /// has been resolved since, so the cells now have the borders of the grid
     /// that remains.
     fn new(
-        doc: &mut Document,
-        grid: &TableGrid,
         shown: &TableGrid,
         border_width: f32,
-        in_place: BorderState,
+        mut in_place: BorderState,
+        remaining: BorderState,
     ) -> Self {
-        let remaining = snapshot_borders(doc, grid);
-        let remains: std::collections::HashSet<usize> =
+        let remains: std::collections::HashSet<_> =
             shown.cells.iter().map(|cell| cell.node_id).collect();
-        let cells = in_place
-            .cells
-            .into_iter()
-            .zip(&remaining.cells)
-            .map(|((cell, mut border, painted), kept)| {
-                // The cells of the collapsed columns are not part of the grid
-                // that remains, which resolves nothing for them: they keep the
-                // block sides they resolved to, and the row lines they share
-                // are in `row_overlaps`.
-                if remains.contains(&cell) {
-                    border.top = kept.1.top;
-                    border.bottom = kept.1.bottom;
-                }
-                (cell, border, painted)
-            })
-            .collect();
+        for cell in &mut in_place.cells {
+            if remains.contains(&cell.node_id) {
+                let kept = remaining
+                    .cell(cell.node_id)
+                    .expect("both states retain every original cell");
+                cell.widths.top = kept.widths.top;
+                cell.widths.bottom = kept.widths.bottom;
+            }
+        }
         Self {
             border_width,
             row_overlaps: Vec::new(),
-            in_place: BorderState {
-                cells,
-                rows: in_place.rows,
-            },
+            in_place,
             remaining,
         }
     }
@@ -4321,7 +4222,7 @@ impl ColumnsInPlace {
     /// more from a row than the cell was measured with.
     fn with_row_overlaps(
         mut self,
-        doc: &mut Document,
+        doc: &Document,
         grid: &TableGrid,
         collapsed_rows: &[bool],
         table_border: &Rect<f32>,
@@ -4331,11 +4232,16 @@ impl ColumnsInPlace {
         if rows_shown.rows.is_empty() {
             return self;
         }
-        apply_borders(doc, &self.in_place);
         let index = CellIndex::new(&rows_shown);
-        self.row_overlaps =
-            compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis).row_overlaps;
-        apply_borders(doc, &self.remaining);
+        self.row_overlaps = compute_collapsed_lines(
+            doc,
+            &self.in_place,
+            &rows_shown,
+            &index,
+            table_border,
+            basis,
+        )
+        .row_overlaps;
         self
     }
 
@@ -4363,7 +4269,7 @@ impl ColumnsInPlace {
     ) -> Result<(), raikiri_traits::LayoutError> {
         let states = self.in_place.cells.iter().zip(&self.remaining.cells);
         for (cell, (in_place, remaining)) in grid.cells.iter_mut().zip(states) {
-            if in_place.1 != remaining.1 {
+            if in_place.widths != remaining.widths {
                 let columns = cell_column_range(cell, column_widths.len())?;
                 measure_cell(doc, cell, spanned_size(&column_widths[columns], spacing.0));
             }
@@ -4383,60 +4289,12 @@ fn measured_in_place<R>(
     let Some(columns) = columns else {
         return measure(doc);
     };
-    apply_borders(doc, &columns.in_place);
-    let measured = measure(doc);
-    apply_borders(doc, &columns.remaining);
-    measured
+    border_scopes::with_temporary_borders(doc, &columns.in_place, measure)
 }
 
-/// Record the borders the cells and rows of `grid` have now.
-fn snapshot_borders(doc: &mut Document, grid: &TableGrid) -> BorderState {
-    let cells = grid
-        .cells
-        .iter()
-        .map(|cell| {
-            let border = doc
-                .layout_style_for_key(cell.node_id)
-                .expect("table cell layout style")
-                .border;
-            let painted = doc.table_layout_node_mut(cell.node_id).collapsed_border;
-            (cell.node_id, border, painted)
-        })
-        .collect();
-    let rows = grid
-        .rows
-        .iter()
-        .map(|&row| (row, doc.nodes[row].collapsed_border))
-        .collect();
-    BorderState { cells, rows }
-}
-
-/// Give the cells and rows the borders `state` recorded, and drop the layouts
-/// the cells cached under other borders.
-fn apply_borders(doc: &mut Document, state: &BorderState) {
-    if state.cells.iter().any(|(cell, border, _)| {
-        doc.layout_style_for_key(*cell)
-            .expect("table cell layout style")
-            .border
-            != *border
-    }) {
-        doc.layout_cache_context.invalidate();
-    }
-    for &(cell, border, painted) in &state.cells {
-        let style = doc
-            .layout_style_for_key_mut(cell)
-            .expect("table cell layout style");
-        let changed = style.border != border;
-        style.border = border;
-        let node = doc.table_layout_node_mut(cell);
-        node.collapsed_border = painted;
-        if changed {
-            node.cache.clear();
-        }
-    }
-    for &(row, painted) in &state.rows {
-        doc.nodes[row].collapsed_border = painted;
-    }
+#[cfg(test)]
+fn snapshot_borders(doc: &Document, grid: &TableGrid) -> BorderState {
+    BorderState::retained(doc, grid)
 }
 
 /// The inline-axis width that collapsed borders take from the table while
@@ -4451,34 +4309,33 @@ fn apply_borders(doc: &mut Document, state: &BorderState) {
 /// the cells of the collapsed columns keep the borders they resolved to, which
 /// they are measured with.
 fn border_width_with_columns_in_place(
-    doc: &mut Document,
+    doc: &Document,
+    state: &mut BorderState,
     grid: &TableGrid,
     collapsed_rows: &[bool],
     shown: &TableGrid,
     table_idx: usize,
-    table_border: &Rect<f32>,
-    basis: Option<f32>,
+    metrics: (&Rect<f32>, Option<f32>),
 ) -> (f32, BorderState) {
+    let (table_border, basis) = metrics;
     let rows_shown = without_collapsed_rows(grid, collapsed_rows);
     if rows_shown.rows.is_empty() {
         // Nothing shows, so no cell border meets the table's own.
-        reset_collapsed_borders(doc, grid);
-        return (
-            table_border.left + table_border.right,
-            snapshot_borders(doc, grid),
-        );
+        state.reset_authored(doc, grid);
+        return (table_border.left + table_border.right, state.clone());
     }
     let index = CellIndex::new(&rows_shown);
-    reset_collapsed_borders(doc, grid);
-    resolve_collapsed_borders(doc, &rows_shown, &index, table_idx);
-    let lines = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis);
-    let in_place = snapshot_borders(doc, grid);
-    reset_collapsed_borders(doc, shown);
+    state.reset_authored(doc, grid);
+    resolve_collapsed_borders(doc, state, &rows_shown, &index, table_idx);
+    let lines = compute_collapsed_lines(doc, state, &rows_shown, &index, table_border, basis);
+    let in_place = state.clone();
+    state.reset_authored(doc, shown);
     (lines.inline_border_width(), in_place)
 }
 
 fn compute_collapsed_lines(
-    doc: &Document,
+    _doc: &Document,
+    state: &BorderState,
     grid: &TableGrid,
     index: &CellIndex,
     table_border: &Rect<f32>,
@@ -4491,7 +4348,13 @@ fn compute_collapsed_lines(
     let borders: Vec<Rect<f32>> = grid
         .cells
         .iter()
-        .map(|c| cell_border_sides(doc, c.node_id, basis))
+        .map(|c| {
+            state
+                .cell(c.node_id)
+                .expect("line cell belongs to border state")
+                .widths
+                .map(|width| resolve_length(width, basis))
+        })
         .collect();
 
     // Vertical boundaries 0..=n. Boundary i separates column i-1 and i;

@@ -368,8 +368,9 @@ fn collapsed_boundary_search_work_grows_with_grid_area() {
         };
         let index = CellIndex::new(&grid);
         TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.set(0));
-        super::super::resolve_collapsed_cell_borders(&mut doc, &grid, &index);
-        let lines = super::super::compute_collapsed_lines(&doc, &grid, &index, &Rect::ZERO, None);
+        super::resolve_collapsed_cell_borders_in_document(&mut doc, &grid, &index);
+        let lines =
+            super::compute_collapsed_lines_in_document(&doc, &grid, &index, &Rect::ZERO, None);
         let visits = TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.get());
         let area = usize::from(side).pow(2);
         eprintln!("{side}x{side}: {visits} cell lookup steps");
