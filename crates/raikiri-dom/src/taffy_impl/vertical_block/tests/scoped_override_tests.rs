@@ -14,6 +14,8 @@ fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> Transp
         block_space: None,
         container_style: transpose_style(tree.layout_style_for_key(container).unwrap(), true),
         child_styles: HashMap::from([(child, style)]),
+        container_view: None,
+        child_views: HashMap::default(),
         placed: Vec::new(),
     }
 }
@@ -222,6 +224,7 @@ fn snapshot_apply_rejects_a_different_frame_before_changing_fields() {
         id: block.id + 1,
         child: None,
         previous: None,
+        view_previous: None,
     };
     let entry = OwnedPropertyOverride::length(LengthProperty::Width, L::Px(11.0), true).unwrap();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

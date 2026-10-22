@@ -1,4 +1,5 @@
 mod scoped_override_tests;
+mod view_tests;
 
 use crate::Document;
 use crate::LayoutStyle as Style;
@@ -899,6 +900,8 @@ fn comparison_unwind_restores_transposed_stack_and_percentage_padding() {
         block_space: Some(200.0),
         container_style: tree.layout_style_for_key(parent).unwrap().clone(),
         child_styles: [(child, tree.layout_style_for_key(child).unwrap().clone())].into(),
+        container_view: None,
+        child_views: Default::default(),
         placed: Vec::new(),
     };
     super::push_transposed_frame(&mut tree, block);

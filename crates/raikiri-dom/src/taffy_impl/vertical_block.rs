@@ -39,6 +39,7 @@ use super::resolve_calc;
 use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
 use raikiri_style::property::{DisplayValue, WritingMode};
+use taffy::CoreStyle;
 
 /// A vertical block container being laid out on transposed axes.
 #[derive(Clone, Debug)]
@@ -50,6 +51,8 @@ pub(crate) struct TransposedBlock {
     block_space: Option<f32>,
     container_style: Style,
     child_styles: HashMap<usize, Style>,
+    container_view: Option<crate::layout::style_views::frozen::FrozenViewInput>,
+    child_views: HashMap<usize, crate::layout::style_views::frozen::FrozenViewInput>,
     /// The children taffy stored a transposed layout for.
     placed: Vec<usize>,
 }
@@ -117,7 +120,29 @@ impl TransposedStyleIndex {
     }
 }
 
-fn push_transposed_frame(tree: &mut LayoutSession<'_>, block: TransposedBlock) {
+fn prepare_frame_views(tree: &mut LayoutSession<'_>, block: &mut TransposedBlock) {
+    use crate::layout::style_views::frozen::FrozenViewInput;
+    use raikiri_layout_style::{BridgeProjection, ClaimsPolicy, ViewContext};
+    if block.container_view.is_some() || tree.style_views.is_none() {
+        return;
+    }
+    let context = ViewContext {
+        bridge_projection: BridgeProjection::BlockTranspose {
+            right_to_left: block.right_to_left,
+        },
+        claims_policy: ClaimsPolicy::Positioning,
+        ..ViewContext::default()
+    };
+    block.container_view = FrozenViewInput::capture(tree, block.container, context);
+    for &child in block.child_styles.keys() {
+        if let Some(input) = FrozenViewInput::capture(tree, child, context) {
+            block.child_views.insert(child, input);
+        }
+    }
+}
+
+fn push_transposed_frame(tree: &mut LayoutSession<'_>, mut block: TransposedBlock) {
+    prepare_frame_views(tree, &mut block);
     tree.context
         .transposed_style_index
         .register(&block, tree.context.transposed_blocks.len());
@@ -129,6 +154,7 @@ pub(crate) struct TransposedSizingUndo {
     id: u64,
     child: Option<usize>,
     previous: Option<raikiri_layout_style::LegacySizingUndo>,
+    view_previous: Option<raikiri_layout_style::OwnedOverrideUndo>,
 }
 
 impl TransposedSizingUndo {
@@ -148,6 +174,7 @@ impl TransposedSizingUndo {
                     id: location.id,
                     child: location.child,
                     previous: None,
+                    view_previous: None,
                 });
             }
         }
@@ -170,6 +197,22 @@ impl TransposedSizingUndo {
         }
     }
 
+    fn view_target<'a>(
+        &self,
+        blocks: &'a mut [TransposedBlock],
+    ) -> Option<&'a mut crate::layout::style_views::frozen::FrozenViewInput> {
+        let block = &mut blocks[self.frame];
+        assert_eq!(
+            block.id, self.id,
+            "scope restores the same transposed frame"
+        );
+        if let Some(child) = self.child {
+            block.child_views.get_mut(&child)
+        } else {
+            block.container_view.as_mut()
+        }
+    }
+
     pub(crate) fn apply(
         &mut self,
         blocks: &mut [TransposedBlock],
@@ -186,9 +229,20 @@ impl TransposedSizingUndo {
                 .apply_transposed_legacy_sizing(self.target(blocks), right_to_left)
                 .expect("validated sizing entry"),
         );
+        self.view_previous = self
+            .view_target(blocks)
+            .map(|input| entry.replace_in(&mut input.late));
     }
 
     pub(crate) fn restore(mut self, blocks: &mut [TransposedBlock]) {
+        if let Some(previous) = self.view_previous.take() {
+            previous.restore(
+                &mut self
+                    .view_target(blocks)
+                    .expect("frozen snapshot stays live")
+                    .late,
+            );
+        }
         if let Some(previous) = self.previous.take() {
             previous.restore(self.target(blocks));
         }
@@ -266,6 +320,41 @@ impl LayoutSession<'_> {
             .transposed_blocks
             .last()
             .and_then(|block| block.child_styles.get(&idx))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn transposed_container_view(
+        &self,
+        idx: usize,
+    ) -> Option<raikiri_layout_style::LayoutStyleView<'_>> {
+        self.context
+            .transposed_blocks
+            .last()
+            .filter(|block| block.container == idx)
+            .map(|block| {
+                block
+                    .container_view
+                    .as_ref()
+                    .expect("prepared frame has a container input")
+                    .view()
+            })
+    }
+    #[cfg(test)]
+    pub(crate) fn transposed_child_view(
+        &self,
+        idx: usize,
+    ) -> Option<raikiri_layout_style::LayoutStyleView<'_>> {
+        self.context
+            .transposed_blocks
+            .last()
+            .filter(|block| block.child_styles.contains_key(&idx))
+            .map(|block| {
+                block
+                    .child_views
+                    .get(&idx)
+                    .expect("prepared frame has a child input")
+                    .view()
+            })
     }
 
     /// Record that taffy stored a transposed layout for `idx`.
@@ -456,6 +545,21 @@ fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
         .border
         .resolve_or_zero(None, resolve_calc);
     let inline_size = (width - padding.left - padding.right - border.left - border.right).max(0.0);
+    if let Some(container) = &block.container_view {
+        let padding = container
+            .view()
+            .padding()
+            .resolve_or_zero(None, resolve_calc);
+        let border = container
+            .view()
+            .border()
+            .resolve_or_zero(None, resolve_calc);
+        let candidate_inline_size =
+            (width - padding.left - padding.right - border.left - border.right).max(0.0);
+        for input in block.child_views.values_mut() {
+            input.resolve_padding(Some(candidate_inline_size));
+        }
+    }
     for style in block.child_styles.values_mut() {
         style.padding = style
             .padding
@@ -535,15 +639,21 @@ pub(super) fn compute_vertical_block(
         let border = container_style.border.resolve_or_zero(None, resolve_calc);
         (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
     });
-    let block = TransposedBlock {
+    let mut block = TransposedBlock {
         id: next_transposed_frame_id(tree),
         container: idx,
         right_to_left,
         block_space,
         container_style,
         child_styles,
+        container_view: None,
+        child_views: HashMap::default(),
         placed: Vec::new(),
     };
+    prepare_frame_views(tree, &mut block);
+    if let Some(container) = &mut block.container_view {
+        container.resolve_padding(containing_inline_size);
+    }
     let (output, mut block) = with_transposed_frame(tree, block, |tree| {
         if inputs.known_dimensions.width.is_none() && shrinks_to_fit(tree, idx, &inputs) {
             inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));

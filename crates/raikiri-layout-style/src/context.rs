@@ -208,6 +208,8 @@ pub enum ClaimsPolicy {
 pub struct ViewContext {
     /// Geometry conversion independent of writing-mode policy.
     pub bridge_projection: BridgeProjection,
+    /// Fully resolved padding captured in the returned geometry.
+    pub resolved_padding: Option<taffy::Rect<f32>>,
     /// Optional basis for only the returned top and bottom block-item edges.
     pub block_item_basis: Option<f32>,
     /// Containing-block policy for the consuming role.
@@ -223,6 +225,7 @@ impl Default for ViewContext {
     fn default() -> Self {
         Self {
             bridge_projection: BridgeProjection::Identity,
+            resolved_padding: None,
             block_item_basis: None,
             claims_policy: ClaimsPolicy::Prepared,
             layout_wm: WritingMode::HorizontalTb,

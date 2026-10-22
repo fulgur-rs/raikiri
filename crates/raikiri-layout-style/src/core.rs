@@ -178,6 +178,9 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     #[inline]
     fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
+        if let Some(padding) = self.context.resolved_padding {
+            return padding.map(taffy::LengthPercentage::length);
+        }
         use LengthProperty::*;
         self.percentage_edges([PaddingTop, PaddingRight, PaddingBottom, PaddingLeft])
     }

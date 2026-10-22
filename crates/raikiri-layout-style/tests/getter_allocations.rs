@@ -294,6 +294,12 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
                         read_all(black_box(&v.with_context(ViewContext {
                             bridge_projection: BridgeProjection::BlockTranspose { right_to_left },
                             block_item_basis: Some(123.0),
+                            resolved_padding: Some(taffy::Rect {
+                                top: 1.0,
+                                right: 2.0,
+                                bottom: 3.0,
+                                left: 4.0,
+                            }),
                             claims_policy: ClaimsPolicy::Positioning,
                             ..ViewContext::default()
                         })));

@@ -11,6 +11,7 @@ use raikiri_traits::NodeKind;
 
 #[cfg(test)]
 pub(crate) mod checked;
+pub(crate) mod frozen;
 pub(super) mod metadata;
 mod overrides;
 pub(crate) use overrides::ScopedOverrides;
@@ -25,6 +26,9 @@ pub(crate) struct StyleViews<'a> {
     cascade: &'a CascadeResult,
     boxes: HashMap<BoxKey, PreparedBox<'a>>,
     legacy_calcs: HashMap<BoxKey, Vec<Arc<raikiri_layout_style::AlignedCalc>>>,
+    // Primitives may retain snapshot handles after their frame has been popped.
+    // Keep unique payloads across bridge replacement for the rest of the session.
+    snapshot_calcs: HashMap<usize, Arc<raikiri_layout_style::AlignedCalc>>,
     prepared_publication: Option<super::cache_context::CacheEpoch>,
     prepared_stamp: Option<PreparedStamp>,
     preparation_batch: bool,
@@ -37,6 +41,7 @@ impl<'a> StyleViews<'a> {
             cascade,
             boxes: HashMap::default(),
             legacy_calcs: HashMap::default(),
+            snapshot_calcs: HashMap::default(),
             prepared_publication: None,
             prepared_stamp: None,
             preparation_batch: false,
@@ -283,7 +288,7 @@ impl LayoutSession<'_> {
                 self.publish_layout_cache_mutations();
                 self.prepare_style_views();
                 if let Some(length) = old_prefix {
-                    self.document.box_style_data.calc_values.drain(..length);
+                    self.retire_calc_prefix(length);
                 }
                 Ok(value)
             }
@@ -300,16 +305,52 @@ impl LayoutSession<'_> {
             return;
         }
         self.prepare_style_views();
-        self.document
-            .box_style_data
-            .calc_values
-            .drain(..old_calc_len);
+        self.retire_calc_prefix(old_calc_len);
+    }
+
+    fn retire_calc_prefix(&mut self, length: usize) {
+        // Append after the retiring prefix to preserve escaped snapshot handles.
+        if let Some(views) = &self.style_views {
+            self.document
+                .box_style_data
+                .calc_values
+                .extend(views.snapshot_calcs.values().cloned());
+        }
+        self.document.box_style_data.calc_values.drain(..length);
+    }
+
+    pub(crate) fn retain_snapshot_calcs(
+        &mut self,
+        owners: impl IntoIterator<Item = Arc<raikiri_layout_style::AlignedCalc>>,
+    ) {
+        let views = self
+            .style_views
+            .as_mut()
+            .expect("frozen inputs borrow a prepared session");
+        for owner in owners {
+            let identity = Arc::as_ptr(&owner) as usize;
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                views.snapshot_calcs.entry(identity)
+            {
+                slot.insert(owner.clone());
+                self.document.box_style_data.calc_values.push(owner);
+            }
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn query_style(&self, idx: usize, role: checked::ReadRole) -> LayoutStyleView<'_> {
         use checked::ReadRole;
         use raikiri_layout_style::ClaimsPolicy;
+        self.assert_style_queries_allowed();
+        let transposed = match role {
+            ReadRole::BlockContainer => self.transposed_container_view(idx),
+            ReadRole::BlockItem | ReadRole::Oof => self.transposed_child_view(idx),
+            _ => None,
+        };
+        if let Some(view) = transposed {
+            return view;
+        }
         let mut context = self
             .style_views
             .as_ref()
