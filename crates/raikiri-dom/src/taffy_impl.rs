@@ -513,13 +513,14 @@ impl LayoutSession<'_> {
     pub(crate) fn in_column_flex_container(&self, node: usize) -> bool {
         use taffy::FlexboxContainerStyle;
 
-        self.taffy_parent_of(node).is_some_and(|parent| {
-            self.nodes[parent].taffy_display() == taffy::Display::Flex
-                && matches!(
+        self.taffy_parent_of(node)
+            .filter(|&parent| self.nodes[parent].taffy_display() == taffy::Display::Flex)
+            .is_some_and(|parent| {
+                matches!(
                     FlexboxContainerStyle::flex_direction(&self.physical_style(parent)),
                     taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
                 )
-        })
+            })
     }
 }
 
