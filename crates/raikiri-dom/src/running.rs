@@ -222,7 +222,7 @@ fn preorder(document: &Document) -> Vec<(usize, usize)> {
             }
             continue;
         }
-        let node = &document.layout_node_with_style(id).unwrap();
+        let node = &document.nodes[id];
         if id != document.root_index() && !node.is_in_document() {
             continue;
         }

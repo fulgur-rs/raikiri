@@ -4,6 +4,16 @@ use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::AlignItems;
 
+/// [`static_position_alignment`] read through a session without a cascade, so
+/// it sees the retained style the test set up.
+fn static_alignment(
+    doc: &mut Document,
+    id: usize,
+    margin_box: Size<f32>,
+) -> (Size<f32>, Size<f32>) {
+    static_position_alignment(&LayoutSession::new(doc), id, margin_box)
+}
+
 /// `html > body(margin:0) > div(parent_css) > div(wrapper_css) > div(fixed_css)`
 /// laid out on an 800x600 page with no margins. Returns the document and the
 /// innermost div.
@@ -646,13 +656,13 @@ fn grid_static_positions_follow_justify_self_without_a_relayout() {
 
 #[test]
 fn grid_static_position_alignment_uses_grid_self_and_content_box() {
-    let (doc, abspos) = laid_out(
+    let (mut doc, abspos) = laid_out(
         "width:200px;height:100px",
         "display:grid;position:relative;width:200px;height:100px;border:2px solid;padding:10px;justify-items:center;align-items:end",
         "position:absolute;width:50px;height:10px",
     );
-    let (alignment, space) = static_position_alignment(
-        &doc,
+    let (alignment, space) = static_alignment(
+        &mut doc,
         abspos,
         Size {
             width: 50.0,
@@ -666,13 +676,13 @@ fn grid_static_position_alignment_uses_grid_self_and_content_box() {
 
 #[test]
 fn grid_static_position_alignment_ignores_explicit_insets() {
-    let (doc, abspos) = laid_out(
+    let (mut doc, abspos) = laid_out(
         "width:200px;height:100px",
         "display:grid;position:relative;width:200px;height:100px",
         "position:absolute;left:0;width:50px;height:10px",
     );
-    let (alignment, space) = static_position_alignment(
-        &doc,
+    let (alignment, space) = static_alignment(
+        &mut doc,
         abspos,
         Size {
             width: 50.0,
@@ -929,13 +939,13 @@ fn laid_out_with_words(fixed_css: &str) -> (Document, usize) {
 #[test]
 fn static_position_alignment_follows_the_flex_container() {
     let alignment = |wrapper_css: &str, fixed_css: &str| {
-        let (doc, fixed) = laid_out(
+        let (mut doc, fixed) = laid_out(
             "width:200px;height:100px",
             &format!("display:flex;height:100px;{wrapper_css}"),
             &format!("position:fixed;width:20px;height:10px;{fixed_css}"),
         );
-        let (alignment, _) = static_position_alignment(
-            &doc,
+        let (alignment, _) = static_alignment(
+            &mut doc,
             fixed,
             Size {
                 width: 100.0,
@@ -976,8 +986,8 @@ fn static_position_alignment_follows_the_flex_container() {
             .unwrap()
             .style
             .align_self = Some(align);
-        let (alignment, _) = static_position_alignment(
-            &doc,
+        let (alignment, _) = static_alignment(
+            &mut doc,
             fixed,
             Size {
                 width: 50.0,
@@ -1014,8 +1024,8 @@ fn static_position_alignment_follows_the_flex_container() {
         .unwrap()
         .style
         .align_self = Some(align(AlignItemsKeyword::End, AlignmentSafety::Safe));
-    let (alignment, _) = static_position_alignment(
-        &doc,
+    let (alignment, _) = static_alignment(
+        &mut doc,
         fixed,
         Size {
             width: 20.0,
@@ -1043,8 +1053,8 @@ fn static_position_alignment_follows_the_flex_container() {
         );
     }
     // Block containers keep the start edge in the inline direction.
-    let (doc, fixed) = laid_out("", "direction:rtl", "position:fixed");
-    let (alignment, _) = static_position_alignment(&doc, fixed, Size::ZERO);
+    let (mut doc, fixed) = laid_out("", "direction:rtl", "position:fixed");
+    let (alignment, _) = static_alignment(&mut doc, fixed, Size::ZERO);
     assert_eq!((alignment.width, alignment.height), (1.0, 0.0));
 }
 

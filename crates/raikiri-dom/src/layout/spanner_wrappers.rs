@@ -35,11 +35,11 @@ pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &Casca
     wrappers.sort_unstable();
     wrappers.dedup();
     for idx in wrappers {
-        lift_into_container(doc, idx);
         let direction = super::bridge::direction_for_axes(
             &cascade.computed[idx],
             super::bridge::uses_vertical_axes(cascade, idx),
         );
+        lift_into_container(doc, idx, direction);
         let facts = super::box_style_data::recipes::BoxFacts::for_node(&doc.nodes[idx], direction);
         let recipe = super::box_style_data::recipes::spanner(facts);
         doc.document
@@ -211,8 +211,7 @@ fn holds_lines(
 
 /// Makes the box of `id` a `display: contents` one, as the bridge does for
 /// an element that is one.
-fn lift_into_container(doc: &mut LayoutSession<'_>, id: usize) {
-    let direction = doc.layout_node_with_style(id).unwrap().style.direction;
+fn lift_into_container(doc: &mut LayoutSession<'_>, id: usize, direction: taffy::Direction) {
     *doc.layout_node_with_style_mut(id).unwrap().style = taffy::Style {
         direction,
         ..crate::LayoutStyle::default()

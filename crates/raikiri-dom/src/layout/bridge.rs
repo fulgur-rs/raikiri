@@ -1333,12 +1333,28 @@ fn is_stretched_by_keyword_width(
     if !keyword_width || lays_out_vertically(cascade, idx) {
         return false;
     }
-    doc.column_flex_container_of(idx).is_some_and(|container| {
+    column_flex_container_of(doc, idx).is_some_and(|container| {
         matches!(
             style.align_self.unwrap_or(container.align_items).keyword,
             AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
         )
     })
+}
+
+/// The style of the flex container with a vertical main axis that holds box
+/// `idx` as an item, if there is one. The bridge reads the retained styles of
+/// the boxes it has already built, before any style view exists.
+fn column_flex_container_of<'a>(
+    doc: &'a LayoutSession<'_>,
+    idx: usize,
+) -> Option<&'a crate::LayoutStyle> {
+    let style = doc.layout_node_with_style(doc.taffy_parent_of(idx)?)?.style;
+    (style.display == taffy::Display::Flex
+        && matches!(
+            style.flex_direction,
+            taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
+        ))
+    .then_some(style)
 }
 
 /// Whether grid item `idx` is a replaced box with a keyword width that its

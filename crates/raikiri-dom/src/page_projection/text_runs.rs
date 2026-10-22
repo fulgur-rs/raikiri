@@ -128,7 +128,7 @@ pub(super) fn prepare_markers(
         }
     }
     for owner in owners {
-        let node = &document.layout_node_with_style(owner).unwrap();
+        let node = &document.nodes[owner];
         let layout = node.unrounded_layout;
         // Only a usable image replaces the list-style-type text fallback.
         if document.list_marker_image(owner).is_some() {
@@ -1021,9 +1021,9 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
     };
     let in_flow = |id: usize| {
         laid_out(id)
-            && document
-                .layout_node_with_style(id)
-                .is_some_and(|node| node.style.float == taffy::Float::None)
+            && document.finished_style(cascade, id).is_some_and(|style| {
+                taffy::BlockItemStyle::float(&style.view()) == taffy::Float::None
+            })
     };
     let (mut id, mut y) = (owner, 0.0);
     loop {
@@ -1113,7 +1113,8 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
 /// Alignment 3 §9.1). Text directly in the grid is an anonymous item of its
 /// own.
 fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) -> Option<FirstLine> {
-    let node = document.layout_node_with_style(grid)?;
+    let node = document.nodes.get(grid)?;
+    let container_style = document.finished_style(cascade, grid)?;
     let is_item = |id: usize| {
         document.nodes.get(id).is_some_and(|item| {
             item.is_in_document()
@@ -1148,15 +1149,15 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
         .iter()
         .copied()
         .find(|&child| {
-            aligns_by_baseline(
-                node.style,
-                document.layout_node_with_style(child).unwrap().style,
-            ) && !node.grid_items_without_baseline.contains(&child)
+            document
+                .finished_style(cascade, child)
+                .is_some_and(|item| aligns_by_baseline(&container_style.view(), &item.view()))
+                && !node.grid_items_without_baseline.contains(&child)
         })
         .or_else(|| first_row_items.first().copied())?;
     // A relative offset moves the item's box, not the line the grid
     // takes its baseline from.
-    let item_node = &document.layout_node_with_style(item).unwrap();
+    let item_node = &document.nodes[item];
     let item_layout = item_node.unrounded_layout;
     let top = item_layout.location.y - layout_applied_relative_offset_y(document, cascade, item);
     let bottom = item_layout.size.height;
@@ -1176,7 +1177,12 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
         Some(mut line) => {
             // A scroll container's baseline, and the line that decides its
             // page, stay within its border box (CSS Box Alignment 3 §9.1).
-            if item_node.style.overflow.y.is_scroll_container() {
+            let scrolls = document.finished_style(cascade, item).is_some_and(|style| {
+                taffy::CoreStyle::overflow(&style.view())
+                    .y
+                    .is_scroll_container()
+            });
+            if scrolls {
                 line.baseline = line.baseline.clamp(0.0, bottom);
                 line.center = line.center.clamp(0.0, bottom);
             }
@@ -1195,11 +1201,17 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
 /// Whether a grid item takes part in baseline alignment in the block axis:
 /// its `align-self` resolves to `baseline` and neither block-axis margin is
 /// `auto` (CSS Box Alignment 3 §9.3).
-fn aligns_by_baseline(container: &crate::LayoutStyle, item: &crate::LayoutStyle) -> bool {
-    let align = item.align_self.or(Some(container.align_items));
+fn aligns_by_baseline(
+    container: &raikiri_layout_style::LayoutStyleView<'_>,
+    item: &raikiri_layout_style::LayoutStyleView<'_>,
+) -> bool {
+    let align = item
+        .bridge_align_self()
+        .or(Some(taffy::GridContainerStyle::align_items(container)));
+    let margin = taffy::CoreStyle::margin(item);
     align.is_some_and(|align| align.keyword() == taffy::AlignItemsKeyword::Baseline)
-        && !item.margin.top.is_auto()
-        && !item.margin.bottom.is_auto()
+        && !margin.top.is_auto()
+        && !margin.bottom.is_auto()
 }
 
 /// The vertical relative offset that layout already applied to `id`'s

@@ -1,5 +1,6 @@
 //! Measure and break an ifc root's paragraph.
 
+use super::boxes::BoxEdges;
 use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
@@ -412,7 +413,20 @@ pub(crate) fn rebreak_roots(
             .and_then(|root| root.lines.as_ref())
             .map(|lines| std::sync::Arc::clone(&lines.lines));
         if let Some(lines) = lines {
-            super::records::record_inline_boxes(doc, id, &ifc, &lines, &geometry);
+            // The new session has bound no styles, so the edges come from the
+            // records the finished layout left in the document. An element
+            // whose record no longer fits `cascade` keeps no edges.
+            super::records::record_inline_boxes(
+                doc,
+                id,
+                &ifc,
+                &lines,
+                &geometry,
+                |tree, element, basis| {
+                    tree.finished_style(cascade, element)
+                        .map_or(BoxEdges::ZERO, |style| BoxEdges::of(&style.view(), basis))
+                },
+            );
         }
     }
     doc.ifc = Some(state);
@@ -422,7 +436,7 @@ pub(crate) fn rebreak_roots(
 fn first_text_node(doc: &Document, root: usize) -> Option<usize> {
     let mut stack: Vec<usize> = doc.nodes[root].children.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
-        let node = &doc.layout_node_with_style(id).unwrap();
+        let node = &doc.nodes[id];
         if !node.is_in_document() {
             continue;
         }

@@ -16,6 +16,14 @@ pub(crate) fn child(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
     materialize(tree.native_style(idx, ReadRole::BlockItem))
 }
 
+/// The box's own style with no role context, reduced to the fields that
+/// block primitives and leaf sizing read, for callers that adjust a local copy
+/// before sizing a leaf. Flex and grid container and item fields keep their
+/// defaults.
+pub(crate) fn physical(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
+    tree.reduced_physical_style(idx, materialize)
+}
+
 fn materialize(query: NativeStyle<'_>) -> LayoutStyle {
     // Primitives distinguish only hidden, block and non-block display here.
     let display = if query.box_generation_mode() == taffy::BoxGenerationMode::None {

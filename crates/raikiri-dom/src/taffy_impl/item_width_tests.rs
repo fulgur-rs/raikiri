@@ -237,3 +237,31 @@ fn an_inline_box_that_is_a_flex_item_is_sized_by_its_keyword_width() {
         (40.0, 20.0)
     );
 }
+
+#[test]
+fn an_item_is_in_a_column_flex_container_only_when_the_main_axis_is_vertical() {
+    for (container, expected) in [
+        ("display:flex;flex-direction:column", true),
+        ("display:flex;flex-direction:column-reverse", true),
+        ("display:flex;flex-direction:row", false),
+        ("display:block", false),
+    ] {
+        let mut item = 0;
+        let fixture = block_fixture(container, |doc, root| {
+            item = doc.append_element(
+                Some(root),
+                "div",
+                crate::LayoutStyle::default(),
+                Some("display:block"),
+            );
+        });
+        let mut doc = fixture.doc;
+        layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600())
+            .expect("layout");
+        assert_eq!(
+            crate::layout::context::LayoutSession::new(&mut doc).in_column_flex_container(item),
+            expected,
+            "{container}"
+        );
+    }
+}

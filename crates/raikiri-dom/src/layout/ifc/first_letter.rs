@@ -704,7 +704,7 @@ impl PredecessorCache {
             .map(|(id, _)| (id, false))
             .collect();
         while let Some((id, visited)) = pending.pop() {
-            let node = &doc.layout_node_with_style(id).unwrap();
+            let node = &doc.nodes[id];
             if !visited {
                 pending.push((id, true));
                 pending.extend(node.children.iter().map(|&child| (child, false)));

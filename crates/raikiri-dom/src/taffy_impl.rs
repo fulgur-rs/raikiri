@@ -12,10 +12,10 @@ use crate::LayoutStyle as Style;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
     AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
-    DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
-    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, MaybeMath, NodeId,
-    Position as TaffyPosition, Size, TraversePartialTree, TraverseTree, compute_cached_layout,
-    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    DetailedGridInfo, ExpandedDimension, GridItemStyle, Layout, LayoutBlockContainer,
+    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
+    MaybeMath, NodeId, Position as TaffyPosition, Size, TraversePartialTree, TraverseTree,
+    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -145,19 +145,17 @@ pub(crate) fn fit_content_room(
 /// percentage, or a `calc()` with one, of the height of its containing block.
 /// A box with an aspect ratio carries each of them over to its width.
 pub(crate) fn height_follows_containing_block(tree: &LayoutSession<'_>, node: usize) -> bool {
-    tree.layout_node_with_style(node).is_some_and(|node| {
-        let style = &node.style;
-        [
-            style.size.height,
-            style.min_size.height.into(),
-            style.max_size.height.into(),
-        ]
-        .into_iter()
-        .any(|height| match height.expand() {
-            ExpandedDimension::Percent(_) => true,
-            ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
-            _ => false,
-        })
+    let style = tree.physical_style(node);
+    [
+        style.size().height,
+        style.min_size().height.into(),
+        style.max_size().height.into(),
+    ]
+    .into_iter()
+    .any(|height| match height.expand() {
+        ExpandedDimension::Percent(_) => true,
+        ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
+        _ => false,
     })
 }
 
@@ -238,26 +236,22 @@ fn flex_item_percent_basis(tree: &LayoutSession<'_>, node: usize) -> Option<Size
 
 /// Whether a margin, padding or border of `style` depends on its percentage
 /// basis.
-fn has_percent_edge(style: &Style) -> bool {
+fn has_percent_edge(style: &impl CoreStyle) -> bool {
     let margin_depends_on_basis = |edge: taffy::LengthPercentageAuto| {
         edge.into_raw().is_plain_calc()
             || edge.resolve_to_option(0.0, resolve_calc)
                 != edge.resolve_to_option(1.0, resolve_calc)
     };
+    let margin = style.margin();
     has_percent_padding_or_border(style)
-        || [
-            style.margin.left,
-            style.margin.right,
-            style.margin.top,
-            style.margin.bottom,
-        ]
-        .into_iter()
-        .any(margin_depends_on_basis)
+        || [margin.left, margin.right, margin.top, margin.bottom]
+            .into_iter()
+            .any(margin_depends_on_basis)
 }
 
 /// Whether a padding or border of `style` depends on its percentage basis.
-fn has_percent_padding_or_border(style: &Style) -> bool {
-    [style.padding, style.border].into_iter().any(|edges| {
+fn has_percent_padding_or_border(style: &impl CoreStyle) -> bool {
+    [style.padding(), style.border()].into_iter().any(|edges| {
         [edges.left, edges.right, edges.top, edges.bottom]
             .into_iter()
             .any(edge_depends_on_basis)
@@ -406,8 +400,7 @@ impl<'a> TaffyChildIter<'a> {
 
     fn new(doc: &'a Document, parent: NodeId, hidden: bool) -> Self {
         let parent = usize::from(parent);
-        let node = doc.layout_node_with_style(parent).unwrap();
-        let layout_node = &doc.nodes[parent];
+        let node = &doc.nodes[parent];
         Self {
             doc,
             flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
@@ -415,7 +408,7 @@ impl<'a> TaffyChildIter<'a> {
             current: if hidden {
                 [].iter()
             } else {
-                layout_node.layout_children().iter()
+                node.layout_children().iter()
             },
             stack: Vec::new(),
         }
@@ -424,7 +417,7 @@ impl<'a> TaffyChildIter<'a> {
     /// Whether `child` is a `display: contents` element whose children take
     /// its place among a container's children.
     fn is_flattened(doc: &Document, child: usize) -> bool {
-        let node = &doc.layout_node_with_style(child).unwrap();
+        let node = &doc.nodes[child];
         node.kind() == raikiri_traits::NodeKind::Element
             && node.display() == DisplayValue::Contents
             && !node.is_ifc_root()
@@ -466,7 +459,7 @@ impl Document {
     /// Loose table rows need no anonymous table here: none is built for a
     /// multicolumn container or for a `display: contents` element.
     pub(crate) fn children_through_contents(&self, parent: usize) -> Vec<usize> {
-        let container = self.layout_node_with_style(parent).unwrap();
+        let container = &self.nodes[parent];
         let flatten = !container.is_display_none() && container.display() != DisplayValue::Contents;
         let mut children = Vec::new();
         let mut stack = vec![self.nodes[parent].children.iter()];
@@ -506,25 +499,28 @@ impl Document {
         let top = self
             .inclusive_ancestors(parent)
             .find(|&id| !TaffyChildIter::is_flattened(self, id))?;
-        let container = &self.layout_node_with_style(top).unwrap();
+        let container = &self.nodes[top];
         let lifted = top != parent
             && !container.is_display_none()
             && container.display() != DisplayValue::Contents;
         Some(if lifted { top } else { parent })
     }
+}
 
-    /// The style of the flex container with a vertical main axis that holds
-    /// box `node` as an item, if there is one.
-    pub(crate) fn column_flex_container_of(&self, node: usize) -> Option<&crate::LayoutStyle> {
-        let style = self
-            .layout_node_with_style(self.taffy_parent_of(node)?)?
-            .style;
-        (style.display == taffy::Display::Flex
-            && matches!(
-                style.flex_direction,
-                taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
-            ))
-        .then_some(style)
+impl LayoutSession<'_> {
+    /// Whether box `node` is an item of a flex container with a vertical main
+    /// axis.
+    pub(crate) fn in_column_flex_container(&self, node: usize) -> bool {
+        use taffy::FlexboxContainerStyle;
+
+        self.taffy_parent_of(node)
+            .filter(|&parent| self.nodes[parent].taffy_display() == taffy::Display::Flex)
+            .is_some_and(|parent| {
+                matches!(
+                    FlexboxContainerStyle::flex_direction(&self.physical_style(parent)),
+                    taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
+                )
+            })
     }
 }
 
@@ -737,9 +733,7 @@ impl LayoutSession<'_> {
         // A size-only cache cannot replay them after a speculative layout is restored.
         let uncached = block_ctx.is_some()
             || std::mem::take(&mut self.context.group_child_uncached)
-            || (paragraph
-                && ifc_basis.is_some()
-                && has_percent_edge(self.layout_node_with_style(idx).unwrap().style))
+            || (paragraph && ifc_basis.is_some() && has_percent_edge(&self.physical_style(idx)))
             || self.context.size_contained_measure.last() == Some(&idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
@@ -753,9 +747,7 @@ impl LayoutSession<'_> {
                     && !self.has_vertical_writing_mode(idx)
             })
             .and_then(|basis| basis.width)
-            .filter(|_| {
-                has_percent_padding_or_border(self.layout_node_with_style(idx).unwrap().style)
-            });
+            .filter(|_| has_percent_padding_or_border(&self.physical_style(idx)));
         let dispatch = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
             let idx = usize::from(node_id);
             let inputs = with_fit_content_room(tree, idx, inputs);
@@ -811,13 +803,7 @@ impl LayoutSession<'_> {
                 if inline_shrink_wrap
                     && !tree.nodes[idx].flags.contains(NodeFlags::IS_ROOT_ELEMENT)
                     && !contained_width
-                    && tree
-                        .layout_node_with_style(idx)
-                        .unwrap()
-                        .style
-                        .size
-                        .width
-                        .is_auto()
+                    && tree.physical_style(idx).size().width.is_auto()
                     && (inputs.known_dimensions.width.is_none()
                         || inputs.sizing_mode != taffy::SizingMode::ContentSize)
                 {
@@ -853,11 +839,7 @@ impl LayoutSession<'_> {
             // by the SVG renderer, not laid out, so it is measured as a leaf.
             // Empty flex/grid containers still run their layout algorithms;
             // explicit grid tracks contribute even when there are no items.
-            let item_is_replaced = tree
-                .layout_node_with_style(idx)
-                .unwrap()
-                .style
-                .item_is_replaced;
+            let item_is_replaced = tree.physical_style(idx).is_replaced();
             // An empty box that is not replaced content, yet has a preferred
             // aspect ratio, is a block container like any other: its sizes
             // follow block flow, including the automatic minimum size and the
@@ -867,12 +849,7 @@ impl LayoutSession<'_> {
                 && !item_is_replaced
                 && leaf_intrinsic_size(&tree.nodes[idx]).is_none()
                 && !tree.nodes[idx].is_inline_svg_root()
-                && tree
-                    .layout_node_with_style(idx)
-                    .unwrap()
-                    .style
-                    .aspect_ratio
-                    .is_some();
+                && tree.physical_style(idx).aspect_ratio().is_some();
             let is_leaf = (tree.nodes[idx].children.is_empty()
                 && !ratio_block
                 && (!matches!(
@@ -884,8 +861,8 @@ impl LayoutSession<'_> {
                 // Replaced content with size containment has no natural size
                 // or aspect ratio; the style bridge left only the ratio the
                 // box states itself.
-                let style = &tree.layout_node_with_style(idx).unwrap().style;
-                return compute_leaf_layout(inputs, style, resolve_calc, |known, _| Size {
+                let style = tree.physical_style(idx);
+                return compute_leaf_layout(inputs, &style, resolve_calc, |known, _| Size {
                     width: known.width.unwrap_or(0.0),
                     height: known.height.unwrap_or(0.0),
                 });
@@ -902,7 +879,7 @@ impl LayoutSession<'_> {
                 // `auto` keeps it.
                 let ratio = tree.nodes[idx].preferred_aspect_ratio.unwrap_or(ratio);
                 let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
-                let mut resolver_style = tree.layout_node_with_style(idx).unwrap().style.clone();
+                let mut resolver_style = block_flow::style_input::physical(tree, idx);
                 apply_local_sizing(
                     &mut resolver_style,
                     &[OwnedPropertyOverride::aspect_ratio(Some(ratio))],
@@ -1005,7 +982,7 @@ impl LayoutSession<'_> {
                 return compute_ifc_root(tree, node_id, inputs, block_ctx);
             }
             if is_leaf {
-                let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
+                let mut style = block_flow::style_input::physical(tree, idx);
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
                 let limits = tree.nodes[idx].content_limits;
                 // Natural ratios resolve intrinsic limits; without them,
@@ -1113,9 +1090,7 @@ impl LayoutSession<'_> {
         // (CSS Box Alignment 3 §9.1), so content scrolled out of view does
         // not move the baseline its parent aligns to.
         // spec: https://www.w3.org/TR/css-align-3/#baseline-export
-        let scrolls = self
-            .layout_node_with_style(idx)
-            .is_some_and(|node| is_scroll_container(node.style.overflow));
+        let scrolls = is_scroll_container(self.physical_style(idx).overflow());
         if scrolls && inputs.run_mode == RunMode::PerformLayout {
             clamp_baselines(&mut output.baselines, output.size.height);
         }
@@ -1189,7 +1164,7 @@ fn compute_ifc_root(
     {
         block_ctx = None;
     }
-    let style = tree.layout_node_with_style(idx).unwrap().style.clone();
+    let style = block_flow::style_input::physical(tree, idx);
     let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
     let mut layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
     // A horizontal paragraph box with an `aspect-ratio` is sized as block
@@ -1714,14 +1689,12 @@ fn measure_ifc_root(
     // max-content measure is not a room to fit, and is kept; so is the room
     // that the limit of `fit-content(<length-percentage>)` makes.
     let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
-    let limited = tree.layout_node_with_style(idx).is_some_and(|node| {
-        matches!(
-            node.style.size.width.expand(),
-            taffy::ExpandedDimension::FitContentPx(_)
-                | taffy::ExpandedDimension::FitContentPercent(_)
-                | taffy::ExpandedDimension::FitContentCalc(_)
-        )
-    });
+    let limited = matches!(
+        tree.physical_style(idx).size().width.expand(),
+        taffy::ExpandedDimension::FitContentPx(_)
+            | taffy::ExpandedDimension::FitContentPercent(_)
+            | taffy::ExpandedDimension::FitContentCalc(_)
+    );
     let available = match page_width {
         Some(page_width)
             if fixed
@@ -2136,13 +2109,13 @@ fn fragmentation_context_for_ifc(
 
     let mut has_row_flex = false;
     for node_id in tree.ancestors(idx) {
-        let node = &tree.layout_node_with_style(node_id).unwrap();
+        let node = &tree.nodes[node_id];
         if let Some(multicol) = node.multicol {
             return (has_row_flex && multicol.horizontal).then_some(context);
         }
         has_row_flex |= node.formatting_context == FormattingContext::Flex
             && matches!(
-                node.style.flex_direction,
+                taffy::FlexboxContainerStyle::flex_direction(&tree.physical_style(node_id)),
                 taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
             );
     }
@@ -2166,7 +2139,7 @@ fn clamp_baselines(baselines: &mut taffy::Baselines, height: f32) {
 /// tree: inline-blocks use the baseline of their last in-flow line box, so recover
 /// the last in-flow text line from the descendant layout tree. See CSS 2.1
 /// §10.8.1: <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
-fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
+fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
     use raikiri_style::property::DisplayValue;
     let root_node = doc.nodes.get(root)?;
     if root_node.is_display_none() {
@@ -2205,10 +2178,12 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     }
     let mut last_baseline = None;
     while let Some((idx, offset_y, outer_clip)) = stack.pop() {
-        let node = &doc.layout_node_with_style(idx).unwrap();
+        let node = &doc.nodes[idx];
         // Clamping a value to this box and then to the boxes around it is
         // clamping it to this box's edges, each clamped to the outer range.
-        let clip = if is_scroll_container(node.style.overflow) {
+        let clip = if node.kind() != raikiri_traits::NodeKind::Text
+            && is_scroll_container(doc.physical_style(idx).overflow())
+        {
             let bottom = offset_y + node.unrounded_layout.size.height;
             (
                 offset_y.max(outer_clip.0).min(outer_clip.1),
@@ -2253,9 +2228,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
 /// items instead, which differ from the fit-content size.
 fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
     tree.nodes[idx].display().is_block_flex_or_grid_container()
-        && tree
-            .layout_node_with_style(idx)
-            .is_some_and(|node| node.style.float != taffy::Float::None)
+        && taffy::BlockItemStyle::float(&tree.physical_style(idx)) != taffy::Float::None
 }
 
 /// The border-box `min-width` and `max-width` of element `idx` that resolve
@@ -2265,7 +2238,7 @@ fn border_box_width_bounds(
     idx: usize,
     parent_width: Option<f32>,
 ) -> (f32, f32) {
-    let style = &tree.layout_node_with_style(idx).unwrap().style;
+    let style = tree.physical_style(idx);
     let adjustment =
         crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
     let resolve = |value, auto: f32| {
@@ -2273,8 +2246,8 @@ fn border_box_width_bounds(
             .filter(|resolved| resolved.is_finite())
             .map_or(auto, |resolved| resolved + adjustment)
     };
-    let min = resolve(style.min_size.width, 0.0);
-    let max = resolve(style.max_size.width, f32::INFINITY);
+    let min = resolve(style.min_size().width, 0.0);
+    let max = resolve(style.max_size().width, f32::INFINITY);
     (min, max.max(min))
 }
 
@@ -2327,7 +2300,7 @@ fn compute_inline_block_shrink_wrap(
         );
     let limits = tree.nodes[idx].content_limits;
     // Clone what the leaf path needs before any exclusive tree use below.
-    let mut leaf_style = tree.layout_node_with_style(idx).unwrap().style.clone();
+    let mut leaf_style = block_flow::style_input::physical(tree, idx);
     if limits != content_limits::ContentLimits::NONE
         && !empty
         && !tree.nodes[idx].size_containment.width
@@ -2669,21 +2642,27 @@ fn center_absolute_children_in_block_axis(
         return;
     }
     let block_is_height = !used_writing_mode(tree, idx).is_vertical();
-    let style = &tree.layout_node_with_style(idx).unwrap().style;
-    let border = style
-        .border
-        .resolve_or_zero(inputs.parent_size.width, resolve_calc);
-    let direction = style.direction;
+    let (border, direction, scrollbar_width, overflow) = {
+        let style = tree.physical_style(idx);
+        (
+            style
+                .border()
+                .resolve_or_zero(inputs.parent_size.width, resolve_calc),
+            style.direction(),
+            style.scrollbar_width(),
+            style.overflow(),
+        )
+    };
     // A scrollbar takes its gutter from the absolute positioning area: a
     // horizontal one from the bottom, a vertical one from the inline end.
     let gutter = |overflow: Overflow| {
         if overflow == Overflow::Scroll {
-            style.scrollbar_width
+            scrollbar_width
         } else {
             0.0
         }
     };
-    let (gutter_x, gutter_y) = (gutter(style.overflow.y), gutter(style.overflow.x));
+    let (gutter_x, gutter_y) = (gutter(overflow.y), gutter(overflow.x));
     let padding_box = if direction == taffy::Direction::Rtl {
         taffy::Rect {
             left: border.left + gutter_x,
@@ -2701,29 +2680,29 @@ fn center_absolute_children_in_block_axis(
     };
     let children = hoisted_children(tree, idx);
     for child in children.iter().copied() {
-        let node = &tree.layout_node_with_style(child).unwrap();
-        let style = &node.style;
+        let style = tree.physical_style(child);
+        let (margin, inset) = (style.margin(), style.inset());
         let (start, end) = if block_is_height {
-            (style.margin.top, style.margin.bottom)
+            (margin.top, margin.bottom)
         } else {
-            (style.margin.left, style.margin.right)
+            (margin.left, margin.right)
         };
         if !start.is_auto() || !end.is_auto() {
             continue;
         }
         let area = match grid {
             Some(grid) => grid.resolve_absolute_grid_area(
-                style.grid_row.clone(),
-                style.grid_column.clone(),
+                GridItemStyle::grid_row(&style),
+                GridItemStyle::grid_column(&style),
                 direction,
                 padding_box,
             ),
             None => padding_box,
         };
         let (area_start, area_end, start, end) = if block_is_height {
-            (area.top, area.bottom, style.inset.top, style.inset.bottom)
+            (area.top, area.bottom, inset.top, inset.bottom)
         } else {
-            (area.left, area.right, style.inset.left, style.inset.right)
+            (area.left, area.right, inset.left, inset.right)
         };
         let area_size = area_end - area_start;
         let start = start.maybe_resolve(area_size, resolve_calc);
@@ -2731,7 +2710,7 @@ fn center_absolute_children_in_block_axis(
         let (Some(start), Some(end)) = (start, end) else {
             continue;
         };
-        let mut layout = node.unrounded_layout;
+        let mut layout = tree.nodes[child].unrounded_layout;
         let box_size = if block_is_height {
             layout.size.height
         } else {
@@ -2756,32 +2735,30 @@ fn center_absolute_children_in_block_axis(
     }
     if !block_is_height {
         for child in children {
-            let node = &tree.layout_node_with_style(child).unwrap();
-            let style = &node.style;
-            if !style.margin.top.is_auto() || !style.margin.bottom.is_auto() {
+            let style = tree.physical_style(child);
+            let (margin, inset) = (style.margin(), style.inset());
+            if !margin.top.is_auto() || !margin.bottom.is_auto() {
                 continue;
             }
             let area = match grid {
                 Some(grid) => grid.resolve_absolute_grid_area(
-                    style.grid_row.clone(),
-                    style.grid_column.clone(),
+                    GridItemStyle::grid_row(&style),
+                    GridItemStyle::grid_column(&style),
                     direction,
                     padding_box,
                 ),
                 None => padding_box,
             };
-            let start = style
-                .inset
+            let start = inset
                 .top
                 .maybe_resolve(area.bottom - area.top, resolve_calc);
-            let end = style
-                .inset
+            let end = inset
                 .bottom
                 .maybe_resolve(area.bottom - area.top, resolve_calc);
             let (Some(start), Some(end)) = (start, end) else {
                 continue;
             };
-            let mut layout = node.unrounded_layout;
+            let mut layout = tree.nodes[child].unrounded_layout;
             let free_space = area.bottom - area.top - start - end - layout.size.height;
             if free_space >= 0.0 {
                 continue;
@@ -2869,22 +2846,23 @@ fn with_content_height_not_definite(
     {
         return inputs;
     }
-    let follows_content = tree.layout_node_with_style(idx).is_some_and(|node| {
-        let style = node.style;
+    let follows_content = {
+        let style = tree.physical_style(idx);
         let min = style
-            .min_size
+            .min_size()
             .maybe_resolve(inputs.parent_size, resolve_calc)
             .height;
         let max = style
-            .max_size
+            .max_size()
             .maybe_resolve(inputs.parent_size, resolve_calc)
             .height;
         let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
-        style.size.height.is_auto()
-            && style.aspect_ratio.is_none()
+        let inset = style.inset();
+        style.size().height.is_auto()
+            && style.aspect_ratio().is_none()
             && !pinned
-            && (style.inset.top.is_auto() || style.inset.bottom.is_auto())
-    });
+            && (inset.top.is_auto() || inset.bottom.is_auto())
+    };
     if follows_content {
         inputs.known_dimensions_are_definite.height = false;
     }
@@ -2904,10 +2882,10 @@ fn with_fit_content_room(
     if inputs.known_dimensions.width.is_some() {
         return inputs;
     }
-    let room = tree.layout_node_with_style(idx).and_then(|node| {
-        let size = node.style.size.width.expand();
+    let room = {
+        let size = tree.physical_style(idx).size().width.expand();
         fit_content_room(tree, idx, size, inputs.parent_size.width, true)
-    });
+    };
     if let Some(room) = room {
         inputs.available_space.width = AvailableSpace::Definite(room);
     }
@@ -2932,14 +2910,12 @@ fn with_column_flex_keyword_room(
     {
         return inputs;
     }
-    let room = tree
-        .layout_node_with_style(idx)
-        .and_then(|node| match node.style.size.width.expand() {
-            taffy::ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
-            taffy::ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
-            _ => None,
-        })
-        .filter(|_| tree.column_flex_container_of(idx).is_some());
+    let room = match tree.physical_style(idx).size().width.expand() {
+        taffy::ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
+        taffy::ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
+        _ => None,
+    }
+    .filter(|_| tree.in_column_flex_container(idx));
     if let Some(room) = room {
         inputs.available_space.width = room;
     }
@@ -2960,17 +2936,16 @@ fn with_fit_content_width(
         return inputs;
     };
     if inputs.known_dimensions.width.is_some()
-        || !tree
-            .layout_node_with_style(usize::from(node_id))
-            .is_some_and(|node| {
-                matches!(
-                    node.style.size.width.expand(),
-                    taffy::ExpandedDimension::FitContent
-                        | taffy::ExpandedDimension::FitContentPx(_)
-                        | taffy::ExpandedDimension::FitContentPercent(_)
-                        | taffy::ExpandedDimension::FitContentCalc(_)
-                )
-            })
+        || !matches!(
+            tree.physical_style(usize::from(node_id))
+                .size()
+                .width
+                .expand(),
+            taffy::ExpandedDimension::FitContent
+                | taffy::ExpandedDimension::FitContentPx(_)
+                | taffy::ExpandedDimension::FitContentPercent(_)
+                | taffy::ExpandedDimension::FitContentCalc(_)
+        )
     {
         return inputs;
     }
@@ -3029,21 +3004,29 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 /// aligns as `start` (CSS Box Alignment 3 §4.4).
 // spec: https://www.w3.org/TR/css-align-3/#overflow-values
 pub(crate) fn auto_grid_abspos_static_alignment(
-    child: &Style,
-    parent: &Style,
+    child: &NativeStyle<'_>,
+    parent: &NativeStyle<'_>,
     overflows: Size<bool>,
 ) -> Option<Size<f32>> {
-    use taffy::{AlignItemsKeyword, AlignmentSafety, GridPlacement};
+    use taffy::{
+        AlignItemsKeyword, AlignmentSafety, GridContainerStyle, GridItemStyle, GridPlacement,
+    };
 
-    if child.position != TaffyPosition::Absolute
-        || !child.inset.top.is_auto()
-        || !child.inset.right.is_auto()
-        || !child.inset.bottom.is_auto()
-        || !child.inset.left.is_auto()
-        || !matches!(&child.grid_row.start, GridPlacement::Auto)
-        || !matches!(&child.grid_row.end, GridPlacement::Auto)
-        || !matches!(&child.grid_column.start, GridPlacement::Auto)
-        || !matches!(&child.grid_column.end, GridPlacement::Auto)
+    let (child_direction, parent_direction) = (child.direction(), parent.direction());
+    let inset = child.inset();
+    let (grid_row, grid_column) = (
+        GridItemStyle::grid_row(child),
+        GridItemStyle::grid_column(child),
+    );
+    if child.position() != TaffyPosition::Absolute
+        || !inset.top.is_auto()
+        || !inset.right.is_auto()
+        || !inset.bottom.is_auto()
+        || !inset.left.is_auto()
+        || !matches!(&grid_row.start, GridPlacement::Auto)
+        || !matches!(&grid_row.end, GridPlacement::Auto)
+        || !matches!(&grid_column.start, GridPlacement::Auto)
+        || !matches!(&grid_column.end, GridPlacement::Auto)
     {
         return None;
     }
@@ -3056,7 +3039,7 @@ pub(crate) fn auto_grid_abspos_static_alignment(
                               overflows: bool| {
         let alignment = self_alignment
             .unwrap_or(parent_alignment)
-            .resolve_self_relative(child.direction, parent.direction, inline);
+            .resolve_self_relative(child_direction, parent_direction, inline);
         let keyword = if alignment.safety == AlignmentSafety::Safe && overflows {
             AlignItemsKeyword::Start
         } else {
@@ -3069,20 +3052,20 @@ pub(crate) fn auto_grid_abspos_static_alignment(
         }
     };
     let inline = alignment_fraction(
-        child.justify_self,
-        parent.justify_items,
+        child.bridge_justify_self(),
+        GridContainerStyle::justify_items(parent),
         true,
         overflows.width,
     );
     Some(Size {
-        width: if parent.direction == taffy::Direction::Rtl {
+        width: if parent_direction == taffy::Direction::Rtl {
             1.0 - inline
         } else {
             inline
         },
         height: alignment_fraction(
-            child.align_self,
-            parent.align_items,
+            child.bridge_align_self(),
+            GridContainerStyle::align_items(parent),
             false,
             overflows.height,
         ),
@@ -3108,14 +3091,14 @@ fn align_auto_grid_abspos_children(
         return;
     }
 
-    let parent_style = &tree.layout_node_with_style(idx).unwrap().style;
+    let parent_style = tree.physical_style(idx);
     // Percentage padding resolves against the containing block's width, not
     // this grid's used width.
     let border = parent_style
-        .border
+        .border()
         .resolve_or_zero(percent_basis, resolve_calc);
     let padding = parent_style
-        .padding
+        .padding()
         .resolve_or_zero(percent_basis, resolve_calc);
 
     let placed: Vec<(usize, taffy::Layout)> = tree
@@ -3209,29 +3192,29 @@ fn auto_grid_abspos_aligned_layout(
     if tree.nodes[child].is_display_none() || tree.taffy_parent_of(child) != Some(grid) {
         return None;
     }
-    let parent_style = &tree.layout_node_with_style(grid)?.style;
-    let node = tree.layout_node_with_style(child)?;
-    let style = &node.style;
-    let mut layout = node.unrounded_layout;
+    let parent_style = tree.physical_style(grid);
+    let style = tree.physical_style(child);
+    let mut layout = tree.nodes[child].unrounded_layout;
     // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
     // §10.6.4).
+    let style_margin = style.margin();
     let margin = taffy::Rect {
-        left: if style.margin.left.is_auto() {
+        left: if style_margin.left.is_auto() {
             0.0
         } else {
             layout.margin.left
         },
-        right: if style.margin.right.is_auto() {
+        right: if style_margin.right.is_auto() {
             0.0
         } else {
             layout.margin.right
         },
-        top: if style.margin.top.is_auto() {
+        top: if style_margin.top.is_auto() {
             0.0
         } else {
             layout.margin.top
         },
-        bottom: if style.margin.bottom.is_auto() {
+        bottom: if style_margin.bottom.is_auto() {
             0.0
         } else {
             layout.margin.bottom
@@ -3247,7 +3230,7 @@ fn auto_grid_abspos_aligned_layout(
         width: free_width < 0.0,
         height: free_height < 0.0,
     };
-    let alignment = auto_grid_abspos_static_alignment(style, parent_style, overflows)?;
+    let alignment = auto_grid_abspos_static_alignment(&style, &parent_style, overflows)?;
     layout.location.x =
         grid_to_owner.x + border.left + padding.left + margin.left + alignment.width * free_width;
     layout.location.y =
@@ -3297,33 +3280,33 @@ impl LayoutSession<'_> {
     ) -> (Size<Option<f32>>, Size<f32>, Option<f32>) {
         use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero, SizingMode};
 
-        let style = &self.layout_node_with_style(idx).unwrap().style;
+        let style = self.physical_style(idx);
         let parent_size = inputs.parent_size;
         let padding = style
-            .padding
+            .padding()
             .resolve_or_zero(parent_size.width, resolve_calc);
         let border = style
-            .border
+            .border()
             .resolve_or_zero(parent_size.width, resolve_calc);
         let padding_border_size = (padding + border).sum_axes();
-        let box_sizing_adjustment = if style.box_sizing == BoxSizing::ContentBox {
+        let box_sizing_adjustment = if style.box_sizing() == BoxSizing::ContentBox {
             padding_border_size
         } else {
             Size::ZERO
         };
-        let aspect_ratio = style.aspect_ratio;
+        let aspect_ratio = style.aspect_ratio();
         let min_size = style
-            .min_size
+            .min_size()
             .maybe_resolve(parent_size, resolve_calc)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
         let max_size = style
-            .max_size
+            .max_size()
             .maybe_resolve(parent_size, resolve_calc)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
         let style_size = style
-            .size
+            .size()
             .maybe_resolve(parent_size, resolve_calc)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
@@ -3346,9 +3329,11 @@ impl LayoutSession<'_> {
             .maybe_clamp(min_size, max_size);
         // A vertical scrollbar takes its gutter from the inline axis, and a
         // horizontal one from the block axis.
+        let scrollbar_width = style.scrollbar_width();
+        let overflow = style.overflow();
         let gutter = |overflow| {
             if overflow == Overflow::Scroll {
-                style.scrollbar_width
+                scrollbar_width
             } else {
                 0.0
             }
@@ -3361,10 +3346,10 @@ impl LayoutSession<'_> {
             Size {
                 width: padding.horizontal_axis_sum()
                     + border.horizontal_axis_sum()
-                    + gutter(style.overflow.y),
+                    + gutter(overflow.y),
                 height: padding.vertical_axis_sum()
                     + border.vertical_axis_sum()
-                    + gutter(style.overflow.x),
+                    + gutter(overflow.x),
             },
             style_size.height.maybe_max(min_size.height),
         )
@@ -3374,17 +3359,13 @@ impl LayoutSession<'_> {
     /// padding or border that depends on its percentage basis.
     fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
         TaffyChildIter::new_for_session(self, NodeId::from(idx)).any(|child| {
-            let Some(node) = self.layout_node_with_style(usize::from(child)) else {
+            let child = usize::from(child);
+            if self.nodes[child].taffy_position() == TaffyPosition::Absolute {
                 return false;
-            };
-            let style = node.style;
-            node.taffy_position() != TaffyPosition::Absolute
-                && [
-                    style.padding.top,
-                    style.padding.bottom,
-                    style.border.top,
-                    style.border.bottom,
-                ]
+            }
+            let style = self.physical_style(child);
+            let (padding, border) = (style.padding(), style.border());
+            [padding.top, padding.bottom, border.top, border.bottom]
                 .into_iter()
                 .any(edge_depends_on_basis)
         })
@@ -3497,19 +3478,15 @@ impl LayoutGridContainer for LayoutSession<'_> {
             .map(|(&child, item)| (child, item.row_start))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let rows = row_sizing_functions(
-            self.layout_node_with_style(parent).unwrap().style,
-            &detailed_grid_info.rows,
-        );
+        let rows = row_sizing_functions(&self.physical_style(parent), &detailed_grid_info.rows);
         self.nodes[parent].grid_items_without_baseline = children
             .iter()
             .zip(detailed_grid_info.items.iter())
             .filter(|&(&child, item)| {
                 let spanned = usize::from(item.row_start.saturating_sub(1))
                     ..usize::from(item.row_end.saturating_sub(1));
-                self.layout_style_for_key(child)
-                    .unwrap()
-                    .size
+                self.physical_style(child)
+                    .size()
                     .height
                     .into_raw()
                     .uses_percentage()
@@ -3604,16 +3581,18 @@ impl TraverseTree for Document {}
 /// as taffy's grid algorithm expands them for the track counts in `rows`
 /// (CSS Grid 1 §7.2 explicit tracks, §7.6 implicit tracks).
 fn row_sizing_functions(
-    style: &Style,
+    style: &impl taffy::GridContainerStyle,
     rows: &taffy::DetailedGridTracksInfo<smol_str::SmolStr>,
 ) -> Vec<taffy::TrackSizingFunction> {
     use taffy::prelude::TaffyAuto;
-    use taffy::{GridTemplateComponent, RepetitionCount, TrackSizingFunction};
+    use taffy::{
+        GenericGridTemplateComponent, GenericRepetition, RepetitionCount, TrackSizingFunction,
+    };
 
     let negative = usize::from(rows.negative_implicit_tracks);
     let explicit = usize::from(rows.explicit_tracks);
     let positive = usize::from(rows.positive_implicit_tracks);
-    let auto_rows = &style.grid_auto_rows;
+    let auto_rows = style.grid_auto_rows().collect::<Vec<_>>();
     // Without `grid-auto-rows`, implicit rows are `auto`.
     let implicit = |index: usize| {
         let count = auto_rows.len().max(1);
@@ -3634,28 +3613,29 @@ fn row_sizing_functions(
     // An automatic repetition takes the explicit rows that the other
     // components leave.
     let fixed_count = style
-        .grid_template_rows
-        .iter()
+        .grid_template_rows()
+        .into_iter()
+        .flatten()
         .map(|component| match component {
-            GridTemplateComponent::Single(_) => 1,
-            GridTemplateComponent::Repeat(repeat) => match repeat.count {
-                RepetitionCount::Count(count) => repeat.tracks.len() * usize::from(count),
+            GenericGridTemplateComponent::Single(_) => 1,
+            GenericGridTemplateComponent::Repeat(repeat) => match repeat.count() {
+                RepetitionCount::Count(count) => repeat.tracks().len() * usize::from(count),
                 RepetitionCount::AutoFill | RepetitionCount::AutoFit => 0,
             },
         })
         .sum::<usize>();
     let mut template = Vec::with_capacity(explicit);
-    for component in &style.grid_template_rows {
+    for component in style.grid_template_rows().into_iter().flatten() {
         match component {
-            GridTemplateComponent::Single(function) => template.push(*function),
-            GridTemplateComponent::Repeat(repeat) => {
-                let count = match repeat.count {
-                    RepetitionCount::Count(count) => repeat.tracks.len() * usize::from(count),
+            GenericGridTemplateComponent::Single(function) => template.push(function),
+            GenericGridTemplateComponent::Repeat(repeat) => {
+                let count = match repeat.count() {
+                    RepetitionCount::Count(count) => repeat.tracks().len() * usize::from(count),
                     RepetitionCount::AutoFill | RepetitionCount::AutoFit => {
                         explicit.saturating_sub(fixed_count)
                     }
                 };
-                template.extend(repeat.tracks.iter().copied().cycle().take(count));
+                template.extend(repeat.tracks().cycle().take(count));
             }
         }
     }

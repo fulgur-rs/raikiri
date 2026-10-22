@@ -1,5 +1,6 @@
 mod calc_owner_tests;
 mod foundation_tests;
+mod physical_memo_tests;
 mod preparation_tests;
 pub(super) mod scoped_override_tests;
 pub(crate) use scoped_override_tests::with_setup_inspector;

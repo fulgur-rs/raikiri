@@ -1,7 +1,7 @@
 //! The layout of the inline elements of a paragraph: the bounding box of
 //! each element's border boxes on its lines.
 
-use super::boxes::commit_child_layout;
+use super::boxes::{BoxEdges, commit_child_layout_with_edges};
 use super::flow::FlowGeometry;
 use super::inline_boxes::{BoxRect, InlineBoxPiece, forced_break_boxes, inline_box_pieces};
 use super::root::IfcRoot;
@@ -29,7 +29,7 @@ fn inline_elements(tree: &Document, root: usize, ifc: &IfcRoot) -> Vec<usize> {
     let mut out = Vec::new();
     let mut stack: Vec<usize> = tree.nodes[root].children.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
-        let node = &tree.layout_node_with_style(id).unwrap();
+        let node = &tree.nodes[id];
         if !node.is_in_document()
             || node.kind() != NodeKind::Element
             || ifc.boxes.iter().any(|b| b.node == id)
@@ -49,12 +49,17 @@ fn inline_elements(tree: &Document, root: usize, ifc: &IfcRoot) -> Vec<usize> {
 ///
 /// The layout serves the readers that accumulate locations along the DOM
 /// parents; painting reads the pieces of each line instead.
+///
+/// `edges_of` reads the border, padding and margin of an element against a
+/// percentage basis, from whichever style source the caller has: the session's
+/// prepared views while layout runs, the finished layout's records afterwards.
 pub(crate) fn record_inline_boxes(
     tree: &mut LayoutSession<'_>,
     root: usize,
     ifc: &IfcRoot,
     lines: &[shodo::Line],
     geometry: &FlowGeometry,
+    edges_of: impl Fn(&LayoutSession<'_>, usize, f32) -> BoxEdges,
 ) {
     let pieces = inline_box_pieces(lines, ifc.writing_mode, geometry.content_size, |_| None);
     // Bounding box of each element's border boxes, in content-box coordinates.
@@ -102,13 +107,8 @@ pub(crate) fn record_inline_boxes(
             x: rect.map_or(0.0, |r| r.x - origin.0) + own.0,
             y: rect.map_or(0.0, |r| r.y - origin.1) + own.1,
         };
-        commit_child_layout(
-            tree,
-            element,
-            &output,
-            location,
-            geometry.content_size.width,
-        );
+        let edges = edges_of(tree, element, geometry.content_size.width);
+        commit_child_layout_with_edges(tree, element, &output, location, edges);
     }
 }
 
