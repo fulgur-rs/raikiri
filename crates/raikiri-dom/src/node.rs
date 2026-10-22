@@ -914,7 +914,7 @@ impl Node {
 
     /// The `::first-letter` fragments of an ifc root in layout order: each
     /// fragment's typographic box, the owner of the letters it wraps (as in
-    /// [`Self::ifc_typographic_style_for_owner`]) and its retained style.
+    /// [`Self::ifc_typographic_style_for_owner`]) and its computed values.
     pub(crate) fn ifc_letter_fragments(
         &self,
     ) -> impl Iterator<Item = (usize, usize, &raikiri_style::ComputedValues)> {

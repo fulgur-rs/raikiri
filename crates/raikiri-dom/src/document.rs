@@ -552,11 +552,9 @@ impl Document {
     ///
     /// Returns: the arena index of the added node.
     ///
-    /// Foreign calc handles in `style` are replaced with safe keyword
-    /// fallbacks before storage, so the arena never holds a pointer it
-    /// does not own. Styles without calc pass through untouched, and the
-    /// layout bridge rebuilds owned calc handles from computed values
-    /// before each layout pass.
+    /// The node carries no layout style of its own: layout reads the
+    /// computed values the cascade produces from the tag, the attributes and
+    /// `inline_style`.
     pub fn append_element(
         &mut self,
         parent: Option<usize>,
