@@ -6,7 +6,11 @@ use crate::node::FormattingContext;
 use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
-pub(super) fn supports(tree: &Document, root: usize, context: FragmentationContext) -> bool {
+pub(super) fn supports(
+    tree: &LayoutSession<'_>,
+    root: usize,
+    context: FragmentationContext,
+) -> bool {
     if !context
         .available_height
         .is_some_and(|height| height.is_finite() && height > 0.0)
@@ -29,7 +33,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         if depth >= 128 {
             return false;
         }
-        let node = &tree.layout_node_with_style(id).unwrap();
+        let node = layout_node(tree, id);
         if !node.is_in_document() || node.is_display_none() {
             continue;
         }
@@ -61,7 +65,8 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
             }
             continue;
         }
-        if projected && node.style.float.is_floated() {
+        let floated = is_floated(tree, id);
+        if projected && floated {
             projected_floats += 1;
             // Isolated float measurement cannot reconstruct sibling packing
             // against the narrower column. Preserve the previous strategy.
@@ -70,7 +75,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
             }
         }
         projected_text_lines |= projected
-            && !node.style.float.is_floated()
+            && !floated
             && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
             && node
                 .ifc
@@ -82,7 +87,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         // measuring that text in isolation would discard its narrowed lines.
         if projected
             && ((!atomic(tree, id) && node.has_before_or_after_content)
-                || (!node.style.float.is_floated()
+                || (!floated
                     && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
                     && node
                         .ifc
@@ -95,23 +100,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         // This projection preserves already measured atomic subtrees, but
         // does not reconstruct block margins, clearance or constrained wrapper sizes.
         // Leave those boxes to the existing geometry-preserving strategies.
-        let zero = LengthPercentageAuto::length(0.0);
-        let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
-        if projected
-            && (node.style.margin.top != zero
-                || node.style.margin.right != zero
-                || node.style.margin.bottom != zero
-                || node.style.margin.left != zero
-                || node.style.padding != Rect::zero()
-                || node.style.border != Rect::zero()
-                || node.style.inset != Rect::auto()
-                || node.style.clear != defaults.clear
-                || (!atomic(tree, id)
-                    && (!node.multicol_auto_width
-                        || node.style.min_size != defaults.min_size
-                        || node.style.max_size != defaults.max_size
-                        || node.style.overflow != defaults.overflow)))
-        {
+        if projected && has_box_constraints(tree, id, node) {
             return false;
         }
         // Keep existing strategies for contexts whose only constraints are
@@ -166,6 +155,31 @@ struct FlowBox {
     splittable: bool,
 }
 
+/// Whether the box has a margin, padding, border, inset, clearance or, unless
+/// it is atomic, a size limit or a clip.
+fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::Node) -> bool {
+    let zero = LengthPercentageAuto::length(0.0);
+    let style = style_of(tree, id);
+    let margin = style.margin();
+    let visible = Point {
+        x: TaffyOverflow::Visible,
+        y: TaffyOverflow::Visible,
+    };
+    margin.top != zero
+        || margin.right != zero
+        || margin.bottom != zero
+        || margin.left != zero
+        || style.padding() != Rect::zero()
+        || style.border() != Rect::zero()
+        || style.inset() != Rect::auto()
+        || BlockItemStyle::clear(&style) != taffy::Clear::None
+        || (!atomic(tree, id)
+            && (!node.multicol_auto_width
+                || style.min_size() != Size::auto()
+                || style.max_size() != Size::auto()
+                || style.overflow() != visible))
+}
+
 fn forced(value: BreakBetween) -> bool {
     matches!(value, BreakBetween::Always | BreakBetween::Column)
 }
@@ -174,15 +188,16 @@ fn avoided(value: BreakBetween) -> bool {
     matches!(value, BreakBetween::Avoid | BreakBetween::AvoidColumn)
 }
 
-fn atomic(tree: &Document, id: usize) -> bool {
-    let node = &tree.layout_node_with_style(id).unwrap();
-    node.style.float.is_floated()
+fn atomic(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let node = layout_node(tree, id);
+    let style = style_of(tree, id);
+    BlockItemStyle::float(&style).is_floated()
         || (node.display().is_block_flex_or_grid_container()
             || matches!(
                 node.display(),
                 DisplayValue::InlineBlock | DisplayValue::FlowRoot
             ))
-        || node.style.size.height != Dimension::auto()
+        || style.size().height != Dimension::auto()
         || matches!(
             node.break_inside,
             BreakInside::Avoid | BreakInside::AvoidColumn
@@ -193,15 +208,15 @@ fn atomic(tree: &Document, id: usize) -> bool {
 /// An inline box that holds only block-level boxes and no line of its own.
 /// Block-in-inline splitting leaves no inline fragment with content around
 /// those blocks (CSS 2.1, 9.2.1.1), so the box flows like a block wrapper.
-fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
-    let node = &tree.layout_node_with_style(id).unwrap();
+fn block_in_inline_wrapper(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let node = layout_node(tree, id);
     node.display() == DisplayValue::Inline
         && node.formatting_context == FormattingContext::Block
         && node.ifc.is_none()
         && !in_paragraph_with_lines(tree, id)
         && has_rendered_element_child(tree, id)
         && node.children.iter().all(|&child| {
-            let child = &tree.layout_node_with_style(child).unwrap();
+            let child = layout_node(tree, child);
             !child.is_in_document()
                 || child.is_display_none()
                 || if child.kind() == NodeKind::Element {
@@ -247,7 +262,12 @@ fn propagated(outer: BreakBetween, inner: BreakBetween) -> BreakBetween {
     }
 }
 
-fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> BreakBetween {
+fn descendant_edge(
+    tree: &LayoutSession<'_>,
+    id: usize,
+    before: bool,
+    depth: usize,
+) -> BreakBetween {
     let own = if before {
         tree.nodes[id].break_before
     } else {
@@ -260,12 +280,7 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
     let in_flow = |&&child: &&usize| {
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
-            && !tree
-                .layout_node_with_style(child)
-                .unwrap()
-                .style
-                .float
-                .is_floated()
+            && !is_floated(tree, child)
             && tree.nodes[child].taffy_position() != TaffyPosition::Absolute
             && matches!(tree.nodes[child].data, NodeData::Element(_))
     };
@@ -294,12 +309,14 @@ fn collect(
     {
         return;
     }
-    let floated = tree
-        .layout_node_with_style(id)
-        .unwrap()
-        .style
-        .float
-        .is_floated();
+    let (float, auto_width) = {
+        let style = style_of(tree, id);
+        (
+            BlockItemStyle::float(&style),
+            style.size().width == Dimension::auto(),
+        )
+    };
+    let floated = float.is_floated();
     let known_width = (tree.nodes[id].multicol_auto_width
         && !floated
         && (tree.nodes[id].display().is_block_flex_or_grid_container()
@@ -307,7 +324,7 @@ fn collect(
                 tree.nodes[id].display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
             ))
-        && tree.layout_node_with_style(id).unwrap().style.size.width == Dimension::auto()
+        && auto_width
         && tree.nodes[id].image_intrinsic_box().is_none()
         && tree.nodes[id].tag_name() != Some("img"))
     .then_some(context.column_width);
@@ -331,12 +348,12 @@ fn collect(
             // The measured box belongs to a column, not the original full-width
             // containing block. Its parent determines block inline alignment;
             // physical float sides remain independent of inline direction.
-            inline_offset: match tree.layout_node_with_style(id).unwrap().style.float {
+            inline_offset: match float {
                 taffy::Float::Right => context.column_width - output.size.width,
                 taffy::Float::Left => 0.0,
                 taffy::Float::None => {
                     if tree.taffy_parent_of(id).is_some_and(|parent| {
-                        tree.layout_node_with_style(parent).unwrap().style.direction == taffy::Direction::Rtl
+                        style_of(tree, parent).direction() == taffy::Direction::Rtl
                     }) {
                         context.column_width - output.size.width
                     } else {
@@ -359,7 +376,7 @@ fn collect(
                 && !has_rendered_element_child(tree, id)
                 && !tree.nodes[id].has_before_or_after_content
                 && !tree.children_through_contents(id).into_iter().any(|child| {
-                    let child = &tree.layout_node_with_style(child).unwrap();
+                    let child = layout_node(tree, child);
                     child.is_in_document()
                         && !child.is_display_none()
                         && matches!(&child.data, NodeData::Text(text) if !text.text_content.trim().is_empty())
@@ -387,7 +404,7 @@ fn collect(
     }
 }
 
-fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
+fn reserve_measurement_work(tree: &mut LayoutSession<'_>, root: usize) -> bool {
     // The remaining fragment capacity also bounds measurement, unless the
     // document is large enough that its work allowance outgrows the cap.
     let work_limit = tree.fragment_tree.work_limit(tree.nodes.len());
@@ -412,7 +429,7 @@ fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
             continue;
         };
         *next += 1;
-        let node = &tree.layout_node_with_style(child).unwrap();
+        let node = layout_node(tree, child);
         let in_document = node.is_in_document();
         let raw_cost = match &node.data {
             NodeData::Text(text) if in_document => text.text_content.len().max(1),

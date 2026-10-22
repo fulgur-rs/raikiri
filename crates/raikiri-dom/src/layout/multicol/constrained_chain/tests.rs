@@ -15,7 +15,17 @@ fn layout(
     super::layout(&mut session, parent, chain, context, border_box, origin)
 }
 
+/// A session over `doc` without a cascade, whose style queries read the
+/// styles the fixture laid out with.
+fn session(doc: &mut Document) -> LayoutSession<'_> {
+    LayoutSession::new(doc)
+}
+
 fn fixture(depth: usize) -> (Document, usize, Vec<usize>) {
+    fixture_with_margin(depth, "0")
+}
+
+fn fixture_with_margin(depth: usize, margin: &str) -> (Document, usize, Vec<usize>) {
     let mut doc = Document::new();
     let html = doc.append_element(
         Some(0),
@@ -42,7 +52,7 @@ fn fixture(depth: usize) -> (Document, usize, Vec<usize>) {
             Some(parent),
             "div",
             crate::LayoutStyle::default(),
-            Some("display:block;width:80px;margin:0"),
+            Some(format!("display:block;width:80px;margin:{margin}").as_str()),
         );
         chain.push(parent);
     }
@@ -59,25 +69,12 @@ fn cyclic_chains_are_rejected_without_returning_an_incomplete_path() {
     let leaf = *chain.last().unwrap();
     doc.nodes[leaf].ifc = None;
     doc.nodes[leaf].children = vec![chain[0]];
-    assert!(supported(&doc, mc).is_none());
+    assert!(supported(&session(&mut doc), mc).is_none());
 }
 
 #[test]
 fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
-    let (mut doc, mc, chain) = fixture(1);
-    let pointer = crate::taffy_impl::push_calc(
-        &mut doc.box_style_data.calc_values,
-        raikiri_style::property::CalcLengthPercentage {
-            px: 1.0,
-            percent: 10.0,
-        },
-        false,
-    );
-    doc.layout_node_with_style_mut(chain[0])
-        .unwrap()
-        .style
-        .margin
-        .left = LengthPercentageAuto::calc(pointer);
+    let (mut doc, mc, chain) = fixture_with_margin(1, "0 0 0 calc(1px + 10%)");
     doc.fragment_tree.fragments.clear();
     let context = FragmentationContext {
         rtl: false,

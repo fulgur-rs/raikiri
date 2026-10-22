@@ -30,23 +30,30 @@ use raikiri_style::property::BreakInside;
 /// that it is the containing block of; [`layout`] breaks them across the
 /// columns as well. Such a child may also hold plain blocks with no
 /// content (see [`wrapped_blocks`]), which take its place in the stream.
-pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Option<Vec<usize>> {
+pub(super) fn supported(
+    tree: &LayoutSession<'_>,
+    parent: usize,
+    out_of_flow: bool,
+) -> Option<Vec<usize>> {
     supported_with_wrapped_blocks(tree, parent, out_of_flow, false)
 }
 
 /// [`supported`] for an outermost multicol container. Its stream may also
 /// hold the blocks of eligible block-only wrappers in their place.
-pub(super) fn supported_with_wrappers(tree: &Document, parent: usize) -> Option<Vec<usize>> {
+pub(super) fn supported_with_wrappers(
+    tree: &LayoutSession<'_>,
+    parent: usize,
+) -> Option<Vec<usize>> {
     supported_with_wrapped_blocks(tree, parent, true, true)
 }
 
 fn supported_with_wrapped_blocks(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     parent: usize,
     out_of_flow: bool,
     allow_wrapped_blocks: bool,
 ) -> Option<Vec<usize>> {
-    let container = &tree.layout_node_with_style(parent).unwrap();
+    let container = layout_node(tree, parent);
     if container.ifc.is_some()
         || !inherits_horizontal(tree, parent)
         || container.has_before_or_after_content
@@ -56,8 +63,8 @@ fn supported_with_wrapped_blocks(
     let mut children = Vec::new();
     let mut boxes = Vec::new();
     for child in rendered_elements(tree, parent) {
-        let node = &tree.layout_node_with_style(child).unwrap();
-        let has_inset = node.style.inset != Rect::auto();
+        let node = layout_node(tree, child);
+        let has_inset = style_of(tree, child).inset() != Rect::auto();
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
@@ -81,20 +88,18 @@ fn supported_with_wrapped_blocks(
         children.push(child);
     }
     let sized = boxes.iter().any(|&child| {
-        let style = &tree.layout_node_with_style(child).unwrap().style;
-        style_dimension_length(style.size.height).is_some()
-            || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
+        let style = style_of(tree, child);
+        style_dimension_length(style.size().height).is_some()
+            || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
             // The height of a box with an aspect ratio follows from its width.
-            || style.aspect_ratio.is_some()
+            || style.aspect_ratio().is_some()
     });
     // An empty containing block has no block size, but the absolutely
     // positioned boxes it holds still break across the columns, past the
     // last one if they start there.
     let holds_absolute_boxes = out_of_flow
         && children.iter().any(|&child| {
-            tree.layout_node_with_style(child)
-                .unwrap()
-                .contains_absolute_boxes
+            layout_node(tree, child).contains_absolute_boxes
                 && !absolute_children(tree, child).is_empty()
         });
     (sized || holds_absolute_boxes).then_some(children)
@@ -103,14 +108,14 @@ fn supported_with_wrapped_blocks(
 /// The rendered element children of `parent`, with those of a `display:
 /// contents` child in its place. Text that renders gives a box lines, which
 /// the callers refuse, so any other node is collapsible white space.
-pub(super) fn rendered_elements(
-    tree: &Document,
+pub(super) fn rendered_elements<'a>(
+    tree: &'a LayoutSession<'_>,
     parent: usize,
-) -> impl Iterator<Item = usize> + '_ {
+) -> impl Iterator<Item = usize> + 'a {
     tree.children_through_contents(parent)
         .into_iter()
         .filter(|&child| {
-            let node = &tree.layout_node_with_style(child).unwrap();
+            let node = layout_node(tree, child);
             node.is_in_document()
                 && !node.is_display_none()
                 && matches!(node.data, NodeData::Element(_))
@@ -120,52 +125,51 @@ pub(super) fn rendered_elements(
 /// Whether `id` starts at the top of the first column of the multicol
 /// container it is a child of, with no line or box before it, which leaves
 /// it the whole column height.
-pub(super) fn starts_the_outer_columns(tree: &Document, id: usize) -> bool {
+pub(super) fn starts_the_outer_columns(tree: &LayoutSession<'_>, id: usize) -> bool {
     let Some(parent) = tree.taffy_parent_of(id) else {
         return false;
     };
-    let outer = &tree.layout_node_with_style(parent).unwrap();
+    let outer = layout_node(tree, parent);
     let zero = LengthPercentage::length(0.0);
     outer.multicol.is_some()
         && !outer.has_before_or_after_content
-        && outer.style.padding.top == zero
-        && outer.style.border.top == zero
+        && style_of(tree, parent).padding().top == zero
+        && style_of(tree, parent).border().top == zero
         // Text that makes lines gives the container inline content.
         && outer.ifc.is_none()
         && rendered_elements(tree, parent).next() == Some(id)
-        && tree.layout_node_with_style(id).unwrap().style.margin.top == LengthPercentageAuto::length(0.0)
+        && style_of(tree, id).margin().top == LengthPercentageAuto::length(0.0)
 }
 
 /// Whether `child` is a block that can be sliced at a column end, leaving
 /// aside what it contains.
-fn is_plain_block(tree: &Document, child: usize) -> bool {
-    tree.layout_node_with_style(child).unwrap().style.inset == Rect::auto()
-        && is_plain_block_ignoring_insets(tree, child)
+fn is_plain_block(tree: &LayoutSession<'_>, child: usize) -> bool {
+    style_of(tree, child).inset() == Rect::auto() && is_plain_block_ignoring_insets(tree, child)
 }
 
 /// [`is_plain_block`] for a box whose insets the caller accepts.
-fn is_plain_block_ignoring_insets(tree: &Document, child: usize) -> bool {
+fn is_plain_block_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
     is_plain_block_with_display(tree, child, false, false)
 }
 
-fn is_plain_wrapper_ignoring_insets(tree: &Document, child: usize) -> bool {
+fn is_plain_wrapper_ignoring_insets(tree: &LayoutSession<'_>, child: usize) -> bool {
     is_plain_block_with_display(tree, child, true, false)
 }
 
 /// [`is_plain_block`] for a box that may hold lines of text, and whose insets
 /// the caller accepts.
-pub(super) fn is_plain_block_holding_lines(tree: &Document, child: usize) -> bool {
+pub(super) fn is_plain_block_holding_lines(tree: &LayoutSession<'_>, child: usize) -> bool {
     is_plain_block_with_display(tree, child, false, true)
 }
 
 fn is_plain_block_with_display(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     child: usize,
     allow_flow_root: bool,
     allow_lines: bool,
 ) -> bool {
-    let node = &tree.layout_node_with_style(child).unwrap();
-    let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
     let display = node.display();
     !(display != DisplayValue::Block && !(allow_flow_root && display == DisplayValue::FlowRoot)
         // An orthogonal flow is monolithic in the column's block axis.
@@ -173,11 +177,15 @@ fn is_plain_block_with_display(
         // So is a box with size containment (CSS Contain 2, 3.1).
         || node.size_containment.height
         || node.taffy_position() != TaffyPosition::Relative
-            && node.taffy_position() != defaults.position
-        || node.style.float.is_floated()
-        || node.style.clear != defaults.clear
-        || block_margins(tree.block_axis_style(child).margin).is_none()
-        || tree.block_axis_style(child).overflow != defaults.overflow
+            && node.taffy_position() != TaffyPosition::Static
+        || BlockItemStyle::float(&style).is_floated()
+        || BlockItemStyle::clear(&style) != taffy::Clear::None
+        || block_margins(&style).is_none()
+        || style.overflow()
+            != (Point {
+                x: TaffyOverflow::Visible,
+                y: TaffyOverflow::Visible,
+            })
         || node.tag_name().is_some_and(|tag| {
             ATOMIC_TAGS.contains(&tag)
                 || REPLACED_BOX_TAGS.contains(&tag)
@@ -254,7 +262,7 @@ impl WrappedBlockTree {
 const MAX_WRAPPED_BLOCK_DEPTH: usize = 32;
 
 fn wrapped_blocks(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     wrapper: usize,
     allow_sliced_wrappers: bool,
 ) -> Option<WrappedBlockTree> {
@@ -262,7 +270,7 @@ fn wrapped_blocks(
 }
 
 fn wrapped_block_tree(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     wrapper: usize,
     allow_sliced_wrappers: bool,
     is_root: bool,
@@ -272,13 +280,14 @@ fn wrapped_block_tree(
     if depth >= MAX_WRAPPED_BLOCK_DEPTH {
         return None;
     }
-    let node = &tree.layout_node_with_style(wrapper).unwrap();
+    let node = layout_node(tree, wrapper);
+    let style = style_of(tree, wrapper);
     if in_multicol_context && node.column_span_all {
         return None;
     }
     let children_in_multicol_context =
         in_multicol_context && node.display() != DisplayValue::FlowRoot;
-    let has_edges = has_block_edge_decorations(node.style);
+    let has_edges = has_block_edge_decorations(&style);
     if node.display() == DisplayValue::FlowRoot && !allow_sliced_wrappers
         || has_edges
             && (!allow_sliced_wrappers || node.clones_box_decorations || !is_root)
@@ -287,16 +296,16 @@ fn wrapped_block_tree(
             node.break_inside,
             BreakInside::Avoid | BreakInside::AvoidColumn
         )
-        || node.style.size.height != Dimension::auto()
+        || style.size().height != Dimension::auto()
         // A minimum, even a percentage one, can hold the wrapper open past
         // its blocks.
         || {
-            let minimum: Dimension = node.style.min_size.height.into();
+            let minimum: Dimension = style.min_size().height.into();
             minimum != Dimension::auto() && style_dimension_length(minimum) != Some(0.0)
         }
-        || node.style.max_size.height != LengthPercentageAuto::auto()
-        || node.style.aspect_ratio.is_some()
-        || node.style.contain != taffy::Contain::NONE
+        || style.max_size().height != LengthPercentageAuto::auto()
+        || style.aspect_ratio().is_some()
+        || style.contain() != taffy::Contain::NONE
     {
         return None;
     }
@@ -318,7 +327,7 @@ fn wrapped_block_tree(
             leaf_count += 1;
         } else {
             if !allow_sliced_wrappers
-                || tree.layout_node_with_style(child).unwrap().style.inset != Rect::auto()
+                || style_of(tree, child).inset() != Rect::auto()
                 || !is_plain_wrapper_ignoring_insets(tree, child)
             {
                 return None;
@@ -344,7 +353,7 @@ fn wrapped_block_tree(
 }
 
 fn apply_wrapped_layout(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     wrapped: &mut WrappedBlockTree,
     items: &mut [Item],
     first_item: usize,
@@ -393,7 +402,7 @@ fn apply_wrapped_layout(
 }
 
 /// Whether the bridged CSS writing mode of `id` is horizontal.
-fn inherits_horizontal(tree: &Document, id: usize) -> bool {
+fn inherits_horizontal(tree: &LayoutSession<'_>, id: usize) -> bool {
     is_horizontal(&tree.nodes[id])
 }
 
@@ -403,8 +412,9 @@ fn is_horizontal(node: &crate::Node) -> bool {
 
 /// The block-start and block-end margins of a child, when they are
 /// non-negative lengths and its inline margins are zero.
-fn block_margins(margin: Rect<LengthPercentageAuto>) -> Option<(f32, f32)> {
+fn block_margins(style: &NativeStyle<'_>) -> Option<(f32, f32)> {
     let zero = LengthPercentageAuto::length(0.0);
+    let margin = style.margin();
     if margin.left != zero || margin.right != zero {
         return None;
     }
@@ -414,9 +424,9 @@ fn block_margins(margin: Rect<LengthPercentageAuto>) -> Option<(f32, f32)> {
     Some((length(margin.top)?, length(margin.bottom)?))
 }
 
-fn has_block_edge_decorations(style: &crate::LayoutStyle) -> bool {
+fn has_block_edge_decorations(style: &NativeStyle<'_>) -> bool {
     let zero = LengthPercentage::length(0.0);
-    let (padding, border) = (style.padding, style.border);
+    let (padding, border) = (style.padding(), style.border());
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
 }
 
@@ -434,21 +444,22 @@ struct WrapperLayout {
 /// Compute a wrapper's internal edges and margins from its first and last
 /// child boundaries.
 fn wrapper_layout(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     wrapper: usize,
     first: WrapperLayout,
     last: WrapperLayout,
     column_width: f32,
 ) -> WrapperLayout {
-    let node = &tree.layout_node_with_style(wrapper).unwrap();
-    let style = node.style;
-    let (margin_top, margin_bottom) = block_margins(style.margin).unwrap_or_default();
-    let top_inset = super::multicol_resolve_inset(tree, style.padding.top, column_width)
-        + super::multicol_resolve_inset(tree, style.border.top, column_width);
-    let bottom_inset = super::multicol_resolve_inset(tree, style.padding.bottom, column_width)
-        + super::multicol_resolve_inset(tree, style.border.bottom, column_width);
+    let node = layout_node(tree, wrapper);
+    let style = style_of(tree, wrapper);
+    let (padding, border) = (style.padding(), style.border());
+    let (margin_top, margin_bottom) = block_margins(&style).unwrap_or_default();
+    let top_inset = super::multicol_resolve_inset(tree, padding.top, column_width)
+        + super::multicol_resolve_inset(tree, border.top, column_width);
+    let bottom_inset = super::multicol_resolve_inset(tree, padding.bottom, column_width)
+        + super::multicol_resolve_inset(tree, border.bottom, column_width);
     let collapses_margins =
-        node.display() == DisplayValue::Block && !has_block_edge_decorations(style);
+        node.display() == DisplayValue::Block && !has_block_edge_decorations(&style);
     if collapses_margins {
         WrapperLayout {
             leading: first.leading,
@@ -476,9 +487,9 @@ fn wrapper_layout(
 
 /// Whether `id` has content of its own, other than the absolutely
 /// positioned children that `skip_absolute` leaves out.
-fn has_rendered_content(tree: &Document, id: usize, skip_absolute: bool) -> bool {
+fn has_rendered_content(tree: &LayoutSession<'_>, id: usize, skip_absolute: bool) -> bool {
     tree.children_through_contents(id).into_iter().any(|child| {
-        let node = &tree.layout_node_with_style(child).unwrap();
+        let node = layout_node(tree, child);
         node.is_in_document()
             && !node.is_display_none()
             && !(skip_absolute && is_absolute_box(node))
@@ -498,11 +509,11 @@ fn is_absolute_box(node: &crate::Node) -> bool {
 }
 
 /// The absolutely positioned children of `child` that are rendered.
-fn absolute_children(tree: &Document, child: usize) -> Vec<usize> {
+fn absolute_children(tree: &LayoutSession<'_>, child: usize) -> Vec<usize> {
     tree.children_through_contents(child)
         .into_iter()
         .filter(|&id| {
-            let node = &tree.layout_node_with_style(id).unwrap();
+            let node = layout_node(tree, id);
             node.is_in_document() && !node.is_display_none() && is_absolute_box(node)
         })
         .collect()
@@ -529,7 +540,7 @@ struct AbsolutePiece {
 /// the columns or its containing block, or when its pieces would not fit in
 /// `budget` fragments.
 fn absolute_pieces(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     children: &[usize],
     placements: &[Vec<Piece>],
     context: FragmentationContext,
@@ -1331,7 +1342,7 @@ fn push_wrapped_block(
         y: first.top - wrapper_first.top,
     };
     tree.set_unrounded_layout(TaffyNodeId::from(leaf), &layout);
-    let sliced = pieces.len() > 1 && slices_decorations(&tree.layout_node_with_style(leaf)?);
+    let sliced = pieces.len() > 1 && slices_decorations(tree, leaf);
     let mut taken = 0.0f32;
     for (index, piece) in pieces.iter().enumerate() {
         let parent_index = parents
@@ -1387,8 +1398,9 @@ fn sliced_rect(rect: FragmentRect, whole: Option<(f32, f32)>) -> FragmentRect {
 /// up by what the earlier pieces took and clipped to the column, so no border
 /// shows where it breaks. Effects sized from the whole box, and decorations
 /// that repeat at each break, are not sliced.
-fn slices_decorations(node: &crate::document::LayoutNodeRef<'_>) -> bool {
-    has_block_edge_decorations(node.style)
+fn slices_decorations(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let node = layout_node(tree, idx);
+    has_block_edge_decorations(&style_of(tree, idx))
         && !node.clones_box_decorations
         && !node.paints_whole_box_effects
 }
@@ -1408,17 +1420,19 @@ enum Insets {
 /// The stream item of `child`, a box of block size `height`. `slice` says how
 /// to measure the decorations when the pieces of a cut box are placed to
 /// slice them.
-fn item(tree: &Document, child: usize, height: f32, slice: Option<Insets>) -> Item {
-    let node = &tree.layout_node_with_style(child).unwrap();
-    let (margin_top, margin_bottom) = block_margins(node.style.margin).unwrap_or_default();
+fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Insets>) -> Item {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    let (margin_top, margin_bottom) = block_margins(&style).unwrap_or_default();
     let slice = slice
-        .filter(|_| slices_decorations(node))
+        .filter(|_| slices_decorations(tree, child))
         .map(|insets| match insets {
             Insets::Against(basis) => {
                 let inset = |value| super::multicol_resolve_inset(tree, value, basis);
+                let (padding, border) = (style.padding(), style.border());
                 (
-                    inset(node.style.padding.top) + inset(node.style.border.top),
-                    inset(node.style.padding.bottom) + inset(node.style.border.bottom),
+                    inset(padding.top) + inset(border.top),
+                    inset(padding.bottom) + inset(border.bottom),
                 )
             }
             Insets::Laid => {
@@ -1442,7 +1456,7 @@ fn item(tree: &Document, child: usize, height: f32, slice: Option<Insets>) -> It
         // there. One taller than a column is cut only where its pieces slice
         // the decorations, as a piece that does not would repeat them at each
         // break.
-        whole: node.paints_whole_box_effects || has_block_edge_decorations(node.style),
+        whole: node.paints_whole_box_effects || has_block_edge_decorations(&style),
         slice,
     }
 }
@@ -1482,7 +1496,7 @@ pub(super) struct Rows {
 /// when a box that must stay whole would be cut, or past `max_pieces`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fill_rows(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     children: &[usize],
     column_count: usize,
     column_fill: ColumnFillValue,
@@ -1882,7 +1896,7 @@ pub(super) fn layout(
         let mut records = Vec::with_capacity(pieces.len());
         // How far each piece of a sliced box is moved up.
         let mut shifts = Vec::with_capacity(pieces.len());
-        let sliced = pieces.len() > 1 && slices_decorations(&tree.layout_node_with_style(child)?);
+        let sliced = pieces.len() > 1 && slices_decorations(tree, child);
         let mut taken = 0.0f32;
         for (index, piece) in pieces.iter().enumerate() {
             shifts.push(if sliced { taken } else { 0.0 });

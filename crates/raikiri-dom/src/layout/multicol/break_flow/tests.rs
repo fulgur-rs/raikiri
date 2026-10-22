@@ -3,6 +3,12 @@ use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
 
+/// A session over `doc` without a cascade, whose style queries read the
+/// styles the fixture bridged.
+fn session(doc: &mut Document) -> LayoutSession<'_> {
+    LayoutSession::new(doc)
+}
+
 fn layout(
     tree: &mut Document,
     root: usize,
@@ -258,14 +264,14 @@ fn fixed_height_flow_advance_preserves_visible_descendant_overflow() {
 
 #[test]
 fn inside_only_avoidance_keeps_the_existing_strategy() {
-    let doc = laid_out(
+    let mut doc = laid_out(
         r#"<div id="columns" style="columns:2;column-fill:auto;gap:0;width:100px;height:160px"><div style="height:50px;break-inside:avoid"></div></div>"#,
     );
     let root = id(&doc, "columns");
     let context =
         FragmentationContext::resolve(100.0, Some(160.0), doc.nodes[root].multicol.unwrap())
             .unwrap();
-    assert!(!supports(&doc, root, context));
+    assert!(!supports(&session(&mut doc), root, context));
 }
 
 #[test]
@@ -284,7 +290,7 @@ fn excessive_wrapper_depth_keeps_the_bounded_fallback() {
     let context =
         FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
             .unwrap();
-    assert!(!supports(&doc, root, context));
+    assert!(!supports(&session(&mut doc), root, context));
 }
 
 #[test]
@@ -305,7 +311,7 @@ fn decorated_and_positioned_boxes_keep_the_existing_geometry_strategy() {
         let context =
             FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
                 .unwrap();
-        assert!(!supports(&doc, root, context), "{decoration}");
+        assert!(!supports(&session(&mut doc), root, context), "{decoration}");
     }
 }
 
@@ -378,7 +384,7 @@ fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
             )
         };
         let reference = laid_out(&markup(""));
-        let doc = laid_out(&markup("break-before:avoid-column"));
+        let mut doc = laid_out(&markup("break-before:avoid-column"));
         let target = &doc.nodes[id(&doc, "target")].unrounded_layout;
         let original = &reference.nodes[id(&reference, "target")].unrounded_layout;
         assert_eq!(target.size.width, original.size.width, "{css}");
@@ -387,7 +393,7 @@ fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
         let context =
             FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
                 .unwrap();
-        assert!(!supports(&doc, root, context), "{css}");
+        assert!(!supports(&session(&mut doc), root, context), "{css}");
     }
 }
 
@@ -404,7 +410,7 @@ fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
             )
         };
         let reference = laid_out(&markup(""));
-        let doc = laid_out(&markup("break-before:avoid-column"));
+        let mut doc = laid_out(&markup("break-before:avoid-column"));
         let geometry = |tree: &Document| {
             (
                 tree.nodes[id(tree, "wrapper")].unrounded_layout.size,
@@ -418,7 +424,7 @@ fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
         let context =
             FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
                 .unwrap();
-        assert!(!supports(&doc, root, context), "{css}");
+        assert!(!supports(&session(&mut doc), root, context), "{css}");
     }
     assert!(differences.is_empty(), "{differences:?}");
 }
@@ -680,8 +686,8 @@ fn security_measurement_counts_nested_out_of_flow_but_skips_unmeasured_roots() {
     let context =
         FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
             .unwrap();
-    assert!(supports(&doc, root, context));
-    assert!(!reserve_measurement_work(&mut doc, root));
+    assert!(supports(&session(&mut doc), root, context));
+    assert!(!reserve_measurement_work(&mut session(&mut doc), root));
     assert!(doc.fragment_tree.limit_exceeded);
 
     let (mut doc, cascade) = fixture(&format!(
@@ -690,7 +696,7 @@ fn security_measurement_counts_nested_out_of_flow_but_skips_unmeasured_roots() {
     apply_computed_to_style(&mut doc, &cascade).unwrap();
     doc.fragment_tree.limit = 8;
     let root = id(&doc, "columns");
-    assert!(reserve_measurement_work(&mut doc, root));
+    assert!(reserve_measurement_work(&mut session(&mut doc), root));
     assert_eq!(doc.fragment_tree.break_flow_work_used, 1);
 }
 
@@ -730,7 +736,7 @@ fn security_filtered_metadata_still_consumes_its_parent_scan_work() {
     doc.mark_in_document_flags();
     assert!(!doc.nodes[comment].is_in_document());
     doc.fragment_tree.limit = 9;
-    assert!(reserve_measurement_work(&mut doc, root));
+    assert!(reserve_measurement_work(&mut session(&mut doc), root));
     assert_eq!(doc.fragment_tree.break_flow_work_used, 9);
 }
 
@@ -764,10 +770,10 @@ fn unsupported_text_and_parallel_or_hidden_nodes_keep_the_scope_bounded() {
         node.set_box_properties(display, raikiri_style::property::PositionValue::Absolute);
     }
     doc.mark_in_document_flags();
-    assert!(supports(&doc, root, context));
+    assert!(supports(&session(&mut doc), root, context));
     doc.append_text(root, "visible");
     doc.mark_in_document_flags();
-    assert!(!supports(&doc, root, context));
+    assert!(!supports(&session(&mut doc), root, context));
 }
 
 #[test]
@@ -780,7 +786,7 @@ fn an_outer_forced_edge_and_the_depth_limit_preserve_own_constraints() {
     let wrapper = id(&doc, "wrapper");
     doc.nodes[wrapper].break_before = BreakBetween::Always;
     assert_eq!(
-        descendant_edge(&doc, wrapper, true, 128),
+        descendant_edge(&session(&mut doc), wrapper, true, 128),
         BreakBetween::Always,
     );
 }
@@ -916,7 +922,7 @@ fn review_nested_positioned_children_of_projected_wrappers_keep_the_previous_str
     let context =
         FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
             .unwrap();
-    assert!(!supports(&doc, root, context));
+    assert!(!supports(&session(&mut doc), root, context));
 }
 
 #[test]
@@ -937,7 +943,7 @@ fn review_interacting_floats_keep_the_existing_geometry_strategy() {
     let context =
         FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
             .unwrap();
-    assert!(!supports(&doc, root, context));
+    assert!(!supports(&session(&mut doc), root, context));
 }
 
 #[test]
@@ -1211,12 +1217,10 @@ fn review_directly_projected_text_keeps_the_existing_strategy() {
     );
     apply_computed_to_style(&mut doc, &cascade).unwrap();
     let root = id(&doc, "columns");
-    assert!(!supports(
-        &doc,
-        root,
+    let context =
         FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
-            .unwrap()
-    ));
+            .unwrap();
+    assert!(!supports(&session(&mut doc), root, context));
 }
 
 fn review_formatting_context_forced_edges(display: &str) {
@@ -1269,12 +1273,10 @@ fn review_internal_flex_and_grid_breaks_keep_the_existing_strategy() {
         ));
         apply_computed_to_style(&mut doc, &cascade).unwrap();
         let root = id(&doc, "columns");
-        assert!(!supports(
-            &doc,
-            root,
+        let context =
             FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
-                .unwrap()
-        ));
+                .unwrap();
+        assert!(!supports(&session(&mut doc), root, context));
     }
 }
 
@@ -1296,12 +1298,10 @@ fn review_inline_formatting_contexts_keep_the_existing_strategy() {
         ));
         apply_computed_to_style(&mut doc, &cascade).unwrap();
         let root = id(&doc, "columns");
-        assert!(!supports(
-            &doc,
-            root,
+        let context =
             FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
-                .unwrap()
-        ));
+                .unwrap();
+        assert!(!supports(&session(&mut doc), root, context));
     }
 }
 
@@ -1389,7 +1389,7 @@ fn review_generated_content_provenance_is_refreshed_by_the_canonical_bridge() {
         let context =
             FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
                 .unwrap();
-        assert_eq!(supports(&doc, root, context), !expected);
+        assert_eq!(supports(&session(&mut doc), root, context), !expected);
     }
 }
 
@@ -1403,7 +1403,7 @@ fn review_generated_only_atomic_box_has_one_measured_fragment() {
 
 #[test]
 fn review_atomic_internal_float_text_keeps_its_measured_subtree() {
-    let doc = laid_out(
+    let mut doc = laid_out(
         "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='atomic' style='display:flow-root;height:40px;break-before:avoid'><div style='float:left;width:20px;height:40px'></div><div id='text' style='height:40px;font-size:20px;line-height:20px'>MMMM</div></div></div>",
     );
     assert_eq!(boxes(&doc, "atomic"), vec![(0, 0.0, 0.0, 50.0, 40.0)]);
@@ -1416,12 +1416,10 @@ fn review_atomic_internal_float_text_keeps_its_measured_subtree() {
             .is_some()
     );
     let root = id(&doc, "columns");
-    assert!(supports(
-        &doc,
-        root,
+    let context =
         FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
-            .unwrap()
-    ));
+            .unwrap();
+    assert!(supports(&session(&mut doc), root, context));
 }
 
 #[test]
@@ -1463,6 +1461,6 @@ fn measurement_work_in_a_large_document_does_not_need_free_fragment_slots() {
     let filler = fragment(root, None, 0, rect);
     let limit = doc.fragment_tree.limit;
     doc.fragment_tree.fragments = vec![filler; limit];
-    assert!(reserve_measurement_work(&mut doc, root));
+    assert!(reserve_measurement_work(&mut session(&mut doc), root));
     assert!(!doc.fragment_tree.limit_exceeded);
 }
