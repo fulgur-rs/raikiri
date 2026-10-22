@@ -79,6 +79,11 @@ impl TransposedBlock {
         }
     }
 
+    /// Whether the block axis of the container runs from right to left.
+    pub(super) fn right_to_left(&self) -> bool {
+        self.right_to_left
+    }
+
     fn has_child(&self, idx: usize) -> bool {
         self.child_views.contains_key(&idx)
     }

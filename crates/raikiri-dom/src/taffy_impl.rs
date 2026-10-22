@@ -1133,6 +1133,14 @@ mod item_width_tests;
 #[cfg(test)]
 mod tests;
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no caller until vertical flex and grid containers lay out through the adapter"
+    )
+)]
+mod axis_adapter;
 pub(crate) mod block_flow;
 pub(crate) mod content_limits;
 mod intrinsic_scopes;
