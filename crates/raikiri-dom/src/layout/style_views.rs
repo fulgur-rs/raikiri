@@ -1,10 +1,12 @@
 use rustc_hash::FxHashMap as HashMap;
+use std::cell::OnceCell;
 use std::sync::Arc;
 
 use super::box_style_data::{BoxStyleData, LayoutBase, PreparedStamp, recipes};
 use crate::{Document, layout::context::LayoutSession, node::arena::BoxKey};
 use raikiri_layout_style::{
-    LayoutStyleView, OwnedPropertyOverride, PreparedData, PreparedStyle, StyleMetadata, ViewContext,
+    LayoutStyleView, OwnedPropertyOverride, PercentBasis, PreparedData, PreparedStyle,
+    StyleMetadata, ViewContext,
 };
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::NodeKind;
@@ -42,6 +44,9 @@ pub(crate) struct PreparedBox<'a> {
     prepared: PreparedStyle<'a>,
     context: ViewContext,
     was_scoped: bool,
+    /// The reduced physical style of the box, filled by the first read that no
+    /// override and no percentage basis touches. It dies with the preparation.
+    physical: OnceCell<Box<crate::LayoutStyle>>,
 }
 
 pub(crate) struct StyleViews<'a> {
@@ -108,6 +113,7 @@ impl<'a> StyleViews<'a> {
                     prepared,
                     context: ViewContext::default(),
                     was_scoped: false,
+                    physical: OnceCell::new(),
                 },
             );
         }
@@ -414,6 +420,39 @@ impl LayoutSession<'_> {
     #[inline]
     pub(crate) fn physical_style(&self, idx: usize) -> NativeStyle<'_> {
         self.native_style(idx, ReadRole::Physical)
+    }
+
+    /// `reduce` applied to the box's physical style.
+    ///
+    /// Layout asks for the same reduction of a box on every pass over it. While
+    /// nothing overrides the box and its percentage basis is Taffy's, the
+    /// reduction depends only on the prepared style, so the first one is kept
+    /// until the next preparation.
+    pub(crate) fn reduced_physical_style(
+        &self,
+        idx: usize,
+        reduce: impl FnOnce(NativeStyle<'_>) -> crate::LayoutStyle,
+    ) -> crate::LayoutStyle {
+        let Some(prepared) = self.unmodified_box(idx) else {
+            return reduce(self.physical_style(idx));
+        };
+        self.assert_style_queries_allowed();
+        (**prepared
+            .physical
+            .get_or_init(|| Box::new(reduce(self.physical_style(idx)))))
+        .clone()
+    }
+
+    /// The prepared box when its physical style is the prepared style alone:
+    /// no pass or scoped override and no replaced percentage basis.
+    fn unmodified_box(&self, idx: usize) -> Option<&PreparedBox<'_>> {
+        let views = self.style_views.as_ref()?;
+        let key = self.nodes.box_key(idx)?;
+        let prepared = views.boxes.get(&key)?;
+        (prepared.context.percent_basis == PercentBasis::Taffy
+            && self.document.box_style_data.get(key)?.pass.is_empty()
+            && self.scoped_overrides.entries(key).is_empty())
+        .then_some(prepared)
     }
 
     pub(crate) fn query_style(&self, idx: usize, role: ReadRole) -> LayoutStyleView<'_> {

@@ -558,7 +558,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         result.oof_candidates.append(&mut atomic_candidates);
         hide_truncated_atomics(tree, &lines, &atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, &root);
-        super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry);
+        super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry, session_edges);
     }
     result
 }
@@ -684,7 +684,14 @@ fn run_boxes(
         outcome.lines.oof_candidates.append(&mut atomic_candidates);
         hide_truncated_atomics(tree, &outcome.lines.lines, &outcome.atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, root);
-        super::records::record_inline_boxes(tree, idx, root, &outcome.lines.lines, &geometry);
+        super::records::record_inline_boxes(
+            tree,
+            idx,
+            root,
+            &outcome.lines.lines,
+            &geometry,
+            session_edges,
+        );
     }
     outcome.lines
 }
@@ -3125,21 +3132,61 @@ pub(crate) fn commit_child_layout(
     location: taffy::Point<f32>,
     basis: f32,
 ) {
-    let style = tree.physical_style(node);
-    let padding = style.padding().resolve_or_zero(Some(basis), resolve_calc);
-    let border = style.border().resolve_or_zero(Some(basis), resolve_calc);
-    let margin = style
-        .margin()
-        .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0));
+    let edges = session_edges(tree, node, basis);
+    commit_child_layout_with_edges(tree, node, output, location, edges);
+}
+
+/// The border, padding and margin of a box, resolved against one basis.
+#[derive(Clone, Copy)]
+pub(crate) struct BoxEdges {
+    border: taffy::Rect<f32>,
+    padding: taffy::Rect<f32>,
+    margin: taffy::Rect<f32>,
+}
+
+impl BoxEdges {
+    /// A box with no edges.
+    pub(crate) const ZERO: Self = Self {
+        border: taffy::Rect::ZERO,
+        padding: taffy::Rect::ZERO,
+        margin: taffy::Rect::ZERO,
+    };
+
+    /// The edges `style` states, with percentages of `basis` and `auto`
+    /// margins as zero.
+    pub(crate) fn of(style: &impl CoreStyle, basis: f32) -> Self {
+        Self {
+            border: style.border().resolve_or_zero(Some(basis), resolve_calc),
+            padding: style.padding().resolve_or_zero(Some(basis), resolve_calc),
+            margin: style
+                .margin()
+                .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0)),
+        }
+    }
+}
+
+/// The edges of `node` as the layout session reads its style.
+pub(crate) fn session_edges(tree: &LayoutSession<'_>, node: usize, basis: f32) -> BoxEdges {
+    BoxEdges::of(&tree.physical_style(node), basis)
+}
+
+/// [`commit_child_layout`] for a caller that has read the child's edges.
+pub(crate) fn commit_child_layout_with_edges(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    output: &taffy::LayoutOutput,
+    location: taffy::Point<f32>,
+    edges: BoxEdges,
+) {
     let layout = taffy::Layout {
         order: tree.nodes[node].unrounded_layout.order,
         location,
         size: output.size,
         scrollable_overflow_rect: output.scrollable_overflow_rect,
         scrollbar_size: Size::ZERO,
-        border,
-        padding,
-        margin,
+        border: edges.border,
+        padding: edges.padding,
+        margin: edges.margin,
     };
     tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
 }
@@ -3226,6 +3273,8 @@ pub(crate) fn place_out_of_flow(
     // The pieces of the inline elements on the lines, made when a box needs
     // them.
     let mut pieces = None;
+    // The root's own style, for the boxes that take a static position.
+    let mut container_style = None;
     let mut candidates = taffy::OofCandidates::new();
     for node in positioned {
         let inline_cb = positioned_inline_ancestor(tree, idx, owner, node)
@@ -3304,7 +3353,9 @@ pub(crate) fn place_out_of_flow(
                 }
             } else {
                 crate::taffy_impl::block_flow::aligned_static_position(
-                    &crate::taffy_impl::block_flow::style_input::physical(tree, idx),
+                    container_style.get_or_insert_with(|| {
+                        crate::taffy_impl::block_flow::style_input::physical(tree, idx)
+                    }),
                     &crate::taffy_impl::block_flow::style_input::physical(tree, node),
                     if rtl {
                         taffy::Direction::Rtl

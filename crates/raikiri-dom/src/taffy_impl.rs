@@ -2181,7 +2181,9 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         let node = &doc.nodes[idx];
         // Clamping a value to this box and then to the boxes around it is
         // clamping it to this box's edges, each clamped to the outer range.
-        let clip = if is_scroll_container(doc.physical_style(idx).overflow()) {
+        let clip = if node.kind() != raikiri_traits::NodeKind::Text
+            && is_scroll_container(doc.physical_style(idx).overflow())
+        {
             let bottom = offset_y + node.unrounded_layout.size.height;
             (
                 offset_y.max(outer_clip.0).min(outer_clip.1),

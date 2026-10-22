@@ -1,5 +1,6 @@
 //! Measure and break an ifc root's paragraph.
 
+use super::boxes::BoxEdges;
 use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
@@ -354,7 +355,6 @@ pub(crate) fn rebreak_roots(
         .filter(|&id| doc.nodes[id].ifc.is_some())
         .collect();
     let widths = crate::layout::multicol::AncestorFacts::new(doc, cascade, max_advance);
-    let mut styles_bound = false;
     for id in roots {
         // A root inside a `min-content`, `max-content` or `fit-content` box
         // keeps the lines its intrinsic width was measured with; no page
@@ -413,13 +413,20 @@ pub(crate) fn rebreak_roots(
             .and_then(|root| root.lines.as_ref())
             .map(|lines| std::sync::Arc::clone(&lines.lines));
         if let Some(lines) = lines {
-            // The new session has bound no styles yet, and the recorded boxes
-            // read them. Roots that keep their lines need none.
-            if !styles_bound {
-                doc.prepare_style_views();
-                styles_bound = true;
-            }
-            super::records::record_inline_boxes(doc, id, &ifc, &lines, &geometry);
+            // The new session has bound no styles, so the edges come from the
+            // records the finished layout left in the document. An element
+            // whose record no longer fits `cascade` keeps no edges.
+            super::records::record_inline_boxes(
+                doc,
+                id,
+                &ifc,
+                &lines,
+                &geometry,
+                |tree, element, basis| {
+                    tree.finished_style(cascade, element)
+                        .map_or(BoxEdges::ZERO, |style| BoxEdges::of(&style.view(), basis))
+                },
+            );
         }
     }
     doc.ifc = Some(state);

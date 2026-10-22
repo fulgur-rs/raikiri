@@ -13,6 +13,9 @@ pub struct LayoutStyleView<'a> {
     pub(crate) use_prepared_claims: bool,
     pass: OverrideLayer<'a>,
     scoped: OverrideLayer<'a>,
+    /// Whether either layer holds an entry: most queries find none and skip
+    /// the scan.
+    has_overrides: bool,
 }
 #[derive(Clone, Copy)]
 enum OverrideLayer<'a> {
@@ -48,6 +51,7 @@ impl<'a> LayoutStyleView<'a> {
             use_prepared_claims: true,
             pass: OverrideLayer::Borrowed(pass),
             scoped: OverrideLayer::Borrowed(scoped),
+            has_overrides: !pass.is_empty() || !scoped.is_empty(),
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
@@ -64,6 +68,7 @@ impl<'a> LayoutStyleView<'a> {
             use_prepared_claims: true,
             pass: OverrideLayer::Owned(pass),
             scoped: OverrideLayer::Owned(scoped),
+            has_overrides: !pass.is_empty() || !scoped.is_empty(),
         }
     }
     /// Preserve positioning-only containing-block claims for Flex/Grid queries.
@@ -90,14 +95,19 @@ impl<'a> LayoutStyleView<'a> {
     }
 
     pub(crate) fn overrides(&self) -> impl Iterator<Item = OverrideKind<'a>> {
-        (0..self.scoped.len())
-            .rev()
-            .map(|index| self.scoped.get(index).0)
-            .chain(
-                (0..self.pass.len())
+        self.has_overrides
+            .then(|| {
+                (0..self.scoped.len())
                     .rev()
-                    .map(|index| self.pass.get(index).0),
-            )
+                    .map(|index| self.scoped.get(index).0)
+                    .chain(
+                        (0..self.pass.len())
+                            .rev()
+                            .map(|index| self.pass.get(index).0),
+                    )
+            })
+            .into_iter()
+            .flatten()
     }
     #[inline]
     pub(crate) fn flags(&self) -> StyleFlags {

@@ -21,7 +21,7 @@ pub(crate) fn child(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
 /// before sizing a leaf. Flex and grid container and item fields keep their
 /// defaults.
 pub(crate) fn physical(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
-    materialize(tree.physical_style(idx))
+    tree.reduced_physical_style(idx, materialize)
 }
 
 fn materialize(query: NativeStyle<'_>) -> LayoutStyle {

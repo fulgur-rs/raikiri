@@ -7,7 +7,7 @@ use crate::generated_content::generated_origin;
 use crate::layout::{LineGlyph, PositionedLine, PositionedRun};
 use crate::node::FormattingContext;
 use raikiri_style::property::{
-    ColumnCountValue, CssColor, Direction, FloatValue, PositionValue, TextShadowColor,
+    ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
 };
 use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
@@ -1021,8 +1021,8 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
     };
     let in_flow = |id: usize| {
         laid_out(id)
-            && cascade.computed.get(id).is_some_and(|computed| {
-                !matches!(computed.float, FloatValue::Left | FloatValue::Right)
+            && document.finished_style(cascade, id).is_some_and(|style| {
+                taffy::BlockItemStyle::float(&style.view()) == taffy::Float::None
             })
     };
     let (mut id, mut y) = (owner, 0.0);
