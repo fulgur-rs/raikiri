@@ -2,13 +2,13 @@ use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
 use crate::layout::context::LayoutSession;
 
-pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
+pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<usize>> {
     if tree.nodes[parent].ifc.is_some() {
         return None;
     }
     // Every box of the chain runs in the container's direction, so one
     // alignment rule places the whole chain in its columns.
-    let direction = tree.layout_node_with_style(parent).unwrap().style.direction;
+    let direction = style_of(tree, parent).direction();
     let mut chain = Vec::new();
     let mut current = parent;
     let mut constrained = false;
@@ -25,20 +25,21 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         if children.next().is_some() {
             return None;
         }
-        let node = &tree.layout_node_with_style(child).unwrap();
-        let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
+        let node = layout_node(tree, child);
+        let style = style_of(tree, child);
+        let overflow = style.overflow();
         if node.display() != DisplayValue::Block
-            || node.style.direction != direction
-            || node.style.float.is_floated()
-            || node.style.clear != defaults.clear
+            || style.direction() != direction
+            || BlockItemStyle::float(&style).is_floated()
+            || BlockItemStyle::clear(&style) != taffy::Clear::None
             || !super::insets_are_a_relative_inline_offset(tree, child)
-            || node.style.padding != Rect::zero()
-            || node.style.border != Rect::zero()
-            || node.style.overflow.x == taffy::Overflow::Scroll
-            || node.style.overflow.y == taffy::Overflow::Scroll
-            || !node.style.size.height.is_auto()
-            || !node.style.min_size.height.is_auto()
-            || !node.style.max_size.height.is_auto()
+            || style.padding() != Rect::zero()
+            || style.border() != Rect::zero()
+            || overflow.x == taffy::Overflow::Scroll
+            || overflow.y == taffy::Overflow::Scroll
+            || !style.size().height.is_auto()
+            || !style.min_size().height.is_auto()
+            || !style.max_size().height.is_auto()
             || node.break_inside != raikiri_style::property::BreakInside::Auto
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
@@ -47,10 +48,10 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         {
             return None;
         }
-        constrained |= node.style.margin != Rect::zero()
+        constrained |= style.margin() != Rect::zero()
             || !node.multicol_auto_width
-            || !node.style.min_size.width.is_auto()
-            || !node.style.max_size.width.is_auto();
+            || !style.min_size().width.is_auto()
+            || !style.max_size().width.is_auto();
         chain.push(child);
         if node.ifc.is_some() {
             return (constrained
@@ -190,7 +191,7 @@ pub(super) fn layout(
     let mut first_layout = tree.nodes[first].unrounded_layout;
     // Parent-owned used margins can still refer to the unfragmented width.
     // Resolve the outer margins against the column before placing this box.
-    let margin_style = tree.layout_node_with_style(first).unwrap().style.margin;
+    let margin_style = style_of(tree, first).margin();
     first_layout.margin = margin_style.map(|margin| {
         margin
             .resolve_to_option(context.column_width, |pointer, basis| {

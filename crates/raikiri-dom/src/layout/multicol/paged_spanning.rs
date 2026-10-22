@@ -10,15 +10,20 @@ use std::collections::HashSet;
 // Fragment records are not edited in the tree: `edits` collects the changes
 // of every owner, and the caller installs them once.
 pub(in crate::layout) fn paginate_spanning_columns(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     edits: &mut FragmentEdits,
     owner: usize,
     owner_y: f32,
     page_for: &impl Fn(f32) -> (u32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<f32, LayoutError> {
+    // A multicol container is not broken when pagination runs on transposed
+    // axes: its columns lay out on the horizontal axes of the page.
+    if tree.context.pagination_on_transposed_axes {
+        return Ok(0.0);
+    }
     let old_groups = tree.nodes[owner].multicol_groups.clone();
-    if old_groups.is_empty() || !tree.block_axis_style(owner).height.is_auto() {
+    if old_groups.is_empty() || !style_of(tree, owner).size().height.is_auto() {
         return Ok(0.0);
     }
     let Some(container) = edits.first(owner) else {
@@ -44,7 +49,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
         }
         let segment = &children[start..end];
         if segment.iter().any(|&id| {
-            let node = &tree.layout_node_with_style(id).unwrap();
+            let node = layout_node(tree, id);
             node.kind() != NodeKind::Text
                 || node.unrounded_layout.size.height != 0.0
                 || node.ifc.is_some()
@@ -172,7 +177,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
 /// the page it starts on may cross more than one page end. Each one visited
 /// is charged to `work`, which bounds their number and checks for an abort.
 fn breaks_at_every_page_end(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     id: usize,
     y: f32,
     mut page_end: f32,
@@ -217,7 +222,7 @@ impl CutLimits {
     /// The limits of the spanner `id`, or `None` when it holds something a page
     /// may not end inside. Each box visited is charged to `work`.
     fn of(
-        tree: &Document,
+        tree: &LayoutSession<'_>,
         id: usize,
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<Option<Self>, LayoutError> {
@@ -226,7 +231,7 @@ impl CutLimits {
         let mut pending = vec![(id, 0.0_f32)];
         while let Some((current, top)) = pending.pop() {
             work.charge(1)?;
-            let node = tree.layout_node_with_style(current).unwrap();
+            let node = layout_node(tree, current);
             if !lineless::is_plain_block_holding_lines(tree, current)
                 || node.break_inside != raikiri_style::property::BreakInside::Auto
             {

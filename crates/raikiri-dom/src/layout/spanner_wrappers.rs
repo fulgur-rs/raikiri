@@ -26,7 +26,7 @@ pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &Casca
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() == NodeKind::Element
             && doc.nodes[idx].column_span_all
-            && is_spanner(doc, idx)
+            && is_spanner_in(doc, cascade, idx)
         {
             collect_wrappers(doc, cascade, idx, &mut wrappers);
         }

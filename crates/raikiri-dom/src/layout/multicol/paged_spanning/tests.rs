@@ -182,7 +182,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
     let control = PageLayoutControl::new(None);
     let mut work = ProjectionWork::new(&control, tree.fragment_tree.limit);
     let valid = paragraph_group::paginate(
-        &tree,
+        &LayoutSession::new(&mut tree),
         &entries,
         context,
         0.0,
@@ -194,7 +194,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         let control = PageLayoutControl::new(None);
         let mut work = ProjectionWork::new(&control, tree.fragment_tree.limit);
         let result = paragraph_group::paginate(
-            &tree,
+            &LayoutSession::new(&mut tree),
             &entries,
             context,
             0.0,

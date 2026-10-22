@@ -5,7 +5,7 @@ use super::BoxParentScope;
 use super::box_tree::BoxTree;
 use super::ifc::projection::REPLACED_BOX_TAGS;
 use super::ifc::style::inset_precedence;
-use super::multicol::spanning::is_spanner;
+use super::multicol::spanning::is_spanner_in;
 use super::page::used_computed_length_percentage_or_auto;
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
@@ -118,7 +118,7 @@ fn relative_insets_with_box_tree(
             return Some(document.fixed_page_area.unwrap_or_default().0);
         }
         let block = document.ifc_layout_node(block?.key)?;
-        Some(if is_spanner(document, node_id) {
+        Some(if is_spanner_in(document, cascade, node_id) {
             block.unrounded_layout.content_box_width()
         } else {
             column_content_width(block)

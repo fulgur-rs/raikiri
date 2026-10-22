@@ -91,7 +91,7 @@ use sanitize::*;
 #[cfg(test)]
 pub(crate) use bridge::{apply_computed_to_style, apply_computed_to_style_in_session};
 pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
-pub(crate) use multicol::spanning::is_spanner;
+pub(crate) use multicol::spanning::{is_spanner, is_spanner_in};
 pub(crate) use multicol::{
     compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
 };

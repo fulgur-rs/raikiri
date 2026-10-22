@@ -26,7 +26,7 @@ struct Paragraph {
 }
 
 pub(super) fn balance(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
@@ -58,7 +58,7 @@ pub(super) fn balance(
 /// order, continuing in overflow columns past the last one (CSS Multi-column
 /// 1, 8.2).
 pub(super) fn fill_definite(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     entries: &[Measurement],
     context: FragmentationContext,
     height: f32,
@@ -82,7 +82,7 @@ pub(super) fn fill_definite(
 /// go to the column of their line. The row and page streams place only lines,
 /// so they pass `false` and leave such a paragraph to the other strategies.
 fn collect(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     entries: &[Measurement],
     atomics: bool,
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
@@ -91,8 +91,7 @@ fn collect(
     let mut has_empty = false;
     let mut high = 0.0;
     for &(child, ref output, _, margin_top, margin_bottom, _) in entries {
-        let node = &tree.layout_node_with_style(child).unwrap();
-        let overflow = tree.block_axis_style(child).overflow;
+        let node = layout_node(tree, child);
         // Source whitespace between block elements has no formatting box.
         if node.kind() == NodeKind::Text && output.size.height == 0.0 && node.ifc.is_none() {
             paragraphs.push(None);
@@ -114,8 +113,10 @@ fn collect(
             && node
                 .authored_writing_mode
                 .is_none_or(|mode| !mode.is_vertical())
-            && overflow.x == taffy::Overflow::Visible
-            && overflow.y == taffy::Overflow::Visible;
+            && {
+                let overflow = style_of(tree, child).overflow();
+                overflow.x == taffy::Overflow::Visible && overflow.y == taffy::Overflow::Visible
+            };
         if !can_balance_paragraph_box(tree, child)
             || (!empty
                 && !if atomics {
@@ -411,7 +412,7 @@ pub(super) enum RowsStop {
 /// rows past that point could have been placed, as telling the two apart
 /// would take the planning the budget is there to stop.
 pub(super) fn fill_rows(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     entries: &[Measurement],
     context: FragmentationContext,
     first: f32,
@@ -531,7 +532,7 @@ pub(super) struct PagedGroup {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paginate(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     entries: &[Measurement],
     context: FragmentationContext,
     owner_y: f32,
