@@ -98,8 +98,10 @@ impl<'a> AuthoredBox<'a> {
         definite_size(self.values().max_width, basis)
     }
 
+    /// Whether the box floats. Only `left` and `right` float in the style
+    /// bridge, so `inline-start`, `inline-end` and `footnote` do not.
     pub(super) fn is_floated(&self) -> bool {
-        !matches!(self.values().float, FloatValue::None)
+        matches!(self.values().float, FloatValue::Left | FloatValue::Right)
     }
 
     pub(super) fn is_replaced(&self) -> bool {

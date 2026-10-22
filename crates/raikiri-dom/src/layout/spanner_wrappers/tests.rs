@@ -330,6 +330,22 @@ fn a_box_that_is_not_a_spanner_lifts_nothing() {
 }
 
 #[test]
+fn a_spanner_with_a_logical_float_is_still_a_spanner() {
+    // Only `left` and `right` float a box; the logical keywords do not.
+    for float in ["inline-start", "inline-end"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
+        let wrapper = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
+        let css = format!("display:block;column-span:all;height:10px;float:{float}");
+        doc.append_element(Some(wrapper), "div", Style::default(), Some(css.as_str()));
+        lay_out(&mut doc);
+        assert!(doc.nodes[wrapper].generates_no_box(), "{css}");
+    }
+}
+
+#[test]
 fn laying_out_again_keeps_the_wrapper_lifted() {
     let (mut doc, wrapper) = wrapped_spanner(COLUMNS, "div", "display:block");
     lay_out(&mut doc);
