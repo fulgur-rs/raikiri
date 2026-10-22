@@ -311,6 +311,76 @@ fn frame_captures_edge_basis_without_reapplying_it_to_late_borders() {
 }
 
 #[test]
+fn frame_baked_edges_preserve_duplicate_override_precedence() {
+    for pass_override in [false, true] {
+        let (mut doc, cascade, child, _) = fixture_with_styles(
+            "display:block",
+            "display:block;width:31px;height:7px;border:2px solid",
+        );
+        let parent = doc.nodes[child].parent.unwrap();
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        let key = tree.nodes.box_key(child).unwrap();
+        let outer =
+            OwnedPropertyOverride::length(LengthProperty::BorderRight, L::Px(3.0), true).unwrap();
+        let outer_scope = if pass_override {
+            tree.record_pass_override(child, outer);
+            Vec::new()
+        } else {
+            vec![(key, outer)]
+        };
+        tree.with_overrides(outer_scope, |tree| {
+            tree.with_overrides(
+                vec![(
+                    key,
+                    OwnedPropertyOverride::length(
+                        LengthProperty::BorderRight,
+                        L::Percent(10.0),
+                        false,
+                    )
+                    .unwrap(),
+                )],
+                |tree| {
+                    tree.with_resolved_edges(child, 200.0, true, |tree| {
+                        let block = frame(tree, parent, child, true);
+                        with_transposed_frame(tree, block, |tree| {
+                            assert_eq!(
+                                tree.query_style(child, ReadRole::BlockItem).border().top,
+                                LengthPercentage::length(20.0),
+                            );
+                            assert_eq!(
+                                tree.checked_query(child, ReadRole::BlockItem).border().top,
+                                LengthPercentage::length(20.0),
+                            );
+                        });
+                    });
+                    assert_eq!(
+                        tree.checked_query(child, ReadRole::BlockItem)
+                            .border()
+                            .right,
+                        LengthPercentage::percent(0.1),
+                    );
+                },
+            );
+            assert_eq!(
+                tree.checked_query(child, ReadRole::BlockItem)
+                    .border()
+                    .right,
+                LengthPercentage::length(3.0),
+            );
+        });
+        assert_eq!(tree.override_checkpoint(), 0);
+        assert!(tree.context.transposed_blocks.is_empty());
+        assert_eq!(
+            tree.checked_query(child, ReadRole::BlockItem)
+                .border()
+                .right,
+            LengthPercentage::length(if pass_override { 3.0 } else { 2.0 }),
+        );
+    }
+}
+
+#[test]
 fn materialized_calc_survives_frame_and_bridge_retirement() {
     use std::sync::Arc;
     use taffy::MaybeResolve;

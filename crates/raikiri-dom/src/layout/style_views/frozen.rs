@@ -93,9 +93,10 @@ impl FrozenViewInput {
                         .into_iter()
                         .zip([edges.top, edges.right, edges.bottom, edges.left])
                 {
-                    OwnedPropertyOverride::length(property, L::Px(value), true)
-                        .unwrap()
-                        .install(&mut input.baseline);
+                    // Baked edges must outrank every captured pass and scoped entry.
+                    input
+                        .baseline
+                        .push(OwnedPropertyOverride::length(property, L::Px(value), true).unwrap());
                 }
             }
             input.context.percent_basis = PercentBasis::Taffy;
