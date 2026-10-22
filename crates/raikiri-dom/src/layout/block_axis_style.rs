@@ -3,12 +3,12 @@
 //!
 //! The paginator breaks a flow along y. A document whose root lays out its
 //! blocks on vertical axes is paginated on transposed axes (see
-//! `page_pipeline::transposed_flow`), so the sizes, margins and insets it
-//! reads along y are the physical x ones of the style. [`BlockAxisStyle`]
-//! holds those facts of one box on the axes the paginator reads, and
-//! [`Document::block_axis_style`] gives them without anything having to be
-//! swapped in the document's own styles: retained styles stay on physical
-//! axes while pagination runs.
+//! [`crate::layout::page_pipeline`] and its private `transposed_flow`
+//! module), so the sizes, margins and insets it reads along y are the
+//! physical x ones of the style. [`BlockAxisStyle`] holds those facts of one
+//! box on the axes the paginator reads, and [`Document::block_axis_style`]
+//! gives them without anything having to be swapped in the document's own
+//! styles: retained styles stay on physical axes while pagination runs.
 
 use taffy::{Dimension, LengthPercentageAuto, Overflow, Point};
 
