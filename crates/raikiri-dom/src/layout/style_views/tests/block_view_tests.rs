@@ -106,7 +106,7 @@ fn block_view_compares_each_new_role_and_bridge_alignment_at_read() {
             taffy::AlignContent::SPACE_BETWEEN
         );
     }
-    for count in &tree.style_view_comparisons.getter_reads[4..] {
+    for count in &tree.style_view_comparisons.getter_reads[4..ReadRole::Pagination as usize] {
         assert!(count.get() > 0);
     }
     assert!(tree.style_view_comparisons.calc_comparisons.get() > 0);

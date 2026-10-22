@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::layout::context::LayoutSession;
-use taffy::TraversePartialTree;
+use taffy::{BlockItemStyle, TraversePartialTree};
 
 /// Truncate the root and descendant leading margins for one pagination pass.
 pub(super) fn truncate_flow(
@@ -39,9 +39,10 @@ pub(super) fn truncate(
     let mut moved = false;
     while let Some((parent, flow_y, leading_flow)) = stack.pop() {
         control.check_aborted()?;
-        let parent_node = &document.layout_node_with_style(parent).unwrap();
+        let parent_node = &document.nodes[parent];
         let block_flow = parent_node.formatting_context == FormattingContext::Block
-            && parent_node.style.align_content == taffy::AlignContent::NORMAL
+            && document.pagination_style(parent).bridge_align_content()
+                == taffy::AlignContent::NORMAL
             && (matches!(
                 parent_node.display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
@@ -62,11 +63,12 @@ pub(super) fn truncate(
         let mut first_in_flow = true;
         let mut preceding_float = false;
         for child in children {
-            let node = &document.layout_node_with_style(child).unwrap();
+            let node = &document.nodes[child];
             if node.is_display_none() || node.is_non_rendered_html_element() {
                 continue;
             }
-            if node.style.float != TaffyFloat::None {
+            let style = document.pagination_style(child);
+            if style.float() != TaffyFloat::None {
                 preceding_float = true;
                 continue;
             }
@@ -83,7 +85,7 @@ pub(super) fn truncate(
             let leading_child = leading_flow && first_in_flow && !preceding_float;
             if block_flow
                 && leading_child
-                && node.style.clear == TaffyClear::None
+                && style.clear() == TaffyClear::None
                 && child_y > content_y
                 && page > pages.page_index_for_y(content_y)
                 && child_y > pages.origin(page) + 0.001

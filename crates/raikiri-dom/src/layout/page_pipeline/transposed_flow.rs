@@ -13,7 +13,7 @@
 //! - the computed values the paginator reads and the page geometry are
 //!   reflected the same way;
 //! - the style facts the paginator reads from a box's retained style are
-//!   read on those axes through [`Document::block_axis_style`], from a style
+//!   read on those axes through `LayoutSession::block_axis`, from a style
 //!   view whose layout writing mode is the root's, so the retained styles
 //!   themselves stay on physical axes;
 //! - after pagination, the boxes are mapped back to physical axes. A box
@@ -170,7 +170,7 @@ impl FlowAxes {
     /// The writing mode whose axes a style view returns its sizes and sides
     /// on, so that the root's block axis is the vertical one: the one the
     /// root has, as far as the axes go.
-    fn layout_wm(self) -> raikiri_style::property::WritingMode {
+    pub(super) fn layout_wm(self) -> raikiri_style::property::WritingMode {
         if self.right_to_left {
             raikiri_style::property::WritingMode::VerticalRl
         } else {

@@ -583,7 +583,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // still lays its in-flow descendants out where the page flow
                 // puts them, so their page names take part in pagination.
                 let inset_out_of_flow_subtree =
-                    out_of_flow_subtree && in_inset_out_of_flow_subtree(document, node_id);
+                    out_of_flow_subtree && in_inset_out_of_flow_subtree(document, cascade, node_id);
                 let explicit_page_name = selected_page_name(cascade, node_id);
                 // CSS Page 3 §4.1: `page` applies to boxes that create class A
                 // break points, which are block-level. An inline-level box,
@@ -702,7 +702,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !out_of_flow_subtree
                     && candidate_height > 0.0
                     && !node.children.iter().any(|&child| {
-                        let child_node = &document.layout_node_with_style(child).unwrap();
+                        let child_node = &document.nodes[child];
                         if child_node.is_display_none()
                             || child_node.is_non_rendered_html_element()
                             || matches!(

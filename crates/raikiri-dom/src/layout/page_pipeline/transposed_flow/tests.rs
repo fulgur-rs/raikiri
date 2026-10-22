@@ -746,20 +746,11 @@ fn pagination_entry_rejects_active_edge_scope() {
 /// The facts of a retained style the paginator reads along its flow, with
 /// the physical sizes and sides exchanged onto transposed axes.
 fn swapped_block_axis_style(axes: FlowAxes, style: &Style) -> BlockAxisStyle {
-    let inset = axes.rect(style.inset);
     BlockAxisStyle {
         height: style.size.width,
         min_height: style.min_size.width,
         max_height: style.max_size.width,
-        min_width: style.min_size.height,
-        max_width: style.max_size.height,
         margin: axes.rect(style.margin),
-        inset_top: inset.top,
-        inset_bottom: inset.bottom,
-        overflow: Point {
-            x: style.overflow.y,
-            y: style.overflow.x,
-        },
         aspect_ratio: style.aspect_ratio.map(f32::recip),
     }
 }

@@ -286,7 +286,10 @@ fn native_block_view_is_used_without_retained_clone_and_reads_all_eight_roles() 
         );
     }
     assert!(
-        stats.getter_reads.iter().all(|count| count.get() > 0),
+        // Pagination reads belong to the paginator's own tests.
+        stats.getter_reads[..ReadRole::Pagination as usize]
+            .iter()
+            .all(|count| count.get() > 0),
         "{stats:?}"
     );
     assert!(stats.iterator_reads.get() > 0, "{stats:?}");

@@ -33,6 +33,64 @@ pub(crate) enum ReadRole {
     /// The box's own style with no role context: no transposed block view,
     /// no containing-block claims and no block-item percentage basis.
     Physical,
+    /// The paginator's reads of a laid-out box.
+    Pagination,
+}
+
+/// A box's style along the axis pagination breaks the flow on, read one fact
+/// at a time. See [`LayoutSession::block_axis`].
+pub(crate) struct BlockAxis<'s> {
+    session: &'s LayoutSession<'s>,
+    idx: usize,
+    snapshot: Option<&'s crate::layout::block_axis_style::BlockAxisStyle>,
+    /// The view the facts are read from, built by the first one that needs it.
+    view: std::cell::OnceCell<NativeStyle<'s>>,
+}
+
+impl BlockAxis<'_> {
+    fn read<T>(
+        &self,
+        snapshot: impl FnOnce(&crate::layout::block_axis_style::BlockAxisStyle) -> T,
+        view: impl FnOnce(&NativeStyle<'_>) -> T,
+    ) -> T {
+        match self.snapshot {
+            Some(facts) => snapshot(facts),
+            None => view(
+                self.view
+                    .get_or_init(|| self.session.pagination_style(self.idx)),
+            ),
+        }
+    }
+
+    pub(crate) fn height(&self) -> taffy::Dimension {
+        use taffy::CoreStyle;
+        self.read(|facts| facts.height, |style| style.size().height)
+    }
+
+    pub(crate) fn min_height(&self) -> taffy::LengthPercentageAuto {
+        use taffy::CoreStyle;
+        self.read(|facts| facts.min_height, |style| style.min_size().height)
+    }
+
+    pub(crate) fn max_height(&self) -> taffy::LengthPercentageAuto {
+        use taffy::CoreStyle;
+        self.read(|facts| facts.max_height, |style| style.max_size().height)
+    }
+
+    pub(crate) fn margin_top(&self) -> taffy::LengthPercentageAuto {
+        use taffy::CoreStyle;
+        self.read(|facts| facts.margin.top, |style| style.margin().top)
+    }
+
+    pub(crate) fn margin_bottom(&self) -> taffy::LengthPercentageAuto {
+        use taffy::CoreStyle;
+        self.read(|facts| facts.margin.bottom, |style| style.margin().bottom)
+    }
+
+    pub(crate) fn aspect_ratio(&self) -> Option<f32> {
+        use taffy::CoreStyle;
+        self.read(|facts| facts.aspect_ratio, |style| style.aspect_ratio())
+    }
 }
 
 #[cfg(not(test))]
@@ -317,6 +375,11 @@ impl LayoutSession<'_> {
     #[inline]
     pub(crate) fn assert_style_queries_allowed(&self) {
         self.assert_native_style_access_allowed();
+        self.assert_outside_preparation_batch();
+    }
+
+    #[inline]
+    fn assert_outside_preparation_batch(&self) {
         assert!(
             !self
                 .style_views
@@ -455,8 +518,17 @@ impl LayoutSession<'_> {
         .then_some(prepared)
     }
 
+    /// The paginator's view of the laid-out box `idx`.
+    #[inline]
+    pub(crate) fn pagination_style(&self, idx: usize) -> NativeStyle<'_> {
+        self.native_style(idx, ReadRole::Pagination)
+    }
+
     pub(crate) fn query_style(&self, idx: usize, role: ReadRole) -> LayoutStyleView<'_> {
         use raikiri_layout_style::ClaimsPolicy;
+        if matches!(role, ReadRole::Pagination) {
+            return self.pagination_view(idx);
+        }
         self.assert_style_queries_allowed();
         let transposed = match role {
             ReadRole::BlockContainer => self.transposed_container_view(idx),
@@ -494,13 +566,48 @@ impl LayoutSession<'_> {
         self.style_view(idx).with_context(context)
     }
 
+    /// The physical view of a laid-out box as the paginator reads it.
+    ///
+    /// Pagination of a vertical root runs on transposed axes, but boxes keep
+    /// their styles on physical axes there. The facts that depend on the axis
+    /// are read through [`Self::block_axis`]; the others (float, clear,
+    /// box sizing, grid tracks, alignment) are the same on both. Only reads
+    /// are allowed: updating styles or preparing boxes stays forbidden
+    /// meanwhile.
+    fn pagination_view(&self, idx: usize) -> LayoutStyleView<'_> {
+        self.assert_outside_preparation_batch();
+        let view = self.prepared_style_view(idx);
+        let mut context = view.context();
+        context.claims_policy = raikiri_layout_style::ClaimsPolicy::Positioning;
+        view.with_context(context)
+    }
+
+    /// The style of box `idx` along the axis pagination breaks the flow on.
+    ///
+    /// While the document is paginated on transposed axes these are the
+    /// facts of the snapshot taken when it was transposed; otherwise they are
+    /// the physical ones of the pagination view. Each fact is read when it is
+    /// asked for, because most callers need one or two of them.
+    pub(crate) fn block_axis(&self, idx: usize) -> BlockAxis<'_> {
+        BlockAxis {
+            session: self,
+            idx,
+            snapshot: self.document.pagination_block_styles.get(idx),
+            view: std::cell::OnceCell::new(),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn checked_query(
         &self,
         idx: usize,
         role: checked::ReadRole,
     ) -> checked::CheckedStyle<'_> {
-        self.assert_style_queries_allowed();
+        if matches!(role, ReadRole::Pagination) {
+            self.assert_outside_preparation_batch();
+        } else {
+            self.assert_style_queries_allowed();
+        }
         let key = self.nodes.box_key(idx).expect("style query has a box key");
         let mut context = checked::ReadContext::new(key, role);
         let view = self.style_views.as_ref().map(|views| {
@@ -631,6 +738,11 @@ impl LayoutSession<'_> {
     #[inline]
     pub(crate) fn style_view(&self, idx: usize) -> LayoutStyleView<'_> {
         self.assert_style_queries_allowed();
+        self.prepared_style_view(idx)
+    }
+
+    #[inline]
+    fn prepared_style_view(&self, idx: usize) -> LayoutStyleView<'_> {
         let key = self.nodes.box_key(idx).expect("style query has a box key");
         let views = self
             .style_views
