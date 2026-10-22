@@ -115,9 +115,10 @@ pub(crate) fn with_pass_view<R>(
 /// Appends `declarations` to the inline style of element `node`; they override
 /// the declarations they repeat.
 pub(crate) fn restyle(doc: &mut Document, node: usize, declarations: &str) {
-    let crate::node::NodeData::Element(element) = &doc.nodes[node].data else {
-        panic!("restyle needs an element");
-    };
+    let element = doc.nodes[node]
+        .data
+        .as_element_mut()
+        .expect("restyle needs an element");
     let mut css = element
         .inline_style
         .as_deref()
