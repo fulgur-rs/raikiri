@@ -206,59 +206,6 @@ impl OwnedPropertyOverride {
         }
     }
 
-    /// Project a physical override into the transitional retained style.
-    ///
-    /// Scalar conversion is shared with the view getters. The adapter must retain
-    /// calc owners before publishing the resulting raw handles.
-    pub fn apply_to_style(&self, style: &mut taffy::Style<raikiri_style::SmolStr>) {
-        use LengthProperty::*;
-        match self.as_borrowed().0 {
-            OverrideKind::Length(property, value) => match property {
-                Width => style.size.width = value.dimension(),
-                Height => style.size.height = value.dimension(),
-                MinWidth => style.min_size.width = value.auto(false),
-                MinHeight => style.min_size.height = value.auto(false),
-                MaxWidth => style.max_size.width = value.auto(false),
-                MaxHeight => style.max_size.height = value.auto(false),
-                MarginTop => style.margin.top = value.auto(true),
-                MarginRight => style.margin.right = value.auto(true),
-                MarginBottom => style.margin.bottom = value.auto(true),
-                MarginLeft => style.margin.left = value.auto(true),
-                PaddingTop => style.padding.top = value.lp(crate::PercentBasis::Taffy),
-                PaddingRight => style.padding.right = value.lp(crate::PercentBasis::Taffy),
-                PaddingBottom => style.padding.bottom = value.lp(crate::PercentBasis::Taffy),
-                PaddingLeft => style.padding.left = value.lp(crate::PercentBasis::Taffy),
-                BorderTop => style.border.top = value.lp(crate::PercentBasis::Taffy),
-                BorderRight => style.border.right = value.lp(crate::PercentBasis::Taffy),
-                BorderBottom => style.border.bottom = value.lp(crate::PercentBasis::Taffy),
-                BorderLeft => style.border.left = value.lp(crate::PercentBasis::Taffy),
-                Top => style.inset.top = value.auto(false),
-                Right => style.inset.right = value.auto(false),
-                Bottom => style.inset.bottom = value.auto(false),
-                Left => style.inset.left = value.auto(false),
-                FlexBasis => style.flex_basis = value.dimension(),
-                ColumnGap => style.gap.width = value.lp(crate::PercentBasis::Taffy),
-                RowGap => style.gap.height = value.lp(crate::PercentBasis::Taffy),
-                // cov:ignore: constructors reject preparation-only override targets.
-                LogicalWidth | LogicalHeight | MinBlock => {
-                    unreachable!("validated physical override")
-                }
-            },
-            OverrideKind::AspectRatio(value) => style.aspect_ratio = value,
-            OverrideKind::Overflow(axis, value) => {
-                let target = match axis {
-                    Axis::X => &mut style.overflow.x,
-                    Axis::Y => &mut style.overflow.y,
-                };
-                *target = crate::core::overflow(value);
-            }
-            OverrideKind::Clear(value) => style.clear = crate::core::clear(value),
-            OverrideKind::FlexShrink(value) => style.flex_shrink = value,
-            OverrideKind::AlignSelf(value) => style.align_self = value,
-            OverrideKind::JustifySelf(value) => style.justify_self = value,
-        }
-    }
-
     /// Construct a physical length override, preparing a calc owner if needed.
     /// `resolved` marks values already resolved in physical pixels.
     ///

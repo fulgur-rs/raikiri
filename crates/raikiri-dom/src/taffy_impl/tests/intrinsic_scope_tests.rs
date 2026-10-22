@@ -1,63 +1,42 @@
 use super::super::{with_flex_intrinsic_probe, with_flex_item_basis_bounds};
 use crate::layout::{
-    apply_computed_to_style,
     context::LayoutSession,
     style_views::tests::{fixture_with_styles, with_setup_inspector},
 };
-use taffy::{Dimension, LengthPercentageAuto as Lpa, NodeId};
+use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+use raikiri_style::ComputedLengthPercentageOrAuto as L;
+use taffy::{CoreStyle, Dimension, FlexboxItemStyle, LengthPercentageAuto as Lpa, NodeId};
 
 #[test]
 fn intrinsic_scope_preserves_unrelated_updates() {
-    for views in [false, true] {
-        let (mut doc, cascade, child, _) =
-            fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
-        let parent = doc.nodes[child].parent.unwrap();
-        apply_computed_to_style(&mut doc, &cascade).unwrap();
-        let mut tree = if views {
-            LayoutSession::with_cascade(&mut doc, &cascade)
-        } else {
-            LayoutSession::new(&mut doc)
-        };
-        if views {
-            tree.prepare_style_views();
-        }
-        with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
-            assert!(
-                tree.layout_style_for_key(parent)
-                    .unwrap()
-                    .max_size
-                    .width
-                    .is_auto()
+    let (mut doc, cascade, child, _) =
+        fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
+        assert!(tree.style_view(parent).max_size().width.is_auto());
+        with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
+            let view = tree.style_view(child);
+            assert!(view.size().width.is_auto());
+            assert_eq!(view.min_size().width, Lpa::length(100.0));
+            assert_eq!(view.flex_shrink(), 1.0);
+            tree.record_pass_override(
+                child,
+                OwnedPropertyOverride::length(LengthProperty::Width, L::Px(91.0), true).unwrap(),
             );
-            with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
-                let style = tree.layout_style_for_key(child).unwrap();
-                assert!(style.size.width.is_auto());
-                assert_eq!(style.min_size.width, Lpa::length(100.0));
-                assert_eq!(style.flex_shrink, 1.0);
-                tree.layout_style_for_key_mut(child).unwrap().size.width = Dimension::length(91.0);
-            });
         });
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().size.width,
-            Dimension::length(91.0)
-        );
-        assert_eq!(tree.layout_style_for_key(child).unwrap().flex_shrink, 0.0);
-        assert_eq!(
-            tree.layout_style_for_key(parent).unwrap().max_size.width,
-            Lpa::length(50.0)
-        );
-        assert_eq!(tree.override_checkpoint(), 0);
-    }
+    });
+    assert_eq!(tree.style_view(child).size().width, Dimension::length(91.0));
+    assert_eq!(tree.style_view(child).flex_shrink(), 0.0);
+    assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
+    assert_eq!(tree.override_checkpoint(), 0);
 }
 
 #[test]
 fn intrinsic_scope_restores_marker_and_original_panic() {
     fn fail(tree: &LayoutSession<'_>, child: usize, count: usize) {
         if count == 2 {
-            assert_eq!(
-                tree.layout_style_for_key(child).unwrap().min_size.width,
-                Lpa::length(100.0)
-            );
+            assert_eq!(tree.style_view(child).min_size().width, Lpa::length(100.0));
             panic!("intrinsic setup failure");
         }
     }
@@ -65,9 +44,7 @@ fn intrinsic_scope_restores_marker_and_original_panic() {
         let (mut doc, cascade, child, _) =
             fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
         let parent = doc.nodes[child].parent.unwrap();
-        apply_computed_to_style(&mut doc, &cascade).unwrap();
-        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-        tree.prepare_style_views();
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         tree.context.flex_intrinsic_probe = Some(child);
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut run = || {
@@ -95,18 +72,9 @@ fn intrinsic_scope_restores_marker_and_original_panic() {
         );
         assert_eq!(tree.context.flex_intrinsic_probe, Some(child));
         assert_eq!(tree.override_checkpoint(), 0);
-        assert_eq!(tree.layout_style_for_key(child).unwrap().flex_shrink, 0.0);
-        assert!(
-            tree.layout_style_for_key(child)
-                .unwrap()
-                .min_size
-                .width
-                .is_auto()
-        );
-        assert_eq!(
-            tree.layout_style_for_key(parent).unwrap().max_size.width,
-            Lpa::length(50.0)
-        );
+        assert_eq!(tree.style_view(child).flex_shrink(), 0.0);
+        assert!(tree.style_view(child).min_size().width.is_auto());
+        assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
     }
 }
 
@@ -120,11 +88,8 @@ pub(in crate::taffy_impl) fn before_child_bounds(tree: &LayoutSession<'_>, idx: 
     if let Some((first, second)) = CHILD_PAIR.get()
         && idx == second
     {
-        assert_eq!(
-            tree.layout_style_for_key(first).unwrap().min_size.width,
-            Lpa::length(100.0)
-        );
-        assert_eq!(tree.layout_style_for_key(first).unwrap().flex_shrink, 1.0);
+        assert_eq!(tree.style_view(first).min_size().width, Lpa::length(100.0));
+        assert_eq!(tree.style_view(first).flex_shrink(), 1.0);
         SAW_PRIOR_BOUND.set(true);
         if FAIL_LATER_CHILD.get() {
             panic!("later child setup failure");
@@ -142,41 +107,22 @@ fn intrinsic_scope_keeps_earlier_child_bounds() {
     }
     let (mut doc, _, first, _) = fixture_with_styles("display:flex", "flex:1 0 100px;width:auto");
     let parent = doc.nodes[first].parent.unwrap();
-    let second = doc.append_element(
-        Some(parent),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("flex:1 0 200px;width:auto"),
-    );
+    let second = doc.append_element(Some(parent), "div", Some("flex:1 0 200px;width:auto"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
-    apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     CHILD_PAIR.set(Some((first, second)));
     SAW_PRIOR_BOUND.set(false);
     let _reset = Reset;
     with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), |tree| {
-        assert_eq!(
-            tree.layout_style_for_key(first).unwrap().min_size.width,
-            Lpa::length(100.0)
-        );
-        assert_eq!(
-            tree.layout_style_for_key(second).unwrap().min_size.width,
-            Lpa::length(200.0)
-        );
+        assert_eq!(tree.style_view(first).min_size().width, Lpa::length(100.0));
+        assert_eq!(tree.style_view(second).min_size().width, Lpa::length(200.0));
     });
     assert!(SAW_PRIOR_BOUND.get());
     for idx in [first, second] {
-        assert!(
-            tree.layout_style_for_key(idx)
-                .unwrap()
-                .min_size
-                .width
-                .is_auto()
-        );
-        assert_eq!(tree.layout_style_for_key(idx).unwrap().flex_shrink, 0.0);
+        assert!(tree.style_view(idx).min_size().width.is_auto());
+        assert_eq!(tree.style_view(idx).flex_shrink(), 0.0);
     }
     assert_eq!(tree.override_checkpoint(), 0);
 }
@@ -188,9 +134,7 @@ fn intrinsic_scope_isolates_probe_cache_and_rejects_late_outer_store() {
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
     let parent = doc.nodes[child].parent.unwrap();
-    apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let id = NodeId::from(child);
     let input = taffy::LayoutInput {
         run_mode: taffy::RunMode::ComputeSize,
@@ -238,9 +182,7 @@ fn intrinsic_scope_dirty_descendant_preserves_original_panic() {
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
     let parent = doc.nodes[child].parent.unwrap();
-    apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_flex_intrinsic_probe(&mut tree, NodeId::from(parent), |tree| {
             with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
@@ -257,11 +199,8 @@ fn intrinsic_scope_dirty_descendant_preserves_original_panic() {
     assert!(tree.layout_dirty);
     assert_eq!(tree.override_checkpoint(), 0);
     assert!(tree.context.flex_intrinsic_probe.is_none());
-    assert_eq!(tree.layout_style_for_key(child).unwrap().flex_shrink, 0.0);
-    assert_eq!(
-        tree.layout_style_for_key(parent).unwrap().max_size.width,
-        Lpa::length(50.0)
-    );
+    assert_eq!(tree.style_view(child).flex_shrink(), 0.0);
+    assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
 }
 
 #[test]
@@ -276,18 +215,11 @@ fn intrinsic_scope_later_child_setup_failure_restores_prefix() {
     let (mut doc, _, first, _) =
         fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
     let parent = doc.nodes[first].parent.unwrap();
-    let second = doc.append_element(
-        Some(parent),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("flex:1 0 200px;width:auto"),
-    );
+    let second = doc.append_element(Some(parent), "div", Some("flex:1 0 200px;width:auto"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
-    apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     CHILD_PAIR.set(Some((first, second)));
     FAIL_LATER_CHILD.set(true);
     let _reset = Reset;
@@ -302,19 +234,10 @@ fn intrinsic_scope_later_child_setup_failure_restores_prefix() {
         Some(&"later child setup failure")
     );
     for idx in [first, second] {
-        assert!(
-            tree.layout_style_for_key(idx)
-                .unwrap()
-                .min_size
-                .width
-                .is_auto()
-        );
-        assert_eq!(tree.layout_style_for_key(idx).unwrap().flex_shrink, 0.0);
+        assert!(tree.style_view(idx).min_size().width.is_auto());
+        assert_eq!(tree.style_view(idx).flex_shrink(), 0.0);
     }
-    assert_eq!(
-        tree.layout_style_for_key(parent).unwrap().max_size.width,
-        Lpa::length(50.0)
-    );
+    assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
     assert_eq!(tree.override_checkpoint(), 0);
     assert!(tree.context.flex_intrinsic_probe.is_none());
 }
@@ -324,21 +247,13 @@ fn intrinsic_scope_container_setup_failure_restores_marker() {
     fn fail(tree: &LayoutSession<'_>, idx: usize, count: usize) {
         assert_eq!(count, 1);
         assert_eq!(tree.context.flex_intrinsic_probe, Some(idx));
-        assert!(
-            tree.layout_style_for_key(idx)
-                .unwrap()
-                .max_size
-                .width
-                .is_auto()
-        );
+        assert!(tree.style_view(idx).max_size().width.is_auto());
         panic!("container setup failure");
     }
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
     let parent = doc.nodes[child].parent.unwrap();
-    apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     tree.context.flex_intrinsic_probe = Some(child);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_setup_inspector(fail, || {
@@ -354,8 +269,5 @@ fn intrinsic_scope_container_setup_failure_restores_marker() {
     );
     assert_eq!(tree.context.flex_intrinsic_probe, Some(child));
     assert_eq!(tree.override_checkpoint(), 0);
-    assert_eq!(
-        tree.layout_style_for_key(parent).unwrap().max_size.width,
-        Lpa::length(50.0)
-    );
+    assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
 }

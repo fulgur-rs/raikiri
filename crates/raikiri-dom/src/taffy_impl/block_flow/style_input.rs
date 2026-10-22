@@ -2,18 +2,16 @@
 
 use crate::{
     LayoutStyle,
-    layout::{
-        context::LayoutSession,
-        style_views::{NativeStyle, ReadRole},
-    },
+    layout::{context::LayoutSession, style_views::ReadRole},
 };
+use raikiri_layout_style::LayoutStyleView;
 use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle};
 
 pub(crate) fn container(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
-    materialize(tree.native_style(idx, ReadRole::BlockContainer))
+    materialize(tree.query_style(idx, ReadRole::BlockContainer))
 }
 pub(crate) fn child(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
-    materialize(tree.native_style(idx, ReadRole::BlockItem))
+    materialize(tree.query_style(idx, ReadRole::BlockItem))
 }
 
 /// The box's own style with no role context, reduced to the fields that
@@ -24,7 +22,7 @@ pub(crate) fn physical(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
     tree.reduced_physical_style(idx, materialize)
 }
 
-fn materialize(query: NativeStyle<'_>) -> LayoutStyle {
+fn materialize(query: LayoutStyleView<'_>) -> LayoutStyle {
     // Primitives distinguish only hidden, block and non-block display here.
     let display = if query.box_generation_mode() == taffy::BoxGenerationMode::None {
         taffy::Display::None

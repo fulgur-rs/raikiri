@@ -5,17 +5,16 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
 use raikiri_dom::Document;
-use raikiri_dom::LayoutStyle as Style;
 
 // Put the target after a populated sibling subtree so repeated parent lookup
 // must traverse both preceding nodes and the target's shrinking child list.
 fn target_document(children: usize) -> (Document, usize, usize) {
     let mut doc = Document::new();
-    let preceding = doc.append_element(Some(0), "aside", Style::default(), None::<&str>);
+    let preceding = doc.append_element(Some(0), "aside", None::<&str>);
     for _ in 0..children {
         doc.append_text(preceding, "unrelated");
     }
-    let parent = doc.append_element(Some(0), "main", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "main", None::<&str>);
     let first_old = doc.append_text(parent, "old");
     for _ in 1..children {
         doc.append_text(parent, "old");
@@ -74,7 +73,7 @@ fn bench_replace_children(c: &mut Criterion) {
 // cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
 fn append_target() -> (Document, usize) {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "main", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "main", None::<&str>);
     doc.mark_in_document_flags();
     (doc, parent)
 }
@@ -131,10 +130,10 @@ fn bench_text_append(c: &mut Criterion) {
 fn bench_dom_reads(c: &mut Criterion) {
     let mut group = c.benchmark_group("dom_reads");
     let (mut doc, parent) = append_target();
-    let html = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(parent), "div", None::<&str>);
     doc.set_element_attribute(html, "data-key", "value")
         .unwrap();
-    let svg = doc.append_element(Some(parent), "svg", Style::default(), None::<&str>);
+    let svg = doc.append_element(Some(parent), "svg", None::<&str>);
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attribute(svg, "viewBox", "0 0 10 10")
         .unwrap();
@@ -158,7 +157,7 @@ fn bench_dom_reads(c: &mut Criterion) {
         let mut parent = root;
         let mut expected = String::new();
         for _ in 0..2000 {
-            let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+            let child = doc.append_element(Some(parent), "div", None::<&str>);
             doc.append_text(child, "hello");
             expected.push_str("<div>hello");
             if deep {

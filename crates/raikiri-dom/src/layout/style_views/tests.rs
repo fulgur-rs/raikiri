@@ -20,14 +20,9 @@ pub(crate) fn fixture_with_styles(
     child: &str,
 ) -> (Document, raikiri_style::CascadeResult, usize, usize) {
     let mut doc = Document::new();
-    let root = doc.append_element(
-        Some(0),
-        "html",
-        LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(Some(root), "body", LayoutStyle::default(), Some(container));
-    let child = doc.append_element(Some(body), "div", LayoutStyle::default(), Some(child));
+    let root = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(root), "body", Some(container));
+    let child = doc.append_element(Some(body), "div", Some(child));
     let text = doc.append_text(body, "text");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -36,34 +31,18 @@ pub(crate) fn fixture_with_styles(
 }
 
 #[test]
-fn prepared_source_is_independent_of_retained_style() {
-    let (mut doc, cascade, child, _) = fixture();
-    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-    assert_eq!(
-        session.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
-    );
-    session.layout_style_for_key_mut(child).unwrap().size.width = taffy::Dimension::length(99.0);
-    assert_eq!(
-        session.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
-    );
-}
-
-#[test]
-fn synthetic_recipe_matches_legacy_neutral_box() {
+fn synthetic_recipe_matches_the_default_taffy_style() {
     let (mut doc, cascade, _, text) = fixture();
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let view = session.style_view(text);
-    let old = session.layout_style_for_key(text).unwrap();
-    assert_eq!(view.size(), old.size());
-    assert_eq!(view.margin(), old.margin());
-    assert_eq!(view.padding(), old.padding());
-    assert_eq!(view.is_block(), old.is_block());
-    assert_eq!(view.direction(), old.direction());
-    assert_eq!(view.box_sizing(), old.box_sizing());
+    let expected = LayoutStyle::default();
+    assert_eq!(view.size(), expected.size());
+    assert_eq!(view.margin(), expected.margin());
+    assert_eq!(view.padding(), expected.padding());
+    assert_eq!(view.is_block(), expected.is_block());
+    assert_eq!(view.direction(), expected.direction());
+    assert_eq!(view.box_sizing(), expected.box_sizing());
 }
 
 fn width(value: f32) -> Vec<OwnedPropertyOverride> {
@@ -127,10 +106,6 @@ fn prepared_image_ratio_comes_from_intrinsic_facts() {
     cascade.computed[child].height = L::Auto;
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-    assert_eq!(
-        session.layout_style_for_key(child).unwrap().aspect_ratio,
-        Some(2.0)
-    );
     assert_eq!(session.style_view(child).aspect_ratio(), Some(2.0));
 }
 
@@ -144,10 +119,6 @@ fn known_image_fallback_dimensions_are_prepared_as_sparse_overrides() {
     cascade.computed[child].height = L::Auto;
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-    assert_eq!(
-        session.style_view(child).size(),
-        session.layout_style_for_key(child).unwrap().size
-    );
     assert_eq!(
         session.style_view(child).size().width,
         taffy::Dimension::length(100.0)
@@ -166,59 +137,66 @@ fn prepared_containment_clears_the_natural_ratio_override() {
     cascade.computed[child].contain = raikiri_style::property::Contain::SIZE;
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-    assert_eq!(
-        session.layout_style_for_key(child).unwrap().aspect_ratio,
-        None
-    );
     assert_eq!(session.style_view(child).aspect_ratio(), None);
 }
 
 #[test]
 fn prepared_grid_alignment_preserves_the_semantic_bridge_overrides() {
-    for (container, child_css) in [
+    use taffy::AlignItems;
+    for (container, child_css, align_self, justify_self, aspect_ratio) in [
+        // A definite size keeps `stretch` from reaching the item.
         (
             "display:grid;align-items:stretch",
             "width:13px;height:max-content",
+            Some(AlignItems::START),
+            None,
+            None,
         ),
         (
             "display:grid;align-items:stretch;justify-items:stretch",
             "aspect-ratio:2/1",
+            None,
+            None,
+            Some(2.0),
         ),
+        // `last baseline` aligns an absolutely positioned item to its end edge.
         (
             "display:grid;align-items:last baseline",
             "position:absolute;align-self:auto",
+            Some(AlignItems::SAFE_SELF_END),
+            None,
+            None,
         ),
     ] {
         let (mut doc, cascade, child, _) = fixture_with_styles(container, child_css);
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-        let old = session.layout_style_for_key(child).unwrap();
         let view = session.style_view(child);
         assert_eq!(
             taffy::GridItemStyle::align_self(&view),
-            old.align_self,
+            align_self,
             "{container}: {child_css}"
         );
         assert_eq!(
             taffy::GridItemStyle::justify_self(&view),
-            old.justify_self,
+            justify_self,
             "{container}: {child_css}"
         );
         assert_eq!(
             view.aspect_ratio(),
-            old.aspect_ratio,
+            aspect_ratio,
             "{container}: {child_css}"
         );
     }
 }
 
-fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, old: &LayoutStyle) {
+fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, expected: &LayoutStyle) {
     use taffy::{
         FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
         GridItemStyle as GI,
     };
     macro_rules! same {
-        ($trait:ident: $($getter:ident),+ $(,)?) => { $(assert_eq!($trait::$getter(&view), $trait::$getter(old), "{}", stringify!($getter));)+ };
+        ($trait:ident: $($getter:ident),+ $(,)?) => { $(assert_eq!($trait::$getter(&view), $trait::$getter(expected), "{}", stringify!($getter));)+ };
     }
     same!(CoreStyle: box_generation_mode, is_block, is_compressible_replaced, is_replaced, box_sizing, direction, overflow, scrollbar_width, position, inset, is_containing_block, size, min_size, max_size, aspect_ratio, margin, padding, border, contain);
     same!(FC: flex_direction, flex_wrap, gap, align_content, align_items, justify_content);
@@ -227,19 +205,19 @@ fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, old: 
     same!(GI: grid_row, grid_column, align_self, justify_self);
     assert_eq!(
         GC::grid_template_columns(&view).is_none(),
-        GC::grid_template_columns(old).is_none()
+        GC::grid_template_columns(expected).is_none()
     );
     assert_eq!(
         GC::grid_template_rows(&view).is_none(),
-        GC::grid_template_rows(old).is_none()
+        GC::grid_template_rows(expected).is_none()
     );
     assert_eq!(
         GC::grid_auto_columns(&view).count(),
-        GC::grid_auto_columns(old).count()
+        GC::grid_auto_columns(expected).count()
     );
     assert_eq!(
         GC::grid_auto_rows(&view).count(),
-        GC::grid_auto_rows(old).count()
+        GC::grid_auto_rows(expected).count()
     );
 }
 
@@ -247,8 +225,6 @@ fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, old: 
 fn prepare_for_inspection(tree: &mut LayoutSession<'_>) {
     let keys = tree.document.nodes.layout_keys().collect();
     tree.style_views
-        .as_mut()
-        .unwrap()
         .prepare_keys(tree.document, keys, &tree.scoped_overrides);
 }
 
@@ -263,7 +239,10 @@ fn contents_recipe_keeps_only_explicit_inherited_direction() {
     prepare_for_inspection(&mut tree);
     assert_neutral_getters(
         tree.style_view(child),
-        tree.layout_style_for_key(child).unwrap(),
+        &LayoutStyle {
+            direction: taffy::Direction::Rtl,
+            ..LayoutStyle::default()
+        },
     );
     block_view_tests::assert_all_new_roles(&tree, child);
 }
@@ -277,7 +256,14 @@ fn initial_containing_block_recipe_uses_page_dimensions() {
     prepare_for_inspection(&mut tree);
     assert_neutral_getters(
         tree.style_view(icb),
-        tree.layout_style_for_key(icb).unwrap(),
+        &LayoutStyle {
+            display: taffy::Display::Block,
+            size: taffy::Size {
+                width: taffy::Dimension::length(123.0),
+                height: taffy::Dimension::length(456.0),
+            },
+            ..LayoutStyle::default()
+        },
     );
     block_view_tests::assert_all_new_roles(&tree, icb);
 }
@@ -291,15 +277,10 @@ fn anonymous_table_and_cell_recipes_inherit_only_selected_facts() {
     super::super::apply_computed_to_style(&mut doc, &cascade).unwrap();
     let parent = doc.nodes[child].parent.unwrap();
     let make = |display| {
-        let mut style = LayoutStyle {
-            direction: taffy::Direction::Rtl,
-            ..LayoutStyle::default()
-        };
-        let mut node = Node::new_element("div".into(), style.clone(), None);
+        let mut node = Node::new_element("div".into(), None);
         node.parent = Some(parent);
         node.set_display(display);
-        node.refresh_box_style(&mut style);
-        (node, style)
+        node
     };
     doc.set_anonymous_tables(vec![make(DisplayValue::Table)]);
     doc.set_anonymous_cells(vec![make(DisplayValue::TableCell)]);
@@ -322,7 +303,11 @@ fn anonymous_table_and_cell_recipes_inherit_only_selected_facts() {
     for idx in [table, cell] {
         assert_neutral_getters(
             tree.style_view(idx),
-            tree.layout_style_for_key(idx).unwrap(),
+            &LayoutStyle {
+                display: taffy::Display::Block,
+                direction: taffy::Direction::Rtl,
+                ..LayoutStyle::default()
+            },
         );
         block_view_tests::assert_all_new_roles(&tree, idx);
     }
@@ -336,49 +321,37 @@ fn resolved_edge_scopes_do_not_resolve_percentages_twice_and_restore_on_unwind()
     );
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-    let original = tree.layout_style_for_key(child).unwrap().padding;
+    let original = tree.style_view(child).padding();
     let result: Result<(), ()> = tree.with_resolved_edges(child, 200.0, true, |tree| {
         let expected = taffy::LengthPercentage::length(25.0);
         assert_eq!(tree.style_view(child).padding().left, expected);
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().padding.left,
-            expected
-        );
         assert_eq!(
             tree.style_view(child).padding().bottom,
             taffy::LengthPercentage::length(7.0)
         );
         tree.with_resolved_edges(child, 300.0, false, |tree| {
             assert_eq!(tree.style_view(child).padding().left, expected);
-            assert_eq!(
-                tree.layout_style_for_key(child).unwrap().padding.left,
-                expected
-            );
         });
         Err(())
     });
     assert!(result.is_err());
-    assert_eq!(tree.layout_style_for_key(child).unwrap().padding, original);
+    assert_eq!(tree.style_view(child).padding(), original);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         tree.with_resolved_edges(child, 100.0, false, |_| panic!("edge scope unwind"));
     }));
     assert!(panic.is_err());
-    assert_eq!(tree.layout_style_for_key(child).unwrap().padding, original);
-    // The prepared and legacy handles differ; compare the restored expression by resolution.
-    let view_pointer = tree
+    assert_eq!(tree.style_view(child).padding(), original);
+    // The restored padding is the authored expression again: 10% + 5px.
+    let pointer = tree
         .style_view(child)
         .padding()
         .left
         .into_raw()
         .calc_value();
-    let old_pointer = original.left.into_raw().calc_value();
-    // SAFETY: The prepared style and the document retain their respective owners.
+    // SAFETY: The prepared style retains its owners.
     #[allow(unsafe_code)]
     unsafe {
-        assert_eq!(
-            raikiri_layout_style::resolve_calc(view_pointer, 100.0),
-            crate::taffy_impl::resolve_calc(old_pointer, 100.0)
-        );
+        assert_eq!(raikiri_layout_style::resolve_calc(pointer, 100.0), 15.0);
     }
 }
 
@@ -391,10 +364,6 @@ fn viewport_overflow_is_recorded_when_the_body_write_happens() {
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
     assert_eq!(tree.style_view(body).overflow().x, taffy::Overflow::Hidden);
     tree.propagate_viewport_overflow(&cascade, body);
-    assert_eq!(
-        tree.style_view(body).overflow(),
-        tree.layout_style_for_key(body).unwrap().overflow
-    );
     assert_eq!(tree.style_view(body).overflow().x, taffy::Overflow::Visible);
     assert_eq!(
         cascade.computed[body].overflow.x,
@@ -403,22 +372,33 @@ fn viewport_overflow_is_recorded_when_the_body_write_happens() {
 }
 
 #[test]
-fn fixed_and_vertical_direction_match_physical_legacy_getters() {
-    for css in [
-        "position:fixed",
-        "writing-mode:sideways-lr;direction:ltr",
-        "writing-mode:vertical-rl;text-orientation:upright;direction:rtl",
+fn fixed_and_vertical_direction_are_physical() {
+    for (css, position, direction) in [
+        (
+            "position:fixed",
+            taffy::Position::Absolute,
+            taffy::Direction::Ltr,
+        ),
+        (
+            "writing-mode:sideways-lr;direction:ltr",
+            taffy::Position::Static,
+            taffy::Direction::Rtl,
+        ),
+        (
+            "writing-mode:vertical-rl;text-orientation:upright;direction:rtl",
+            taffy::Position::Static,
+            taffy::Direction::Ltr,
+        ),
     ] {
         let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", css);
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
         let view = session.style_view(child);
-        let old = session.layout_style_for_key(child).unwrap();
-        assert_eq!(view.position(), old.position(), "{css}");
-        assert_eq!(view.direction(), old.direction(), "{css}");
+        assert_eq!(view.position(), position, "{css}");
+        assert_eq!(view.direction(), direction, "{css}");
         assert_eq!(
             view.size(),
-            old.size(),
+            LayoutStyle::default().size(),
             "physical sizes stay unprojected: {css}"
         );
     }
@@ -452,10 +432,12 @@ fn source_metadata_covers_hidden_logical_and_keyword_policies() {
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
         prepare_for_inspection(&mut tree);
-        assert_neutral_getters(
-            tree.style_view(child),
-            tree.layout_style_for_key(child).unwrap(),
+        assert_eq!(
+            tree.style_view(child).box_generation_mode() == taffy::BoxGenerationMode::None,
+            child_css == "display:none",
+            "{child_css}"
         );
+        block_view_tests::assert_all_new_roles(&tree, child);
         let crate::layout::box_style_data::LayoutBase::Synthetic(neutral) = &tree
             .box_style_data
             .get(crate::node::arena::BoxKey::Source(0))
@@ -540,7 +522,7 @@ fn prepared_claims_include_transform_containing_blocks() {
 }
 
 #[test]
-fn repeated_pass_overrides_replace_the_property_and_project_legacy_values() {
+fn repeated_pass_overrides_replace_the_property() {
     let (mut doc, cascade, child, _) = fixture();
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
@@ -549,7 +531,7 @@ fn repeated_pass_overrides_replace_the_property_and_project_legacy_values() {
     let key = session.nodes.box_key(child).unwrap();
     assert_eq!(session.box_style_data.get(key).unwrap().pass.len(), 1);
     assert_eq!(
-        session.layout_style_for_key(child).unwrap().size.width,
+        session.style_view(child).size().width,
         taffy::Dimension::length(55.0)
     );
 }
@@ -612,12 +594,6 @@ fn fallback_image_replaced_policy_uses_normalized_keyword_sizes() {
         taffy::Dimension::length(100.0)
     );
     assert!(session.style_view(child).is_replaced());
-    assert!(
-        session
-            .layout_style_for_key(child)
-            .unwrap()
-            .item_is_replaced
-    );
 }
 
 #[test]
@@ -695,8 +671,6 @@ pub(crate) fn prepare_all_layout_views(tree: &mut LayoutSession<'_>) {
     tree.publish_layout_cache_mutations();
     let keys = tree.nodes.layout_keys().collect();
     tree.style_views
-        .as_mut()
-        .expect("view-owning test session")
         .prepare_keys(tree.document, keys, &tree.scoped_overrides);
 }
 

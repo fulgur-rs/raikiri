@@ -1,29 +1,21 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use crate::layout::test_support::page_box_800x600;
 use raikiri_style::{build_rule_tree, cascade};
 
 #[test]
 fn percentage_width_under_page_positioned_box_uses_its_owner_page() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(
-        Some(html),
-        "div",
-        Style::default(),
-        Some("display:block;height:20px"),
-    );
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "div", Some("display:block;height:20px"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let positioned = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("position:absolute;top:90px;left:0;right:0;height:20px"),
     );
     let child = document.append_element(
         Some(positioned),
         "div",
-        Style::default(),
         Some("display:block;width:50%;height:10px"),
     );
     let rules = build_rule_tree(&document);
@@ -74,19 +66,12 @@ fn vertical_pagination_keeps_an_absolute_box_at_the_page_origin() {
         let html = document.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some(&format!("display:block;writing-mode:{mode}")),
         );
-        let body = document.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("display:block;margin:20px"),
-        );
+        let body = document.append_element(Some(html), "body", Some("display:block;margin:20px"));
         let positioned = document.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("position:absolute;left:0;top:0;width:200px;height:50px"),
         );
         // Two blocks that cannot share a page make the document paginate.
@@ -94,7 +79,6 @@ fn vertical_pagination_keeps_an_absolute_box_at_the_page_origin() {
             document.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(&format!(
                     "display:block;width:{width}px;height:100px;break-inside:avoid"
                 )),
@@ -139,34 +123,21 @@ fn a_box_in_a_filtered_inline_on_a_later_page_is_placed_like_one_in_a_relative_i
         ("display:inline;filter:blur(1px)", "position:fixed"),
     ] {
         let mut document = Document::new();
-        let html =
-            document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = document.append_element(Some(0), "html", Some("display:block"));
         let body = document.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:0;font-family:Ahem;font-size:10px;line-height:10px"),
         );
-        document.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:100px"),
-        );
-        let paragraph = document.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;width:200px"),
-        );
+        document.append_element(Some(body), "div", Some("display:block;height:100px"));
+        let paragraph =
+            document.append_element(Some(body), "div", Some("display:block;width:200px"));
         document.append_text(paragraph, "aaaa ");
-        let outer =
-            document.append_element(Some(paragraph), "span", Style::default(), Some(outer_css));
+        let outer = document.append_element(Some(paragraph), "span", Some(outer_css));
         document.append_text(outer, "bb");
         let child = document.append_element(
             Some(outer),
             "span",
-            Style::default(),
             Some(&format!(
                 "{child_css};left:50%;top:50%;width:10px;height:10px"
             )),

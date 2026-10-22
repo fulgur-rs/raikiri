@@ -4,7 +4,8 @@ use taffy::CacheTree;
 #[test]
 fn old_saved_cache_is_not_restored_into_new_epoch() {
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let id = taffy::NodeId::from(0usize);
     let input = layout_input(10.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
@@ -19,7 +20,8 @@ fn old_saved_cache_is_not_restored_into_new_epoch() {
 #[test]
 fn stale_cache_capture_in_current_epoch_stays_stale_after_restore() {
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let id = taffy::NodeId::from(0usize);
     let input = layout_input(10.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
@@ -34,7 +36,8 @@ fn stale_cache_capture_in_current_epoch_stays_stale_after_restore() {
 #[test]
 fn valid_saved_cache_restores_only_its_own_original_entries() {
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let id = taffy::NodeId::from(0usize);
     let a = layout_input(10.0);
     let b = layout_input(20.0);
@@ -53,7 +56,8 @@ fn valid_saved_cache_restores_only_its_own_original_entries() {
 #[test]
 fn synthetic_rebuild_invalidates_parent() {
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let id = taffy::NodeId::from(0usize);
     let input = layout_input(10.0);
     for kind in 0..3 {
@@ -65,9 +69,11 @@ fn synthetic_rebuild_invalidates_parent() {
             0 => tree.document.set_anonymous_tables(Vec::new()),
             1 => tree.document.set_anonymous_cells(Vec::new()),
             _ => {
-                tree.document.set_initial_containing_block(
-                    crate::node::Node::new_document(),
-                    crate::LayoutStyle::default(),
+                crate::layout::initial_containing_block::prepare(
+                    tree.document,
+                    &session_cascade,
+                    100.0,
+                    100.0,
                 );
             }
         }
@@ -130,15 +136,10 @@ fn cold_warm_uncached_outputs_agree() {
             child,
             Some(format!("display:{display};width:80px;height:30px").into()),
         );
-        doc.append_element(
-            Some(child),
-            "div",
-            crate::LayoutStyle::default(),
-            Some("width:50%;height:10px"),
-        );
+        doc.append_element(Some(child), "div", Some("width:50%;height:10px"));
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
-        let mut tree = LayoutSession::new(&mut doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
         let id = taffy::NodeId::from(child);
         let input = layout_input(80.0);
@@ -155,11 +156,12 @@ fn cold_warm_uncached_outputs_agree() {
 
 #[test]
 fn legacy_session_size_scope_restores_values_after_unwind() {
+    use taffy::CoreStyle;
     let (mut doc, mut cascade, child, _) = crate::layout::style_views::tests::fixture();
     cascade.computed[child].min_width = raikiri_style::ComputedLengthPercentageOrAuto::MaxContent;
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::new(&mut doc);
-    let old = tree.layout_style_for_key(child).unwrap().min_size;
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let old = tree.style_view(child).min_size();
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::taffy_impl::content_limits::with_width_limits(
             &mut tree,
@@ -173,7 +175,7 @@ fn legacy_session_size_scope_restores_values_after_unwind() {
         );
     }));
     assert!(panic.is_err());
-    assert_eq!(tree.layout_style_for_key(child).unwrap().min_size, old);
+    assert_eq!(tree.style_view(child).min_size(), old);
     assert_eq!(tree.override_checkpoint(), 0);
     assert!(tree.layout_cache_context.active_frame.is_none());
 }
@@ -185,7 +187,7 @@ fn resolved_edge_scopes_publish_exactly_once_per_change() {
         let mut tree = if checked {
             LayoutSession::with_cascade(&mut doc, &cascade)
         } else {
-            LayoutSession::new(&mut doc)
+            LayoutSession::bridged(&mut doc, &cascade)
         };
         crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
         // Count scope changes separately from the pending document publication.
@@ -207,7 +209,8 @@ fn resolved_edge_scopes_publish_exactly_once_per_change() {
 #[test]
 fn saved_cache_from_previous_namespace_cannot_be_restored() {
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let id = taffy::NodeId::from(0usize);
     let input = layout_input(10.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
@@ -232,16 +235,10 @@ fn table_and_multicol_flex_descendants_agree_after_forced_miss() {
         };
         doc.set_element_inline_style(child, Some(container_css.into()));
         let parent = if table {
-            let row = doc.append_element(
-                Some(child),
-                "tr",
-                crate::LayoutStyle::default(),
-                Some("display:table-row"),
-            );
+            let row = doc.append_element(Some(child), "tr", Some("display:table-row"));
             doc.append_element(
                 Some(row),
                 "td",
-                crate::LayoutStyle::default(),
                 Some("display:table-cell;height:20px;border:1px solid"),
             )
         } else {
@@ -250,17 +247,11 @@ fn table_and_multicol_flex_descendants_agree_after_forced_miss() {
         let flex = doc.append_element(
             Some(parent),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:flex;width:100%;height:10px"),
         );
-        doc.append_element(
-            Some(flex),
-            "div",
-            crate::LayoutStyle::default(),
-            Some("width:50%;height:10px"),
-        );
+        doc.append_element(Some(flex), "div", Some("width:50%;height:10px"));
         let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
-        let mut tree = LayoutSession::new(&mut doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
         let id = taffy::NodeId::from(child);
         let mut input = layout_input(80.0);

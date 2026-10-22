@@ -17,7 +17,6 @@ fn child_size(root_css: &str, lead: &str, child_css: &str) -> (f32, f32) {
         child = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!("display:block;{child_css}")),
         );
         doc.append_text(child, "AAAA BBBB");
@@ -140,14 +139,12 @@ fn a_block_beside_a_float_fits_its_content_to_the_room_the_float_leaves() {
         let float = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;float:left;width:40px;height:10px"),
         );
         doc.append_text(float, "");
         child = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;overflow:hidden;width:fit-content"),
         );
         doc.append_text(child, "AAAA BBBB");

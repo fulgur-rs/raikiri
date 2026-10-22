@@ -1,7 +1,6 @@
 //! Regression coverage for cumulative counter snapshot resource limits.
 
 use anyrender::Scene;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{
     Document, MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES, counter_snapshots, layout_single_page,
 };
@@ -15,14 +14,9 @@ fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {
     const DESCENDANT_COUNT: usize = 1024;
 
     let mut document = Document::new();
-    let html = document.append_element(
-        Some(document.root_index()),
-        "html",
-        Style::default(),
-        None::<&str>,
-    );
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(document.root_index()), "html", None::<&str>);
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(
         style,
         "body, div { display: block } body::before { content: counter(c0) }",
@@ -33,9 +27,9 @@ fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {
         use std::fmt::Write as _;
         write!(reset, " c{index} 0").expect("writing to String succeeds");
     }
-    let body = document.append_element(Some(html), "body", Style::default(), Some(reset));
+    let body = document.append_element(Some(html), "body", Some(reset));
     for _ in 0..DESCENDANT_COUNT {
-        document.append_element(Some(body), "div", Style::default(), None::<&str>);
+        document.append_element(Some(body), "div", None::<&str>);
     }
     document.mark_in_document_flags();
 
@@ -111,14 +105,9 @@ fn multipage_paint_shares_one_counter_snapshot_build() {
     const DESCENDANT_COUNT: usize = 1024;
 
     let mut document = Document::new();
-    let html = document.append_element(
-        Some(document.root_index()),
-        "html",
-        Style::default(),
-        None::<&str>,
-    );
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(document.root_index()), "html", None::<&str>);
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(
         style,
         "body, div { display: block } body::before { content: counter(c0) }",
@@ -129,9 +118,9 @@ fn multipage_paint_shares_one_counter_snapshot_build() {
         use std::fmt::Write as _;
         write!(reset, " c{index} 0").expect("writing to String succeeds");
     }
-    let body = document.append_element(Some(html), "body", Style::default(), Some(reset));
+    let body = document.append_element(Some(html), "body", Some(reset));
     for _ in 0..DESCENDANT_COUNT {
-        document.append_element(Some(body), "div", Style::default(), None::<&str>);
+        document.append_element(Some(body), "div", None::<&str>);
     }
     document.mark_in_document_flags();
     let rules = build_rule_tree(&document);

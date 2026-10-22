@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
 
@@ -14,19 +13,16 @@ fn body_doc(
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some(format!("display:block;{html_css}").as_str()),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(format!("display:block;{body_css}").as_str()),
     );
     let child = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!("display:block;height:10px;{child_css}").as_str()),
     );
     let rules = build_rule_tree(&doc);
@@ -62,45 +58,49 @@ fn boxes_that_keep_the_margins_apart_add_them() {
     }
 }
 
+/// The vertical overflow the layout of a document gives its body, and the
+/// top of the body.
+fn laid_out_body_overflow(html_css: &str, body_css: &str) -> (TaffyOverflow, f32) {
+    let (mut doc, cascade, body, _) = body_doc(html_css, body_css, "margin-top:30px");
+    with_ahem(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::with_cascade(&mut doc, &cascade);
+    crate::layout::page_pipeline::layout_single_page_in_session(
+        &mut session,
+        &cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    let overflow = crate::taffy_impl::block_flow::style_input::physical(&session, body)
+        .overflow
+        .y;
+    drop(session);
+    (overflow, absolute_rect(&doc, body).1)
+}
+
 #[test]
 fn body_overflow_is_visible_only_when_it_propagates_to_the_viewport() {
-    let (doc, body, _) = laid_out("", "margin:8px;overflow:hidden", "margin-top:30px");
     assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.overflow.y,
-        TaffyOverflow::Visible
+        laid_out_body_overflow("", "margin:8px;overflow:hidden"),
+        (TaffyOverflow::Visible, 30.0)
     );
-    assert_eq!(absolute_rect(&doc, body).1, 30.0);
-    let (doc, body, _) = laid_out(
-        "overflow:hidden",
-        "margin:8px;overflow:hidden",
-        "margin-top:30px",
-    );
-    assert_ne!(
-        doc.layout_node_with_style(body).unwrap().style.overflow.y,
-        TaffyOverflow::Visible
-    );
-    assert_eq!(absolute_rect(&doc, body).1, 8.0);
+    let (overflow, top) = laid_out_body_overflow("overflow:hidden", "margin:8px;overflow:hidden");
+    assert_ne!(overflow, TaffyOverflow::Visible);
+    assert_eq!(top, 8.0);
 }
 
 #[test]
 fn a_body_outside_html_keeps_its_overflow() {
     let mut doc = Document::new();
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:block;overflow:hidden"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:block;overflow:hidden"));
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
-    let before = doc.layout_node_with_style(body).unwrap().style.overflow;
-    crate::layout::context::LayoutSession::new(&mut doc)
-        .propagate_viewport_overflow(&cascade, body);
-    assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.overflow,
-        before
-    );
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    let overflow = |session: &crate::layout::context::LayoutSession<'_>| {
+        crate::taffy_impl::block_flow::style_input::physical(session, body).overflow
+    };
+    let before = overflow(&session);
+    session.propagate_viewport_overflow(&cascade, body);
+    assert_eq!(overflow(&session), before);
 }
 
 #[test]

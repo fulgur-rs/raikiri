@@ -1,7 +1,7 @@
 use crate::Document;
 use crate::LayoutStyle as Style;
-use crate::layout::context::LayoutSession;
-use raikiri_style::property::{DisplayValue, PositionValue, TextAlign, TextAlignLast};
+use crate::layout::test_support::{restyle, style_css, with_bridged_session};
+use raikiri_style::property::{DisplayValue, PositionValue};
 use taffy::{
     AvailableSpace, Dimension, Display, Float, LayoutInput, LengthPercentage, LengthPercentageAuto,
     Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
@@ -13,8 +13,9 @@ fn block_layout(
     inputs: LayoutInput,
     context: Option<&mut super::context::BlockContext<'_>>,
 ) -> taffy::LayoutOutput {
-    let mut session = LayoutSession::new(tree);
-    crate::taffy_impl::block_layout(&mut session, node_id, inputs, context)
+    with_bridged_session(tree, |session| {
+        crate::taffy_impl::block_layout(session, node_id, inputs, context)
+    })
 }
 
 fn inputs() -> LayoutInput {
@@ -48,29 +49,27 @@ fn minimum_height_drops_the_last_child_margin_it_separates() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Block,
             min_size: Size {
                 width: LengthPercentageAuto::auto(),
                 height: LengthPercentageAuto::length(80.0),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     tree.append_element(
         Some(child),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Block,
             size: Size {
                 width: Dimension::auto(),
@@ -81,8 +80,7 @@ fn minimum_height_drops_the_last_child_margin_it_separates() {
                 ..Style::default().margin
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The margin neither escapes the block nor adds to the height that
@@ -102,7 +100,7 @@ fn auto_height_encloses_a_float_before_end_padding() {
         let root = tree.append_element(
             Some(0),
             "div",
-            Style {
+            Some(style_css(&Style {
                 display: Display::FlowRoot,
                 box_sizing: taffy::BoxSizing::ContentBox,
                 size: Size {
@@ -119,13 +117,12 @@ fn auto_height_encloses_a_float_before_end_padding() {
                     ..Style::default().padding
                 },
                 ..Style::default()
-            },
-            None::<&str>,
+            })),
         );
         tree.append_element(
             Some(root),
             "div",
-            Style {
+            Some(style_css(&Style {
                 display: Display::Block,
                 float: Float::Left,
                 size: Size {
@@ -133,8 +130,7 @@ fn auto_height_encloses_a_float_before_end_padding() {
                     height: Dimension::length(80.0),
                 },
                 ..Style::default()
-            },
-            None::<&str>,
+            })),
         );
         let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
         assert_eq!(output.size.height, expected);
@@ -147,16 +143,15 @@ fn fixed_children_do_not_participate_in_block_flow() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let fixed = tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             position: taffy::Position::Fixed,
             size: Size {
                 width: Dimension::length(20.0),
@@ -168,20 +163,18 @@ fn fixed_children_do_not_participate_in_block_flow() {
                 ..Style::default().inset
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let sibling = tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             size: Size {
                 width: Dimension::length(40.0),
                 height: Dimension::length(10.0),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(output.size.height, 10.0);
@@ -197,49 +190,25 @@ fn inline_absolute_candidates_keep_the_rtl_float_slot_point() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
-            display: Display::FlowRoot,
-            direction: taffy::Direction::Rtl,
-            size: Size {
-                width: Dimension::length(200.0),
-                height: Dimension::length(100.0),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:flow-root;direction:rtl;width:200px;height:100px;text-align:center"),
     );
-    tree.nodes[root].static_position_text_align = TextAlign::Center;
-    tree.nodes[root].static_position_text_align_last = TextAlignLast::Auto;
     tree.append_element(
         Some(root),
         "div",
-        Style {
-            display: Display::Block,
-            float: Float::Left,
-            size: Size {
-                width: Dimension::length(50.0),
-                height: Dimension::length(50.0),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:block;float:left;width:50px;height:50px"),
     );
     let abs = tree.append_element(
         Some(root),
         "div",
-        Style {
-            position: taffy::Position::Absolute,
-            size: Size {
-                width: Dimension::length(40.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("position:absolute;width:40px;height:10px"),
     );
-    tree.nodes[abs].set_box_properties(DisplayValue::Inline, PositionValue::Absolute);
 
-    let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let output = with_bridged_session(&mut tree, |session| {
+        // The bridge blockifies an absolutely positioned box; this one stands
+        // for a box whose static position is that of an inline-level box.
+        session.nodes[abs].set_box_properties(DisplayValue::Inline, PositionValue::Absolute);
+        crate::taffy_impl::block_layout(session, NodeId::from(root), inputs(), None)
+    });
     let candidate = output.oof_candidates.as_slice().first().unwrap();
     assert_eq!(candidate.static_position.x.area.start, 125.0);
     assert_eq!(
@@ -255,17 +224,16 @@ fn absolute_child_overflow_is_reported_without_growing_the_block() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             position: taffy::Position::Relative,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             position: taffy::Position::Absolute,
             size: Size {
                 width: Dimension::length(40.0),
@@ -277,8 +245,7 @@ fn absolute_child_overflow_is_reported_without_growing_the_block() {
                 ..Style::default().inset
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(
@@ -296,15 +263,14 @@ fn block(tree: &mut Document, parent: usize, width: f32, height: f32) -> usize {
     tree.append_element(
         Some(parent),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Block,
             size: Size {
                 width: Dimension::length(width),
                 height: Dimension::length(height),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     )
 }
 
@@ -320,38 +286,26 @@ fn float_avoiding_blocks_align_within_the_available_slot() {
         let root = tree.append_element(
             Some(0),
             "div",
-            Style {
+            Some(style_css(&Style {
                 display: Display::FlowRoot,
                 direction,
                 ..Style::default()
-            },
-            None::<&str>,
+            })),
         );
         let float = block(&mut tree, root, 50.0, 20.0);
-        tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+        restyle(&mut tree, float, "float:left");
         let child = block(&mut tree, root, 40.0, 10.0);
-        tree.layout_node_with_style_mut(child)
-            .unwrap()
-            .style
-            .display = Display::FlowRoot;
-        tree.layout_node_with_style_mut(child)
-            .unwrap()
-            .style
-            .margin
-            .left = if left_auto {
-            LengthPercentageAuto::auto()
-        } else {
-            LengthPercentageAuto::length(0.0)
-        };
-        tree.layout_node_with_style_mut(child)
-            .unwrap()
-            .style
-            .margin
-            .right = if right_auto {
-            LengthPercentageAuto::auto()
-        } else {
-            LengthPercentageAuto::length(0.0)
-        };
+        restyle(&mut tree, child, "display:flow-root");
+        let side = |auto: bool| if auto { "auto" } else { "0" };
+        restyle(
+            &mut tree,
+            child,
+            &format!(
+                "margin-left:{};margin-right:{}",
+                side(left_auto),
+                side(right_auto)
+            ),
+        );
         block_layout(&mut tree, NodeId::from(root), inputs(), None);
         assert_eq!(tree.nodes[child].unrounded_layout.location.x, expected);
     }
@@ -363,28 +317,26 @@ fn fit_content_children_keep_the_finite_available_width() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             size: Size {
                 width: Dimension::fit_content(),
                 height: Dimension::auto(),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     for _ in 0..2 {
         let float = block(&mut tree, child, 100.0, 10.0);
-        tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+        restyle(&mut tree, float, "float:left");
     }
     let mut input = inputs();
     input.known_dimensions.width = Some(150.0);
@@ -405,16 +357,15 @@ fn intrinsic_width_children_use_their_final_width_for_auto_margins() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             size: Size {
                 width: Dimension::max_content(),
@@ -426,8 +377,7 @@ fn intrinsic_width_children_use_their_final_width_for_auto_margins() {
                 ..Style::default().margin
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     block(&mut tree, child, 50.0, 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -439,20 +389,14 @@ fn intrinsic_width_children_use_their_final_width_for_auto_margins() {
 fn nested_out_of_flow_grids_preserve_the_outer_grid_area() {
     use crate::layout::test_support::{absolute_rect, page_box_800x600};
     let mut tree = Document::new();
-    let html = tree.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = tree.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let grid = tree.append_element(Some(body), "div", Style::default(), Some("display:grid;position:relative;width:200px;height:20px;grid-template-columns:100px 100px"));
-    let nested = tree.append_element(Some(grid), "div", Style::default(), Some("display:grid;position:absolute;left:0;top:0;width:10px;height:10px;grid-template-columns:10px"));
-    tree.append_element(
-        Some(nested),
-        "div",
-        Style::default(),
-        Some("width:10px;height:10px"),
-    );
+    let html = tree.append_element(Some(0), "html", None::<&str>);
+    let body = tree.append_element(Some(html), "body", Some("margin:0"));
+    let grid = tree.append_element(Some(body), "div", Some("display:grid;position:relative;width:200px;height:20px;grid-template-columns:100px 100px"));
+    let nested = tree.append_element(Some(grid), "div", Some("display:grid;position:absolute;left:0;top:0;width:10px;height:10px;grid-template-columns:10px"));
+    tree.append_element(Some(nested), "div", Some("width:10px;height:10px"));
     let child = tree.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;grid-column:2;left:0;top:0;width:10px;height:10px"),
     );
     tree.mark_in_document_flags();
@@ -475,7 +419,7 @@ fn block_distribution_alignment_uses_the_single_subject_fallback() {
         let root = tree.append_element(
             Some(0),
             "div",
-            Style {
+            Some(style_css(&Style {
                 display: Display::FlowRoot,
                 size: Size {
                     width: Dimension::auto(),
@@ -483,8 +427,7 @@ fn block_distribution_alignment_uses_the_single_subject_fallback() {
                 },
                 align_content: alignment,
                 ..Style::default()
-            },
-            None::<&str>,
+            })),
         );
         let child = block(&mut tree, root, 40.0, 20.0);
         block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -498,7 +441,7 @@ fn block_alignment_moves_scrollable_overflow_with_the_children() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             size: Size {
                 width: Dimension::auto(),
@@ -506,14 +449,10 @@ fn block_alignment_moves_scrollable_overflow_with_the_children() {
             },
             align_content: taffy::AlignContent::END,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let child = block(&mut tree, root, 40.0, 20.0);
-    tree.layout_node_with_style_mut(child)
-        .unwrap()
-        .style
-        .display = Display::FlowRoot;
+    restyle(&mut tree, child, "display:flow-root");
     block(&mut tree, child, 40.0, 150.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(tree.nodes[child].unrounded_layout.location.y, 80.0);
@@ -526,7 +465,7 @@ fn block_alignment_moves_the_exported_baseline() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             size: Size {
                 width: Dimension::auto(),
@@ -534,21 +473,19 @@ fn block_alignment_moves_the_exported_baseline() {
             },
             align_content: taffy::AlignContent::END,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Flex,
             size: Size {
                 width: Dimension::length(40.0),
                 height: Dimension::length(20.0),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     block(&mut tree, child, 40.0, 20.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -567,16 +504,15 @@ fn baseline_probe(
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Flex,
             overflow: taffy::Point {
                 x: overflow,
@@ -587,13 +523,12 @@ fn baseline_probe(
                 height: Dimension::length(20.0),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     tree.append_element(
         Some(child),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Block,
             size: Size {
                 width: Dimension::length(20.0),
@@ -606,8 +541,7 @@ fn baseline_probe(
                 bottom: LengthPercentageAuto::length(0.0),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     block_layout(&mut tree, NodeId::from(root), inputs(), None)
 }
@@ -641,22 +575,18 @@ fn a_box_that_is_not_a_scroll_container_keeps_a_baseline_below_its_border_box() 
 
 #[test]
 fn containment_limits_descendant_overflow_to_the_child_border_box() {
-    for contain in [taffy::Contain::LAYOUT, taffy::Contain::PAINT] {
+    for contain_css in ["contain:layout", "contain:paint"] {
         let mut tree = Document::new();
         let root = tree.append_element(
             Some(0),
             "div",
-            Style {
+            Some(style_css(&Style {
                 display: Display::FlowRoot,
                 ..Style::default()
-            },
-            None::<&str>,
+            })),
         );
         let child = block(&mut tree, root, 100.0, 10.0);
-        tree.layout_node_with_style_mut(child)
-            .unwrap()
-            .style
-            .contain = contain;
+        restyle(&mut tree, child, contain_css);
         block(&mut tree, child, 300.0, 10.0);
         let mut input = inputs();
         input.known_dimensions.width = Some(100.0);
@@ -671,12 +601,11 @@ fn a_known_width_transfers_through_the_block_aspect_ratio() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             aspect_ratio: Some(2.0),
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     block(&mut tree, root, 20.0, 10.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -693,12 +622,11 @@ fn ratio_box(tree: &mut Document, style: Style) -> usize {
     tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             aspect_ratio: Some(2.0),
             ..style
-        },
-        None::<&str>,
+        })),
     )
 }
 
@@ -893,7 +821,7 @@ fn scrollable_overflow_keeps_the_end_padding_after_content() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             size: Size {
                 width: Dimension::auto(),
@@ -909,8 +837,7 @@ fn scrollable_overflow_keeps_the_end_padding_after_content() {
                 ..Style::default().padding
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     block(&mut tree, root, 300.0, 100.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -922,11 +849,10 @@ fn plain(tree: &mut Document, parent: usize) -> usize {
     tree.append_element(
         Some(parent),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Block,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     )
 }
 
@@ -936,26 +862,18 @@ fn a_formatting_context_pushed_below_an_adjoining_float_separates_its_margin() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let outer = plain(&mut tree, root);
     let holder = plain(&mut tree, outer);
     let float = block(&mut tree, holder, 200.0, 200.0);
-    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+    restyle(&mut tree, float, "float:left");
     let context = block(&mut tree, outer, 200.0, 1.0);
-    tree.layout_node_with_style_mut(context)
-        .unwrap()
-        .style
-        .display = Display::FlowRoot;
-    tree.layout_node_with_style_mut(context)
-        .unwrap()
-        .style
-        .margin
-        .top = LengthPercentageAuto::length(200.0);
+    restyle(&mut tree, context, "display:flow-root");
+    restyle(&mut tree, context, "margin-top:200px");
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The box does not fit beside the float, so its margin no longer
     // collapses with the parent's and the float stays at the top.
@@ -971,26 +889,18 @@ fn a_formatting_context_beside_an_adjoining_float_keeps_its_margin() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let outer = plain(&mut tree, root);
     let holder = plain(&mut tree, outer);
     let float = block(&mut tree, holder, 100.0, 10.0);
-    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+    restyle(&mut tree, float, "float:left");
     let context = block(&mut tree, outer, 100.0, 10.0);
-    tree.layout_node_with_style_mut(context)
-        .unwrap()
-        .style
-        .display = Display::FlowRoot;
-    tree.layout_node_with_style_mut(context)
-        .unwrap()
-        .style
-        .margin
-        .top = LengthPercentageAuto::length(50.0);
+    restyle(&mut tree, context, "display:flow-root");
+    restyle(&mut tree, context, "margin-top:50px");
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The box fits beside the float, so the margin escapes and carries
     // the float down with it.
@@ -1006,29 +916,18 @@ fn a_formatting_context_clearing_an_adjoining_float_starts_below_it() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let outer = plain(&mut tree, root);
     let float = block(&mut tree, outer, 100.0, 50.0);
-    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+    restyle(&mut tree, float, "float:left");
     let context = block(&mut tree, outer, 100.0, 50.0);
-    tree.layout_node_with_style_mut(context)
-        .unwrap()
-        .style
-        .display = Display::FlowRoot;
-    tree.layout_node_with_style_mut(context)
-        .unwrap()
-        .style
-        .clear = taffy::Clear::Left;
-    tree.layout_node_with_style_mut(context)
-        .unwrap()
-        .style
-        .margin
-        .top = LengthPercentageAuto::length(300.0);
+    restyle(&mut tree, context, "display:flow-root");
+    restyle(&mut tree, context, "clear:left");
+    restyle(&mut tree, context, "margin-top:300px");
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 0.0);
     assert_eq!(tree.nodes[context].unrounded_layout.location.y, 50.0);
@@ -1043,37 +942,21 @@ fn clearance_under_an_unresolved_origin_excludes_the_escaping_margin() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::Block,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let float = block(&mut tree, root, 50.0, 100.0);
-    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+    restyle(&mut tree, float, "float:left");
     let padded = plain(&mut tree, root);
-    tree.layout_node_with_style_mut(padded)
-        .unwrap()
-        .style
-        .padding
-        .top = LengthPercentage::length(1.0);
+    restyle(&mut tree, padded, "padding-top:1px");
     let inner = plain(&mut tree, padded);
     let first = plain(&mut tree, inner);
-    tree.layout_node_with_style_mut(first)
-        .unwrap()
-        .style
-        .margin
-        .bottom = LengthPercentageAuto::length(49.0);
+    restyle(&mut tree, first, "margin-bottom:49px");
     let cleared = plain(&mut tree, inner);
-    tree.layout_node_with_style_mut(cleared)
-        .unwrap()
-        .style
-        .clear = taffy::Clear::Left;
-    tree.layout_node_with_style_mut(cleared)
-        .unwrap()
-        .style
-        .margin
-        .top = LengthPercentageAuto::length(98.0);
+    restyle(&mut tree, cleared, "clear:left");
+    restyle(&mut tree, cleared, "margin-top:98px");
     // Like the body of a page, the root's own top margin may still collapse
     // with its children, so no origin in it is resolved.
     let mut root_inputs = inputs();
@@ -1092,35 +975,16 @@ fn clearance_under_an_unresolved_origin_counts_the_block_margin_once() {
     let mut tree = Document::new();
     let root = plain(&mut tree, 0);
     let float = block(&mut tree, root, 50.0, 150.0);
-    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+    restyle(&mut tree, float, "float:left");
     let padded = plain(&mut tree, root);
-    tree.layout_node_with_style_mut(padded)
-        .unwrap()
-        .style
-        .padding
-        .top = LengthPercentage::length(1.0);
+    restyle(&mut tree, padded, "padding-top:1px");
     let inner = plain(&mut tree, padded);
-    tree.layout_node_with_style_mut(inner)
-        .unwrap()
-        .style
-        .margin
-        .top = LengthPercentageAuto::length(20.0);
+    restyle(&mut tree, inner, "margin-top:20px");
     let first = plain(&mut tree, inner);
-    tree.layout_node_with_style_mut(first)
-        .unwrap()
-        .style
-        .margin
-        .bottom = LengthPercentageAuto::length(49.0);
+    restyle(&mut tree, first, "margin-bottom:49px");
     let cleared = plain(&mut tree, inner);
-    tree.layout_node_with_style_mut(cleared)
-        .unwrap()
-        .style
-        .clear = taffy::Clear::Left;
-    tree.layout_node_with_style_mut(cleared)
-        .unwrap()
-        .style
-        .margin
-        .top = LengthPercentageAuto::length(50.0);
+    restyle(&mut tree, cleared, "clear:left");
+    restyle(&mut tree, cleared, "margin-top:50px");
     let mut root_inputs = inputs();
     root_inputs.vertical_margins_are_collapsible.start = true;
     block_layout(&mut tree, NodeId::from(root), root_inputs, None);
@@ -1138,18 +1002,11 @@ fn clearance_past_a_float_on_the_same_strut_keeps_the_float_coordinates() {
     let mut tree = Document::new();
     let root = plain(&mut tree, 0);
     let spacer = plain(&mut tree, root);
-    tree.layout_node_with_style_mut(spacer)
-        .unwrap()
-        .style
-        .margin
-        .bottom = LengthPercentageAuto::length(49.0);
+    restyle(&mut tree, spacer, "margin-bottom:49px");
     let float = block(&mut tree, root, 50.0, 10.0);
-    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
+    restyle(&mut tree, float, "float:left");
     let cleared = block(&mut tree, root, 50.0, 10.0);
-    tree.layout_node_with_style_mut(cleared)
-        .unwrap()
-        .style
-        .clear = taffy::Clear::Left;
+    restyle(&mut tree, cleared, "clear:left");
     let mut root_inputs = inputs();
     root_inputs.vertical_margins_are_collapsible.start = true;
     block_layout(&mut tree, NodeId::from(root), root_inputs, None);
@@ -1166,24 +1023,15 @@ fn a_last_child_margin_escapes_when_min_height_equals_the_content() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
     let parent = plain(&mut tree, root);
-    tree.layout_node_with_style_mut(parent)
-        .unwrap()
-        .style
-        .min_size
-        .height = LengthPercentageAuto::length(20.0);
+    restyle(&mut tree, parent, "min-height:20px");
     let child = block(&mut tree, parent, 100.0, 20.0);
-    tree.layout_node_with_style_mut(child)
-        .unwrap()
-        .style
-        .margin
-        .bottom = LengthPercentageAuto::length(100.0);
+    restyle(&mut tree, child, "margin-bottom:100px");
     let next = block(&mut tree, root, 100.0, 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(tree.nodes[parent].unrounded_layout.size.height, 20.0);
@@ -1194,11 +1042,10 @@ fn flow_root_container(tree: &mut Document) -> usize {
     tree.append_element(
         Some(0),
         "div",
-        Style {
+        Some(style_css(&Style {
             display: Display::FlowRoot,
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     )
 }
 
@@ -1211,9 +1058,18 @@ fn float_box(
     height: f32,
 ) -> usize {
     let float = block(tree, parent, width, height);
-    let style = &mut tree.layout_node_with_style_mut(float).unwrap().style;
-    style.float = side;
-    style.clear = clear;
+    let side = match side {
+        Float::Left => "left",
+        Float::Right => "right",
+        Float::None => "none",
+    };
+    let clear = match clear {
+        taffy::Clear::None => "none",
+        taffy::Clear::Left => "left",
+        taffy::Clear::Right => "right",
+        taffy::Clear::Both => "both",
+    };
+    restyle(tree, float, &format!("float:{side};clear:{clear}"));
     float
 }
 
@@ -1225,10 +1081,9 @@ fn formatting_context_box(
     height: f32,
 ) -> usize {
     let child = block(tree, parent, width.unwrap_or(0.0), height);
-    let style = &mut tree.layout_node_with_style_mut(child).unwrap().style;
-    style.display = Display::FlowRoot;
+    restyle(tree, child, "display:flow-root");
     if width.is_none() {
-        style.size.width = Dimension::auto();
+        restyle(tree, child, "width:auto");
     }
     child
 }
@@ -1414,9 +1269,7 @@ fn a_square_formatting_context_settles_in_the_widest_room_it_fits_beside_the_flo
         );
     }
     let square = formatting_context_box(&mut tree, root, None, 0.0);
-    let style = &mut tree.layout_node_with_style_mut(square).unwrap().style;
-    style.size.height = Dimension::auto();
-    style.aspect_ratio = Some(1.0);
+    restyle(&mut tree, square, "height:auto;aspect-ratio:1");
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // 140px wide it would be 140px tall and reach the 10px band, which
     // narrows it to 10px. Only 10px tall, it no longer reaches that band, and

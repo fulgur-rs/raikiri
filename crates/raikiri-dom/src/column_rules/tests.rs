@@ -60,12 +60,7 @@ fn hidden_descendants_and_zero_height_containers_do_not_create_rules() {
         "A\nB\nC\nD",
         "width:100px;column-count:2;column-gap:20px;column-rule:2px solid red;orphans:1;widows:1",
     );
-    document.append_element(
-        Some(owner),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:none"),
-    );
+    document.append_element(Some(owner), "div", Some("display:none"));
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     layout_single_page(&mut document, &cascade, PageBox::default()).unwrap();
@@ -83,15 +78,9 @@ fn each_row_box_of_a_continued_nested_container_paints_its_own_rules() {
             let inner = document.append_element(
                 Some(root),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:block;height:500px;column-count:1;column-gap:10px;column-rule:2px solid red"),
             );
-            document.append_element(
-                Some(inner),
-                "div",
-                crate::LayoutStyle::default(),
-                Some("display:block;height:600px"),
-            );
+            document.append_element(Some(inner), "div", Some("display:block;height:600px"));
         },
     );
     let inner = document.nodes[outer].children[0];
@@ -130,13 +119,11 @@ fn rules_that_only_the_rows_of_a_continued_nested_container_have_are_painted() {
             let inner = document.append_element(
                 Some(root),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:block;column-count:2;column-gap:10px;column-rule:2px solid red"),
             );
             document.append_element(
                 Some(inner),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:block;height:200px;break-inside:avoid-column"),
             );
         },
@@ -168,15 +155,9 @@ fn each_row_box_of_a_continued_nested_container_is_a_slice_of_the_whole_box() {
             let inner = document.append_element(
                 Some(root),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:block;height:500px;column-count:1"),
             );
-            document.append_element(
-                Some(inner),
-                "div",
-                crate::LayoutStyle::default(),
-                Some("display:block;height:600px"),
-            );
+            document.append_element(Some(inner), "div", Some("display:block;height:600px"));
         },
     );
     let inner = document.nodes[outer].children[0];

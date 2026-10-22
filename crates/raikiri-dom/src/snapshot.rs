@@ -331,11 +331,7 @@ impl Document {
                         animation_style,
                         template,
                     } => {
-                        let mut node = Node::new_element(
-                            tag.into(),
-                            Default::default(),
-                            inline_style.map(Into::into),
-                        );
+                        let mut node = Node::new_element(tag.into(), inline_style.map(Into::into));
                         let e = node.data.as_element_mut().expect("element constructor");
                         e.namespace = namespace.map(Into::into);
                         e.prefix = prefix.map(Into::into);
@@ -357,13 +353,6 @@ impl Document {
                 node
             })
             .collect();
-        doc.retained_layout_styles.retain_source_styles();
-        for id in 1..doc.nodes.len() {
-            doc.retained_layout_styles.insert(
-                crate::node::arena::BoxKey::Source(id),
-                crate::LayoutStyle::default(),
-            );
-        }
         // Rebuild O(1) parent pointers from the validated `children` lists.
         // `validate` already enforced single-parent, bounds, and acyclicity,
         // so every listed child resolves to exactly one parent here.

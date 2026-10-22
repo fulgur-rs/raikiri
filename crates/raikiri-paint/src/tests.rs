@@ -2,26 +2,19 @@ use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use peniko::Color;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
-use taffy::{Dimension, Display, Size};
 
 /// Return a Document + CascadeResult for hello-world
 /// (`<html><head></head><body><p style="color:red">Hi</p></body></html>`)
 /// after `layout_single_page`; shared setup for all tests in this module.
 fn hello_world_paint_setup() -> (Document, raikiri_style::CascadeResult) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;color:red"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some("display:block;color:red"));
     let _t = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -32,13 +25,12 @@ fn hello_world_paint_setup() -> (Document, raikiri_style::CascadeResult) {
 #[test]
 fn paint_single_page_empty_list_item_emits_marker() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let _item = doc.append_element(
         Some(body),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-type: disc"),
     );
     let rules = build_rule_tree(&doc);
@@ -61,10 +53,10 @@ fn decorated_text_scene(style: &str) -> Scene {
 
 fn decorated_text_scene_with_text(style: &str, text: &str) -> Scene {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(Some(body), "p", Style::default(), Some(style));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some(style));
     let _text = doc.append_text(p, text);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -144,13 +136,12 @@ fn fixed_width_named_page_entry_points_paint_the_same_document() {
 #[test]
 fn paint_single_page_box_shadow_emits_basic_outer_shadow_command() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let _box = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width: 100px; height: 100px; box-shadow: rgba(0,255,0,1) 10px 10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -176,13 +167,12 @@ fn paint_single_page_box_shadow_emits_basic_outer_shadow_command() {
 #[test]
 fn paint_single_page_box_shadow_resolves_current_color_and_skips_inset_or_transparent() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let _box = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width: 100px; height: 100px; color: #0a141e; box-shadow: currentcolor 4px 3px, transparent 8px 3px, inset black 12px 3px",
             ),
         );
@@ -208,13 +198,12 @@ fn paint_single_page_box_shadow_resolves_current_color_and_skips_inset_or_transp
 #[test]
 fn paint_single_page_outline_emits_basic_solid_outline() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let _box = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width: 60px; height: 60px; color: green; outline: 20px solid currentcolor"),
     );
     let rules = build_rule_tree(&doc);
@@ -245,15 +234,15 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
     use peniko::Color;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "::highlight(sample) { background-color: rgb(0, 255, 255); }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Some("display:block"));
     let text = doc.append_text(paragraph, "a!");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -301,21 +290,16 @@ fn custom_highlight_paints_only_on_the_line_holding_its_text() {
     use peniko::Color;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "::highlight(sample) { background-color: rgb(0, 255, 255); }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     // The paragraph is narrower than a word, so each word has a line of its own.
-    let paragraph = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;width:1px"),
-    );
+    let paragraph = doc.append_element(Some(body), "p", Some("display:block;width:1px"));
     let text = doc.append_text(paragraph, "aa bb");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -384,29 +368,19 @@ fn highlighted_ruby_annotation(
     use anyrender::types::Paint;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "::highlight(sample) { background-color: rgb(0, 255, 255); }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some(paragraph_style));
-    let ruby = doc.append_element(Some(paragraph), "ruby", Style::default(), Some(ruby_style));
-    let base = doc.append_element(
-        Some(ruby),
-        "rb",
-        Style::default(),
-        Some("display:ruby-base"),
-    );
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Some(paragraph_style));
+    let ruby = doc.append_element(Some(paragraph), "ruby", Some(ruby_style));
+    let base = doc.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     doc.append_text(base, "a");
-    let annotation = doc.append_element(
-        Some(ruby),
-        "rt",
-        Style::default(),
-        Some("display:ruby-text;font-size:10px"),
-    );
+    let annotation = doc.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:10px"));
     let text = doc.append_text(annotation, "xyz");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -490,22 +464,17 @@ fn custom_highlight_skips_hidden_text_on_a_line_with_visible_text() {
     use anyrender::types::Paint;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "::highlight(sample) { background-color: rgb(0, 255, 255); }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Some("display:block"));
     doc.append_text(paragraph, "seen ");
-    let hidden = doc.append_element(
-        Some(paragraph),
-        "span",
-        Style::default(),
-        Some("visibility:hidden"),
-    );
+    let hidden = doc.append_element(Some(paragraph), "span", Some("visibility:hidden"));
     let text = doc.append_text(hidden, "unseen");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -576,13 +545,12 @@ fn custom_highlight_of_an_inter_character_ruby_annotation_runs_down_its_text() {
 #[test]
 fn paint_single_page_opacity_wraps_element_subtree_in_one_layer() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let _box = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width: 60px; height: 60px; background: red; opacity: 0.5"),
     );
     let rules = build_rule_tree(&doc);
@@ -614,12 +582,11 @@ fn paint_single_page_opacity_wraps_element_subtree_in_one_layer() {
 #[test]
 fn paint_single_page_blurred_text_shadow_uses_a_filtered_layer() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let p = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some("display:block;color: black; text-shadow: 3px 4px 5px red"),
     );
     doc.append_text(p, "blur");
@@ -685,9 +652,9 @@ fn paint_single_page_canvas_background_site_is_noop_at_m1_4() {
 #[test]
 fn paint_single_page_uses_page_background_color_before_document_canvas() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let _text = doc.append_text(body, "Hi");
     let mut rules = build_rule_tree(&doc);
     rules.add_stylesheet(
@@ -720,10 +687,10 @@ fn paint_single_page_uses_page_background_color_before_document_canvas() {
 fn an_auto_body_margin_places_direct_text_like_a_zero_margin() {
     fn first_glyph_x(style: &str) -> f64 {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         // The body is a block box whatever else its style says.
         let style = format!("display:block;{style}");
-        let body = doc.append_element(Some(html), "body", Style::default(), Some(&style));
+        let body = doc.append_element(Some(html), "body", Some(&style));
         doc.append_text(body, "direct body text");
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -753,12 +720,11 @@ fn an_auto_body_margin_places_direct_text_like_a_zero_margin() {
 #[test]
 fn paint_img_filename_color_uses_padding_aware_background_path() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let img = doc.append_element(
         Some(body),
         "img",
-        Style::default(),
         Some("width:20px;height:10px;padding:2px"),
     );
     doc.set_element_attributes(img, vec![("src".into(), "red.png".into())]);
@@ -781,7 +747,7 @@ fn paint_single_page_without_body_returns_early() {
     // Fragment (Document → direct `<p>` child, no `<body>`): `paint_document`
     // returns early, but still emits the white canvas background.
     let mut doc = Document::new();
-    let p = doc.append_element(Some(0), "p", Style::default(), Some("display:block"));
+    let p = doc.append_element(Some(0), "p", Some("display:block"));
     let _t = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -814,18 +780,14 @@ fn paint_single_page_skips_zero_size_subtree() {
     // explicit size) is not walked. This checks `paint_element`'s early return
     // (the layout-side `empty_display_none_leaf...` test covers that side).
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    // Put the hidden element directly under body (Display::None, size 0).
-    let hidden_style = Style {
-        display: Display::None,
-        size: Size {
-            width: Dimension::length(100.0),
-            height: Dimension::length(50.0),
-        },
-        ..Default::default()
-    };
-    let hidden = doc.append_element(Some(body), "hidden", hidden_style, Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    // Put the hidden element directly under body (display:none with an explicit size).
+    let hidden = doc.append_element(
+        Some(body),
+        "hidden",
+        Some("display:none;width:100px;height:50px"),
+    );
     let _child_of_hidden = doc.append_text(hidden, "should not be painted");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -854,18 +816,16 @@ fn paint_single_page_skips_zero_size_subtree() {
 #[test]
 fn paint_single_page_clips_overflow_hidden_descendants() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:70px;height:70px;overflow:hidden"),
     );
     let _child = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:20px;background:blue"),
     );
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -898,41 +858,12 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
     // losing the GlyphRun. Under the current `is_display_none` check, the
     // Display::Block container is walked and the child's GlyphRun is emitted.
     // This distinguishes zero-size blocks from hidden elements.
-    //
-    // `apply_computed_to_style` now dispatches `bridge_size` for width.
-    // The hand-built `taffy::Style { size.width = length(0) }` in this
-    // fixture would be overwritten by the initial `cv.width` = Auto
-    // (because `<container>` has no author width). An auto-width
-    // Display::Block stretches to the containing width (A4), so the
-    // `size.width == 0.0` sanity check would fail. Instead, specify
-    // `"width: 0px; height: 0px"` inline so the bridge translates
-    // cv.{width,height} = ComputedLengthPercentageOrAuto::Px(0.0).
-    // Initially, height was not bridged, so the hand-built
-    // `zero_block_style.size.height = length(0.0)` still preserved the
-    // zero-height sanity check.
-    //
-    // Later, `bridge_size` began writing a struct literal for
-    // `style.size = Size { width, height }`, bridging height as well.
-    // The hand-built `size.height = length(0.0)` is now redundant because
-    // the inline `height: 0px` overwrites it with the same value.
-    // Behavior is unchanged.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let zero_block_style = Style {
-        display: Display::Block,
-        size: Size {
-            width: Dimension::length(0.0),
-            height: Dimension::length(0.0),
-        },
-        ..Default::default()
-    };
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let container = doc.append_element(
         Some(body),
         "container",
-        zero_block_style,
-        // The bridge overwrites both width and height, so set them inline
-        // (height is bridged too).
         Some("display:block; width: 0px; height: 0px"),
     );
     let _text = doc.append_text(container, "visible");
@@ -1107,19 +1038,17 @@ fn paint_single_page_nested_decorations_follow_line_order() {
     use peniko::Color;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let parent = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some("display:block;text-decoration-line:overline; text-decoration-color:red"),
     );
     let child = doc.append_element(
         Some(parent),
         "span",
-        Style::default(),
         Some("text-decoration-line:underline; text-decoration-color:blue"),
     );
     let _text = doc.append_text(child, "nested");
@@ -1205,15 +1134,13 @@ fn paint_single_page_html_decoration_propagates_into_body() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("text-decoration-line:underline; text-decoration-color:red"),
     );
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let p = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some("display:block;color:blue; text-decoration-line:none"),
     );
     let _text = doc.append_text(p, "root");
@@ -1249,19 +1176,17 @@ fn paint_single_page_ancestor_decoration_propagates_and_keeps_origin_color() {
     use peniko::Color;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let parent = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some("display:block;color:red; text-decoration-line:underline"),
     );
     let child = doc.append_element(
         Some(parent),
         "span",
-        Style::default(),
         Some("color:blue; text-decoration-line:none"),
     );
     let _text = doc.append_text(child, "child");
@@ -1321,9 +1246,9 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
     // (`style="margin: ..."`) instead; this also matches the production
     // code path.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     // `margin: 20px 0px 0px 20px` (top=20, right=0, bottom=0, left=20)
     // recreates the old hand-built shape in CSS. Specify `0px` explicitly:
     // raikiri-style `parse_length_value` does not accept bare unitless `0`
@@ -1333,7 +1258,6 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
     let p = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some("display:block;margin: 20px 0px 0px 20px; color: red"),
     );
     let text = doc.append_text(p, "Hi");
@@ -1412,11 +1336,11 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
 ///
 fn span_text_glyph_y(span_style: Option<&str>) -> f32 {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
-    let span = doc.append_element(Some(p), "span", Style::default(), span_style);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some("display:block"));
+    let span = doc.append_element(Some(p), "span", span_style);
     let _text = doc.append_text(span, "Sub");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1474,9 +1398,9 @@ fn paint_single_page_skips_empty_text() {
     // An empty Text node has no glyph on any line and must silently skip
     // `draw_glyphs`.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some("display:block"));
     let _t = doc.append_text(p, ""); // ← empty text
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1767,7 +1691,7 @@ fn paint_single_page_debug_asserts_cascade_document_length_match() {
     // #[cfg(debug_assertions)]; otherwise `cargo test --release` fails.
     // Release builds deliberately do not enforce this invariant.
     let (mut doc, cr) = hello_world_paint_setup();
-    doc.append_element(Some(0), "p", Style::default(), Some("display:block"));
+    doc.append_element(Some(0), "p", Some("display:block"));
     let mut scene = Scene::new();
     paint_single_page(&mut scene, &doc, &cr, PageBox::A4).expect("paint succeeds");
 }
@@ -1811,14 +1735,9 @@ fn img_element_paints_its_decoded_pixels() {
     // may separately apply — this test only checks paint's own draw
     // call given a known box.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let img = doc.append_element(
-        Some(body),
-        "img",
-        Style::default(),
-        Some("width:10px;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let img = doc.append_element(Some(body), "img", Some("width:10px;height:10px"));
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1906,24 +1825,14 @@ fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", None::<&str>);
     doc.append_text(
         style,
         ".svg-root { opacity:0.75; background-color:blue; border:1px solid red }",
     );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("color:rgb(0,128,0)"),
-    );
-    let svg = doc.append_element(
-        Some(body),
-        "svg",
-        Style::default(),
-        Some("width:10px;height:10px"),
-    );
+    let body = doc.append_element(Some(html), "body", Some("color:rgb(0,128,0)"));
+    let svg = doc.append_element(Some(body), "svg", Some("width:10px;height:10px"));
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attributes(
         svg,
@@ -1935,7 +1844,7 @@ fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
             ("height".into(), "1".into()),
         ],
     );
-    let rect = doc.append_element(Some(svg), "rect", Style::default(), None::<&str>);
+    let rect = doc.append_element(Some(svg), "rect", None::<&str>);
     doc.set_element_namespace(rect, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attributes(
         rect,
@@ -2174,9 +2083,9 @@ fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::Rend
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let svg = doc.append_element(Some(body), "svg", Style::default(), Some(style));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let svg = doc.append_element(Some(body), "svg", Some(style));
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attributes(
         svg,
@@ -2186,7 +2095,7 @@ fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::Rend
             ("height".into(), "1".into()),
         ],
     );
-    let image = doc.append_element(Some(svg), "image", Style::default(), None::<&str>);
+    let image = doc.append_element(Some(svg), "image", None::<&str>);
     doc.set_element_namespace(image, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attributes(
         image,
@@ -2246,18 +2155,12 @@ fn img_padding_percentage_resolves_against_width_not_height() {
     // against height" (10px) disagree, so a wrong reference axis
     // produces a different, assertion-failing offset.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let container = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:100px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let container = doc.append_element(Some(body), "div", Some("display:block;width:100px"));
     let img = doc.append_element(
         Some(container),
         "img",
-        Style::default(),
         Some(
             "width:100px;height:50px;padding-top:20%;padding-right:0px;\
                  padding-bottom:0px;padding-left:0px",
@@ -2335,12 +2238,11 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
         return;
     }
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let img = doc.append_element(
             Some(body),
             "img",
-            Style::default(),
             Some(
                 "width:100px;height:50px;font-family:Ahem;font-size:16px;padding-top:1ch;                 padding-right:0px;padding-bottom:0px;padding-left:0px;                 background-color:rgb(255,0,0);background-clip:content-box",
             ),
@@ -2385,13 +2287,12 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
 #[test]
 fn paint_single_page_border_radius_unifies_matching_border_and_background() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let _head = document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let _box = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;width: 100px; height: 80px; background: red; border: 4px solid red; \
                  border-radius: 12px; background-clip: padding-box",
@@ -2400,7 +2301,6 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
     let _current_color = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;width: 100px; height: 80px; color: green; background: red; \
                  border: 4px solid currentcolor; border-radius: 12px; \
@@ -2410,7 +2310,6 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
     let _dashed = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;width: 100px; height: 80px; background: red; border: 4px dashed blue; \
                  border-radius: 12px",
@@ -2434,16 +2333,15 @@ fn paint_single_page_border_radius_unifies_matching_border_and_background() {
 #[test]
 fn trace_records_box_clip_opacity_and_text_in_walk_order() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let o = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;opacity:.5;overflow:hidden;height:50px"),
     );
-    let p = doc.append_element(Some(o), "p", Style::default(), Some("display:block"));
+    let p = doc.append_element(Some(o), "p", Some("display:block"));
     let _t = doc.append_text(p, "hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -2489,20 +2387,15 @@ fn contextual_custom_highlight_uses_the_texts_inherited_foreground() {
     use peniko::Color;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "::highlight(sample) { background-color: red; background-color: color-mix(in srgb,currentcolor,red); }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let paragraph = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;color:blue"),
-    );
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Some("display:block;color:blue"));
     let text = doc.append_text(paragraph, "a!");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -2551,9 +2444,9 @@ fn padded_dotted_page_border_stays_inside_the_right_page_margin() {
     // The page border box is the page area inset by the page margins on every
     // side (CSS Paged Media 3 §3.2), whatever its padding and border style.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let _text = doc.append_text(body, "Hi");
     let mut rules = build_rule_tree(&doc);
     rules.add_stylesheet(
@@ -3086,19 +2979,13 @@ fn negative_sticky_inline_group_paints_below_the_text() {
 #[test]
 fn trace_records_inline_opacity_around_an_atomic_inline() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
-    let span = doc.append_element(
-        Some(p),
-        "span",
-        Style::default(),
-        Some("display:inline;opacity:.5"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some("display:block"));
+    let span = doc.append_element(Some(p), "span", Some("display:inline;opacity:.5"));
     let atomic = doc.append_element(
         Some(span),
         "i",
-        Style::default(),
         Some("display:inline-block;width:5px;height:5px;background:blue"),
     );
     let rules = build_rule_tree(&doc);
@@ -3160,22 +3047,17 @@ fn negative_atomic_inline_paints_below_the_text_of_a_clipping_paragraph() {
 #[test]
 fn custom_highlight_in_a_translucent_inline_element_paints_in_its_group() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "::highlight(sample) { background-color: rgb(0, 255, 255); }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Some("display:block"));
     doc.append_text(paragraph, "a");
-    let span = doc.append_element(
-        Some(paragraph),
-        "span",
-        Style::default(),
-        Some("display:inline;opacity:.5"),
-    );
+    let span = doc.append_element(Some(paragraph), "span", Some("display:inline;opacity:.5"));
     let text = doc.append_text(span, "b!");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -3323,19 +3205,9 @@ fn first_letter_fragments_composite_with_their_retained_opacity() {
 #[test]
 fn paint_with_images_skips_the_content_of_a_singular_root() {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block; transform: scale(0)"),
-    );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let img = doc.append_element(
-        Some(body),
-        "img",
-        Style::default(),
-        Some("width:10px;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block; transform: scale(0)"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let img = doc.append_element(Some(body), "img", Some("width:10px;height:10px"));
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");

@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use raikiri_traits::{IntrinsicBox, ResolveDisposition, ResolvedIntrinsic};
 use std::cell::Cell;
 
@@ -75,9 +74,9 @@ fn skips_img_inside_template_contents() {
     // in-document — see `resolves_img_appended_directly_under_template`).
     let mut doc = Document::new();
     let root = doc.root_index();
-    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(root), "template", None::<&str>);
     let frag = doc.allocate_template_fragment_root(tmpl);
-    let img = doc.append_element(Some(frag), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(frag), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     doc.mark_in_document_flags();
     assert!(
@@ -98,8 +97,8 @@ fn resolves_img_appended_directly_under_template() {
     // in-document and is resolved like any other reachable `<img>`.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
-    let img = doc.append_element(Some(tmpl), "img", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(root), "template", None::<&str>);
+    let img = doc.append_element(Some(tmpl), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     doc.mark_in_document_flags();
     assert!(
@@ -116,7 +115,7 @@ fn resolves_img_appended_directly_under_template() {
 fn resolves_img_with_absolute_src() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
     resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0)).expect("resolve Ok");
@@ -130,7 +129,7 @@ fn resolves_img_with_absolute_src() {
 fn uses_intrinsic_from_a_fallback_disposition() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
     resolve_images(&mut doc, &FallbackResolver(30.0, 40.0))
@@ -143,7 +142,7 @@ fn uses_intrinsic_from_a_fallback_disposition() {
 fn skips_img_with_relative_src_without_a_base() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "relative.png".into())]);
 
     resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0)).expect("resolve Ok");
@@ -166,7 +165,7 @@ fn resolves_relative_img_src_against_document_base() {
 
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "../image.png".into())]);
     let resolver = Capture(std::cell::RefCell::new(None));
     let base = Url::parse("https://example.test/book/chapter.html").unwrap();
@@ -188,7 +187,7 @@ fn resolves_relative_img_src_against_document_base() {
 fn propagates_resolver_error() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
     let err = resolve_images(&mut doc, &AlwaysErrResolver)
@@ -204,7 +203,7 @@ fn propagates_resolver_error() {
 fn resolver_error_clears_stale_size_and_dirties_layout() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     doc.mark_in_document_flags();
 
@@ -222,9 +221,9 @@ fn resolver_error_clears_stale_size_and_dirties_layout() {
 fn resolver_error_stops_the_walk_at_the_first_failure() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let first = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(first, vec![("src".into(), "file:///a.png".into())]);
-    let second = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let second = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(second, vec![("src".into(), "file:///b.png".into())]);
 
     let resolver = CountingErrResolver::default();
@@ -241,7 +240,7 @@ fn resolver_error_stops_the_walk_at_the_first_failure() {
 fn ignores_non_img_elements() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let div = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    let div = doc.append_element(Some(root), "div", None::<&str>);
     doc.set_element_attributes(div, vec![("src".into(), "file:///x.png".into())]);
 
     resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0)).expect("resolve Ok");
@@ -256,7 +255,7 @@ fn re_resolving_after_src_becomes_unresolvable_clears_stale_value() {
     // mutated to something unresolvable and `resolve_images` runs again.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0)).expect("resolve Ok");
     assert_eq!(doc.nodes[img].image_intrinsic_size(), Some((10.0, 20.0)));
@@ -271,7 +270,7 @@ fn re_resolving_after_src_becomes_unresolvable_clears_stale_value() {
 fn intrinsic_size_changes_dirty_layout_caches_without_dirtying_unchanged_sizes() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(root), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     doc.mark_in_document_flags();
 
@@ -299,7 +298,7 @@ fn intrinsic_size_changes_dirty_layout_caches_without_dirtying_unchanged_sizes()
 fn canvas_intrinsic_uses_width_height_with_defaults_and_ratio() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let canvas = doc.append_element(Some(root), "canvas", Style::default(), None::<&str>);
+    let canvas = doc.append_element(Some(root), "canvas", None::<&str>);
     doc.mark_in_document_flags();
     resolve_canvas_intrinsic_sizes(&mut doc);
     assert_eq!(
@@ -328,7 +327,7 @@ fn canvas_intrinsic_uses_width_height_with_defaults_and_ratio() {
 fn canvas_intrinsic_skips_non_canvas_and_inert_subtrees() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let div = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    let div = doc.append_element(Some(root), "div", None::<&str>);
     doc.set_element_attributes(div, vec![("width".into(), "50".into())]);
     doc.mark_in_document_flags();
     resolve_canvas_intrinsic_sizes(&mut doc);
@@ -339,7 +338,7 @@ fn canvas_intrinsic_skips_non_canvas_and_inert_subtrees() {
 fn canvas_intrinsic_handles_invalid_zero_overlong_and_foreign() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let canvas = doc.append_element(Some(root), "canvas", Style::default(), None::<&str>);
+    let canvas = doc.append_element(Some(root), "canvas", None::<&str>);
     doc.set_element_attributes(
         canvas,
         vec![
@@ -372,7 +371,7 @@ fn canvas_intrinsic_handles_invalid_zero_overlong_and_foreign() {
     );
 
     // Foreign-namespace canvas is not a canvas for intrinsic purposes.
-    let foreign = doc.append_element(Some(root), "canvas", Style::default(), None::<&str>);
+    let foreign = doc.append_element(Some(root), "canvas", None::<&str>);
     doc.set_element_namespace(foreign, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attributes(
         foreign,
@@ -389,7 +388,7 @@ fn canvas_intrinsic_handles_invalid_zero_overlong_and_foreign() {
 fn resolved_urls_follow_relative_sources_base_changes_and_attribute_mutation() {
     let mut document = Document::new();
     let root = document.root_index();
-    let image = document.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let image = document.append_element(Some(root), "img", None::<&str>);
     document.set_element_attributes(image, vec![("src".into(), "image.png".into())]);
     document.mark_in_document_flags();
     let first = Url::parse("https://first.test/sub/document.html").unwrap();
@@ -416,7 +415,7 @@ fn resolved_urls_follow_relative_sources_base_changes_and_attribute_mutation() {
 fn a_selected_image_url_outlives_base_changes_until_src_changes() {
     let mut document = Document::new();
     let root = document.root_index();
-    let image = document.append_element(Some(root), "img", Style::default(), None::<&str>);
+    let image = document.append_element(Some(root), "img", None::<&str>);
     document.set_element_attributes(image, vec![("src".into(), "image.png".into())]);
     document.mark_in_document_flags();
     let selected = Url::parse("https://first.test/image.png").unwrap();

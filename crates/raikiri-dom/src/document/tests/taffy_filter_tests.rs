@@ -13,18 +13,19 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
     // root, so its <span> never appears in any taffy child list.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let body = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
-    let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(root), "body", None::<&str>);
+    let tmpl = doc.append_element(Some(body), "template", None::<&str>);
+    let inner = doc.append_element(Some(tmpl), "p", None::<&str>);
     let _txt = doc.append_text(inner, "hi");
     let frag = doc.allocate_template_fragment_root(tmpl);
-    let frag_span = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
+    let frag_span = doc.append_element(Some(frag), "span", None::<&str>);
 
     doc.mark_in_document_flags();
 
     let body_id = taffy::NodeId::from(body);
     let tmpl_id = taffy::NodeId::from(tmpl);
-    let session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let session = LayoutSession::bridged(&mut doc, &session_cascade);
 
     // The body directly contains one template child (taffy count).
     assert_eq!(
@@ -62,13 +63,14 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
 fn a_flex_container_drops_a_white_space_only_child() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "div", None::<&str>);
     doc.append_text(parent, "\n  ");
     doc.set_display(parent, raikiri_style::property::DisplayValue::Flex);
     doc.mark_in_document_flags();
 
     let parent_id = taffy::NodeId::from(parent);
-    let session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let session = LayoutSession::bridged(&mut doc, &session_cascade);
     assert_eq!(
         <LayoutSession<'_> as TraversePartialTree>::child_count(&session, parent_id),
         0,
@@ -91,12 +93,12 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
     // under body and require body taffy child_count == 1 (only <p>).
     let mut doc = Document::new();
     let root = doc.root_index();
-    let body = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(root), "body", None::<&str>);
     // Attach in interleaved order; verify order independence.
     let _c0 = doc.append_comment(Some(body), "hello");
     let _pi0 = doc.append_processing_instruction(Some(body), "xml-stylesheet", "href='x'");
     let _c1 = doc.append_comment(Some(body), "middle");
-    let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+    let p = doc.append_element(Some(body), "p", None::<&str>);
     let _c2 = doc.append_comment(Some(body), "end");
     let _pi1 = doc.append_processing_instruction(Some(body), "xml", "version='1.0'");
 
@@ -120,7 +122,8 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
     // (b) The body has only one child (<p>) in the taffy layout tree.
     let body_taffy = taffy::NodeId::from(body);
     let p_taffy = taffy::NodeId::from(p);
-    let session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let session = LayoutSession::bridged(&mut doc, &session_cascade);
     assert_eq!(
         <LayoutSession<'_> as TraversePartialTree>::child_count(&session, body_taffy),
         1,
@@ -140,21 +143,16 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
 #[test]
 fn document_child_indexing_matches_filtered_flat_tree_order() {
     let mut doc = Document::new();
-    let parent = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
-    let first = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+    let first = doc.append_element(Some(parent), "p", None::<&str>);
     doc.append_text(parent, " \n");
     doc.append_comment(Some(parent), "ignored");
     doc.append_processing_instruction(Some(parent), "xml-stylesheet", "href='x'");
-    let contents = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    let contents = doc.append_element(Some(parent), "span", None::<&str>);
     doc.set_display(contents, raikiri_style::property::DisplayValue::Contents);
-    let nested_first = doc.append_element(Some(contents), "div", Style::default(), None::<&str>);
-    let nested_second = doc.append_element(Some(contents), "div", Style::default(), None::<&str>);
-    let last = doc.append_element(Some(parent), "section", Style::default(), None::<&str>);
+    let nested_first = doc.append_element(Some(contents), "div", None::<&str>);
+    let nested_second = doc.append_element(Some(contents), "div", None::<&str>);
+    let last = doc.append_element(Some(parent), "section", None::<&str>);
     doc.mark_in_document_flags();
 
     let parent_id = taffy::NodeId::from(parent);

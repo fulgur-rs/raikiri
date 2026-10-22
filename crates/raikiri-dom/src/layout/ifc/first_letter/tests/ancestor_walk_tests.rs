@@ -9,12 +9,7 @@ fn origins_fixture(sheet: &str, child_style: &str, prefix: bool) -> (Fixture, us
         if prefix {
             doc.append_text(root, "Before");
         }
-        child = doc.append_element(
-            Some(root),
-            "p",
-            crate::LayoutStyle::default(),
-            Some(child_style),
-        );
+        child = doc.append_element(Some(root), "p", Some(child_style));
         doc.append_text(child, "A");
     });
     (fixture, child)

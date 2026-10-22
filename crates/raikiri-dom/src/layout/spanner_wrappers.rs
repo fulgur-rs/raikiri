@@ -39,7 +39,7 @@ pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &Casca
             &cascade.computed[idx],
             super::bridge::uses_vertical_axes(cascade, idx),
         );
-        lift_into_container(doc, idx, direction);
+        lift_into_container(doc, idx);
         let facts = super::box_style_data::recipes::BoxFacts::for_node(&doc.nodes[idx], direction);
         let recipe = super::box_style_data::recipes::spanner(facts);
         doc.document
@@ -92,64 +92,105 @@ fn collect_wrappers(
 /// draws nothing and starts no stacking context or containing block, and it
 /// does not change how the lines of its content are laid out.
 fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    doc.layout_node_with_style(id).is_some_and(|node| {
-        let zero = LengthPercentageAuto::length(0.0);
-        let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
-        let style = node.style;
-        let cv = &cascade.computed[id];
-        node.display() == DisplayValue::Block
-            && node.taffy_position() == defaults.position
-            && !style.float.is_floated()
-            && style.clear == defaults.clear
-            && style.overflow == defaults.overflow
-            && [
-                style.margin.top,
-                style.margin.right,
-                style.margin.bottom,
-                style.margin.left,
-            ]
-            .into_iter()
-            .all(|margin| margin == zero || margin.is_auto())
-            && style.padding == Rect::zero()
-            && style.border == Rect::zero()
-            && style.size == defaults.size
-            && style.min_size == defaults.min_size
-            && style.max_size == defaults.max_size
-            && !node.paints_whole_box_effects
-            && !node.paints_background_color
-            && !node.claims_absolute_oof
-            && !node.claims_fixed_oof
-            && !node.has_before_or_after_content
-            && [
-                raikiri_style::PseudoElem::FirstLine,
-                raikiri_style::PseudoElem::FirstLetter,
-            ]
-            .into_iter()
-            .all(|pseudo| {
-                !cascade
-                    .pseudo
-                    .contains_key(&(raikiri_style::StyleNodeId::new(id as u64), pseudo))
-            })
-            && node.multicol.is_none()
-            && !node.column_span_all
-            && node.break_before == BreakBetween::Auto
-            && node.break_after == BreakBetween::Auto
-            && node.break_inside == raikiri_style::property::BreakInside::Auto
-            && cv.contain == raikiri_style::property::Contain::NONE
-            && cv.isolation == raikiri_style::property::Isolation::Auto
-            && cv.z_index == raikiri_style::property::ZIndexValue::Auto
-            && !node.used_writing_mode.is_vertical()
-            && style.aspect_ratio.is_none()
-            && node.tag_name().is_none_or(|tag| {
-                !(ATOMIC_TAGS.contains(&tag)
-                    || REPLACED_BOX_TAGS.contains(&tag)
-                    || matches!(
-                        tag,
-                        "fieldset" | "legend" | "details" | "summary" | "dialog"
-                    ))
-            })
-            && !crate::paint_rules::lays_out_as_replaced(doc, id)
-    })
+    let node = &doc.nodes[id];
+    let cv = &cascade.computed[id];
+    // The sizes layout reads: a keyword that sizes nothing is `auto`.
+    let sized = super::bridge::layout_values_of(doc, cascade, id);
+    let min_height =
+        super::bridge::physical_min_height(&sized, super::bridge::uses_vertical_axes(cascade, id));
+    let size_is_auto = |size| matches!(size, ComputedLengthPercentageOrAuto::Auto);
+    // A minimum or maximum that is a keyword is laid out by the box's
+    // content limits, so it constrains nothing here.
+    let limit_is_none = |size| size_is_auto(size) || super::bridge::is_sizing_keyword(size);
+    let overflows_visibly = |value| {
+        !matches!(
+            value,
+            OverflowValue::Hidden
+                | OverflowValue::Clip
+                | OverflowValue::Scroll
+                | OverflowValue::Auto
+        )
+    };
+    let margin_is_zero_or_auto = |margin| match margin {
+        ComputedLengthPercentageOrAuto::Auto => true,
+        ComputedLengthPercentageOrAuto::Px(px) => px == 0.0,
+        _ => false,
+    };
+    let padding_is_zero =
+        |padding| matches!(padding, ComputedLengthPercentageOrCalc::Px(px) if px == 0.0);
+    node.display() == DisplayValue::Block
+        && node.taffy_position() == taffy::Position::Static
+        && !matches!(cv.float, FloatValue::Left | FloatValue::Right)
+        && !matches!(
+            cv.clear,
+            ClearValue::Left | ClearValue::Right | ClearValue::Both
+        )
+        && overflows_visibly(cv.overflow.x)
+        && overflows_visibly(cv.overflow.y)
+        && [
+            cv.margin.top,
+            cv.margin.right,
+            cv.margin.bottom,
+            cv.margin.left,
+        ]
+        .into_iter()
+        .all(margin_is_zero_or_auto)
+        && [
+            cv.padding.top,
+            cv.padding.right,
+            cv.padding.bottom,
+            cv.padding.left,
+        ]
+        .into_iter()
+        .all(padding_is_zero)
+        && [
+            cv.border.top.width().px(),
+            cv.border.right.width().px(),
+            cv.border.bottom.width().px(),
+            cv.border.left.width().px(),
+        ]
+        .into_iter()
+        .all(|width| width == 0.0)
+        && size_is_auto(sized.width)
+        && size_is_auto(sized.height)
+        && limit_is_none(sized.min_width)
+        && limit_is_none(min_height)
+        && limit_is_none(sized.max_width)
+        && limit_is_none(sized.max_height)
+        && !node.paints_whole_box_effects
+        && !node.paints_background_color
+        && !node.claims_absolute_oof
+        && !node.claims_fixed_oof
+        && !node.has_before_or_after_content
+        && [
+            raikiri_style::PseudoElem::FirstLine,
+            raikiri_style::PseudoElem::FirstLetter,
+        ]
+        .into_iter()
+        .all(|pseudo| {
+            !cascade
+                .pseudo
+                .contains_key(&(raikiri_style::StyleNodeId::new(id as u64), pseudo))
+        })
+        && node.multicol.is_none()
+        && !node.column_span_all
+        && node.break_before == BreakBetween::Auto
+        && node.break_after == BreakBetween::Auto
+        && node.break_inside == raikiri_style::property::BreakInside::Auto
+        && cv.contain == raikiri_style::property::Contain::NONE
+        && cv.isolation == raikiri_style::property::Isolation::Auto
+        && cv.z_index == raikiri_style::property::ZIndexValue::Auto
+        && !node.used_writing_mode.is_vertical()
+        && node.preferred_aspect_ratio.is_none()
+        && node.tag_name().is_none_or(|tag| {
+            !(ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(
+                    tag,
+                    "fieldset" | "legend" | "details" | "summary" | "dialog"
+                ))
+        })
+        && !crate::paint_rules::lays_out_as_replaced(doc, id)
 }
 
 /// Whether the lines that the box of `id` holds directly are laid out as they
@@ -211,11 +252,7 @@ fn holds_lines(
 
 /// Makes the box of `id` a `display: contents` one, as the bridge does for
 /// an element that is one.
-fn lift_into_container(doc: &mut LayoutSession<'_>, id: usize, direction: taffy::Direction) {
-    *doc.layout_node_with_style_mut(id).unwrap().style = taffy::Style {
-        direction,
-        ..crate::LayoutStyle::default()
-    };
+fn lift_into_container(doc: &mut LayoutSession<'_>, id: usize) {
     doc.nodes[id].unrounded_layout = taffy::Layout::default();
     doc.nodes[id].multicol_auto_width = true;
     doc.nodes[id].has_logical_min_block_size = false;

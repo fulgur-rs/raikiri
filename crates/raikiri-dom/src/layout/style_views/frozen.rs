@@ -13,13 +13,9 @@ pub(crate) struct FrozenViewInput {
     context: ViewContext,
 }
 impl FrozenViewInput {
-    pub(crate) fn capture(
-        tree: &mut LayoutSession<'_>,
-        idx: usize,
-        context: ViewContext,
-    ) -> Option<Self> {
+    pub(crate) fn capture(tree: &mut LayoutSession<'_>, idx: usize, context: ViewContext) -> Self {
         tree.assert_style_queries_allowed();
-        let views = tree.style_views.as_ref()?;
+        let views = &tree.style_views;
         let key = tree.nodes.box_key(idx).expect("snapshot key is live");
         let source = views
             .boxes
@@ -103,7 +99,7 @@ impl FrozenViewInput {
         }
         input.context.bridge_projection = context.bridge_projection;
         tree.retain_snapshot_calcs(owners);
-        Some(input)
+        input
     }
     pub(crate) fn view(&self) -> LayoutStyleView<'_> {
         LayoutStyleView::with_owned_overrides(

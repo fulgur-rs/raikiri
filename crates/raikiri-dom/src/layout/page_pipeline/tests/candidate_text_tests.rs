@@ -6,7 +6,7 @@ fn positioned_text_start_y_falls_back_to_the_owned_first_line() {
     let mut text_source = None;
     let (mut doc, cascade, root) = ahem_paragraph_with("", |doc, root| {
         doc.append_text(root, "A");
-        doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+        doc.append_element(Some(root), "br", Some("display:inline"));
         text_source = Some(doc.append_text(root, "B"));
     });
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
@@ -62,14 +62,9 @@ fn candidate_text_line_scans_grow_with_lines_instead_of_text_owners() {
         let (mut doc, cascade, _) = ahem_paragraph_with("width:40px", |doc, root| {
             for index in 0..count {
                 if index > 0 {
-                    doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+                    doc.append_element(Some(root), "br", Some("display:inline"));
                 }
-                let span = doc.append_element(
-                    Some(root),
-                    "span",
-                    Style::default(),
-                    Some("display:inline"),
-                );
+                let span = doc.append_element(Some(root), "span", Some("display:inline"));
                 doc.append_text(span, "A");
             }
         });
@@ -93,7 +88,7 @@ fn indexed_owners_keep_shared_lines_and_read_current_pagination_shifts() {
     let (mut doc, cascade, root) = ahem_paragraph_with("width:40px", |doc, root| {
         sources.push(doc.append_text(root, "   "));
         sources.push(doc.append_text(root, "aa"));
-        let span = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+        let span = doc.append_element(Some(root), "span", Some("display:inline"));
         sources.push(doc.append_text(span, "bb cc"));
     });
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
@@ -224,14 +219,13 @@ fn an_atomic_only_line_has_no_indexed_text_owner() {
     let mut sources = Vec::new();
     let (mut doc, cascade, root) = ahem_paragraph_with("width:40px", |doc, root| {
         sources.push(doc.append_text(root, "A"));
-        doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+        doc.append_element(Some(root), "br", Some("display:inline"));
         doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline-block;width:10px;height:10px"),
         );
-        doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+        doc.append_element(Some(root), "br", Some("display:inline"));
         sources.push(doc.append_text(root, "B"));
     });
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();

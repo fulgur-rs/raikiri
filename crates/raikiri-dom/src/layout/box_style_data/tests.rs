@@ -122,7 +122,7 @@ fn interrupted_publication_keeps_old_and_new_payloads_alive() {
 #[test]
 fn document_clone_retains_calc_handles_without_inheriting_readiness() {
     let mut doc = Document::new();
-    let id = doc.append_element(Some(0), "div", crate::LayoutStyle::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "div", None::<&str>);
     let owner = Arc::new(AlignedCalc::new(
         CalcLengthPercentage {
             px: 5.0,
@@ -133,11 +133,6 @@ fn document_clone_retains_calc_handles_without_inheriting_readiness() {
     let weak = Arc::downgrade(&owner);
     let pointer = Arc::as_ptr(&owner).cast();
     doc.box_style_data.calc_values.push(owner);
-    doc.retained_layout_styles
-        .get_mut(BoxKey::Source(id))
-        .unwrap()
-        .size
-        .width = taffy::Dimension::calc(pointer);
     let stamp = doc.box_style_data.stamp();
     doc.box_style_data
         .insert(BoxKey::Source(id), record(LayoutBase::Source(id), stamp));
@@ -146,16 +141,14 @@ fn document_clone_retains_calc_handles_without_inheriting_readiness() {
     assert!(!cloned.box_style_data.is_ready());
     drop(doc);
     assert!(weak.upgrade().is_some());
-    let handle = cloned
-        .layout_style(id)
-        .unwrap()
-        .size
-        .width
-        .into_raw()
-        .calc_value();
-    assert_eq!(handle, pointer);
-    assert_eq!(crate::taffy_impl::resolve_calc(handle, 0.0), 5.0);
-    assert_eq!(crate::taffy_impl::resolve_calc(handle, 100.0), 30.0);
+    let retained = cloned
+        .box_style_data
+        .calc_values
+        .first()
+        .expect("the clone keeps the payload");
+    assert!(std::ptr::eq(Arc::as_ptr(retained).cast::<()>(), pointer));
+    assert_eq!(retained.resolve(0.0), 5.0);
+    assert_eq!(retained.resolve(100.0), 30.0);
     drop(cloned);
     assert!(weak.upgrade().is_none());
 }
@@ -173,10 +166,7 @@ fn anonymous_cell_reconstruction_invalidates_the_recycled_record() {
         .push(OwnedPropertyOverride::aspect_ratio(Some(2.0)));
     doc.box_style_data.insert(key, old);
     assert!(doc.box_style_data.finish_publication(old_stamp));
-    doc.set_anonymous_cells(vec![(
-        crate::node::Node::new_element("td".into(), crate::LayoutStyle::default(), None),
-        crate::LayoutStyle::default(),
-    )]);
+    doc.set_anonymous_cells(vec![crate::node::Node::new_element("td".into(), None)]);
     assert!(!doc.box_style_data.is_ready());
     assert!(doc.box_style_data.get(key).is_none());
     assert_ne!(doc.box_style_data.stamp().recipe, old_stamp.recipe);
@@ -187,7 +177,7 @@ fn source_topology_mutation_rejects_a_pre_mutation_stamp() {
     let mut doc = Document::new();
     let stamp = doc.box_style_data.stamp();
     assert!(doc.box_style_data.finish_publication(stamp));
-    doc.append_element(Some(0), "div", crate::LayoutStyle::default(), None::<&str>);
+    doc.append_element(Some(0), "div", None::<&str>);
     assert!(!doc.box_style_data.is_ready());
     assert_ne!(doc.box_style_data.stamp().source, stamp.source);
     assert_ne!(doc.box_style_data.stamp().topology, stamp.topology);

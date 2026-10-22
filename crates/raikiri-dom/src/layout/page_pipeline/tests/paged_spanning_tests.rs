@@ -6,24 +6,21 @@ fn long_spanning_document() -> (Document, CascadeResult) {
 
 fn spanning_document(heading_css: &str) -> (Document, CascadeResult) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
     let body = document.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font:20px/20px Ahem"),
     );
     let owner = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
     );
     let paragraph = document.append_element(
         Some(owner),
         "p",
-        Style::default(),
         Some("display:block;white-space:pre;margin:0"),
     );
     document.append_text(
@@ -32,7 +29,7 @@ fn spanning_document(heading_css: &str) -> (Document, CascadeResult) {
             .collect::<Vec<_>>()
             .join("\n"),
     );
-    let heading = document.append_element(Some(owner), "div", Style::default(), Some(heading_css));
+    let heading = document.append_element(Some(owner), "div", Some(heading_css));
     document.append_text(heading, "B");
     let rules = raikiri_style::build_rule_tree(&document);
     let cascade = raikiri_style::cascade(&document, &rules).unwrap();
@@ -89,7 +86,7 @@ fn spanning_pagination_propagates_an_exhausted_ancestor_growth_budget() {
     let mut work = ProjectionWork::new(&control, limit);
     let owner_y = current_abs_y(&probe, owner);
     let delta = paginate_spanning_columns(
-        &mut crate::layout::context::LayoutSession::new(&mut probe),
+        &mut crate::layout::context::LayoutSession::bridged(&mut probe, &cascade),
         &mut edits,
         owner,
         owner_y,
@@ -105,7 +102,7 @@ fn spanning_pagination_propagates_an_exhausted_ancestor_growth_budget() {
     document.fragment_tree.break_flow_work_used = limit - planning_cost;
     let parent_height = document.nodes[parent].unrounded_layout.size.height;
     let result = paginate_flow(
-        &mut crate::layout::context::LayoutSession::new(&mut document),
+        &mut crate::layout::context::LayoutSession::bridged(&mut document, &cascade),
         &cascade,
         root,
         PageFlowGeometry {
@@ -210,20 +207,17 @@ fn a_multicol_owner_is_monolithic_when_pagination_is_transposed() {
     let html = document.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl"),
     );
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    document.append_element(Some(html), "head", None::<&str>);
     let body = document.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font:20px/20px Ahem"),
     );
     let owner = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;writing-mode:horizontal-tb;width:100px;column-count:2;\
              column-gap:20px;orphans:1;widows:1",
@@ -232,19 +226,14 @@ fn a_multicol_owner_is_monolithic_when_pagination_is_transposed() {
     let paragraph = document.append_element(
         Some(owner),
         "p",
-        Style::default(),
         Some("display:block;white-space:pre;margin:0"),
     );
     document.append_text(
         paragraph,
         std::iter::repeat_n("A", 200).collect::<Vec<_>>().join("\n"),
     );
-    let heading = document.append_element(
-        Some(owner),
-        "div",
-        Style::default(),
-        Some("display:block;column-span:all"),
-    );
+    let heading =
+        document.append_element(Some(owner), "div", Some("display:block;column-span:all"));
     document.append_text(heading, "B");
     let rules = raikiri_style::build_rule_tree(&document);
     let cascade = raikiri_style::cascade(&document, &rules).unwrap();

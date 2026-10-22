@@ -1343,13 +1343,11 @@ fn wpt_font_loader_refuses_a_rooted_file_url_that_escapes_through_a_link() {
 fn live_stylesheet_sources_handle_style_targets_and_nested_subtrees() {
     let mut document = raikiri_dom::Document::new();
     let root = document.root_index();
-    let wrapper = document.append_element(Some(root), "div", Default::default(), None::<&str>);
-    let style = document.append_element(Some(wrapper), "style", Default::default(), None::<&str>);
+    let wrapper = document.append_element(Some(root), "div", None::<&str>);
+    let style = document.append_element(Some(wrapper), "style", None::<&str>);
     document.append_text(style, ".first { color: red; }");
-    let nested =
-        document.append_element(Some(wrapper), "section", Default::default(), None::<&str>);
-    let nested_style =
-        document.append_element(Some(nested), "style", Default::default(), None::<&str>);
+    let nested = document.append_element(Some(wrapper), "section", None::<&str>);
+    let nested_style = document.append_element(Some(nested), "style", None::<&str>);
     document.append_text(nested_style, ".second { color: blue; }");
 
     assert!(live_wpt_stylesheet_sources_in_subtree(&document, usize::MAX).is_empty());

@@ -15,7 +15,6 @@ use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::{QuirksMode, Tracer, TreeBuilder};
 use markup5ever::ns;
 use raikiri_dom::Document;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_traits::{Dom, Node, NodeId, NodeKind, RenderWarning, WarningKind};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -153,7 +152,7 @@ impl RaikiriTreeSink {
     ///
     /// Populate `Node.inline_style`, `Node.namespace`, and `Node.attributes`
     /// from the metadata tables together in [`RaikiriTreeSink::finish`].
-    /// Here, only register the tag and default Style in the Document and store
+    /// Here, only register the tag in the Document and store
     /// full-fidelity metadata in the side tables.
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
         self.flush_text();
@@ -161,10 +160,10 @@ impl RaikiriTreeSink {
             return OVERFLOW_HANDLE;
         }
         let tag: SmolStr = AsRef::<str>::as_ref(&name.local).into();
-        let idx =
-            self.document
-                .borrow_mut()
-                .append_element(None, tag, Style::default(), None::<&str>);
+        let idx = self
+            .document
+            .borrow_mut()
+            .append_element(None, tag, None::<&str>);
         self.qual_names.borrow_mut().insert(idx, name);
         self.attributes.borrow_mut().insert(idx, attrs);
         idx

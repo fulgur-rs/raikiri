@@ -39,12 +39,7 @@ fn a_line_shared_by_two_text_nodes_belongs_to_both() {
     // "aa" + <span>"bb"</span> + "cc" fit on one 60px line.
     let (mut doc, _cascade, root) = ahem_paragraph("", "width:60px");
     let first = doc.append_text(root, "aa");
-    let span = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline"),
-    );
+    let span = doc.append_element(Some(root), "span", Some("display:inline"));
     let inner = doc.append_text(span, "bb");
     let last = doc.append_text(root, "cc");
     let cascade = recascade(&mut doc);
@@ -60,12 +55,7 @@ fn a_line_shared_by_two_text_nodes_belongs_to_both() {
 fn a_root_indexes_each_text_owner_once_per_line() {
     let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
     let first = doc.append_text(root, "aa");
-    let span = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline"),
-    );
+    let span = doc.append_element(Some(root), "span", Some("display:inline"));
     let inner = doc.append_text(span, "bb cc");
     let cascade = recascade(&mut doc);
     lay_out(&mut doc, &cascade);
@@ -129,12 +119,7 @@ fn an_inline_element_is_not_a_text_node() {
     // The span carries IN_IFC_SUBTREE but is not text, so it has no lines.
     let (mut doc, _cascade, root) = ahem_paragraph("", "width:60px");
     doc.append_text(root, "aa ");
-    let span = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline"),
-    );
+    let span = doc.append_element(Some(root), "span", Some("display:inline"));
     doc.append_text(span, "bb");
     let cascade = recascade(&mut doc);
     lay_out(&mut doc, &cascade);
@@ -146,12 +131,7 @@ fn a_line_belongs_only_to_the_text_nodes_that_have_glyphs_on_it() {
     // "aaaa " fills the 40px line, so the span's "bbbb" wraps to line 2.
     let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
     let first = doc.append_text(root, "aaaa ");
-    let span = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline"),
-    );
+    let span = doc.append_element(Some(root), "span", Some("display:inline"));
     let inner = doc.append_text(span, "bbbb");
     let cascade = recascade(&mut doc);
     lay_out(&mut doc, &cascade);

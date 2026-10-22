@@ -9,18 +9,8 @@ fn sparse_paragraph_slots_preserve_full_listing_with_different_supplied_lines() 
         "width:30px;line-height:10px",
         |doc, root| {
             for _ in 0..20 {
-                let span = doc.append_element(
-                    Some(root),
-                    "span",
-                    crate::LayoutStyle::default(),
-                    Some("opacity:.8"),
-                );
-                let inner = doc.append_element(
-                    Some(span),
-                    "em",
-                    crate::LayoutStyle::default(),
-                    Some("opacity:.9"),
-                );
+                let span = doc.append_element(Some(root), "span", Some("opacity:.8"));
+                let inner = doc.append_element(Some(span), "em", Some("opacity:.9"));
                 doc.append_text(inner, "X X ");
             }
         },
@@ -82,13 +72,11 @@ fn merging_groups_preserves_insertion_order_with_nonmonotonic_box_positions() {
                 boxes.push(doc.append_element(
                     Some(root),
                     "i",
-                    crate::LayoutStyle::default(),
                     Some("display:inline-block;opacity:.5;width:1px;height:1px;position:relative;z-index:0"),
                 ));
                 let group = doc.append_element(
                     Some(root),
                     "span",
-                    crate::LayoutStyle::default(),
                     Some("opacity:.5;position:relative;z-index:0"),
                 );
                 doc.append_text(group, "X");
@@ -134,12 +122,7 @@ fn a_first_letter_alone_keeps_its_holding_dom_group_reachable() {
         "div::first-line{opacity:.5} div::first-letter{opacity:.6;background:blue}",
         "width:30px;line-height:10px",
         |doc, root| {
-            let span = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("opacity:.8"),
-            );
+            let span = doc.append_element(Some(root), "span", Some("opacity:.8"));
             doc.append_text(span, "X X X");
         },
     );
@@ -169,18 +152,8 @@ fn cached_empty_child_presence_is_reused_without_listing_a_foreign_group() {
         "div::first-line{opacity:.5}",
         "width:10px;line-height:10px",
         |doc, root| {
-            let outer = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("opacity:.8"),
-            );
-            let inner = doc.append_element(
-                Some(outer),
-                "em",
-                crate::LayoutStyle::default(),
-                Some("opacity:.9"),
-            );
+            let outer = doc.append_element(Some(root), "span", Some("opacity:.8"));
+            let inner = doc.append_element(Some(outer), "em", Some("opacity:.9"));
             doc.append_text(inner, "X X");
             groups.extend([outer, inner]);
         },

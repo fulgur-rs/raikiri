@@ -1,43 +1,60 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use raikiri_traits::{Dom, Element, Node, NodeId, NodeKind};
-use taffy::prelude::*;
-use taffy::{AvailableSpace, Dimension, Display, Size};
+use taffy::{AvailableSpace, Display, Size};
 
+/// Lays out the subtree under `root` as taffy does, in a session over `doc`
+/// whose styles are bridged from the cascade of the inline styles.
 fn compute_root_layout(
     doc: &mut Document,
     root: taffy::NodeId,
     available_space: Size<AvailableSpace>,
 ) {
-    let mut session = crate::layout::context::LayoutSession::new(doc);
+    let rules = raikiri_style::build_rule_tree(doc);
+    let cascade = raikiri_style::cascade(doc, &rules).expect("cascade Ok");
+    compute_root_layout_with(doc, &cascade, root, available_space);
+}
+
+/// [`compute_root_layout`] over styles bridged from `cascade`.
+fn compute_root_layout_with(
+    doc: &mut Document,
+    cascade: &raikiri_style::CascadeResult,
+    root: taffy::NodeId,
+    available_space: Size<AvailableSpace>,
+) {
+    let mut session = crate::layout::context::LayoutSession::bridged(doc, cascade);
     taffy::compute_root_layout(&mut session, root, available_space);
+}
+
+/// The CSS keyword of the layout modes these tests drive.
+fn display_keyword(display: Display) -> &'static str {
+    match display {
+        Display::Block => "block",
+        Display::Flex => "flex",
+        Display::Grid => "grid",
+        Display::FlowRoot => "flow-root",
+        Display::None => "none",
+    }
 }
 
 fn build_document(display: Display) -> (Document, usize) {
     let mut doc = Document::new();
-    let leaf_style = Style {
-        size: Size {
-            width: Dimension::length(100.0),
-            height: Dimension::length(50.0),
-        },
-        ..Default::default()
+    let leaf_style = "display:block;width:100px;height:50px";
+    let grid_tracks = if matches!(display, Display::Grid) {
+        ";grid-template-columns:200px 200px;grid-template-rows:50px"
+    } else {
+        ""
     };
-    let mut root_style = Style {
-        display,
-        size: Size {
-            width: Dimension::length(400.0),
-            height: Dimension::auto(),
-        },
-        ..Default::default()
-    };
-    if matches!(display, Display::Grid) {
-        root_style.grid_template_columns = vec![length(200.0), length(200.0)];
-        root_style.grid_template_rows = vec![length(50.0)];
-    }
     // Create layout root (idx=1) as a child of Document node (idx=0).
-    let layout_root = doc.append_element(Some(0), "root", root_style, None::<&str>);
-    doc.append_element(Some(layout_root), "a", leaf_style.clone(), None::<&str>);
-    doc.append_element(Some(layout_root), "b", leaf_style, None::<&str>);
+    let layout_root = doc.append_element(
+        Some(0),
+        "root",
+        Some(format!(
+            "display:{};width:400px{grid_tracks}",
+            display_keyword(display)
+        )),
+    );
+    doc.append_element(Some(layout_root), "a", Some(leaf_style));
+    doc.append_element(Some(layout_root), "b", Some(leaf_style));
     (doc, layout_root)
 }
 
@@ -45,16 +62,14 @@ fn build_document(display: Display) -> (Document, usize) {
 fn all_three_display_modes_layout_non_degenerate() {
     for display in [Display::Block, Display::Flex, Display::Grid] {
         let (mut doc, layout_root) = build_document(display);
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
-        taffy::compute_root_layout(
-            &mut session,
+        compute_root_layout(
+            &mut doc,
             taffy::NodeId::from(layout_root),
             Size {
                 width: AvailableSpace::Definite(800.0),
                 height: AvailableSpace::Definite(600.0),
             },
         );
-        drop(session);
         let layout = doc.nodes[layout_root].unrounded_layout;
         assert!(
             layout.size.width > 0.0 && layout.size.height > 0.0,
@@ -116,7 +131,7 @@ fn independent_documents_lay_out_in_parallel() {
 #[test]
 fn dom_trait_navigation() {
     let mut doc = Document::new();
-    let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let p = doc.append_element(Some(0), "p", None::<&str>);
     let _t = doc.append_text(p, "hello");
 
     // root_id is the virtual root of Document kind.
@@ -153,7 +168,7 @@ fn child_ids_returns_empty_on_invalid_nodeid() {
     // consumers that stash a NodeId across a document rebuild.
     // This keeps child traversal safe for stale references.
     let mut doc = Document::new();
-    doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    doc.append_element(Some(0), "p", None::<&str>);
 
     let far = NodeId::new(doc.nodes.len() as u64 + 100);
     let kids: Vec<_> = Dom::child_ids(&doc, far).collect();
@@ -176,8 +191,8 @@ fn element_ref_reflects_inline_style_source() {
     use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
 
     let mut doc = Document::new();
-    let p = doc.append_element(Some(0), "p", Style::default(), Some("color:red"));
-    let noattr = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let p = doc.append_element(Some(0), "p", Some("color:red"));
+    let noattr = doc.append_element(Some(0), "div", None::<&str>);
 
     let p_node = doc.node(NodeId::new(p as u64)).expect("p exists");
     let p_elem = p_node.as_element().expect("p is element");
@@ -196,8 +211,8 @@ fn element_ref_reflects_namespace_uri_when_set() {
     use smol_str::SmolStr;
 
     let mut doc = Document::new();
-    let html_p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
-    let svg_g = doc.append_element(Some(0), "g", Style::default(), None::<&str>);
+    let html_p = doc.append_element(Some(0), "p", None::<&str>);
+    let svg_g = doc.append_element(Some(0), "g", None::<&str>);
     doc.set_element_namespace(svg_g, Some(SmolStr::new("http://www.w3.org/2000/svg")));
 
     let p_node = doc.node(NodeId::new(html_p as u64)).expect("p exists");
@@ -216,7 +231,7 @@ fn element_ref_reflects_id_and_class_and_attr() {
     use smol_str::SmolStr;
 
     let mut doc = Document::new();
-    let el = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let el = doc.append_element(Some(0), "div", None::<&str>);
     doc.set_element_attributes(
         el,
         vec![
@@ -260,7 +275,7 @@ fn element_attr_style_reads_through_inline_style() {
     use raikiri_traits::{Dom, Element as _, Node as _, NodeId};
 
     let mut doc = Document::new();
-    let el = doc.append_element(Some(0), "p", Style::default(), Some("color:red"));
+    let el = doc.append_element(Some(0), "p", Some("color:red"));
     // Do not include style in attributes (the sink separates it).
 
     let el_node = doc.node(NodeId::new(el as u64)).expect("p exists");
@@ -282,7 +297,7 @@ fn element_id_treats_empty_value_as_none_while_attr_preserves_presence() {
     use smol_str::SmolStr;
 
     let mut doc = Document::new();
-    let el = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let el = doc.append_element(Some(0), "div", None::<&str>);
     doc.set_element_attributes(
         el,
         vec![
@@ -310,13 +325,13 @@ fn set_element_attributes_panics_on_non_element_in_debug() {
 }
 
 // ── TreeSink support APIs ────────────────────────────
-// NB: append_element takes a 4th `inline_style_source: Option<impl Into<SmolStr>>`
+// NB: append_element takes a third `inline_style_source: Option<impl Into<SmolStr>>`
 // argument. These tests don't exercise inline style, so pass `None::<&str>`.
 
 #[test]
 fn attach_child_appends_to_parent_children() {
     let mut doc = Document::new();
-    let a = doc.append_element(None, "a", Style::default(), None::<&str>); // detached
+    let a = doc.append_element(None, "a", None::<&str>); // detached
     doc.attach_child(0, a);
     let children: Vec<_> = Dom::child_ids(&doc, doc.root_id()).collect();
     assert_eq!(children.len(), 1);
@@ -326,9 +341,9 @@ fn attach_child_appends_to_parent_children() {
 #[test]
 fn insert_child_before_places_at_correct_index() {
     let mut doc = Document::new();
-    let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
-    let c = doc.append_element(Some(0), "c", Style::default(), None::<&str>);
-    let b = doc.append_element(None, "b", Style::default(), None::<&str>); // detached
+    let a = doc.append_element(Some(0), "a", None::<&str>);
+    let c = doc.append_element(Some(0), "c", None::<&str>);
+    let b = doc.append_element(None, "b", None::<&str>); // detached
     doc.insert_child_before(0, c, b);
     let kids: Vec<_> = Dom::child_ids(&doc, doc.root_id())
         .map(|n| n.0 as usize)
@@ -339,8 +354,8 @@ fn insert_child_before_places_at_correct_index() {
 #[test]
 fn parent_of_returns_containing_parent() {
     let mut doc = Document::new();
-    let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(a), "child", Style::default(), None::<&str>);
+    let a = doc.append_element(Some(0), "a", None::<&str>);
+    let child = doc.append_element(Some(a), "child", None::<&str>);
     assert_eq!(doc.parent_of(child), Some(a));
     assert_eq!(doc.parent_of(0), None); // root has no parent
 }
@@ -348,8 +363,8 @@ fn parent_of_returns_containing_parent() {
 #[test]
 fn detach_from_parent_removes_child_and_returns_parent() {
     let mut doc = Document::new();
-    let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
-    let b = doc.append_element(Some(0), "b", Style::default(), None::<&str>);
+    let a = doc.append_element(Some(0), "a", None::<&str>);
+    let b = doc.append_element(Some(0), "b", None::<&str>);
     assert_eq!(doc.detach_from_parent(a), Some(0));
     let kids: Vec<_> = Dom::child_ids(&doc, doc.root_id())
         .map(|n| n.0 as usize)
@@ -369,15 +384,11 @@ fn empty_display_none_leaf_produces_hidden_layout() {
     // check regresses, the leaf-layout path would honor this explicit size
     // and produce a non-zero layout instead of LayoutOutput::HIDDEN's zero size.
     let mut doc = Document::new();
-    let hidden_style = Style {
-        display: Display::None,
-        size: Size {
-            width: Dimension::length(100.0),
-            height: Dimension::length(50.0),
-        },
-        ..Default::default()
-    };
-    let hidden = doc.append_element(Some(0), "hidden", hidden_style, None::<&str>);
+    let hidden = doc.append_element(
+        Some(0),
+        "hidden",
+        Some("display:none;width:100px;height:50px"),
+    );
     compute_root_layout(
         &mut doc,
         taffy::NodeId::from(hidden),
@@ -396,12 +407,8 @@ fn empty_display_none_leaf_produces_hidden_layout() {
     // Case 2: non-empty (container) element with display:none — should
     // also produce HIDDEN, confirming the container path is unaffected.
     let mut doc2 = Document::new();
-    let hidden_parent_style = Style {
-        display: Display::None,
-        ..Default::default()
-    };
-    let hidden_parent = doc2.append_element(Some(0), "hp", hidden_parent_style, None::<&str>);
-    doc2.append_element(Some(hidden_parent), "child", Style::default(), None::<&str>);
+    let hidden_parent = doc2.append_element(Some(0), "hp", Some("display:none"));
+    doc2.append_element(Some(hidden_parent), "child", None::<&str>);
     compute_root_layout(
         &mut doc2,
         taffy::NodeId::from(hidden_parent),
@@ -421,10 +428,10 @@ fn empty_display_none_leaf_produces_hidden_layout() {
 #[test]
 fn reparent_children_moves_all_children_to_new_parent() {
     let mut doc = Document::new();
-    let src = doc.append_element(Some(0), "src", Style::default(), None::<&str>);
-    let dst = doc.append_element(Some(0), "dst", Style::default(), None::<&str>);
-    let c1 = doc.append_element(Some(src), "c1", Style::default(), None::<&str>);
-    let c2 = doc.append_element(Some(src), "c2", Style::default(), None::<&str>);
+    let src = doc.append_element(Some(0), "src", None::<&str>);
+    let dst = doc.append_element(Some(0), "dst", None::<&str>);
+    let c1 = doc.append_element(Some(src), "c1", None::<&str>);
+    let c2 = doc.append_element(Some(src), "c2", None::<&str>);
     doc.reparent_children(src, dst);
     let src_kids: Vec<_> = Dom::child_ids(&doc, NodeId::new(src as u64)).collect();
     let dst_kids: Vec<_> = Dom::child_ids(&doc, NodeId::new(dst as u64))
@@ -438,28 +445,10 @@ fn reparent_children_moves_all_children_to_new_parent() {
 fn layout_cache_invalidated_after_mutation() {
     // Build a Document, run layout, mutate, run layout again — verify
     // the new layout reflects the mutation (not the stale cache).
-    let leaf_style = Style {
-        size: Size {
-            width: Dimension::length(100.0),
-            height: Dimension::length(50.0),
-        },
-        ..Default::default()
-    };
+    let leaf_style = "display:block;width:100px;height:50px";
     let mut doc = Document::new();
-    let root = doc.append_element(
-        Some(0),
-        "root",
-        Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(400.0),
-                height: Dimension::auto(),
-            },
-            ..Default::default()
-        },
-        None::<&str>,
-    );
-    doc.append_element(Some(root), "a", leaf_style.clone(), None::<&str>);
+    let root = doc.append_element(Some(0), "root", Some("display:block;width:400px"));
+    doc.append_element(Some(root), "a", Some(leaf_style));
 
     // First layout
     compute_root_layout(
@@ -473,7 +462,7 @@ fn layout_cache_invalidated_after_mutation() {
     let first_height = doc.nodes[root].unrounded_layout.size.height;
 
     // Add a second child — root height should change (2 leaves = ~100)
-    doc.append_element(Some(root), "b", leaf_style, None::<&str>);
+    doc.append_element(Some(root), "b", Some(leaf_style));
 
     compute_root_layout(
         &mut doc,
@@ -501,30 +490,12 @@ fn many_mutations_still_yield_correct_layout() {
     // Verify that repeated mutations don't accumulate stale state.
     // Mutations only set a dirty flag (O(1)); the lazy clear on the
     // first compute_child_layout ensures correctness without O(N) per-mutation cost.
-    let leaf_style = Style {
-        size: Size {
-            width: Dimension::length(10.0),
-            height: Dimension::length(10.0),
-        },
-        ..Default::default()
-    };
+    let leaf_style = "display:block;width:10px;height:10px";
     let mut doc = Document::new();
-    let root = doc.append_element(
-        Some(0),
-        "root",
-        Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(400.0),
-                height: Dimension::auto(),
-            },
-            ..Default::default()
-        },
-        None::<&str>,
-    );
+    let root = doc.append_element(Some(0), "root", Some("display:block;width:400px"));
     // Add 200 children — each mutation flips layout_dirty (O(1)).
     for _ in 0..200 {
-        doc.append_element(Some(root), "child", leaf_style.clone(), None::<&str>);
+        doc.append_element(Some(root), "child", Some(leaf_style));
     }
     compute_root_layout(
         &mut doc,
@@ -550,19 +521,7 @@ fn a_text_leaf_outside_every_paragraph_measures_zero() {
     use taffy::{AvailableSpace, NodeId as TaffyNodeId, Size};
 
     let mut doc = Document::new();
-    let root = doc.append_element(
-        Some(0),
-        "root",
-        Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(400.0),
-                height: Dimension::auto(),
-            },
-            ..Default::default()
-        },
-        None::<&str>,
-    );
+    let root = doc.append_element(Some(0), "root", Some("display:block;width:400px"));
     let text = doc.append_text(root, "Hi");
 
     compute_root_layout(
@@ -583,7 +542,7 @@ fn a_text_leaf_outside_every_paragraph_measures_zero() {
 #[test]
 fn document_get_node_returns_some_for_valid_id_and_none_for_out_of_range() {
     let mut doc = Document::new();
-    let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let p = doc.append_element(Some(0), "p", None::<&str>);
     // Valid: root + p both exist.
     assert!(doc.get_node(0).is_some());
     assert!(doc.get_node(p).is_some());
@@ -597,7 +556,7 @@ fn document_node_count_grows_with_appends() {
     let mut doc = Document::new();
     let n0 = doc.node_count(); // root only = 1
     assert_eq!(n0, 1);
-    let _e = doc.append_element(Some(0), "e", Style::default(), None::<&str>);
+    let _e = doc.append_element(Some(0), "e", None::<&str>);
     let _t = doc.append_text(0, "hi");
     assert_eq!(doc.node_count(), n0 + 2);
 }
@@ -619,7 +578,7 @@ fn node_accessors_are_callable_from_external_call_site() {
     // crates/raikiri/tests/external_consumer.rs accesses zero Node/Element fields;
     // this test checks the raikiri-dom internal public surface.
     let mut doc = Document::new();
-    let e = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let e = doc.append_element(Some(0), "div", None::<&str>);
     let t = doc.append_text(e, "hi");
     let node = doc.get_node(e).unwrap();
     let _ = &node.children;
@@ -631,107 +590,66 @@ fn node_accessors_are_callable_from_external_call_site() {
     assert_eq!(tn.kind(), NodeKind::Text);
 }
 
-/// Does taffy's own block layout algorithm hang (infinite loop) when the
-/// `taffy::Style` geometry it's driven with is non-finite?
+/// Does taffy's block layout algorithm hang when the computed geometry the
+/// style views read is non-finite?
 ///
-/// This bypasses cascade / `raikiri_style::resolve` / `raikiri_dom::layout`'s
-/// bridge helpers **on the input side** — including the `sanitize_taffy` /
-/// `sanitize_finite` guards installed in those bridge functions — by
-/// constructing the `taffy::Style` directly and handing it to
-/// `Document::append_element` (the same raw-`Style` escape hatch
-/// `build_document` above already uses for non-cascade layout tests),
-/// then driving `compute_root_layout` straight from this test. That
-/// characterizes **taffy's own** block layout algorithm — the sink under
-/// test here — independent of whether raikiri's input guard currently
-/// prevents the input from reaching it ("characterize the sink, not just
-/// the guard").
+/// The computed values are set on the cascade result directly, so the
+/// non-finite lengths never pass through the cascade's own handling and reach
+/// the views as they are. That leaves the views' clamping as the input-side
+/// guard, and this test drives `compute_root_layout` straight from the
+/// result.
 ///
 /// **What this does *not* bypass**: the output-side guard,
 /// `sanitize_taffy_layout`, called unconditionally from
 /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
 /// (`crates/raikiri-dom/src/taffy_impl.rs`). `compute_root_layout` invokes
 /// that trait method itself as part of committing every node's computed
-/// layout, regardless of how the `Style` it started from was constructed
-/// — there is no code path through `compute_root_layout` that skips it.
-/// So this test's `Document.nodes[..].unrounded_layout` values are
-/// guaranteed finite by the output-side guard even though this test's
-/// *input* bypasses the input-side guard; the assertion below on the
-/// child's layout confirms exactly that (finite, non-default output),
-/// rather than silently relying on it.
+/// layout, so the child's `unrounded_layout` is guaranteed finite; the
+/// assertion below confirms exactly that (finite, non-default output) rather
+/// than silently relying on it.
 ///
 /// # Regression
 ///
-/// No hang: `compute_root_layout` returns well within the 10s bound for
-/// every non-finite field this test sets (width/height `+Inf`/`NaN`,
-/// padding/margin/border mixing `NaN`, `+Inf`, `-Inf`, and a `+Inf`
-/// percentage) — and it isn't a silently-skipped no-op either, since the
-/// child's `unrounded_layout` is asserted below to be both non-default
-/// and (per the output-side guard) finite. This is consistent with —
-/// and now formalizes as an automated regression check — the observation
-/// that taffy-side tests at sites 1–4 immediately fail assertions (only
-/// values break). This test
-/// does not assert anything about *which specific* values taffy produces
-/// (a separate, still-open concern about the "finite garbage"
-/// semantic-validity of taffy's output is tracked elsewhere); it pins the
-/// **timing** (no livelock) and the **finiteness invariant** (the
-/// output-side guard holds even under directly-adversarial input, not
-/// just cascade-derived input) — taffy's block layout is not a
-/// livelock/hang surface for non-finite `Style` geometry, whether or not
-/// raikiri's own input guard is in the picture.
+/// No hang: `compute_root_layout` returns well within the 10s bound for every
+/// non-finite field this test sets (width/height `+Inf`/`NaN`, padding and
+/// margin mixing `NaN`, `+Inf`, `-Inf`, and a `+Inf` percentage), and it is not
+/// a silently skipped no-op either, since the child's `unrounded_layout` is
+/// asserted to be both non-default and finite. The test does not assert
+/// *which* values taffy produces; it pins the **timing** (no livelock) and the
+/// **finiteness invariant** under directly adversarial input.
 #[test]
-fn taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry() {
+fn taffy_block_layout_does_not_hang_on_nonfinite_computed_geometry() {
+    use raikiri_style::{ComputedLengthPercentageOrAuto as Auto, ComputedLengthPercentageOrCalc};
     use std::sync::mpsc::RecvTimeoutError;
     use std::time::Duration;
-    use taffy::{LengthPercentage, LengthPercentageAuto, Rect};
 
-    /// Returns `(doc, root, first_pathological_child)` — the child id is
-    /// needed after layout to check its `unrounded_layout` (non-vacuity:
-    /// distinguishes "actually laid out" from "silently skipped
-    /// no-op", which a bare timing pass/fail cannot).
-    fn build_nonfinite_document() -> (Document, usize, usize) {
-        // Every geometry field taffy's block layout consumes gets a
-        // different non-finite flavor, so a single run exercises +Inf,
-        // -Inf, NaN, and +Inf-as-percentage together rather than needing
-        // one test per flavor (this test only cares about *timing*, so
-        // mixing them is fine — see doc comment above).
-        let pathological_style = Style {
-            size: Size {
-                width: Dimension::length(f32::INFINITY),
-                height: Dimension::length(f32::NAN),
-            },
-            padding: Rect {
-                left: LengthPercentage::length(f32::NAN),
-                right: LengthPercentage::percent(f32::INFINITY),
-                top: LengthPercentage::length(f32::NEG_INFINITY),
-                bottom: LengthPercentage::length(0.0),
-            },
-            margin: Rect {
-                left: LengthPercentageAuto::length(f32::INFINITY),
-                right: LengthPercentageAuto::length(f32::NEG_INFINITY),
-                top: LengthPercentageAuto::length(f32::NAN),
-                bottom: LengthPercentageAuto::length(0.0),
-            },
-            border: Rect {
-                left: LengthPercentage::length(f32::NAN),
-                right: LengthPercentage::length(0.0),
-                top: LengthPercentage::length(0.0),
-                bottom: LengthPercentage::length(0.0),
-            },
-            ..Default::default()
-        };
-        let root_style = Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(400.0),
-                height: Dimension::auto(),
-            },
-            ..Default::default()
-        };
+    /// Returns `(doc, cascade, root, first_pathological_child)` — the child id
+    /// is needed after layout to check its `unrounded_layout` (non-vacuity:
+    /// distinguishes "actually laid out" from "silently skipped no-op", which a
+    /// bare timing pass/fail cannot).
+    fn build_nonfinite_document() -> (Document, raikiri_style::CascadeResult, usize, usize) {
         let mut doc = Document::new();
-        let root = doc.append_element(Some(0), "root", root_style, None::<&str>);
-        let a = doc.append_element(Some(root), "a", pathological_style.clone(), None::<&str>);
-        doc.append_element(Some(root), "b", pathological_style, None::<&str>);
-        (doc, root, a)
+        let root = doc.append_element(Some(0), "root", Some("display:block;width:400px"));
+        let a = doc.append_element(Some(root), "a", Some("display:block"));
+        let b = doc.append_element(Some(root), "b", Some("display:block"));
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let mut cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+        // Every geometry field taffy's block layout consumes gets a different
+        // non-finite flavor, so a single run exercises +Inf, -Inf, NaN, and
+        // +Inf-as-percentage together rather than needing one test per flavor
+        // (this test only cares about *timing*, so mixing them is fine).
+        for node in [a, b] {
+            let values = &mut cascade.computed[node];
+            values.width = Auto::Px(f32::INFINITY);
+            values.height = Auto::Px(f32::NAN);
+            values.padding.left = ComputedLengthPercentageOrCalc::Px(f32::NAN);
+            values.padding.right = ComputedLengthPercentageOrCalc::Percent(f32::INFINITY);
+            values.padding.top = ComputedLengthPercentageOrCalc::Px(f32::NEG_INFINITY);
+            values.margin.left = Auto::Px(f32::INFINITY);
+            values.margin.right = Auto::Px(f32::NEG_INFINITY);
+            values.margin.top = Auto::Px(f32::NAN);
+        }
+        (doc, cascade, root, a)
     }
 
     /// Layout::default()'s `size` is `(0.0, 0.0)` — a node taffy never
@@ -754,10 +672,11 @@ fn taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry() {
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let (mut doc, root, a) = build_nonfinite_document();
+        let (mut doc, cascade, root, a) = build_nonfinite_document();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            compute_root_layout(
+            compute_root_layout_with(
                 &mut doc,
+                &cascade,
                 taffy::NodeId::from(root),
                 Size {
                     width: AvailableSpace::Definite(800.0),
@@ -777,13 +696,13 @@ fn taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry() {
     match rx.recv_timeout(Duration::from_secs(10)) {
         Ok(Ok(non_vacuous)) => assert!(
             non_vacuous,
-            "compute_root_layout completed but child 'a' (pathological, non-finite Style) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or the sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize this test rather than deleting this assertion"
+            "compute_root_layout completed but child 'a' (pathological, non-finite geometry) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or the sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize this test rather than deleting this assertion"
         ),
         Ok(Err(_panic_payload)) => panic!(
-            "taffy::compute_root_layout (or the post-layout assertion) panicked on non-finite Style geometry — re-characterize this test (it previously pinned 'completes without panic or hang')"
+            "taffy::compute_root_layout (or the post-layout assertion) panicked on non-finite geometry — re-characterize this test (it previously pinned 'completes without panic or hang')"
         ),
         Err(RecvTimeoutError::Timeout) => panic!(
-            "taffy::compute_root_layout did not return within 10s on non-finite Style geometry — possible taffy block layout hang/livelock found; this would be a new finding, not a regression of a previously-passing guarantee, since this test is the first automated characterization of this input"
+            "taffy::compute_root_layout did not return within 10s on non-finite geometry — possible taffy block layout hang/livelock found; this would be a new finding, not a regression of a previously-passing guarantee, since this test is the first automated characterization of this input"
         ),
         Err(RecvTimeoutError::Disconnected) => panic!(
             "worker thread panicked before catch_unwind could report it cleanly — see stderr above"
@@ -798,27 +717,14 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
     let first = doc.append_element(
         Some(root),
         "first",
-        Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(40.0),
-                height: Dimension::length(20.0),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:block;width:40px;height:20px"),
     );
     let text = doc.append_text(first, "text without a paragraph");
-    let mut second_style = Style {
-        display: Display::Block,
-        size: Size {
-            width: Dimension::length(60.0),
-            height: Dimension::length(30.0),
-        },
-        ..Style::default()
-    };
-    second_style.margin.top = taffy::LengthPercentageAuto::length(15.0);
-    let second = doc.append_element(Some(root), "second", second_style, None::<&str>);
+    let second = doc.append_element(
+        Some(root),
+        "second",
+        Some("display:block;width:60px;height:30px;margin-top:15px"),
+    );
     compute_root_layout(
         &mut doc,
         taffy::NodeId::from(root),
@@ -842,8 +748,6 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
             height: 65.0
         }
     );
-    assert_eq!(doc.layout_style(root).unwrap().display, Display::Flex);
-    assert_eq!(doc.layout_style(text).unwrap().display, Display::Flex);
     assert_eq!(doc.nodes[root].taffy_display(), Display::Flex);
     assert_eq!(doc.nodes[text].taffy_display(), Display::Flex);
 }
@@ -855,35 +759,20 @@ fn programmatic_flow_root_keeps_a_descendant_margin_inside_its_box() {
         (Display::FlowRoot, 10.0, 20.0, 50.0),
     ] {
         let mut doc = Document::new();
-        let root = doc.append_element(
-            Some(0),
-            "root",
-            Style {
-                display: Display::Block,
-                size: Size {
-                    width: Dimension::length(200.0),
-                    height: Dimension::auto(),
-                },
-                ..Style::default()
-            },
-            None::<&str>,
+        let root = doc.append_element(Some(0), "root", Some("display:block;width:200px"));
+        let container = doc.append_element(
+            Some(root),
+            "container",
+            Some(format!(
+                "display:{};margin-top:10px",
+                display_keyword(display)
+            )),
         );
-        let mut container_style = Style {
-            display,
-            ..Style::default()
-        };
-        container_style.margin.top = taffy::LengthPercentageAuto::length(10.0);
-        let container = doc.append_element(Some(root), "container", container_style, None::<&str>);
-        let mut child_style = Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(20.0),
-                height: Dimension::length(20.0),
-            },
-            ..Style::default()
-        };
-        child_style.margin.top = taffy::LengthPercentageAuto::length(20.0);
-        let child = doc.append_element(Some(container), "child", child_style, None::<&str>);
+        let child = doc.append_element(
+            Some(container),
+            "child",
+            Some("display:block;width:20px;height:20px;margin-top:20px"),
+        );
         compute_root_layout(
             &mut doc,
             taffy::NodeId::from(root),

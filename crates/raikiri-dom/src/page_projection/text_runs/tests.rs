@@ -3,16 +3,10 @@ use super::*;
 #[test]
 fn cloned_projection_keeps_marker_text_after_the_original_is_dropped() {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     document.append_element(
         Some(body),
         "li",
-        crate::LayoutStyle::default(),
         Some("display:list-item;list-style-type:decimal;font:10px Ahem"),
     );
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
@@ -61,17 +55,11 @@ fn marker_projection_propagates_the_fixed_counter_snapshot_budget() {
     let parent = document.append_element(
         Some(0),
         "ol",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;counter-reset:{names}")),
     );
     let mut owner = 0;
     for _ in 0..1100 {
-        owner = document.append_element(
-            Some(parent),
-            "li",
-            crate::LayoutStyle::default(),
-            Some("display:list-item"),
-        );
+        owner = document.append_element(Some(parent), "li", Some("display:list-item"));
     }
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -155,8 +143,7 @@ fn ellipsis_text_is_one_ellipsis_or_one_period_per_glyph() {
 #[test]
 fn a_typographic_box_is_not_reported_as_generated_before_text() {
     let mut document = Document::new();
-    let owner =
-        document.append_element(Some(0), "div", crate::LayoutStyle::default(), None::<&str>);
+    let owner = document.append_element(Some(0), "div", None::<&str>);
     let letter = crate::generated_content::generated_node_id(owner, PseudoElem::FirstLetter);
     assert_eq!(run_source(&document, letter), None);
     for (pseudo, kind) in [
@@ -194,23 +181,12 @@ fn grid_items(container: &str, items: &[&str]) -> (Document, CascadeResult, usiz
 /// with an X unless its style mentions `empty`.
 fn container_items(container: &str, items: &[&str]) -> (Document, CascadeResult, usize) {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let container_node = document.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some(container),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let container_node = document.append_element(Some(body), "div", Some(container));
     for style in items {
         let item = document.append_element(
             Some(container_node),
             "p",
-            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;margin:0;{}",
                 style.replace("empty", "")
@@ -319,18 +295,12 @@ fn a_column_box_shift_resolves_a_percentage_relative_offset() {
 /// Two Ahem paragraphs, one X per 10px line: 25 lines, then 3 lines below.
 fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     let mut roots = [0; 2];
     for (root, count) in roots.iter_mut().zip([25, 3]) {
         *root = document.append_element(
             Some(body),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;width:10px;font:10px/10px Ahem"),
         );
         document.append_text(*root, vec!["X"; count].join(" "));
@@ -591,16 +561,10 @@ fn a_grid_first_line_clamps_the_baseline_of_a_scrolling_item() {
 #[test]
 fn a_grid_first_line_includes_text_directly_in_the_grid() {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     let grid = document.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:grid;padding-top:7px;font:10px/20px Ahem"),
     );
     document.append_text(grid, "X".to_string());
@@ -646,33 +610,17 @@ fn ruby_annotations_project_above_their_base_without_its_decorations() {
     let body = document.append_element(
         Some(0),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem;text-decoration:underline"),
     );
-    let ruby = document.append_element(
-        Some(body),
-        "ruby",
-        crate::LayoutStyle::default(),
-        Some("display:ruby"),
-    );
-    let base = document.append_element(
-        Some(ruby),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let ruby = document.append_element(Some(body), "ruby", Some("display:ruby"));
+    let base = document.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     document.append_text(base, "aa");
-    let annotation = document.append_element(
-        Some(ruby),
-        "rt",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-text;font-size:5px"),
-    );
+    let annotation =
+        document.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:5px"));
     document.append_text(annotation, "xx");
     let underlined = document.append_element(
         Some(ruby),
         "rt",
-        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:overline"),
     );
     document.append_text(underlined, "yy");
@@ -725,35 +673,18 @@ fn annotation_decorations_stay_on_the_annotation_baseline() {
     let body = document.append_element(
         Some(0),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
-    let ruby = document.append_element(
-        Some(body),
-        "ruby",
-        crate::LayoutStyle::default(),
-        Some("display:ruby"),
-    );
-    let base = document.append_element(
-        Some(ruby),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let ruby = document.append_element(Some(body), "ruby", Some("display:ruby"));
+    let base = document.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     document.append_text(base, "aaaa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:underline"),
     );
     document.append_text(annotation, "xx");
-    let raised = document.append_element(
-        Some(annotation),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("vertical-align:super"),
-    );
+    let raised = document.append_element(Some(annotation), "span", Some("vertical-align:super"));
     document.append_text(raised, "yy");
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -794,28 +725,17 @@ fn blockified_rubies_take_their_transforms() {
     let body = document.append_element(
         Some(0),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        crate::LayoutStyle::default(),
         Some("display:ruby;position:absolute;left:0;top:0;transform:translate(7px,0)"),
     );
-    let base = document.append_element(
-        Some(ruby),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let base = document.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     document.append_text(base, "aa");
-    let annotation = document.append_element(
-        Some(ruby),
-        "rt",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-text;font-size:5px"),
-    );
+    let annotation =
+        document.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:5px"));
     document.append_text(annotation, "xx");
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -853,26 +773,18 @@ fn inter_character_annotations_draw_no_decorations() {
     let body = document.append_element(
         Some(0),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        crate::LayoutStyle::default(),
         Some("display:ruby;text-decoration:underline;ruby-position:inter-character"),
     );
-    let base = document.append_element(
-        Some(ruby),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let base = document.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:underline"),
     );
     document.append_text(annotation, "xx");
@@ -920,47 +832,21 @@ fn nested_ruby_bases_keep_their_annotation_decorations() {
     let body = document.append_element(
         Some(0),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
-    let outer = document.append_element(
-        Some(body),
-        "ruby",
-        crate::LayoutStyle::default(),
-        Some("display:ruby"),
-    );
-    let base = document.append_element(
-        Some(outer),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let outer = document.append_element(Some(body), "ruby", Some("display:ruby"));
+    let base = document.append_element(Some(outer), "rb", Some("display:ruby-base"));
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(outer),
         "rt",
-        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:underline"),
     );
-    let inner = document.append_element(
-        Some(annotation),
-        "ruby",
-        crate::LayoutStyle::default(),
-        Some("display:ruby"),
-    );
-    let inner_base = document.append_element(
-        Some(inner),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let inner = document.append_element(Some(annotation), "ruby", Some("display:ruby"));
+    let inner_base = document.append_element(Some(inner), "rb", Some("display:ruby-base"));
     document.append_text(inner_base, "bb");
-    let inner_annotation = document.append_element(
-        Some(inner),
-        "rt",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-text;font-size:5px"),
-    );
+    let inner_annotation =
+        document.append_element(Some(inner), "rt", Some("display:ruby-text;font-size:5px"));
     document.append_text(inner_annotation, "yy");
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1007,28 +893,17 @@ fn floated_ruby_decorations_skip_its_annotations() {
     let body = document.append_element(
         Some(0),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        crate::LayoutStyle::default(),
         Some("display:ruby;float:left;text-decoration:underline"),
     );
-    let base = document.append_element(
-        Some(ruby),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let base = document.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     document.append_text(base, "aa");
-    let annotation = document.append_element(
-        Some(ruby),
-        "rt",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-text;font-size:5px"),
-    );
+    let annotation =
+        document.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:5px"));
     document.append_text(annotation, "xx");
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1070,42 +945,16 @@ fn floated_ruby_decorations_skip_its_annotations() {
 #[test]
 fn box_paint_shift_translates_the_boxes_layout_finds_transformable() {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let paragraph = document.append_element(
-        Some(body),
-        "p",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let paragraph = document.append_element(Some(body), "p", Some("display:block;margin:0"));
     let translated = "display:inline;transform:translateX(10px)";
-    let span = document.append_element(
-        Some(paragraph),
-        "span",
-        crate::LayoutStyle::default(),
-        Some(translated),
-    );
+    let span = document.append_element(Some(paragraph), "span", Some(translated));
     document.append_text(span, "X".to_string());
-    let button = document.append_element(
-        Some(paragraph),
-        "button",
-        crate::LayoutStyle::default(),
-        Some(translated),
-    );
-    let math = document.append_element(
-        Some(paragraph),
-        "math",
-        crate::LayoutStyle::default(),
-        Some(translated),
-    );
+    let button = document.append_element(Some(paragraph), "button", Some(translated));
+    let math = document.append_element(Some(paragraph), "math", Some(translated));
     let floated = document.append_element(
         Some(paragraph),
         "span",
-        crate::LayoutStyle::default(),
         Some(&format!("{translated};float:left")),
     );
     document.mark_in_document_flags();
@@ -1146,26 +995,18 @@ fn inter_character_annotation_glyphs_are_reported_upright_one_below_the_other() 
     let body = document.append_element(
         Some(0),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        crate::LayoutStyle::default(),
         Some("display:ruby;ruby-position:inter-character"),
     );
-    let base = document.append_element(
-        Some(ruby),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let base = document.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-orientation:sideways"),
     );
     document.append_text(annotation, "xx");
@@ -1219,23 +1060,16 @@ fn a_fixed_outside_marker_ignores_the_body_relative_translation() {
     for body_offset in [0, 20] {
         let mut document = Document::new();
         with_ahem(&mut document);
-        let html = document.append_element(
-            Some(0),
-            "html",
-            crate::LayoutStyle::default(),
-            Some("display:block"),
-        );
+        let html = document.append_element(Some(0), "html", Some("display:block"));
         let body = document.append_element(
             Some(html),
             "body",
-            crate::LayoutStyle::default(),
             Some(format!(
                 "display:block;margin:0;font:20px/1 Ahem;position:relative;top:{body_offset}px"
             )),
         );
         let fixed = document.append_element(
-            Some(body), "li", crate::LayoutStyle::default(),
-            Some("display:list-item;list-style:decimal outside;position:fixed;left:0;top:70px;padding-top:20px"),
+            Some(body), "li", Some("display:list-item;list-style:decimal outside;position:fixed;left:0;top:70px;padding-top:20px"),
         );
         document.append_text(fixed, "X");
         let cascade =

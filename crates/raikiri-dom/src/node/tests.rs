@@ -17,22 +17,12 @@ fn retained_typographic_lookup_has_linear_work_across_many_inline_owners() {
         "width:10000px",
         |doc, root| {
             for _ in 0..128 {
-                let span = doc.append_element(
-                    Some(root),
-                    "span",
-                    crate::LayoutStyle::default(),
-                    Some("display:inline"),
-                );
+                let span = doc.append_element(Some(root), "span", Some("display:inline"));
                 doc.append_text(span, "“");
             }
             doc.append_text(root, "A");
             for _ in 0..32 {
-                let span = doc.append_element(
-                    Some(root),
-                    "span",
-                    crate::LayoutStyle::default(),
-                    Some("display:inline"),
-                );
+                let span = doc.append_element(Some(root), "span", Some("display:inline"));
                 doc.append_text(span, "Y");
             }
         },
@@ -155,7 +145,6 @@ mod ifc_geometry_tests {
         let inline = doc.append_element(
             Some(root),
             "span",
-            crate::LayoutStyle::default(),
             Some("display:inline;padding-left:3px;padding-right:3px"),
         );
         doc.append_text(inline, "bb");
@@ -198,7 +187,7 @@ mod flags_tests {
 
     #[test]
     fn node_new_element_has_is_in_document_set_by_default() {
-        let n = Node::new_element(SmolStr::new("p"), crate::LayoutStyle::default(), None);
+        let n = Node::new_element(SmolStr::new("p"), None);
         assert!(n.is_in_document());
     }
 
@@ -278,7 +267,7 @@ mod is_non_rendered_html_element_tests {
     use super::*;
 
     fn html_element(tag: &str) -> Node {
-        Node::new_element(SmolStr::new(tag), crate::LayoutStyle::default(), None)
+        Node::new_element(SmolStr::new(tag), None)
     }
 
     fn set_ns(n: &mut Node, ns: &str) {
@@ -377,7 +366,7 @@ mod attribute_ns_tests {
     const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
     fn element_with_namespaced_attr() -> Node {
-        let mut node = Node::new_element(SmolStr::new("use"), crate::LayoutStyle::default(), None);
+        let mut node = Node::new_element(SmolStr::new("use"), None);
         if let NodeData::Element(element) = &mut node.data {
             element.attributes.push(Attr {
                 namespace: Some(SmolStr::new(XLINK_NS)),
@@ -426,13 +415,8 @@ mod attribute_ns_tests {
 fn an_ifc_root_exposes_no_layout_children() {
     use crate::Document;
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
-    let root = doc.append_element(
-        Some(html),
-        "div",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let root = doc.append_element(Some(html), "div", None::<&str>);
     doc.append_text(root, "aa");
     assert_eq!(doc.nodes[root].layout_children().len(), 1);
     doc.nodes[root].flags.insert(NodeFlags::IS_IFC_ROOT);
@@ -489,7 +473,6 @@ fn canvas_bitmap_errors_have_descriptive_messages() {
 #[cfg(test)]
 mod min_content_tests {
     use super::*;
-    use crate::LayoutStyle as Style;
     use crate::layout::layout_single_page;
     use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600};
 
@@ -500,31 +483,21 @@ mod min_content_tests {
     /// `width:min-content` wrapper around a block of Ahem text.
     fn min_content_rects(float: bool) -> (Rect, Rect) {
         let mut doc = crate::Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
         let outer = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(if float {
                 "display:block;float:left;font-family:Ahem;font-size:10px;line-height:10px"
             } else {
                 "display:block;font-family:Ahem;font-size:10px;line-height:10px"
             }),
         );
-        let wrapper = doc.append_element(
-            Some(outer),
-            "div",
-            Style::default(),
-            Some("display:block;width:min-content"),
-        );
-        let inner = doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block"),
-        );
-        let text = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+        let wrapper =
+            doc.append_element(Some(outer), "div", Some("display:block;width:min-content"));
+        let inner = doc.append_element(Some(wrapper), "div", Some("display:block"));
+        let text = doc.append_element(Some(inner), "div", Some("display:block"));
         doc.append_text(text, "aaaa bbbb cccc");
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);

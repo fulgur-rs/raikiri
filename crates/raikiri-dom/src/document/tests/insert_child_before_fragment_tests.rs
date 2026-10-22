@@ -24,8 +24,8 @@ fn make_fragment_with_two_children(doc: &mut Document) -> (usize, usize, usize) 
     let frag = doc.nodes.len();
     doc.nodes.push(Node::new_document_fragment());
     // The fragment’s children are two detached Elements.
-    let c0 = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
-    let c1 = doc.append_element(Some(frag), "div", Style::default(), None::<&str>);
+    let c0 = doc.append_element(Some(frag), "span", None::<&str>);
+    let c1 = doc.append_element(Some(frag), "div", None::<&str>);
     (frag, c0, c1)
 }
 
@@ -37,10 +37,10 @@ fn insert_child_before_splices_fragment_children_at_position() {
     // `before` itself and any later existing siblings.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
     // The parent already has two siblings: `[first, last]`.
-    let first = doc.append_element(Some(parent), "h1", Style::default(), None::<&str>);
-    let last = doc.append_element(Some(parent), "footer", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(parent), "h1", None::<&str>);
+    let last = doc.append_element(Some(parent), "footer", None::<&str>);
 
     let (frag, c0, c1) = make_fragment_with_two_children(&mut doc);
     doc.insert_child_before(parent, last, frag);
@@ -60,8 +60,8 @@ fn insert_child_before_empties_fragments_children_after_move() {
     // children; this test checks that draining moves them.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    let sibling = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
+    let sibling = doc.append_element(Some(parent), "p", None::<&str>);
 
     let (frag, _c0, _c1) = make_fragment_with_two_children(&mut doc);
     // Precondition: the fragment itself has two children.
@@ -85,8 +85,8 @@ fn insert_child_before_does_not_insert_the_fragment_node_itself() {
     // children rather than parent → fragment).
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    let sibling = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
+    let sibling = doc.append_element(Some(parent), "p", None::<&str>);
 
     let (frag, _c0, _c1) = make_fragment_with_two_children(&mut doc);
     doc.insert_child_before(parent, sibling, frag);
@@ -104,9 +104,9 @@ fn insert_child_before_with_empty_fragment_is_noop_on_parent_children() {
     // counterpart of the attach_child edge check).
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    let a = doc.append_element(Some(parent), "a", Style::default(), None::<&str>);
-    let b = doc.append_element(Some(parent), "b", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
+    let a = doc.append_element(Some(parent), "a", None::<&str>);
+    let b = doc.append_element(Some(parent), "b", None::<&str>);
 
     // Empty fragment.
     let empty_frag = doc.nodes.len();
@@ -128,10 +128,10 @@ fn insert_child_before_non_fragment_keeps_existing_insert_semantics() {
     // pin that the fragment branch causes no collateral damage.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    let last = doc.append_element(Some(parent), "z", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
+    let last = doc.append_element(Some(parent), "z", None::<&str>);
     // Insert a detached Element at before=last (a foster-parenting primitive).
-    let elem = doc.append_element(None, "m", Style::default(), None::<&str>);
+    let elem = doc.append_element(None, "m", None::<&str>);
     doc.insert_child_before(parent, last, elem);
     assert_eq!(doc.nodes[parent].children, vec![elem, last]);
 }

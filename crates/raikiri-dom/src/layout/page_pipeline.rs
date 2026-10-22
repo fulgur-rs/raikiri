@@ -1062,6 +1062,18 @@ pub(super) fn layout_single_page_checked(
     layout_single_page_with_table_projection(&mut session, cascade, page_box, false, false)
 }
 
+/// A single-page layout in `session`, which stays open afterwards so that a
+/// test can read what the pass left in the document through the same views
+/// the pass used.
+#[cfg(test)]
+pub(super) fn layout_single_page_in_session(
+    session: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+) -> Result<(), LayoutError> {
+    layout_single_page_with_table_projection(session, cascade, page_box, false, false)
+}
+
 /// The error a layout pass recorded in the session while taffy ran: a
 /// rejected table or an exhausted fragment budget.
 fn take_layout_failure(

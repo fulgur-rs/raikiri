@@ -2,12 +2,12 @@ use super::*;
 
 fn rich_document() -> Document {
     let mut doc = Document::new();
-    let e = doc.append_element(Some(0), "template", Default::default(), Some("color:red"));
+    let e = doc.append_element(Some(0), "template", Some("color:red"));
     let fragment = doc.allocate_template_fragment_root(e);
     doc.append_text(fragment, "template text");
     doc.append_comment(Some(0), "comment");
     doc.append_processing_instruction(Some(0), "target", "data");
-    let detached = doc.append_element(None, "svg", Default::default(), None::<&str>);
+    let detached = doc.append_element(None, "svg", None::<&str>);
     let element = doc.nodes[detached].data.as_element_mut().unwrap();
     element.namespace = Some("http://www.w3.org/2000/svg".into());
     element.prefix = Some("s".into());
@@ -22,7 +22,7 @@ fn rich_document() -> Document {
         url::Url::parse("https://example.test/dir/page.html").unwrap(),
     ));
     doc.add_stylesheet("p {color:blue}", StylesheetKind::Author);
-    let img = doc.append_element(Some(0), "img", Default::default(), None::<&str>);
+    let img = doc.append_element(Some(0), "img", None::<&str>);
     doc.select_image_url(
         img,
         "a.png",
@@ -40,7 +40,7 @@ fn roundtrip_all_logical_kinds() {
     assert_eq!(restored.logical_snapshot(), before);
     for id in 0..restored.node_count() {
         assert!(
-            restored.layout_style(id).is_some(),
+            restored.nodes.box_key(id).is_some(),
             "restored source node {id}"
         );
     }
@@ -75,12 +75,7 @@ fn reject_a_base_url_that_does_not_parse() {
 #[test]
 fn roundtrip_preserves_animation_style() {
     let mut document = Document::new();
-    let element = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Default::default(),
-        None::<&str>,
-    );
+    let element = document.append_element(Some(document.root_index()), "div", None::<&str>);
     document.set_element_animation_style(element, Some("font-size: 20px;".into()));
 
     let restored = Document::from_logical_snapshot(document.logical_snapshot(), 100).unwrap();
@@ -110,12 +105,7 @@ fn roundtrip_detached_template_namespaced_attributes() {
 #[cfg(feature = "snapshot-serde")]
 fn older_serde_snapshot_without_animation_style_defaults_to_none() {
     let mut document = Document::new();
-    document.append_element(
-        Some(document.root_index()),
-        "div",
-        Default::default(),
-        None::<&str>,
-    );
+    document.append_element(Some(document.root_index()), "div", None::<&str>);
     let mut wire = serde_json::to_value(document.logical_snapshot()).unwrap();
     let element = wire["nodes"][1]["data"]["Element"].as_object_mut().unwrap();
     assert!(element.remove("animation_style").is_some());
@@ -543,7 +533,7 @@ fn logical_snapshot_maps_all_quirks_modes() {
 #[test]
 fn detached_focus_is_dropped_on_rebuild() {
     let mut doc = Document::new();
-    let body = doc.append_element(None, "body", Default::default(), None::<&str>);
+    let body = doc.append_element(None, "body", None::<&str>);
     let loose = doc.create_detached_element("button").unwrap();
     let mut snapshot = doc.logical_snapshot();
     snapshot.focused = Some(loose);

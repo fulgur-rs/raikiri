@@ -67,7 +67,6 @@ fn new_session_refreshes_spanner_recipe_from_current_source_direction() {
     doc.append_element(
         Some(wrapper),
         "div",
-        LayoutStyle::default(),
         Some("display:block;column-span:all;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -102,12 +101,7 @@ fn new_session_refreshes_spanner_recipe_from_current_source_direction() {
 fn new_session_refreshes_anonymous_recipes_from_their_explicit_owners() {
     use raikiri_style::property::{Direction, WritingMode};
     let (mut doc, _, owner, _) = fixture_with_styles("display:block", "display:block");
-    let row = doc.append_element(
-        Some(owner),
-        "div",
-        LayoutStyle::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(owner), "div", Some("display:table-row"));
     doc.append_text(row, "A");
     doc.mark_in_document_flags();
     let mut cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -222,12 +216,7 @@ fn same_recipe_metadata_refresh_preserves_document_pass_entries() {
 #[test]
 fn changed_anonymous_owner_discards_the_previous_identity_pass_entries() {
     let (mut doc, _, owner, _) = fixture_with_styles("display:block", "display:block");
-    let row = doc.append_element(
-        Some(owner),
-        "div",
-        LayoutStyle::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(owner), "div", Some("display:table-row"));
     doc.append_text(row, "A");
     doc.mark_in_document_flags();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -518,12 +507,7 @@ fn source_wrapper_rebinds_when_the_same_key_becomes_a_spanner_recipe() {
         "display:block;column-count:2;width:120px",
         "display:block;grid-template-columns:7px 11px",
     );
-    let spanner = doc.append_element(
-        Some(wrapper),
-        "div",
-        LayoutStyle::default(),
-        Some("display:block;height:20px"),
-    );
+    let spanner = doc.append_element(Some(wrapper), "div", Some("display:block;height:20px"));
     doc.mark_in_document_flags();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
@@ -570,7 +554,10 @@ fn source_wrapper_rebinds_when_the_same_key_becomes_a_spanner_recipe() {
     assert_eq!(session.style_view(wrapper).aspect_ratio(), None);
     assert_neutral_getters(
         session.style_view(wrapper),
-        session.layout_style_for_key(wrapper).unwrap(),
+        &crate::LayoutStyle {
+            display: taffy::Display::Block,
+            ..crate::LayoutStyle::default()
+        },
     );
 }
 
@@ -670,7 +657,7 @@ fn failed_rebinding_keeps_replaced_prepared_data_until_full_recovery() {
     use std::sync::Arc;
     let (mut doc, _, child, _) = fixture_with_styles("display:flex", "width:calc(50% + 10px)");
     let body = doc.nodes[child].parent.unwrap();
-    let later = doc.append_element(Some(body), "div", LayoutStyle::default(), Some("width:7px"));
+    let later = doc.append_element(Some(body), "div", Some("width:7px"));
     doc.mark_in_document_flags();
     let mut cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     let old = {

@@ -45,11 +45,14 @@
 //! (such as tag_name == "template") for separate checks: that makes the concept
 //! implicit and risks omissions when shadow DOM is added.
 
-/// Retained layout input with the same grid identifier type as computed styles.
+/// The Taffy style a layout algorithm takes as input, with the same grid
+/// identifier type as computed styles.
 ///
 /// Long identifiers share their storage when Taffy clones a named placement.
+/// A style of this type is built for one algorithm call from the style views;
+/// no box keeps one.
 // cov:ignore: type aliases have no executable mapping; layout trait tests verify the type.
-pub type LayoutStyle = taffy::Style<smol_str::SmolStr>;
+pub(crate) type LayoutStyle = taffy::Style<smol_str::SmolStr>;
 
 mod diag;
 mod fragment;

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 fn a_rowspan_registers_its_shared_group_once_and_excludes_the_table_boundary() {
     let mut doc = Document::new();
     let mut element = |parent, tag, display| {
-        let id = doc.append_element(Some(parent), tag, Style::default(), None::<&str>);
+        let id = doc.append_element(Some(parent), tag, None::<&str>);
         doc.set_display(id, display);
         id
     };

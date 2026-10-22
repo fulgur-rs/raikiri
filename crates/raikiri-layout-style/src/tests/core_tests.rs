@@ -59,10 +59,13 @@ fn sizing_keywords_and_non_finite_numbers_follow_bridge_policy() {
         cv.width = value;
         cv.min_width = value;
         cv.max_height = value;
+        cv.margin.left = value;
         query(&cv, StyleFlags::default(), |v| {
             assert_ne!(v.size().width, taffy::Dimension::auto());
             assert_eq!(v.min_size().width, taffy::LengthPercentageAuto::auto());
             assert_eq!(v.max_size().height, taffy::LengthPercentageAuto::auto());
+            // A margin never computes to a keyword; one that gets here is no margin.
+            assert_eq!(v.margin().left, taffy::LengthPercentageAuto::length(0.0));
         });
         query(&cv, StyleFlags::IGNORE_WIDTH_KEYWORD, |v| {
             assert_eq!(v.size().width, taffy::Dimension::auto())

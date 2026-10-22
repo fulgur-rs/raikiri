@@ -1,115 +1,49 @@
 use super::*;
-use crate::LayoutStyle as Style;
-
-#[test]
-fn grid_bridge_shares_long_identifiers_with_computed_values() {
-    let name = smol_str::SmolStr::new("a-grid-identifier-longer-than-the-inline-string-capacity");
-    let mut cv = ComputedValues::initial();
-    cv.grid_column_start = GridLineValue::Named(name.clone());
-    cv.grid_column_end = GridLineValue::SpanNamed(name.clone(), 2);
-    cv.grid_template_columns =
-        ComputedGridTemplateTracks::List(std::sync::Arc::new(ComputedGridTrackList {
-            line_names: vec![vec![name.clone()], vec![]],
-            components: vec![ComputedGridTrackListComponent::Repeat(
-                ComputedGridTrackRepeat {
-                    count: GridRepeatCount::Count(2),
-                    line_names: vec![vec![name.clone()], vec![]],
-                    tracks: vec![ComputedGridTrackSize::Breadth(
-                        ComputedGridTrackBreadth::Px(20.0),
-                    )],
-                },
-            )],
-        }));
-    cv.grid_template_areas =
-        GridTemplateAreasValue::Areas(std::sync::Arc::new(GridTemplateAreas {
-            row_strings: vec![name.clone()],
-            areas: vec![GridTemplateAreaEntry {
-                name: name.clone(),
-                row_start: 1,
-                row_end: 2,
-                column_start: 1,
-                column_end: 2,
-            }],
-            row_count: 1,
-            column_count: 1,
-        }));
-    let mut style = Style::default();
-    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut Vec::new());
-    let GridPlacement::NamedLine(line, 1) = style.grid_column.start.clone() else {
-        panic!("named line");
-    };
-    let GridPlacement::NamedSpan(span, 2) = style.grid_column.end.clone() else {
-        panic!("named span");
-    };
-    let GridTemplateComponent::Repeat(repeat) = &style.grid_template_columns[0] else {
-        panic!("repeat");
-    };
-    let area = &style.grid_template_areas.as_ref().unwrap().areas[0].name;
-    for bridged in [
-        line.as_str(),
-        span.as_str(),
-        style.grid_template_column_names[0][0].as_str(),
-        repeat.line_names[0][0].as_str(),
-        area.as_str(),
-    ] {
-        assert_eq!(bridged, name.as_str());
-        assert_eq!(bridged.as_ptr(), name.as_str().as_ptr());
-    }
-}
+use crate::layout::test_support::{bridged_display, bridged_style};
 
 #[test]
 fn apply_computed_to_style_bridges_display_to_taffy() {
     // display bridge active — DisplayValue → taffy::Display
     // Regression check that the mapping is correct.
     //
-    // Adding bridge_margin to the dispatch still preserves the existing assertion:
+    // The margin assertion below holds for the same reason:
     // for elements without an explicit margin, the cascade supplies initial
     // `Sides::all(Length::Px(0.0))`, translated to taffy's
     // `LengthPercentageAuto::length(0.0)`. This equals
     // `taffy::Style::default().margin` (all `Length(0.0)`).
     //
-    // Likewise, adding bridge_padding to the dispatch preserves the
-    // padding assertion: an unspecified padding has the initial
+    // Likewise for the padding assertion: an unspecified padding has the initial
     // `Sides::all(Length::Px(0.0))` → taffy `LengthPercentage::length(0.0)`
-    // value, matching `taffy::Style::default().padding`; no change to
-    // that assertion is needed.
+    // value, matching `taffy::Style::default().padding`.
     //
-    // Adding bridge_size (width) to the dispatch also preserves the
-    // size assertion: unspecified width has initial `LengthOrAuto::Auto`,
-    // translated to `Dimension::auto()`. That matches the width of
-    // `taffy::Style::default().size` (`Size::auto()`); height was initially
-    // left at its default. The existing size-equals-default assertion still passes.
+    // And for the size assertion: unspecified width and height have the
+    // initial `LengthOrAuto::Auto`, translated to `Dimension::auto()`, which
+    // matches `taffy::Style::default().size` (`Size::auto()`).
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:none"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.display,
-        Display::None
-    );
+    assert_eq!(bridged_display(&mut doc, &cr, body), Display::None);
 
     let default_style = <crate::LayoutStyle as Default>::default();
+    assert_eq!(bridged_style(&mut doc, &cr, body).size, default_style.size);
     assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.size,
-        default_style.size
-    );
-    assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.margin,
+        bridged_style(&mut doc, &cr, body).margin,
         default_style.margin
     );
     assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.padding,
+        bridged_style(&mut doc, &cr, body).padding,
         default_style.padding
     );
 }
 
 #[test]
-fn retained_style_pair_keeps_calc_handles_alive_across_clone_and_relayout() {
+fn calc_handles_stay_alive_across_clone_and_relayout() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -117,14 +51,12 @@ fn retained_style_pair_keeps_calc_handles_alive_across_clone_and_relayout() {
     let root = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;width:100px;height:100px"),
     );
-    let body = doc.append_element(Some(root), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(root), "body", Some("display:block"));
     let child = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:calc(50% + 10px);height:10px;padding-left:calc(10% + 5px)"),
     );
     doc.mark_in_document_flags();
@@ -136,15 +68,13 @@ fn retained_style_pair_keeps_calc_handles_alive_across_clone_and_relayout() {
 
     crate::layout::layout_single_page(&mut doc, &cr, page).expect("layout Ok");
     let mut clone = doc.clone();
-    let clone_calc = clone
-        .layout_style(child)
-        .expect("clone retained style")
+    let clone_rules = build_rule_tree(&clone);
+    let clone_cascade = cascade(&clone, &clone_rules).expect("clone cascade Ok");
+    let clone_calc = bridged_style(&mut clone, &clone_cascade, child)
         .size
         .width
         .into_raw()
         .calc_value();
-    let clone_rules = build_rule_tree(&clone);
-    let clone_cascade = cascade(&clone, &clone_rules).expect("clone cascade Ok");
 
     crate::layout::layout_single_page(&mut doc, &cr, page).expect("original relayout Ok");
     assert_eq!(
@@ -161,7 +91,7 @@ fn retained_style_pair_keeps_calc_handles_alive_across_clone_and_relayout() {
 
     crate::layout::layout_single_page(&mut clone, &clone_cascade, page).expect("clone relayout Ok");
 
-    let style = clone.layout_style(child).expect("retained style");
+    let style = bridged_style(&mut clone, &clone_cascade, child);
     let width = style.size.width.into_raw();
     assert!(width.has_calc());
     assert_eq!(
@@ -222,24 +152,21 @@ fn apply_computed_to_style_tracks_logical_min_block_provenance() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let avoided = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("min-block-size: 40px; break-inside: avoid"),
     );
     let auto = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("min-block-size: 40px; break-inside: auto"),
     );
     let page_only = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("min-block-size: 40px; break-inside: avoid-page"),
     );
     let rules = build_rule_tree(&doc);
@@ -250,11 +177,7 @@ fn apply_computed_to_style_tracks_logical_min_block_provenance() {
     assert!(!doc.nodes[auto].has_logical_min_block_size);
     assert!(!doc.nodes[page_only].has_logical_min_block_size);
     assert_eq!(
-        doc.layout_node_with_style(avoided)
-            .unwrap()
-            .style
-            .min_size
-            .height,
+        bridged_style(&mut doc, &cr, avoided).min_size.height,
         LengthPercentageAuto::length(40.0)
     );
 }
@@ -264,15 +187,15 @@ fn apply_computed_to_style_bridges_direction_to_taffy() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("direction:rtl"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("direction:rtl"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.direction,
+        bridged_style(&mut doc, &cr, body).direction,
         taffy::Direction::Rtl
     );
 }
@@ -285,19 +208,16 @@ fn apply_computed_to_style_preserves_authored_list_item_padding() {
     let inside = doc.append_element(
         Some(0),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-position: inside"),
     );
     let outside = doc.append_element(
         Some(0),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-position: outside"),
     );
     let explicit_padding = doc.append_element(
         Some(0),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-position: inside; padding-left: 5px"),
     );
     let rules = build_rule_tree(&doc);
@@ -306,9 +226,7 @@ fn apply_computed_to_style_preserves_authored_list_item_padding() {
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     assert_eq!(
-        doc.layout_node_with_style(inside)
-            .unwrap()
-            .style
+        bridged_style(&mut doc, &cr, inside)
             .padding
             .left
             .into_raw()
@@ -316,9 +234,7 @@ fn apply_computed_to_style_preserves_authored_list_item_padding() {
         0.0
     );
     assert_eq!(
-        doc.layout_node_with_style(outside)
-            .unwrap()
-            .style
+        bridged_style(&mut doc, &cr, outside)
             .padding
             .left
             .into_raw()
@@ -326,8 +242,7 @@ fn apply_computed_to_style_preserves_authored_list_item_padding() {
         0.0
     );
     assert_eq!(
-        doc.layout_style(explicit_padding)
-            .unwrap()
+        bridged_style(&mut doc, &cr, explicit_padding)
             .padding
             .left
             .into_raw()
@@ -338,7 +253,7 @@ fn apply_computed_to_style_preserves_authored_list_item_padding() {
 
 #[test]
 fn apply_computed_to_style_bridges_margin_to_taffy() {
-    // Regression check that bridge_margin translates
+    // Regression check that the margin translates
     // Sides<ComputedLengthPercentageOrAuto> into taffy::Rect<LengthPercentageAuto>.
     // Cover each of the three bridge branches (Px / Percent / Auto)
     // with one case.
@@ -355,12 +270,12 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
 
     fn margin_for(inline: &str) -> Rect<LengthPercentageAuto> {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(body).unwrap().style.margin
+        bridged_style(&mut doc, &cr, body).margin
     }
 
     // Case 1: shorthand `margin: 10px 20px 30px 40px` (top/right/bottom/left)
@@ -425,7 +340,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_padding_to_taffy() {
-    // Regression check that bridge_padding translates
+    // Regression check that the padding translates
     // Sides<ComputedLengthPercentage> into taffy::Rect<LengthPercentage>.
     // Unlike margin, padding does not accept `auto`
     // (<length-percentage `[0,∞]`>), so **two arms**
@@ -442,12 +357,12 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
 
     fn padding_for(inline: &str) -> Rect<LengthPercentage> {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(body).unwrap().style.padding
+        bridged_style(&mut doc, &cr, body).padding
     }
 
     // Case 1: shorthand `padding: 5px 10px 15px 20px` (top/right/bottom/left)
@@ -497,8 +412,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_width_to_taffy() {
-    // bridge_size (width component)
-    // translates cv.width: ComputedLengthPercentageOrAuto into
+    // The width translates cv.width: ComputedLengthPercentageOrAuto into
     // taffy::Style::size.width: Dimension. Check each of its three branches
     // (Px / Percent / Auto) with one case
     // (`pt` is converted to px in cascade phase 3).
@@ -517,15 +431,15 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
 
     fn width_for(inline: &str) -> Dimension {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         // Put the inline style on non-body element p. Since
         // apply_page_content_box_to_body only touches body, p's style.size is observable after the bridge.
-        let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
+        let p = doc.append_element(Some(body), "p", Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(p).unwrap().style.size.width
+        bridged_style(&mut doc, &cr, p).size.width
     }
 
     // Case 1: `width: 100px` → Dimension::length(100.0) (Px unchanged).
@@ -551,7 +465,7 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_height_to_taffy() {
-    // Height support in bridge_size extends its width mapping.
+    // The height mapping extends the width mapping.
     // Check that cv.height: ComputedLengthPercentageOrAuto becomes
     // taffy::Style::size.height: Dimension. This pairs with the
     // sibling test `apply_computed_to_style_bridges_width_to_taffy`.
@@ -574,15 +488,15 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
 
     fn height_for(inline: &str) -> Dimension {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         // Put the inline style on non-body element p. Since
         // apply_page_content_box_to_body only touches body, p's style.size is observable after the bridge.
-        let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
+        let p = doc.append_element(Some(body), "p", Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(p).unwrap().style.size.height
+        bridged_style(&mut doc, &cr, p).size.height
     }
 
     // Case 1: `height: 100px` → Dimension::length(100.0) (Px unchanged).
@@ -600,7 +514,7 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_min_size_to_taffy() {
-    // Min-size half of bridge_min_max_size: translate cv.min_width / cv.min_height,
+    // Min-size half of the size limits: translate cv.min_width / cv.min_height,
     // both ComputedLengthPercentageOrAuto, into taffy::Style::min_size,
     // a Size<Dimension>. Use the same fixture pattern as the
     // sibling `apply_computed_to_style_bridges_height_to_taffy` test:
@@ -615,13 +529,13 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
 
     fn min_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let p = doc.append_element(Some(body), "p", Style::default(), inline);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
+        let p = doc.append_element(Some(body), "p", inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(p).unwrap().style.min_size
+        bridged_style(&mut doc, &cr, p).min_size
     }
 
     // Case 1: unspecified → taffy default (initial min `auto` round-trip).
@@ -654,7 +568,7 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_max_size_to_taffy() {
-    // Max-size half of bridge_min_max_size: translate cv.max_width / cv.max_height
+    // Max-size half of the size limits: translate cv.max_width / cv.max_height
     // into taffy::Style::max_size: Size<Dimension>.
     // Use the same fixture pattern as the sibling min-size test.
     //
@@ -665,13 +579,13 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
 
     fn max_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let p = doc.append_element(Some(body), "p", Style::default(), inline);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
+        let p = doc.append_element(Some(body), "p", inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(p).unwrap().style.max_size
+        bridged_style(&mut doc, &cr, p).max_size
     }
 
     // Case 1: unspecified → taffy default (initial max `none` round-trip).
@@ -699,37 +613,32 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
 
     // Case 3b: an inset calc() is preserved the same way.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let p = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some("position: relative; left: calc(50% + 1em); top: calc(10% - 2px)"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cr).expect("styles");
     assert!(
-        doc.layout_node_with_style(p)
-            .unwrap()
-            .style
+        bridged_style(&mut doc, &cr, p)
             .inset
             .left
             .into_raw()
             .is_plain_calc()
     );
     assert!(
-        doc.layout_node_with_style(p)
-            .unwrap()
-            .style
+        bridged_style(&mut doc, &cr, p)
             .inset
             .top
             .into_raw()
             .is_plain_calc()
     );
     assert_eq!(
-        doc.layout_node_with_style(p).unwrap().style.inset.right,
+        bridged_style(&mut doc, &cr, p).inset.right,
         LengthPercentageAuto::auto()
     );
 
@@ -748,7 +657,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
 
 #[test]
 fn apply_computed_to_style_bridges_border_to_taffy() {
-    // Regression check that bridge_border translates
+    // Regression check that the border widths translate
     // Sides<ComputedBorder> to taffy::Rect<LengthPercentage>.
     // The assertion checks the mapping end to end.
     //
@@ -776,7 +685,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     //
     // Test approach: use both the four-side `border: <w> <s> <c>` shorthand
     // and longhands. Check the entire shorthand expansion → per-side
-    // cascade → bridge_border pipeline. The single-side shorthand
+    // cascade → border width pipeline. The single-side shorthand
     // `border-top: ...` is not yet supported by the parser;
     // see computed.rs lines 228–229.
     use raikiri_style::{build_rule_tree, cascade};
@@ -784,12 +693,12 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
 
     fn border_for(inline: &str) -> Rect<LengthPercentage> {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some(inline));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some(inline));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(body).unwrap().style.border
+        bridged_style(&mut doc, &cr, body).border
     }
 
     // Case 1 (positive path): `border: 5px solid red` shorthand → 4 side
@@ -907,11 +816,10 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
     use taffy::{LengthPercentage, Rect};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         // Never declare `border-style`: all four computed sides retain
         // the initial `none` (CSS Backgrounds 3 §3.2 "Inherited: no").
         Some("border-top-width: 5px"),
@@ -922,7 +830,7 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
 
     // border-style unset (initial `none`) must gate width to 0 all the way to taffy.
     assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.border,
+        bridged_style(&mut doc, &cr, body).border,
         Rect {
             top: LengthPercentage::length(0.0),
             right: LengthPercentage::length(0.0),
@@ -945,11 +853,10 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     use taffy::{Dimension, LengthPercentage, LengthPercentageAuto, Rect};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("font-size: 20px"));
+    let html = doc.append_element(Some(0), "html", Some("font-size: 20px"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         // font-size inherits 20px. `em` uses this node's 20px; `rem` uses
         // the root's 20px.
         Some(
@@ -960,7 +867,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    let style = &doc.layout_node_with_style(body).unwrap().style;
+    let style = &bridged_style(&mut doc, &cr, body);
 
     // 2em × 20px = 40px (previously 0.0).
     assert_eq!(
@@ -991,7 +898,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
 
 #[test]
 fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
-    // Regression check that bridge_box_sizing performs the one-to-one
+    // Regression check that the box-sizing bridge performs the one-to-one
     // enum mapping from raikiri_style::BoxSizing to taffy::BoxSizing.
     // Confirm it end to end.
     //
@@ -1009,12 +916,12 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
 
     fn box_sizing_for(inline: Option<&str>) -> TaffyBoxSizing {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), inline);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", inline);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.layout_node_with_style(body).unwrap().style.box_sizing
+        bridged_style(&mut doc, &cr, body).box_sizing
     }
 
     // Case 1: border-box → taffy::BoxSizing::BorderBox
@@ -1044,16 +951,16 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
     use raikiri_style::{build_rule_tree, cascade};
     fn box_sizing_for_width_and_borders(width: Option<&str>, borders: &str) -> TaffyBoxSizing {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
         let style = match width {
             Some(w) => format!("{w}; {borders}"),
             None => borders.to_string(),
         };
-        let body = doc.append_element(Some(html), "body", Style::default(), Some(style.as_str()));
+        let body = doc.append_element(Some(html), "body", Some(style.as_str()));
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("apply Ok");
-        doc.layout_node_with_style(body).unwrap().style.box_sizing
+        bridged_style(&mut doc, &cr, body).box_sizing
     }
     assert_eq!(
         box_sizing_for_width_and_borders(None, "border-right: 150px solid red"),
@@ -1074,11 +981,10 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
     // Exercise the single-side shorthand CSS-wide and deferred paths so
     // rule expansion for the new left shorthand stays covered.
     let mut var_doc = Document::new();
-    let var_html = var_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let var_html = var_doc.append_element(Some(0), "html", None::<&str>);
     let _ = var_doc.append_element(
         Some(var_html),
         "body",
-        Style::default(),
         Some("border-left: inherit; border-left: var(--missing)"),
     );
     let var_rules = build_rule_tree(&var_doc);
@@ -1089,18 +995,13 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
 #[test]
 fn page_layout_preserves_authored_body_width_from_bridge() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;width:100px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;width:100px"));
     let rules = raikiri_style::build_rule_tree(&doc);
     let cr = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
     assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.size.width,
+        bridged_style(&mut doc, &cr, body).size.width,
         Dimension::length(100.0)
     );
     assert_eq!(doc.nodes[body].unrounded_layout.size.width, 100.0);
@@ -1115,27 +1016,17 @@ fn layout_single_page_bridges_display_flow_root() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let flow_root = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:flow-root;width:200px"),
-    );
-    let child = doc.append_element(
-        Some(flow_root),
-        "div",
-        Style::default(),
-        Some("height:20px;background:red"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let flow_root = doc.append_element(Some(body), "div", Some("display:flow-root;width:200px"));
+    let child = doc.append_element(Some(flow_root), "div", Some("height:20px;background:red"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     assert_eq!(
-        doc.layout_node_with_style(flow_root).unwrap().style.display,
+        bridged_display(&mut doc, &cr, flow_root),
         Display::FlowRoot,
         // cov:ignore: panic-message literal only executes on assertion failure.
         "bridge_display must map DisplayValue::FlowRoot to taffy::Display::FlowRoot"
@@ -1156,23 +1047,12 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let flex_container =
-        doc.append_element(Some(body), "div", Style::default(), Some("display:flex"));
-    let child_a = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
-    let child_b = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let flex_container = doc.append_element(Some(body), "div", Some("display:flex"));
+    let child_a = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
+    let child_b = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -1181,10 +1061,7 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.layout_node_with_style(flex_container)
-            .unwrap()
-            .style
-            .display,
+        bridged_display(&mut doc, &cr, flex_container),
         Display::Flex,
         "bridge_display must map DisplayValue::Flex to taffy::Display::Flex"
     );
@@ -1208,157 +1085,20 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
     );
 }
 
-#[test]
-fn bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword() {
-    // `bridge_flex`'s `flex_direction`/`flex_wrap` match arms — the
-    // sibling `flex_direction_column_stacks_children_vertically` /
-    // `gap_adds_space_between_flex_items` tests only exercise `Row`
-    // (default) and `Column` end-to-end through real layout geometry;
-    // this test pins the remaining keyword→taffy-constant mappings
-    // directly, since geometry alone can't discriminate e.g.
-    // `RowReverse` from `Row` without a multi-child fixture per
-    // variant.
-    for (direction, expected) in [
-        (FlexDirectionValue::Row, TaffyFlexDirection::Row),
-        (
-            FlexDirectionValue::RowReverse,
-            TaffyFlexDirection::RowReverse,
-        ),
-        (FlexDirectionValue::Column, TaffyFlexDirection::Column),
-        (
-            FlexDirectionValue::ColumnReverse,
-            TaffyFlexDirection::ColumnReverse,
-        ),
-    ] {
-        let mut cv = ComputedValues::initial();
-        cv.flex_direction = direction;
-        let mut style = Style::default();
-        let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(
-            style.flex_direction, expected,
-            "flex-direction: {direction:?}"
-        );
-    }
-
-    for (wrap, expected) in [
-        (FlexWrapValue::NoWrap, TaffyFlexWrap::NoWrap),
-        (FlexWrapValue::Wrap, TaffyFlexWrap::Wrap),
-        (FlexWrapValue::WrapReverse, TaffyFlexWrap::WrapReverse),
-    ] {
-        let mut cv = ComputedValues::initial();
-        cv.flex_wrap = wrap;
-        let mut style = Style::default();
-        let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
-        assert_eq!(style.flex_wrap, expected, "flex-wrap: {wrap:?}");
-    }
-}
-
-#[test]
-fn bridge_flex_absolutizes_flex_basis_px_and_percent() {
-    // `bridge_flex`'s `ComputedFlexBasis::Px`/`Percent` arms — no
-    // existing test sets an explicit `<length-percentage>` flex-basis
-    // (`flex_grow_absorbs_free_space` below leaves it at the `auto`
-    // initial value), so these two reachable arms had no direct
-    // coverage.
-    let mut cv = ComputedValues::initial();
-    cv.flex_basis = ComputedFlexBasis::Px(40.0);
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(style.flex_basis, Dimension::length(40.0));
-
-    // `ComputedFlexBasis::Percent` holds the authored number (`50.0`
-    // for `50%`, not a `0.0..=1.0` fraction) — the bridge divides by
-    // 100 before handing it to taffy, same convention as
-    // `computed_length_percentage_or_auto_to_taffy_dimension`'s other
-    // callers (`width`/`height`/`margin`).
-    let mut cv = ComputedValues::initial();
-    cv.flex_basis = ComputedFlexBasis::Percent(50.0);
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(style.flex_basis, Dimension::percent(0.5));
-}
-
-#[test]
-fn bridge_flex_maps_intrinsic_basis_keywords_to_taffy_dimensions() {
-    // taffy 0.14 migration: `min-content` / `max-content` /
-    // `fit-content` / `content` map to taffy's own intrinsic
-    // `Dimension` variants (no `auto` collapse anymore).
-    for (value, expected) in [
-        (ComputedFlexBasis::MinContent, Dimension::min_content()),
-        (ComputedFlexBasis::MaxContent, Dimension::max_content()),
-        (ComputedFlexBasis::FitContent, Dimension::fit_content()),
-        (ComputedFlexBasis::Content, Dimension::content()),
-    ] {
-        let mut cv = ComputedValues::initial();
-        cv.flex_basis = value;
-        let mut style = Style::default();
-        let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
-        assert_eq!(style.flex_basis, expected);
-        assert!(diag.is_empty());
-    }
-}
-
-#[test]
-fn content_alignment_to_taffy_maps_every_keyword() {
-    // `content_alignment_to_taffy` backs both `justify-content` and
-    // `align-content` (`bridge_alignment`) — check every keyword→taffy
-    // constant mapping directly, since only `Center`-ish geometry is
-    // exercised end-to-end elsewhere.
-    for (value, expected) in [
-        (ContentAlignmentValue::Normal, None),
-        (
-            ContentAlignmentValue::Stretch,
-            Some(TaffyAlignContent::STRETCH),
-        ),
-        (
-            ContentAlignmentValue::SpaceBetween,
-            Some(TaffyAlignContent::SPACE_BETWEEN),
-        ),
-        (
-            ContentAlignmentValue::SpaceEvenly,
-            Some(TaffyAlignContent::SPACE_EVENLY),
-        ),
-        (
-            ContentAlignmentValue::SpaceAround,
-            Some(TaffyAlignContent::SPACE_AROUND),
-        ),
-        (
-            ContentAlignmentValue::Center,
-            Some(TaffyAlignContent::CENTER),
-        ),
-        (ContentAlignmentValue::Start, Some(TaffyAlignContent::START)),
-        (ContentAlignmentValue::End, Some(TaffyAlignContent::END)),
-        (
-            ContentAlignmentValue::FlexStart,
-            Some(TaffyAlignContent::FLEX_START),
-        ),
-        (
-            ContentAlignmentValue::FlexEnd,
-            Some(TaffyAlignContent::FLEX_END),
-        ),
-    ] {
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(
-            content_alignment_to_taffy(value),
-            expected,
-            "value: {value:?}"
-        );
-    }
+/// The alignments the bridge settles for a box with the computed values `cv`
+/// in a container with the computed values `parent`.
+fn settled_alignments(cv: &ComputedValues, parent: &ComputedValues) -> Settled {
+    let mut settled = Settled::of(cv);
+    let (align_self, justify_self) = settled::inherited_last_baseline(cv, parent);
+    settled.align_self = align_self.or(settled.align_self);
+    settled.justify_self = justify_self.or(settled.justify_self);
+    settled
 }
 
 #[test]
 fn self_alignment_to_taffy_maps_every_keyword() {
-    // `self_alignment_to_taffy` backs `align-items` and the
-    // non-`auto` branch of `align-self` (`bridge_alignment`) — check
-    // every keyword→taffy constant mapping directly.
+    // `self_alignment_to_taffy` backs `align-items` and the non-`auto` branch
+    // of `align-self` — check every keyword→taffy constant mapping directly.
     for (value, expected) in [
         (SelfAlignmentValue::Normal, None),
         (SelfAlignmentValue::Stretch, Some(TaffyAlignItems::STRETCH)),
@@ -1384,33 +1124,29 @@ fn self_alignment_to_taffy_maps_every_keyword() {
 }
 
 #[test]
-fn bridge_alignment_align_self_auto_maps_to_none() {
-    // `bridge_alignment`'s `AlignSelfValue::Auto` arm — the `None`
-    // mapping (CSS Box Alignment 3 §6.2: falls back to the parent's
-    // `align-items`, delegated to taffy) has no other coverage.
+fn settled_alignment_align_self_auto_is_none() {
+    // The `AlignSelfValue::Auto` arm — the `None` mapping (CSS Box Alignment
+    // 3 §6.2: falls back to the parent's `align-items`, delegated to taffy).
     let mut cv = ComputedValues::initial();
     cv.align_self = AlignSelfValue::Auto;
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
+    let style = Settled::of(&cv);
     assert_eq!(style.align_self, None);
 }
 
 #[test]
-fn bridge_alignment_align_self_value_delegates_to_self_alignment_to_taffy() {
-    // `bridge_alignment`'s `AlignSelfValue::Value(v)` arm — distinct
-    // from the sibling test above, which only pins the `Auto` arm.
-    // `self_alignment_to_taffy` itself is already pinned directly by
-    // `self_alignment_to_taffy_maps_every_keyword`, but that doesn't
-    // exercise this match arm's delegation to it.
+fn settled_alignment_align_self_value_maps_through_self_alignment() {
+    // The `AlignSelfValue::Value(v)` arm — distinct from the sibling test
+    // above, which only pins the `Auto` arm. `self_alignment_to_taffy` itself
+    // is pinned by `self_alignment_to_taffy_maps_every_keyword`, but that
+    // doesn't exercise this arm's delegation to it.
     let mut cv = ComputedValues::initial();
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
+    let style = Settled::of(&cv);
     assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
 }
 
 #[test]
-fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
+fn settled_alignment_last_baseline_falls_back_to_end_for_abspos() {
     // An absolutely positioned box takes no part in baseline alignment, so
     // `last baseline` falls back to `safe self-end` on both axes. A box in the
     // flow keeps aligning to the baseline.
@@ -1424,15 +1160,14 @@ fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
         cv.position = position;
         cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::LastBaseline);
         cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::LastBaseline);
-        let mut style = Style::default();
-        bridge_alignment(&mut style, &cv);
+        let style = Settled::of(&cv);
         assert_eq!(style.align_self, Some(expected), "position: {label}");
         assert_eq!(style.justify_self, Some(expected), "position: {label}");
     }
 }
 
 #[test]
-fn bridge_alignment_baseline_falls_back_to_safe_start_for_abspos() {
+fn settled_alignment_baseline_falls_back_to_safe_start_for_abspos() {
     // An absolutely positioned box takes no part in baseline alignment, so
     // `baseline` keeps taffy's start placement with `safe` overflow alignment
     // on both axes. A box in the flow keeps aligning to the baseline.
@@ -1450,8 +1185,7 @@ fn bridge_alignment_baseline_falls_back_to_safe_start_for_abspos() {
         cv.position = position;
         cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Baseline);
         cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::Baseline);
-        let mut style = Style::default();
-        bridge_alignment(&mut style, &cv);
+        let style = Settled::of(&cv);
         assert_eq!(style.align_self, Some(expected), "position: {label}");
         assert_eq!(style.justify_self, Some(expected), "position: {label}");
     }
@@ -1473,9 +1207,7 @@ fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
         let label = format!("{position:?}");
         let mut cv = ComputedValues::initial();
         cv.position = position;
-        let mut style = Style::default();
-        bridge_alignment(&mut style, &cv);
-        bridge_inherited_last_baseline(&mut style, &cv, &parent);
+        let style = settled_alignments(&cv, &parent);
         assert_eq!(style.align_self, expected, "position: {label}");
         assert_eq!(style.justify_self, expected, "position: {label}");
     }
@@ -1492,18 +1224,14 @@ fn abspos_auto_alignment_takes_the_containers_last_baseline_only_for_the_static_
     cv.position = PositionValue::Absolute;
     cv.left = ComputedLengthPercentageOrAuto::Px(0.0);
     cv.bottom = ComputedLengthPercentageOrAuto::Px(0.0);
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
-    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    let style = settled_alignments(&cv, &parent);
     assert_eq!(style.align_self, None);
     assert_eq!(style.justify_self, None);
 
     cv.left = ComputedLengthPercentageOrAuto::Auto;
     cv.bottom = ComputedLengthPercentageOrAuto::Auto;
     cv.top = ComputedLengthPercentageOrAuto::Px(0.0);
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
-    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    let style = settled_alignments(&cv, &parent);
     assert_eq!(style.align_self, None);
     assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
 }
@@ -1515,9 +1243,7 @@ fn abspos_own_alignment_overrides_the_containers_last_baseline() {
     let mut cv = ComputedValues::initial();
     cv.position = PositionValue::Absolute;
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
-    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    let style = settled_alignments(&cv, &parent);
     assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
     assert_eq!(style.justify_self, None);
 }
@@ -1533,28 +1259,22 @@ fn abspos_takes_last_baseline_from_a_display_contents_document_element() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:contents;align-items:last baseline;justify-items:last baseline"),
     );
-    doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let child = doc.append_element(
-        Some(html),
-        "div",
-        Style::default(),
-        Some("position:absolute"),
-    );
+    doc.append_element(Some(html), "body", None::<&str>);
+    let child = doc.append_element(Some(html), "div", Some("position:absolute"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
-    let style = &doc.layout_node_with_style(child).unwrap().style;
+    let style = &bridged_style(&mut doc, &cr, child);
     assert_eq!(style.align_self, Some(TaffyAlignItems::SAFE_SELF_END));
     assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
 }
 
 #[test]
-fn bridge_alignment_align_self_normal_preserves_normal_instead_of_auto() {
+fn settled_alignment_align_self_normal_preserves_normal_instead_of_auto() {
     // Regression test: `align-self: normal` must
     // NOT collapse to the same `None` mapping as `align-self: auto`.
     // `auto` computes to the parent's `align-items` value (CSS Box
@@ -1566,8 +1286,7 @@ fn bridge_alignment_align_self_normal_preserves_normal_instead_of_auto() {
     // does. See the end-to-end behavioral check below.
     let mut cv = ComputedValues::initial();
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
+    let style = Settled::of(&cv);
     assert_eq!(style.align_self, Some(TaffyAlignItems::NORMAL));
 }
 
@@ -1578,24 +1297,22 @@ fn align_self_normal_stretches_even_when_parent_align_items_is_center() {
     // center (inheriting the parent's value per spec), but a child
     // with `align-self: normal` must independently stretch to fill the
     // cross axis — the two must NOT produce the same layout, even
-    // though `bridge_alignment` maps both through `Option<AlignItems>`.
+    // though both map through `Option<AlignItems>`.
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;height:100px;align-items:center"),
     );
     let normal_child = doc.append_element(
         Some(flex_container),
         "div",
-        Style::default(),
         Some("width:50px;align-self:normal"),
     );
     let rules = build_rule_tree(&doc);
@@ -1614,7 +1331,7 @@ fn align_self_normal_stretches_even_when_parent_align_items_is_center() {
 
 #[test]
 fn flex_direction_column_stacks_children_vertically() {
-    // `bridge_flex`'s `flex_direction` field must actually reach
+    // The `flex_direction` mapping must actually reach
     // taffy's `compute_flexbox_layout` — asserting `style.flex_direction
     // == Column` alone would only prove the assignment, not the integration,
     // since reading the field back off the taffy `Style` cannot
@@ -1629,7 +1346,7 @@ fn flex_direction_column_stacks_children_vertically() {
     // test's default row-direction container only puts `column-gap` on
     // the main axis. Here, `flex-direction: column` makes `row-gap` the
     // *main*-axis gap (`Size::main()` for a column container resolves to
-    // `height`, per `bridge_gap`'s `width: column_gap, height: row_gap`
+    // `height`, per the gap mapping's `width: column_gap, height: row_gap`
     // mapping), so the two children's y-offset becomes 20px (first
     // child's height) + 10px (row-gap) = 30px — discriminating a dropped
     // row-gap (would stay at 20px) or a transposed bridge (would become
@@ -1638,27 +1355,16 @@ fn flex_direction_column_stacks_children_vertically() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column;gap:10px 30px"),
     );
-    let child_a = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
-    let child_b = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let child_a = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
+    let child_b = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -1686,7 +1392,7 @@ fn flex_direction_column_stacks_children_vertically() {
 
 #[test]
 fn flex_grow_absorbs_free_space() {
-    // `bridge_flex`'s `flex_grow` field reaching taffy's flexible-length
+    // The `flex_grow` mapping reaching taffy's flexible-length
     // resolution algorithm (§9.7 "Resolving Flexible Lengths") — a
     // growable child must widen past its own basis to consume the free
     // space in the container, while a non-growable sibling stays at its
@@ -1695,27 +1401,16 @@ fn flex_grow_absorbs_free_space() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let flex_container = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:flex;width:500px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let flex_container = doc.append_element(Some(body), "div", Some("display:flex;width:500px"));
     let grower = doc.append_element(
         Some(flex_container),
         "div",
-        Style::default(),
         Some("width:100px;height:20px;flex-grow:1"),
     );
-    let fixed = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let fixed = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -1741,45 +1436,9 @@ fn flex_grow_absorbs_free_space() {
 }
 
 #[test]
-fn bridge_float_maps_every_float_and_clear_keyword() {
-    // `bridge_float`'s enum match arms — direct pin, same rationale as
-    // `bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword`:
-    // geometry-based tests below only exercise `Float::Left` /
-    // `Clear::Left`, so this pins the remaining keyword→taffy-constant
-    // mappings that a geometry fixture can't discriminate from each
-    // other without a dedicated fixture per variant.
-    for (float, expected) in [
-        (FloatValue::None, TaffyFloat::None),
-        (FloatValue::Left, TaffyFloat::Left),
-        (FloatValue::Right, TaffyFloat::Right),
-    ] {
-        let mut cv = ComputedValues::initial();
-        cv.float = float;
-        let mut style = Style::default();
-        bridge_float(&mut style, &cv);
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(style.float, expected, "float: {float:?}");
-    }
-
-    for (clear, expected) in [
-        (ClearValue::None, TaffyClear::None),
-        (ClearValue::Left, TaffyClear::Left),
-        (ClearValue::Right, TaffyClear::Right),
-        (ClearValue::Both, TaffyClear::Both),
-    ] {
-        let mut cv = ComputedValues::initial();
-        cv.clear = clear;
-        let mut style = Style::default();
-        bridge_float(&mut style, &cv);
-        assert_eq!(style.clear, expected, "clear: {clear:?}");
-    }
-}
-
-#[test]
 fn floated_box_with_explicit_width_is_positioned_at_the_containing_block_edge() {
     // Real float layout (taffy's `float_layout` feature, wired via
-    // `bridge_float` + `taffy_impl`'s `LayoutBlockContainer` impl) —
+    // the float bridge + `taffy_impl`'s `LayoutBlockContainer` impl) —
     // a `float:left` box with an explicit width must be sized to
     // that width (not stretch to the container's full width like a
     // normal block child would) and must be positioned flush against
@@ -1797,14 +1456,13 @@ fn floated_box_with_explicit_width_is_positioned_at_the_containing_block_edge() 
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let container = doc.append_element(Some(body), "div", Style::default(), Some("width:200px"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let container = doc.append_element(Some(body), "div", Some("width:200px"));
     let float_child = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("float:left;width:60px;height:40px"),
     );
 
@@ -1839,78 +1497,8 @@ fn floated_box_with_explicit_width_is_positioned_at_the_containing_block_edge() 
 }
 
 #[test]
-fn bridge_gap_collapses_normal_to_zero() {
-    // `computed_gap_component_to_taffy`'s `Normal` arm (CSS Box
-    // Alignment 3 §8.1's "normal" keyword has no taffy equivalent, so
-    // this bridge collapses it to `0`) — a direct pin, since it's
-    // plausible for this branch to appear covered only incidentally
-    // through unrelated tests' default (gap-less) fixtures rather
-    // than being pinned on its own.
-    let cv = ComputedValues::initial();
-    assert_eq!(cv.row_gap, ComputedLengthPercentageOrNormal::Normal);
-    assert_eq!(cv.column_gap, ComputedLengthPercentageOrNormal::Normal);
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_gap(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(
-        style.gap,
-        Size {
-            width: LengthPercentage::length(0.0),
-            height: LengthPercentage::length(0.0),
-        }
-    );
-}
-
-#[test]
-fn bridge_gap_hands_a_mixed_calc_to_taffy() {
-    // `column-gap: calc(10% + 5px)` keeps both terms and resolves against
-    // the container's inner size once it is known.
-    let mut cv = ComputedValues::initial();
-    cv.column_gap =
-        ComputedLengthPercentageOrNormal::Calc(raikiri_style::property::CalcLengthPercentage {
-            percent: 10.0,
-            px: 5.0,
-        });
-    let mut style = Style::default();
-    let mut calc_values = Vec::new();
-    let mut diag = Vec::new();
-    bridge_gap(&mut style, &cv, &mut calc_values, &mut diag);
-    let raw = style.gap.width.into_raw();
-    assert!(raw.is_plain_calc());
-    assert_eq!(
-        crate::taffy_impl::resolve_calc(raw.calc_value(), 200.0),
-        25.0
-    );
-    assert_eq!(style.gap.height, LengthPercentage::length(0.0));
-}
-
-#[test]
-fn bridge_gap_absolutizes_percent_gap() {
-    // `computed_gap_component_to_taffy`'s `Percent` arm — the `Px`
-    // arm has incidental coverage through `gap_adds_space_between_flex_items`
-    // below, but no existing test exercises `row-gap`/`column-gap` with
-    // a `<percentage>` value. `ComputedLengthPercentageOrNormal::Percent`
-    // holds the authored number (`25.0` for `25%`), and the bridge
-    // divides by 100 before handing it to taffy, same convention as
-    // `bridge_flex_absolutizes_flex_basis_px_and_percent` above.
-    let mut cv = ComputedValues::initial();
-    cv.row_gap = ComputedLengthPercentageOrNormal::Percent(25.0);
-    cv.column_gap = ComputedLengthPercentageOrNormal::Percent(10.0);
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_gap(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(
-        style.gap,
-        Size {
-            width: LengthPercentage::percent(0.1),
-            height: LengthPercentage::percent(0.25),
-        }
-    );
-}
-
-#[test]
 fn gap_adds_space_between_flex_items() {
-    // `bridge_gap` maps the `gap` shorthand's 2 components onto taffy's
+    // The gap mapping puts the `gap` shorthand's 2 components onto taffy's
     // `Size<LengthPercentage>` as `Size { width: column_gap, height:
     // row_gap }`. The 2 components are deliberately asymmetric (10px
     // vs 30px) so that a transposed mapping (swapping row/column) would
@@ -1922,31 +1510,16 @@ fn gap_adds_space_between_flex_items() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let flex_container = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:flex;gap:10px 30px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let flex_container = doc.append_element(Some(body), "div", Some("display:flex;gap:10px 30px"));
     // Source formatting whitespace is not an anonymous flex item. Keep
     // it in the DOM to exercise the same filtering used by HTML parsing.
     let _whitespace_before = doc.append_text(flex_container, "\n  ");
-    let child_a = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let child_a = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
     let _whitespace_between = doc.append_text(flex_container, "\n  ");
-    let child_b = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let child_b = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
     let _whitespace_after = doc.append_text(flex_container, "\n");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1967,8 +1540,8 @@ fn gap_adds_space_between_flex_items() {
 
 #[test]
 fn justify_content_flex_end_pushes_children_to_container_end() {
-    // `bridge_alignment`'s `justify_content` field reaching taffy's
-    // main-axis alignment (§9.5 "Main-Axis Alignment") — with
+    // `justify-content` reaching taffy's main-axis alignment (§9.5
+    // "Main-Axis Alignment") — with
     // `justify-content: flex-end` in a 500px-wide row container, 2
     // 100px-wide children must land flush against the container's end
     // edge (x = 500 - 200 = 300 for the first child).
@@ -1976,27 +1549,16 @@ fn justify_content_flex_end_pushes_children_to_container_end() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;width:500px;justify-content:flex-end"),
     );
-    let child_a = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
-    let child_b = doc.append_element(
-        Some(flex_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let child_a = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
+    let child_b = doc.append_element(Some(flex_container), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -2034,23 +1596,12 @@ fn layout_single_page_bridges_display_grid_to_taffy_grid() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let grid_container =
-        doc.append_element(Some(body), "div", Style::default(), Some("display:grid"));
-    let child_a = doc.append_element(
-        Some(grid_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
-    let child_b = doc.append_element(
-        Some(grid_container),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let grid_container = doc.append_element(Some(body), "div", Some("display:grid"));
+    let child_a = doc.append_element(Some(grid_container), "div", Some("width:100px;height:20px"));
+    let child_b = doc.append_element(Some(grid_container), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -2059,10 +1610,7 @@ fn layout_single_page_bridges_display_grid_to_taffy_grid() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.layout_node_with_style(grid_container)
-            .unwrap()
-            .style
-            .display,
+        bridged_display(&mut doc, &cr, grid_container),
         Display::Grid,
         "bridge_display must map DisplayValue::Grid to taffy::Display::Grid"
     );
@@ -2081,290 +1629,11 @@ fn layout_single_page_bridges_display_grid_to_taffy_grid() {
     }
 }
 
-// ── bridge_grid (CSS Grid Layout Module Level 1) ────────────────────
-
-use raikiri_style::property::{GridTemplateAreaEntry, GridTemplateAreas};
-use raikiri_style::{ComputedGridTrackList, ComputedGridTrackRepeat};
-
 #[test]
-fn bridge_grid_maps_grid_auto_flow_keywords() {
-    for (flow, expected) in [
-        (GridAutoFlowValue::Row, TaffyGridAutoFlow::Row),
-        (GridAutoFlowValue::Column, TaffyGridAutoFlow::Column),
-        (GridAutoFlowValue::RowDense, TaffyGridAutoFlow::RowDense),
-        (
-            GridAutoFlowValue::ColumnDense,
-            TaffyGridAutoFlow::ColumnDense,
-        ),
-    ] {
-        let mut cv = ComputedValues::initial();
-        cv.grid_auto_flow = flow;
-        let mut style = Style::default();
-        let mut diag = Vec::new();
-        bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(style.grid_auto_flow, expected, "grid-auto-flow: {flow:?}");
-    }
-}
-
-#[test]
-fn bridge_grid_maps_every_grid_line_placement_variant() {
-    for (value, expected) in [
-        (GridLineValue::Auto, GridPlacement::Auto),
-        (GridLineValue::Line(-2), taffy_style_helpers::line(-2i16)),
-        (
-            GridLineValue::Named("col".into()),
-            GridPlacement::NamedLine("col".into(), 1),
-        ),
-        (
-            GridLineValue::NamedLine("col".into(), 3),
-            GridPlacement::NamedLine("col".into(), 3),
-        ),
-        (GridLineValue::Span(4), GridPlacement::Span(4)),
-        (
-            GridLineValue::SpanNamed("col".into(), 2),
-            GridPlacement::NamedSpan("col".into(), 2),
-        ),
-    ] {
-        // cov:ignore: panic-message literal only executed on assertion
-        // failure, which doesn't happen while this test passes.
-        assert_eq!(
-            grid_line_value_to_taffy_placement(&value),
-            expected,
-            "grid-line: {value:?}"
-        );
-    }
-}
-
-#[test]
-fn bridge_grid_maps_grid_row_and_grid_column_from_the_4_longhands() {
+fn settled_justify_self_keeps_end_and_normal() {
     let mut cv = ComputedValues::initial();
-    cv.grid_row_start = GridLineValue::Line(2);
-    cv.grid_row_end = GridLineValue::Span(3);
-    cv.grid_column_start = GridLineValue::Named("main".into());
-    cv.grid_column_end = GridLineValue::Auto;
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(
-        style.grid_row,
-        TaffyLine {
-            start: taffy_style_helpers::line(2i16),
-            end: GridPlacement::Span(3),
-        }
-    );
-    assert_eq!(
-        style.grid_column,
-        TaffyLine {
-            start: GridPlacement::NamedLine("main".into(), 1),
-            end: GridPlacement::Auto,
-        }
-    );
-}
-
-#[test]
-fn bridge_grid_maps_track_list_with_repeat_minmax_fr_and_named_lines() {
-    // `grid-template-columns: [a] 100px repeat(2, [b] minmax(0, 1fr))`
-    // — exercises a bare fixed track, a `repeat()` with `minmax()`/`fr`
-    // inside, and named lines both outside and inside the `repeat()`.
-    let mut cv = ComputedValues::initial();
-    cv.grid_template_columns =
-        ComputedGridTemplateTracks::List(std::sync::Arc::new(ComputedGridTrackList {
-            line_names: vec![vec!["a".into()], vec![], vec![]],
-            components: vec![
-                ComputedGridTrackListComponent::Size(ComputedGridTrackSize::Breadth(
-                    ComputedGridTrackBreadth::Px(100.0),
-                )),
-                ComputedGridTrackListComponent::Repeat(ComputedGridTrackRepeat {
-                    count: GridRepeatCount::Count(2),
-                    line_names: vec![vec!["b".into()], vec![]],
-                    tracks: vec![ComputedGridTrackSize::MinMax(
-                        ComputedGridTrackBreadth::Px(0.0),
-                        ComputedGridTrackBreadth::Flex(1.0),
-                    )],
-                }),
-            ],
-        }));
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
-
-    assert_eq!(style.grid_template_columns.len(), 2);
-    assert_eq!(
-        style.grid_template_columns[0],
-        GridTemplateComponent::Single(TrackSizingFunction {
-            min: MinTrackSizingFunction::length(100.0),
-            max: MaxTrackSizingFunction::length(100.0),
-        })
-    );
-    assert_eq!(
-        style.grid_template_columns[1],
-        GridTemplateComponent::Repeat(GridTemplateRepetition {
-            count: TaffyRepetitionCount::Count(2),
-            tracks: vec![TrackSizingFunction {
-                min: MinTrackSizingFunction::length(0.0),
-                max: MaxTrackSizingFunction::fr(1.0),
-            }],
-            line_names: vec![vec!["b".into()], vec![]],
-        })
-    );
-    assert_eq!(
-        style.grid_template_column_names,
-        vec![vec![smol_str::SmolStr::new_static("a")], vec![], vec![]]
-    );
-}
-
-#[test]
-fn bridge_grid_maps_grid_template_areas() {
-    let mut cv = ComputedValues::initial();
-    cv.grid_template_areas =
-        GridTemplateAreasValue::Areas(std::sync::Arc::new(GridTemplateAreas {
-            row_strings: vec!["header".into()],
-            areas: vec![GridTemplateAreaEntry {
-                name: "header".into(),
-                row_start: 1,
-                row_end: 2,
-                column_start: 1,
-                column_end: 3,
-            }],
-            row_count: 1,
-            column_count: 2,
-        }));
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(
-        style.grid_template_areas,
-        Some(taffy::style::GridTemplateAreas {
-            areas: vec![TaffyGridTemplateArea {
-                name: "header".into(),
-                row_start: 1,
-                row_end: 2,
-                column_start: 1,
-                column_end: 3,
-            }],
-            row_count: 1,
-            column_count: 2,
-        })
-    );
-}
-
-#[test]
-fn bridge_grid_maps_grid_auto_columns_and_rows_track_sizes() {
-    let mut cv = ComputedValues::initial();
-    cv.grid_auto_columns = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
-        ComputedGridTrackBreadth::Px(50.0),
-    )]);
-    cv.grid_auto_rows = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
-        ComputedGridTrackBreadth::MinContent,
-    )]);
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(
-        style.grid_auto_columns,
-        vec![TrackSizingFunction {
-            min: MinTrackSizingFunction::length(50.0),
-            max: MaxTrackSizingFunction::length(50.0),
-        }]
-    );
-    assert_eq!(
-        style.grid_auto_rows,
-        vec![TrackSizingFunction {
-            min: MinTrackSizingFunction::min_content(),
-            max: MaxTrackSizingFunction::min_content(),
-        }]
-    );
-}
-
-#[test]
-fn bridge_grid_maps_grid_auto_columns_percent_and_max_content_breadth() {
-    // Sibling of `bridge_grid_maps_grid_auto_columns_and_rows_track_sizes`
-    // above, which only exercises `Px`/`MinContent` — `Percent` and
-    // `MaxContent` are the 2 `ComputedGridTrackBreadth` variants that
-    // test left unreached in both `grid_track_breadth_to_taffy_min` and
-    // `grid_track_breadth_to_taffy_max` (`Flex`/`Auto` are covered
-    // elsewhere by the repeat/minmax and named-line tests).
-    let mut cv = ComputedValues::initial();
-    cv.grid_auto_columns = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
-        ComputedGridTrackBreadth::Percent(25.0),
-    )]);
-    cv.grid_auto_rows = std::sync::Arc::new(vec![ComputedGridTrackSize::Breadth(
-        ComputedGridTrackBreadth::MaxContent,
-    )]);
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(
-        style.grid_auto_columns,
-        vec![TrackSizingFunction {
-            min: MinTrackSizingFunction::percent(0.25),
-            max: MaxTrackSizingFunction::percent(0.25),
-        }]
-    );
-    assert_eq!(
-        style.grid_auto_rows,
-        vec![TrackSizingFunction {
-            min: MinTrackSizingFunction::max_content(),
-            max: MaxTrackSizingFunction::max_content(),
-        }]
-    );
-}
-
-#[test]
-fn bridge_grid_maps_grid_auto_columns_fit_content() {
-    // `fit-content(<length-percentage>)` (CSS Grid 1 §7.2.1) — no other
-    // `bridge_grid` test constructs `ComputedGridTrackSize::FitContent`,
-    // so `grid_track_size_to_taffy`'s `FitContent` arm (both the px and
-    // percentage forms) was previously unreached by any test.
-    let mut cv = ComputedValues::initial();
-    cv.grid_auto_columns = std::sync::Arc::new(vec![
-        ComputedGridTrackSize::FitContent(ComputedLengthPercentage::Px(80.0)),
-        ComputedGridTrackSize::FitContent(ComputedLengthPercentage::Percent(40.0)),
-    ]);
-    let mut style = Style::default();
-    let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
-    assert_eq!(
-        style.grid_auto_columns,
-        vec![
-            TrackSizingFunction {
-                min: MinTrackSizingFunction::auto(),
-                max: MaxTrackSizingFunction::fit_content_px(80.0),
-            },
-            TrackSizingFunction {
-                min: MinTrackSizingFunction::auto(),
-                max: MaxTrackSizingFunction::fit_content_percent(0.4),
-            },
-        ]
-    );
-}
-
-#[test]
-fn grid_repeat_count_to_taffy_maps_auto_fill_and_auto_fit() {
-    // `repeat(auto-fill, ...)` / `repeat(auto-fit, ...)` (CSS Grid 1
-    // §7.2.3.2) — the other `bridge_grid` track-list tests only
-    // exercise `GridRepeatCount::Count(_)`, so the two auto-repeat
-    // variants had no direct coverage.
-    assert_eq!(
-        grid_repeat_count_to_taffy(GridRepeatCount::AutoFill),
-        TaffyRepetitionCount::AutoFill
-    );
-    assert_eq!(
-        grid_repeat_count_to_taffy(GridRepeatCount::AutoFit),
-        TaffyRepetitionCount::AutoFit
-    );
-}
-
-#[test]
-fn bridge_alignment_maps_justify_items_and_justify_self() {
-    let mut cv = ComputedValues::initial();
-    cv.justify_items = SelfAlignmentValue::Center;
     cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::End);
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
-    assert_eq!(style.justify_items, TaffyAlignItems::CENTER);
+    let style = Settled::of(&cv);
     assert_eq!(style.justify_self, Some(TaffyAlignItems::END));
 
     // `justify-self: normal` behaves as `stretch` (CSS Box Alignment 3
@@ -2373,14 +1642,13 @@ fn bridge_alignment_maps_justify_items_and_justify_self() {
     // (`self_alignment_or_auto_to_taffy` doc).
     let mut cv = ComputedValues::initial();
     cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
-    let mut style = Style::default();
-    bridge_alignment(&mut style, &cv);
+    let style = Settled::of(&cv);
     assert_eq!(style.justify_self, Some(TaffyAlignItems::NORMAL));
 }
 
 #[test]
 fn grid_template_columns_actually_sizes_columns_through_taffy_grid_algorithm() {
-    // `bridge_grid`'s `grid_template_columns` field must actually reach
+    // The `grid_template_columns` mapping must actually reach
     // taffy's `compute_grid_layout` — asserting the `taffy::Style`
     // field alone would only prove the assignment, not the integration
     // (same rationale as `flex_direction_column_stacks_children_vertically`
@@ -2391,25 +1659,22 @@ fn grid_template_columns_actually_sizes_columns_through_taffy_grid_algorithm() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:100px 200px"),
     );
     let cell_a = doc.append_element(
         Some(grid_container),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:1;height:20px"),
     );
     let cell_b = doc.append_element(
         Some(grid_container),
         "div",
-        Style::default(),
         Some("grid-column:2;grid-row:1;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2441,7 +1706,7 @@ fn grid_template_columns_actually_sizes_columns_through_taffy_grid_algorithm() {
 
 #[test]
 fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
-    // `bridge_grid`'s `grid_auto_flow` field reaching taffy's
+    // The `grid_auto_flow` mapping reaching taffy's
     // auto-placement algorithm — with `grid-auto-flow: column` and no
     // explicit placement, 2 children must be auto-placed into
     // successive *columns* of the same row (not successive rows, the
@@ -2451,27 +1716,16 @@ fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-auto-flow:column;grid-auto-columns:100px"),
     );
-    let cell_a = doc.append_element(
-        Some(grid_container),
-        "div",
-        Style::default(),
-        Some("height:20px"),
-    );
-    let cell_b = doc.append_element(
-        Some(grid_container),
-        "div",
-        Style::default(),
-        Some("height:20px"),
-    );
+    let cell_a = doc.append_element(Some(grid_container), "div", Some("height:20px"));
+    let cell_b = doc.append_element(Some(grid_container), "div", Some("height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -2504,12 +1758,11 @@ fn multicol_style_keeps_both_terms_of_a_calc_gap() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;width:200px;column-gap:calc(10% + 5px)"),
     );
     let rules = build_rule_tree(&doc);
@@ -2530,18 +1783,16 @@ fn multicol_style_resolves_normal_gap_to_one_em() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let default_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;width:200px"),
     );
     let large_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;width:200px;font-size:32px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2569,17 +1820,11 @@ fn apply_computed_to_style_bridges_min_content_width_to_taffy() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let width = doc.append_element(
-        Some(html),
-        "div",
-        Style::default(),
-        Some("display:block;width:min-content"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let width = doc.append_element(Some(html), "div", Some("display:block;width:min-content"));
     let inline = doc.append_element(
         Some(html),
         "div",
-        Style::default(),
         Some("display:block;inline-size:min-content"),
     );
     let rules = build_rule_tree(&doc);
@@ -2587,11 +1832,11 @@ fn apply_computed_to_style_bridges_min_content_width_to_taffy() {
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
 
     assert_eq!(
-        doc.layout_node_with_style(width).unwrap().style.size.width,
+        bridged_style(&mut doc, &cascade, width).size.width,
         Dimension::min_content()
     );
     assert_eq!(
-        doc.layout_node_with_style(inline).unwrap().style.size.width,
+        bridged_style(&mut doc, &cascade, inline).size.width,
         Dimension::min_content()
     );
 }
@@ -2601,17 +1846,11 @@ fn apply_computed_to_style_bridges_max_and_fit_content_width_to_taffy() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let max = doc.append_element(
-        Some(html),
-        "div",
-        Style::default(),
-        Some("display:block;width:max-content"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let max = doc.append_element(Some(html), "div", Some("display:block;width:max-content"));
     let fit = doc.append_element(
         Some(html),
         "div",
-        Style::default(),
         Some("display:block;inline-size:fit-content"),
     );
     let rules = build_rule_tree(&doc);
@@ -2619,11 +1858,11 @@ fn apply_computed_to_style_bridges_max_and_fit_content_width_to_taffy() {
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
 
     assert_eq!(
-        doc.layout_node_with_style(max).unwrap().style.size.width,
+        bridged_style(&mut doc, &cascade, max).size.width,
         Dimension::max_content()
     );
     assert_eq!(
-        doc.layout_node_with_style(fit).unwrap().style.size.width,
+        bridged_style(&mut doc, &cascade, fit).size.width,
         Dimension::fit_content()
     );
 }
@@ -2633,7 +1872,7 @@ fn apply_computed_to_style_bridges_the_fit_content_function_limit_to_taffy() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let widths: Vec<usize> = [
         "font-size:20px;width:fit-content(2em)",
         "width:fit-content(25%)",
@@ -2641,19 +1880,12 @@ fn apply_computed_to_style_bridges_the_fit_content_function_limit_to_taffy() {
         "width:fit-content(calc(10px + 5px))",
     ]
     .into_iter()
-    .map(|css| {
-        doc.append_element(
-            Some(html),
-            "div",
-            Style::default(),
-            Some(&format!("display:block;{css}")),
-        )
-    })
+    .map(|css| doc.append_element(Some(html), "div", Some(&format!("display:block;{css}"))))
     .collect();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
-    let width = |node: usize| doc.layout_node_with_style(node).unwrap().style.size.width;
+    let mut width = |node: usize| bridged_style(&mut doc, &cascade, node).size.width;
 
     assert_eq!(width(widths[0]), Dimension::fit_content_px(40.0));
     assert_eq!(width(widths[1]), Dimension::fit_content_percent(0.25));
@@ -2670,12 +1902,12 @@ fn bridged_sizes(cases: &[(&str, &str, &str)]) -> Vec<taffy::Size<Dimension>> {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let children: Vec<usize> = cases
         .iter()
         .map(|&(parent_css, tag, child_css)| {
-            let parent = doc.append_element(Some(html), "div", Style::default(), Some(parent_css));
-            doc.append_element(Some(parent), tag, Style::default(), Some(child_css))
+            let parent = doc.append_element(Some(html), "div", Some(parent_css));
+            doc.append_element(Some(parent), tag, Some(child_css))
         })
         .collect();
     let rules = build_rule_tree(&doc);
@@ -2683,7 +1915,7 @@ fn bridged_sizes(cases: &[(&str, &str, &str)]) -> Vec<taffy::Size<Dimension>> {
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
     children
         .into_iter()
-        .map(|child| doc.layout_node_with_style(child).unwrap().style.size)
+        .map(|child| bridged_style(&mut doc, &cascade, child).size)
         .collect()
 }
 
@@ -2707,12 +1939,12 @@ fn bridged_content_limits(
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let children: Vec<usize> = cases
         .iter()
         .map(|&(parent_css, tag, child_css)| {
-            let parent = doc.append_element(Some(html), "div", Style::default(), Some(parent_css));
-            doc.append_element(Some(parent), tag, Style::default(), Some(child_css))
+            let parent = doc.append_element(Some(html), "div", Some(parent_css));
+            doc.append_element(Some(parent), tag, Some(child_css))
         })
         .collect();
     let rules = build_rule_tree(&doc);
@@ -2721,7 +1953,7 @@ fn bridged_content_limits(
     children
         .into_iter()
         .map(|child| {
-            let style = &doc.layout_node_with_style(child).unwrap().style;
+            let style = &bridged_style(&mut doc, &cascade, child);
             (
                 doc.nodes[child].content_limits,
                 style.min_size,
@@ -2887,20 +2119,14 @@ fn a_display_contents_parent_passes_its_own_container_to_the_content_limits() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let mut items = Vec::new();
     for container in ["display:flex", "display:block"] {
-        let outer = doc.append_element(Some(html), "div", Style::default(), Some(container));
-        let contents = doc.append_element(
-            Some(outer),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
+        let outer = doc.append_element(Some(html), "div", Some(container));
+        let contents = doc.append_element(Some(outer), "div", Some("display:contents"));
         items.push(doc.append_element(
             Some(contents),
             "div",
-            Style::default(),
             Some("display:block;min-width:max-content"),
         ));
     }
@@ -2923,20 +2149,14 @@ fn a_display_contents_parent_passes_its_own_container_to_the_width_keyword() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let mut items = Vec::new();
     for container in ["display:flex", "display:block"] {
-        let outer = doc.append_element(Some(html), "div", Style::default(), Some(container));
-        let contents = doc.append_element(
-            Some(outer),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
+        let outer = doc.append_element(Some(html), "div", Some(container));
+        let contents = doc.append_element(Some(outer), "div", Some("display:contents"));
         items.push(doc.append_element(
             Some(contents),
             "div",
-            Style::default(),
             Some("display:block;width:max-content;max-width:100px"),
         ));
     }
@@ -2946,7 +2166,7 @@ fn a_display_contents_parent_passes_its_own_container_to_the_width_keyword() {
 
     // The flex item is clamped, so its keyword stays out of Taffy's way; the
     // block is sized by the keyword and clamped afterwards.
-    let width = |item: usize| doc.layout_node_with_style(item).unwrap().style.size.width;
+    let mut width = |item: usize| bridged_style(&mut doc, &cascade, item).size.width;
     assert_eq!(width(items[0]), Dimension::auto());
     assert_eq!(width(items[1]), Dimension::max_content());
 }
@@ -3131,22 +2351,17 @@ fn bridged_align_selves(
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let children: Vec<usize> = cases
         .iter()
         .map(|&(parent_css, tag, child_css)| {
-            let parent = doc.append_element(Some(html), "div", Style::default(), Some(parent_css));
+            let parent = doc.append_element(Some(html), "div", Some(parent_css));
             let parent = if wrapped {
-                doc.append_element(
-                    Some(parent),
-                    "div",
-                    Style::default(),
-                    Some("display:contents"),
-                )
+                doc.append_element(Some(parent), "div", Some("display:contents"))
             } else {
                 parent
             };
-            doc.append_element(Some(parent), tag, Style::default(), Some(child_css))
+            doc.append_element(Some(parent), tag, Some(child_css))
         })
         .collect();
     let rules = build_rule_tree(&doc);
@@ -3154,7 +2369,7 @@ fn bridged_align_selves(
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
     children
         .into_iter()
-        .map(|child| doc.layout_node_with_style(child).unwrap().style.align_self)
+        .map(|child| bridged_style(&mut doc, &cascade, child).align_self)
         .collect()
 }
 
@@ -3393,69 +2608,29 @@ fn an_item_inherits_the_keyword_height_of_its_container() {
 }
 
 #[test]
-fn a_sizing_keyword_is_no_min_max_constraint_and_no_margin() {
-    // Taffy's min and max sizes hold no sizing keyword (the node's content
-    // limits do) and a margin never computes to one; where one reaches either,
-    // it is no constraint and no margin.
-    for keyword in [
-        ComputedLengthPercentageOrAuto::MinContent,
-        ComputedLengthPercentageOrAuto::MaxContent,
-        ComputedLengthPercentageOrAuto::FitContent,
-    ] {
-        let mut calc_values = Vec::new();
-        let mut diag = Vec::new();
-        assert_eq!(
-            computed_length_percentage_or_auto_to_taffy_min_max(
-                &mut calc_values,
-                keyword,
-                true,
-                "test",
-                &mut diag,
-            ),
-            LengthPercentageAuto::auto()
-        );
-        assert_eq!(
-            computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
-                &mut calc_values,
-                keyword,
-                "test",
-                &mut diag,
-            ),
-            LengthPercentageAuto::length(0.0)
-        );
-        assert!(diag.is_empty());
-    }
-}
-
-#[test]
 fn a_multicol_container_establishes_a_block_formatting_context() {
     // CSS Multi-column Layout 1, 2: the first child's top margin stays
     // inside the multicol container instead of collapsing with its own.
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:1;width:200px"),
     );
     let child = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:block;height:20px;margin-top:15px"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    assert_eq!(
-        doc.layout_node_with_style(multicol).unwrap().style.display,
-        Display::FlowRoot
-    );
+    assert_eq!(bridged_display(&mut doc, &cr, multicol), Display::FlowRoot);
     assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 0.0);
     assert_eq!(doc.nodes[child].unrounded_layout.location.y, 15.0);
     assert_eq!(doc.nodes[multicol].unrounded_layout.size.height, 35.0);
@@ -3465,22 +2640,20 @@ fn a_multicol_container_establishes_a_block_formatting_context() {
 fn bridged_writing_modes_follow_live_parents_and_refresh_before_consumers() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let body = doc.append_element(Some(0), "body", Style::default(), Some("display:block"));
-    let early = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(0), "body", Some("display:block"));
+    let early = doc.append_element(Some(body), "div", Some("display:block"));
     let text = doc.append_text(early, "x");
     let late = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:sideways-rl"),
     );
     let horizontal = doc.append_element(
         Some(late),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:horizontal-tb"),
     );
-    let template = doc.append_element(Some(late), "template", Style::default(), None::<&str>);
+    let template = doc.append_element(Some(late), "template", None::<&str>);
     let fragment = doc.allocate_template_fragment_root(template);
     let inert = doc.append_text(fragment, "inert");
     doc.detach_from_parent(early);
@@ -3547,15 +2720,10 @@ fn changing_a_block_parent_to_flex_refreshes_inline_size_containment_before_clas
 
     let mut doc = Document::new();
     with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("margin:0;font:20px/1 Ahem"),
-    );
-    let parent = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    let child = doc.append_element(Some(parent), "span", Style::default(), Some("contain:size"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/1 Ahem"));
+    let parent = doc.append_element(Some(body), "div", Some("display:block"));
+    let child = doc.append_element(Some(parent), "span", Some("contain:size"));
     doc.append_text(child, "XX");
 
     let first = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -3576,16 +2744,10 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
     fn fixture(parent_css: &str) -> (Document, usize, usize) {
         let mut doc = Document::new();
         with_ahem(&mut doc);
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("margin:0;font:20px/1 Ahem"),
-        );
-        let parent = doc.append_element(Some(body), "div", Style::default(), Some(parent_css));
-        let child =
-            doc.append_element(Some(parent), "span", Style::default(), Some("contain:size"));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/1 Ahem"));
+        let parent = doc.append_element(Some(body), "div", Some(parent_css));
+        let child = doc.append_element(Some(parent), "span", Some("contain:size"));
         doc.append_text(child, "XX");
         (doc, parent, child)
     }
@@ -3618,5 +2780,6 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
 }
 
 mod aspect_ratio_tests;
+mod clamp_warning_tests;
 mod content_limit_bridge_tests;
 mod replaced_sizing_tests;

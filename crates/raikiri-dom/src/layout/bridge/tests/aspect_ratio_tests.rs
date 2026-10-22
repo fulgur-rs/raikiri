@@ -8,11 +8,10 @@ fn lay_out_in_a_100px_body(
 ) -> (Document, Vec<usize>) {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:100px"),
     );
     let nodes = build(&mut doc, body);
@@ -31,7 +30,6 @@ fn append_block(doc: &mut Document, parent: usize, css: &str) -> usize {
     doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some(format!("display:block;{css}").as_str()),
     )
 }
@@ -285,32 +283,20 @@ fn a_maximum_width_wins_over_the_minimum_width_carried_from_the_minimum_height()
 fn a_column_flex_item_with_a_ratio_gets_its_flex_base_from_the_max_content_width() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-flow:column wrap;width:max-content;height:100px"),
     );
     let item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("width:100%;aspect-ratio:1/1;min-height:0px"),
     );
     for _ in 0..2 {
-        doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("float:left;width:50px;height:50px"),
-        );
+        doc.append_element(Some(item), "div", Some("float:left;width:50px;height:50px"));
     }
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -381,17 +367,15 @@ fn a_multicol_block_width_from_the_ratio_grows_to_the_widths_of_its_columns() {
 fn ratio_only_svg_size(css: &str) -> (f32, f32) {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:200px"),
     );
     let svg = doc.append_element(
         Some(body),
         "svg",
-        Style::default(),
         Some(format!("display:block;{css}").as_str()),
     );
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));

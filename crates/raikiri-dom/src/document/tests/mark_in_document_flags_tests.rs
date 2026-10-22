@@ -8,9 +8,9 @@ fn mark_in_document_flags_clears_detached_arena_nodes() {
     // is_in_document=false after marking (step 1 clears their default true flag).
     let mut doc = Document::new();
     let root = doc.root_index();
-    let attached = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    let attached = doc.append_element(Some(root), "div", None::<&str>);
     // Create a detached node with parent=None (append_element primitive contract).
-    let detached = doc.append_element(None::<usize>, "span", Style::default(), None::<&str>);
+    let detached = doc.append_element(None::<usize>, "span", None::<&str>);
 
     // Both constructors default to true.
     assert!(doc.get_node(attached).unwrap().is_in_document());
@@ -40,8 +40,8 @@ fn mark_in_document_flags_keeps_template_real_children_in_document() {
     // `template_in_document_tests`.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
-    let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(root), "template", None::<&str>);
+    let inner = doc.append_element(Some(tmpl), "p", None::<&str>);
     let text = doc.append_text(inner, "hi");
 
     doc.mark_in_document_flags();
@@ -67,7 +67,7 @@ fn append_operations_set_flags_dirty() {
     // A fresh Document starts with dirty=false.
     let mut doc = Document::new();
     assert!(!doc.flags_dirty, "fresh Document has clean flags");
-    let e = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let e = doc.append_element(Some(0), "div", None::<&str>);
     assert!(doc.flags_dirty, "append_element sets dirty");
     doc.flags_dirty = false;
     doc.append_text(e, "hi");
@@ -80,9 +80,9 @@ fn attach_and_detach_set_flags_dirty() {
     // Both retain_children operations change tree topology and must set
     // flags_dirty.
     let mut doc = Document::new();
-    let a = doc.append_element(Some(0), "a", Style::default(), None::<&str>);
-    let b = doc.append_element(Some(0), "b", Style::default(), None::<&str>);
-    let d = doc.append_element(None::<usize>, "d", Style::default(), None::<&str>);
+    let a = doc.append_element(Some(0), "a", None::<&str>);
+    let b = doc.append_element(Some(0), "b", None::<&str>);
+    let d = doc.append_element(None::<usize>, "d", None::<&str>);
     doc.mark_in_document_flags(); // clean
     assert!(!doc.flags_dirty);
 
@@ -113,7 +113,7 @@ fn mark_in_document_flags_is_noop_when_clean() {
     // Invariant: without mutation after marking, marking again is
     // fast and idempotent.
     let mut doc = Document::new();
-    let e = doc.append_element(Some(0), "e", Style::default(), None::<&str>);
+    let e = doc.append_element(Some(0), "e", None::<&str>);
     doc.mark_in_document_flags();
     assert!(!doc.flags_dirty);
     assert!(doc.get_node(e).unwrap().is_in_document());
@@ -132,9 +132,9 @@ fn set_element_namespace_dirties_flags_for_svg_only() {
     // detection (real children stay in-document in any namespace, and the
     // inert contents fragment is unreachable regardless).
     let mut doc = Document::new();
-    let tmpl = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
-    let div = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let svg = doc.append_element(Some(0), "svg", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(0), "template", None::<&str>);
+    let div = doc.append_element(Some(0), "div", None::<&str>);
+    let svg = doc.append_element(Some(0), "svg", None::<&str>);
     doc.mark_in_document_flags();
     assert!(!doc.flags_dirty);
 
@@ -169,7 +169,7 @@ fn post_mark_attach_under_template_stays_in_document_after_remark() {
     // marking again after mutation. This is the post-parse mutation contract.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(root), "template", None::<&str>);
     doc.mark_in_document_flags();
     assert!(doc.get_node(tmpl).unwrap().is_in_document());
 
@@ -177,7 +177,7 @@ fn post_mark_attach_under_template_stays_in_document_after_remark() {
     // Attaching it directly below a template makes flags_dirty=true, and
     // marking must keep the flag: it is an ordinary light-DOM child, not
     // template contents.
-    let new_child = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+    let new_child = doc.append_element(Some(tmpl), "p", None::<&str>);
     assert!(doc.flags_dirty, "mutation → dirty");
     // Before marking, the flag still has its default true value.
     assert!(doc.get_node(new_child).unwrap().is_in_document());

@@ -1,6 +1,5 @@
 use super::*;
 
-use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
 
 fn cascaded(doc: &Document) -> CascadeResult {
@@ -14,21 +13,10 @@ fn empty_table_cell_classification_walks_text_children() {
     let table = doc.append_element(
         Some(doc.root_index()),
         "table",
-        Style::default(),
         Some("display:table;border-collapse:separate;empty-cells:hide"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let cell = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.append_text(cell, "visible content");
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
@@ -58,7 +46,6 @@ fn overflow_clip_rejects_a_node_without_cascaded_values() {
     let node = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("display:block;overflow:hidden"),
     );
     doc.mark_in_document_flags();
@@ -79,18 +66,8 @@ fn overflow_clip_rejects_a_node_without_cascaded_values() {
 #[test]
 fn overflow_clip_does_not_apply_to_an_ordinary_inline_box() {
     let mut doc = Document::new();
-    let parent = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        Some("display:block"),
-    );
-    let inline = doc.append_element(
-        Some(parent),
-        "span",
-        Style::default(),
-        Some("display:inline;overflow:hidden"),
-    );
+    let parent = doc.append_element(Some(doc.root_index()), "div", Some("display:block"));
+    let inline = doc.append_element(Some(parent), "span", Some("display:inline;overflow:hidden"));
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
     assert!(
@@ -108,18 +85,8 @@ fn overflow_clip_does_not_apply_to_an_ordinary_inline_box() {
 #[test]
 fn overflow_clip_applies_to_an_inline_flex_item() {
     let mut doc = Document::new();
-    let parent = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        Some("display:flex"),
-    );
-    let item = doc.append_element(
-        Some(parent),
-        "fieldset",
-        Style::default(),
-        Some("overflow:hidden"),
-    );
+    let parent = doc.append_element(Some(doc.root_index()), "div", Some("display:flex"));
+    let item = doc.append_element(Some(parent), "fieldset", Some("overflow:hidden"));
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
     // The cascade keeps `inline`; the flex container blockifies the item.
@@ -142,7 +109,6 @@ fn overflow_clip_propagates_a_block_root_to_the_viewport() {
     let root = doc.append_element(
         Some(doc.root_index()),
         "html",
-        Style::default(),
         Some("display:block;overflow:hidden"),
     );
     doc.mark_in_document_flags();
@@ -201,7 +167,7 @@ fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box() {
         ),
     ] {
         let mut doc = Document::new();
-        let node = doc.append_element(Some(doc.root_index()), "div", Style::default(), Some(css));
+        let node = doc.append_element(Some(doc.root_index()), "div", Some(css));
         doc.mark_in_document_flags();
         let cascade = cascaded(&doc);
         let before = overflow_clip(&doc, &cascade, node, border_box, no_border);
@@ -222,21 +188,11 @@ fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box() {
 #[test]
 fn negative_z_index_sorts_before_static_and_positive_after() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let a = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:relative;z-index:2"),
-    );
-    let b = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let c = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:relative;z-index:-1"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let a = doc.append_element(Some(body), "div", Some("position:relative;z-index:2"));
+    let b = doc.append_element(Some(body), "div", None::<&str>);
+    let c = doc.append_element(Some(body), "div", Some("position:relative;z-index:-1"));
     doc.mark_in_document_flags();
     let cr = cascaded(&doc);
     assert_eq!(find_paint_root(&doc), Some(body));
@@ -248,21 +204,11 @@ fn negative_z_index_sorts_before_static_and_positive_after() {
 #[test]
 fn overflow_and_opacity_predicates() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let a = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("overflow:hidden;opacity:0.5"),
-    );
-    let b = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let contents = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:contents;opacity:0.5"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let a = doc.append_element(Some(body), "div", Some("overflow:hidden;opacity:0.5"));
+    let b = doc.append_element(Some(body), "div", None::<&str>);
+    let contents = doc.append_element(Some(body), "div", Some("display:contents;opacity:0.5"));
     doc.mark_in_document_flags();
     let cr = cascaded(&doc);
     assert!(clips_overflow(&cr.computed[a]));
@@ -290,12 +236,11 @@ fn internal_table_tracks_do_not_clip_but_containers_do() {
         ("grid", true),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let node = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:{display};overflow:hidden")),
         );
         doc.mark_in_document_flags();
@@ -311,8 +256,8 @@ fn internal_table_tracks_do_not_clip_but_containers_do() {
 #[test]
 fn named_page_matching_skips_check_when_no_active_page() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.mark_in_document_flags();
     let cr = cascaded(&doc);
     assert!(named_page_matches(&doc, &cr, body, None));
@@ -322,12 +267,7 @@ fn named_page_matching_skips_check_when_no_active_page() {
 #[test]
 fn flex_static_boxes_use_the_positioned_paint_bucket() {
     let mut document = Document::new();
-    let flex = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Style::default(),
-        Some("display:flex"),
-    );
+    let flex = document.append_element(Some(document.root_index()), "div", Some("display:flex"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     assert_eq!(paint_order_key(&cascade, flex), (2, 0));
@@ -336,30 +276,10 @@ fn flex_static_boxes_use_the_positioned_paint_bucket() {
 #[test]
 fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
     fn parent_with_ordered_children(document: &mut Document, display: &str) -> (usize, [usize; 3]) {
-        let parent = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some(display),
-        );
-        let a = document.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("display:block;order:2"),
-        );
-        let b = document.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("display:block;order:-1"),
-        );
-        let c = document.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("display:block;order:2"),
-        );
+        let parent = document.append_element(Some(document.root_index()), "div", Some(display));
+        let a = document.append_element(Some(parent), "div", Some("display:block;order:2"));
+        let b = document.append_element(Some(parent), "div", Some("display:block;order:-1"));
+        let c = document.append_element(Some(parent), "div", Some("display:block;order:2"));
         (parent, [a, b, c])
     }
 
@@ -368,13 +288,11 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
     let absolute_first = document.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;order:10;position:absolute"),
     );
     let absolute_second = document.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;order:5;position:absolute"),
     );
     let (grid, grid_items) = parent_with_ordered_children(&mut document, "display:grid");
@@ -382,80 +300,53 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
 
     // Flex/grid items with different inner display values still share one
     // order-modified paint sequence.
-    let mixed_parent = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Style::default(),
-        Some("display:grid"),
-    );
-    let nested_flex_item = document.append_element(
-        Some(mixed_parent),
-        "div",
-        Style::default(),
-        Some("display:flex;order:-1"),
-    );
-    let block_item = document.append_element(
-        Some(mixed_parent),
-        "div",
-        Style::default(),
-        Some("display:block;order:1"),
-    );
+    let mixed_parent =
+        document.append_element(Some(document.root_index()), "div", Some("display:grid"));
+    let nested_flex_item =
+        document.append_element(Some(mixed_parent), "div", Some("display:flex;order:-1"));
+    let block_item =
+        document.append_element(Some(mixed_parent), "div", Some("display:block;order:1"));
 
-    let z_index_parent = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Style::default(),
-        Some("display:flex"),
-    );
+    let z_index_parent =
+        document.append_element(Some(document.root_index()), "div", Some("display:flex"));
     let z_one_late = document.append_element(
         Some(z_index_parent),
         "div",
-        Style::default(),
         Some("display:block;z-index:1;order:1"),
     );
     let z_two_early = document.append_element(
         Some(z_index_parent),
         "div",
-        Style::default(),
         Some("display:block;z-index:2;order:-1"),
     );
     let z_one_early = document.append_element(
         Some(z_index_parent),
         "div",
-        Style::default(),
         Some("display:block;z-index:1;order:0"),
     );
     let positioned_z_two = document.append_element(
         Some(z_index_parent),
         "div",
-        Style::default(),
         Some("display:block;position:relative;z-index:2;order:-2"),
     );
 
     // Out-of-flow flex children are treated as order 0 for painting. Their
     // authored order is ignored, with DOM order breaking the 0-value tie.
-    let positioned_parent = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Style::default(),
-        Some("display:flex"),
-    );
+    let positioned_parent =
+        document.append_element(Some(document.root_index()), "div", Some("display:flex"));
     let absolute_slot = document.append_element(
         Some(positioned_parent),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;order:100"),
     );
     let relative_late = document.append_element(
         Some(positioned_parent),
         "div",
-        Style::default(),
         Some("display:block;position:relative;order:1"),
     );
     let relative_early = document.append_element(
         Some(positioned_parent),
         "div",
-        Style::default(),
         Some("display:block;position:relative;order:-1"),
     );
 
@@ -547,15 +438,15 @@ fn inline_deferral_rejects_a_node_without_cascaded_values() {
 #[test]
 fn only_in_flow_typographic_pseudo_elements_form_opacity_groups() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Some("display:none"));
     doc.append_text(
         style,
         "p::before{content:'a';opacity:.5} p::after{content:'b';opacity:.5;float:left} \
          p::marker{opacity:.5}",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:list-item"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some("display:list-item"));
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
     let id = |pseudo| crate::generated_content::generated_node_id(p, pseudo);
@@ -571,15 +462,15 @@ fn only_in_flow_typographic_pseudo_elements_form_opacity_groups() {
 #[test]
 fn generated_boxes_below_a_paragraph_hold_a_negative_stack_level() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Some("display:none"));
     doc.append_text(
         style,
         "p::before{content:'a';position:relative;z-index:-1} p+p::before{z-index:1}",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let paragraph = |doc: &mut Document| {
-        let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        let p = doc.append_element(Some(body), "p", Some("display:block"));
         doc.append_text(p, "text");
         p
     };
@@ -594,52 +485,21 @@ fn generated_boxes_below_a_paragraph_hold_a_negative_stack_level() {
 #[test]
 fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_an_opacity_group() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let div = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    let plain = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
-    let open = doc.append_element(
-        Some(plain),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let div = doc.append_element(Some(body), "div", Some("display:block"));
+    let plain = doc.append_element(Some(div), "span", Some("display:inline"));
+    let open = doc.append_element(Some(plain), "span", Some("display:inline-block"));
     let leveled = doc.append_element(
         Some(plain),
         "span",
-        Style::default(),
         Some("display:inline;position:relative;z-index:1"),
     );
-    let passed = doc.append_element(
-        Some(leveled),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
-    let faded = doc.append_element(
-        Some(plain),
-        "span",
-        Style::default(),
-        Some("display:inline;opacity:0.5"),
-    );
-    let kept = doc.append_element(
-        Some(faded),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
-    let ruby = doc.append_element(
-        Some(plain),
-        "ruby",
-        Style::default(),
-        Some("display:ruby;opacity:0.5"),
-    );
-    let in_ruby = doc.append_element(
-        Some(ruby),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
+    let passed = doc.append_element(Some(leveled), "span", Some("display:inline-block"));
+    let faded = doc.append_element(Some(plain), "span", Some("display:inline;opacity:0.5"));
+    let kept = doc.append_element(Some(faded), "span", Some("display:inline-block"));
+    let ruby = doc.append_element(Some(plain), "ruby", Some("display:ruby;opacity:0.5"));
+    let in_ruby = doc.append_element(Some(ruby), "span", Some("display:inline-block"));
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
     assert!(hoists_positioned_content(&doc, &cascade, open));
@@ -653,7 +513,7 @@ fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_an_opacity_gro
 
 fn clip_of(style: &str, border: f32, padding: f32) -> Option<PaintClip> {
     let mut doc = Document::new();
-    let node = doc.append_element(Some(doc.root_index()), "div", Style::default(), Some(style));
+    let node = doc.append_element(Some(doc.root_index()), "div", Some(style));
     doc.mark_in_document_flags();
     doc.nodes[node].unrounded_layout.padding = taffy::Rect {
         left: padding,
@@ -742,23 +602,16 @@ fn overflow_clip_margin_reshapes_the_corners_from_the_border_edge() {
 #[test]
 fn replaced_content_clip_follows_overflow_per_axis() {
     let mut doc = Document::new();
-    let visible = doc.append_element(
-        Some(doc.root_index()),
-        "canvas",
-        Style::default(),
-        Some("overflow:visible"),
-    );
+    let visible = doc.append_element(Some(doc.root_index()), "canvas", Some("overflow:visible"));
     // The UA style sheet's rule for replaced elements.
     let clipped = doc.append_element(
         Some(doc.root_index()),
         "canvas",
-        Style::default(),
         Some("overflow:clip;overflow-clip-margin:content-box"),
     );
     let block_only = doc.append_element(
         Some(doc.root_index()),
         "canvas",
-        Style::default(),
         Some("overflow:visible clip;overflow-clip-margin:content-box"),
     );
     doc.mark_in_document_flags();
@@ -786,13 +639,11 @@ fn a_replaced_element_clips_every_hidden_axis_from_its_content_box() {
     let hidden = doc.append_element(
         Some(doc.root_index()),
         "img",
-        Style::default(),
         Some("display:block;overflow:hidden;overflow-clip-margin:content-box"),
     );
     let outset = doc.append_element(
         Some(doc.root_index()),
         "img",
-        Style::default(),
         Some("display:block;overflow:clip visible;overflow-clip-margin:10px"),
     );
     doc.mark_in_document_flags();
@@ -822,19 +673,16 @@ fn a_scroll_container_applies_only_an_inward_clip_margin() {
     let inward = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("display:block;overflow:hidden;overflow-clip-margin:content-box"),
     );
     let outward = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("display:block;overflow:auto;overflow-clip-margin:10px"),
     );
     let border_box_value = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("display:block;overflow:hidden;overflow-clip-margin:border-box -10px"),
     );
     doc.mark_in_document_flags();
@@ -866,7 +714,6 @@ fn an_audio_element_uses_its_hidden_overflow_as_clip() {
     let audio = doc.append_element(
         Some(doc.root_index()),
         "audio",
-        Style::default(),
         Some("display:block;overflow:hidden;overflow-clip-margin:10px"),
     );
     doc.mark_in_document_flags();
@@ -884,7 +731,6 @@ fn an_extreme_clip_margin_keeps_the_clip_finite() {
     let node = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("display:block;overflow:clip;overflow-clip-margin:1e40px"),
     );
     doc.mark_in_document_flags();
@@ -900,7 +746,7 @@ fn an_extreme_clip_margin_keeps_the_clip_finite() {
 #[test]
 fn only_a_visible_box_paints_its_own_decorations() {
     let mut doc = Document::new();
-    let body = doc.append_element(Some(0), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(0), "body", None::<&str>);
     let boxes: Vec<_> = [
         ("table", "visible"),
         ("table", "hidden"),
@@ -912,7 +758,6 @@ fn only_a_visible_box_paints_its_own_decorations() {
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!("display:{display};visibility:{keyword}").as_str()),
         )
     })
@@ -937,11 +782,10 @@ fn only_a_visible_box_paints_its_own_decorations() {
 #[test]
 fn positioned_frames_go_back_to_their_place_in_tree_order() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let block = |doc: &mut Document, parent| {
-        doc.append_element(Some(parent), "div", Style::default(), Some("display:block"))
-    };
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block =
+        |doc: &mut Document, parent| doc.append_element(Some(parent), "div", Some("display:block"));
     let a = block(&mut doc, body);
     let b = block(&mut doc, body);
     let b1 = block(&mut doc, b);

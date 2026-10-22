@@ -25,7 +25,7 @@ fn rowspan_clamps_after_parsing_a_wide_integer() {
         ),
     ] {
         let mut doc = Document::new();
-        let cell = doc.append_element(Some(0), "td", Style::default(), None::<&str>);
+        let cell = doc.append_element(Some(0), "td", None::<&str>);
         doc.set_element_attribute(cell, "rowspan", value).unwrap();
         assert_eq!(super::super::get_rowspan(&doc, cell), expected, "{value}");
     }
@@ -34,7 +34,7 @@ fn rowspan_clamps_after_parsing_a_wide_integer() {
 #[test]
 fn missing_or_invalid_rowspan_keeps_the_single_row_default() {
     let mut doc = Document::new();
-    let cell = doc.append_element(Some(0), "td", Style::default(), None::<&str>);
+    let cell = doc.append_element(Some(0), "td", None::<&str>);
     assert_eq!(super::super::get_rowspan(&doc, cell), 1);
     for value in [
         "",

@@ -2,7 +2,6 @@
 //! fixed boxes. A table lays its cells out itself, so it hands the boxes a row
 //! or row group contains over to that part.
 
-use crate::LayoutStyle as Style;
 use crate::document::Document;
 use crate::layout::page_pipeline::{PageLayoutControl, layout_pages_with_options};
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
@@ -13,7 +12,7 @@ const ABSOLUTE_CSS: &str = "position:absolute;left:10px;top:15px;width:30px;heig
 const PARTS: [&str; 4] = ["tr", "tbody", "thead", "tfoot"];
 
 fn element(doc: &mut Document, parent: usize, tag: &str, css: &str) -> usize {
-    doc.append_element(Some(parent), tag, Style::default(), Some(css))
+    doc.append_element(Some(parent), tag, Some(css))
 }
 
 /// `html > body(margin:0) > [div(height:50px), table(border-spacing:0)]`,

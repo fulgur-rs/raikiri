@@ -1,11 +1,13 @@
 use super::*;
-use crate::LayoutStyle as Style;
-use crate::layout::context::LayoutSession;
+use crate::layout::test_support::{bridged_style, with_bridged_session};
 
 fn enforce_layout_invariants_for_test(document: &mut Document, root: usize) -> Vec<LayoutWarn> {
-    let mut session = LayoutSession::new(document);
-    super::enforce_layout_invariants(&mut session, root);
-    std::mem::take(&mut session.context.layout_warnings)
+    with_bridged_session(document, |session| {
+        // The warnings of the bridge are not the ones under test.
+        session.context.layout_warnings.clear();
+        super::enforce_layout_invariants(session, root);
+        std::mem::take(&mut session.context.layout_warnings)
+    })
 }
 
 /// Whether `v` sits exactly on the symmetric clamp boundary of [`MAX_TAFFY_MAGNITUDE`].
@@ -41,21 +43,20 @@ fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
 // because NaN is `NaN != NaN`, `assert_ne!(x, ...NAN)` will unconditionally pass, making it impossible to
 // determine the presence or absence of a guard.
 
-/// Returns the `taffy::Style` of the target element after passing through cascade →
-/// `apply_computed_to_style`.
+/// Returns the style input of the target element after passing through the
+/// cascade and the style bridge.
 ///
 /// The fixture is a **non-body element** (`<p>`) — because `<body>`'s size will be clobbered by the
 /// subsequent `apply_page_content_box_to_body`.
 fn guarded_style_for(inline: &str) -> crate::LayoutStyle {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let p = doc.append_element(Some(body), "p", Style::default(), Some(inline));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let p = doc.append_element(Some(body), "p", Some(inline));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
-    apply_computed_to_style(&mut doc, &cr).expect("styles");
-    doc.layout_node_with_style(p).unwrap().style.clone()
+    bridged_style(&mut doc, &cr, p)
 }
 
 /// site 1 — `computed_length_percentage_to_taffy_length_percentage` (padding).
@@ -411,12 +412,12 @@ fn layout_all_finite(l: &TaffyLayout) -> bool {
 fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let mut parent = body;
     let mut ids = Vec::with_capacity(depth);
     for _ in 0..depth {
-        parent = doc.append_element(Some(parent), "div", Style::default(), Some(decl));
+        parent = doc.append_element(Some(parent), "div", Some(decl));
         ids.push(parent);
     }
     let rules = build_rule_tree(&doc);
@@ -678,8 +679,8 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
 #[test]
 fn content_box_violation_resets_subtree_to_zero_layout() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(Some(parent), "div", None::<&str>);
 
     // padding.left+right (40.0) is greater than size.width (10.0) =>
     // content_box_width() = 10.0 - 40.0 = -30.0 < 0.0.size / padding
@@ -759,9 +760,9 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
 #[test]
 fn saturated_child_outside_parent_is_not_reset() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
-    let grandchild = doc.append_element(Some(child), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(Some(parent), "div", None::<&str>);
+    let grandchild = doc.append_element(Some(child), "div", None::<&str>);
 
     // Parent is normal (100x100, not saturated).
     doc.nodes[parent].unrounded_layout = TaffyLayout {
@@ -861,18 +862,16 @@ fn saturated_child_outside_parent_is_not_reset() {
 fn legitimate_negative_margin_overflow_is_not_reset() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display: block; width: 50px; height: 50px;"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display: block; width: 200px; height: 200px; margin-left: -30px;"),
     );
     let rules = build_rule_tree(&doc);
@@ -934,8 +933,8 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
 #[test]
 fn saturated_but_contained_layout_is_not_reset() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(Some(parent), "div", None::<&str>);
 
     // Create a case where the parent's size is also exactly at the saturation boundary — the child's location
     // fits perfectly within it (boundary value, OK by `<=`).
@@ -1020,8 +1019,8 @@ fn saturated_but_contained_layout_is_not_reset() {
 #[test]
 fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(Some(parent), "div", None::<&str>);
 
     doc.nodes[parent].unrounded_layout = TaffyLayout {
         order: 0,
@@ -1109,8 +1108,8 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
 #[test]
 fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(Some(parent), "div", None::<&str>);
 
     // This is to ensure that parent.size.height is also exactly at the saturation boundary, so that
     // child.location.y (also at the saturation boundary) fits perfectly there (`<=`, exactly at the
@@ -1177,8 +1176,8 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
 #[test]
 fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(Some(parent), "div", None::<&str>);
 
     // parent.size is saturated — assuming an unrelated cause (e.g., percentage compounding that occurred in
     // another subtree), this saturation is unrelated to this child.
@@ -1300,8 +1299,8 @@ fn nested_percentage_wide_child_chain_is_not_reset() {
 #[test]
 fn saturated_negative_location_is_not_reset() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(Some(parent), "div", None::<&str>);
 
     doc.nodes[parent].unrounded_layout = TaffyLayout {
         order: 0,
@@ -1389,18 +1388,16 @@ fn saturated_negative_location_is_not_reset() {
 fn saturated_negative_margin_percentage_child_is_not_reset() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display: block; width: 100px; height: 100px;"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display: block; width: 10px; height: 10px; margin-left: -1e9%;"),
     );
     let rules = build_rule_tree(&doc);
@@ -1472,18 +1469,16 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
 fn saturated_positive_margin_percentage_child_is_not_reset() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display: block; width: 100px; height: 100px;"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display: block; width: 10px; height: 10px; margin-left: 1e9%;"),
     );
     let rules = build_rule_tree(&doc);
@@ -1592,8 +1587,8 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     // `<img>` is a replaced element: with `width: auto` its used width is
     // its intrinsic width (CSS 2.1 §10.3.2/10.3.4), which the
     // inline-block shrink-wrap path (`compute_inline_block_shrink_wrap`)
@@ -1603,12 +1598,7 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
     // ever runs, so it would not observe the resolved intrinsic size
     // here (this is why the UA default for `<img>` is `inline-block`,
     // not `block`).
-    let img = doc.append_element(
-        Some(body),
-        "img",
-        Style::default(),
-        Some("display:inline-block"),
-    );
+    let img = doc.append_element(Some(body), "img", Some("display:inline-block"));
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
     let rules = build_rule_tree(&doc);
@@ -1658,14 +1648,9 @@ fn img_presentational_dimensions_override_its_intrinsic_aspect_ratio() {
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let img = doc.append_element(
-        Some(body),
-        "img",
-        Style::default(),
-        Some("display:inline-block"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let img = doc.append_element(Some(body), "img", Some("display:inline-block"));
     doc.set_element_attributes(
         img,
         vec![
@@ -1703,12 +1688,12 @@ fn with_resolver_refreshes_membership_before_the_image_pre_pass() {
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let tmpl = doc.append_element(Some(body), "template", None::<&str>);
     let frag = doc.allocate_template_fragment_root(tmpl);
     let _hidden_text = doc.append_text(frag, "template text");
-    let img = doc.append_element(Some(frag), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(frag), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
     let rules = build_rule_tree(&doc);
@@ -1729,12 +1714,11 @@ fn layout_page_fragments_clips_long_block_into_split_fragments() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let tall = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:120px"),
     );
     doc.append_text(tall, "tall");
@@ -1772,12 +1756,11 @@ fn layout_page_fragments_exposes_text_line_ranges_for_continuations() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let paragraph = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some("display:block;width:20px;font-size:10px;line-height:10px"),
     );
     let text = doc.append_text(paragraph, "a ".repeat(200));
@@ -1823,23 +1806,13 @@ fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
 
     fn paginate(style: &str) -> (usize, f32, f32, usize) {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
         // Leave room for exactly two 10px lines on page zero.
-        let _lead = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:30px"),
-        );
-        let paragraph = doc.append_element(Some(body), "p", Style::default(), Some(style));
+        let _lead = doc.append_element(Some(body), "div", Some("display:block;height:30px"));
+        let paragraph = doc.append_element(Some(body), "p", Some(style));
         let text = doc.append_text(paragraph, "a\nb\nc");
-        let following = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        let following = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
 
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -1887,10 +1860,9 @@ fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
 #[test]
 fn an_element_of_an_ifc_subtree_is_not_zeroed_for_a_narrow_content_box() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let inner = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
-    doc.nodes[inner].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let inner = doc.append_element(Some(body), "span", None::<&str>);
     let mut layout = TaffyLayout::with_order(0);
     layout.size = Size {
         width: 10.0,
@@ -1902,8 +1874,15 @@ fn an_element_of_an_ifc_subtree_is_not_zeroed_for_a_narrow_content_box() {
         top: 0.0,
         bottom: 0.0,
     };
-    doc.nodes[inner].unrounded_layout = layout;
-    let warnings = enforce_layout_invariants_for_test(&mut doc, body);
+    let warnings = with_bridged_session(&mut doc, |session| {
+        // The bridge assigns the flags and layouts of the boxes, so the
+        // subtree is described to it only once it has run.
+        session.context.layout_warnings.clear();
+        session.nodes[inner].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+        session.nodes[inner].unrounded_layout = layout;
+        super::enforce_layout_invariants(session, body);
+        std::mem::take(&mut session.context.layout_warnings)
+    });
     assert_eq!(doc.nodes[inner].unrounded_layout.size.width, 10.0);
     assert!(warnings.is_empty());
 }

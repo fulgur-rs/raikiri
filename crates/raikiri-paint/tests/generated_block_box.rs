@@ -2,7 +2,6 @@
 //! painter.
 
 use anyrender::Scene;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
@@ -44,9 +43,9 @@ fn paint_with_root(css: &str, root_css: Option<&str>) -> Vec<u8> {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), root_css);
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", root_css);
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         format!(
@@ -54,8 +53,8 @@ fn paint_with_root(css: &str, root_css: Option<&str>) -> Vec<u8> {
              div {{ display: block; font: 10px/20px Ahem; color: transparent }} {css}"
         ),
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let div = doc.append_element(Some(body), "div", None::<&str>);
     doc.append_text(div, "A");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();

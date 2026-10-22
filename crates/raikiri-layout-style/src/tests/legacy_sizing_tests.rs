@@ -109,6 +109,36 @@ fn legacy_sizing_rejects_unrelated_properties_before_mutation() {
 }
 
 #[test]
+fn legacy_sizing_membership_matches_the_accepted_properties() {
+    use LengthProperty::*;
+    for property in [
+        Width,
+        Height,
+        MinWidth,
+        MinHeight,
+        MaxWidth,
+        MaxHeight,
+        BorderTop,
+        BorderRight,
+        BorderBottom,
+        BorderLeft,
+    ] {
+        let entry = OwnedPropertyOverride::length(property, L::Px(3.0), true).unwrap();
+        assert!(entry.is_legacy_sizing(), "{property:?}");
+        assert!(entry.apply_legacy_sizing(&mut Style::default()).is_ok());
+    }
+    for property in [MarginLeft, PaddingTop, Top, FlexBasis, ColumnGap] {
+        let entry = OwnedPropertyOverride::length(property, L::Px(3.0), true).unwrap();
+        assert!(!entry.is_legacy_sizing(), "{property:?}");
+    }
+    assert!(OwnedPropertyOverride::flex_shrink(0.0).is_legacy_sizing());
+    assert!(OwnedPropertyOverride::aspect_ratio(Some(2.0)).is_legacy_sizing());
+    assert!(
+        !OwnedPropertyOverride::clear(raikiri_style::property::ClearValue::Both).is_legacy_sizing()
+    );
+}
+
+#[test]
 fn transposed_legacy_sizing_swaps_physical_targets_and_undoes_only_the_target() {
     let mut style = Style::<raikiri_style::SmolStr>::default();
     style.padding.left = taffy::LengthPercentage::length(73.0);

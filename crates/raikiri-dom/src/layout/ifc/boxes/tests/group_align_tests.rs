@@ -150,7 +150,6 @@ fn paragraph(doc: &mut crate::Document, parent: usize, style: &str, text: &str) 
     let block = doc.append_element(
         Some(parent),
         "p",
-        crate::LayoutStyle::default(),
         Some(format!("display:block;margin:0;{style}").as_str()),
     );
     doc.append_text(block, text);
@@ -169,12 +168,7 @@ fn the_lines_of_block_children_align_as_one_group() {
     assert_eq!(starts, [vec![60.0, 60.0], vec![60.0]]);
     // A nested block in the same formatting context joins the group too.
     let starts = block_starts("text-group-align: end", |doc, root| {
-        let outer = doc.append_element(
-            Some(root),
-            "div",
-            crate::LayoutStyle::default(),
-            Some("display:block"),
-        );
+        let outer = doc.append_element(Some(root), "div", Some("display:block"));
         vec![
             paragraph(doc, outer, "", "AAAA"),
             paragraph(doc, root, "", "AA"),
@@ -260,7 +254,6 @@ fn nested_group_roots_are_laid_out_in_linear_time() {
             parent = doc.append_element(
                 Some(parent),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:block;text-group-align:end"),
             );
         }
@@ -296,7 +289,6 @@ fn an_independent_block_with_its_own_group_leaves_the_outer_measure_alone() {
         let independent = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:flow-root;text-group-align:end"),
         );
         paragraph(doc, independent, "", "A");

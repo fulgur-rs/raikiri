@@ -138,12 +138,7 @@ fn inline_children_keep_source_order() {
 fn wbr_is_transformed_when_its_computed_style_enables_word_space_transform() {
     let fixture = block_fixture("word-space-transform:space", |doc, root| {
         doc.append_text(root, "a");
-        doc.append_element(
-            Some(root),
-            "wbr",
-            crate::LayoutStyle::default(),
-            Some("display:inline"),
-        );
+        doc.append_element(Some(root), "wbr", Some("display:inline"));
         doc.append_text(root, "b");
     });
     let projected = project(&fixture).expect("project");
@@ -154,12 +149,7 @@ fn wbr_is_transformed_when_its_computed_style_enables_word_space_transform() {
 fn a_br_forces_a_break() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
-        doc.append_element(
-            Some(root),
-            "br",
-            crate::LayoutStyle::default(),
-            Some("display:inline"),
-        );
+        doc.append_element(Some(root), "br", Some("display:inline"));
         doc.append_text(root, "bb");
     });
     let projected = project(&fixture).expect("project");
@@ -205,7 +195,6 @@ fn an_img_and_an_inline_svg_are_atomic() {
             doc.append_element(
                 Some(root),
                 tag,
-                crate::LayoutStyle::default(),
                 Some("display:inline;width:10px;height:10px"),
             );
         });
@@ -242,7 +231,7 @@ fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
-            doc.append_element(Some(root), tag, crate::LayoutStyle::default(), Some(css));
+            doc.append_element(Some(root), tag, Some(css));
         });
         let projected = project(&fixture).expect(css);
         assert_eq!(projected.meta.boxes.len(), 1, "{tag} {css}");
@@ -266,7 +255,7 @@ fn positioned_boxes_of_every_kind_are_out_of_flow_boxes() {
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
-            doc.append_element(Some(root), tag, crate::LayoutStyle::default(), Some(css));
+            doc.append_element(Some(root), tag, Some(css));
         });
         let projected = project(&fixture).expect(css);
         assert_eq!(projected.meta.boxes.len(), 1, "{tag} {css}");
@@ -308,18 +297,16 @@ fn an_invalid_root_is_reported() {
 
 #[test]
 fn generated_text_of_the_root_is_projected_before_its_content() {
-    use crate::LayoutStyle as Style;
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(style, "div::before { content: \"x\" }");
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px"),
     );
     doc.append_text(root, "aa");
@@ -360,17 +347,11 @@ fn an_image_marker_without_text_or_pixels_projects_nothing() {
 fn text_align_is_inherited_from_ancestors() {
     // `text-align:center` on <body>: the block inherits it.
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("text-align:center"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("text-align:center"));
     let root = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;font-family:Ahem;font-size:10px"),
     );
     doc.append_text(root, "aa");
@@ -397,35 +378,15 @@ fn text_align_is_inherited_from_ancestors() {
 #[test]
 fn language_is_inherited_normalized_and_stopped_by_an_empty_value() {
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.set_element_attribute(html, "lang", " JA-jp ")
         .expect("set language");
-    let inherit = doc.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
-    let cleared = doc.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let inherit = doc.append_element(Some(body), "div", None::<&str>);
+    let cleared = doc.append_element(Some(body), "div", None::<&str>);
     doc.set_element_attribute(cleared, "lang", "")
         .expect("clear language");
-    let below = doc.append_element(
-        Some(cleared),
-        "span",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let below = doc.append_element(Some(cleared), "span", None::<&str>);
     assert_eq!(language_of(&doc, inherit).as_deref(), Some("ja-jp"));
     assert_eq!(language_of(&doc, cleared), None);
     assert_eq!(language_of(&doc, below), None);
@@ -485,12 +446,7 @@ fn non_rendered_html_elements_contribute_no_text() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
         for tag in ["style", "script"] {
-            let hidden = doc.append_element(
-                Some(root),
-                tag,
-                crate::LayoutStyle::default(),
-                Some("display:inline"),
-            );
+            let hidden = doc.append_element(Some(root), tag, Some("display:inline"));
             doc.append_text(hidden, "zz");
         }
         doc.append_text(root, "bb");
@@ -558,7 +514,6 @@ fn a_block_level_image_or_svg_is_a_block_child() {
             doc.append_element(
                 Some(root),
                 tag,
-                crate::LayoutStyle::default(),
                 Some("display:block;width:10px;height:10px"),
             );
         });
@@ -604,7 +559,6 @@ fn a_cleared_line_break_is_recorded_with_its_physical_side() {
             doc.append_element(
                 Some(root),
                 "br",
-                crate::LayoutStyle::default(),
                 Some(format!("display:inline;clear:{clear}").as_str()),
             );
         }
@@ -694,27 +648,20 @@ fn a_float_and_an_atomic_directly_under_the_root_are_still_projected() {
 fn generated_text_of_a_contents_element_is_projected_in_place() {
     // A `display: contents` element has no box, but its pseudo-elements do:
     // they sit before and after its children (CSS Display 3, 2.5).
-    use crate::LayoutStyle as Style;
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(style, "span::before { content: \"x\" }");
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px"),
     );
     doc.append_text(root, "aa");
-    let wrapper = doc.append_element(
-        Some(root),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let wrapper = doc.append_element(Some(root), "span", Some("display:contents"));
     doc.append_text(wrapper, "bb");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -959,7 +906,7 @@ fn first_letter_adjacent_source_scan_enforces_text_and_item_limits() {
 
 #[test]
 fn inside_marker_is_first_inline_content_and_only_indents_the_first_line() {
-    let fixture = block_fixture(
+    let mut fixture = block_fixture(
         "display:list-item;list-style-position:inside;list-style-type:'X '",
         |doc, root| {
             doc.append_text(root, "aaaa bbbb");
@@ -969,15 +916,15 @@ fn inside_marker_is_first_inline_content_and_only_indents_the_first_line() {
     assert_eq!(projected.paragraph.text(), "\u{2066}X \u{2069}aaaa bbbb");
     assert_eq!(line_texts(&projected, 70.0), ["X aaaa", "bbbb"]);
     assert_eq!(
-        fixture
-            .doc
-            .layout_node_with_style(fixture.root)
-            .unwrap()
-            .style
-            .padding
-            .left
-            .into_raw()
-            .value(),
+        crate::layout::test_support::bridged_style(
+            &mut fixture.doc,
+            &fixture.cascade,
+            fixture.root
+        )
+        .padding
+        .left
+        .into_raw()
+        .value(),
         0.0
     );
 }
@@ -990,12 +937,7 @@ fn inside_marker_precedes_before_and_increases_empty_item_height() {
             doc.append_text(root, "b");
         },
     );
-    let head = fixture.doc.append_element(
-        Some(0),
-        "style",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let head = fixture.doc.append_element(Some(0), "style", None::<&str>);
     fixture.doc.append_text(
         head,
         r#"div::before { content: "a" } div::marker { color:red;font-size:20px }"#,
@@ -1030,12 +972,7 @@ fn inside_marker_preserves_spaces_does_not_wrap_or_inherit_text_transform() {
                 doc.append_text(root, "ab");
             },
         );
-        let sheet = fixture.doc.append_element(
-            Some(0),
-            "style",
-            crate::LayoutStyle::default(),
-            None::<&str>,
-        );
+        let sheet = fixture.doc.append_element(Some(0), "style", None::<&str>);
         fixture.doc.append_text(sheet, author_marker);
         fixture.doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&fixture.doc);
@@ -1118,7 +1055,9 @@ fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rt
         )
         .unwrap();
         let inputs = {
-            let mut session = crate::layout::context::LayoutSession::new(&mut fixture.doc);
+            let session_cascade = crate::layout::test_support::cascaded(&fixture.doc);
+            let mut session =
+                crate::layout::context::LayoutSession::bridged(&mut fixture.doc, &session_cascade);
             crate::layout::ifc::boxes::intrinsics_of_boxes(
                 &mut session,
                 fixture.root,

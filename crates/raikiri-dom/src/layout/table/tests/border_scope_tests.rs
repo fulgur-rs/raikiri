@@ -70,12 +70,10 @@ fn border_scope_table_restores_width_and_commits_paint() {
                 tree.table_style(idx).border().right,
                 LengthPercentage::length(9.0)
             );
-            if tree.style_views.is_some() {
-                assert_eq!(
-                    tree.style_view(idx).border().right,
-                    LengthPercentage::length(9.0)
-                );
-            }
+            assert_eq!(
+                tree.style_view(idx).border().right,
+                LengthPercentage::length(9.0)
+            );
         }
     }
     for views in [false, true] {
@@ -85,7 +83,7 @@ fn border_scope_table_restores_width_and_commits_paint() {
         let mut tree = if views {
             LayoutSession::with_cascade(&mut doc, &cascade)
         } else {
-            LayoutSession::new(&mut doc)
+            LayoutSession::bridged(&mut doc, &cascade)
         };
         if views {
             crate::layout::style_views::tests::prepare_all_layout_views(&mut tree);
@@ -133,11 +131,13 @@ fn border_scope_in_place_panic_restores_remaining() {
     }
     let (mut doc, _, table, cells) = fixture(&[2, 9, 3], true);
     let first = cells[0];
-    doc.nodes[first].collapsed_border = Some(Sides {
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
+    // Bridging clears the paint, so the earlier paint is set once it is done.
+    tree.nodes[first].collapsed_border = Some(Sides {
         right: collapsed_candidate(BorderStyle::Solid, 3.0, CssColor::BLACK).border,
         ..Sides::all(collapsed_candidate(BorderStyle::Solid, 2.0, CssColor::BLACK).border)
     });
-    let mut tree = LayoutSession::new(&mut doc);
     let mut grid = super::super::cache::table_grid(&mut tree, table).unwrap();
     let prepared = super::super::cache::prepared_borders(&mut tree, table, &grid, None, Rect::ZERO);
     let columns = prepared.columns_in_place.as_ref().unwrap();
@@ -227,7 +227,8 @@ fn border_scope_setup_failure_rolls_back_width_and_paint() {
                 )
             })
             .collect();
-        let mut tree = LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
         let prepared = prepared_state(&mut tree, table);
         let state = prepared.borders.as_ref().unwrap();
         let _reset = Reset;
@@ -298,7 +299,8 @@ fn border_scope_outer_error_keeps_successful_nested_paint() {
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
         crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
-        let mut tree = LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
         let prepared = prepared_state(&mut tree, outer);
         let state = prepared.borders.as_ref().unwrap();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -361,7 +363,8 @@ fn border_scope_temporary_reset_is_explicit_and_restores_outer_values() {
     };
     let (mut doc, _, table, cells) = fixture(&[2, 9], false);
     let first = cells[0];
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let grid = super::super::cache::table_grid(&mut tree, table).unwrap();
     let authored = super::super::BorderState::authored(&tree, &grid);
     let mut outer = authored.clone();
@@ -468,7 +471,8 @@ fn border_scope_native_panic_restores_original_paint() {
             )
         })
         .collect();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     FIRST_CELL.set(Some(cells[0]));
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         super::cell_scope_tests::with_inspector(fail, || {
@@ -523,7 +527,6 @@ fn border_scope_nested_cold_table_keeps_publication() {
     doc.append_element(
         Some(row),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -594,7 +597,8 @@ fn border_scope_publications_keep_linear_entries_and_no_history() {
     for (rows, columns) in [(2, 2), (32, 16), (64, 16)] {
         let (mut doc, table, first) = super::cache_tests::fixture(rows, columns);
         let authored = border_in_document(&mut doc, first);
-        let mut tree = LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
         let prepared = prepared_state(&mut tree, table);
         let state = prepared.borders.as_ref().unwrap();
         assert_eq!(state.entries(&tree).len(), 4 * rows * columns);
@@ -626,7 +630,8 @@ fn border_scope_publications_keep_linear_entries_and_no_history() {
 fn border_scope_cache_hit_and_forced_miss_keep_geometry_and_paint() {
     for collapsed in [false, true] {
         let (mut doc, _, table, cells) = fixture(&[2, 9, 3], collapsed);
-        let mut tree = LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
         tree.sync_layout_cache_mutations();
         let publication = tree.layout_cache_context.publication_epoch();
         super::super::GRID_BUILDS.set(0);
@@ -700,7 +705,8 @@ fn border_scope_empty_table_keeps_natural_and_assigned_widths() {
                 doc.mark_in_document_flags();
                 let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
                 crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
-                let mut tree = LayoutSession::new(&mut doc);
+                let session_cascade = crate::layout::test_support::cascaded(&doc);
+                let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
                 let mut input = column_probe_input();
                 input.known_dimensions.width = known;
                 let output =

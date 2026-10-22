@@ -1,11 +1,9 @@
 //! The page-area initial containing block, outside the source DOM.
 
 use crate::Document;
-use crate::LayoutStyle as Style;
 use crate::node::{Node, NodeFlags};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::{Contain, DisplayValue};
-use taffy::{Dimension, Size};
 
 /// The document element whose principal box is a child of the ICB.
 /// Source parents and children remain the DOM tree throughout layout.
@@ -79,25 +77,16 @@ pub(crate) fn prepare(
     width: f32,
     height: f32,
 ) -> usize {
-    let mut style = Style {
-        // The native root establishes its BFC and resolves a Block root's
-        // definite dimensions before its children need percentage bases.
-        display: taffy::Display::Block,
-        size: Size {
-            width: Dimension::length(width),
-            height: Dimension::length(height),
-        },
-        ..Style::default()
-    };
     let facts = recipe_facts(document, cascade);
-    let mut node = Node::new_element("".into(), style.clone(), None);
+    // The native root establishes its BFC and resolves a Block root's
+    // definite dimensions before its children need percentage bases.
+    let mut node = Node::new_element("".into(), None);
     if let Some(root) = root_element(document) {
         node.children.push(root);
         let principal = principal_element(document, cascade, root);
         node.used_writing_mode = document.nodes[principal].used_writing_mode;
-        style.direction = facts.direction;
     }
-    let key = document.set_initial_containing_block(node, style);
+    let key = document.set_initial_containing_block(node);
     let recipe = super::box_style_data::recipes::initial_containing_block(width, height, facts);
     document
         .box_style_data

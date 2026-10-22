@@ -412,7 +412,7 @@ fn is_horizontal(node: &crate::Node) -> bool {
 
 /// The block-start and block-end margins of a child, when they are
 /// non-negative lengths and its inline margins are zero.
-fn block_margins(style: &NativeStyle<'_>) -> Option<(f32, f32)> {
+fn block_margins(style: &LayoutStyleView<'_>) -> Option<(f32, f32)> {
     let zero = LengthPercentageAuto::length(0.0);
     let margin = style.margin();
     if margin.left != zero || margin.right != zero {
@@ -424,7 +424,7 @@ fn block_margins(style: &NativeStyle<'_>) -> Option<(f32, f32)> {
     Some((length(margin.top)?, length(margin.bottom)?))
 }
 
-fn has_block_edge_decorations(style: &NativeStyle<'_>) -> bool {
+fn has_block_edge_decorations(style: &LayoutStyleView<'_>) -> bool {
     let zero = LengthPercentage::length(0.0);
     let (padding, border) = (style.padding(), style.border());
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero

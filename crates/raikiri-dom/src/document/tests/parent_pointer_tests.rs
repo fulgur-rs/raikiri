@@ -6,13 +6,12 @@
 //! appendChild stay linear instead of quadratic.
 
 use super::*;
-use crate::LayoutStyle as Style;
 
 #[test]
 fn parent_of_tracks_append_primitives() {
     let mut doc = Document::new();
     assert_eq!(doc.parent_of(0), None);
-    let elem = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let elem = doc.append_element(Some(0), "div", None::<&str>);
     assert_eq!(doc.parent_of(elem), Some(0));
     let text = doc.append_text(elem, "hi");
     assert_eq!(doc.parent_of(text), Some(elem));
@@ -20,7 +19,7 @@ fn parent_of_tracks_append_primitives() {
     assert_eq!(doc.parent_of(comment), Some(elem));
     let pi = doc.append_processing_instruction(Some(elem), "target", "data");
     assert_eq!(doc.parent_of(pi), Some(elem));
-    let detached = doc.append_element(None, "span", Style::default(), None::<&str>);
+    let detached = doc.append_element(None, "span", None::<&str>);
     assert_eq!(doc.parent_of(detached), None);
     assert_eq!(doc.parent_of(doc.node_count() + 100), None);
 }
@@ -28,9 +27,9 @@ fn parent_of_tracks_append_primitives() {
 #[test]
 fn parent_of_tracks_attach_and_insert_before() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let other = doc.append_element(Some(0), "section", Style::default(), None::<&str>);
-    let child = doc.append_element(None, "span", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
+    let other = doc.append_element(Some(0), "section", None::<&str>);
+    let child = doc.append_element(None, "span", None::<&str>);
     doc.attach_child(parent, child);
     assert_eq!(doc.parent_of(child), Some(parent));
     doc.detach_from_parent(child);
@@ -49,10 +48,10 @@ fn parent_of_tracks_attach_and_insert_before() {
 #[test]
 fn parent_of_tracks_fragment_splice() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "main", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "main", None::<&str>);
     let frag = doc.create_detached_fragment();
     let a = doc.append_text(frag, "a");
-    let b = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
+    let b = doc.append_element(Some(frag), "span", None::<&str>);
     assert_eq!(doc.parent_of(a), Some(frag));
     doc.attach_child(host, frag);
     assert_eq!(doc.nodes[frag].children.len(), 0);
@@ -70,8 +69,8 @@ fn parent_of_tracks_fragment_splice() {
 #[test]
 fn parent_of_tracks_reparent_and_retain() {
     let mut doc = Document::new();
-    let from = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let to = doc.append_element(Some(0), "section", Style::default(), None::<&str>);
+    let from = doc.append_element(Some(0), "div", None::<&str>);
+    let to = doc.append_element(Some(0), "section", None::<&str>);
     let k1 = doc.append_text(from, "one");
     let k2 = doc.append_text(from, "two");
     doc.reparent_children(from, to);
@@ -87,8 +86,8 @@ fn parent_of_tracks_reparent_and_retain() {
 #[test]
 fn parent_of_tracks_text_content_replacement() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let nested = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let nested = doc.append_element(Some(host), "span", None::<&str>);
     let nested_text = doc.append_text(nested, "old");
     doc.set_element_text_content(host, "new").unwrap();
     assert_eq!(doc.parent_of(nested), None);
@@ -104,9 +103,9 @@ fn parent_of_tracks_text_content_replacement() {
 #[test]
 fn parent_of_tracks_move_semantics_append_child() {
     let mut doc = Document::new();
-    let first = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let second = doc.append_element(Some(0), "section", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(first), "span", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(0), "div", None::<&str>);
+    let second = doc.append_element(Some(0), "section", None::<&str>);
+    let child = doc.append_element(Some(first), "span", None::<&str>);
     doc.append_child(second, child).unwrap();
     assert!(doc.nodes[first].children.is_empty());
     assert_eq!(doc.parent_of(child), Some(second));
@@ -116,7 +115,7 @@ fn parent_of_tracks_move_semantics_append_child() {
 #[cfg(feature = "logical-snapshot")]
 fn parent_of_survives_snapshot_roundtrip() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let child = doc.append_text(host, "hi");
     let snap = doc.logical_snapshot();
     let restored = Document::from_logical_snapshot(snap, 100).unwrap();
@@ -127,7 +126,7 @@ fn parent_of_survives_snapshot_roundtrip() {
 #[test]
 fn append_child_loop_stays_linear() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let count = 3000usize;
     let start = std::time::Instant::now();
     for i in 0..count {
@@ -147,8 +146,8 @@ fn append_child_loop_stays_linear() {
 #[test]
 fn ancestors_walk_parent_pointers_nearest_first() {
     let mut doc = Document::new();
-    let outer = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let inner = doc.append_element(Some(outer), "span", Style::default(), None::<&str>);
+    let outer = doc.append_element(Some(0), "div", None::<&str>);
+    let inner = doc.append_element(Some(outer), "span", None::<&str>);
     let text = doc.append_text(inner, "hi");
     assert_eq!(
         doc.ancestors(text).collect::<Vec<_>>(),
@@ -165,7 +164,7 @@ fn ancestors_walk_parent_pointers_nearest_first() {
     assert!(!doc.is_ancestor_or_self(text, outer));
 
     // A detached subtree ends at its own top.
-    let detached = doc.append_element(None, "p", Style::default(), None::<&str>);
+    let detached = doc.append_element(None, "p", None::<&str>);
     let leaf = doc.append_text(detached, "x");
     assert_eq!(doc.ancestors(leaf).collect::<Vec<_>>(), vec![detached]);
 
@@ -181,10 +180,10 @@ fn ancestors_walk_parent_pointers_nearest_first() {
 #[test]
 fn preorder_yields_a_subtree_in_tree_order() {
     let mut doc = Document::new();
-    let first = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let nested = doc.append_element(Some(first), "span", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(0), "div", None::<&str>);
+    let nested = doc.append_element(Some(first), "span", None::<&str>);
     let text = doc.append_text(nested, "hi");
-    let second = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let second = doc.append_element(Some(0), "p", None::<&str>);
     assert_eq!(
         doc.preorder(0).collect::<Vec<_>>(),
         vec![0, first, nested, text, second]

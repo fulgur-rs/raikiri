@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
@@ -8,7 +7,7 @@ const SVG_NS: &str = "http://www.w3.org/2000/svg";
 fn null_namespace_lookup_folds_only_ascii_on_html_elements() {
     let mut doc = Document::new();
     for namespace in [None, Some(XHTML_NAMESPACE_URI.into()), Some(SVG_NS.into())] {
-        let id = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let id = doc.append_element(Some(0), "div", None::<&str>);
         doc.set_element_namespace(id, namespace.clone());
         doc.set_element_attribute(id, "data-Ä", "unicode").unwrap();
         doc.set_element_attribute(id, "data-key", "ascii").unwrap();
@@ -33,7 +32,7 @@ fn null_namespace_lookup_folds_only_ascii_on_html_elements() {
 }
 
 fn svg_use_element(doc: &mut Document) -> usize {
-    let id = doc.append_element(Some(0), "use", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "use", None::<&str>);
     doc.set_element_namespace_info(id, Some(SVG_NS.into()), None);
     doc.set_element_namespaced_attribute(id, XLINK_NS, Some("xlink".into()), "href", "#shape")
         .expect("valid namespaced attribute");
@@ -60,7 +59,7 @@ fn namespaced_attribute_survives_and_null_lookup_ignores_it() {
 #[test]
 fn namespaced_lookup_is_exact_without_case_folding() {
     let mut doc = Document::new();
-    let id = doc.append_element(Some(0), "svg", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "svg", None::<&str>);
     doc.set_element_namespace_info(id, Some(SVG_NS.into()), None);
     doc.set_element_namespaced_attribute(id, SVG_NS, None, "viewBox", "0 0 1 1")
         .expect("valid namespaced attribute");
@@ -75,7 +74,7 @@ fn namespaced_lookup_is_exact_without_case_folding() {
 #[test]
 fn namespaced_lookup_returns_none_for_non_elements_and_bad_ids() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let text = doc.append_text(host, "hi");
     assert_eq!(doc.element_attribute_ns(text, XLINK_NS, "href"), None);
     assert_eq!(doc.element_attribute_ns(usize::MAX, XLINK_NS, "href"), None);
@@ -87,7 +86,7 @@ fn namespaced_lookup_returns_none_for_non_elements_and_bad_ids() {
 #[test]
 fn namespaced_setter_rejects_empty_namespace() {
     let mut doc = Document::new();
-    let id = doc.append_element(Some(0), "use", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "use", None::<&str>);
     assert!(
         doc.set_element_namespaced_attribute(id, "", Some("xlink".into()), "href", "#a")
             .is_err()

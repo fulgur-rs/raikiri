@@ -15,7 +15,7 @@ fn parent_lookup_lifts_contents_but_keeps_a_layout_root_parent() {
 }
 
 fn child(doc: &mut Document, parent: usize, display: DisplayValue) -> usize {
-    let id = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(parent), "div", None::<&str>);
     doc.set_display(id, display);
     id
 }

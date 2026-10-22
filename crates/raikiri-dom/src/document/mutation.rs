@@ -107,10 +107,6 @@ impl Document {
     pub fn create_detached_text(&mut self, data: &str) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(SmolStr::new(data)));
-        self.retained_layout_styles.insert(
-            crate::node::arena::BoxKey::Source(id),
-            crate::LayoutStyle::default(),
-        );
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         id
@@ -125,10 +121,6 @@ impl Document {
     pub fn create_detached_fragment(&mut self) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_document_fragment());
-        self.retained_layout_styles.insert(
-            crate::node::arena::BoxKey::Source(id),
-            crate::LayoutStyle::default(),
-        );
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         id
@@ -286,11 +278,7 @@ impl Document {
         }
         let node = match &self.nodes[id].data {
             NodeData::Element(element) => {
-                let mut copy = Node::new_element(
-                    element.tag_name.clone(),
-                    crate::LayoutStyle::default(),
-                    None,
-                );
+                let mut copy = Node::new_element(element.tag_name.clone(), None);
                 if let NodeData::Element(copy_element) = &mut copy.data {
                     copy_element.inline_style = element.inline_style.clone();
                     copy_element.namespace = element.namespace.clone();
@@ -311,10 +299,6 @@ impl Document {
         let has_template_contents = self.template_contents_of(id).is_some();
         let copy = self.nodes.len();
         self.nodes.push(node);
-        self.retained_layout_styles.insert(
-            crate::node::arena::BoxKey::Source(copy),
-            crate::LayoutStyle::default(),
-        );
         if has_template_contents {
             self.allocate_template_fragment_root(copy);
         }

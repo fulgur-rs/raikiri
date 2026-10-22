@@ -1,26 +1,25 @@
 //! `Document::extract_nodes`: copying part of a tree into a new document.
 
 use super::*;
-use crate::LayoutStyle as Style;
 
 #[test]
 fn listed_nodes_are_copied_in_order_with_their_tree_and_data() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let before = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let before = doc.append_element(Some(body), "p", None::<&str>);
     doc.append_text(before, "skipped");
-    let kept = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let span = doc.append_element(Some(kept), "span", Style::default(), None::<&str>);
+    let kept = doc.append_element(Some(body), "div", None::<&str>);
+    let span = doc.append_element(Some(kept), "span", None::<&str>);
     let text = doc.append_text(span, "kept");
-    let after = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    let img = doc.append_element(Some(kept), "img", Style::default(), None::<&str>);
+    let after = doc.append_element(Some(body), "p", None::<&str>);
+    let img = doc.append_element(Some(kept), "img", None::<&str>);
     let url = url::Url::parse("https://example.test/a.png").expect("url");
     doc.resolved_image_urls
         .insert(img, ("a.png".to_owned(), url.clone()));
     doc.resolved_image_urls
         .insert(after, ("b.png".to_owned(), url.clone()));
-    let fragment = doc.append_element(None, "template-contents", Style::default(), None::<&str>);
+    let fragment = doc.append_element(None, "template-contents", None::<&str>);
     doc.nodes[kept]
         .data
         .as_element_mut()
@@ -71,8 +70,8 @@ fn listed_nodes_are_copied_in_order_with_their_tree_and_data() {
 #[test]
 fn a_node_listed_without_its_parent_is_detached() {
     let mut doc = Document::new();
-    let outer = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let inner = doc.append_element(Some(outer), "span", Style::default(), None::<&str>);
+    let outer = doc.append_element(Some(0), "div", None::<&str>);
+    let inner = doc.append_element(Some(outer), "span", None::<&str>);
     let mut copy = doc.extract_nodes(&[0, inner]);
     copy.mark_in_document_flags();
     assert_eq!(copy.parent_of(1), None);
@@ -83,10 +82,10 @@ fn a_node_listed_without_its_parent_is_detached() {
 #[test]
 fn focus_follows_the_element_while_it_is_in_the_tree() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let button = doc.append_element(Some(html), "button", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let button = doc.append_element(Some(html), "button", None::<&str>);
     let text = doc.append_text(html, "x");
-    let detached = doc.append_element(None, "button", Style::default(), None::<&str>);
+    let detached = doc.append_element(None, "button", None::<&str>);
     assert_eq!(doc.focused_element(), None);
     doc.set_focused_element(Some(button));
     assert_eq!(doc.focused_element(), Some(button));
@@ -121,15 +120,15 @@ fn focus_follows_the_element_while_it_is_in_the_tree() {
 #[test]
 fn moving_the_focused_element_clears_focus() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let div = doc.append_element(Some(html), "div", Style::default(), None::<&str>);
-    let button = doc.append_element(Some(html), "button", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let div = doc.append_element(Some(html), "div", None::<&str>);
+    let button = doc.append_element(Some(html), "button", None::<&str>);
     doc.set_focused_element(Some(button));
     doc.append_child(div, button).unwrap();
     assert_eq!(doc.parent_of(button), Some(div));
     assert_eq!(doc.focused_element(), None);
     // Moving a node outside the focused subtree keeps focus.
-    let span = doc.append_element(Some(html), "span", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(html), "span", None::<&str>);
     doc.set_focused_element(Some(button));
     doc.append_child(div, span).unwrap();
     assert_eq!(doc.focused_element(), Some(button));

@@ -2,7 +2,6 @@
 
 use anyrender::{PaintScene, Scene, recording::RenderCommand};
 use kurbo::Affine;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -619,18 +618,17 @@ fn document() -> (Document, usize) {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     (doc, body)
 }
 
 fn element(doc: &mut Document, parent: usize, style: &str) -> usize {
-    doc.append_element(Some(parent), "div", Style::default(), Some(style))
+    doc.append_element(Some(parent), "div", Some(style))
 }
 
 fn page() -> PageBox {
@@ -1266,14 +1264,9 @@ fn empty_cell_classification_preserves_in_flow_content_and_absolute_descendants(
                 doc.append_text(cell, if contents == 10 { "\n" } else { " " });
             }
             12 => {
-                let sheet = doc.append_element(Some(body), "style", Style::default(), None::<&str>);
+                let sheet = doc.append_element(Some(body), "style", None::<&str>);
                 doc.append_text(sheet, "span::before{content:'X'}");
-                doc.append_element(
-                    Some(cell),
-                    "span",
-                    Style::default(),
-                    Some("display:contents"),
-                );
+                doc.append_element(Some(cell), "span", Some("display:contents"));
             }
             _ => {}
         }
@@ -1696,11 +1689,11 @@ fn specified_empty_cell_height_floors_the_row_without_moving_text_baselines() {
 fn generated_pseudo_boxes_keep_separate_cell_backgrounds_and_borders() {
     for pseudo in ["before", "after"] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(body), "style", Style::default(), None::<&str>);
+        let sheet = doc.append_element(Some(body), "style", None::<&str>);
         doc.append_text(sheet, format!("td::{pseudo} {{ content:'X';color:green }}"));
         let table = element(&mut doc, body, "display:table;width:20px;border-spacing:0");
         let row = element(&mut doc, table, "display:table-row;height:20px");
-        let cell = doc.append_element(Some(row), "td", Style::default(), Some("display:table-cell;width:18px;vertical-align:top;empty-cells:hide;background:blue;border:1px solid black"));
+        let cell = doc.append_element(Some(row), "td", Some("display:table-cell;width:18px;vertical-align:top;empty-cells:hide;background:blue;border:1px solid black"));
         let computed = layout(&mut doc);
         assert!(!raikiri_dom::paint_rules::hides_empty_table_cell(
             &doc, &computed, cell
@@ -1773,16 +1766,11 @@ fn generated_box_empty_cell_classification_respects_box_generation_and_flow() {
         ("content:url(data:image/svg+xml,invalid)", false),
     ] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(body), "style", Style::default(), None::<&str>);
+        let sheet = doc.append_element(Some(body), "style", None::<&str>);
         doc.append_text(sheet, format!("td::before {{ {declarations} }}"));
         let table = element(&mut doc, body, "display:table;width:20px;border-spacing:0");
         let row = element(&mut doc, table, "display:table-row;height:20px");
-        let cell = doc.append_element(
-            Some(row),
-            "td",
-            Style::default(),
-            Some("display:table-cell;empty-cells:hide"),
-        );
+        let cell = doc.append_element(Some(row), "td", Some("display:table-cell;empty-cells:hide"));
         let computed = layout(&mut doc);
         assert_eq!(
             raikiri_dom::paint_rules::hides_empty_table_cell(&doc, &computed, cell),
@@ -3333,7 +3321,7 @@ fn third_review_hidden_cell_descendants_only_count_restored_visible_boxes() {
             );
         } else if restored == 2 {
             doc.set_element_attributes(hidden, vec![("id".into(), "hidden".into())]);
-            let sheet = doc.append_element(Some(body), "style", Style::default(), None::<&str>);
+            let sheet = doc.append_element(Some(body), "style", None::<&str>);
             doc.append_text(
                 sheet,
                 "#hidden::before { visibility:visible;content:'X';color:transparent }",

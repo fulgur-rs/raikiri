@@ -46,26 +46,26 @@ fn set_attribute(doc: &mut Document, node: usize, name: &str, value: impl ToStri
 fn append_column(doc: &mut Document, parent: usize, column: &Column) {
     match column {
         Column::Col(css, span) => {
-            let col = doc.append_element(Some(parent), "div", Style::default(), Some(*css));
+            let col = doc.append_element(Some(parent), "div", Some(*css));
             if let Some(span) = span {
                 set_attribute(doc, col, "span", span);
             }
         }
         Column::Group(css, children) => {
-            let group = doc.append_element(Some(parent), "div", Style::default(), Some(*css));
+            let group = doc.append_element(Some(parent), "div", Some(*css));
             for child in children {
-                doc.append_element(Some(group), "div", Style::default(), Some(*child));
+                doc.append_element(Some(group), "div", Some(*child));
             }
         }
         Column::SpannedGroup(css, span, children) => {
-            let group = doc.append_element(Some(parent), "div", Style::default(), Some(*css));
+            let group = doc.append_element(Some(parent), "div", Some(*css));
             set_attribute(doc, group, "span", span);
             for child in children {
-                doc.append_element(Some(group), "div", Style::default(), Some(*child));
+                doc.append_element(Some(group), "div", Some(*child));
             }
         }
         Column::EmptyGroup(css, span) => {
-            let group = doc.append_element(Some(parent), "div", Style::default(), Some(*css));
+            let group = doc.append_element(Some(parent), "div", Some(*css));
             if let Some(span) = span {
                 set_attribute(doc, group, "span", span);
             }
@@ -74,40 +74,25 @@ fn append_column(doc: &mut Document, parent: usize, column: &Column) {
             doc.append_comment(Some(parent), "between columns");
         }
         Column::NeverRendered(children) => {
-            let wrapper = doc.append_element(
-                Some(parent),
-                "script",
-                Style::default(),
-                Some("display:contents"),
-            );
+            let wrapper = doc.append_element(Some(parent), "script", Some("display:contents"));
             for child in children {
                 append_column(doc, wrapper, child);
             }
         }
         Column::Contents(children) => {
-            let wrapper = doc.append_element(
-                Some(parent),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
+            let wrapper = doc.append_element(Some(parent), "div", Some("display:contents"));
             for child in children {
                 append_column(doc, wrapper, child);
             }
         }
         Column::GroupWithContents(css, span, children) => {
-            let group = doc.append_element(Some(parent), "div", Style::default(), Some(*css));
+            let group = doc.append_element(Some(parent), "div", Some(*css));
             if let Some(span) = span {
                 set_attribute(doc, group, "span", span);
             }
-            let wrapper = doc.append_element(
-                Some(group),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
+            let wrapper = doc.append_element(Some(group), "div", Some("display:contents"));
             for child in children {
-                doc.append_element(Some(wrapper), "div", Style::default(), Some(*child));
+                doc.append_element(Some(wrapper), "div", Some(*child));
             }
         }
     }
@@ -126,25 +111,15 @@ fn table_with(
     cell_css: &str,
 ) -> ColumnFixture {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let table = doc.append_element(Some(body), "div", Style::default(), Some(table_css));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(Some(body), "div", Some(table_css));
     for column in columns {
         append_column(&mut doc, table, column);
     }
     let mut cells = Vec::new();
     for _ in 0..rows {
-        let row = doc.append_element(
-            Some(table),
-            "div",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
         cells.push(
             widths
                 .iter()
@@ -152,7 +127,6 @@ fn table_with(
                     doc.append_element(
                         Some(row),
                         "div",
-                        Style::default(),
                         Some(format!(
                             "display:table-cell;width:{width}px;height:20px;padding:0;box-sizing:border-box;{cell_css}"
                         )),
@@ -162,11 +136,10 @@ fn table_with(
         );
     }
     let spanning = spanning.map(|width| {
-        let row = doc.append_element(Some(table), "div", Style::default(), Some("display:table-row"));
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
         let cell = doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some(format!(
                 "display:table-cell;width:{width}px;height:20px;padding:0;box-sizing:border-box;{cell_css}"
             )),
@@ -380,27 +353,16 @@ fn a_collapsed_column_leaves_the_row_height_it_gave() {
     // The cell of the collapsed column would wrap onto many lines at no
     // width; the row keeps the single line it measured before the collapse.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
-    doc.append_element(Some(table), "div", Style::default(), Some(COLLAPSED_COL));
-    doc.append_element(Some(table), "div", Style::default(), Some(COL));
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(Some(body), "div", Some(SEPARATE));
+    doc.append_element(Some(table), "div", Some(COLLAPSED_COL));
+    doc.append_element(Some(table), "div", Some(COL));
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
     for text in ["XXXX XXXX XXXX", "X"] {
         let cell = doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some("display:table-cell;padding:0;font-family:Ahem;font-size:20px;line-height:20px"),
         );
         doc.append_text(cell, text);
@@ -436,30 +398,23 @@ fn laid_out_rows(
     rows: &[Row],
 ) -> (Document, usize, Vec<Vec<usize>>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let table = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!(
             "display:table;{table_css};border-collapse:collapse;width:{width}px"
         )),
     );
     for css in columns {
-        doc.append_element(Some(table), "div", Style::default(), Some(*css));
+        doc.append_element(Some(table), "div", Some(*css));
     }
     let mut by_row = Vec::new();
     for &(row_css, cells) in rows {
         let row = doc.append_element(
             Some(table),
             "div",
-            Style::default(),
             Some(format!("display:table-row;{row_css}")),
         );
         let mut ids = Vec::new();
@@ -471,7 +426,6 @@ fn laid_out_rows(
             let cell = doc.append_element(
                 Some(row),
                 "div",
-                Style::default(),
                 Some(format!(
                     "display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px;{css}"
                 )),
@@ -481,8 +435,7 @@ fn laid_out_rows(
             }
             // A text after `#` is set in a block box inside the cell.
             if let Some(text) = text.strip_prefix('#') {
-                let block =
-                    doc.append_element(Some(cell), "div", Style::default(), Some("display:block"));
+                let block = doc.append_element(Some(cell), "div", Some("display:block"));
                 doc.append_text(block, text);
             } else {
                 doc.append_text(cell, text);

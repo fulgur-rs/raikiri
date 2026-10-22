@@ -283,8 +283,8 @@ fn built_grid_clips_spans_at_row_groups_before_indexing() {
 fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
     for mode in ["fixed", "auto"] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let table = append_grid_part(
             &mut doc,
             body,

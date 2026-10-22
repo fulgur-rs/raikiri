@@ -1,17 +1,37 @@
 use super::*;
-use crate::LayoutStyle as Style;
-use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
+use crate::layout::test_support::{
+    absolute_rect, page_box_800x600, with_ahem, with_bridged_session,
+};
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::AlignItems;
 
-/// [`static_position_alignment`] read through a session without a cascade, so
-/// it sees the retained style the test set up.
+/// [`static_position_alignment`] of box `id` in a session bridged from the
+/// cascade of `doc`.
 fn static_alignment(
     doc: &mut Document,
     id: usize,
     margin_box: Size<f32>,
 ) -> (Size<f32>, Size<f32>) {
-    static_position_alignment(&LayoutSession::new(doc), id, margin_box)
+    static_alignment_with(doc, id, margin_box, None)
+}
+
+/// [`static_alignment`] with `align_self` replacing the `align-self` of box
+/// `id`, for the alignments the cascade does not produce.
+fn static_alignment_with(
+    doc: &mut Document,
+    id: usize,
+    margin_box: Size<f32>,
+    align_self: Option<AlignItems>,
+) -> (Size<f32>, Size<f32>) {
+    with_bridged_session(doc, |session| {
+        if let Some(align) = align_self {
+            session.record_pass_override(
+                id,
+                raikiri_layout_style::OwnedPropertyOverride::align_self(Some(align)),
+            );
+        }
+        static_position_alignment(session, id, margin_box)
+    })
 }
 
 /// `html > body(margin:0) > div(parent_css) > div(wrapper_css) > div(fixed_css)`
@@ -55,20 +75,17 @@ fn laid_out_with_text(
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some(format!("display:block;{html_css}").as_str()),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(format!("display:block;margin:0;{body_css}").as_str()),
     );
     let add = |doc: &mut Document, parent: usize, css: &str| {
         doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some(format!("display:block;{css}").as_str()),
         )
     };
@@ -370,22 +387,20 @@ fn fixed_boxes_inside_paragraphs_are_placed_against_the_page_area() {
         ),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:0;font-family:Ahem;font-size:10px;line-height:10px"),
         );
         let div = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;margin:40px 0 0 30px"),
         );
-        let p = doc.append_element(Some(div), "p", Style::default(), Some("display:block"));
+        let p = doc.append_element(Some(div), "p", Some("display:block"));
         doc.append_text(p, "text ");
-        let span = doc.append_element(Some(p), "span", Style::default(), Some(fixed_css));
+        let span = doc.append_element(Some(p), "span", Some(fixed_css));
         doc.append_text(span, "fx");
         doc.append_text(p, " more");
         let rules = build_rule_tree(&doc);
@@ -530,7 +545,6 @@ fn grid_abspos_static_positions_survive_the_fixed_relayout() {
     let item = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;width:5px;height:5px"),
     );
     let rules = build_rule_tree(&doc);
@@ -703,23 +717,12 @@ fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
         ("transform:translateY(1px)", "top:5px", 105.0),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:100px"),
-        );
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        doc.append_element(Some(body), "div", Some("display:block;height:100px"));
         let wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;margin-top:30px;height:20px;{wrapper_css}"
             )),
@@ -727,7 +730,6 @@ fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
         let fixed = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;position:fixed;left:5px;width:50px;height:20px;{fixed_css}"
             )),
@@ -735,13 +737,11 @@ fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
         let grid = doc.append_element(
             Some(fixed),
             "div",
-            Style::default(),
             Some("display:grid;width:50%;padding:10px"),
         );
         let item = doc.append_element(
             Some(grid),
             "div",
-            Style::default(),
             Some("display:block;position:absolute;width:5px;height:5px"),
         );
         let rules = build_rule_tree(&doc);
@@ -773,7 +773,6 @@ fn keyword_sized_fixed_boxes_take_padding_resolved_against_the_page_area() {
     doc.append_element(
         Some(fixed),
         "div",
-        Style::default(),
         Some("display:block;width:30px;height:5px"),
     );
     let rules = build_rule_tree(&doc);
@@ -816,7 +815,6 @@ fn keyword_sized_fixed_boxes_are_clamped_against_the_page_area() {
     doc.append_element(
         Some(fixed),
         "div",
-        Style::default(),
         Some("display:block;width:500px;height:5px"),
     );
     let rules = build_rule_tree(&doc);
@@ -982,17 +980,14 @@ fn static_position_alignment_follows_the_flex_container() {
             &format!("display:flex;height:100px;width:100px;flex-direction:{flex_direction}"),
             &format!("position:fixed;width:20px;height:10px;direction:{direction}"),
         );
-        doc.layout_node_with_style_mut(fixed)
-            .unwrap()
-            .style
-            .align_self = Some(align);
-        let (alignment, _) = static_alignment(
+        let (alignment, _) = static_alignment_with(
             &mut doc,
             fixed,
             Size {
                 width: 50.0,
                 height: 50.0,
             },
+            Some(align),
         );
         (alignment.width, alignment.height)
     };
@@ -1020,17 +1015,14 @@ fn static_position_alignment_follows_the_flex_container() {
         "position:fixed;width:20px;height:10px",
     );
     let mut doc = doc;
-    doc.layout_node_with_style_mut(fixed)
-        .unwrap()
-        .style
-        .align_self = Some(align(AlignItemsKeyword::End, AlignmentSafety::Safe));
-    let (alignment, _) = static_alignment(
+    let (alignment, _) = static_alignment_with(
         &mut doc,
         fixed,
         Size {
             width: 20.0,
             height: 200.0,
         },
+        Some(align(AlignItemsKeyword::End, AlignmentSafety::Safe)),
     );
     assert_eq!((alignment.width, alignment.height), (0.0, 0.0));
     // `self-start` and `self-end` follow the box's own direction where the
@@ -1104,17 +1096,15 @@ fn positioned_boxes_that_are_not_generated_do_not_contain() {
 #[test]
 fn the_body_border_does_not_move_uncontained_absolute_children() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;border:30px solid"),
     );
     let abspos = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;left:5px;top:6px;width:50%;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -1155,23 +1145,16 @@ fn a_root_filter_does_not_contain_absolute_descendants() {
         "display:block;will-change:filter",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some(root_css));
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
+        let html = doc.append_element(Some(0), "html", Some(root_css));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;margin-left:30px;margin-top:50px"),
         );
         let abspos = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;position:absolute;left:5px;top:6px;width:20px;height:10px"),
         );
         let rules = build_rule_tree(&doc);
@@ -1188,29 +1171,21 @@ fn a_root_filter_does_not_contain_absolute_descendants() {
 #[test]
 fn inline_form_controls_contain_fixed_descendants() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;margin-left:30px;margin-top:50px"),
     );
     let button = doc.append_element(
         Some(parent),
         "button",
-        Style::default(),
         Some("display:inline;will-change:transform"),
     );
     let fixed = doc.append_element(
         Some(button),
         "div",
-        Style::default(),
         Some("display:block;position:fixed;left:5px;top:6px;width:20px;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -1223,24 +1198,17 @@ fn inline_form_controls_contain_fixed_descendants() {
 /// child with `abs_css`. Returns the document and the child.
 fn paragraph_with_positioned_child(parent_css: &str, abs_css: &str) -> (Document, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!("display:block;position:relative;{parent_css}").as_str()),
     );
     doc.append_text(parent, "text");
     let abs = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some(format!("display:block;position:absolute;{abs_css}").as_str()),
     );
     let rules = build_rule_tree(&doc);

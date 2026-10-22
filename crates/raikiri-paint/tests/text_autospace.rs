@@ -1,7 +1,6 @@
 //! Paint coverage for lines that carry text-autospace boundaries.
 
 use anyrender::{Scene, recording::RenderCommand};
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_paint::paint_single_page;
 use raikiri_style::{build_rule_tree, cascade};
@@ -12,12 +11,11 @@ use raikiri_traits::PageBox;
 #[test]
 fn same_font_runs_share_a_baseline_on_autospace_lines() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
     let div = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;font-size:40px;text-autospace:normal"),
     );
     // `Hello ` ends in a space, so only `国` / `abc` meet at a boundary.

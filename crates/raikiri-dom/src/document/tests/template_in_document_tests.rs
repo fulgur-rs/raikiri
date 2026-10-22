@@ -9,10 +9,10 @@ use raikiri_style::{ComputedValues, Origin, RuleTree, cascade};
 fn template_real_children_stay_in_document() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
-    let inner = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(root), "template", None::<&str>);
+    let inner = doc.append_element(Some(tmpl), "p", None::<&str>);
     let text = doc.append_text(inner, "hi");
-    let nested = doc.append_element(Some(inner), "span", Style::default(), None::<&str>);
+    let nested = doc.append_element(Some(inner), "span", None::<&str>);
 
     doc.mark_in_document_flags();
 
@@ -42,9 +42,9 @@ fn template_real_children_stay_in_document() {
 fn template_contents_fragment_children_stay_out_of_document() {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(root), "template", None::<&str>);
     let frag = doc.allocate_template_fragment_root(tmpl);
-    let span = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(frag), "span", None::<&str>);
     let text = doc.append_text(span, "x");
 
     doc.mark_in_document_flags();
@@ -72,12 +72,12 @@ fn template_contents_fragment_children_stay_out_of_document() {
 #[test]
 fn cascade_styles_template_real_children_but_not_fragment_contents() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
-    let real = doc.append_element(Some(tmpl), "p", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let tmpl = doc.append_element(Some(body), "template", None::<&str>);
+    let real = doc.append_element(Some(tmpl), "p", None::<&str>);
     let frag = doc.allocate_template_fragment_root(tmpl);
-    let inert = doc.append_element(Some(frag), "p", Style::default(), None::<&str>);
+    let inert = doc.append_element(Some(frag), "p", None::<&str>);
 
     let mut rules = RuleTree::empty();
     rules.add_stylesheet("p { color: red }", Origin::Author);
@@ -103,11 +103,11 @@ fn cascade_styles_template_real_children_but_not_fragment_contents() {
 #[test]
 fn sibling_combinator_matches_template_real_children() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
-    let first = doc.append_element(Some(tmpl), "span", Style::default(), None::<&str>);
-    let second = doc.append_element(Some(tmpl), "span", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let tmpl = doc.append_element(Some(body), "template", None::<&str>);
+    let first = doc.append_element(Some(tmpl), "span", None::<&str>);
+    let second = doc.append_element(Some(tmpl), "span", None::<&str>);
 
     let mut rules = RuleTree::empty();
     rules.add_stylesheet("span + span { color: red }", Origin::Author);

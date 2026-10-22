@@ -1,6 +1,7 @@
 use crate::LayoutStyle as Style;
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
+use crate::layout::test_support::style_css;
 use raikiri_style::property::{
     Border, BorderColor, BorderStyle, CssColor, DisplayValue, Length, Sides,
 };
@@ -28,8 +29,7 @@ fn with_layout_session<R>(
     document: &mut Document,
     layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
-    let mut session = LayoutSession::new(document);
-    layout(&mut session)
+    crate::layout::test_support::with_bridged_session(document, layout)
 }
 
 pub(super) fn build_table_grid_in_document(
@@ -147,7 +147,7 @@ fn append_grid_part(
     display: DisplayValue,
     css: &str,
 ) -> usize {
-    let id = doc.append_element(Some(parent), tag, Style::default(), Some(css));
+    let id = doc.append_element(Some(parent), tag, Some(css));
     doc.set_display(id, display);
     id
 }
@@ -257,28 +257,17 @@ fn a_rowspan_that_fills_the_column_limit_rejects_a_cell_beyond_it() {
 #[test]
 fn paged_projection_does_not_change_the_next_single_page_cell_coordinates() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display:table;border-spacing:0"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let table = doc.append_element(Some(body), "table", Some("display:table;border-spacing:0"));
     let mut cells = Vec::new();
     let mut rows = Vec::new();
     for _ in 0..2 {
-        let row = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
         rows.push(row);
         cells.push(doc.append_element(
             Some(row),
             "td",
-            Style::default(),
             Some("display:table-cell;width:10px;height:10px"),
         ));
     }
@@ -297,123 +286,70 @@ fn paged_projection_does_not_change_the_next_single_page_cell_coordinates() {
 }
 
 #[test]
-fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
-    for prepared in [false, true] {
-        let mut doc = Document::new();
-        let html = doc.append_element(
-            Some(0),
-            "html",
-            Style {
-                display: taffy::Display::Block,
-                ..Style::default()
-            },
-            Some("display:block"),
-        );
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style {
-                display: taffy::Display::Block,
-                ..Style::default()
-            },
-            Some("display:block"),
-        );
-        let table = doc.append_element(
-            Some(body),
-            "table",
-            Style {
-                display: taffy::Display::Block,
-                size: Size {
-                    width: Dimension::length(40.0),
-                    height: Dimension::auto(),
-                },
-                ..Style::default()
-            },
-            Some("display:table;width:40px;border-spacing:0"),
-        );
-        doc.set_display(table, DisplayValue::Table);
-        let row = doc.append_element(
-            Some(table),
-            "tr",
-            Style {
-                display: taffy::Display::Block,
-                ..Style::default()
-            },
-            Some("display:table-row"),
-        );
-        doc.set_display(row, DisplayValue::TableRow);
-        let mut children = Vec::new();
-        for _ in 0..2 {
-            let cell = doc.append_element(
+fn a_proper_table_keeps_its_cell_geometry_through_the_native_callback() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Some("display:table;width:40px;border-spacing:0"),
+    );
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    let children: Vec<usize> = (0..2)
+        .map(|_| {
+            doc.append_element(
                 Some(row),
                 "td",
-                Style {
-                    display: taffy::Display::Block,
-                    size: Size {
-                        width: Dimension::length(20.0),
-                        height: Dimension::length(10.0),
-                    },
-                    ..Style::default()
-                },
                 Some("display:table-cell;width:20px;height:10px"),
-            );
-            doc.set_display(cell, DisplayValue::TableCell);
-            children.push(cell);
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let grid = build_table_grid_in_document(&mut doc, table).unwrap();
+    assert_eq!(grid.n_cols, 2);
+    assert_eq!(grid.rows.len(), 1);
+    assert_eq!(
+        grid.cells
+            .iter()
+            .map(|cell| cell.node_id)
+            .collect::<Vec<_>>(),
+        children
+    );
+    let mut inputs = column_probe_input();
+    inputs.known_dimensions.width = Some(40.0);
+    let (output, error_none) = with_layout_session(&mut doc, |session| {
+        let output = compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs);
+        (output, session.context.table_layout_error.is_none())
+    });
+    assert_eq!(
+        output.size,
+        Size {
+            width: 40.0,
+            height: 10.0
         }
-        doc.mark_in_document_flags();
-        if prepared {
-            let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-            crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
-        }
-        // Native callers may supply typed styles without running the CSS bridge.
-        // Keep their real-cell grid identical to the prepared CSS path.
-        assert_eq!(doc.table_objects.rows.contains_key(&table), prepared);
-        let grid = build_table_grid_in_document(&mut doc, table).unwrap();
-        assert_eq!(grid.n_cols, 2);
-        assert_eq!(grid.rows.len(), 1);
+    );
+    assert!(error_none);
+    for (column, &cell) in children.iter().enumerate() {
+        let layout = &doc.nodes[cell].unrounded_layout;
         assert_eq!(
-            grid.cells
-                .iter()
-                .map(|cell| cell.node_id)
-                .collect::<Vec<_>>(),
-            children
-        );
-        let mut inputs = column_probe_input();
-        inputs.known_dimensions.width = Some(40.0);
-        let (output, error_none) = with_layout_session(&mut doc, |session| {
-            let output =
-                compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs);
-            (output, session.context.table_layout_error.is_none())
-        });
-        assert_eq!(
-            output.size,
+            layout.size,
             Size {
-                width: 40.0,
+                width: 20.0,
                 height: 10.0
             }
         );
-        assert!(error_none);
-        for (column, &cell) in children.iter().enumerate() {
-            let layout = &doc.nodes[cell].unrounded_layout;
-            assert_eq!(
-                layout.size,
-                Size {
-                    width: 20.0,
-                    height: 10.0
-                }
-            );
-            assert_eq!(
-                layout.location,
-                taffy::Point {
-                    x: column as f32 * 20.0,
-                    y: 0.0
-                }
-            );
-        }
-        assert_eq!(doc.nodes[table].children, [row]);
-        assert_eq!(doc.nodes[row].children, children);
-        assert_eq!(doc.table_objects.rows.contains_key(&table), prepared);
+        assert_eq!(
+            layout.location,
+            taffy::Point {
+                x: column as f32 * 20.0,
+                y: 0.0
+            }
+        );
     }
+    assert_eq!(doc.nodes[table].children, [row]);
+    assert_eq!(doc.nodes[row].children, children);
+    assert!(doc.table_objects.rows.contains_key(&table));
 }
 
 #[test]
@@ -423,22 +359,15 @@ fn anonymous_block_direction_reaches_the_native_callback() {
         let table = doc.append_element(
             Some(0),
             "div",
-            Style::default(),
             Some(
                 format!("display:table;width:100px;border-spacing:0;direction:{direction}")
                     .as_str(),
             ),
         );
-        let row = doc.append_element(
-            Some(table),
-            "div",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
         let block = doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some("display:block;width:20px;height:10px"),
         );
         doc.mark_in_document_flags();
@@ -467,22 +396,11 @@ fn anonymous_block_direction_reaches_the_native_callback() {
 #[test]
 fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     let mut doc = Document::new();
-    let table = doc.append_element(
-        Some(0),
-        "div",
-        Style::default(),
-        Some("display:table;border-spacing:0"),
-    );
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let table = doc.append_element(Some(0), "div", Some("display:table;border-spacing:0"));
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
     let block = doc.append_element(
         Some(row),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -501,7 +419,9 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     inputs.known_dimensions.width = Some(100.0);
     inputs.run_mode = taffy::RunMode::PerformLayout;
     let output = {
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let mut session =
+            crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
         taffy::LayoutPartialTree::compute_child_layout(
             &mut session,
             taffy::NodeId::from(key),
@@ -529,33 +449,17 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
 #[test]
 fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let table = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:table;border-spacing:0"),
-    );
-    let group = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row-group"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(Some(body), "div", Some("display:table;border-spacing:0"));
+    let group = doc.append_element(Some(table), "div", Some("display:table-row-group"));
     let mut children = Vec::new();
     for _ in 0..2 {
-        let row = doc.append_element(
-            Some(group),
-            "div",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(group), "div", Some("display:table-row"));
         for _ in 0..2 {
             children.push(doc.append_element(
                 Some(row),
                 "div",
-                Style::default(),
                 Some("display:block;width:20px;height:10px"),
             ));
         }
@@ -603,29 +507,18 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
 fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let table = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:table;width:40px;border-spacing:0"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let cell = doc.append_element(Some(row), "div", Style::default(), Some("display:table-cell;width:40px;vertical-align:baseline;font-family:Ahem;font-size:40px;line-height:40px"));
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "div", Some("display:table-cell;width:40px;vertical-align:baseline;font-family:Ahem;font-size:40px;line-height:40px"));
     doc.set_element_attributes(cell, vec![("rowspan".into(), "2".into())]);
     doc.append_text(cell, "X");
-    doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    doc.append_element(Some(table), "div", Some("display:table-row"));
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
@@ -640,16 +533,11 @@ fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
 
 fn oversized_columns_document(explicit_row: bool, columns: bool) -> Document {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "div", Style::default(), Some("display: table"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "div", Some("display: table"));
     let parent = if explicit_row {
-        doc.append_element(
-            Some(table),
-            "div",
-            Style::default(),
-            Some("display: table-row"),
-        )
+        doc.append_element(Some(table), "div", Some("display: table-row"))
     } else {
         table
     };
@@ -657,7 +545,6 @@ fn oversized_columns_document(explicit_row: bool, columns: bool) -> Document {
         let cell = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some(if columns {
                 "display: table-column"
             } else {
@@ -706,13 +593,10 @@ fn oversized_column_element_spans_return_layout_error() {
 fn table_column_grid_accepts_exact_representable_boundary() {
     for (explicit, columns) in [(true, false), (false, false), (false, true)] {
         let mut doc = oversized_columns_document(explicit, columns);
-        let rules = build_rule_tree(&doc);
-        let cr = cascade(&doc, &rules).unwrap();
         let table = 3;
         let last = doc.nodes.len() - 1;
         let attribute = if columns { "span" } else { "colspan" };
         doc.set_element_attributes(last, vec![(attribute.into(), "535".into())]);
-        crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
         let grid = build_table_grid_in_document(&mut doc, table).unwrap();
         assert_eq!(grid.n_cols, u16::MAX);
         if columns {
@@ -725,7 +609,11 @@ fn table_column_grid_accepts_exact_representable_boundary() {
             );
         }
         doc.set_element_attributes(last, vec![(attribute.into(), "536".into())]);
-        assert!(build_table_grid_in_document(&mut doc, table).is_err());
+        let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert!(matches!(
+            crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4),
+            Err(raikiri_traits::LayoutError::Internal { .. })
+        ));
     }
 }
 
@@ -760,7 +648,8 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
             cells: vec![fixed_cell(0, start, span, Dimension::auto())],
             col_widths: vec![],
         };
-        let mut session = LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
         assert!(
             resolve_row_heights_in_session(&mut session, &mut grid, &[1.0, 1.0], (0.0, 0.0))
                 .is_err()
@@ -904,10 +793,10 @@ fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
     let mut doc = Document::new();
     let widths = [3.0, 5.0, 7.0, 9.0];
     let cells = widths.map(|width| {
-        let id = bordered_cell(&mut doc, width);
-        let candidate = collapsed_candidate(BorderStyle::Solid, width, CssColor::BLACK);
-        doc.nodes[id].computed_border = Some(Sides::all(candidate.border));
-        id
+        collapsed_cell(
+            &mut doc,
+            collapsed_candidate(BorderStyle::Solid, width, CssColor::BLACK),
+        )
     });
     let grid = super::TableGrid {
         n_cols: 2,
@@ -921,9 +810,10 @@ fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
         col_widths: vec![],
     };
 
-    resolve_collapsed_cell_borders_in_document(&mut doc, &grid, &super::CellIndex::new(&grid));
+    let used =
+        resolve_collapsed_cell_borders_in_document(&mut doc, &grid, &super::CellIndex::new(&grid));
 
-    let borders = borders_in_document(&mut doc, &cells);
+    let borders = cells.map(|cell| used[&cell]);
     assert_eq!(borders[0].right, LengthPercentage::length(5.0));
     assert_eq!(borders[1].left, LengthPercentage::length(5.0));
     assert_eq!(borders[2].right, LengthPercentage::length(9.0));
@@ -957,11 +847,49 @@ fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
     );
 }
 
-/// A cell whose border box widths and computed borders all use `border`.
+/// A `tag` box of the given `display` whose four borders are all `border`.
+fn collapsed_box(
+    doc: &mut Document,
+    tag: &str,
+    display: &str,
+    border: super::CollapsedBorderCandidate,
+) -> usize {
+    collapsed_box_in(doc, 0, tag, display, border)
+}
+
+/// Like [`collapsed_box`], below `parent`. The root element is blockified, so
+/// a box whose display matters goes below some other element.
+fn collapsed_box_in(
+    doc: &mut Document,
+    parent: usize,
+    tag: &str,
+    display: &str,
+    border: super::CollapsedBorderCandidate,
+) -> usize {
+    let style = format!("{:?}", border.border.style()).to_lowercase();
+    let color = match border.border.color {
+        BorderColor::Resolved(color) => format!(
+            "rgba({},{},{},{})",
+            color.r,
+            color.g,
+            color.b,
+            f32::from(color.a) / 255.0
+        ),
+        _ => "currentcolor".to_owned(),
+    };
+    doc.append_element(
+        Some(parent),
+        tag,
+        Some(format!(
+            "display:{display};border:{}px {style} {color}",
+            border.border.width().px()
+        )),
+    )
+}
+
+/// A cell whose four borders are all `border`.
 fn collapsed_cell(doc: &mut Document, border: super::CollapsedBorderCandidate) -> usize {
-    let id = bordered_cell(doc, border.border.width().px());
-    doc.nodes[id].computed_border = Some(Sides::all(border.border));
-    id
+    collapsed_box(doc, "td", "table-cell", border)
 }
 
 #[test]
@@ -1040,9 +968,9 @@ fn an_edge_cell_side_yields_to_a_winning_table_border() {
         col_widths: vec![],
     };
 
-    resolve_collapsed_table_edges_in_document(&mut doc, &grid, table);
+    let used = resolve_collapsed_table_edges_in_document(&mut doc, &grid, table);
 
-    let losing_bottom_border = border_in_document(&mut doc, losing).bottom;
+    let losing_bottom_border = used[&losing].bottom;
     let losing_sides = doc.nodes[losing].collapsed_border().expect("resolved");
     assert_eq!(losing_sides.bottom.style(), BorderStyle::None);
     assert_eq!(losing_sides.bottom.width().px(), 0.0);
@@ -1063,18 +991,20 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
         a: 255,
     };
     let thin = collapsed_candidate(BorderStyle::Solid, 1.0, CssColor::BLACK);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let rows: Vec<usize> = (0..3)
         .map(|index| {
             let color = if index == 2 { red } else { CssColor::BLACK };
-            let row = collapsed_cell(
+            collapsed_box_in(
                 &mut doc,
+                host,
+                "tr",
+                "table-row",
                 collapsed_candidate(BorderStyle::Solid, 5.0, color),
-            );
-            doc.set_display(row, DisplayValue::TableRow);
-            row
+            )
         })
         .collect();
-    let spanning = collapsed_cell(&mut doc, thin);
+    let spanning = collapsed_box_in(&mut doc, host, "td", "table-cell", thin);
     let grid = super::TableGrid {
         n_cols: 2,
         rows: rows.clone(),
@@ -1082,7 +1012,7 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
         col_widths: vec![],
     };
 
-    resolve_collapsed_row_borders_in_document(&mut doc, &grid);
+    let used = resolve_collapsed_row_borders_in_document(&mut doc, &grid);
 
     // The spanning cell's bottom lies on the last row's bottom border.
     let bottom = doc.nodes[spanning]
@@ -1091,10 +1021,7 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
         .bottom;
     assert_eq!(bottom.color, BorderColor::Resolved(red));
     assert_eq!(bottom.width().px(), 5.0);
-    assert_eq!(
-        border_in_document(&mut doc, spanning).bottom,
-        LengthPercentage::length(5.0)
-    );
+    assert_eq!(used[&spanning].bottom, LengthPercentage::length(5.0));
     for row in rows {
         let painted = doc.nodes[row].collapsed_border().expect("row resolved");
         assert_eq!(painted.top.style(), BorderStyle::None);
@@ -1199,7 +1126,6 @@ fn an_anonymous_row_does_not_turn_its_first_cell_into_a_row() {
         &mut doc,
         collapsed_candidate(BorderStyle::Solid, 1.0, CssColor::BLACK),
     );
-    doc.set_display(first, DisplayValue::TableCell);
     let grid = super::TableGrid {
         n_cols: 2,
         // An anonymous row is recorded by its first cell.
@@ -1225,10 +1151,12 @@ fn an_anonymous_row_does_not_turn_its_first_cell_into_a_row() {
 #[test]
 fn collapsed_resolution_skips_boxes_without_computed_borders() {
     let mut doc = Document::new();
-    // A hand-built box that never went through the style bridge has no
-    // computed borders, so it takes part in no conflict.
-    let bare_row = bordered_cell(&mut doc, 2.0);
-    doc.set_display(bare_row, DisplayValue::TableRow);
+    let bare_row = collapsed_box(
+        &mut doc,
+        "tr",
+        "table-row",
+        collapsed_candidate(BorderStyle::Solid, 2.0, CssColor::BLACK),
+    );
     let bare_table = bordered_cell(&mut doc, 2.0);
     let bare_cell = bordered_cell(&mut doc, 2.0);
     let cell = collapsed_cell(
@@ -1241,9 +1169,6 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
         cells: vec![make_cell(cell, 0, 0, 1, 1, Dimension::auto())],
         col_widths: vec![],
     };
-
-    resolve_collapsed_row_borders_in_document(&mut doc, &grid);
-    resolve_collapsed_table_edges_in_document(&mut doc, &grid, bare_table);
     let pair = super::TableGrid {
         n_cols: 2,
         rows: vec![bare_row],
@@ -1253,65 +1178,51 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
         ],
         col_widths: vec![],
     };
-    resolve_collapsed_cell_borders_in_document(&mut doc, &pair, &super::CellIndex::new(&pair));
 
-    assert!(doc.nodes[cell].collapsed_border().is_none());
-    assert!(doc.nodes[bare_cell].collapsed_border().is_none());
-    assert!(doc.nodes[bare_row].collapsed_border().is_none());
-    assert_eq!(
-        border_in_document(&mut doc, cell).top,
-        LengthPercentage::length(3.0)
-    );
+    with_layout_session(&mut doc, |session| {
+        // The bridge gives every element computed borders, so strip the ones
+        // that stand for boxes it did not reach.
+        for bare in [bare_row, bare_table, bare_cell] {
+            session.nodes[bare].computed_border = None;
+        }
+        with_retained_border_state_in(session, &grid, |session, state| {
+            super::resolve_collapsed_row_borders(session, state, &grid)
+        });
+        with_retained_border_state_in(session, &grid, |session, state| {
+            super::resolve_collapsed_table_edges(session, state, &grid, bare_table)
+        });
+        with_retained_border_state_in(session, &pair, |session, state| {
+            super::resolve_collapsed_cell_borders(
+                session,
+                state,
+                &pair,
+                &super::CellIndex::new(&pair),
+            )
+        });
+
+        assert!(session.nodes[cell].collapsed_border().is_none());
+        assert!(session.nodes[bare_cell].collapsed_border().is_none());
+        assert!(session.nodes[bare_row].collapsed_border().is_none());
+        assert_eq!(
+            session.table_style(cell).border().top,
+            LengthPercentage::length(3.0)
+        );
+    });
 }
 
 fn build_simple_2x2() -> Document {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table"),
-    );
-    let tr1 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td1 = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    let td2 = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table"));
+    let tr1 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td1 = doc.append_element(Some(tr1), "td", Some("display: table-cell"));
+    let td2 = doc.append_element(Some(tr1), "td", Some("display: table-cell"));
     let _t1 = doc.append_text(td1, "cell1");
     let _t2 = doc.append_text(td2, "cell2");
-    let tr2 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td3 = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    let td4 = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let tr2 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td3 = doc.append_element(Some(tr2), "td", Some("display: table-cell"));
+    let td4 = doc.append_element(Some(tr2), "td", Some("display: table-cell"));
     let _t3 = doc.append_text(td3, "cell3");
     let _t4 = doc.append_text(td4, "cell4");
     doc
@@ -1368,44 +1279,18 @@ fn table_simple_2x2_columns_and_rows() {
 #[test]
 fn table_vertical_writing_mode_maps_columns_to_inline_axis() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; writing-mode: vertical-lr"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let first = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    let second = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    let _first_child = doc.append_element(
-        Some(first),
-        "div",
-        Style::default(),
-        Some("width: 50px; height: 100px"),
-    );
-    let _second_child = doc.append_element(
-        Some(second),
-        "div",
-        Style::default(),
-        Some("width: 50px; height: 100px"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let first = doc.append_element(Some(row), "td", Some("display: table-cell"));
+    let second = doc.append_element(Some(row), "td", Some("display: table-cell"));
+    let _first_child = doc.append_element(Some(first), "div", Some("width: 50px; height: 100px"));
+    let _second_child = doc.append_element(Some(second), "div", Some("width: 50px; height: 100px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade");
@@ -1437,18 +1322,12 @@ fn table_vertical_writing_mode_maps_columns_to_inline_axis() {
 #[test]
 fn empty_table_caption_is_laid_out_and_painted() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table"));
     let caption = doc.append_element(
         Some(table),
         "caption",
-        Style::default(),
         Some(
             "display: table-caption; width: 100px; height: 50px; margin-left: 200px; \
              position: relative; left: -200px",
@@ -1470,46 +1349,16 @@ fn empty_table_caption_is_laid_out_and_painted() {
 #[test]
 fn table_colspan_wide_equals_sum_of_spanned_columns() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table"),
-    );
-    let tr1 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td_wide = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table"));
+    let tr1 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td_wide = doc.append_element(Some(tr1), "td", Some("display: table-cell"));
     doc.set_element_attributes(td_wide, vec![("colspan".into(), "2".into())]);
     let _t = doc.append_text(td_wide, "wide");
-    let tr2 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td_a = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    let td_b = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let tr2 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td_a = doc.append_element(Some(tr2), "td", Some("display: table-cell"));
+    let td_b = doc.append_element(Some(tr2), "td", Some("display: table-cell"));
     let _ta = doc.append_text(td_a, "a");
     let _tb = doc.append_text(td_b, "b");
     doc.mark_in_document_flags();
@@ -1531,47 +1380,17 @@ fn table_colspan_wide_equals_sum_of_spanned_columns() {
 #[test]
 fn table_rowspan_distributes_height() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table"),
-    );
-    let tr1 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td_span = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table"));
+    let tr1 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td_span = doc.append_element(Some(tr1), "td", Some("display: table-cell"));
     doc.set_element_attributes(td_span, vec![("rowspan".into(), "2".into())]);
     let _t = doc.append_text(td_span, "span");
-    let td1 = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let td1 = doc.append_element(Some(tr1), "td", Some("display: table-cell"));
     let _t1 = doc.append_text(td1, "a");
-    let tr2 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td2 = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let tr2 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td2 = doc.append_element(Some(tr2), "td", Some("display: table-cell"));
     let _t2 = doc.append_text(td2, "b");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -1597,28 +1416,13 @@ fn table_rowspan_distributes_height() {
 #[test]
 fn nested_table_depth_cap_does_not_panic() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let mut parent = body;
     for _ in 0..10 {
-        let table = doc.append_element(
-            Some(parent),
-            "table",
-            Style::default(),
-            Some("display: table"),
-        );
-        let tr = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display: table-row"),
-        );
-        let td = doc.append_element(
-            Some(tr),
-            "td",
-            Style::default(),
-            Some("display: table-cell"),
-        );
+        let table = doc.append_element(Some(parent), "table", Some("display: table"));
+        let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+        let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
         let _t = doc.append_text(td, "x");
         parent = td;
     }
@@ -1633,32 +1437,12 @@ fn nested_table_depth_cap_does_not_panic() {
 fn table_with_tbody_anonymization() {
     // Ensure html5ever tbody auto-insertion not required: manually use tbody group
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table"),
-    );
-    let tbody = doc.append_element(
-        Some(table),
-        "tbody",
-        Style::default(),
-        Some("display: table-row-group"),
-    );
-    let tr = doc.append_element(
-        Some(tbody),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table"));
+    let tbody = doc.append_element(Some(table), "tbody", Some("display: table-row-group"));
+    let tr = doc.append_element(Some(tbody), "tr", Some("display: table-row"));
+    let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
     let _t = doc.append_text(td, "inside tbody");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -1676,13 +1460,13 @@ fn table_parse_path_via_raikiri_html_uses_ua_display() {
     // Simulate parse path UA injection: inject minimal UA CSS manually.
     use raikiri_style::Origin;
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     // No inline display: rely on UA
-    let table = doc.append_element(Some(body), "table", Style::default(), None::<&str>);
-    let tr = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    let td1 = doc.append_element(Some(tr), "td", Style::default(), None::<&str>);
-    let td2 = doc.append_element(Some(tr), "td", Style::default(), None::<&str>);
+    let table = doc.append_element(Some(body), "table", None::<&str>);
+    let tr = doc.append_element(Some(table), "tr", None::<&str>);
+    let td1 = doc.append_element(Some(tr), "td", None::<&str>);
+    let td2 = doc.append_element(Some(tr), "td", None::<&str>);
     let _t1 = doc.append_text(td1, "hi");
     let _t2 = doc.append_text(td2, "bye");
     doc.mark_in_document_flags();
@@ -1721,32 +1505,16 @@ fn fixed_layout_honors_first_row_widths_and_ignores_content() {
     // CSS 2.1 §17.5.2.1: table 400px, first-row cell 100px fixed →
     // columns 100 / 300 regardless of the long content in column 2.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; table-layout: fixed; width: 400px"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td1 = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell; width: 100px"),
-    );
-    let td2 = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td1 = doc.append_element(Some(tr), "td", Some("display: table-cell; width: 100px"));
+    let td2 = doc.append_element(Some(tr), "td", Some("display: table-cell"));
     let _t1 = doc.append_text(td1, "x");
     let _t2 = doc.append_text(
         td2,
@@ -1784,52 +1552,21 @@ fn fixed_layout_ignores_non_first_row_widths() {
     // CSS 2.1 §17.5.2.1: only the first row sets widths — a 300px width
     // on a second-row cell must not move the columns off 200/200.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; table-layout: fixed; width: 400px"),
     );
-    let tr1 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td1 = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    let td2 = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let tr1 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td1 = doc.append_element(Some(tr1), "td", Some("display: table-cell"));
+    let td2 = doc.append_element(Some(tr1), "td", Some("display: table-cell"));
     let _a = doc.append_text(td1, "a");
     let _b = doc.append_text(td2, "b");
-    let tr2 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td3 = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell; width: 300px"),
-    );
-    let td4 = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let tr2 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td3 = doc.append_element(Some(tr2), "td", Some("display: table-cell; width: 300px"));
+    let td4 = doc.append_element(Some(tr2), "td", Some("display: table-cell"));
     let _c = doc.append_text(td3, "c");
     let _d = doc.append_text(td4, "d");
     doc.mark_in_document_flags();
@@ -1852,30 +1589,22 @@ fn collapse_overlaps_adjoining_borders_by_pairwise_min() {
     // cells collapse the interior line to max(4, 4) = 4 by overlapping
     // the boxes by min(4, 4) = 4.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; border-collapse: collapse"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td1 = doc.append_element(
         Some(tr),
         "td",
-        Style::default(),
         Some("display: table-cell; border: 4px solid black"),
     );
     let td2 = doc.append_element(
         Some(tr),
         "td",
-        Style::default(),
         Some("display: table-cell; border: 4px solid black"),
     );
     let _t1 = doc.append_text(td1, "a");
@@ -1917,30 +1646,18 @@ fn separate_cells_abut_without_overlap() {
     // Counterpart check: without `border-collapse: collapse` the same
     // bordered cells abut exactly (no absorbed line).
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table"),
-    );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table"));
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td1 = doc.append_element(
         Some(tr),
         "td",
-        Style::default(),
         Some("display: table-cell; border: 4px solid black"),
     );
     let td2 = doc.append_element(
         Some(tr),
         "td",
-        Style::default(),
         Some("display: table-cell; border: 4px solid black"),
     );
     let _t1 = doc.append_text(td1, "a");
@@ -1961,32 +1678,20 @@ fn separate_cells_abut_without_overlap() {
 #[test]
 fn explicit_single_row_height_resolves_percentage_child() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; width: 150px; height: 100px; border: 5px solid black"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let cell = doc.append_element(
         Some(row),
         "td",
-        Style::default(),
         Some("display: table-cell; padding: 5px; border: 2px solid magenta"),
     );
-    let child = doc.append_element(
-        Some(cell),
-        "div",
-        Style::default(),
-        Some("width: 100%; height: 100%"),
-    );
+    let child = doc.append_element(Some(cell), "div", Some("width: 100%; height: 100%"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -2010,29 +1715,14 @@ fn explicit_single_row_height_resolves_percentage_child() {
 fn explicit_table_height_respects_box_sizing() {
     for (box_sizing, expected_outer) in [("border-box", 100.0), ("content-box", 140.0)] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let table_style = format!(
             "display: table; box-sizing: {box_sizing}; border: 20px solid black; border-collapse: collapse; height: 100px"
         );
-        let table = doc.append_element(
-            Some(body),
-            "table",
-            Style::default(),
-            Some(table_style.as_str()),
-        );
-        let row = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display: table-row"),
-        );
-        doc.append_element(
-            Some(row),
-            "td",
-            Style::default(),
-            Some("display: table-cell"),
-        );
+        let table = doc.append_element(Some(body), "table", Some(table_style.as_str()));
+        let row = doc.append_element(Some(table), "tr", Some("display: table-row"));
+        doc.append_element(Some(row), "td", Some("display: table-cell"));
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
@@ -2067,30 +1757,19 @@ fn table_calc_minimum_sizes_resolve_against_the_containing_block() {
         ),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some(&format!(
                 "display:table;border-spacing:0;box-sizing:{box_sizing};\
                  padding:5px;border:3px solid black;\
                  min-width:calc(50% + 10px);min-height:calc(50% + 10px)"
             )),
         );
-        let row = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display:table-row"),
-        );
-        let cell = doc.append_element(
-            Some(row),
-            "td",
-            Style::default(),
-            Some("display:table-cell"),
-        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "td", Some("display:table-cell"));
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
         crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
@@ -2152,44 +1831,31 @@ fn fixed_table_percentage_only_calc_width_fixes_the_column() {
 
 fn fixed_table_calc_column_geometry(from_column: bool, width: &str) -> (f32, f32, f32) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display:table;table-layout:fixed;width:200px;border-spacing:0"),
     );
     if from_column {
         doc.append_element(
             Some(table),
             "col",
-            Style::default(),
             Some(&format!("display:table-column;width:{width}")),
         );
     }
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     let first = doc.append_element(
         Some(row),
         "td",
-        Style::default(),
         Some(&if from_column {
             "display:table-cell".to_owned()
         } else {
             format!("display:table-cell;width:{width}")
         }),
     );
-    let second = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let second = doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
@@ -2218,30 +1884,15 @@ fn table_min_size_respects_box_sizing() {
         [("content-box", 66.0, 50.0), ("border-box", 50.0, 34.0)]
     {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let table_style = format!(
             "display: table; box-sizing: {box_sizing}; border: 3px solid black; \
              padding: 5px; min-width: 50px; min-height: 50px"
         );
-        let table = doc.append_element(
-            Some(body),
-            "table",
-            Style::default(),
-            Some(table_style.as_str()),
-        );
-        let tr = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display: table-row"),
-        );
-        let td = doc.append_element(
-            Some(tr),
-            "td",
-            Style::default(),
-            Some("display: table-cell"),
-        );
+        let table = doc.append_element(Some(body), "table", Some(table_style.as_str()));
+        let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+        let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
@@ -2319,45 +1970,15 @@ fn distribute_columns_covers_growth_and_shrink_phases() {
 #[test]
 fn table_colspan_percent_distribution_uses_definite_table_width() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table; width: 110px"),
-    );
-    let tr1 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let wide = doc.append_element(
-        Some(tr1),
-        "td",
-        Style::default(),
-        Some("display: table-cell; width: 50%"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table; width: 110px"));
+    let tr1 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let wide = doc.append_element(Some(tr1), "td", Some("display: table-cell; width: 50%"));
     doc.set_element_attributes(wide, vec![("colspan".into(), "2".into())]);
-    let tr2 = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let left = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell; width: 5px"),
-    );
-    let right = doc.append_element(
-        Some(tr2),
-        "td",
-        Style::default(),
-        Some("display: table-cell; width: 5px"),
-    );
+    let tr2 = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let left = doc.append_element(Some(tr2), "td", Some("display: table-cell; width: 5px"));
+    let right = doc.append_element(Some(tr2), "td", Some("display: table-cell; width: 5px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -2373,32 +1994,20 @@ fn table_colspan_percent_distribution_uses_definite_table_width() {
 #[test]
 fn absolute_auto_table_uses_definite_containing_block_width() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("width: 100px; height: 100px; position: relative"),
     );
     let table = doc.append_element(
         Some(container),
         "table",
-        Style::default(),
         Some("display: table; position: absolute; left: -100px; height: 100px"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let cell = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let cell = doc.append_element(Some(row), "td", Some("display: table-cell"));
     doc.append_text(cell, "x");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -2615,109 +2224,55 @@ fn fixed_first_row_colspan_minimum_grows_its_columns() {
 fn first_cell_baseline_descends_through_multiple_block_containers() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let table = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:table;width:20px;border-spacing:0"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let cell = doc.append_element(Some(row), "div", Style::default(), Some("display:table-cell;vertical-align:top;font-family:Ahem;font-size:10px;line-height:10px"));
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "div", Some("display:table-cell;vertical-align:top;font-family:Ahem;font-size:10px;line-height:10px"));
     let outer = doc.append_element(
         Some(cell),
         "div",
-        Style::default(),
         Some("display:block;margin-top:3px;padding-top:2px"),
     );
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some("display:block;margin-top:5px;padding-top:4px"),
     );
     doc.append_text(inner, "X");
     doc.append_text(cell, "later inline content");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-    assert_eq!(
-        with_layout_session(&mut doc, |session| super::first_cell_baseline(
-            session, cell, 0.0
-        )),
-        Some(22.0)
-    );
+    let mut session = LayoutSession::with_cascade(&mut doc, &computed);
+    crate::layout::page_pipeline::layout_single_page_in_session(
+        &mut session,
+        &computed,
+        PageBox::A4,
+    )
+    .unwrap();
+    assert_eq!(super::first_cell_baseline(&session, cell, 0.0), Some(22.0));
 }
 
 #[test]
-fn vertical_table_cell_alignment_accounts_for_scrollbar_width() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display:table;width:80px;height:80px;writing-mode:vertical-rl"),
-    );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let cell_style = Style {
-        scrollbar_width: 20.0,
-        ..Style::default()
-    };
-    let cell = doc.append_element(
-        Some(row),
-        "td",
-        cell_style,
-        Some("display:table-cell;overflow-y:scroll;vertical-align:middle"),
-    );
-    let child = doc.append_element(
-        Some(cell),
-        "div",
-        Style::default(),
-        Some("display:block;position:relative;left:50%;width:10px;height:10px"),
-    );
-    doc.mark_in_document_flags();
-    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-
-    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 80.0);
-    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 65.0);
-}
-
-#[test]
-fn table_oof_candidates_use_the_rtl_border_and_scrollbar_area() {
+fn table_oof_candidates_use_the_border_area() {
     let mut doc = Document::new();
     let table = doc.append_element(
         Some(0),
         "table",
-        Style {
-            scrollbar_width: 10.0,
-            ..Style::default()
-        },
-        Some("display:table;direction:rtl;border:2px solid;overflow-x:scroll;overflow-y:scroll"),
+        Some("display:table;border:2px solid;overflow-x:scroll;overflow-y:scroll"),
     );
     let fixed = doc.append_element(
         Some(table),
         "div",
-        Style::default(),
         Some("position:fixed;width:10px;height:10px"),
     );
     let absolute = doc.append_element(
         Some(table),
         "div",
-        Style::default(),
         Some("position:absolute;width:10px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -2741,11 +2296,11 @@ fn table_oof_candidates_use_the_rtl_border_and_scrollbar_area() {
     assert_eq!(
         area.size,
         Size {
-            width: 86.0,
-            height: 86.0
+            width: 96.0,
+            height: 96.0
         }
     );
-    assert_eq!(area.offset, taffy::Point { x: 12.0, y: 2.0 });
+    assert_eq!(area.offset, taffy::Point { x: 2.0, y: 2.0 });
     let candidates = output.oof_candidates.as_slice();
     assert_eq!(candidates.len(), 2);
     assert_eq!(candidates[0].node, taffy::NodeId::from(fixed));
@@ -2762,19 +2317,16 @@ fn in_flow_caption_bubbles_uncontained_fixed_candidates() {
     let table = doc.append_element(
         Some(0),
         "table",
-        Style::default(),
         Some("display:table;width:100px;height:50px"),
     );
     let caption = doc.append_element(
         Some(table),
         "caption",
-        Style::default(),
         Some("display:table-caption;width:20px;height:10px;margin-left:17px"),
     );
     let fixed = doc.append_element(
         Some(caption),
         "div",
-        Style::default(),
         Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
     );
     doc.mark_in_document_flags();
@@ -3003,73 +2555,40 @@ fn resolve_fixed_column_widths_underflow_clamps_unfixed_columns_to_zero() {
 // -----------------------------------------------------------------
 // collect_col_widths / collect_rows_inner / flush_pending — grid
 // construction helpers, called directly on a minimal html/body/table
-// shell (display + attributes set on Node directly, bypassing
-// cascade — these functions only read `Node::display`/attributes,
-// not computed CSS).
+// shell.
 // -----------------------------------------------------------------
 
 fn table_shell() -> (Document, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "table", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
     (doc, table)
 }
 
 #[test]
 fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
     let (mut doc, table) = table_shell();
-    let colgroup = doc.append_element(Some(table), "colgroup", Style::default(), None::<&str>);
-    doc.set_display(colgroup, DisplayValue::TableColumnGroup);
+    let colgroup = doc.append_element(Some(table), "colgroup", Some("display:table-column-group"));
 
-    let col_a = doc.append_element(
+    doc.append_element(
         Some(colgroup),
         "col",
-        Style {
-            size: Size {
-                width: Dimension::length(40.0),
-                height: Dimension::auto(),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:table-column;width:40px"),
     );
-    doc.set_display(col_a, DisplayValue::TableColumn);
-
     let col_b = doc.append_element(
         Some(colgroup),
         "col",
-        Style {
-            min_size: Size {
-                width: LengthPercentageAuto::length(20.0),
-                height: LengthPercentageAuto::auto(),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:table-column;min-width:20px"),
     );
-    doc.set_display(col_b, DisplayValue::TableColumn);
     doc.set_element_attributes(col_b, vec![("span".into(), "2".into())]);
 
     // A `<tr>` sibling of the colgroup must be skipped, not treated
     // as a column.
-    let tr = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.set_display(tr, DisplayValue::TableRow);
+    doc.append_element(Some(table), "tr", Some("display:table-row"));
 
     // A bare `<col>` directly under the table (anonymous colgroup).
-    let col_c = doc.append_element(
-        Some(table),
-        "col",
-        Style {
-            size: Size {
-                width: Dimension::percent(0.25),
-                height: Dimension::auto(),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
-    );
-    doc.set_display(col_c, DisplayValue::TableColumn);
+    doc.append_element(Some(table), "col", Some("display:table-column;width:25%"));
 
     doc.mark_in_document_flags();
     let sizing = with_layout_session(&mut doc, |session| {
@@ -3091,10 +2610,8 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
 #[test]
 fn collect_rows_wraps_bare_cells_in_anonymous_row() {
     let (mut doc, table) = table_shell();
-    let td1 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
-    doc.set_display(td1, DisplayValue::TableCell);
-    let td2 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
-    doc.set_display(td2, DisplayValue::TableCell);
+    doc.append_element(Some(table), "td", Some("display:table-cell"));
+    doc.append_element(Some(table), "td", Some("display:table-cell"));
     doc.mark_in_document_flags();
 
     let mut rows = Vec::new();
@@ -3116,19 +2633,13 @@ fn head_body_fixture() -> (Document, usize, usize, usize) {
     let (mut doc, table) = table_shell();
     // DOM order: tbody first, thead second — reorder must float the
     // header group up regardless.
-    let tbody = doc.append_element(Some(table), "tbody", Style::default(), None::<&str>);
-    doc.set_display(tbody, DisplayValue::TableRowGroup);
-    let tr_body = doc.append_element(Some(tbody), "tr", Style::default(), None::<&str>);
-    doc.set_display(tr_body, DisplayValue::TableRow);
-    let body_cell = doc.append_element(Some(tr_body), "td", Style::default(), None::<&str>);
-    doc.set_display(body_cell, DisplayValue::TableCell);
+    let tbody = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+    let tr_body = doc.append_element(Some(tbody), "tr", Some("display:table-row"));
+    let body_cell = doc.append_element(Some(tr_body), "td", Some("display:table-cell"));
 
-    let thead = doc.append_element(Some(table), "thead", Style::default(), None::<&str>);
-    doc.set_display(thead, DisplayValue::TableHeaderGroup);
-    let tr_head = doc.append_element(Some(thead), "tr", Style::default(), None::<&str>);
-    doc.set_display(tr_head, DisplayValue::TableRow);
-    let head_cell = doc.append_element(Some(tr_head), "td", Style::default(), None::<&str>);
-    doc.set_display(head_cell, DisplayValue::TableCell);
+    let thead = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
+    let tr_head = doc.append_element(Some(thead), "tr", Some("display:table-row"));
+    let head_cell = doc.append_element(Some(tr_head), "td", Some("display:table-cell"));
 
     doc.mark_in_document_flags();
     (doc, table, head_cell, body_cell)
@@ -3175,17 +2686,13 @@ fn collect_rows_inner_no_reorder_keeps_dom_order_for_nested_call() {
 #[test]
 fn collect_rows_inner_skips_character_data_between_rows() {
     let (mut doc, table) = table_shell();
-    let tr1 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.set_display(tr1, DisplayValue::TableRow);
-    let td1 = doc.append_element(Some(tr1), "td", Style::default(), None::<&str>);
-    doc.set_display(td1, DisplayValue::TableCell);
+    let tr1 = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    doc.append_element(Some(tr1), "td", Some("display:table-cell"));
 
     doc.append_text(table, "   ");
 
-    let tr2 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.set_display(tr2, DisplayValue::TableRow);
-    let td2 = doc.append_element(Some(tr2), "td", Style::default(), None::<&str>);
-    doc.set_display(td2, DisplayValue::TableCell);
+    let tr2 = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    doc.append_element(Some(tr2), "td", Some("display:table-cell"));
 
     doc.mark_in_document_flags();
     let mut rows = Vec::new();
@@ -3210,11 +2717,9 @@ fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
     // A plain wrapper (e.g. an authoring-error `<div>` directly under
     // `<table>`) is neither a row, a cell, nor a row-group — the
     // catch-all branch still recurses into it looking for rows.
-    let wrapper = doc.append_element(Some(table), "div", Style::default(), None::<&str>);
-    let tr = doc.append_element(Some(wrapper), "tr", Style::default(), None::<&str>);
-    doc.set_display(tr, DisplayValue::TableRow);
-    let td = doc.append_element(Some(tr), "td", Style::default(), None::<&str>);
-    doc.set_display(td, DisplayValue::TableCell);
+    let wrapper = doc.append_element(Some(table), "div", None::<&str>);
+    let tr = doc.append_element(Some(wrapper), "tr", Some("display:table-row"));
+    let td = doc.append_element(Some(tr), "td", Some("display:table-cell"));
 
     doc.mark_in_document_flags();
     let mut rows = Vec::new();
@@ -3233,9 +2738,9 @@ fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
 #[test]
 fn flush_pending_assigns_sequential_columns_respecting_colspan() {
     let (mut doc, table) = table_shell();
-    let td_a = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
+    let td_a = doc.append_element(Some(table), "td", None::<&str>);
     doc.set_element_attributes(td_a, vec![("colspan".into(), "2".into())]);
-    let td_b = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
+    let td_b = doc.append_element(Some(table), "td", None::<&str>);
     doc.mark_in_document_flags();
 
     let mut pending = vec![td_a, td_b];
@@ -3300,20 +2805,15 @@ fn make_cell(
     }
 }
 
+/// A table cell with a solid border of `px` on every side.
+///
+/// The cell hangs off the document root, as only boxes in the tree take part
+/// in the cascade.
 fn bordered_cell(doc: &mut Document, px: f32) -> usize {
     doc.append_element(
-        None,
+        Some(0),
         "td",
-        Style {
-            border: Rect {
-                left: LengthPercentage::length(px),
-                right: LengthPercentage::length(px),
-                top: LengthPercentage::length(px),
-                bottom: LengthPercentage::length(px),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some(format!("display:table-cell;border:{px}px solid")),
     )
 }
 
@@ -3443,9 +2943,9 @@ fn column_probe_input() -> LayoutInput {
 #[test]
 fn resolve_column_widths_colspan_one_percent_cell_sets_column_percentage() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let pct_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
-    let auto_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let pct_cell = doc.append_element(Some(html), "td", None::<&str>);
+    let auto_cell = doc.append_element(Some(html), "td", None::<&str>);
     doc.mark_in_document_flags();
 
     let grid = super::TableGrid {
@@ -3483,22 +2983,21 @@ fn resolve_column_widths_colspan_one_percent_cell_sets_column_percentage() {
 #[test]
 fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let span_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let span_cell = doc.append_element(Some(html), "td", None::<&str>);
     doc.append_element(
         Some(span_cell),
         "div",
-        Style {
+        Some(style_css(&Style {
             size: Size {
                 width: Dimension::length(100.0),
                 height: Dimension::length(10.0),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
-    let c0 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
-    let c1 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    let c0 = doc.append_element(Some(html), "td", None::<&str>);
+    let c1 = doc.append_element(Some(html), "td", None::<&str>);
     doc.mark_in_document_flags();
 
     let grid = super::TableGrid {
@@ -3544,22 +3043,21 @@ fn resolve_column_widths_definite_avail_nonfit_keeps_colspan_minimum() {
     // It must keep the colspan-derived minimum (50 per column), matching
     // the known-width branch, not shrink to 25 per column.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let span_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let span_cell = doc.append_element(Some(html), "td", None::<&str>);
     doc.append_element(
         Some(span_cell),
         "div",
-        Style {
+        Some(style_css(&Style {
             size: Size {
                 width: Dimension::length(100.0),
                 height: Dimension::length(10.0),
             },
             ..Style::default()
-        },
-        None::<&str>,
+        })),
     );
-    let c0 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
-    let c1 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+    let c0 = doc.append_element(Some(html), "td", None::<&str>);
+    let c1 = doc.append_element(Some(html), "td", None::<&str>);
     doc.mark_in_document_flags();
 
     let grid = super::TableGrid {
@@ -3786,20 +3284,10 @@ fn compute_table_layout_empty_table_as_flex_item_uses_container_width() {
     // fill the flex-resolved main size rather than shrink-wrapping
     // to its padding/border (the `parent_is_flex_or_grid` branch).
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let flex = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display: flex; width: 300px"),
-    );
-    let table = doc.append_element(
-        Some(flex),
-        "table",
-        Style::default(),
-        Some("display: table; flex-grow: 1"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let flex = doc.append_element(Some(body), "div", Some("display: flex; width: 300px"));
+    let table = doc.append_element(Some(flex), "table", Some("display: table; flex-grow: 1"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3820,32 +3308,12 @@ fn compute_table_layout_max_width_never_shrinks_below_intrinsic_content() {
     // min-width grows it. A max-width smaller than the natural
     // content width is therefore a no-op.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display: table; max-width: 60px"),
-    );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td1 = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    doc.append_element(
-        Some(td1),
-        "div",
-        Style::default(),
-        Some("width: 100px; height: 10px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display: table; max-width: 60px"));
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td1 = doc.append_element(Some(tr), "td", Some("display: table-cell"));
+    doc.append_element(Some(td1), "div", Some("width: 100px; height: 10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3865,32 +3333,16 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
     // table edge on both sides, so a single-column table is the cell plus
     // two gaps wide, with the cell inset by one gap.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; border-spacing: 10px"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    doc.append_element(
-        Some(td),
-        "div",
-        Style::default(),
-        Some("width: 40px; height: 10px"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
+    doc.append_element(Some(td), "div", Some("width: 40px; height: 10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3914,7 +3366,7 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
 
 fn colspan_of(value: Option<&str>) -> u16 {
     let mut doc = Document::new();
-    let td = doc.append_element(None, "td", Style::default(), None::<&str>);
+    let td = doc.append_element(None, "td", None::<&str>);
     if let Some(v) = value {
         doc.set_element_attributes(td, vec![("colspan".into(), v.into())]);
     }
@@ -3954,32 +3406,16 @@ fn fixed_auto_width_shrink_wraps_to_content() {
     // automatic layout algorithm; §17.5.2: such a table does not fill its
     // containing block. One 50px cell must shrink-wrap, not fill A4.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; table-layout: fixed"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    doc.append_element(
-        Some(td),
-        "div",
-        Style::default(),
-        Some("width: 50px; height: 10px"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
+    doc.append_element(Some(td), "div", Some("width: 50px; height: 10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -3998,32 +3434,16 @@ fn fixed_specified_width_fills_to_specified_width() {
     // that width as the distribution basis. Guards on the auto fallback
     // must not change this path.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; table-layout: fixed; width: 400px"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    doc.append_element(
-        Some(td),
-        "div",
-        Style::default(),
-        Some("width: 50px; height: 10px"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
+    doc.append_element(Some(td), "div", Some("width: 50px; height: 10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -4041,32 +3461,16 @@ fn auto_width_shrink_wraps_to_content_baseline() {
     // Baseline: auto layout with no specified width shrink-wraps
     // (CSS 2.1 §17.5.2.2). Fixed+auto must match this after the fix.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; table-layout: auto"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    let td = doc.append_element(
-        Some(tr),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
-    doc.append_element(
-        Some(td),
-        "div",
-        Style::default(),
-        Some("width: 50px; height: 10px"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
+    let td = doc.append_element(Some(tr), "td", Some("display: table-cell"));
+    doc.append_element(Some(td), "div", Some("width: 50px; height: 10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -4081,16 +3485,10 @@ fn auto_width_shrink_wraps_to_content_baseline() {
 
 /// Appends a `display: table-cell` with one block child of the given size.
 fn sized_cell(doc: &mut Document, row: usize, width: f32, height: f32) -> usize {
-    let td = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let td = doc.append_element(Some(row), "td", Some("display: table-cell"));
     doc.append_element(
         Some(td),
         "div",
-        Style::default(),
         Some(format!("width: {width}px; height: {height}px").as_str()),
     );
     td
@@ -4101,22 +3499,15 @@ fn separate_border_spacing_gaps_columns_rows_and_spanned_cells() {
     // CSS 2.2 §17.6.1: n tracks take n + 1 gaps, and a spanning cell
     // covers the gaps between the tracks it spans.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; border-spacing: 5px"),
     );
-    let row = |doc: &mut Document| {
-        doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display: table-row"),
-        )
-    };
+    let row =
+        |doc: &mut Document| doc.append_element(Some(table), "tr", Some("display: table-row"));
     let tr1 = row(&mut doc);
     let wide = sized_cell(&mut doc, tr1, 10.0, 10.0);
     doc.set_element_attributes(wide, vec![("colspan".into(), "2".into())]);
@@ -4144,22 +3535,15 @@ fn separate_border_spacing_counts_spanned_gaps_toward_a_rowspan_height() {
     // A 40px cell spanning two rows already gets the 5px gap between
     // them, so the two rows only need to share the remaining 35px.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; border-spacing: 5px"),
     );
-    let row = |doc: &mut Document| {
-        doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display: table-row"),
-        )
-    };
+    let row =
+        |doc: &mut Document| doc.append_element(Some(table), "tr", Some("display: table-row"));
     // The spanning cell is the last column, so the second row's cell
     // takes the first column without depending on slot reservation.
     let tr1 = row(&mut doc);
@@ -4201,20 +3585,14 @@ fn separate_border_spacing_widens_a_table_narrower_than_its_columns() {
     // CSS 2.1 §17.5.2: the table is at least its columns plus the spacing,
     // so the cell keeps its gap on both sides instead of overflowing.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; border-spacing: 2px; width: 10px"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td = sized_cell(&mut doc, tr, 10.0, 10.0);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -4229,20 +3607,14 @@ fn separate_border_spacing_widens_a_table_narrower_than_its_columns() {
 #[test]
 fn separate_border_spacing_gaps_the_stacked_tracks_of_a_vertical_table() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; writing-mode: vertical-lr; border-spacing: 3px 5px"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let first = sized_cell(&mut doc, tr, 50.0, 100.0);
     let second = sized_cell(&mut doc, tr, 50.0, 100.0);
     doc.mark_in_document_flags();
@@ -4270,20 +3642,14 @@ fn separate_border_spacing_grows_a_table_shorter_than_its_rows() {
     // CSS 2.2 §17.5.3: a specified table height is a minimum, so the rows
     // and their gaps still fit.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display: table; border-spacing: 2px; height: 10px"),
     );
-    let tr = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
+    let tr = doc.append_element(Some(table), "tr", Some("display: table-row"));
     let td = sized_cell(&mut doc, tr, 10.0, 10.0);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -4362,32 +3728,16 @@ fn negative_absolute_insets_do_not_expand_the_available_table_width() {
     use crate::layout::test_support::{ifc_ahem_fonts, page_box_800x600};
     for inset in ["left:-100px", "right:-100px"] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
         let container = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;position:relative;width:100px;height:100px"),
         );
-        let table = doc.append_element(Some(container), "table", Style::default(), Some(format!("display:table;position:absolute;{inset};height:100px;border-spacing:0;font-family:Ahem;font-size:10px;line-height:10px")));
-        let row = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display:table-row"),
-        );
-        let cell = doc.append_element(
-            Some(row),
-            "td",
-            Style::default(),
-            Some("display:table-cell;padding:0"),
-        );
+        let table = doc.append_element(Some(container), "table", Some(format!("display:table;position:absolute;{inset};height:100px;border-spacing:0;font-family:Ahem;font-size:10px;line-height:10px")));
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "td", Some("display:table-cell;padding:0"));
         doc.append_text(cell, "x x x x x x x x x");
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
@@ -4406,39 +3756,75 @@ thread_local! {
     pub(super) static COLUMN_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-fn with_retained_border_state(
-    doc: &mut Document,
+fn with_retained_border_state_in(
+    session: &mut LayoutSession<'_>,
     grid: &super::TableGrid,
     resolve: impl FnOnce(&LayoutSession<'_>, &mut super::BorderState),
 ) {
+    let mut state = super::BorderState::retained(session, grid);
+    resolve(session, &mut state);
+    publish_border_state_for_assertions(session, &state);
+}
+
+/// The border widths boxes have once a resolution has been published.
+type UsedBorders = std::collections::HashMap<usize, Rect<LengthPercentage>>;
+
+/// The border widths the cells and rows of `grid`, and `extra`, have in
+/// `session`.
+fn used_borders(
+    session: &LayoutSession<'_>,
+    grid: &super::TableGrid,
+    extra: Option<usize>,
+) -> UsedBorders {
+    grid.cells
+        .iter()
+        .map(|cell| cell.node_id)
+        .chain(grid.rows.iter().copied())
+        .chain(extra)
+        .map(|idx| (idx, session.table_style(idx).border()))
+        .collect()
+}
+
+/// Resolves in a session of its own and returns the widths it gave the boxes.
+///
+/// A resolution is published as overrides of the session, which end with it,
+/// so the widths are read before then.
+fn with_retained_border_state(
+    doc: &mut Document,
+    grid: &super::TableGrid,
+    extra: Option<usize>,
+    resolve: impl FnOnce(&LayoutSession<'_>, &mut super::BorderState),
+) -> UsedBorders {
     with_layout_session(doc, |session| {
-        let mut state = super::BorderState::retained(session, grid);
-        resolve(session, &mut state);
-        publish_border_state_for_assertions(session, &state);
-    });
+        with_retained_border_state_in(session, grid, resolve);
+        used_borders(session, grid, extra)
+    })
 }
 fn resolve_collapsed_cell_borders_in_document(
     doc: &mut Document,
     grid: &super::TableGrid,
     index: &super::CellIndex,
-) {
-    with_retained_border_state(doc, grid, |doc, state| {
+) -> UsedBorders {
+    with_retained_border_state(doc, grid, None, |doc, state| {
         super::resolve_collapsed_cell_borders(doc, state, grid, index)
-    });
+    })
 }
-fn resolve_collapsed_row_borders_in_document(doc: &mut Document, grid: &super::TableGrid) {
-    with_retained_border_state(doc, grid, |doc, state| {
+fn resolve_collapsed_row_borders_in_document(
+    doc: &mut Document,
+    grid: &super::TableGrid,
+) -> UsedBorders {
+    with_retained_border_state(doc, grid, None, |doc, state| {
         super::resolve_collapsed_row_borders(doc, state, grid)
-    });
+    })
 }
 fn resolve_collapsed_table_edges_in_document(
     doc: &mut Document,
     grid: &super::TableGrid,
     table: usize,
-) {
-    with_retained_border_state(doc, grid, |doc, state| {
+) -> UsedBorders {
+    with_retained_border_state(doc, grid, Some(table), |doc, state| {
         super::resolve_collapsed_table_edges(doc, state, grid, table)
-    });
+    })
 }
 fn compute_collapsed_lines_in_document(
     doc: &mut Document,
@@ -4468,7 +3854,7 @@ fn resolve_collapsed_border_pair_in_document(
         ],
         col_widths: vec![],
     };
-    with_retained_border_state(doc, &grid, |doc, state| {
+    with_retained_border_state(doc, &grid, None, |doc, state| {
         if let (Some(left), Some(right)) = (
             state.candidate(doc, leading, leading_side),
             state.candidate(doc, trailing, trailing_side),

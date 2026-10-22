@@ -1,6 +1,5 @@
 use super::*;
 
-use crate::LayoutStyle as Style;
 use smol_str::SmolStr;
 
 #[test]
@@ -8,7 +7,7 @@ fn element_string_value_resolves_bare_content_to_element_text_value() {
     // GCPM 3 §1.1.1.1: content() / content(text) = "the string value of
     // the element, determined as if white-space: normal had been set".
     let mut doc = Document::new();
-    let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+    let h1 = doc.append_element(Some(0), "h1", None::<&str>);
     doc.append_text(h1, "  Loomings   Ch.  1  ");
 
     let value = element_string_value(&doc, h1);
@@ -22,7 +21,7 @@ fn element_string_value_content_text_preserves_no_break_space() {
     // regression check against using str::split_whitespace (Unicode
     // White_Space, which would wrongly collapse/trim it too).
     let mut doc = Document::new();
-    let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+    let h1 = doc.append_element(Some(0), "h1", None::<&str>);
     doc.append_text(h1, "A\u{A0}\u{A0}B");
 
     let value = element_string_value(&doc, h1);
@@ -39,7 +38,7 @@ fn element_string_value_content_text_collapses_tab_lf_and_cr() {
     // these three after narrowing away from split_ascii_whitespace's
     // ASCII set (which also collapsed them, plus form feed).
     let mut doc = Document::new();
-    let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+    let h1 = doc.append_element(Some(0), "h1", None::<&str>);
     doc.append_text(h1, "A\t\t\u{A}\u{A}\u{D}\u{D}B");
 
     let value = element_string_value(&doc, h1);
@@ -54,7 +53,7 @@ fn element_string_value_content_text_preserves_form_feed() {
     // or trim away. Regression check against str::split_ascii_whitespace,
     // whose Rust-defined ASCII whitespace set wrongly includes U+000C.
     let mut doc = Document::new();
-    let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+    let h1 = doc.append_element(Some(0), "h1", None::<&str>);
     doc.append_text(h1, "A\u{C}\u{C}B");
 
     let value = element_string_value(&doc, h1);
@@ -66,8 +65,8 @@ fn element_string_value_content_text_concatenates_across_descendant_elements() {
     // "String value of the element" reaches through descendant
     // elements, not just direct-child text nodes.
     let mut doc = Document::new();
-    let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
-    let em = doc.append_element(Some(h1), "em", Style::default(), None::<&str>);
+    let h1 = doc.append_element(Some(0), "h1", None::<&str>);
+    let em = doc.append_element(Some(h1), "em", None::<&str>);
     doc.append_text(em, "Moby");
     doc.append_text(h1, " Dick");
 
@@ -100,12 +99,12 @@ fn element_string_value_content_text_no_stack_overflow_on_deep_dom_and_preserves
     // the nested child before visiting that level's own text — a
     // single-child chain wouldn't exercise that ordering at all.
     let mut doc = Document::new();
-    let mut parent = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+    let mut parent = doc.append_element(Some(0), "h1", None::<&str>);
     let root = parent;
     let depth = 200_000;
     for i in 0..depth {
         doc.append_text(parent, format!("t{i} "));
-        parent = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+        parent = doc.append_element(Some(parent), "span", None::<&str>);
     }
     // Built independently of collect_descendant_text's own
     // whitespace-collapse pipeline, so this isn't just checking the
@@ -129,11 +128,11 @@ fn element_string_value_content_text_skips_template_descendants() {
     // under the template element stays in-document instead, so the probe
     // `<p>` is placed in the contents fragment here.
     let mut doc = Document::new();
-    let root = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
+    let root = doc.append_element(Some(0), "h1", None::<&str>);
     doc.append_text(root, "before ");
-    let tmpl = doc.append_element(Some(root), "template", Style::default(), None::<&str>);
+    let tmpl = doc.append_element(Some(root), "template", None::<&str>);
     let frag = doc.allocate_template_fragment_root(tmpl);
-    let inner = doc.append_element(Some(frag), "p", Style::default(), None::<&str>);
+    let inner = doc.append_element(Some(frag), "p", None::<&str>);
     doc.append_text(inner, "hidden");
     doc.append_text(root, " after");
 
@@ -252,15 +251,15 @@ fn page_search_matches_a_scan_of_the_pool() {
 /// node ids of the body, the paragraphs and the running elements.
 fn running_document() -> (Document, CascadeResult, [usize; 5]) {
     let mut doc = Document::new();
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, ".hdr { position: running(hdr) }");
-    let body = doc.append_element(Some(0), "body", Style::default(), None::<&str>);
-    let first = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    let head = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let first = doc.append_element(Some(body), "p", None::<&str>);
+    let head = doc.append_element(Some(body), "div", None::<&str>);
     doc.set_element_attributes(head, vec![(SmolStr::new("class"), SmolStr::new("hdr"))]);
     doc.append_text(head, "Head");
-    let second = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    let tail = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let second = doc.append_element(Some(body), "p", None::<&str>);
+    let tail = doc.append_element(Some(body), "div", None::<&str>);
     doc.set_element_attributes(tail, vec![(SmolStr::new("class"), SmolStr::new("hdr"))]);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -299,7 +298,7 @@ fn running_elements_take_the_page_of_the_content_around_them() {
 #[test]
 fn a_document_without_running_elements_has_an_empty_index() {
     let mut doc = Document::new();
-    doc.append_element(Some(0), "body", Style::default(), None::<&str>);
+    doc.append_element(Some(0), "body", None::<&str>);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
@@ -350,7 +349,7 @@ fn a_running_element_too_deep_to_lay_out_is_an_error() {
     let (mut doc, _, [_, _, head, ..]) = running_document();
     let mut parent = head;
     for _ in 0..=crate::layout::MAX_LAYOUT_DEPTH {
-        parent = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+        parent = doc.append_element(Some(parent), "div", None::<&str>);
     }
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);

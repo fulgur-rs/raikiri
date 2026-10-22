@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 
 #[test]
 fn serialize_raw_text_tags_in_both_html_namespace_representations() {
@@ -15,8 +14,8 @@ fn serialize_raw_text_tags_in_both_html_namespace_representations() {
     ] {
         for namespace in [None, Some(XHTML_NAMESPACE_URI.into())] {
             let mut doc = Document::new();
-            let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-            let element = doc.append_element(Some(host), tag, Style::default(), None::<&str>);
+            let host = doc.append_element(Some(0), "div", None::<&str>);
+            let element = doc.append_element(Some(host), tag, None::<&str>);
             doc.set_element_namespace(element, namespace);
             doc.append_text(element, "a < b & c");
             assert_eq!(doc.serialize_inner_html(element).unwrap(), "a < b & c");
@@ -31,13 +30,13 @@ fn serialize_raw_text_tags_in_both_html_namespace_representations() {
 #[test]
 fn serialize_html_void_tags_omits_children_and_end_tags() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let mut expected = String::new();
     for tag in [
         "AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM",
         "SOURCE", "TRACK", "WBR",
     ] {
-        let element = doc.append_element(Some(host), tag, Style::default(), None::<&str>);
+        let element = doc.append_element(Some(host), tag, None::<&str>);
         doc.append_text(element, "ignored");
         expected.push_str(&format!("<{tag}>"));
     }
@@ -47,15 +46,15 @@ fn serialize_html_void_tags_omits_children_and_end_tags() {
 #[test]
 fn serialize_mixed_case_raw_text_void_and_foreign_elements() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let script = doc.append_element(Some(host), "ScRiPt", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let script = doc.append_element(Some(host), "ScRiPt", None::<&str>);
     doc.append_text(script, "a < b & c");
-    let br = doc.append_element(Some(host), "BR", Style::default(), None::<&str>);
+    let br = doc.append_element(Some(host), "BR", None::<&str>);
     doc.append_text(br, "ignored");
-    let foreign = doc.append_element(Some(host), "ScRiPt", Style::default(), None::<&str>);
+    let foreign = doc.append_element(Some(host), "ScRiPt", None::<&str>);
     doc.set_element_namespace(foreign, Some("http://www.w3.org/2000/svg".into()));
     doc.append_text(foreign, "a < b & c");
-    let foreign_br = doc.append_element(Some(host), "BR", Style::default(), None::<&str>);
+    let foreign_br = doc.append_element(Some(host), "BR", None::<&str>);
     doc.set_element_namespace(foreign_br, Some("http://www.w3.org/2000/svg".into()));
     doc.append_text(foreign_br, "kept");
     assert_eq!(
@@ -67,13 +66,13 @@ fn serialize_mixed_case_raw_text_void_and_foreign_elements() {
 #[test]
 fn serialize_nested_templates_preserves_long_end_tags_and_sibling_order() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let long_tag = "a-custom-element-with-a-tag-longer-than-inline-storage";
-    let outer = doc.append_element(Some(host), long_tag, Style::default(), None::<&str>);
+    let outer = doc.append_element(Some(host), long_tag, None::<&str>);
     doc.append_text(outer, "first");
-    let template = doc.append_element(Some(outer), "template", Style::default(), None::<&str>);
+    let template = doc.append_element(Some(outer), "template", None::<&str>);
     let contents = doc.allocate_template_fragment_root(template);
-    let nested = doc.append_element(Some(contents), "template", Style::default(), None::<&str>);
+    let nested = doc.append_element(Some(contents), "template", None::<&str>);
     let nested_contents = doc.allocate_template_fragment_root(nested);
     doc.append_text(nested_contents, "inner");
     doc.append_text(contents, "last");
@@ -89,8 +88,8 @@ fn serialize_nested_templates_preserves_long_end_tags_and_sibling_order() {
 #[test]
 fn serialize_inner_html_uses_live_attributes_escapes_content_and_omits_void_end_tags() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let paragraph = doc.append_element(Some(host), "p", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let paragraph = doc.append_element(Some(host), "p", None::<&str>);
     doc.set_element_attributes(
         paragraph,
         vec![(SmolStr::new("data-empty"), SmolStr::new(""))],
@@ -112,7 +111,7 @@ fn serialize_inner_html_uses_live_attributes_escapes_content_and_omits_void_end_
     let text = doc.append_text(paragraph, "A < B & C > D");
     doc.append_comment(Some(paragraph), "note");
     doc.append_processing_instruction(Some(paragraph), "target", "data");
-    doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+    doc.append_element(Some(paragraph), "br", None::<&str>);
 
     assert_eq!(
         doc.serialize_inner_html(host).unwrap(),
@@ -129,8 +128,8 @@ fn serialize_inner_html_uses_live_attributes_escapes_content_and_omits_void_end_
 #[test]
 fn serializes_raw_text_and_keeps_setter_validation() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let script = doc.append_element(Some(host), "script", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let script = doc.append_element(Some(host), "script", None::<&str>);
     doc.append_text(script, "if (a < b && c > d) {}");
 
     assert_eq!(
@@ -160,8 +159,8 @@ fn serialize_inner_html_keeps_digit_leading_attribute_names() {
     // Planted via the plural setter (no name check, like the parse sink) to
     // model parser output without going through single-setter validation.
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let span = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let span = doc.append_element(Some(host), "span", None::<&str>);
     doc.set_element_attributes(span, vec![(SmolStr::new("1bad"), SmolStr::new("x"))]);
     assert_eq!(
         doc.serialize_inner_html(host).unwrap(),
@@ -172,9 +171,8 @@ fn serialize_inner_html_keeps_digit_leading_attribute_names() {
     assert!(doc.set_element_attribute(span, "2 bad", "y").is_err());
 
     let mut spaced = Document::new();
-    let spaced_host = spaced.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let spaced_span =
-        spaced.append_element(Some(spaced_host), "span", Style::default(), None::<&str>);
+    let spaced_host = spaced.append_element(Some(0), "div", None::<&str>);
+    let spaced_span = spaced.append_element(Some(spaced_host), "span", None::<&str>);
     spaced.set_element_attributes(
         spaced_span,
         vec![(SmolStr::new("bad name"), SmolStr::new("value"))],
@@ -191,8 +189,8 @@ fn serialize_inner_html_attribute_mode_keeps_angle_brackets_and_apostrophe() {
     // `"`); `<`, `>` and `'` stay raw. Text mode escapes `&`, `<`, `>` (plus
     // NBSP) and leaves both quotes raw.
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let para = doc.append_element(Some(host), "p", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let para = doc.append_element(Some(host), "p", None::<&str>);
     doc.set_element_attribute(para, "title", "a<b>c'd\"e&f")
         .unwrap();
     doc.append_text(para, "a<b>c'd\"e&f");
@@ -206,8 +204,8 @@ fn serialize_inner_html_attribute_mode_keeps_angle_brackets_and_apostrophe() {
 fn serialize_inner_html_escapes_nbsp_in_text_and_attributes() {
     // U+00A0 becomes `&nbsp;` in both text and attribute modes.
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let para = doc.append_element(Some(host), "p", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let para = doc.append_element(Some(host), "p", None::<&str>);
     doc.set_element_attribute(para, "title", "a\u{a0}b")
         .unwrap();
     doc.append_text(para, "x\u{a0}y");
@@ -220,12 +218,12 @@ fn serialize_inner_html_escapes_nbsp_in_text_and_attributes() {
 #[test]
 fn attribute_names_follow_html_and_foreign_content_case_rules() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "div", None::<&str>);
     doc.set_element_attribute(html, "DATA-Key", "one").unwrap();
     doc.set_element_attribute(html, "data-key", "two").unwrap();
     assert_eq!(doc.element_attribute(html, "DATA-KEY"), Some("two"));
 
-    let svg = doc.append_element(Some(0), "svg", Style::default(), None::<&str>);
+    let svg = doc.append_element(Some(0), "svg", None::<&str>);
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attribute(svg, "viewBox", "0 0 10 10")
         .unwrap();
@@ -239,12 +237,12 @@ fn attribute_names_follow_html_and_foreign_content_case_rules() {
 #[test]
 fn replace_children_from_targets_template_contents() {
     let mut target = Document::new();
-    let template = target.append_element(Some(0), "template", Style::default(), None::<&str>);
+    let template = target.append_element(Some(0), "template", None::<&str>);
     let template_contents = target.allocate_template_fragment_root(template);
     target.append_text(template_contents, "old");
 
     let mut source = Document::new();
-    let span = source.append_element(Some(0), "span", Style::default(), None::<&str>);
+    let span = source.append_element(Some(0), "span", None::<&str>);
     source.append_text(span, "new");
 
     target.replace_children_from(template, &source, source.root_index());
@@ -259,8 +257,8 @@ fn replace_children_from_targets_template_contents() {
 #[test]
 fn serialize_inner_html_reads_template_contents_fragment() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let template = doc.append_element(Some(host), "template", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let template = doc.append_element(Some(host), "template", None::<&str>);
     let contents = doc.allocate_template_fragment_root(template);
     doc.append_text(contents, "<template text>");
 
@@ -281,10 +279,9 @@ fn serialize_inner_html_reads_template_contents_fragment() {
 #[test]
 fn serialize_inner_html_reports_malformed_template_fragment_links() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let parent_template = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
-    let nested_template =
-        doc.append_element(Some(host), "template", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let parent_template = doc.append_element(Some(0), "template", None::<&str>);
+    let nested_template = doc.append_element(Some(host), "template", None::<&str>);
     let document_root = doc.root_index();
     let wrong_kind = doc.append_text(document_root, "not a fragment");
 
@@ -334,7 +331,7 @@ fn serialize_inner_html_reports_malformed_template_fragment_links() {
 #[test]
 fn serialize_inner_html_flattens_fragment_children_and_rejects_document_children() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let fragment = doc.nodes.len();
     doc.nodes.push(Node::new_document_fragment());
     doc.nodes[host].children.push(fragment);

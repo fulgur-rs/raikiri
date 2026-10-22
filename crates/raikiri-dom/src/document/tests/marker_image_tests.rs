@@ -105,7 +105,6 @@ fn image_marker_resolves_missing_natural_dimensions_against_one_em() {
         let item = doc.append_element(
             Some(0),
             "li",
-            crate::LayoutStyle::default(),
             Some("display:list-item;list-style:inside url(marker.svg);font-size:16px"),
         );
         doc.mark_in_document_flags();
@@ -138,7 +137,6 @@ fn unavailable_marker_images_leave_the_text_fallback_and_clear_cached_pixels() {
         doc.append_element(
             Some(0),
             "li",
-            crate::LayoutStyle::default(),
             Some(format!("display:list-item;{css}").as_str()),
         );
     }
@@ -185,7 +183,6 @@ fn marker_raster_variants_share_one_document_retained_byte_budget() {
         doc.append_element(
             Some(0),
             "li",
-            crate::LayoutStyle::default(),
             Some(format!("display:list-item;list-style:inside url(https://images.test/vector.svg);font-size:{em}px").as_str()),
         );
     }
@@ -212,7 +209,6 @@ fn marker_budget_document(
             doc.append_element(
                 Some(0),
                 "li",
-                crate::LayoutStyle::default(),
                 Some(
                     format!("display:list-item;list-style:inside url({url});font-size:{em}px")
                         .as_str(),
@@ -467,21 +463,11 @@ fn content_image_size_follows_the_default_sizing_algorithm() {
 /// `html > body > p` with `css` as the author stylesheet.
 fn content_image_document(css: &str) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(0),
-        "style",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, css);
-    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
-    let p = doc.append_element(Some(body), "p", crate::LayoutStyle::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let p = doc.append_element(Some(body), "p", None::<&str>);
     doc.append_text(p, "a");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -757,48 +743,18 @@ fn prepared_replacing_content_images_use_the_pseudo_elements_max_width() {
 #[test]
 fn content_images_of_unrendered_owners_are_not_decoded_or_charged() {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(0),
-        "style",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, "p::before{content:url(https://images.test/a.png)}");
-    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     // Owners in a `display: none` subtree, and one that is itself
     // `display: none`, come first in key order.
-    let hidden = doc.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:none"),
-    );
-    let in_hidden = doc.append_element(
-        Some(hidden),
-        "p",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
-    let deep = doc.append_element(
-        Some(hidden),
-        "div",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
-    let in_deep = doc.append_element(Some(deep), "p", crate::LayoutStyle::default(), None::<&str>);
-    let itself = doc.append_element(
-        Some(body),
-        "p",
-        crate::LayoutStyle::default(),
-        Some("display:none"),
-    );
-    let visible = doc.append_element(Some(body), "p", crate::LayoutStyle::default(), None::<&str>);
+    let hidden = doc.append_element(Some(body), "div", Some("display:none"));
+    let in_hidden = doc.append_element(Some(hidden), "p", None::<&str>);
+    let deep = doc.append_element(Some(hidden), "div", None::<&str>);
+    let in_deep = doc.append_element(Some(deep), "p", None::<&str>);
+    let itself = doc.append_element(Some(body), "p", Some("display:none"));
+    let visible = doc.append_element(Some(body), "p", None::<&str>);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -1024,25 +980,10 @@ fn a_content_image_of_extreme_ratio_falls_back_to_its_visible_area() {
 #[test]
 fn standalone_image_marker_sits_inside_or_before_the_padding_edge() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
-    let inside = doc.append_element(
-        Some(body),
-        "li",
-        crate::LayoutStyle::default(),
-        Some("list-style-position:inside"),
-    );
-    let outside = doc.append_element(
-        Some(body),
-        "li",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let inside = doc.append_element(Some(body), "li", Some("list-style-position:inside"));
+    let outside = doc.append_element(Some(body), "li", None::<&str>);
     let cascade =
         raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).expect("cascade");
     let size = ImageRasterSize {

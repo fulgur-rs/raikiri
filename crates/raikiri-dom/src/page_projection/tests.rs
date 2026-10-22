@@ -1,4 +1,3 @@
-use crate::LayoutStyle as Style;
 use crate::{
     Document, PageContentInsets, PageMargins, PageSlice, layout_pages, layout_single_page,
     layout_single_page_with_resolver,
@@ -141,25 +140,18 @@ fn generated_image_ids_name_only_before_and_after_images() {
 #[test]
 fn many_pages_keep_only_one_overflow_record_per_source() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let mut parent = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let mut parent = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     for _ in 0..250 {
         parent = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;height:1px;overflow-x:clip;overflow-y:visible"),
         );
     }
     doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display:block;width:10px;height:100000px"),
     );
     let rules = build_rule_tree(&doc);
@@ -182,23 +174,17 @@ fn many_pages_keep_only_one_overflow_record_per_source() {
         retained <= 250,
         "250 source clips must not become {retained} persistent page copies"
     );
-    doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    doc.append_element(Some(parent), "div", None::<&str>);
     assert!(doc.page_projection.overflow_clips.is_empty());
 }
 
 #[test]
 fn shared_source_clips_snap_after_fractional_page_translation() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let node = doc.append_element(
-        Some(body), "div", Style::default(),
-        Some("display:block;position:absolute;left:.6px;top:.6px;box-sizing:border-box;width:10px;height:150px;border:.1px solid;overflow:clip;border-radius:50%"),
+        Some(body), "div", Some("display:block;position:absolute;left:.6px;top:.6px;box-sizing:border-box;width:10px;height:150px;border:.1px solid;overflow:clip;border-radius:50%"),
     );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -258,31 +244,24 @@ fn fixture() -> (
     usize,
 ) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let div = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:10px;height:10px"),
     );
-    let link = doc.append_element(Some(div), "a", Style::default(), None::<&str>);
+    let link = doc.append_element(Some(div), "a", None::<&str>);
     doc.set_element_attributes(link, vec![("href".into(), " /go ".into())]);
     let text = doc.append_text(link, "x");
     let fixed = doc.append_element(
         Some(body),
         "a",
-        Style::default(),
         Some("position:fixed;top:0;width:10px;height:10px"),
     );
     doc.set_element_attributes(fixed, vec![("href".into(), "#fixed".into())]);
     doc.append_text(fixed, "f");
-    let img = doc.append_element(Some(body), "img", Style::default(), None::<&str>);
+    let img = doc.append_element(Some(body), "img", None::<&str>);
     doc.set_element_attributes(
         img,
         vec![("src".into(), "https://example.test/image.png".into())],
@@ -383,7 +362,7 @@ fn projection_is_cleared_by_mutation_and_relayout() {
     let (mut doc, cascade, page, slices, div, _) = fixture();
     project(&mut doc, &cascade, page, &slices[..1]);
     assert!(doc.page_fragments(0).next().is_some());
-    doc.append_element(Some(div), "span", Style::default(), None::<&str>);
+    doc.append_element(Some(div), "span", None::<&str>);
     assert_eq!(doc.page_fragments(0).count(), 0);
     assert_eq!(doc.page_links(0).count(), 0);
     let rules = build_rule_tree(&doc);
@@ -608,7 +587,6 @@ fn generated_image_projection_work_stays_linear_in_page_count() {
                     let paragraph = doc.append_element(
                         Some(root),
                         "p",
-                        Style::default(),
                         Some("display:block;height:100px;margin:0"),
                     );
                     doc.append_text(paragraph, "A");

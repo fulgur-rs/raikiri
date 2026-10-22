@@ -1,5 +1,4 @@
 use crate::Document;
-use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
 
@@ -7,17 +6,11 @@ use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x60
 /// the Ahem text "aa bb" or a 50px square block.
 fn rect_of(css: &str, text: bool) -> (f32, f32, f32, f32) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!("font-family:Ahem;font-size:10px;line-height:10px;{css}").as_str()),
     );
     if text {
@@ -26,7 +19,6 @@ fn rect_of(css: &str, text: bool) -> (f32, f32, f32, f32) {
         doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some("display:block;width:50px;height:50px"),
         );
     }
@@ -74,17 +66,11 @@ fn horizontal_block_still_fills_the_body() {
 #[test]
 fn vertical_rl_block_keeps_its_absolute_child_on_the_block_start_edge() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;writing-mode:vertical-rl;position:relative;\
              font-family:Ahem;font-size:10px;line-height:10px",
@@ -93,7 +79,6 @@ fn vertical_rl_block_keeps_its_absolute_child_on_the_block_start_edge() {
     let absolute = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;position:absolute"),
     );
     doc.append_text(absolute, "dd ee");
@@ -123,23 +108,16 @@ fn vertical_list_item_is_as_wide_as_its_lines() {
 #[test]
 fn block_inheriting_a_vertical_mode_through_display_contents_is_as_wide_as_its_lines() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let contents = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:contents;writing-mode:vertical-rl"),
     );
     let block = doc.append_element(
         Some(contents),
         "div",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     doc.append_text(block, "aa bb");
@@ -154,29 +132,21 @@ fn block_inheriting_a_vertical_mode_through_display_contents_is_as_wide_as_its_l
 #[test]
 fn right_float_stays_inside_a_vertical_block() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl"),
     );
     let float = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;float:right;width:20px;height:20px"),
     );
     doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;width:50px;height:50px"),
     );
     doc.mark_in_document_flags();
@@ -211,16 +181,10 @@ fn sideways_percentage_padding_uses_the_containing_block_inline_extent() {
     // is 20px, even while sideways glyph shaping retains its fallback.
     for mode in ["sideways-rl", "sideways-lr"] {
         let mut doc = Document::new();
-        let body = doc.append_element(
-            Some(0),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
+        let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!(
                 "display:block;position:relative;writing-mode:{mode};width:100px;height:200px;font:10px Ahem"
             )),
@@ -228,7 +192,6 @@ fn sideways_percentage_padding_uses_the_containing_block_inline_extent() {
         let child = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;position:absolute;left:0;top:0;width:auto;height:10px;padding-left:10%"),
         );
         doc.append_text(child, "x");

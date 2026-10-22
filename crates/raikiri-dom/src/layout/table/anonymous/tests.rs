@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::CoreStyle;
 
@@ -16,16 +15,11 @@ pub(super) fn record_owner_clone(source: &Node) {
 #[test]
 fn deep_contents_wrappers_keep_source_order_on_a_small_stack() {
     let mut doc = Document::new();
-    let owner = doc.append_element(Some(0), "div", Style::default(), Some("display:table-row"));
+    let owner = doc.append_element(Some(0), "div", Some("display:table-row"));
     let first = doc.append_text(owner, "A");
     let mut parent = owner;
     for _ in 0..2048 {
-        parent = doc.append_element(
-            Some(parent),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        parent = doc.append_element(Some(parent), "span", Some("display:contents"));
     }
     let middle = doc.append_text(parent, "B");
     let last = doc.append_text(owner, "C");
@@ -55,25 +49,15 @@ fn owner_generated_cells_keep_source_children_and_shared_projection_limits() {
     use shodo::limits::{LimitKind, Limits};
 
     let mut doc = Document::new();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(
         sheet,
         "#owner::before{content:'X'}#owner::after{content:'Y'}",
     );
-    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
-    let owner = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let table = doc.append_element(Some(0), "div", Some("display:table"));
+    let owner = doc.append_element(Some(table), "div", Some("display:table-row"));
     doc.set_element_attributes(owner, vec![("id".into(), "owner".into())]);
-    let proper = doc.append_element(
-        Some(owner),
-        "div",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let proper = doc.append_element(Some(owner), "div", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
@@ -147,24 +131,14 @@ fn owner_generated_cells_keep_source_children_and_shared_projection_limits() {
 #[test]
 fn source_owner_enumeration_is_linear_across_many_anonymous_rows() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let table = doc.append_element(Some(body), "div", Style::default(), Some("display:table"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(Some(body), "div", Some("display:table"));
     let mut owners = Vec::new();
     for _ in 0..200 {
-        let row = doc.append_element(
-            Some(table),
-            "div",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
         doc.append_text(row, "A");
-        doc.append_element(
-            Some(row),
-            "div",
-            Style::default(),
-            Some("display:table-cell"),
-        );
+        doc.append_element(Some(row), "div", Some("display:table-cell"));
         owners.push(row);
     }
     doc.mark_in_document_flags();
@@ -195,26 +169,15 @@ fn source_owner_enumeration_is_linear_across_many_anonymous_rows() {
 #[test]
 fn generated_contents_classification_preserves_css22_visibility_and_rebuilds() {
     let mut doc = Document::new();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(sheet, "span::before{content:'X'}");
     let table = doc.append_element(
         Some(0),
         "div",
-        Style::default(),
         Some("display:table;border-collapse:separate;empty-cells:hide"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let span = doc.append_element(
-        Some(row),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
+    let span = doc.append_element(Some(row), "span", Some("display:contents"));
     for (owner_visibility, pseudo_visibility, expected) in [
         ("visible", "visible", false),
         ("hidden", "visible", true),
@@ -244,18 +207,13 @@ fn generated_contents_classification_preserves_css22_visibility_and_rebuilds() {
 #[test]
 fn deep_generated_contents_stream_is_bounded_and_keeps_real_children() {
     let mut doc = Document::new();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(sheet, "span::before{content:'X'}span::after{content:'Y'}");
-    let owner = doc.append_element(Some(0), "div", Style::default(), Some("display:table-row"));
+    let owner = doc.append_element(Some(0), "div", Some("display:table-row"));
     let mut parent = owner;
     let mut wrappers = Vec::new();
     for _ in 0..2048 {
-        parent = doc.append_element(
-            Some(parent),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        parent = doc.append_element(Some(parent), "span", Some("display:contents"));
         wrappers.push(parent);
     }
     let text = doc.append_text(parent, "A");
@@ -295,17 +253,12 @@ fn deep_generated_contents_stream_is_bounded_and_keeps_real_children() {
 fn owner_clone_volume_is_linear_across_many_anonymous_rows() {
     for count in [200, 400] {
         let mut doc = Document::new();
-        let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
+        let table = doc.append_element(Some(0), "div", Some("display:table"));
         for index in 0..count {
             doc.set_element_attribute(table, format!("data-item-{index}"), "source")
                 .unwrap();
-            doc.append_element(Some(table), "div", Style::default(), Some("display:block"));
-            doc.append_element(
-                Some(table),
-                "div",
-                Style::default(),
-                Some("display:table-row"),
-            );
+            doc.append_element(Some(table), "div", Some("display:block"));
+            doc.append_element(Some(table), "div", Some("display:table-row"));
         }
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -325,30 +278,15 @@ fn owner_clone_volume_is_linear_across_many_anonymous_rows() {
 #[test]
 fn column_bounds_are_checked_before_projection_and_recover_without_stale_cells() {
     let mut doc = Document::new();
-    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let table = doc.append_element(Some(0), "div", Some("display:table"));
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
     for _ in 0..65 {
-        let cell = doc.append_element(
-            Some(row),
-            "div",
-            Style::default(),
-            Some("display:table-cell"),
-        );
+        let cell = doc.append_element(Some(row), "div", Some("display:table-cell"));
         doc.set_element_attribute(cell, "colspan", "1000").unwrap();
     }
-    let last = doc.append_element(
-        Some(row),
-        "div",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let last = doc.append_element(Some(row), "div", Some("display:table-cell"));
     doc.set_element_attribute(last, "colspan", "534").unwrap();
-    let content = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
+    let content = doc.append_element(Some(row), "div", Some("display:block"));
     doc.set_element_attribute(table, "data-source", "kept")
         .unwrap();
     doc.mark_in_document_flags();
@@ -362,12 +300,7 @@ fn column_bounds_are_checked_before_projection_and_recover_without_stale_cells()
     );
     assert_eq!(doc.anonymous_table_cells(row).count(), 1);
 
-    let extra = doc.append_element(
-        Some(row),
-        "div",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let extra = doc.append_element(Some(row), "div", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     assert!(crate::layout::apply_computed_to_style(&mut doc, &computed).is_err());
@@ -397,18 +330,12 @@ fn column_bounds_are_checked_before_projection_and_recover_without_stale_cells()
 #[test]
 fn row_bounds_are_checked_before_projection_at_the_existing_exact_boundary() {
     let mut doc = Document::new();
-    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
-    let group = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row-group"),
-    );
+    let table = doc.append_element(Some(0), "div", Some("display:table"));
+    let group = doc.append_element(Some(table), "div", Some("display:table-row-group"));
     for index in 0..=u16::MAX {
         doc.append_element(
             Some(if index < 32768 { table } else { group }),
             "div",
-            Style::default(),
             Some("display:table-row"),
         );
     }
@@ -426,12 +353,7 @@ fn row_bounds_are_checked_before_projection_at_the_existing_exact_boundary() {
             .len(),
         65536
     );
-    let extra = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let extra = doc.append_element(Some(table), "div", Some("display:table-row"));
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     assert!(crate::layout::apply_computed_to_style(&mut doc, &computed).is_err());
@@ -446,14 +368,9 @@ fn row_bounds_are_checked_before_projection_at_the_existing_exact_boundary() {
 #[test]
 fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let table = doc.append_element(
-        Some(body),
-        "canvas",
-        Style::default(),
-        Some("display:table;border-spacing:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(Some(body), "canvas", Some("display:table;border-spacing:0"));
     doc.set_element_attribute(table, "width", "32").unwrap();
     doc.set_element_attribute(table, "height", "16").unwrap();
     doc.set_element_attribute(table, "lang", "tr").unwrap();
@@ -462,19 +379,12 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
     let block = doc.append_element(
         Some(table),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:10px"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
     doc.append_element(
         Some(table),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:10px"),
     );
     let children = doc.nodes[table].children.clone();
@@ -491,7 +401,7 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
         );
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-        assert!(anonymous_prototype(&doc, &computed, table).0.ifc.is_none());
+        assert!(anonymous_prototype(&doc, table).ifc.is_none());
         crate::layout::layout_single_page(&mut doc, &computed, raikiri_traits::PageBox::A4)
             .unwrap();
         assert_eq!(doc.anonymous_table_cells(table).count(), 2);
@@ -526,7 +436,8 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
             .anonymous_table_cells(table)
             .map(|(cell, _)| cell)
             .collect();
-        let session = crate::layout::context::LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let session = crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
         for cell in cells {
             assert!(session.table_style(cell).is_block());
         }
@@ -536,27 +447,17 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
 #[test]
 fn deep_overlay_contents_metadata_is_linear_and_keeps_source_children() {
     let mut doc = Document::new();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(
         sheet,
         "span::before{content:'X';position:absolute}span::after{content:'Y';float:left}",
     );
-    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
-    let owner = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let table = doc.append_element(Some(0), "div", Some("display:table"));
+    let owner = doc.append_element(Some(table), "div", Some("display:table-row"));
     let mut parent = owner;
     let mut wrappers = Vec::new();
     for _ in 0..2048 {
-        parent = doc.append_element(
-            Some(parent),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        parent = doc.append_element(Some(parent), "span", Some("display:contents"));
         wrappers.push(parent);
     }
     let text = doc.append_text(parent, "A");

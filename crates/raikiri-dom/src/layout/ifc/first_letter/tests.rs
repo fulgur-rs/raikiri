@@ -109,12 +109,7 @@ fn first_letter_source_offsets_fail_explicitly_instead_of_wrapping() {
 #[test]
 fn opening_the_letter_inline_box_reports_the_item_budget_boundary() {
     let fixture = sheet_fixture("div::first-letter{font-size:20px}", "", |doc, root| {
-        let span = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline"),
-        );
+        let span = doc.append_element(Some(root), "span", Some("display:inline"));
         doc.append_text(span, "A");
     });
     let fonts = ahem_fonts();
@@ -266,12 +261,7 @@ fn preserved_whitespace_before_an_inner_block_stops_ancestor_letter_selection() 
     for (extra, expected_size) in [("", 20.0), ("white-space:pre", 10.0)] {
         let fixture = sheet_fixture("div::first-letter{font-size:20px}", extra, |doc, root| {
             doc.append_text(root, " ");
-            let block = doc.append_element(
-                Some(root),
-                "p",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            let block = doc.append_element(Some(root), "p", Some("display:block"));
             doc.append_text(block, "A");
         });
         let block = fixture.doc.get_node(fixture.root).unwrap().children[1];
@@ -416,15 +406,9 @@ fn adjacent_letter_selection_skips_hidden_and_out_of_flow_inline_subtrees() {
         let mut next = 0;
         let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
             owner = doc.append_text(root, "(");
-            let skipped =
-                doc.append_element(Some(root), tag, crate::LayoutStyle::default(), Some(css));
+            let skipped = doc.append_element(Some(root), tag, Some(css));
             doc.append_text(skipped, "Z");
-            let span = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:inline"),
-            );
+            let span = doc.append_element(Some(root), "span", Some("display:inline"));
             next = doc.append_text(span, "Ab");
         });
         let mut letter = FirstLetter::new(
@@ -457,7 +441,7 @@ fn adjacent_letter_selection_stops_at_a_line_break() {
         let mut owner = 0;
         let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
             owner = doc.append_text(root, " ");
-            doc.append_element(Some(root), "br", crate::LayoutStyle::default(), Some(css));
+            doc.append_element(Some(root), "br", Some(css));
             doc.append_text(root, "Ab");
         });
         let mut letter = FirstLetter::new(
@@ -526,18 +510,8 @@ fn generated_text_in_a_preceding_contents_sibling_blocks_ancestor_letter_styling
         "div::first-letter{color:red} span::before{content:'X'}",
         "",
         |doc, root| {
-            doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:contents"),
-            );
-            child = doc.append_element(
-                Some(root),
-                "section",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            doc.append_element(Some(root), "span", Some("display:contents"));
+            child = doc.append_element(Some(root), "section", Some("display:block"));
             doc.append_text(child, "Ab");
         },
     );
@@ -554,12 +528,7 @@ fn first_letter_predecessor_work_is_bounded_across_many_ifc_roots() {
             doc.append_comment(Some(parent), "ignored");
         }
         for _ in 0..200 {
-            let root = doc.append_element(
-                Some(parent),
-                "section",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            let root = doc.append_element(Some(parent), "section", Some("display:block"));
             doc.append_text(root, "A");
             roots.push(root);
         }
@@ -730,12 +699,7 @@ fn review_logical_float_predecessors_follow_the_projected_in_flow_blocks() {
                 ("A", format!("display:block;float:{float}")),
                 ("B", "display:block".into()),
             ] {
-                let child = doc.append_element(
-                    Some(root),
-                    "p",
-                    crate::LayoutStyle::default(),
-                    Some(css.as_str()),
-                );
+                let child = doc.append_element(Some(root), "p", Some(css.as_str()));
                 roots.push(child);
                 texts.push(doc.append_text(child, text));
             }
@@ -768,12 +732,7 @@ fn review_pre_line_predecessor_spaces_match_anonymous_line_eligibility() {
             "white-space:pre-line",
             |doc, root| {
                 doc.append_text(root, text);
-                child = doc.append_element(
-                    Some(root),
-                    "p",
-                    crate::LayoutStyle::default(),
-                    Some("display:block"),
-                );
+                child = doc.append_element(Some(root), "p", Some("display:block"));
                 doc.append_text(child, "B");
             },
         );
@@ -804,23 +763,12 @@ fn review_empty_inline_predecessors_do_not_form_a_first_letter_barrier() {
             let span = doc.append_element(
                 Some(root),
                 "span",
-                crate::LayoutStyle::default(),
                 Some(format!("display:{display}").as_str()),
             );
             if nested {
-                doc.append_element(
-                    Some(span),
-                    "span",
-                    crate::LayoutStyle::default(),
-                    Some("display:inline"),
-                );
+                doc.append_element(Some(span), "span", Some("display:inline"));
             }
-            child = doc.append_element(
-                Some(root),
-                "p",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            child = doc.append_element(Some(root), "p", Some("display:block"));
             doc.append_text(child, "A");
         });
         let selected = ancestor_letter_projection(&fixture, child);
@@ -853,19 +801,9 @@ fn review_inline_predecessors_keep_text_generated_and_forced_line_barriers() {
             "div::first-letter{font-size:20px}"
         };
         let fixture = sheet_fixture(sheet, "", |doc, root| {
-            let inline = doc.append_element(
-                Some(root),
-                tag,
-                crate::LayoutStyle::default(),
-                Some("display:inline"),
-            );
+            let inline = doc.append_element(Some(root), tag, Some("display:inline"));
             doc.append_text(inline, content);
-            child = doc.append_element(
-                Some(root),
-                "p",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            child = doc.append_element(Some(root), "p", Some("display:block"));
             doc.append_text(child, "B");
         });
         assert!(
@@ -881,28 +819,13 @@ fn review_empty_inline_subtree_work_stays_document_bounded() {
     let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
         let mut nested = root;
         for _ in 0..64 {
-            nested = doc.append_element(
-                Some(nested),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:inline"),
-            );
+            nested = doc.append_element(Some(nested), "span", Some("display:inline"));
             for _ in 0..8 {
-                doc.append_element(
-                    Some(nested),
-                    "span",
-                    crate::LayoutStyle::default(),
-                    Some("display:inline"),
-                );
+                doc.append_element(Some(nested), "span", Some("display:inline"));
             }
         }
         for _ in 0..200 {
-            let block = doc.append_element(
-                Some(root),
-                "p",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            let block = doc.append_element(Some(root), "p", Some("display:block"));
             doc.append_text(block, "A");
             roots.push(block);
         }
@@ -948,18 +871,8 @@ fn review_generated_inline_predecessors_keep_before_after_atomic_barriers() {
                 ),
                 "",
                 |doc, root| {
-                    doc.append_element(
-                        Some(root),
-                        "span",
-                        crate::LayoutStyle::default(),
-                        Some("display:inline"),
-                    );
-                    child = doc.append_element(
-                        Some(root),
-                        "p",
-                        crate::LayoutStyle::default(),
-                        Some("display:block"),
-                    );
+                    doc.append_element(Some(root), "span", Some("display:inline"));
+                    child = doc.append_element(Some(root), "p", Some("display:block"));
                     doc.append_text(child, "A");
                 },
             );
@@ -984,19 +897,9 @@ fn review_empty_generated_ancestors_and_predecessors_keep_the_block_child_bounda
             let mut child = 0;
             let fixture = sheet_fixture(&sheet, "", |doc, root| {
                 if !ancestor {
-                    doc.append_element(
-                        Some(root),
-                        "span",
-                        crate::LayoutStyle::default(),
-                        Some("display:contents"),
-                    );
+                    doc.append_element(Some(root), "span", Some("display:contents"));
                 }
-                child = doc.append_element(
-                    Some(root),
-                    "p",
-                    crate::LayoutStyle::default(),
-                    Some("display:block"),
-                );
+                child = doc.append_element(Some(root), "p", Some("display:block"));
                 doc.append_text(child, "A");
             });
             let selected = ancestor_letter_projection(&fixture, child);
@@ -1013,19 +916,9 @@ fn child_origins(sheet: &str, follows_contents_span: bool) -> (usize, Vec<usize>
     let mut child = 0;
     let fixture = sheet_fixture(sheet, "", |doc, root| {
         if follows_contents_span {
-            doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:contents"),
-            );
+            doc.append_element(Some(root), "span", Some("display:contents"));
         }
-        child = doc.append_element(
-            Some(root),
-            "p",
-            crate::LayoutStyle::default(),
-            Some("display:block"),
-        );
+        child = doc.append_element(Some(root), "p", Some("display:block"));
         doc.append_text(child, "A");
     });
     let (letters, lines) = typographic_origins(
@@ -1116,20 +1009,10 @@ fn review_resolved_nonempty_generated_predecessors_still_block_ancestor_letters(
                 let owner = if ancestor {
                     root
                 } else {
-                    doc.append_element(
-                        Some(root),
-                        "span",
-                        crate::LayoutStyle::default(),
-                        Some("display:contents"),
-                    )
+                    doc.append_element(Some(root), "span", Some("display:contents"))
                 };
                 doc.set_element_attributes(owner, vec![("title".into(), "B".into())]);
-                child = doc.append_element(
-                    Some(root),
-                    "p",
-                    crate::LayoutStyle::default(),
-                    Some("display:block"),
-                );
+                child = doc.append_element(Some(root), "p", Some("display:block"));
                 doc.append_text(child, "A");
             });
             assert!(ancestor_letter_projection(&fixture, child).is_empty());
@@ -1147,12 +1030,7 @@ fn review_empty_atomic_generated_boxes_remain_first_letter_barriers() {
             "",
             |doc, root| {
                 doc.append_text(root, "(");
-                doc.append_element(
-                    Some(root),
-                    "span",
-                    crate::LayoutStyle::default(),
-                    None::<&str>,
-                );
+                doc.append_element(Some(root), "span", None::<&str>);
                 doc.append_text(root, "A");
             },
         );
@@ -1191,12 +1069,7 @@ fn review_empty_ordinary_generated_text_keeps_adjacent_source_continuations() {
                 "",
                 |doc, root| {
                     owners.push(doc.append_text(root, "("));
-                    doc.append_element(
-                        Some(root),
-                        "span",
-                        crate::LayoutStyle::default(),
-                        None::<&str>,
-                    );
+                    doc.append_element(Some(root), "span", None::<&str>);
                     owners.push(doc.append_text(root, "A"));
                 },
             );
@@ -1230,14 +1103,12 @@ fn review_adjacent_owners_use_their_own_segment_break_modes() {
                     let first = doc.append_element(
                         Some(root),
                         "span",
-                        crate::LayoutStyle::default(),
                         Some(&format!("white-space:{first_mode}")),
                     );
                     owners.push(doc.append_text(first, "“"));
                     let second = doc.append_element(
                         Some(root),
                         "span",
-                        crate::LayoutStyle::default(),
                         Some(&format!("white-space:{second_mode}")),
                     );
                     doc.set_element_attributes(second, vec![("id".into(), "second".into())]);

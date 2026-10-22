@@ -129,15 +129,15 @@ fn generated_content_images_are_prefetched_against_the_base_url() {
         }
     }
     let mut doc = raikiri_dom::Document::new();
-    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "div::before{content:'a' url(icon.png) url(http://[)}\
          div::after{content:url(https://images.test/after.png)}\
          li::marker{content:url(marker.png)}",
     );
-    doc.append_element(Some(0), "div", Default::default(), None::<&str>);
-    doc.append_element(Some(0), "li", Default::default(), None::<&str>);
+    doc.append_element(Some(0), "div", None::<&str>);
+    doc.append_element(Some(0), "li", None::<&str>);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -178,9 +178,9 @@ fn generated_content_prefetch_stops_at_the_layout_image_limit() {
         .map(|index| format!(" url(i{index}.png)"))
         .collect();
     let mut doc = raikiri_dom::Document::new();
-    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, format!("div::before{{content:{content}}}"));
-    doc.append_element(Some(0), "div", Default::default(), None::<&str>);
+    doc.append_element(Some(0), "div", None::<&str>);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -203,7 +203,7 @@ fn generated_content_images_that_layout_cannot_place_are_not_prefetched() {
         }
     }
     let mut doc = raikiri_dom::Document::new();
-    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "p::before{content:url(shown.png)}\
@@ -211,18 +211,18 @@ fn generated_content_images_that_layout_cannot_place_are_not_prefetched() {
          .hidden::before{content:url(hidden.png)}\
          .floated::before{content:url(floated.png);float:left}",
     );
-    let hidden = doc.append_element(Some(0), "div", Default::default(), Some("display:none"));
-    let inner = doc.append_element(Some(hidden), "div", Default::default(), None::<&str>);
-    let in_hidden = doc.append_element(Some(inner), "p", Default::default(), None::<&str>);
+    let hidden = doc.append_element(Some(0), "div", Some("display:none"));
+    let inner = doc.append_element(Some(hidden), "div", None::<&str>);
+    let in_hidden = doc.append_element(Some(inner), "p", None::<&str>);
     doc.set_element_attribute(in_hidden, "class", "hidden".to_string())
         .unwrap();
-    let gone = doc.append_element(Some(0), "p", Default::default(), Some("display:none"));
+    let gone = doc.append_element(Some(0), "p", Some("display:none"));
     doc.set_element_attribute(gone, "class", "gone".to_string())
         .unwrap();
-    let floated = doc.append_element(Some(0), "p", Default::default(), None::<&str>);
+    let floated = doc.append_element(Some(0), "p", None::<&str>);
     doc.set_element_attribute(floated, "class", "floated".to_string())
         .unwrap();
-    doc.append_element(Some(0), "p", Default::default(), None::<&str>);
+    doc.append_element(Some(0), "p", None::<&str>);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();

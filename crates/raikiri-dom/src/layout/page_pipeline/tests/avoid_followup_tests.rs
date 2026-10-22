@@ -1,7 +1,7 @@
 use super::*;
 
 fn block(doc: &mut Document, parent: usize, css: &str) -> usize {
-    doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    doc.append_element(Some(parent), "div", Some(css))
 }
 
 #[test]
@@ -161,12 +161,7 @@ fn a_second_line_inline_branch_does_not_add_its_origin_to_float_end() {
             "display:block;font-family:Ahem;font-size:10px;line-height:50px",
         );
         doc.append_text(paragraph, "0");
-        doc.append_element(
-            Some(paragraph),
-            "br",
-            Style::default(),
-            Some("display:inline"),
-        );
+        doc.append_element(Some(paragraph), "br", Some("display:inline"));
         doc.append_text(paragraph, "1");
         inline = block(doc, paragraph, "display:inline");
         float = block(doc, inline, "float:left;width:20px;height:80px");
@@ -212,12 +207,7 @@ fn a_relative_inline_child_offset_is_removed_from_float_end() {
             "display:block;font-family:Ahem;font-size:10px;line-height:50px",
         );
         doc.append_text(paragraph, "0");
-        doc.append_element(
-            Some(paragraph),
-            "br",
-            Style::default(),
-            Some("display:inline"),
-        );
+        doc.append_element(Some(paragraph), "br", Some("display:inline"));
         doc.append_text(paragraph, "1");
         inline = block(doc, paragraph, "display:inline;position:relative;top:20px");
         float = block(doc, inline, "float:left;width:20px;height:80px");
@@ -303,7 +293,7 @@ fn a_moved_float_child_contributes_its_shift_to_the_float_extent() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     let body = doc.parent_of(root).unwrap();
-    let doc = crate::layout::context::LayoutSession::new(&mut doc);
+    let doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
 
     let grown = super::super::grown_auto_height(
         &doc,
@@ -350,7 +340,7 @@ fn an_untracked_ifc_sibling_float_follows_the_moved_block() {
     doc.nodes[wrapper].unrounded_layout.location.y = 0.0;
     doc.nodes[float].unrounded_layout.location.y = 0.0;
     doc.nodes[float].unrounded_layout.size.height = 80.0;
-    let doc = crate::layout::context::LayoutSession::new(&mut doc);
+    let doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let grown = super::super::grown_auto_height(
         &doc,
         &cascade,
@@ -381,7 +371,7 @@ fn a_moved_footnote_passes_float_extent_through_non_bfc_ancestors() {
         });
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
-        let mut doc = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         let mut shifts = super::super::SubtreeShifts::default();
 
         assert!(super::super::grow_ancestors_for_shift(
@@ -413,7 +403,7 @@ fn margin_truncation_stops_at_an_unchanged_fixed_height_ancestor() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     let moved_y = doc.nodes[moved].unrounded_layout.location.y;
-    let mut doc = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
 
     super::super::move_box_by_truncated_margin(&mut doc, &cascade, moved, -10.0, body);
 
@@ -476,7 +466,7 @@ fn moving_a_sibling_does_not_shift_a_nested_footnote_float_extent() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     let body = doc.parent_of(wrapper).unwrap();
-    let doc = crate::layout::context::LayoutSession::new(&mut doc);
+    let doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let grown = super::super::grown_auto_height(
         &doc,
         &cascade,
@@ -613,7 +603,7 @@ fn an_ifc_float_already_followed_by_a_moved_block_counts_only_its_real_extent_gr
     doc.nodes[moved].unrounded_layout.size.height = 10.0;
     doc.nodes[later_float].unrounded_layout.location.y = 0.0;
     doc.nodes[later_float].unrounded_layout.size.height = 80.0;
-    let mut doc = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut doc = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
     let followed = super::super::follow_ifc_block(&mut doc, paragraph, moved, 0.0, 10.0, 40.0);
 
     assert!(followed.shifted.contains(&later_float));
@@ -678,7 +668,7 @@ fn an_ifc_float_inside_a_followed_inline_wrapper_counts_only_its_real_extent_gro
         .y = -1.0;
     doc.nodes[later_float].unrounded_layout.location.y = 0.0;
     doc.nodes[later_float].unrounded_layout.size.height = 65.0;
-    let mut doc = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut doc = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
     let followed = super::super::follow_ifc_block(&mut doc, paragraph, moved, 0.0, 10.0, 40.0);
 
     assert!(followed.shifted.contains(&later_float));
@@ -899,7 +889,7 @@ fn a_fixed_height_wrapper_reports_that_it_cannot_absorb_a_moved_child() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     let mut shifts = super::super::SubtreeShifts::default();
-    let mut doc = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     assert!(super::super::grow_ancestors_for_shift(
         &mut doc,
         &cascade,

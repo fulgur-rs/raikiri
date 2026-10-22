@@ -25,11 +25,10 @@ fn laid_out_with_natural_box(
 ) -> Document {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:100px"),
     );
     build(&mut doc, body);
@@ -64,7 +63,6 @@ fn canvas_with_css(css: &str) -> (f32, f32) {
         canvas = doc.append_element(
             Some(body),
             "canvas",
-            Style::default(),
             Some(format!("display:block;{css}").as_str()),
         );
         doc.set_element_attribute(canvas, "width", "10")
@@ -112,17 +110,11 @@ fn ratio_only_svg_uses_viewbox_ratio_for_intrinsic_keyword_size() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;width:200px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;width:200px"));
     let svg = doc.append_element(
         Some(body),
         "svg",
-        Style::default(),
         Some("display:block;min-height:max-content"),
     );
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
@@ -142,7 +134,7 @@ fn ratio_only_svg_uses_viewbox_ratio_for_intrinsic_keyword_size() {
 fn a_block_level_image_keeps_its_natural_width() {
     let mut image = 0;
     let doc = laid_out(|doc, body| {
-        image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+        image = doc.append_element(Some(body), "img", Some("display:block"));
     });
     assert_eq!(size(&doc, image), (25.0, 50.0));
 }
@@ -155,7 +147,6 @@ fn an_empty_flex_or_grid_image_keeps_its_natural_size() {
             images.push(doc.append_element(
                 Some(body),
                 "img",
-                Style::default(),
                 Some(format!("display:{display}").as_str()),
             ));
         }
@@ -169,7 +160,7 @@ fn an_empty_flex_or_grid_image_keeps_its_natural_size() {
 fn a_decoded_image_keeps_its_own_natural_size_whatever_its_file_name() {
     let mut image = 0;
     let doc = laid_out(|doc, body| {
-        image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+        image = doc.append_element(Some(body), "img", Some("display:block"));
         doc.set_element_attribute(image, "src", "green.png")
             .unwrap();
     });
@@ -182,7 +173,7 @@ fn a_decoded_image_keeps_its_own_natural_size_whatever_its_file_name() {
 fn an_unresolved_green_image_keeps_the_stand_in_size_over_a_fallback_box() {
     let mut image = 0;
     let doc = laid_out_with_natural_size((0.0, 0.0), |doc, body| {
-        image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+        image = doc.append_element(Some(body), "img", Some("display:block"));
         doc.set_element_attribute(image, "src", "green.png")
             .unwrap();
     });
@@ -195,12 +186,7 @@ fn replaced_content_without_a_natural_size_still_fills_the_width() {
     let mut boxes = Vec::new();
     let doc = laid_out(|doc, body| {
         for tag in ["object", "iframe", "video", "embed"] {
-            boxes.push(doc.append_element(
-                Some(body),
-                tag,
-                Style::default(),
-                Some("display:block;height:10px"),
-            ));
+            boxes.push(doc.append_element(Some(body), tag, Some("display:block;height:10px")));
         }
     });
     for node in boxes {
@@ -215,10 +201,9 @@ fn a_grid_image_keeps_its_natural_size_under_normal_alignment() {
         let grid = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:grid;grid-template-rows:100px;grid-template-columns:100px"),
         );
-        image = doc.append_element(Some(grid), "img", Style::default(), None::<&str>);
+        image = doc.append_element(Some(grid), "img", None::<&str>);
     });
     assert_eq!(size(&doc, image), (25.0, 50.0));
 }
@@ -235,10 +220,9 @@ fn a_grid_image_stretched_on_both_axes_fills_its_area() {
             let grid = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(format!("display:grid;grid-template-rows:100px;grid-template-columns:100px;height:100px;{grid_css}").as_str()),
             );
-            images.push(doc.append_element(Some(grid), "img", Style::default(), Some(image_css)));
+            images.push(doc.append_element(Some(grid), "img", Some(image_css)));
         }
     });
     let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
@@ -257,10 +241,9 @@ fn a_grid_image_stretched_on_one_axis_keeps_its_ratio() {
             let grid = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:grid;grid-template-rows:100px;grid-template-columns:100px;height:100px;position:relative"),
             );
-            images.push(doc.append_element(Some(grid), "img", Style::default(), Some(image_css)));
+            images.push(doc.append_element(Some(grid), "img", Some(image_css)));
         }
     });
     let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
@@ -276,13 +259,11 @@ fn a_grid_image_with_a_definite_width_and_stretch_alignment_ignores_its_ratio() 
         let grid = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:grid;grid-template-rows:100px;grid-template-columns:100px;height:100px"),
         );
         image = doc.append_element(
             Some(grid),
             "img",
-            Style::default(),
             Some("align-self:stretch;justify-self:stretch;width:40px"),
         );
     });
@@ -296,10 +277,9 @@ fn a_stretched_grid_image_in_an_auto_row_keeps_its_ratio() {
         let grid = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:grid;grid-template-columns:100px;place-items:stretch"),
         );
-        image = doc.append_element(Some(grid), "img", Style::default(), None::<&str>);
+        image = doc.append_element(Some(grid), "img", None::<&str>);
     });
     assert_eq!(size(&doc, image), (100.0, 200.0));
 }
@@ -311,11 +291,10 @@ fn stretched_grid_images_in_implicit_auto_rows_keep_their_ratio() {
         let grid = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:grid;grid-template-rows:100px;grid-template-columns:100px;place-items:stretch"),
         );
         for _ in 0..2 {
-            images.push(doc.append_element(Some(grid), "img", Style::default(), None::<&str>));
+            images.push(doc.append_element(Some(grid), "img", None::<&str>));
         }
     });
     assert_eq!(size(&doc, images[1]), (100.0, 200.0));
@@ -332,14 +311,13 @@ fn stretched_grid_images_fill_fixed_implicit_rows_but_not_repeated_ones() {
             let grid = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(
                     format!("display:grid;{rows};grid-template-columns:100px;place-items:stretch")
                         .as_str(),
                 ),
             );
             for _ in 0..2 {
-                images.push(doc.append_element(Some(grid), "img", Style::default(), None::<&str>));
+                images.push(doc.append_element(Some(grid), "img", None::<&str>));
             }
         }
     });
@@ -358,10 +336,9 @@ fn a_lone_stretched_grid_image_placed_in_an_implicit_row_keeps_its_ratio() {
             let grid = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:grid;grid-template-rows:100px;grid-template-columns:100px;place-items:stretch"),
             );
-            images.push(doc.append_element(Some(grid), "img", Style::default(), Some(placement)));
+            images.push(doc.append_element(Some(grid), "img", Some(placement)));
         }
     });
     let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
@@ -373,14 +350,13 @@ fn a_lone_stretched_grid_image_placed_in_an_implicit_row_keeps_its_ratio() {
 fn a_block_level_fallback_image_keeps_its_supplied_width() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:300px"),
     );
-    let image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+    let image = doc.append_element(Some(body), "img", Some("display:block"));
     doc.set_element_attribute(image, "src", "support/green.png")
         .unwrap();
     doc.mark_in_document_flags();
@@ -398,8 +374,8 @@ fn a_block_level_fallback_image_keeps_its_supplied_width() {
 fn image_in_box(box_css: &str, image_css: &str) -> ((f32, f32), (f32, f32)) {
     let (mut parent, mut image) = (0, 0);
     let doc = laid_out(|doc, body| {
-        parent = doc.append_element(Some(body), "div", Style::default(), Some(box_css));
-        image = doc.append_element(Some(parent), "img", Style::default(), Some(image_css));
+        parent = doc.append_element(Some(body), "div", Some(box_css));
+        image = doc.append_element(Some(parent), "img", Some(image_css));
     });
     (size(&doc, parent), size(&doc, image))
 }
@@ -500,19 +476,17 @@ fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_agai
     ] {
         let mut parent = 0;
         let mut doc = laid_out(|doc, body| {
-            parent = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:inline-block;height:100px"),
-            );
-            doc.append_element(Some(parent), "img", Style::default(), Some(image_css));
+            parent =
+                doc.append_element(Some(body), "div", Some("display:inline-block;height:100px"));
+            doc.append_element(Some(parent), "img", Some(image_css));
         });
         let widths: Vec<f32> = heights
             .into_iter()
             .map(|percent_height| {
                 let intrinsics = {
-                    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+                    let session_cascade = crate::layout::test_support::cascaded(&doc);
+                    let mut session =
+                        crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
                     crate::layout::ifc::boxes::intrinsics_of_boxes(
                         &mut session,
                         parent,
@@ -542,30 +516,21 @@ fn the_width_of_a_percentage_height_container_follows_the_height_it_is_measured_
     // through the image, and so does the width of the image in the container.
     let mut parent = 0;
     let mut doc = laid_out(|doc, body| {
-        parent = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:inline-block;height:100px"),
-        );
+        parent = doc.append_element(Some(body), "div", Some("display:inline-block;height:100px"));
         let container = doc.append_element(
             Some(parent),
             "span",
-            Style::default(),
             Some("display:inline-flex;height:100%"),
         );
-        doc.append_element(
-            Some(container),
-            "img",
-            Style::default(),
-            Some("height:100%"),
-        );
+        doc.append_element(Some(container), "img", Some("height:100%"));
     });
     let widths: Vec<f32> = [Some(100.0), None, Some(60.0), Some(100.0)]
         .into_iter()
         .map(|percent_height| {
             let intrinsics = {
-                let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+                let session_cascade = crate::layout::test_support::cascaded(&doc);
+                let mut session =
+                    crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
                 crate::layout::ifc::boxes::intrinsics_of_boxes(
                     &mut session,
                     parent,
@@ -593,23 +558,15 @@ fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured
     // measured for one never answers another.
     let mut parent = 0;
     let mut doc = laid_out(|doc, body| {
-        parent = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:inline-block"),
-        );
-        doc.append_element(
-            Some(parent),
-            "img",
-            Style::default(),
-            Some("display:block;height:100%"),
-        );
+        parent = doc.append_element(Some(body), "div", Some("display:inline-block"));
+        doc.append_element(Some(parent), "img", Some("display:block;height:100%"));
     });
     let widths: Vec<f32> = [Some(100.0), None, Some(60.0), Some(100.0)]
         .into_iter()
         .map(|height| {
-            let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+            let session_cascade = crate::layout::test_support::cascaded(&doc);
+            let mut session =
+                crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
             let inputs = taffy::LayoutInput {
                 run_mode: taffy::RunMode::ComputeSize,
                 sizing_mode: taffy::SizingMode::InherentSize,
@@ -644,7 +601,7 @@ fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured
 fn image_size(css: &str) -> (f32, f32) {
     let mut image = 0;
     let doc = laid_out(|doc, body| {
-        image = doc.append_element(Some(body), "img", Style::default(), Some(css));
+        image = doc.append_element(Some(body), "img", Some(css));
     });
     size(&doc, image)
 }
@@ -797,19 +754,14 @@ fn a_percentage_height_of_an_image_resolves_against_an_absolute_box_with_a_defin
     let (parent, image) = {
         let (mut parent, mut image) = (0, 0);
         let doc = laid_out(|doc, body| {
-            let container = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("position:relative;height:80px"),
-            );
+            let container =
+                doc.append_element(Some(body), "div", Some("position:relative;height:80px"));
             parent = doc.append_element(
                 Some(container),
                 "div",
-                Style::default(),
                 Some("position:absolute;top:0;bottom:0"),
             );
-            image = doc.append_element(Some(parent), "img", Style::default(), Some("height:100%"));
+            image = doc.append_element(Some(parent), "img", Some("height:100%"));
         });
         (size(&doc, parent), size(&doc, image))
     };
@@ -844,13 +796,8 @@ fn a_percentage_height_of_a_block_is_auto_in_an_absolute_box_that_sizes_to_its_c
     let height = |box_css: &str| {
         let (mut parent, mut child) = (0, 0);
         let doc = laid_out(|doc, body| {
-            parent = doc.append_element(Some(body), "div", Style::default(), Some(box_css));
-            child = doc.append_element(
-                Some(parent),
-                "div",
-                Style::default(),
-                Some("height:100%;min-height:10px"),
-            );
+            parent = doc.append_element(Some(body), "div", Some(box_css));
+            child = doc.append_element(Some(parent), "div", Some("height:100%;min-height:10px"));
         });
         (size(&doc, parent).1, size(&doc, child).1)
     };
@@ -869,16 +816,14 @@ fn a_replaced_box_in_a_vertical_shrink_to_fit_box_resolves_its_percentage_width(
         let container = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("position:relative;width:200px;height:100px"),
         );
         parent = doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some("position:absolute;writing-mode:vertical-rl;width:50%"),
         );
-        image = doc.append_element(Some(parent), "img", Style::default(), Some("width:100%"));
+        image = doc.append_element(Some(parent), "img", Some("width:100%"));
     });
     assert_eq!(size(&doc, image), (100.0, 100.0));
     assert_eq!(size(&doc, parent), (100.0, 100.0));
@@ -889,9 +834,8 @@ fn a_replaced_box_in_a_vertical_shrink_to_fit_box_resolves_its_percentage_width(
 fn image_in_container(container_css: &str, image_css: &str) -> (f32, f32) {
     let mut image = 0;
     let doc = laid_out(|doc, body| {
-        let container =
-            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
-        image = doc.append_element(Some(container), "img", Style::default(), Some(image_css));
+        let container = doc.append_element(Some(body), "div", Some(container_css));
+        image = doc.append_element(Some(container), "img", Some(image_css));
     });
     size(&doc, image)
 }
@@ -1025,9 +969,8 @@ fn a_keyword_width_with_a_function_limit_still_follows_an_auto_width() {
 fn child_in_container(container_css: &str, tag: &str, css: &str) -> (f32, (f32, f32)) {
     let mut child = 0;
     let doc = laid_out(|doc, body| {
-        let container =
-            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
-        child = doc.append_element(Some(container), tag, Style::default(), Some(css));
+        let container = doc.append_element(Some(body), "div", Some(container_css));
+        child = doc.append_element(Some(container), tag, Some(css));
         if tag == "svg" {
             doc.set_element_namespace(child, Some("http://www.w3.org/2000/svg".into()));
             doc.set_element_attributes(child, vec![("viewBox".into(), "0 0 2 1".into())]);
@@ -1223,9 +1166,8 @@ fn a_size_contained_image_with_a_keyword_width_is_not_stretched() {
 fn image_box_in_container(container_css: &str, image_css: &str) -> ((f32, f32), (f32, f32)) {
     let mut image = 0;
     let doc = laid_out(|doc, body| {
-        let container =
-            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
-        image = doc.append_element(Some(container), "img", Style::default(), Some(image_css));
+        let container = doc.append_element(Some(body), "div", Some(container_css));
+        image = doc.append_element(Some(container), "img", Some(image_css));
     });
     let location = doc.nodes[image].unrounded_layout.location;
     ((location.x, location.y), size(&doc, image))
@@ -1446,29 +1388,22 @@ fn a_block_with_a_keyword_height_is_not_stretched_either() {
         ] {
             let mut block = 0;
             let doc = laid_out(|doc, body| {
-                let container =
-                    doc.append_element(Some(body), "div", Style::default(), Some(container));
+                let container = doc.append_element(Some(body), "div", Some(container));
                 block = doc.append_element(
                     Some(container),
                     "div",
-                    Style::default(),
                     Some(&format!("align-self:stretch;width:30px;height:{height}")),
                 );
-                doc.append_element(Some(block), "div", Style::default(), Some("height:40px"));
+                doc.append_element(Some(block), "div", Some("height:40px"));
             });
             assert_eq!(size(&doc, block), (30.0, 40.0), "{name} {height}");
         }
     }
     let mut block = 0;
     let doc = laid_out(|doc, body| {
-        let container = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some(KEYWORD_WIDTH_CONTAINERS[2].1),
-        );
-        block = doc.append_element(Some(container), "div", Style::default(), Some("width:30px"));
-        doc.append_element(Some(block), "div", Style::default(), Some("height:40px"));
+        let container = doc.append_element(Some(body), "div", Some(KEYWORD_WIDTH_CONTAINERS[2].1));
+        block = doc.append_element(Some(container), "div", Some("width:30px"));
+        doc.append_element(Some(block), "div", Some("height:40px"));
     });
     assert_eq!(size(&doc, block), (30.0, 100.0));
 }
@@ -1480,7 +1415,6 @@ fn image_without_natural_ratio(css: &str) -> (f32, f32) {
         image = doc.append_element(
             Some(body),
             "img",
-            Style::default(),
             Some(format!("display:block;{css}").as_str()),
         );
     });
@@ -1508,9 +1442,8 @@ fn an_authored_ratio_replaces_the_ratio_of_the_natural_size_when_the_resolver_ga
 fn ratio_only_svg_in_container(container_css: &str, view_box: &str, svg_css: &str) -> (f32, f32) {
     let mut svg = 0;
     let doc = laid_out(|doc, body| {
-        let container =
-            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
-        svg = doc.append_element(Some(container), "svg", Style::default(), Some(svg_css));
+        let container = doc.append_element(Some(body), "div", Some(container_css));
+        svg = doc.append_element(Some(container), "svg", Some(svg_css));
         doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
         doc.set_element_attributes(svg, vec![("viewBox".into(), view_box.into())]);
     });
@@ -1712,7 +1645,7 @@ fn a_keyword_min_or_max_size_of_an_image_takes_the_size_its_other_side_gives() {
 fn natural_20x50_image(css: &str) -> (Document, usize) {
     let mut image = 0;
     let doc = laid_out_with_natural_size((20.0, 50.0), |doc, body| {
-        image = doc.append_element(Some(body), "img", Style::default(), Some(css));
+        image = doc.append_element(Some(body), "img", Some(css));
     });
     (doc, image)
 }
@@ -1836,12 +1769,7 @@ fn the_ratio_of_an_aspect_ratio_relates_the_content_box_when_it_is_auto_or_natur
     // Without a natural ratio, `auto` alone leaves nothing to relate.
     let mut image = 0;
     let doc = laid_out_with_natural_box((0.0, 0.0), false, |doc, body| {
-        image = doc.append_element(
-            Some(body),
-            "img",
-            Style::default(),
-            Some("aspect-ratio:auto"),
-        );
+        image = doc.append_element(Some(body), "img", Some("aspect-ratio:auto"));
     });
     assert!(!doc.nodes[image].ratio_in_content_box);
 }

@@ -1,7 +1,6 @@
 //! Literal font and paint checks for typographic first-letter styling.
 
 use anyrender::{Scene, recording::RenderCommand};
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -44,17 +43,15 @@ fn inside_text_marker_keeps_its_ink_with_and_without_first_letter_opacity() {
         let ol = doc.append_element(
             Some(root),
             "ol",
-            Style::default(),
             Some("display:block;list-style:decimal-leading-zero inside"),
         );
-        let li = doc.append_element(Some(ol), "li", Style::default(), Some("display:list-item"));
+        let li = doc.append_element(Some(ol), "li", Some("display:list-item"));
         doc.append_text(li, "XX");
         let (mut reference, _, prefix) = fixture("", None, "01. ");
         let reference_root = reference.parent_of(prefix).unwrap();
         let first = reference.append_element(
             Some(reference_root),
             "span",
-            Style::default(),
             Some(if opacity {
                 "color:#ff7f7f"
             } else {
@@ -134,7 +131,7 @@ fn cumulative_tiny_transforms_leave_no_first_letter_opacity_ink() {
     );
     let mut root = doc.parent_of(empty).unwrap();
     for _ in 0..3 {
-        root = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+        root = doc.append_element(Some(root), "div", Some("display:block"));
     }
     doc.append_text(root, "XX");
     doc.mark_in_document_flags();
@@ -273,18 +270,17 @@ fn fixture(
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Some("display:none"));
     doc.append_text(style, sheet);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;font:10px/40px Ahem;color:black"),
     );
     let parent = nested_style.map_or(root, |style| {
-        doc.append_element(Some(root), "span", Style::default(), Some(style))
+        doc.append_element(Some(root), "span", Some(style))
     });
     let text_node = doc.append_text(parent, text);
     doc.mark_in_document_flags();
@@ -392,20 +388,16 @@ fn first_letter_ink_matches_literal_rectangles_and_preserves_dom_offsets() {
         let mut actual = Scene::new();
         raikiri_paint::paint_single_page(&mut actual, &doc, &computed, page).unwrap();
         let mut expected = Document::new();
-        let html =
-            expected.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body =
-            expected.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let html = expected.append_element(Some(0), "html", Some("display:block"));
+        let body = expected.append_element(Some(html), "body", Some("display:block"));
         expected.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!("position:absolute;{first_rect}").as_str()),
         );
         expected.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!("position:absolute;{second_rect}").as_str()),
         );
         expected.mark_in_document_flags();
@@ -550,7 +542,7 @@ fn source_byte_offsets_follow_multibyte_and_comment_split_graphemes() {
 fn a_separate_whitespace_node_does_not_consume_the_letter() {
     let (mut doc, _, text) = fixture("div::first-letter{font-size:20px}", None, "\u{a0}");
     let root = doc.parent_of(text).unwrap();
-    let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(root), "span", None::<&str>);
     doc.append_text(span, "XY");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -656,12 +648,8 @@ fn only_the_first_in_flow_block_supplies_an_ancestors_letter() {
         let (mut doc, _, text) = fixture("body::first-letter{font-size:20px}", None, "XX");
         let root = doc.parent_of(text).unwrap();
         let body = doc.parent_of(root).unwrap();
-        let first = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;font:10px/40px Ahem"),
-        );
+        let first =
+            doc.append_element(Some(body), "div", Some("display:block;font:10px/40px Ahem"));
         let target = doc.append_text(first, "XX");
         let previous = if let Some(text) = prefix.strip_prefix("text:") {
             doc.append_text(body, text)
@@ -675,7 +663,6 @@ fn only_the_first_in_flow_block_supplies_an_ancestors_letter() {
                 } else {
                     "div"
                 },
-                Style::default(),
                 Some(if prefix == "nonrendered" {
                     "display:block"
                 } else {
@@ -751,8 +738,7 @@ fn inline_boundary_slices_keep_one_set_of_first_letter_edges() {
             split.parent_of(parent).unwrap()
         };
         if trailing {
-            let span =
-                split.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+            let span = split.append_element(Some(root), "span", Some("display:inline"));
             split.append_text(span, "\"");
         } else {
             split.append_text(root, "A");
@@ -878,7 +864,7 @@ fn generated_first_letter_slices_match_independent_inline_paint_and_geometry() {
     let sheet = "div::before{content:'(';color:red;font-size:20px} span::before{content:'A';color:blue;font-size:30px} span::after{content:')Y';color:green;font-size:40px} div::first-letter{font-size:50%;background:currentcolor;border-bottom:1px solid currentcolor;text-decoration:underline}";
     let (mut actual, _, empty) = fixture(sheet, None, "");
     let root = actual.parent_of(empty).unwrap();
-    let span = actual.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+    let span = actual.append_element(Some(root), "span", Some("display:inline"));
     actual.append_text(root, "Z");
     actual.mark_in_document_flags();
     let computed = cascade(&actual, &build_rule_tree(&actual)).unwrap();
@@ -941,8 +927,7 @@ fn generated_first_letter_slices_match_independent_inline_paint_and_geometry() {
                 ""
             }
         );
-        let span =
-            reference.append_element(Some(root), "span", Style::default(), Some(css.as_str()));
+        let span = reference.append_element(Some(root), "span", Some(css.as_str()));
         reference.append_text(span, text);
     }
     reference.mark_in_document_flags();
@@ -1068,7 +1053,7 @@ fn empty_ordinary_generated_text_does_not_lose_the_next_letters_paint() {
                 "(",
             );
             let root = doc.parent_of(first).unwrap();
-            doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+            doc.append_element(Some(root), "span", None::<&str>);
             doc.append_text(root, "A");
             doc.mark_in_document_flags();
             let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -1100,7 +1085,7 @@ fn nested_first_line_uses_its_own_variable_for_the_letters_inherited_color() {
         let (mut doc, _, text) = fixture(sheet, None, if inline_child { "" } else { "A" });
         if inline_child {
             let root = doc.parent_of(text).unwrap();
-            let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+            let span = doc.append_element(Some(root), "span", None::<&str>);
             doc.append_text(span, "A");
         }
         doc.mark_in_document_flags();
@@ -1132,7 +1117,7 @@ fn word_break_elements_keep_the_chromium_typographic_boundary() {
         let (mut doc, _, first) = fixture("div::first-letter{font-size:20px;color:red}", None, "“");
         let root = doc.parent_of(first).unwrap();
         if let Some(tag) = tag {
-            doc.append_element(Some(root), tag, Style::default(), None::<&str>);
+            doc.append_element(Some(root), tag, None::<&str>);
         }
         doc.append_text(root, "A");
         doc.mark_in_document_flags();
@@ -1216,7 +1201,6 @@ fn split_first_letter_opacity_retains_each_inline_owners_variable() {
         let span = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(&format!("display:inline;--o:{second_opacity}")),
         );
         let letter = doc.append_text(span, "A");
@@ -1258,12 +1242,7 @@ fn nested_split_first_letter_opacity_keeps_each_owners_enclosing_group() {
     let sheet = "body::first-letter{opacity:var(--o)} div::first-letter{font-size:20px;color:red;background:blue;opacity:.5}";
     let (mut doc, _, quote) = fixture(sheet, Some("display:inline;--o:0"), "“");
     let root = doc.parent_of(doc.parent_of(quote).unwrap()).unwrap();
-    let span = doc.append_element(
-        Some(root),
-        "span",
-        Style::default(),
-        Some("display:inline;--o:1"),
-    );
+    let span = doc.append_element(Some(root), "span", Some("display:inline;--o:1"));
     doc.append_text(span, "A");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -1295,7 +1274,6 @@ fn overlapping_split_first_letter_opacity_keeps_source_paint_order() {
     let span = doc.append_element(
         Some(root),
         "span",
-        Style::default(),
         Some("display:inline;--c:blue;--o:.75;position:relative;left:-20px"),
     );
     doc.append_text(span, "A");
@@ -1317,12 +1295,7 @@ fn split_first_letter_background_excludes_inline_margin_from_its_composite_width
     let sheet = "div::first-letter{font-size:20px;color:transparent;background-image:conic-gradient(red,blue)}";
     let (mut split, _, quote) = fixture(sheet, Some("display:inline"), "“");
     let root = split.parent_of(split.parent_of(quote).unwrap()).unwrap();
-    let span = split.append_element(
-        Some(root),
-        "span",
-        Style::default(),
-        Some("display:inline;margin-left:10px"),
-    );
+    let span = split.append_element(Some(root), "span", Some("display:inline;margin-left:10px"));
     split.append_text(span, "A");
     split.mark_in_document_flags();
     let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
@@ -1400,7 +1373,6 @@ fn split_first_letter_url_background_keeps_one_positioning_area() {
             let span = split.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some(&format!("display:inline;margin-left:{gap}px")),
             );
             split.append_text(span, "A");
@@ -1511,7 +1483,6 @@ fn first_letter_shadow_slices_exclude_real_owner_margins() {
             let second = split.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some(&format!("display:inline;margin-left:{gap}px")),
             );
             split.append_text(second, "A");

@@ -1,5 +1,4 @@
 use crate::Document;
-use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
@@ -27,7 +26,7 @@ fn abs_rect(container_css: &str, float_css: &str, abs_css: &str) -> (f32, f32, f
 fn abs_rect_after(container_css: &str, before: &[&str], abs_css: &str) -> (f32, f32, f32, f32) {
     let mut doc = Document::new();
     let add = |doc: &mut Document, parent: usize, tag: &str, css: &str| {
-        doc.append_element(Some(parent), tag, Style::default(), Some(css))
+        doc.append_element(Some(parent), tag, Some(css))
     };
     let html = add(&mut doc, 0, "html", "display:block");
     let body = add(&mut doc, html, "body", "display:block;margin:0");
@@ -61,15 +60,10 @@ fn abs_rect_after_nested_float(
 ) -> Rect {
     let mut doc = Document::new();
     let add = |doc: &mut Document, parent: usize, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+        doc.append_element(Some(parent), "div", Some(css))
     };
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let container = add(
         &mut doc,
         body,
@@ -202,15 +196,10 @@ fn the_box_keeps_its_place_when_its_containing_block_is_further_up() {
 fn fixed_descendants_stay_where_the_page_area_puts_them() {
     let mut doc = Document::new();
     let add = |doc: &mut Document, parent: usize, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+        doc.append_element(Some(parent), "div", Some(css))
     };
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let container = add(
         &mut doc,
         body,
@@ -281,15 +270,10 @@ fn a_float_in_an_earlier_block_of_the_same_bfc_shortens_the_static_line() {
 fn contents_children_participate_in_the_static_line() {
     let mut doc = Document::new();
     let add = |doc: &mut Document, parent: usize, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+        doc.append_element(Some(parent), "div", Some(css))
     };
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let container = add(
         &mut doc,
         body,
@@ -405,15 +389,10 @@ fn inline_static_line_still_avoids_floats_when_horizontal_inset_is_set() {
 fn shrink_wrapped_inline_static_line_accounts_for_margins_when_fitting() {
     let mut doc = Document::new();
     let add = |doc: &mut Document, parent: usize, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+        doc.append_element(Some(parent), "div", Some(css))
     };
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let container = add(
         &mut doc,
         body,
@@ -458,15 +437,10 @@ fn a_static_line_with_no_float_slot_moves_below_the_floats() {
 fn a_fixed_box_laid_out_again_keeps_its_children_aligned() {
     let mut doc = Document::new();
     let add = |doc: &mut Document, parent: usize, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+        doc.append_element(Some(parent), "div", Some(css))
     };
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let narrow = add(&mut doc, body, "display:block;width:100px");
     // The fixed box is 50px wide against its parent, then 400px against the
     // page area.
@@ -507,15 +481,10 @@ fn fixed_and_replaced_boxes_take_their_line_too() {
 /// the absolute rects of the inner box and of the fixed box inside it.
 fn inside_a_relaid_fixed_box(tag: &str, inner_css: &str, nested_css: &str) -> (Rect, Rect) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let add = |doc: &mut Document, parent: usize, tag: &str, css: &str| {
-        doc.append_element(Some(parent), tag, Style::default(), Some(css))
+        doc.append_element(Some(parent), tag, Some(css))
     };
     let narrow = add(&mut doc, body, "div", "display:block;width:100px");
     let fixed = add(

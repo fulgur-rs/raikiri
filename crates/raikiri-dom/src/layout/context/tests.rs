@@ -1,13 +1,15 @@
 use super::LayoutSession;
 use crate::document::Document;
+use crate::layout::test_support::cascaded;
 use crate::node::Node;
 use crate::node::arena::BoxKey;
 
 #[test]
 fn a_new_session_starts_with_empty_warning_and_error_scratch() {
     let mut document = Document::new();
+    let cascade = cascaded(&document);
     {
-        let mut session = LayoutSession::new(&mut document);
+        let mut session = LayoutSession::with_cascade(&mut document, &cascade);
         session
             .context
             .layout_warnings
@@ -19,7 +21,7 @@ fn a_new_session_starts_with_empty_warning_and_error_scratch() {
         session.context.table_layout_error = Some("table failed".to_owned());
     }
 
-    let session = LayoutSession::new(&mut document);
+    let session = LayoutSession::with_cascade(&mut document, &cascade);
     assert!(session.context.layout_warnings.is_empty());
     assert!(session.context.table_layout_error.is_none());
 }
@@ -27,6 +29,7 @@ fn a_new_session_starts_with_empty_warning_and_error_scratch() {
 #[test]
 fn layout_session_state_covers_every_box_key_kind() {
     let mut document = Document::new();
+    let cascade = cascaded(&document);
     document
         .nodes
         .set_anonymous_tables(vec![Node::new_document()]);
@@ -41,7 +44,7 @@ fn layout_session_state_covers_every_box_key_kind() {
     let table = document.nodes.anonymous_table_key(0);
     let cell = document.nodes.anonymous_cell_key(0);
     let initial_containing_block = usize::MAX;
-    let session = LayoutSession::new(&mut document);
+    let session = LayoutSession::with_cascade(&mut document, &cascade);
 
     assert_eq!(
         session.node_state(source).unwrap().box_key,

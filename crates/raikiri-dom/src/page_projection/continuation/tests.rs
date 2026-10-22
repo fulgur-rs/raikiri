@@ -102,12 +102,7 @@ fn page_start_names_a_block_that_begins_the_page() {
     let mut blocks = Vec::new();
     let (mut doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
         for _ in 0..3 {
-            blocks.push(doc.append_element(
-                Some(root),
-                "div",
-                crate::LayoutStyle::default(),
-                Some("display:block;height:15px"),
-            ));
+            blocks.push(doc.append_element(Some(root), "div", Some("display:block;height:15px")));
         }
     });
     let slices = paginate(&mut doc, &cascade, page_box(100.0, 30.0));
@@ -127,12 +122,7 @@ fn continuation_cascade_drops_breaks_before_the_token() {
             "display:block;break-before:page;break-inside:avoid",
             "display:block;break-before:page",
         ] {
-            blocks.push(doc.append_element(
-                Some(root),
-                "div",
-                crate::LayoutStyle::default(),
-                Some(style),
-            ));
+            blocks.push(doc.append_element(Some(root), "div", Some(style)));
         }
     });
     doc.prepare_continuation_cascade(&mut cascade, PageStartToken::Node(blocks[1]));
@@ -158,12 +148,7 @@ fn page_start_skips_a_float_that_comes_first() {
             "display:block;float:left;width:10px;height:10px",
             "display:block;height:15px",
         ] {
-            blocks.push(doc.append_element(
-                Some(root),
-                "div",
-                crate::LayoutStyle::default(),
-                Some(style),
-            ));
+            blocks.push(doc.append_element(Some(root), "div", Some(style)));
         }
     });
     let slices = paginate(&mut doc, &cascade, page_box(100.0, 30.0));

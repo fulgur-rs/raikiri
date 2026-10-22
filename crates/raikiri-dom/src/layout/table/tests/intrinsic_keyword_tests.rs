@@ -3,11 +3,10 @@ use super::*;
 fn cell_with_text(limits: &str) -> (Document, usize) {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let cell = doc.append_element(
         Some(html),
         "td",
-        Style::default(),
         Some(&format!(
             "display:table-cell;font-family:Ahem;font-size:10px;line-height:10px;{limits}"
         )),
@@ -60,17 +59,15 @@ fn compute_table_width_with_cells(
 ) -> f32 {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:200px"),
     );
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some(&format!("display:table;border-spacing:0;{limits}")),
     );
     if collapse_first_column {
@@ -79,22 +76,15 @@ fn compute_table_width_with_cells(
             doc.append_element(
                 Some(table),
                 "col",
-                Style::default(),
                 Some(&format!("display:table-column;visibility:{visibility}")),
             );
         }
     }
     for _ in 0..rows {
-        let row = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
         for _ in 0..columns {
             let cell = doc.append_element(
-                Some(row), "td", Style::default(),
-                Some(&format!("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px;{cell_limits}")),
+                Some(row), "td", Some(&format!("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px;{cell_limits}")),
             );
             doc.append_text(cell, "AAAA BBBB");
         }
@@ -167,18 +157,8 @@ fn cell_fit_content_uses_available_column_room() {
 fn spanning_cell_min_width_max_content_distributes_across_tracks() {
     let (mut doc, spanning_cell) = cell_with_text("min-width:max-content");
     let html = doc.nodes[spanning_cell].parent.unwrap();
-    let first = doc.append_element(
-        Some(html),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
-    let second = doc.append_element(
-        Some(html),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let first = doc.append_element(Some(html), "td", Some("display:table-cell"));
+    let second = doc.append_element(Some(html), "td", Some("display:table-cell"));
     let grid = super::super::TableGrid {
         n_cols: 2,
         rows: vec![],
@@ -225,29 +205,21 @@ fn cell_min_width_keyword_counts_padding_and_border_once() {
 fn wrapper_max_width_min_content_bounds_columns_before_distribution() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:200px"),
     );
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display:table;border-spacing:0;max-width:min-content"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     let cell = doc.append_element(
         Some(row),
         "td",
-        Style::default(),
         Some("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     doc.append_text(cell, "AAAA BBBB");
@@ -262,29 +234,21 @@ fn wrapper_max_width_min_content_bounds_columns_before_distribution() {
 fn wrapper_min_width_max_content_wins_over_max_min_content() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:200px"),
     );
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display:table;border-spacing:0;min-width:max-content;max-width:min-content"),
     );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     let cell = doc.append_element(
         Some(row),
         "td",
-        Style::default(),
         Some("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     doc.append_text(cell, "AAAA BBBB");
@@ -299,36 +263,23 @@ fn wrapper_min_width_max_content_wins_over_max_min_content() {
 fn caption_min_width_max_content_contributes_to_table_minimum() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:200px"),
     );
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display:table;border-spacing:0"),
-    );
+    let table = doc.append_element(Some(body), "table", Some("display:table;border-spacing:0"));
     let caption = doc.append_element(
         Some(table),
         "caption",
-        Style::default(),
         Some("display:table-caption;min-width:max-content;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     doc.append_text(caption, "AAAA BBBB");
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     doc.append_element(
         Some(row),
         "td",
-        Style::default(),
         Some("display:table-cell;width:10px;height:10px;padding:0"),
     );
 
@@ -392,39 +343,30 @@ fn vertical_fit_content_limit_without_basis_uses_intrinsic_available_space() {
 fn vertical_caption_min_height_max_content_contributes_to_table_inline_size() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:200px"),
     );
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display:table;border-spacing:0;writing-mode:vertical-rl"),
     );
     let caption = doc.append_element(
         Some(table),
         "caption",
-        Style::default(),
         Some(
             "display:table-caption;min-height:max-content;margin-top:3px;margin-bottom:4px;\
              font-family:Ahem;font-size:10px;line-height:10px",
         ),
     );
     doc.append_text(caption, "AAAA BBBB");
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     doc.append_element(
         Some(row),
         "td",
-        Style::default(),
         Some("display:table-cell;width:10px;height:10px;padding:0"),
     );
 

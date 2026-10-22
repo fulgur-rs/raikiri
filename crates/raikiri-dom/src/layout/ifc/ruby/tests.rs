@@ -1,12 +1,11 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use crate::layout::PositionedLines;
 use crate::layout::ifc::test_support::{Fixture, block_fixture, sheet_fixture};
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{page_box_800x600, with_ahem};
 
 fn element(doc: &mut Document, parent: usize, tag: &str, style: &str) -> usize {
-    doc.append_element(Some(parent), tag, Style::default(), Some(style))
+    doc.append_element(Some(parent), tag, Some(style))
 }
 
 /// `<tag style="{style}">{text}</tag>` under `parent`.
@@ -1141,12 +1140,7 @@ fn rubies_with_anonymous_parts_and_intra_level_spaces_lay_out() {
         let span = element(doc, container, "span", "position:relative;left:1px");
         doc.append_text(span, "c");
         doc.append_text(container, " ");
-        doc.append_element(
-            Some(container),
-            "br",
-            Style::default(),
-            Some("display:inline"),
-        );
+        doc.append_element(Some(container), "br", Some("display:inline"));
         let rtc = element(doc, container, "rtc", "display:ruby-text-container");
         rt(doc, rtc, "x");
         doc.append_text(rtc, " ");

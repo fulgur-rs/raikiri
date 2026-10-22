@@ -1,12 +1,11 @@
 use super::*;
-use crate::LayoutStyle as Style;
 
 #[test]
 fn append_child_moves_elements_and_rejects_cycles() {
     let mut doc = Document::new();
-    let first = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let second = doc.append_element(Some(0), "section", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(first), "span", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(0), "div", None::<&str>);
+    let second = doc.append_element(Some(0), "section", None::<&str>);
+    let child = doc.append_element(Some(first), "span", None::<&str>);
 
     doc.append_child(second, child).unwrap();
     assert!(doc.nodes[first].children.is_empty());
@@ -19,8 +18,8 @@ fn append_child_moves_elements_and_rejects_cycles() {
 #[test]
 fn append_child_rejects_stale_indices_and_hierarchy_violations() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(None, "span", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let child = doc.append_element(None, "span", None::<&str>);
 
     assert!(doc.append_child(usize::MAX, child).is_err());
     // The Document root already has `host` as its one Element child, so a
@@ -39,7 +38,7 @@ fn append_child_accepts_comment_and_processing_instruction_children() {
     // CharacterData node -- Comment and ProcessingInstruction included --
     // as a plain Element's child.
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
     let comment = doc.create_detached_comment("note");
     let pi = doc.append_processing_instruction(None, "target", "data");
 
@@ -51,7 +50,7 @@ fn append_child_accepts_comment_and_processing_instruction_children() {
 #[test]
 fn append_child_splices_fragment_children() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "main", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "main", None::<&str>);
     let fragment = doc.nodes.len();
     doc.nodes.push(Node::new_document_fragment());
     let child = doc.append_text(fragment, "from fragment");
@@ -78,8 +77,8 @@ fn detached_element_creation_validates_xml_names() {
 #[test]
 fn element_text_content_reads_descendants_and_replaces_them() {
     let mut doc = Document::new();
-    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let nested = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+    let host = doc.append_element(Some(0), "div", None::<&str>);
+    let nested = doc.append_element(Some(host), "span", None::<&str>);
     let nested_text = doc.append_text(nested, "first");
     doc.append_comment(Some(nested), "ignored comment");
     doc.append_text(host, " second");

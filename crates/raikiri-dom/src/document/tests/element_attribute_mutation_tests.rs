@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use raikiri_traits::{Dom as _, Element as _, Node as _, NodeId};
 
 fn element_attributes(doc: &Document, id: usize) -> Vec<(String, String)> {
@@ -88,8 +87,8 @@ fn remove_element_attribute_panics_for_a_non_element() {
 #[test]
 fn remove_element_attribute_validates_names_and_preserves_foreign_case() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let svg = doc.append_element(Some(0), "svg", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "div", None::<&str>);
+    let svg = doc.append_element(Some(0), "svg", None::<&str>);
     doc.set_element_namespace(svg, Some(SmolStr::new("http://www.w3.org/2000/svg")));
 
     assert!(doc.remove_element_attribute(html, "bad name").is_err());
@@ -105,7 +104,7 @@ fn remove_element_attribute_validates_names_and_preserves_foreign_case() {
 #[test]
 fn element_attribute_accessors_return_none_for_non_elements_and_match_html_case() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "div", None::<&str>);
     let text = doc.append_text(html, "text");
     doc.set_element_attribute(html, "title", "heading").unwrap();
     assert_eq!(doc.element_namespace_uri(html), Some(XHTML_NAMESPACE_URI));
@@ -119,7 +118,7 @@ fn element_attribute_accessors_return_none_for_non_elements_and_match_html_case(
 #[test]
 fn set_and_remove_element_attribute_preserve_order_and_route_style_separately() {
     let mut doc = Document::new();
-    let id = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "div", None::<&str>);
     doc.set_element_attributes(
         id,
         vec![

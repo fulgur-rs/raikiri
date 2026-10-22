@@ -1,6 +1,5 @@
 //! Public-layout regression coverage for whitespace between inline boxes.
 
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -8,24 +7,13 @@ use raikiri_traits::PageBox;
 #[test]
 fn public_layout_preserves_collapsed_whitespace_between_inline_boxes() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let block =
-        document.append_element(Some(body), "div", Style::default(), Some("display: block"));
-    let left = document.append_element(
-        Some(block),
-        "span",
-        Style::default(),
-        Some("display: inline"),
-    );
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
+    let block = document.append_element(Some(body), "div", Some("display: block"));
+    let left = document.append_element(Some(block), "span", Some("display: inline"));
     document.append_text(left, "left");
     let whitespace = document.append_text(block, "\n  ");
-    let right = document.append_element(
-        Some(block),
-        "span",
-        Style::default(),
-        Some("display: inline"),
-    );
+    let right = document.append_element(Some(block), "span", Some("display: inline"));
     document.append_text(right, "right");
 
     let rules = build_rule_tree(&document);

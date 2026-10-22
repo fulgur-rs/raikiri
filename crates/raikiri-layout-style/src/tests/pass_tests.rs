@@ -18,8 +18,8 @@ fn clear_override_has_pass_and_scope_precedence() {
 }
 
 #[test]
-fn retained_override_projection_matches_getters_for_every_physical_property() {
-    use taffy::GridItemStyle;
+fn every_physical_override_reaches_its_getter() {
+    use taffy::{Dimension, GridItemStyle, LengthPercentage as Lp, LengthPercentageAuto as Lpa};
     let values = ComputedValues::initial();
     let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
     let mut entries = Vec::new();
@@ -39,47 +39,87 @@ fn retained_override_projection_matches_getters_for_every_physical_property() {
         OwnedPropertyOverride::justify_self(Some(taffy::AlignSelf::END)),
     ]);
     let mut pass = Vec::new();
-    let mut style = taffy::Style::<raikiri_style::SmolStr>::default();
     for entry in entries {
-        entry.apply_to_style(&mut style);
         entry.install(&mut pass);
-        let view =
-            LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
-        assert_eq!(view.size(), style.size);
-        assert_eq!(view.min_size(), style.min_size);
-        assert_eq!(view.max_size(), style.max_size);
-        assert_eq!(view.margin(), style.margin);
-        assert_eq!(view.padding(), style.padding);
-        assert_eq!(view.border(), style.border);
-        assert_eq!(view.inset(), style.inset);
-        assert_eq!(view.flex_basis(), style.flex_basis);
-        assert_eq!(view.gap(), style.gap);
-        assert_eq!(view.aspect_ratio(), style.aspect_ratio);
-        assert_eq!(view.overflow(), style.overflow);
-        assert_eq!(view.clear(), style.clear);
-        assert_eq!(view.flex_shrink(), style.flex_shrink);
-        assert_eq!(FlexboxItemStyle::align_self(&view), style.align_self);
-        assert_eq!(view.justify_self(), style.justify_self);
     }
+    // Each property keeps its last entry only.
     assert_eq!(pass.len(), LengthProperty::ALL.len() - 3 + 7);
+    let view = LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
+    let dimension = Dimension::length(17.0);
+    let length = Lp::length(17.0);
+    let length_or_auto = Lpa::length(17.0);
+    assert_eq!(
+        view.size(),
+        taffy::Size {
+            width: dimension,
+            height: dimension
+        }
+    );
+    assert_eq!(
+        view.min_size(),
+        taffy::Size {
+            width: length_or_auto,
+            height: length_or_auto
+        }
+    );
+    assert_eq!(
+        view.max_size(),
+        taffy::Size {
+            width: length_or_auto,
+            height: length_or_auto
+        }
+    );
+    fn sides<T: Copy>(side: T) -> taffy::Rect<T> {
+        taffy::Rect {
+            left: side,
+            right: side,
+            top: side,
+            bottom: side,
+        }
+    }
+    assert_eq!(view.margin(), sides(length_or_auto));
+    assert_eq!(view.padding(), sides(length));
+    assert_eq!(view.border(), sides(length));
+    assert_eq!(view.inset(), sides(length_or_auto));
+    assert_eq!(view.flex_basis(), dimension);
+    assert_eq!(
+        view.gap(),
+        taffy::Size {
+            width: length,
+            height: length
+        }
+    );
+    assert_eq!(view.aspect_ratio(), None);
+    assert_eq!(
+        view.overflow(),
+        taffy::Point {
+            x: taffy::Overflow::Hidden,
+            y: taffy::Overflow::Scroll
+        }
+    );
+    assert_eq!(view.clear(), taffy::Clear::Both);
+    assert_eq!(view.flex_shrink(), 0.5);
+    assert_eq!(
+        FlexboxItemStyle::align_self(&view),
+        Some(taffy::AlignSelf::START)
+    );
+    assert_eq!(view.justify_self(), Some(taffy::AlignSelf::END));
 }
 
 #[test]
-fn flex_shrink_projection_preserves_the_getter_override_value() {
+fn flex_shrink_getter_preserves_the_override_value() {
     let values = ComputedValues::initial();
     let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
     for value in [-1.0, f32::NAN, f32::INFINITY, 1.0e8] {
         let entries = [OwnedPropertyOverride::flex_shrink(value)];
         let view =
             LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &entries, &[]);
-        let mut style = taffy::Style::default();
-        entries[0].apply_to_style(&mut style);
-        assert_eq!(view.flex_shrink().to_bits(), style.flex_shrink.to_bits());
+        assert_eq!(view.flex_shrink().to_bits(), value.to_bits());
     }
 }
 
 #[test]
-fn clearance_projection_covers_each_authored_side() {
+fn clearance_covers_each_authored_side() {
     for (value, expected) in [
         (ClearValue::None, taffy::Clear::None),
         (ClearValue::Left, taffy::Clear::Left),
@@ -92,8 +132,5 @@ fn clearance_projection_covers_each_authored_side() {
         let view =
             LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &[], &[]);
         assert_eq!(view.clear(), expected);
-        let mut style = taffy::Style::default();
-        OwnedPropertyOverride::clear(value).apply_to_style(&mut style);
-        assert_eq!(style.clear, expected);
     }
 }

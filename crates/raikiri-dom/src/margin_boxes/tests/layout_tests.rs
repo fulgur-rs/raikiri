@@ -1070,12 +1070,7 @@ fn page_counter_base_is_zero_when_the_root_element_has_no_reset() {
     // The first element child of the document is the root element, whatever
     // its name; one without a `counter-reset` leaves the base at zero.
     let mut doc = engine_document();
-    let style = doc.append_element(
-        Some(doc.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(doc.root_index()), "style", None::<&str>);
     doc.append_text(
         style,
         "@page { margin: 40px; @top-left { content: counter(page) } }",
@@ -1141,9 +1136,9 @@ fn margin_box_quotes_come_from_the_box_the_page_or_the_root() {
 #[test]
 fn named_strings_and_running_elements_resolve_to_document_text() {
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "h1 { string-set: title 'Ch. ' content() } \
@@ -1153,10 +1148,10 @@ fn named_strings_and_running_elements_resolve_to_document_text() {
            @top-right { content: element(hdr) } \
            @bottom-left { content: string(missing) element(missing) attr(id) } }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let h1 = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let h1 = doc.append_element(Some(body), "h1", None::<&str>);
     doc.append_text(h1, "  One \n Two ");
-    let hdr = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let hdr = doc.append_element(Some(body), "div", None::<&str>);
     doc.append_text(hdr, "Running head");
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -1179,9 +1174,9 @@ fn named_strings_and_running_elements_keep_no_break_spaces_and_form_feeds() {
     // CSS Text 3 §4.1 collapses only spaces, tabs and segment breaks;
     // U+00A0 and U+000C are ordinary text in the string value.
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "h1 { string-set: title content() } \
@@ -1190,10 +1185,10 @@ fn named_strings_and_running_elements_keep_no_break_spaces_and_form_feeds() {
            @top-left { content: string(title) } \
            @top-right { content: element(hdr) } }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let h1 = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let h1 = doc.append_element(Some(body), "h1", None::<&str>);
     doc.append_text(h1, " A\u{A0}\u{A0}B ");
-    let hdr = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let hdr = doc.append_element(Some(body), "div", None::<&str>);
     doc.append_text(hdr, "C\u{C}D");
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -1213,9 +1208,9 @@ fn named_strings_and_running_elements_keep_no_break_spaces_and_form_feeds() {
 #[test]
 fn shared_named_values_take_the_last_assignment_on_every_page() {
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "h1 { string-set: title content(), title 'Last ' content() } \
@@ -1224,11 +1219,11 @@ fn shared_named_values_take_the_last_assignment_on_every_page() {
            @top-left { content: string(title) } \
            @top-right { content: element(hdr) } }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     for (heading, running) in [("One", "First head"), ("Two", "Second head")] {
-        let h1 = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+        let h1 = doc.append_element(Some(body), "h1", None::<&str>);
         doc.append_text(h1, heading);
-        let hdr = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let hdr = doc.append_element(Some(body), "div", None::<&str>);
         doc.append_text(hdr, running);
     }
     let rules = build_rule_tree(&doc);
@@ -1429,9 +1424,9 @@ fn named_values_follow_document_order_after_the_tree_changes() {
     // Moving the first heading after the second, and detaching a third,
     // leaves the arena order unlike the document order.
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         "h1 { string-set: title content() } \
@@ -1440,12 +1435,12 @@ fn named_values_follow_document_order_after_the_tree_changes() {
            @top-left { content: string(title) } \
            @top-right { content: element(hdr) } }",
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let mut moved = Vec::new();
     for (heading, running) in [("Last", "Last head"), ("First", "First head")] {
-        let h1 = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+        let h1 = doc.append_element(Some(body), "h1", None::<&str>);
         doc.append_text(h1, heading);
-        let hdr = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let hdr = doc.append_element(Some(body), "div", None::<&str>);
         doc.append_text(hdr, running);
         moved.extend([h1, hdr]);
     }
@@ -1453,7 +1448,7 @@ fn named_values_follow_document_order_after_the_tree_changes() {
         doc.detach_from_parent(node);
         doc.append_child(body, node).unwrap();
     }
-    let detached = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+    let detached = doc.append_element(Some(body), "h1", None::<&str>);
     doc.append_text(detached, "Detached");
     doc.detach_from_parent(detached);
     let rules = build_rule_tree(&doc);

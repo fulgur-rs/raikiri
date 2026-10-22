@@ -1,7 +1,6 @@
 //! Page projection contracts.
 
 use super::super::super::*;
-use crate::LayoutStyle as Style;
 use crate::layout::test_support::{absolute_rect, ahem_paragraph_with, with_ahem};
 use raikiri_style::{Origin, build_rule_tree, cascade};
 use raikiri_traits::{NodeId, PageBox};
@@ -13,12 +12,7 @@ fn many_sibling_inline_boxes_project_within_two_seconds() {
 
     let (mut document, cascade, root) = ahem_paragraph_with("width:800px", |doc, root| {
         for _ in 0..30_000 {
-            doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some("display:inline;padding:1px"),
-            );
+            doc.append_element(Some(root), "span", Some("display:inline;padding:1px"));
         }
     });
     layout_single_page(with_ahem(&mut document), &cascade, PageBox::A4).expect("layout");
@@ -86,26 +80,17 @@ fn many_sibling_text_nodes_project_within_two_seconds() {
 #[test]
 fn separate_ifc_roots_project_their_own_wrapped_pieces_and_text_lines() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
     let mut owners = Vec::new();
     for padding in [3, 7] {
         let css = format!(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;\
              width:40px;padding-left:{padding}px"
         );
-        let root = document.append_element(Some(body), "div", Style::default(), Some(&css));
-        let span = document.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("display:inline;padding:0 1px"),
-        );
+        let root = document.append_element(Some(body), "div", Some(&css));
+        let span =
+            document.append_element(Some(root), "span", Some("display:inline;padding:0 1px"));
         let text = document.append_text(span, "aaaa bbbb");
         owners.push((root, span, text));
     }
@@ -126,7 +111,7 @@ fn separate_ifc_roots_project_their_own_wrapped_pieces_and_text_lines() {
     );
     assert_eq!(pages.len(), 1);
     for (root, span, text) in owners {
-        let node = &document.layout_node_with_style(root).unwrap();
+        let node = &document.nodes[root];
         assert!(node.is_ifc_root());
         let expected_box = node
             .ifc_inline_boxes()
@@ -190,21 +175,11 @@ fn separate_ifc_roots_project_their_own_wrapped_pieces_and_text_lines() {
 #[test]
 fn public_page_fragment_snapshot_is_node_ordered() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let first = document.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let first = document.append_element(Some(body), "div", Some("display:block;height:10px"));
     document.append_text(first, "first");
-    let second = document.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let second = document.append_element(Some(body), "div", Some("display:block;height:10px"));
     document.append_text(second, "second");
 
     let rules = build_rule_tree(&document);
@@ -256,26 +231,23 @@ fn public_page_fragment_item_keeps_repeat_distinct_from_split() {
 #[test]
 fn fixed_position_subtrees_repeat_on_every_page() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let flow = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;height:70px;width:20px"),
     );
     document.append_text(flow, "flow");
     let fixed = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:fixed;top:0;left:0;width:20px;height:5px"),
     );
     let fixed_text = document.append_text(fixed, "fixed");
     let fixed_link = document.append_element(
         Some(body),
         "a",
-        Style::default(),
         Some("position:fixed;top:10px;left:0;width:20px;height:5px"),
     );
     document.set_element_attributes(
@@ -286,7 +258,6 @@ fn fixed_position_subtrees_repeat_on_every_page() {
     let forced = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;break-before:page;height:10px"),
     );
     document.append_text(forced, "forced");
@@ -371,12 +342,11 @@ fn fixed_position_subtrees_repeat_on_every_page() {
 #[test]
 fn page_fragment_link_events_preserve_anchor_and_placement_geometry() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
     let anchor = document.append_element(
         Some(body),
         "a",
-        Style::default(),
         Some("display:block;width:80px;height:10px"),
     );
     document.set_element_attributes(
@@ -414,12 +384,11 @@ fn page_fragment_link_events_preserve_anchor_and_placement_geometry() {
 #[test]
 fn page_fragment_link_events_keep_empty_href_and_skip_non_links_and_hidden_nodes() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
     let empty = document.append_element(
         Some(body),
         "a",
-        Style::default(),
         Some("display:block;width:30px;height:10px"),
     );
     document.set_element_attributes(empty, vec![(SmolStr::new("href"), SmolStr::new(""))]);
@@ -427,11 +396,10 @@ fn page_fragment_link_events_keep_empty_href_and_skip_non_links_and_hidden_nodes
     let no_href = document.append_element(
         Some(body),
         "a",
-        Style::default(),
         Some("display:block;width:30px;height:10px"),
     );
     document.append_text(no_href, "not a link");
-    let hidden = document.append_element(Some(body), "a", Style::default(), Some("display:none"));
+    let hidden = document.append_element(Some(body), "a", Some("display:none"));
     document.set_element_attributes(
         hidden,
         vec![(SmolStr::new("href"), SmolStr::new("#hidden"))],
@@ -440,7 +408,6 @@ fn page_fragment_link_events_keep_empty_href_and_skip_non_links_and_hidden_nodes
     let link_element = document.append_element(
         Some(body),
         "link",
-        Style::default(),
         Some("display:block;width:30px;height:10px"),
     );
     document.set_element_attributes(
@@ -463,13 +430,12 @@ fn page_fragment_link_events_keep_empty_href_and_skip_non_links_and_hidden_nodes
 #[test]
 fn page_fragment_link_event_order_is_page_and_node_deterministic() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
     for (href, text) in [("#second", "second"), ("#first", "first")] {
         let anchor = document.append_element(
             Some(body),
             "a",
-            Style::default(),
             Some("display:block;width:40px;height:10px"),
         );
         document.set_element_attributes(anchor, vec![(SmolStr::new("href"), SmolStr::new(href))]);
@@ -502,14 +468,14 @@ fn page_fragment_link_events_skip_documents_without_a_body() {
 #[test]
 fn page_fragment_link_events_prefer_leaf_placements_and_keep_box_fallbacks() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let anchor = document.append_element(Some(body), "a", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
+    let anchor = document.append_element(Some(body), "a", None::<&str>);
     document.set_element_attributes(
         anchor,
         vec![(SmolStr::new("href"), SmolStr::new("#target"))],
     );
-    let span = document.append_element(Some(anchor), "span", Style::default(), None::<&str>);
+    let span = document.append_element(Some(anchor), "span", None::<&str>);
     let direct_text = document.append_text(anchor, "direct");
     document.append_text(span, "nested");
 
@@ -559,12 +525,11 @@ fn page_fragment_link_events_prefer_leaf_placements_and_keep_box_fallbacks() {
 #[test]
 fn page_fragment_margin_padding_coordinates_are_applied_once() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let box_id = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:10px;height:10px"),
     );
     document.append_text(box_id, "box");
@@ -675,22 +640,16 @@ fn page_fragment_projection_keeps_distinct_resolved_geometry_per_page() {
 #[test]
 fn named_page_propagation_skips_out_of_flow_children() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let named = document.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;page:named"),
-    );
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let named = document.append_element(Some(body), "div", Some("display:block;page:named"));
     let out = document.append_element(
         Some(named),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;top:0"),
     );
     document.append_text(out, "out of flow");
-    let flow = document.append_element(Some(named), "div", Style::default(), Some("display:block"));
+    let flow = document.append_element(Some(named), "div", Some("display:block"));
     document.append_text(flow, "in flow");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade named-page fixture");
@@ -746,12 +705,7 @@ fn a_text_inside_a_span_starts_at_the_root_content_origin() {
     let (mut doc, _cascade, root) =
         ahem_paragraph("", "width:40px;padding:5px;box-sizing:content-box");
     doc.append_text(root, "aa ");
-    let span = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline;padding-left:3px"),
-    );
+    let span = doc.append_element(Some(root), "span", Some("display:inline;padding-left:3px"));
     let text = doc.append_text(span, "bbbb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -787,12 +741,7 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
     // natural break.
     let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px;widows:1");
     doc.append_text(root, "aa ");
-    let span = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline"),
-    );
+    let span = doc.append_element(Some(root), "span", Some("display:inline"));
     let text = doc.append_text(span, "bbbb cccc dddd");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -822,12 +771,7 @@ fn an_ifc_paragraph_that_would_leave_one_line_behind_moves() {
     {
         let (mut doc, _cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
         let body = doc.parent_of(root).expect("body");
-        let spacer = doc.append_element(
-            Some(body),
-            "div",
-            crate::LayoutStyle::default(),
-            Some("display:block;height:25px"),
-        );
+        let spacer = doc.append_element(Some(body), "div", Some("display:block;height:25px"));
         doc.nodes[body].children.retain(|&c| c != spacer);
         doc.nodes[body].children.insert(0, spacer);
         doc.mark_in_document_flags();
@@ -872,7 +816,6 @@ fn pages_of_a_fixed_height_paragraph(
         let spacer = doc.append_element(
             Some(body),
             "div",
-            crate::LayoutStyle::default(),
             Some(format!("display:block;height:{spacer_height}px").as_str()),
         );
         doc.nodes[body].children.retain(|&c| c != spacer);
@@ -933,21 +876,11 @@ fn ranges_of_a_text_below_a_span(
     let mut results = Vec::new();
     {
         let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
-        let span = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline"),
-        );
+        let span = doc.append_element(Some(root), "span", Some("display:inline"));
         doc.append_text(span, "aa ");
         let text = doc.append_text(root, "bbbb cccc");
         let body = doc.parent_of(root).expect("body");
-        let spacer = doc.append_element(
-            Some(body),
-            "div",
-            crate::LayoutStyle::default(),
-            Some("display:block;height:15px"),
-        );
+        let spacer = doc.append_element(Some(body), "div", Some("display:block;height:15px"));
         doc.nodes[body].children.retain(|&c| c != spacer);
         doc.nodes[body].children.insert(0, spacer);
         doc.mark_in_document_flags();
@@ -1002,16 +935,10 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
                 doc.append_text(root, "aaaa");
             });
         let body = doc.parent_of(root).expect("body");
-        let section = doc.append_element(
-            Some(body),
-            "section",
-            crate::LayoutStyle::default(),
-            Some("display:block;page:a"),
-        );
+        let section = doc.append_element(Some(body), "section", Some("display:block;page:a"));
         let named = doc.append_element(
             Some(section),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;page:b;font-family:Ahem;font-size:10px;line-height:10px"),
         );
         doc.append_text(named, "x");
@@ -1020,7 +947,6 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
         let next = doc.append_element(
             Some(section),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
         );
         doc.append_text(next, "bbbb");
@@ -1070,12 +996,7 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
     // must start again from the laid-out positions, not add a second move.
     let (mut doc, _cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:40px");
     let body = doc.parent_of(root).expect("body");
-    let spacer = doc.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block;height:25px"),
-    );
+    let spacer = doc.append_element(Some(body), "div", Some("display:block;height:25px"));
     doc.nodes[body].children.retain(|&c| c != spacer);
     doc.nodes[body].children.insert(0, spacer);
     doc.mark_in_document_flags();
@@ -1111,18 +1032,16 @@ fn a_box_moved_inside_a_body_paragraph_is_not_moved_again_by_the_text_after_it()
     let mut results = Vec::new();
     {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
         );
         doc.append_text(body, "aa ");
         let block = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:20px;orphans:1;widows:1"),
         );
         let inner = doc.append_text(block, "bbbb cccc");
@@ -1152,20 +1071,18 @@ fn pagination_keeps_an_atomic_inside_a_span_on_its_line() {
     // `aa <span>bb<b></b></span>` in a body paragraph: the inline-block's
     // page fragment is where the line put it, not offset again by the span.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:100px"),
     );
     doc.append_text(body, "aa ");
-    let span = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(body), "span", None::<&str>);
     doc.append_text(span, "bb");
     let atomic = doc.append_element(
         Some(span),
         "b",
-        Style::default(),
         Some("display:inline-block;width:20px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -1197,16 +1114,15 @@ fn a_block_inside_a_span_of_a_body_paragraph_moves_to_the_next_page_like_a_direc
     let mut results = Vec::new();
     for nested in [false, true] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
         );
         doc.append_text(body, "aa ");
         let parent = if nested {
-            doc.append_element(Some(body), "span", Style::default(), None::<&str>)
+            doc.append_element(Some(body), "span", None::<&str>)
         } else {
             body
         };
@@ -1214,7 +1130,6 @@ fn a_block_inside_a_span_of_a_body_paragraph_moves_to_the_next_page_like_a_direc
         let block = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;height:20px;orphans:1;widows:1"),
         );
         let inner = doc.append_text(block, "bbbb cccc");
@@ -1250,21 +1165,19 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
     // span's own location (10px down) is not added to the block's when
     // pagination checks whether it fits.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
     );
     doc.append_text(body, "aa");
-    doc.append_element(Some(body), "br", Style::default(), Some("display:inline"));
-    let span = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+    doc.append_element(Some(body), "br", Some("display:inline"));
+    let span = doc.append_element(Some(body), "span", None::<&str>);
     doc.append_text(span, "bb");
     let block = doc.append_element(
         Some(span),
         "div",
-        Style::default(),
         Some("display:block;height:20px;orphans:1;widows:1"),
     );
     let inner = doc.append_text(block, "cccc");
@@ -1295,20 +1208,14 @@ fn a_block_inside_a_span_that_fits_its_page_stays_there() {
 /// count.
 fn forced_break_in_a_body_paragraph(css: &str) -> ((u32, f32), (u32, f32), usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     doc.append_text(body, "aa");
-    let block = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some(&format!("display:block;{css}")),
-    );
+    let block = doc.append_element(Some(body), "div", Some(&format!("display:block;{css}")));
     let inner = doc.append_text(block, "bb");
     let tail = doc.append_text(body, " cc");
     doc.mark_in_document_flags();
@@ -1368,21 +1275,15 @@ fn a_forced_break_after_text_inside_a_span_starts_a_page() {
     // The body paragraph's only text is inside a link: the break before the
     // block is still not the first thing on the page.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
-    let link = doc.append_element(Some(body), "a", Style::default(), None::<&str>);
+    let link = doc.append_element(Some(body), "a", None::<&str>);
     doc.append_text(link, "aa");
-    let block = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;break-before:page"),
-    );
+    let block = doc.append_element(Some(body), "div", Some("display:block;break-before:page"));
     let inner = doc.append_text(block, "bb");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -1410,22 +1311,17 @@ fn a_forced_break_after_text_inside_a_span_starts_a_page() {
 fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
     let run = || {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
         );
         doc.append_text(body, "aa");
         let mut texts = Vec::new();
         for (inner, tail) in [("bb", " cc"), ("dd", " ee")] {
-            let block = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;break-before:page"),
-            );
+            let block =
+                doc.append_element(Some(body), "div", Some("display:block;break-before:page"));
             texts.push(doc.append_text(block, inner));
             texts.push(doc.append_text(body, tail));
         }
@@ -1467,18 +1363,16 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
     // follows it there (on both paths).
     let run = || {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
         );
         doc.append_text(body, "aa");
         let block = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:20px;orphans:1;widows:1"),
         );
         let inner = doc.append_text(block, "bbbb cccc");
@@ -1517,20 +1411,14 @@ fn nested_named_pages_inside_paragraphs_start_their_pages() {
     // them that returns to the outer page name.
     let run = || {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
         );
         let div = |doc: &mut Document, parent: usize, css: &str| {
-            doc.append_element(
-                Some(parent),
-                "div",
-                Style::default(),
-                Some(&format!("display:block;{css}")),
-            )
+            doc.append_element(Some(parent), "div", Some(&format!("display:block;{css}")))
         };
         let mut texts = Vec::new();
         let d1 = div(&mut doc, body, "page:a");
@@ -1622,11 +1510,10 @@ fn engine_fragments_of(
     build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
 ) -> Vec<(u32, f32, f32)> {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     let ids = build(&mut doc, body);
@@ -1661,9 +1548,9 @@ fn a_nested_inline_element_is_located_on_its_line() {
     // x = 80 on the first line, not at its offset inside <b>.
     let fragments = engine_fragments_of(|doc, body| {
         doc.append_text(body, "aaaa ");
-        let b = doc.append_element(Some(body), "b", Style::default(), None::<&str>);
+        let b = doc.append_element(Some(body), "b", None::<&str>);
         doc.append_text(b, "bb ");
-        let a = doc.append_element(Some(b), "a", Style::default(), None::<&str>);
+        let a = doc.append_element(Some(b), "a", None::<&str>);
         doc.append_text(a, "cc");
         vec![b, a]
     });
@@ -1676,14 +1563,9 @@ fn an_inline_element_after_a_block_moved_to_the_next_page_follows_its_line() {
     // span is on the second page, on the line after the block.
     let fragments = engine_fragments_of(|doc, body| {
         doc.append_text(body, "aa");
-        let block = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;break-before:page"),
-        );
+        let block = doc.append_element(Some(body), "div", Some("display:block;break-before:page"));
         doc.append_text(block, "bb");
-        let span = doc.append_element(Some(body), "span", Style::default(), None::<&str>);
+        let span = doc.append_element(Some(body), "span", None::<&str>);
         doc.append_text(span, "cc");
         vec![span]
     });
@@ -1693,16 +1575,14 @@ fn an_inline_element_after_a_block_moved_to_the_next_page_follows_its_line() {
 #[test]
 fn nested_column_flex_page_names_break_inside_the_item() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
-    let block = |doc: &mut Document, parent, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
-    };
+    let block =
+        |doc: &mut Document, parent, css: &str| doc.append_element(Some(parent), "div", Some(css));
     let before = block(&mut doc, body, "display:block");
     let a = doc.append_text(before, "a");
     let flex = block(&mut doc, body, "display:flex;flex-direction:column");
@@ -1748,15 +1628,14 @@ fn nested_column_flex_page_names_break_inside_the_item() {
 fn nested_column_flex_named_boundary_matches_an_explicit_break_with_body_margin() {
     let run = |named: bool| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:8px;font:10px/10px Ahem"),
         );
         let block = |doc: &mut Document, parent, css: &str| {
-            doc.append_element(Some(parent), "div", Style::default(), Some(css))
+            doc.append_element(Some(parent), "div", Some(css))
         };
         let before = block(&mut doc, body, "display:block");
         let a = doc.append_text(before, "a");
@@ -1819,15 +1698,14 @@ fn non_flow_text_does_not_reset_a_column_items_named_page() {
         "position:fixed;left:80px;top:0",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font:10px/10px Ahem"),
         );
         let block = |doc: &mut Document, parent, css: &str| {
-            doc.append_element(Some(parent), "div", Style::default(), Some(css))
+            doc.append_element(Some(parent), "div", Some(css))
         };
         let before = block(&mut doc, body, "display:block");
         let a = doc.append_text(before, "a");
@@ -1871,25 +1749,22 @@ fn non_flow_text_does_not_reset_a_column_items_named_page() {
 fn trailing_positioned_text_preserves_the_column_items_named_page() {
     for position in ["absolute", "fixed"] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font:10px/10px Ahem"),
         );
         let flex = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:flex;flex-direction:column"),
         );
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
         for name in ["a", "b"] {
             let block = doc.append_element(
                 Some(item),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;page:{name}")),
             );
             doc.append_text(block, "X");
@@ -1897,7 +1772,6 @@ fn trailing_positioned_text_preserves_the_column_items_named_page() {
         let positioned = doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;position:{position};left:80px;top:0;page:ignored"
             )),
@@ -1923,51 +1797,36 @@ fn trailing_positioned_text_preserves_the_column_items_named_page() {
 #[test]
 fn returning_from_a_nested_column_flex_keeps_its_last_named_page() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font:10px/10px Ahem"),
     );
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    let item = doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
-    let first = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
+    let item = doc.append_element(Some(outer), "div", Some("display:block"));
+    let first = doc.append_element(Some(item), "div", Some("display:block;page:a"));
     let a = doc.append_text(first, "A");
     let inner = doc.append_element(
         Some(item),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    let inner_item =
-        doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    let inner_item = doc.append_element(Some(inner), "div", Some("display:block"));
     let mut texts = vec![a];
     for name in ["b", "c"] {
         let block = doc.append_element(
             Some(inner_item),
             "div",
-            Style::default(),
             Some(&format!("display:block;page:{name}")),
         );
         texts.push(doc.append_text(block, "X"));
     }
-    let after = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:c"),
-    );
+    let after = doc.append_element(Some(item), "div", Some("display:block;page:c"));
     texts.push(doc.append_text(after, "D"));
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -2000,25 +1859,22 @@ fn returning_from_a_nested_column_flex_keeps_its_last_named_page() {
 #[test]
 fn a_seen_anonymous_column_page_remains_distinct_from_a_named_page() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font:10px/10px Ahem"),
     );
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
     let texts = ["a", "auto", "b"].map(|name| {
         let block = doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some(&format!("display:block;page:{name}")),
         );
         doc.append_text(block, "X")
@@ -2051,32 +1907,24 @@ fn a_seen_anonymous_column_page_remains_distinct_from_a_named_page() {
 #[test]
 fn a_non_text_column_item_uses_the_anonymous_page_before_a_named_descendant() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font:10px/10px Ahem"),
     );
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
     let first = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;height:10px;background:red"),
     );
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
-    let named = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
+    let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
     let text = doc.append_text(named, "X");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -2107,39 +1955,27 @@ fn a_non_text_column_item_uses_the_anonymous_page_before_a_named_descendant() {
 fn contents_wrapping_a_flex_item_preserves_its_page_name_suppression() {
     let run = |contents: bool| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font:10px/10px Ahem"),
         );
-        let before = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let before = doc.append_element(Some(body), "div", Some("display:block"));
         let a = doc.append_text(before, "A");
         let flex = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:flex;flex-direction:column"),
         );
         let parent = if contents {
-            doc.append_element(
-                Some(flex),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            )
+            doc.append_element(Some(flex), "div", Some("display:contents"))
         } else {
             flex
         };
-        let item = doc.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let item = doc.append_element(Some(parent), "div", Some("display:block;page:a"));
         let b = doc.append_text(item, "B");
-        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let after = doc.append_element(Some(body), "div", Some("display:block"));
         let c = doc.append_text(after, "C");
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -2169,28 +2005,17 @@ fn contents_wrapping_a_flex_item_preserves_its_page_name_suppression() {
 #[test]
 fn row_flex_keeps_the_existing_deferred_nested_named_boundary() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font:10px/10px Ahem"),
     );
-    let flex = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:flex;flex-direction:row"),
-    );
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
-    let named = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
+    let flex = doc.append_element(Some(body), "div", Some("display:flex;flex-direction:row"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
+    let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
     let a = doc.append_text(named, "A");
-    let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let after = doc.append_element(Some(body), "div", Some("display:block"));
     let b = doc.append_text(after, "B");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -2214,34 +2039,26 @@ fn row_flex_keeps_the_existing_deferred_nested_named_boundary() {
 fn row_inline_flex_inside_grid_defers_nested_named_page_boundary() {
     let run = |display: &str| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;font:10px/10px Ahem"),
         );
         let grid = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:grid;grid-template-columns:100px"),
         );
         let flex = doc.append_element(
             Some(grid),
             "div",
-            Style::default(),
             Some(&format!("{display};flex-direction:row")),
         );
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
-        let named = doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
+        let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
         let a = doc.append_text(named, "A");
-        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let after = doc.append_element(Some(body), "div", Some("display:block"));
         let b = doc.append_text(after, "B");
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -2271,17 +2088,15 @@ fn row_inline_flex_inside_grid_defers_nested_named_page_boundary() {
 
 fn column_review_document() -> (Document, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font:10px/10px Ahem"),
     );
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
     (doc, body, flex)
@@ -2322,28 +2137,13 @@ fn column_reverse_contents_items_follow_visual_page_order() {
         );
         let mut parent = flex;
         for _ in 0..wrappers {
-            parent = doc.append_element(
-                Some(parent),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
+            parent = doc.append_element(Some(parent), "div", Some("display:contents"));
         }
-        let item = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
-        let a = doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let item = doc.append_element(Some(parent), "div", Some("display:block"));
+        let a = doc.append_element(Some(item), "div", Some("display:block;page:a"));
         let a = doc.append_text(a, "A");
-        let item = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
-        let b = doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("display:block;page:b"),
-        );
+        let item = doc.append_element(Some(parent), "div", Some("display:block"));
+        let b = doc.append_element(Some(item), "div", Some("display:block;page:b"));
         let b = doc.append_text(b, "B");
         assert_eq!(
             column_review_pages(doc, &[a, b]),
@@ -2359,22 +2159,15 @@ fn trailing_column_item_under_contents_can_fragment_at_page_edge() {
         doc.append_element(
             Some(flex),
             "div",
-            Style::default(),
             Some("display:block;height:10px;flex-shrink:0"),
         );
         let mut parent = flex;
         for _ in 0..wrappers {
-            parent = doc.append_element(
-                Some(parent),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
+            parent = doc.append_element(Some(parent), "div", Some("display:contents"));
         }
         let last = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;height:60px;flex-shrink:0"),
         );
         assert_eq!(
@@ -2389,25 +2182,15 @@ fn row_inside_column_keeps_deferred_nested_named_boundary() {
     for nested_item in [true, false] {
         let (mut doc, body, column) = column_review_document();
         let parent = if nested_item {
-            doc.append_element(Some(column), "div", Style::default(), Some("display:block"))
+            doc.append_element(Some(column), "div", Some("display:block"))
         } else {
             column
         };
-        let row = doc.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("display:flex;flex-direction:row"),
-        );
-        let item = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
-        let named = doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let row = doc.append_element(Some(parent), "div", Some("display:flex;flex-direction:row"));
+        let item = doc.append_element(Some(row), "div", Some("display:block"));
+        let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
         let a = doc.append_text(named, "A");
-        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let after = doc.append_element(Some(body), "div", Some("display:block"));
         let b = doc.append_text(after, "B");
         assert_eq!(
             column_review_pages(doc, &[a, b]).1,
@@ -2423,25 +2206,14 @@ fn a_nested_row_does_not_coalesce_a_real_preceding_column_item() {
     doc.append_element(
         Some(column),
         "div",
-        Style::default(),
         Some("display:block;height:10px;flex-shrink:0"),
     );
-    let item = doc.append_element(Some(column), "div", Style::default(), Some("display:block"));
-    let row = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:flex;flex-direction:row"),
-    );
-    let item = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
-    let named = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
+    let item = doc.append_element(Some(column), "div", Some("display:block"));
+    let row = doc.append_element(Some(item), "div", Some("display:flex;flex-direction:row"));
+    let item = doc.append_element(Some(row), "div", Some("display:block"));
+    let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
     let a = doc.append_text(named, "A");
-    let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let after = doc.append_element(Some(body), "div", Some("display:block"));
     let b = doc.append_text(after, "B");
     assert_eq!(column_review_pages(doc, &[a, b]).1, vec![2, 3]);
 }
@@ -2449,25 +2221,10 @@ fn a_nested_row_does_not_coalesce_a_real_preceding_column_item() {
 #[test]
 fn hidden_child_preserves_the_named_empty_run_boundary() {
     let (mut doc, _, flex) = column_review_document();
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
-    let first = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
-    doc.append_element(
-        Some(first),
-        "div",
-        Style::default(),
-        Some("display:none;height:10px"),
-    );
-    let next = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:b"),
-    );
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
+    let first = doc.append_element(Some(item), "div", Some("display:block;page:a"));
+    doc.append_element(Some(first), "div", Some("display:none;height:10px"));
+    let next = doc.append_element(Some(item), "div", Some("display:block;page:b"));
     let text = doc.append_text(next, "X");
     assert_eq!(
         column_review_pages(doc, &[text]),
@@ -2479,16 +2236,10 @@ fn hidden_child_preserves_the_named_empty_run_boundary() {
 fn inline_named_canvas_takes_the_page_of_its_container() {
     let (mut doc, body, flex) = column_review_document();
     doc.set_element_inline_style(flex, Some("display:none".into()));
-    let before = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let before = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     let canvas = doc.append_element(
         Some(body),
         "canvas",
-        Style::default(),
         Some("display:inline;page:a;width:10px;height:10px"),
     );
     // `page` does not apply to an inline-level box, so the canvas stays on
@@ -2503,19 +2254,9 @@ fn inline_named_canvas_takes_the_page_of_its_container() {
 fn empty_table_row_does_not_move_following_body_text() {
     let (mut doc, body, flex) = column_review_document();
     doc.set_element_inline_style(flex, Some("display:none".into()));
-    let table = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:table;border-spacing:0"),
-    );
-    doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let table = doc.append_element(Some(body), "div", Some("display:table;border-spacing:0"));
+    doc.append_element(Some(table), "div", Some("display:table-row"));
+    let after = doc.append_element(Some(body), "div", Some("display:block"));
     let text = doc.append_text(after, "X");
     assert_eq!(column_review_pages(doc, &[text]), (vec![None], vec![0]));
 }
@@ -2526,20 +2267,10 @@ fn column_review_contents_wrapper_does_not_count_as_a_preceding_item() {
         let (mut doc, _, flex) = column_review_document();
         let mut parent = flex;
         for _ in 0..wrappers {
-            parent = doc.append_element(
-                Some(parent),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
+            parent = doc.append_element(Some(parent), "div", Some("display:contents"));
         }
-        let item = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
-        let named = doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let item = doc.append_element(Some(parent), "div", Some("display:block"));
+        let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
         let text = doc.append_text(named, "X");
         assert_eq!(
             column_review_pages(doc, &[text]),
@@ -2551,19 +2282,13 @@ fn column_review_contents_wrapper_does_not_count_as_a_preceding_item() {
 #[test]
 fn column_review_first_item_retains_leading_non_text_content() {
     let (mut doc, _, flex) = column_review_document();
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
     let leading = doc.append_element(
         Some(item),
         "div",
-        Style::default(),
         Some("display:block;height:10px;background:red"),
     );
-    let named = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
+    let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
     let text = doc.append_text(named, "X");
     assert_eq!(
         column_review_pages(doc, &[leading, text]),
@@ -2574,23 +2299,17 @@ fn column_review_first_item_retains_leading_non_text_content() {
 #[test]
 fn column_review_explicit_outer_name_matches_the_active_physical_page() {
     let (mut doc, body, flex) = column_review_document();
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
     let mut texts = Vec::new();
     for name in ["a", "c"] {
         let named = doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some(&format!("display:block;page:{name}")),
         );
         texts.push(doc.append_text(named, "X"));
     }
-    let after = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;page:c"),
-    );
+    let after = doc.append_element(Some(body), "div", Some("display:block;page:c"));
     texts.push(doc.append_text(after, "Z"));
     assert_eq!(
         column_review_pages(doc, &texts),
@@ -2601,21 +2320,15 @@ fn column_review_explicit_outer_name_matches_the_active_physical_page() {
 #[test]
 fn column_review_empty_named_run_coalesces_inside_a_flex_item() {
     let (mut doc, _, flex) = column_review_document();
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
     for name in ["a", "b", "c"] {
         doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some(&format!("display:block;page:{name}")),
         );
     }
-    let named = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:c"),
-    );
+    let named = doc.append_element(Some(item), "div", Some("display:block;page:c"));
     let text = doc.append_text(named, "X");
     assert_eq!(
         column_review_pages(doc, &[text]),
@@ -2631,16 +2344,11 @@ fn column_review_non_rendered_children_do_not_open_an_anonymous_page() {
         "display:block;float:left;height:10px",
     ] {
         let (mut doc, _, flex) = column_review_document();
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
-        doc.append_element(Some(item), "div", Style::default(), Some(css));
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
+        doc.append_element(Some(item), "div", Some(css));
         doc.append_comment(Some(item), "ignored");
         doc.append_text(item, " ");
-        let named = doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
         let text = doc.append_text(named, "X");
         assert_eq!(
             column_review_pages(doc, &[text]),
@@ -2652,27 +2360,16 @@ fn column_review_non_rendered_children_do_not_open_an_anonymous_page() {
 #[test]
 fn column_review_empty_children_do_not_hide_a_rendered_leading_box() {
     let (mut doc, _, flex) = column_review_document();
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
     let leading = doc.append_element(
         Some(item),
         "div",
-        Style::default(),
         Some("display:block;height:10px;background:red"),
     );
     doc.append_comment(Some(leading), "ignored");
     doc.append_text(leading, " ");
-    doc.append_element(
-        Some(leading),
-        "div",
-        Style::default(),
-        Some("display:block"),
-    );
-    let named = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
+    doc.append_element(Some(leading), "div", Some("display:block"));
+    let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
     let text = doc.append_text(named, "X");
     assert_eq!(
         column_review_pages(doc, &[leading, text]),
@@ -2691,34 +2388,22 @@ fn contents_items_use_global_order_for_named_page_traversal() {
                     Some("display:flex;flex-direction:column-reverse".into()),
                 );
             }
-            let wrapper = doc.append_element(
-                Some(flex),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
+            let wrapper = doc.append_element(Some(flex), "div", Some("display:contents"));
             let mut texts = Vec::new();
             for (name, order) in [("a", 2), ("b", 1)] {
                 let parent = if separate_wrappers {
-                    doc.append_element(
-                        Some(flex),
-                        "div",
-                        Style::default(),
-                        Some("display:contents"),
-                    )
+                    doc.append_element(Some(flex), "div", Some("display:contents"))
                 } else {
                     wrapper
                 };
                 let item = doc.append_element(
                     Some(parent),
                     "div",
-                    Style::default(),
                     Some(&format!("display:block;order:{order}")),
                 );
                 let named = doc.append_element(
                     Some(item),
                     "div",
-                    Style::default(),
                     Some(&format!("display:block;page:{name}")),
                 );
                 texts.push(doc.append_text(named, "X"));
@@ -2747,21 +2432,11 @@ fn nested_row_out_of_flow_names_do_not_defer_normal_content() {
         "display:none",
     ] {
         let (mut doc, body, flex) = column_review_document();
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
-        let row = doc.append_element(
-            Some(item),
-            "div",
-            Style::default(),
-            Some("display:flex;flex-direction:row"),
-        );
-        let inner = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
-        doc.append_element(
-            Some(inner),
-            "div",
-            Style::default(),
-            Some(&format!("page:a;{css}")),
-        );
-        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
+        let row = doc.append_element(Some(item), "div", Some("display:flex;flex-direction:row"));
+        let inner = doc.append_element(Some(row), "div", Some("display:block"));
+        doc.append_element(Some(inner), "div", Some(&format!("page:a;{css}")));
+        let after = doc.append_element(Some(body), "div", Some("display:block"));
         let text = doc.append_text(after, "X");
         assert_eq!(
             column_review_pages(doc, &[text]),
@@ -2774,30 +2449,18 @@ fn nested_row_out_of_flow_names_do_not_defer_normal_content() {
 #[test]
 fn effective_order_interleaves_items_from_separate_contents_wrappers() {
     let (mut doc, _, flex) = column_review_document();
-    let outer = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let other = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let outer = doc.append_element(Some(flex), "div", Some("display:contents"));
+    let other = doc.append_element(Some(flex), "div", Some("display:contents"));
     let mut texts = Vec::new();
     for (name, order, parent) in [("a", 3, outer), ("b", 2, other), ("c", 1, outer)] {
         let item = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some(&format!("display:block;order:{order}")),
         );
         let named = doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some(&format!("display:block;page:{name}")),
         );
         texts.push(doc.append_text(named, "X"));
@@ -2814,19 +2477,9 @@ fn effective_order_interleaves_items_from_separate_contents_wrappers() {
 #[test]
 fn global_contents_order_preserves_stored_wrapper_source_offsets() {
     let (mut doc, _, flex) = column_review_document();
-    let outer = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let inner = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let item = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    let outer = doc.append_element(Some(flex), "div", Some("display:contents"));
+    let inner = doc.append_element(Some(outer), "div", Some("display:contents"));
+    let item = doc.append_element(Some(inner), "div", Some("display:block"));
     doc.nodes[outer].unrounded_layout.location.y = 10.0;
     doc.nodes[inner].unrounded_layout.location.y = 5.0;
     let offset = super::super::pagination_child_parent_y;
@@ -2839,21 +2492,15 @@ fn global_contents_order_preserves_stored_wrapper_source_offsets() {
 #[test]
 fn anonymous_nested_column_content_establishes_enclosing_page_context() {
     let (mut doc, _, flex) = column_review_document();
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
     let inner = doc.append_element(
         Some(item),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    let anonymous = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    let anonymous = doc.append_element(Some(inner), "div", Some("display:block"));
     let before = doc.append_text(anonymous, "X");
-    let named = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;page:a"),
-    );
+    let named = doc.append_element(Some(item), "div", Some("display:block;page:a"));
     let after = doc.append_text(named, "X");
     assert_eq!(
         column_review_pages(doc, &[before, after]),
@@ -2868,17 +2515,12 @@ fn ignored_float_on_effective_column_flex_item_keeps_named_descendants() {
             let (mut doc, _, flex) = column_review_document();
             let mut parent = flex;
             for _ in 0..wrappers {
-                parent = doc.append_element(
-                    Some(parent),
-                    "div",
-                    Style::default(),
-                    Some("display:contents;float:left"),
-                );
+                parent =
+                    doc.append_element(Some(parent), "div", Some("display:contents;float:left"));
             }
             let item = doc.append_element(
                 Some(parent),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;float:{float}")),
             );
             let mut texts = Vec::new();
@@ -2886,7 +2528,6 @@ fn ignored_float_on_effective_column_flex_item_keeps_named_descendants() {
                 let named = doc.append_element(
                     Some(item),
                     "div",
-                    Style::default(),
                     Some(&format!("display:block;page:{name}")),
                 );
                 texts.push(doc.append_text(named, "X"));
@@ -2904,11 +2545,10 @@ fn ignored_float_on_effective_column_flex_item_keeps_named_descendants() {
 fn a_real_float_below_the_flex_item_does_not_establish_named_pages() {
     for float in ["left", "right"] {
         let (mut doc, _, flex) = column_review_document();
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
         let floated = doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some(&format!("display:block;float:{float}")),
         );
         let mut texts = Vec::new();
@@ -2916,7 +2556,6 @@ fn a_real_float_below_the_flex_item_does_not_establish_named_pages() {
             let named = doc.append_element(
                 Some(floated),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;page:{name}")),
             );
             texts.push(doc.append_text(named, "X"));
@@ -2933,28 +2572,20 @@ fn a_real_float_below_the_flex_item_does_not_establish_named_pages() {
 fn enclosing_anonymous_content_precedes_a_new_inner_named_context() {
     for outer_direction in ["column", "row"] {
         let (mut doc, _, flex) = column_review_document();
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
         let before_box = doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some(&format!("display:flex;flex-direction:{outer_direction}")),
         );
         let before = doc.append_text(before_box, "X");
         let inner = doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some("display:flex;flex-direction:column"),
         );
-        let inner_item =
-            doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
-        let named = doc.append_element(
-            Some(inner_item),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let inner_item = doc.append_element(Some(inner), "div", Some("display:block"));
+        let named = doc.append_element(Some(inner_item), "div", Some("display:block;page:a"));
         let after = doc.append_text(named, "X");
         assert_eq!(
             column_review_pages(doc, &[before, after]),
@@ -2968,34 +2599,27 @@ fn enclosing_anonymous_content_precedes_a_new_inner_named_context() {
 fn a_fresh_empty_page_can_take_the_first_inner_named_type() {
     for boundary in ["before", "after", "natural"] {
         let (mut doc, _, flex) = column_review_document();
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
         let before_css = match boundary {
             "after" => "display:block;break-after:page",
             "natural" => "display:block;height:50px",
             _ => "display:block",
         };
-        let before_box = doc.append_element(Some(item), "div", Style::default(), Some(before_css));
+        let before_box = doc.append_element(Some(item), "div", Some(before_css));
         let before = doc.append_text(before_box, "X");
         let empty_css = if boundary == "before" {
             "display:block;break-before:page"
         } else {
             "display:block"
         };
-        let empty = doc.append_element(Some(item), "div", Style::default(), Some(empty_css));
+        let empty = doc.append_element(Some(item), "div", Some(empty_css));
         let inner = doc.append_element(
             Some(empty),
             "div",
-            Style::default(),
             Some("display:flex;flex-direction:column"),
         );
-        let inner_item =
-            doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
-        let named = doc.append_element(
-            Some(inner_item),
-            "div",
-            Style::default(),
-            Some("display:block;page:a"),
-        );
+        let inner_item = doc.append_element(Some(inner), "div", Some("display:block"));
+        let named = doc.append_element(Some(inner_item), "div", Some("display:block;page:a"));
         let after = doc.append_text(named, "X");
         assert_eq!(
             column_review_pages(doc, &[before, after]),
@@ -3008,25 +2632,14 @@ fn a_fresh_empty_page_can_take_the_first_inner_named_type() {
 #[test]
 fn page_local_footnote_keeps_its_text_attached_inside_flex() {
     let (mut doc, _, flex) = column_review_document();
-    doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:block;height:20px"),
-    );
+    doc.append_element(Some(flex), "div", Some("display:block;height:20px"));
     let note = doc.append_element(
         Some(flex),
         "aside",
-        Style::default(),
         Some("display:block;float:footnote;height:10px;width:50px"),
     );
     let text = doc.append_text(note, "note");
-    let following = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let following = doc.append_element(Some(flex), "div", Some("display:block;height:10px"));
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     let mut page = PageBox::new();
@@ -3057,33 +2670,23 @@ fn paragraph_after_a_spacer(
 ) -> MovedParagraph {
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let spacer_css = format!("display:block;height:{spacer_height}px");
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some(spacer_css.as_str()),
-    );
+    doc.append_element(Some(body), "div", Some(spacer_css.as_str()));
     let parent = match section {
         Some(css) => {
             let css = format!("display:block;{css}");
-            doc.append_element(Some(body), "section", Style::default(), Some(css.as_str()))
+            doc.append_element(Some(body), "section", Some(css.as_str()))
         }
         None => body,
     };
     let style = format!(
         "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
     );
-    let root = doc.append_element(Some(parent), "div", Style::default(), Some(style.as_str()));
+    let root = doc.append_element(Some(parent), "div", Some(style.as_str()));
     let text = doc.append_text(root, "aaaa bbbb cccc");
-    let after = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:5px"),
-    );
+    let after = doc.append_element(Some(body), "div", Some("display:block;height:5px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -3240,30 +2843,18 @@ fn a_nested_paragraph_moved_for_a_widow_leaves_an_earlier_float_behind() {
     // to page 1; the float, already placed on page 0, stays there.
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:15px"),
-    );
-    let section = doc.append_element(
-        Some(body),
-        "section",
-        Style::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:15px"));
+    let section = doc.append_element(Some(body), "section", Some("display:block"));
     let float = doc.append_element(
         Some(section),
         "div",
-        Style::default(),
         Some("display:block;float:left;width:5px;height:5px"),
     );
     let root = doc.append_element(
         Some(section),
         "div",
-        Style::default(),
         Some(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:50px;\
              orphans:2;widows:2",
@@ -3332,10 +2923,10 @@ fn a_paragraph_in_a_floated_section_is_not_moved_for_its_widow() {
 #[test]
 fn a_block_outside_the_laid_out_root_is_not_a_block_flow_paragraph() {
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let aside = doc.append_element(Some(body), "aside", Style::default(), Some("display:block"));
-    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let aside = doc.append_element(Some(body), "aside", Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Some("display:block"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -3361,24 +2952,17 @@ fn a_nested_paragraph_moved_for_a_widow_leaves_a_later_positioned_box_behind() {
     // placed against it, stay where they are.
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:15px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:15px"));
     let section = doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;position:relative"),
     );
     let root = doc.append_element(
         Some(section),
         "div",
-        Style::default(),
         Some(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
              orphans:2;widows:2",
@@ -3388,7 +2972,6 @@ fn a_nested_paragraph_moved_for_a_widow_leaves_a_later_positioned_box_behind() {
     let positioned = doc.append_element(
         Some(section),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;top:0;width:5px;height:5px"),
     );
     doc.mark_in_document_flags();
@@ -3421,42 +3004,32 @@ fn inline_runs_after_a_spacer(
 ) -> (usize, RunFragments) {
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:15px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:15px"));
     let parent = match section {
         Some(css) => {
             let css = format!("display:block;{css}");
-            doc.append_element(Some(body), "section", Style::default(), Some(css.as_str()))
+            doc.append_element(Some(body), "section", Some(css.as_str()))
         }
         None => body,
     };
     let style = format!(
         "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
     );
-    let root = doc.append_element(Some(parent), "div", Style::default(), Some(style.as_str()));
+    let root = doc.append_element(Some(parent), "div", Some(style.as_str()));
     let texts: Vec<_> = runs
         .iter()
         .map(|&(wrapped, text)| {
             let holder = if wrapped {
-                doc.append_element(Some(root), "span", Style::default(), Some("display:inline"))
+                doc.append_element(Some(root), "span", Some("display:inline"))
             } else {
                 root
             };
             doc.append_text(holder, text)
         })
         .collect();
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:5px"),
-    );
+    doc.append_element(Some(body), "div", Some("display:block;height:5px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -3553,25 +3126,20 @@ fn flex_item_paragraph_after_a_spacer(
 ) -> (Vec<(u32, Option<PageFragmentLineRange>)>, f32) {
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:15px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:15px"));
     let flex_css = if wrap {
         "display:flex;flex-wrap:wrap;width:40px"
     } else {
         "display:flex;flex-wrap:nowrap;width:50px"
     };
-    let flex = doc.append_element(Some(body), "div", Style::default(), Some(flex_css));
+    let flex = doc.append_element(Some(body), "div", Some(flex_css));
     let style = format!(
         "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:{};{root_css}",
         if wrap { "100%" } else { "40px" }
     );
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some(style.as_str()));
+    let item = doc.append_element(Some(flex), "div", Some(style.as_str()));
     let text = doc.append_text(item, "aaaa bbbb cccc");
     if !between.is_empty() {
         doc.append_text(flex, between);
@@ -3580,12 +3148,7 @@ fn flex_item_paragraph_after_a_spacer(
         "display:block;height:5px;width:{};{second_extra_css}",
         if wrap { "100%" } else { "10px" }
     );
-    let second = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some(second_css.as_str()),
-    );
+    let second = doc.append_element(Some(flex), "div", Some(second_css.as_str()));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -3660,24 +3223,17 @@ fn an_absolutely_positioned_child_stays_when_a_flex_item_breaks_earlier() {
     // positioned child 35px down the container, below the item's old
     // bottom: it is on no flex line, so the moved lines do not move it.
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:15px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:15px"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-wrap:wrap;width:40px;position:relative"),
     );
     let item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:100%;orphans:1;widows:2",
         ),
@@ -3686,7 +3242,6 @@ fn an_absolutely_positioned_child_stays_when_a_flex_item_breaks_earlier() {
     let positioned = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;top:35px;height:5px;width:5px"),
     );
     doc.mark_in_document_flags();
@@ -3768,30 +3323,19 @@ fn a_paragraph_with_a_definite_height_moves_as_a_unit_for_its_widows() {
     // leave one widow. The paragraph's height is its own, so its lines do
     // not move down inside it; it moves to page 1 whole and stays 30px tall.
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:15px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:15px"));
     let paragraph = doc.append_element(
         Some(body),
         "p",
-        Style::default(),
         Some(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
              height:30px;orphans:1;widows:2",
         ),
     );
     let text = doc.append_text(paragraph, "aaaa bbbb cccc");
-    let after = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:5px"),
-    );
+    let after = doc.append_element(Some(body), "div", Some("display:block;height:5px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -3835,19 +3379,16 @@ fn a_blockified_inline_flex_item_alone_on_its_line_breaks_like_a_flex_one() {
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some("display:grid;grid-template-columns:40px;padding-top:15px"),
         );
         let flex = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some(&format!("{display};flex-wrap:wrap;width:40px")),
         );
         let item = doc.append_element(
             Some(flex),
             "div",
-            Style::default(),
             Some(
                 "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:100%;\
                  orphans:1;widows:2",
@@ -3857,7 +3398,6 @@ fn a_blockified_inline_flex_item_alone_on_its_line_breaks_like_a_flex_one() {
         let second = doc.append_element(
             Some(flex),
             "div",
-            Style::default(),
             Some("display:block;height:5px;width:100%"),
         );
         doc.mark_in_document_flags();
@@ -3911,38 +3451,22 @@ fn a_paragraph_over_three_pages_keeps_its_widows_on_the_last_page() {
     // which span both texts' runs, start page 2; the section grows to hold
     // them and the flow after follows.
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:15px"),
-    );
-    let section = doc.append_element(
-        Some(body),
-        "section",
-        Style::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:15px"));
+    let section = doc.append_element(Some(body), "section", Some("display:block"));
     let root = doc.append_element(
         Some(section),
         "div",
-        Style::default(),
         Some(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
              orphans:1;widows:2",
         ),
     );
     let first = doc.append_text(root, "aaaa bbbb cccc dddd ");
-    let span = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+    let span = doc.append_element(Some(root), "span", Some("display:inline"));
     let second = doc.append_text(span, "eeee ffff gggg");
-    let after = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:5px"),
-    );
+    let after = doc.append_element(Some(body), "div", Some("display:block;height:5px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -4102,15 +3626,9 @@ fn page_shells_follow_the_vertical_root_flow_axis() {
     let html = document.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl"),
     );
-    document.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    document.append_element(Some(html), "body", Some("display:block;margin:0"));
     document.mark_in_document_flags();
     let cascade = cascade(&document, &build_rule_tree(&document)).expect("cascade");
     let page_box = PageBox::A4;

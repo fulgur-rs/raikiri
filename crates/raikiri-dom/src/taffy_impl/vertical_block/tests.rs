@@ -2,7 +2,6 @@ mod scoped_override_tests;
 mod view_tests;
 
 use crate::Document;
-use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
 use taffy::LengthPercentage;
@@ -14,17 +13,11 @@ use taffy::LengthPercentage;
 /// and of its children.
 fn layout(container_css: &str, children: &[&str]) -> Vec<(f32, f32, f32, f32)> {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             format!(
                 "display:block;font-family:Ahem;font-size:10px;line-height:10px;{container_css}"
@@ -38,7 +31,6 @@ fn layout(container_css: &str, children: &[&str]) -> Vec<(f32, f32, f32, f32)> {
         let child = doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some(format!("display:block;{css}").as_str()),
         );
         if !text.is_empty() {
@@ -160,31 +152,19 @@ fn horizontal_child_of_a_vertical_container_is_as_tall_as_its_content() {
     // its block size, from its 10px-tall child, not the container's inline
     // size it would be stretched to.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl;width:300px;height:200px"),
     );
     let child = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:horizontal-tb;width:40px"),
     );
-    doc.append_element(
-        Some(child),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    doc.append_element(Some(child), "div", Some("display:block;height:10px"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -195,11 +175,10 @@ fn horizontal_child_of_a_vertical_container_is_as_tall_as_its_content() {
 #[test]
 fn vertical_rl_body_stacks_its_paragraphs_from_the_right() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(
             "display:block;margin:8px;writing-mode:vertical-rl;font-family:Ahem;\
              font-size:10px;line-height:10px",
@@ -208,12 +187,7 @@ fn vertical_rl_body_stacks_its_paragraphs_from_the_right() {
     let paragraphs: Vec<usize> = ["aa bb", "cc"]
         .into_iter()
         .map(|text| {
-            let p = doc.append_element(
-                Some(body),
-                "p",
-                Style::default(),
-                Some("display:block;margin:0 0 0 10px"),
-            );
+            let p = doc.append_element(Some(body), "p", Some("display:block;margin:0 0 0 10px"));
             doc.append_text(p, text);
             p
         })
@@ -328,11 +302,10 @@ fn layout_body_in(
     children: &[(&str, &str, &str)],
 ) -> (Document, Vec<usize>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some(html_css));
+    let html = doc.append_element(Some(0), "html", Some(html_css));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(format!("font-family:Ahem;font-size:10px;line-height:10px;{body_css}").as_str()),
     );
     let mut ids = vec![body];
@@ -341,7 +314,7 @@ fn layout_body_in(
             doc.append_text(body, text);
             continue;
         }
-        let child = doc.append_element(Some(body), tag, Style::default(), Some(css));
+        let child = doc.append_element(Some(body), tag, Some(css));
         if !text.is_empty() {
             doc.append_text(child, text);
         }
@@ -357,11 +330,10 @@ fn layout_body_in(
 
 fn vertical_document(writing_mode: &str, width: &str, height: &str) -> (Document, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(
             format!(
                 "display:block;margin:0;writing-mode:{writing_mode};width:{width};height:{height};\
@@ -388,19 +360,16 @@ fn same_mode_vertical_block_margins_collapse_through_a_child() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:flow-root;width:200px;height:40px"),
         );
         let outer = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;height:40px;margin-block-start:10px"),
         );
         let inner = doc.append_element(
             Some(outer),
             "p",
-            Style::default(),
             Some("display:block;width:20px;margin-block:20px"),
         );
         doc.append_text(inner, "a");
@@ -440,26 +409,22 @@ fn vertical_content_min_width_prevents_the_last_child_margin_from_escaping() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:flow-root;width:200px;height:40px"),
         );
         let wrapper = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some(format!("display:block;width:auto;height:40px;{box_sizing}").as_str()),
         );
         doc.append_text(wrapper, "a");
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;width:20px;height:10px;margin-block-end:20px"),
         );
         let sibling = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:10px;height:10px"),
         );
 
@@ -483,25 +448,21 @@ fn same_mode_vertical_descendant_clear_sees_an_ancestor_float() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:flow-root;width:100px;height:40px"),
         );
         let float = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:10px;height:20px"),
         );
         let wrapper = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:100px;height:40px"),
         );
         let cleared = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;clear:both;width:20px;height:20px"),
         );
 
@@ -533,19 +494,16 @@ fn matching_vertical_and_sideways_block_axes_share_floats() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:flow-root;width:100px;height:40px"),
         );
         let float = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:10px;height:20px"),
         );
         let wrapper = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some(
                 format!("display:block;writing-mode:{child_mode};width:100px;height:40px").as_str(),
             ),
@@ -553,7 +511,6 @@ fn matching_vertical_and_sideways_block_axes_share_floats() {
         let cleared = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;clear:both;width:20px;height:20px"),
         );
 
@@ -582,21 +539,14 @@ fn vertical_inline_content_shares_ancestor_floats() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:flow-root;width:100px;height:40px"),
         );
         let float = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;float:right;width:10px;height:20px"),
         );
-        let paragraph = doc.append_element(
-            Some(root),
-            "p",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
+        let paragraph = doc.append_element(Some(root), "p", Some("display:block;margin:0"));
         doc.append_text(paragraph, "a a a a");
 
         layout_vertical_document(&mut doc);
@@ -639,13 +589,14 @@ fn vertical_body_of_text_keeps_its_bottom_margin() {
 
 #[test]
 fn vertical_flex_body_keeps_its_vertical_margins() {
-    let (doc, ids) = layout_body(
+    let (mut doc, ids) = layout_body(
         "display:flex;margin:8px;writing-mode:vertical-rl",
         &[("div", "width:20px;height:10px", "")],
     );
     // A flex body lays its items out on horizontal axes, below its top
     // margin rather than below padding in place of it.
-    let padding = doc.layout_node_with_style(ids[0]).unwrap().style.padding;
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let padding = crate::layout::test_support::bridged_style(&mut doc, &cascade, ids[0]).padding;
     let zero = LengthPercentage::length(0.0);
     assert_eq!((padding.top, padding.bottom), (zero, zero));
     assert_eq!(absolute_rect(&doc, ids[1]), (8.0, 8.0, 20.0, 10.0));
@@ -656,29 +607,21 @@ fn contents_element_with_columns_keeps_its_children_vertical() {
     // A `display: contents` element is no multicol container, so its child
     // keeps the vertical mapping of `margin-block-start`.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl;width:300px;height:200px"),
     );
     let contents = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:contents;column-count:2"),
     );
     let child = doc.append_element(
         Some(contents),
         "div",
-        Style::default(),
         Some("display:block;width:30px;margin-block-start:10px"),
     );
     doc.mark_in_document_flags();
@@ -694,29 +637,17 @@ fn contents_child_of_a_vertical_flex_container_keeps_the_horizontal_mapping() {
     // on horizontal axes, so `margin-block-start` maps to the top margin as
     // it does for a direct flex item.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;writing-mode:vertical-rl;width:300px;height:200px"),
     );
-    let contents = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let contents = doc.append_element(Some(container), "div", Some("display:contents"));
     let child = doc.append_element(
         Some(contents),
         "div",
-        Style::default(),
         Some("display:block;width:30px;height:20px;margin-block-start:10px"),
     );
     doc.mark_in_document_flags();
@@ -781,31 +712,23 @@ fn vertical_container_padding_looks_through_a_contents_parent() {
     // block is the vertical body around it. Its auto inline size fits the
     // 200px-tall child, so `padding-right: 10%` is 20px.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;writing-mode:vertical-rl"),
     );
     let contents = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:contents;writing-mode:horizontal-tb"),
     );
     let container = doc.append_element(
         Some(contents),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl;width:100px;height:200px;padding-right:10%"),
     );
-    let child = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;width:20px"),
-    );
+    let child = doc.append_element(Some(container), "div", Some("display:block;width:20px"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -820,91 +743,22 @@ fn vertical_flex_item_keeps_its_padding_percentages_while_measured() {
     // main-axis parent size; `padding-right: 10%` of the 300px wide
     // container is still 30px.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;width:300px;height:100px"),
     );
     let item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl;padding-right:10%"),
     );
-    doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;width:20px"),
-    );
+    doc.append_element(Some(item), "div", Some("display:block;width:20px"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_eq!(absolute_rect(&doc, item).2, 50.0);
-}
-
-#[test]
-fn comparison_unwind_restores_transposed_stack_and_percentage_padding() {
-    use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
-    let (mut doc, cascade, child, _) = fixture_with_styles(
-        "writing-mode:vertical-rl;width:200px;height:100px",
-        "display:flex;writing-mode:horizontal-tb;width:20px;height:10px;padding-left:10%",
-    );
-    with_ahem(&mut doc);
-    let parent = doc.nodes[child].parent.unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
-    let padding = tree.layout_style_for_key(child).unwrap().padding;
-    let block = super::TransposedBlock {
-        id: super::next_transposed_frame_id(&mut tree),
-        container: parent,
-        right_to_left: true,
-        block_space: Some(200.0),
-        children: vec![child],
-        container_style: tree.layout_style_for_key(parent).unwrap().clone(),
-        child_styles: [(child, tree.layout_style_for_key(child).unwrap().clone())].into(),
-        container_view: None,
-        child_views: Default::default(),
-        placed: Vec::new(),
-    };
-    super::push_transposed_frame(&mut tree, block);
-    tree.layout_style_for_key_mut(child).unwrap().size.width = taffy::Dimension::length(99.0);
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        tree.compute_transposed_child(
-            taffy::NodeId::from(child),
-            taffy::LayoutInput {
-                run_mode: taffy::RunMode::ComputeSize,
-                parent_size: taffy::Size {
-                    width: Some(100.0),
-                    height: Some(200.0),
-                },
-                ..taffy::LayoutInput::HIDDEN
-            },
-            None,
-        );
-    }));
-    let error = panic.expect_err("injected independent size disagreement must fail");
-    assert!(
-        error
-            .downcast_ref::<String>()
-            .unwrap()
-            .contains("style view mismatch")
-    );
-    assert_eq!(tree.context.transposed_blocks.len(), 1);
-    assert_eq!(tree.context.transposed_blocks[0].container, parent);
-    assert_eq!(tree.layout_style_for_key(child).unwrap().padding, padding);
-    assert_eq!(
-        taffy::CoreStyle::padding(&tree.style_view(child)).left,
-        padding.left
-    );
 }

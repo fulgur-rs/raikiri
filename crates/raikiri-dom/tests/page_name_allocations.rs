@@ -3,7 +3,6 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout::first_page_name};
 
 struct CountingAllocator;
@@ -54,12 +53,12 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 fn unnamed_first_page_selection_allocates_nothing() {
     for (width, depth) in [(256, 1), (1, 256), (64, 4)] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         for _ in 0..width {
             let mut parent = body;
             for _ in 0..depth {
-                parent = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+                parent = doc.append_element(Some(parent), "div", None::<&str>);
             }
             doc.append_text(parent, "x");
         }
@@ -79,9 +78,9 @@ fn flat_taffy_child_walk_allocates_nothing() {
     use taffy::TraversePartialTree;
     for width in [0, 1, 128] {
         let mut doc = Document::new();
-        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let parent = doc.append_element(Some(0), "div", None::<&str>);
         let expected: Vec<_> = (0..width)
-            .map(|_| doc.append_element(Some(parent), "div", Style::default(), None::<&str>))
+            .map(|_| doc.append_element(Some(parent), "div", None::<&str>))
             .collect();
         doc.mark_in_document_flags();
         ALLOCATIONS.with(|count| count.set(Some(0)));

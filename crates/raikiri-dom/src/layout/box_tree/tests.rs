@@ -1,24 +1,13 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
 
 fn contents_chain(body_style: &str) -> (Document, CascadeResult, [usize; 4]) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some(body_style));
-    let outer = document.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let inner = document.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let child = document.append_element(Some(inner), "span", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some(body_style));
+    let outer = document.append_element(Some(body), "div", Some("display:contents"));
+    let inner = document.append_element(Some(outer), "div", Some("display:contents"));
+    let child = document.append_element(Some(inner), "span", None::<&str>);
     document.mark_in_document_flags();
     let cascade = cascade(&document, &build_rule_tree(&document)).unwrap();
     (document, cascade, [html, body, inner, child])
@@ -53,10 +42,10 @@ fn a_contents_body_is_flattened_in_both_parent_scopes() {
 #[test]
 fn layout_root_scope_stops_at_a_non_element_even_when_its_display_is_contents() {
     let mut document = Document::new();
-    let body = document.append_element(Some(0), "body", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(0), "body", Some("display:block"));
     let text = document.append_text(body, "boundary");
     // Preserve the IFC boundary even for a manually built non-element parent.
-    let child = document.append_element(Some(text), "span", Style::default(), None::<&str>);
+    let child = document.append_element(Some(text), "span", None::<&str>);
     document.mark_in_document_flags();
     let mut cascade = cascade(&document, &build_rule_tree(&document)).unwrap();
     cascade.computed[text].display = DisplayValue::Contents;

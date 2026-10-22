@@ -2,7 +2,6 @@
 
 use super::font::{BundledFace, bundled_collection};
 use crate::Document;
-use crate::LayoutStyle as Style;
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
@@ -53,10 +52,10 @@ fn block_fixture_inner(
     let mut doc = Document::new();
     // No UA sheet is applied here, so the ancestors are made block containers
     // explicitly (the initial `display` is `inline`).
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let style = format!("display:block;font-family:Ahem;font-size:10px;{extra_style}");
-    let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
+    let root = doc.append_element(Some(body), "div", Some(style.as_str()));
     build(&mut doc, root);
     doc.mark_in_document_flags();
     if let Some(fonts) = fonts {
@@ -76,13 +75,13 @@ pub(crate) fn sheet_fixture(
     build: impl FnOnce(&mut Document, usize),
 ) -> Fixture {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style_element = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style_element = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(style_element, sheet);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let style = format!("display:block;font-family:Ahem;font-size:10px;{extra_style}");
-    let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
+    let root = doc.append_element(Some(body), "div", Some(style.as_str()));
     build(&mut doc, root);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -93,7 +92,7 @@ pub(crate) fn sheet_fixture(
 
 /// `<span style="{style}">` under `parent`.
 pub(crate) fn span(doc: &mut Document, parent: usize, style: &str) -> usize {
-    doc.append_element(Some(parent), "span", Style::default(), Some(style))
+    doc.append_element(Some(parent), "span", Some(style))
 }
 
 /// A shared layer holding only Ahem: every glyph is exactly one em wide.

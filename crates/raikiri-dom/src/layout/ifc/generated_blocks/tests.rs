@@ -666,7 +666,9 @@ fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
     // Fragmentainers two lines tall: the box's first two lines fill the
     // first, its last two go on in the second.
     let lines = {
-        let mut session = crate::layout::context::LayoutSession::new(&mut fixture.doc);
+        let session_cascade = crate::layout::test_support::cascaded(&fixture.doc);
+        let mut session =
+            crate::layout::context::LayoutSession::bridged(&mut fixture.doc, &session_cascade);
         crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
             &mut session,
             fixture.root,
@@ -710,7 +712,9 @@ fn line_starts_beside_a_float_in_the_second_fragmentainer(text_indent: &str) -> 
     )
     .expect("layout");
     let lines = {
-        let mut session = crate::layout::context::LayoutSession::new(&mut fixture.doc);
+        let session_cascade = crate::layout::test_support::cascaded(&fixture.doc);
+        let mut session =
+            crate::layout::context::LayoutSession::bridged(&mut fixture.doc, &session_cascade);
         crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
             &mut session,
             fixture.root,
@@ -979,12 +983,7 @@ fn a_formatting_root_block_beside_a_float_resolves_its_width_in_the_room_left() 
 fn before_after_sibling_float(css: &str, float_css: &str) -> (f32, f32) {
     let (mut doc, _, _, root) =
         crate::layout::test_support::ahem_paragraph_beside_floats("A", &[float_css], "");
-    let style_element = doc.append_element(
-        Some(root),
-        "style",
-        crate::LayoutStyle::default(),
-        Some("display:none"),
-    );
+    let style_element = doc.append_element(Some(root), "style", Some("display:none"));
     doc.append_text(
         style_element,
         format!("div > div:last-child::before {{ content: 'XXX'; display: flow-root; {css} }}"),

@@ -2,7 +2,6 @@
 
 use anyrender::{PaintScene, Scene};
 use kurbo::Affine;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -24,11 +23,10 @@ fn document() -> (Document, usize) {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     (doc, body)
@@ -38,7 +36,7 @@ fn document() -> (Document, usize) {
 fn review_owner_pseudos_form_cells_around_a_proper_cell() {
     for kind in ["table", "group", "row"] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(
             sheet,
             "#owner::before{content:'X';color:red} #owner::after{content:'Y';color:green}",
@@ -311,7 +309,7 @@ fn review_inline_table_flex_item_keeps_its_flexed_width_and_contents_boundary() 
 #[test]
 fn review_row_overflow_does_not_clip_generated_cell_text() {
     let (mut doc, body) = document();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(sheet, "#row::before{content:'AAAA';display:table-cell;color:red;white-space:nowrap;text-overflow:ellipsis}");
     let table = element(
         &mut doc,
@@ -335,7 +333,7 @@ fn review_row_overflow_does_not_clip_generated_cell_text() {
 }
 
 fn element(doc: &mut Document, parent: usize, style: &str) -> usize {
-    doc.append_element(Some(parent), "div", Style::default(), Some(style))
+    doc.append_element(Some(parent), "div", Some(style))
 }
 
 fn page() -> PageBox {
@@ -575,17 +573,12 @@ fn anonymous_text_trace_interleaves_generated_and_real_text_with_cells() {
     use raikiri_paint::{PaintTraceEvent, trace_paint_order};
     for generated in [false, true] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(sheet, "span::before{content:'A';color:black}");
         let table = element(&mut doc, body, "display:table;border-spacing:0");
         let row = element(&mut doc, table, "display:table-row");
         if generated {
-            doc.append_element(
-                Some(row),
-                "span",
-                Style::default(),
-                Some("display:contents"),
-            );
+            doc.append_element(Some(row), "span", Some("display:contents"));
         } else {
             doc.append_text(row, "A");
         }
@@ -595,12 +588,7 @@ fn anonymous_text_trace_interleaves_generated_and_real_text_with_cells() {
             "display:table-cell;width:10px;height:10px;background:blue;vertical-align:top",
         );
         if generated {
-            doc.append_element(
-                Some(row),
-                "span",
-                Style::default(),
-                Some("display:contents"),
-            );
+            doc.append_element(Some(row), "span", Some("display:contents"));
         } else {
             doc.append_text(row, "B");
         }
@@ -841,8 +829,8 @@ fn anonymous_rows_share_a_rowspan_background_through_contents_groups() {
 fn anonymous_block_cells_preserve_placement_with_installed_font_bootstrap() {
     let build = || {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
         (doc, body)
     };
     let (mut doc, body) = build();
@@ -916,7 +904,7 @@ fn anonymous_block_cells_preserve_placement_with_installed_font_bootstrap() {
 #[test]
 fn anonymous_text_uses_page_content_clip_and_skips_other_page_ink() {
     let (mut doc, body) = document();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(sheet, "@page { margin-left:40px; margin-right:40px }");
     let table = element(&mut doc, body, "display:table;border-spacing:0");
     let row = element(&mut doc, table, "display:table-row;white-space:nowrap");
@@ -970,7 +958,6 @@ fn html_col_width_reaches_fixed_and_auto_layout_and_exact_paint() {
         let col = doc.append_element(
             Some(table),
             "col",
-            Style::default(),
             Some(format!("display:table-column;{author_width}")),
         );
         doc.set_element_attributes(col, vec![("width".into(), attribute.into())]);
@@ -1615,7 +1602,7 @@ fn anonymous_cell_preserves_out_of_flow_descendant_paint() {
 fn anonymous_cell_keeps_generated_text_of_its_inline_source_child() {
     let build = |anonymous: bool| {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(
             sheet,
             "span::before { content:'X';color:red } span::after { content:'Y';color:blue }",
@@ -1627,12 +1614,7 @@ fn anonymous_cell_keeps_generated_text_of_its_inline_source_child() {
         } else {
             element(&mut doc, row, "display:table-cell")
         };
-        let span = doc.append_element(
-            Some(parent),
-            "span",
-            Style::default(),
-            Some("display:inline"),
-        );
+        let span = doc.append_element(Some(parent), "span", Some("display:inline"));
         doc.append_text(span, "A");
         element(
             &mut doc,
@@ -2093,19 +2075,14 @@ fn review_anonymous_named_page_probe_ignores_unprojected_hidden_text() {
 fn review_contents_pseudos_survive_anonymous_cell_projection() {
     for real_content in [false, true] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(
             sheet,
             "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
         );
         let table = element(&mut doc, body, "display:table;border-spacing:0");
         let row = element(&mut doc, table, "display:table-row");
-        let span = doc.append_element(
-            Some(row),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        let span = doc.append_element(Some(row), "span", Some("display:contents"));
         if real_content {
             doc.append_text(span, "A");
         }
@@ -2143,7 +2120,7 @@ fn review_contents_pseudos_survive_anonymous_cell_projection() {
 fn review_contents_generated_cells_stay_around_structural_cells_in_source_order() {
     for owner_display in ["table", "table-row-group", "table-row"] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(
             sheet,
             "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
@@ -2154,12 +2131,7 @@ fn review_contents_generated_cells_stay_around_structural_cells_in_source_order(
         } else {
             element(&mut doc, table, &format!("display:{owner_display}"))
         };
-        let span = doc.append_element(
-            Some(owner),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        let span = doc.append_element(Some(owner), "span", Some("display:contents"));
         let nested = element(&mut doc, span, "display:contents");
         element(
             &mut doc,
@@ -2199,19 +2171,14 @@ fn review_contents_generated_cells_stay_around_structural_cells_in_source_order(
 #[test]
 fn review_contents_pseudo_runs_keep_real_owners_and_utf8_sources() {
     let (mut doc, body) = document();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(
         sheet,
         "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
     );
     let table = element(&mut doc, body, "display:table;border-spacing:0");
     let row = element(&mut doc, table, "display:table-row");
-    let span = doc.append_element(
-        Some(row),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let span = doc.append_element(Some(row), "span", Some("display:contents"));
     let text = doc.append_text(span, "Ω");
     let count = doc.node_count();
     let computed = layout(&mut doc);
@@ -2259,16 +2226,11 @@ fn review_contents_pseudo_runs_keep_real_owners_and_utf8_sources() {
 #[test]
 fn review_contents_pseudo_lines_interleave_with_structural_cell_events() {
     let (mut doc, body) = document();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(sheet, "span::before{content:'X'}span::after{content:'Y'}");
     let table = element(&mut doc, body, "display:table;border-spacing:0");
     let row = element(&mut doc, table, "display:table-row");
-    let span = doc.append_element(
-        Some(row),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let span = doc.append_element(Some(row), "span", Some("display:contents"));
     let cell = element(&mut doc, span, "display:table-cell");
     doc.append_text(cell, "A");
     let computed = layout(&mut doc);
@@ -2299,18 +2261,13 @@ fn review_contents_pseudo_lines_interleave_with_structural_cell_events() {
 #[test]
 fn review_contents_pseudos_remain_outside_a_structural_row() {
     let (mut doc, body) = document();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(
         sheet,
         "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
     );
     let table = element(&mut doc, body, "display:table;border-spacing:0");
-    let span = doc.append_element(
-        Some(table),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let span = doc.append_element(Some(table), "span", Some("display:contents"));
     let row = element(&mut doc, span, "display:table-row");
     let cell = element(&mut doc, row, "display:table-cell;color:green");
     doc.append_text(cell, "A");
@@ -2348,17 +2305,12 @@ fn review_contents_generated_values_share_counters_and_keep_empty_negatives() {
         "content:open-quote",
     ] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(sheet, format!(
             "span{{counter-reset:sample 1;quotes:'X' 'Y'}}span::before{{{declaration};color:red}}"
         ));
         let table = element(&mut doc, body, "display:table;border-spacing:0");
-        let span = doc.append_element(
-            Some(table),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        let span = doc.append_element(Some(table), "span", Some("display:contents"));
         doc.set_element_attribute(span, "data-label", "X").unwrap();
         let computed = layout(&mut doc);
         let (mut reference, body) = document();
@@ -2380,15 +2332,10 @@ fn review_contents_generated_values_share_counters_and_keep_empty_negatives() {
         ("content:'X';position:absolute", true),
     ] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(sheet, format!("span::before{{{pseudo_style}}}"));
         let table = element(&mut doc, body, "display:table;border-spacing:0");
-        doc.append_element(
-            Some(table),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        doc.append_element(Some(table), "span", Some("display:contents"));
         let computed = layout(&mut doc);
         if overlay {
             assert_eq!(doc.anonymous_table_cells(table).count(), 0);
@@ -2414,18 +2361,13 @@ fn review_contents_generated_values_share_counters_and_keep_empty_negatives() {
 #[test]
 fn review_contents_generated_cells_survive_cancelled_pagination() {
     let (mut doc, body) = document();
-    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    let sheet = doc.append_element(Some(0), "style", Some("display:none"));
     doc.append_text(
         sheet,
         "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
     );
     let table = element(&mut doc, body, "display:table;border-spacing:0");
-    let span = doc.append_element(
-        Some(table),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let span = doc.append_element(Some(table), "span", Some("display:contents"));
     let count = doc.node_count();
     let computed = layout(&mut doc);
     let abort = || true;
@@ -2480,8 +2422,7 @@ fn contents_out_of_flow_pseudos_survive_anonymous_cell_traversal() {
                 .flat_map(|kind| [false, true].map(move |has_text| (kind, has_text)))
             {
                 let (mut doc, body) = document();
-                let sheet =
-                    doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+                let sheet = doc.append_element(Some(0), "style", Some("display:none"));
                 doc.append_text(
                     sheet,
                     format!("span::{pseudo}{{content:'X';color:red;{placement}}}"),
@@ -2495,7 +2436,6 @@ fn contents_out_of_flow_pseudos_survive_anonymous_cell_traversal() {
                 let span = doc.append_element(
                     Some(owner),
                     "span",
-                    Style::default(),
                     Some("display:contents;color:transparent"),
                 );
                 if has_text {
@@ -2527,7 +2467,7 @@ fn contents_out_of_flow_pseudos_survive_anonymous_cell_traversal() {
 fn contents_overlay_keeps_projected_pseudos_and_real_cells_single() {
     for proper_cell in [false, true] {
         let (mut doc, body) = document();
-        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let sheet = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(sheet, if proper_cell {
             "span::before{content:'X';color:red;position:absolute}"
         } else {
@@ -2538,7 +2478,6 @@ fn contents_overlay_keeps_projected_pseudos_and_real_cells_single() {
         let span = doc.append_element(
             Some(row),
             "span",
-            Style::default(),
             Some("display:contents;color:transparent"),
         );
         let nested = element(&mut doc, span, "display:contents");
