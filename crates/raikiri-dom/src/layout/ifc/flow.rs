@@ -350,13 +350,11 @@ pub(crate) fn rebreak_roots(
     let Some(mut state) = doc.ifc.take() else {
         return;
     };
-    // The new session has bound no styles yet, and the recorded boxes read
-    // them.
-    doc.prepare_style_views();
     let roots: Vec<usize> = (0..doc.nodes.len())
         .filter(|&id| doc.nodes[id].ifc.is_some())
         .collect();
     let widths = crate::layout::multicol::AncestorFacts::new(doc, cascade, max_advance);
+    let mut styles_bound = false;
     for id in roots {
         // A root inside a `min-content`, `max-content` or `fit-content` box
         // keeps the lines its intrinsic width was measured with; no page
@@ -415,6 +413,12 @@ pub(crate) fn rebreak_roots(
             .and_then(|root| root.lines.as_ref())
             .map(|lines| std::sync::Arc::clone(&lines.lines));
         if let Some(lines) = lines {
+            // The new session has bound no styles yet, and the recorded boxes
+            // read them. Roots that keep their lines need none.
+            if !styles_bound {
+                doc.prepare_style_views();
+                styles_bound = true;
+            }
             super::records::record_inline_boxes(doc, id, &ifc, &lines, &geometry);
         }
     }

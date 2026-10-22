@@ -623,17 +623,18 @@ fn seed_carried_floats(
         if visible_bottom <= visible_top {
             continue;
         }
+        let style = tree.physical_style(source.node_id);
         ctx.place_floated_box(
             Size {
                 width: layout.size.width + margin.left + margin.right,
                 height: visible_bottom - visible_top,
             },
             geometry.top_edge + visible_top - column_origin,
-            tree.physical_style(source.node_id)
+            style
                 .float()
                 .float_direction()
                 .unwrap_or(FloatDirection::Left),
-            tree.physical_style(source.node_id).clear(),
+            style.clear(),
             false,
         );
     }

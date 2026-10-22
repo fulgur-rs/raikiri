@@ -16,8 +16,10 @@ pub(crate) fn child(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
     materialize(tree.native_style(idx, ReadRole::BlockItem))
 }
 
-/// The box's own style, as the retained style used to hold it, for callers
-/// that adjust a local copy before sizing a leaf.
+/// The box's own style with no role context, reduced to the fields that
+/// block primitives and leaf sizing read, for callers that adjust a local copy
+/// before sizing a leaf. Flex and grid container and item fields keep their
+/// defaults.
 pub(crate) fn physical(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
     materialize(tree.physical_style(idx))
 }
