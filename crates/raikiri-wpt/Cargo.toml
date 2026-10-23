@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-wpt"
-version = "0.1.0"
+version.workspace = true
 description = "WPT (web-platform-tests) runner harness for raikiri: executes W3C tests against raikiri with blitz-html/blitz-dom/blitz-paint as baseline oracle"
 edition.workspace = true
 rust-version.workspace = true

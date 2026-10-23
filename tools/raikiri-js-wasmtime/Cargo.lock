@@ -1323,6 +1323,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "moxcms"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1749,6 +1759,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pxfm"
+version = "0.1.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1765,13 +1781,15 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raikiri-dom"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "bitflags",
  "cssparser",
+ "raikiri-layout-style",
  "raikiri-style",
  "raikiri-traits",
  "rayon",
+ "rustc-hash",
  "serde",
  "shodo",
  "skrifa 0.44.0",
@@ -1784,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "raikiri-js"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -1845,8 +1863,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "raikiri-layout-style"
+version = "0.0.1"
+dependencies = [
+ "raikiri-style",
+ "taffy",
+]
+
+[[package]]
 name = "raikiri-style"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "cssparser",
  "precomputed-hash",
@@ -1858,10 +1884,11 @@ dependencies = [
 
 [[package]]
 name = "raikiri-traits"
-version = "0.2.0"
+version = "0.0.1"
 dependencies = [
  "bytes",
  "libc",
+ "moxcms",
  "raikiri-style",
  "rustc-hash",
  "rustix",
@@ -2112,9 +2139,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shodo"
-version = "0.0.32"
+version = "0.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e80d3a39cc503050f9e0d826b9c3074ce0c31dee496c7c9aa289777d31438a14"
+checksum = "7b02af552304c9112be3d7eb228a0612ea9662410ddb5f8453df5c87f3418d8d"
 dependencies = [
  "foldhash",
  "fontique",

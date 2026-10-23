@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-layout-style"
-version = "0.1.0"
+version.workspace = true
 description = "Borrowed ComputedValues views for Taffy layout styles"
 edition.workspace = true
 rust-version.workspace = true
