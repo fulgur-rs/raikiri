@@ -117,6 +117,15 @@ fn parse_with_limits(
         }),
         error => XhtmlParseError::Xml(error),
     })?;
+    let document = build_dom(&xml, limits)?;
+    crate::parse::finish_document(document, options).map_err(Into::into)
+}
+
+fn build_dom(
+    xml: &roxmltree::Document<'_>,
+    limits: &RenderLimits,
+) -> Result<UncascadedDocument, XhtmlParseError> {
+    let source = xml.input_text();
     let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes);
     let signal = sink.dom_node_limit_signal();
     let mut stack = vec![(xml.root(), sink.get_document())];
@@ -191,7 +200,7 @@ fn parse_with_limits(
         }
         .into());
     }
-    crate::parse::finish_document(document, options).map_err(Into::into)
+    Ok(document)
 }
 
 fn qualified_name(namespace: Option<&str>, local: &str, raw: &str) -> QualName {

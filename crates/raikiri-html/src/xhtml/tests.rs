@@ -198,3 +198,83 @@ fn doctype_markers_inside_text_comments_and_literals_do_not_trigger_dtd_rejectio
 <html value="&lt;!DOCTYPE html ["><![CDATA[<!DOCTYPE html [literal]]>literal</html>"#;
     assert!(parse(&source[..], &options()).is_ok());
 }
+
+#[test]
+fn input_read_errors_preserve_the_diagnostic_and_io_cause() {
+    use std::error::Error;
+    struct BrokenReader;
+    impl std::io::Read for BrokenReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "fixture read refused",
+            ))
+        }
+    }
+    let error = parse(BrokenReader, &options()).unwrap_err();
+    assert!(error.to_string().contains("source read error"));
+    let input_error = error.source().unwrap();
+    let io_error = input_error
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert_eq!(io_error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(io_error.to_string(), "fixture read refused");
+}
+
+#[test]
+fn xml_and_dtd_errors_expose_distinct_diagnostics_and_causes() {
+    use std::error::Error;
+    let malformed = parse(&b"<html><body></html>"[..], &options()).unwrap_err();
+    assert!(malformed.to_string().starts_with("XHTML syntax error:"));
+    assert!(
+        malformed
+            .source()
+            .unwrap()
+            .downcast_ref::<roxmltree::Error>()
+            .is_some()
+    );
+    let dtd = parse(
+        &b"<!DOCTYPE html [<!ENTITY e 'text'>]><html>&e;</html>"[..],
+        &options(),
+    )
+    .unwrap_err();
+    assert!(
+        dtd.to_string()
+            .contains("internal DTD subsets are unsupported")
+    );
+    assert!(dtd.source().is_none());
+}
+
+#[test]
+fn dom_projection_enforces_its_own_node_budget_before_attaching_elements() {
+    use raikiri_traits::{LimitKind, ParseError, RenderLimits};
+    let xml = roxmltree::Document::parse("<root><child/></root>").unwrap();
+    let mut limits = RenderLimits::default();
+    limits.max_dom_nodes = Some(2);
+    assert!(matches!(
+        super::build_dom(&xml, &limits),
+        Err(super::XhtmlParseError::Input(ParseError::LimitExceeded {
+            kind: LimitKind::DomNodes,
+            limit: 2,
+            actual: 3,
+        }))
+    ));
+}
+
+#[test]
+fn dom_projection_enforces_its_node_budget_when_final_text_is_flushed() {
+    use raikiri_traits::{LimitKind, ParseError, RenderLimits};
+    let xml = roxmltree::Document::parse("<root>text</root>").unwrap();
+    let mut limits = RenderLimits::default();
+    limits.max_dom_nodes = Some(2);
+    assert!(matches!(
+        super::build_dom(&xml, &limits),
+        Err(super::XhtmlParseError::Input(ParseError::LimitExceeded {
+            kind: LimitKind::DomNodes,
+            limit: 2,
+            actual: 3,
+        }))
+    ));
+}

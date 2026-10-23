@@ -11,8 +11,11 @@ pub(crate) enum DocumentSyntax {
 
 impl DocumentSyntax {
     pub(crate) fn for_path(path: &Path) -> Self {
+        // Limit automatic XML parsing to the runner's XHTML discovery extension.
+        // Direct .xht/.xml fixtures retain their legacy HTML-compatible path until
+        // XHTML DTD catalogs and their named character references are supported.
         match path.extension().and_then(|extension| extension.to_str()) {
-            Some("xhtml" | "xht" | "xml") => Self::Xhtml,
+            Some("xhtml") => Self::Xhtml,
             _ => Self::Html,
         }
     }

@@ -132,3 +132,14 @@ fn http_print_uses_xhtml_for_base_probe_and_rendering() {
     );
     assert_eq!(server.finish(), ["/xml.html"]);
 }
+
+#[test]
+fn legacy_xml_extensions_keep_the_existing_html_compatibility_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = "<html><head><title>border&ndash;radius</title></head><body></body></html>";
+    for extension in ["xht", "xml"] {
+        let path = dir.path().join(format!("legacy.{extension}"));
+        std::fs::write(&path, source).unwrap();
+        assert!(render_raikiri_file_pages(&path, 80, 60).is_ok());
+    }
+}
