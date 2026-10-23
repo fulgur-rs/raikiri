@@ -1,38 +1,6 @@
 use super::*;
-use crate::layout::test_support::{
-    absolute_rect, page_box_800x600, with_ahem, with_bridged_session,
-};
+use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::AlignItems;
-
-/// [`static_position_alignment`] of box `id` in a session bridged from the
-/// cascade of `doc`.
-fn static_alignment(
-    doc: &mut Document,
-    id: usize,
-    margin_box: Size<f32>,
-) -> (Size<f32>, Size<f32>) {
-    static_alignment_with(doc, id, margin_box, None)
-}
-
-/// [`static_alignment`] with `align_self` replacing the `align-self` of box
-/// `id`, for the alignments the cascade does not produce.
-fn static_alignment_with(
-    doc: &mut Document,
-    id: usize,
-    margin_box: Size<f32>,
-    align_self: Option<AlignItems>,
-) -> (Size<f32>, Size<f32>) {
-    with_bridged_session(doc, |session| {
-        if let Some(align) = align_self {
-            session.record_pass_override(
-                id,
-                raikiri_layout_style::OwnedPropertyOverride::align_self(Some(align)),
-            );
-        }
-        static_position_alignment(session, id, margin_box)
-    })
-}
 
 /// `html > body(margin:0) > div(parent_css) > div(wrapper_css) > div(fixed_css)`
 /// laid out on an 800x600 page with no margins. Returns the document and the
@@ -669,46 +637,6 @@ fn grid_static_positions_follow_justify_self_without_a_relayout() {
 }
 
 #[test]
-fn grid_static_position_alignment_uses_grid_self_and_content_box() {
-    let (mut doc, abspos) = laid_out(
-        "width:200px;height:100px",
-        "display:grid;position:relative;width:200px;height:100px;border:2px solid;padding:10px;justify-items:center;align-items:end",
-        "position:absolute;width:50px;height:10px",
-    );
-    let (alignment, space) = static_alignment(
-        &mut doc,
-        abspos,
-        Size {
-            width: 50.0,
-            height: 10.0,
-        },
-    );
-
-    assert_eq!((alignment.width, alignment.height), (0.5, 1.0));
-    assert_eq!((space.width, space.height), (200.0, 100.0));
-}
-
-#[test]
-fn grid_static_position_alignment_ignores_explicit_insets() {
-    let (mut doc, abspos) = laid_out(
-        "width:200px;height:100px",
-        "display:grid;position:relative;width:200px;height:100px",
-        "position:absolute;left:0;width:50px;height:10px",
-    );
-    let (alignment, space) = static_alignment(
-        &mut doc,
-        abspos,
-        Size {
-            width: 50.0,
-            height: 10.0,
-        },
-    );
-
-    assert_eq!((alignment.width, alignment.height), (0.0, 0.0));
-    assert_eq!(space, Size::ZERO);
-}
-
-#[test]
 fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
     for (wrapper_css, fixed_css, expected_y) in [
         ("", "top:5px", 5.0),
@@ -935,119 +863,86 @@ fn laid_out_with_words(fixed_css: &str) -> (Document, usize) {
 }
 
 #[test]
-fn static_position_alignment_follows_the_flex_container() {
-    let alignment = |wrapper_css: &str, fixed_css: &str| {
-        let (mut doc, fixed) = laid_out(
+fn static_positions_follow_the_flex_alignment_of_the_parent_against_the_page_area() {
+    // The fixed box is sized against the page area but keeps the static
+    // position the flex container gives it: its flex line is 200px wide and
+    // 100px tall at (0, 50), and the box is 20px by 10px. The positions are
+    // those of Chromium.
+    let position = |wrapper_css: &str, fixed_css: &str| {
+        let (doc, fixed) = laid_out(
             "width:200px;height:100px",
             &format!("display:flex;height:100px;{wrapper_css}"),
             &format!("position:fixed;width:20px;height:10px;{fixed_css}"),
         );
-        let (alignment, _) = static_alignment(
-            &mut doc,
-            fixed,
-            Size {
-                width: 100.0,
-                height: 50.0,
-            },
-        );
-        (alignment.width, alignment.height)
+        let (x, y, _, _) = absolute_rect(&doc, fixed);
+        (x, y)
     };
-    assert_eq!(alignment("", ""), (0.0, 0.0));
-    assert_eq!(alignment("flex-direction:row-reverse", ""), (1.0, 0.0));
-    assert_eq!(alignment("flex-direction:column-reverse", ""), (0.0, 1.0));
-    assert_eq!(alignment("justify-content:end", ""), (1.0, 0.0));
-    assert_eq!(
-        alignment("justify-content:start;direction:rtl", ""),
-        (1.0, 0.0)
-    );
-    assert_eq!(alignment("justify-content:flex-end", ""), (1.0, 0.0));
-    assert_eq!(alignment("justify-content:space-around", ""), (0.5, 0.0));
-    assert_eq!(alignment("justify-content:space-between", ""), (0.0, 0.0));
-    assert_eq!(alignment("align-items:center", ""), (0.0, 0.5));
-    assert_eq!(alignment("", "align-self:end"), (0.0, 1.0));
-    assert_eq!(alignment("", "align-self:flex-end"), (0.0, 1.0));
-    assert_eq!(alignment("", "align-self:baseline"), (0.0, 0.0));
-    assert_eq!(alignment("flex-wrap:wrap-reverse", ""), (0.0, 1.0));
-    assert_eq!(
-        alignment("flex-direction:column;direction:rtl", ""),
-        (1.0, 0.0)
-    );
-    // Taffy styles the cascade does not produce: safe alignment and the
-    // `self-*` keywords.
-    let with_align_self = |flex_direction: &str, direction: &str, align: AlignItems| {
-        let (mut doc, fixed) = laid_out(
-            "width:200px;height:100px",
-            &format!("display:flex;height:100px;width:100px;flex-direction:{flex_direction}"),
-            &format!("position:fixed;width:20px;height:10px;direction:{direction}"),
-        );
-        let (alignment, _) = static_alignment_with(
-            &mut doc,
-            fixed,
-            Size {
-                width: 50.0,
-                height: 50.0,
-            },
-            Some(align),
-        );
-        (alignment.width, alignment.height)
-    };
-    let align = |keyword, safety| AlignItems { keyword, safety };
-    // Safe alignment that would overflow the container aligns as start.
-    assert_eq!(
-        with_align_self(
-            "row",
-            "ltr",
-            align(AlignItemsKeyword::End, AlignmentSafety::Safe)
+    for (wrapper_css, fixed_css, expected) in [
+        ("", "", (0.0, 50.0)),
+        ("flex-direction:row-reverse", "", (180.0, 50.0)),
+        ("flex-direction:column-reverse", "", (0.0, 140.0)),
+        ("justify-content:end", "", (180.0, 50.0)),
+        ("justify-content:start;direction:rtl", "", (180.0, 50.0)),
+        ("justify-content:flex-end", "", (180.0, 50.0)),
+        ("justify-content:space-around", "", (90.0, 50.0)),
+        ("justify-content:space-between", "", (0.0, 50.0)),
+        ("align-items:center", "", (0.0, 95.0)),
+        ("", "align-self:end", (0.0, 140.0)),
+        ("", "align-self:flex-end", (0.0, 140.0)),
+        ("", "align-self:baseline", (0.0, 50.0)),
+        ("flex-wrap:wrap-reverse", "", (0.0, 140.0)),
+        ("flex-direction:column;direction:rtl", "", (180.0, 50.0)),
+        (
+            "flex-direction:column",
+            "align-self:self-end",
+            (180.0, 50.0),
         ),
-        (0.0, 1.0)
-    );
-    assert_eq!(
-        with_align_self(
-            "column",
-            "ltr",
-            align(AlignItemsKeyword::End, AlignmentSafety::Safe)
+        (
+            "flex-direction:column;direction:rtl",
+            "align-self:self-start",
+            (180.0, 50.0),
         ),
-        (1.0, 0.0)
-    );
-    let (doc, fixed) = laid_out(
-        "width:200px;height:100px",
-        "display:flex;height:100px;width:100px",
-        "position:fixed;width:20px;height:10px",
-    );
-    let mut doc = doc;
-    let (alignment, _) = static_alignment_with(
-        &mut doc,
-        fixed,
-        Size {
-            width: 20.0,
-            height: 200.0,
-        },
-        Some(align(AlignItemsKeyword::End, AlignmentSafety::Safe)),
-    );
-    assert_eq!((alignment.width, alignment.height), (0.0, 0.0));
-    // `self-start` and `self-end` follow the box's own direction where the
-    // cross axis is its inline axis.
-    for (flex_direction, direction, keyword, expected) in [
-        ("row", "rtl", AlignItemsKeyword::SelfStart, (0.0, 0.0)),
-        ("row", "rtl", AlignItemsKeyword::SelfEnd, (0.0, 1.0)),
-        ("column", "ltr", AlignItemsKeyword::SelfEnd, (1.0, 0.0)),
-        ("column", "rtl", AlignItemsKeyword::SelfStart, (1.0, 0.0)),
-        ("column", "rtl", AlignItemsKeyword::SelfEnd, (0.0, 0.0)),
+        ("", "direction:rtl;align-self:self-start", (0.0, 50.0)),
+        ("", "direction:rtl;align-self:self-end", (0.0, 140.0)),
+        (
+            "align-items:flex-end;justify-content:flex-end",
+            "",
+            (180.0, 140.0),
+        ),
+        (
+            "justify-content:center;align-items:center",
+            "margin:3px 4px 5px 6px",
+            (91.0, 94.0),
+        ),
+        // A box of 260px by 130px overflows the line on both axes.
+        ("", "width:260px;height:130px;align-self:end", (0.0, 20.0)),
+        (
+            "justify-content:center",
+            "width:260px;height:130px;align-self:center",
+            (-30.0, 35.0),
+        ),
+        (
+            "justify-content:flex-end",
+            "width:260px;height:130px;align-self:unsafe end",
+            (-60.0, 20.0),
+        ),
+        (
+            "direction:rtl",
+            "width:260px;height:130px;align-self:end",
+            (-60.0, 20.0),
+        ),
+        (
+            "flex-direction:column;justify-content:center",
+            "width:260px;height:130px;align-self:unsafe end",
+            (-60.0, 35.0),
+        ),
     ] {
         assert_eq!(
-            with_align_self(
-                flex_direction,
-                direction,
-                align(keyword, AlignmentSafety::Unsafe)
-            ),
+            position(wrapper_css, fixed_css),
             expected,
-            "{flex_direction} {direction} {keyword:?}"
+            "{wrapper_css} | {fixed_css}"
         );
     }
-    // Block containers keep the start edge in the inline direction.
-    let (mut doc, fixed) = laid_out("", "direction:rtl", "position:fixed");
-    let (alignment, _) = static_alignment(&mut doc, fixed, Size::ZERO);
-    assert_eq!((alignment.width, alignment.height), (1.0, 0.0));
 }
 
 #[test]

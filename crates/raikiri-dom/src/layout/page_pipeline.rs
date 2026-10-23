@@ -1209,7 +1209,6 @@ fn layout_single_page_with_table_projection(
             height: content_height,
         },
     );
-    super::fixed::correct_root_flex_static_positions(document);
     document.finalize_oof_layout();
     // After Step 5, check semantic parent-child geometry invariants and
     // replace any invalid subtree with the deterministic fallback (zero).

@@ -1,5 +1,5 @@
-//! Self-alignment of the absolutely positioned boxes of a vertical block
-//! container.
+//! Self-alignment of the absolutely positioned boxes of a container on the
+//! axes of a vertical writing mode: a block, flex or grid container.
 //!
 //! Taffy knows only `horizontal-tb`. It aligns an absolutely positioned box
 //! in the physical horizontal axis by `justify-self`, from the left edge
@@ -211,11 +211,16 @@ impl AxisBox {
 /// The scrollable overflow that the boxes in `children` contribute to their
 /// containing block when they are at the positions of their layouts, laid out
 /// against `area`: what Taffy merges for them once it has laid them out.
+///
+/// The rectangle is measured in physical coordinates from the top left corner
+/// of the padding box, as the layout of a container on vertical axes reports
+/// its own. A reversed inline direction moves where the container starts to
+/// scroll along the vertical axis, never the horizontal one, so `direction`
+/// does not mirror it.
 fn hoisted_overflow(
     tree: &LayoutSession<'_>,
     children: &[usize],
     area: OofPositioningArea,
-    direction: Direction,
     container_overflow: Point<Overflow>,
 ) -> Rect<f32> {
     let container_scrolls =
@@ -224,15 +229,8 @@ fn hoisted_overflow(
     for &child in children {
         let layout = tree.nodes[child].unrounded_layout;
         let style = tree.physical_style(child);
-        // The location is measured from the scroll origin, which is the right
-        // edge under `direction: rtl`.
-        let x = layout.location.x - area.offset.x;
         let location = Point {
-            x: if direction == Direction::Rtl {
-                area.size.width - x - layout.size.width
-            } else {
-                x
-            },
+            x: layout.location.x - area.offset.x,
             y: layout.location.y - area.offset.y,
         };
         rect = rect.union(overflow_contribution(
@@ -306,8 +304,8 @@ fn overflow_contribution(
 }
 
 /// Align the absolutely positioned boxes that `idx` is the containing block
-/// of, laid out against `area`, when `idx` is a vertical block container or
-/// the root of vertical lines.
+/// of, laid out against `area`, when `idx` is a vertical block, flex or grid
+/// container or the root of vertical lines.
 ///
 /// Returns the scrollable overflow of all the boxes at their positions, to
 /// replace what Taffy merged for them, when a box moved.
@@ -339,17 +337,8 @@ pub(in crate::taffy_impl) fn hoisted_overflow_rect(
     idx: usize,
     area: OofPositioningArea,
 ) -> Rect<f32> {
-    let (direction, overflow) = {
-        let container = tree.physical_style(idx);
-        (container.direction(), container.overflow())
-    };
-    hoisted_overflow(
-        tree,
-        &hoisted_children(tree, idx),
-        area,
-        direction,
-        overflow,
-    )
+    let overflow = tree.physical_style(idx).overflow();
+    hoisted_overflow(tree, &hoisted_children(tree, idx), area, overflow)
 }
 
 fn align_children(
@@ -472,7 +461,7 @@ fn align_children(
             moved_any = true;
         }
     }
-    moved_any.then(|| hoisted_overflow(tree, &children, overall_area, direction, overflow))
+    moved_any.then(|| hoisted_overflow(tree, &children, overall_area, overflow))
 }
 
 #[cfg(test)]

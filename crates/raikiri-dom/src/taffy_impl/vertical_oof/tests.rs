@@ -486,13 +486,15 @@ fn the_overflow_of_a_moved_box_is_that_of_its_new_position() {
         overflow("writing-mode:vertical-lr", wide),
         (0.0, 150.0, 0.0, 50.0)
     );
-    // The inline axis of a `direction: rtl` box ends at the top.
+    // The inline axis of a `direction: rtl` box ends at the top. The direction
+    // reverses the vertical axis only: the box stays at the left edge and its
+    // overflow is measured from the left, as without the direction.
     assert_eq!(
         overflow(
             "writing-mode:vertical-lr;direction:rtl",
             "top:0;bottom:0;height:150px;justify-self:end"
         ),
-        (0.0, 100.0, -50.0, 100.0)
+        (0.0, 50.0, -50.0, 100.0)
     );
 }
 
