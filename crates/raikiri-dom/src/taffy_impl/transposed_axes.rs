@@ -14,6 +14,11 @@
 //! sizing and the frame bookkeeping stay with [`super::vertical_block`].
 //! Margin collapsing is kept across a conversion only when the caller says
 //! both sides share a block formatting context.
+//!
+//! The conversions of an output and of a layout swap the axes of the
+//! scrollable overflow rectangle without mirroring it. [`OverflowFrame`] maps
+//! it to physical coordinates by mirroring within the padding box, for the
+//! callers that need the rectangle in physical coordinates.
 
 use taffy::tree::RequestedAxis;
 use taffy::{
@@ -215,6 +220,99 @@ fn swap_rect_axes(rect: Rect<f32>) -> Rect<f32> {
         right: rect.bottom,
         top: rect.left,
         bottom: rect.right,
+    }
+}
+
+/// The size of the padding box inside a border box of `border_box`, given
+/// its `border` on the same axes.
+pub(super) fn padding_box(border_box: Size<f32>, border: Rect<f32>) -> Size<f32> {
+    Size {
+        width: (border_box.width - border.left - border.right).max(0.0),
+        height: (border_box.height - border.top - border.bottom).max(0.0),
+    }
+}
+
+/// How the scrollable overflow rectangle of a box on transposed axes maps to
+/// physical coordinates and back.
+///
+/// Taffy measures the rectangle on the layout axes from the corner of the
+/// padding box where scrolling starts: `left` and `right` along the inline
+/// axis, `top` and `bottom` down the block axis. Under `direction: rtl` it
+/// reads the inline axis from its far end, so the inline offsets are
+/// measured from there. Physical coordinates are measured from the top left
+/// corner of the padding box, with x to the right and y down, the way the
+/// layout and the positioning area of the same box are. Overflow past the
+/// block-end side of a `vertical-rl` box therefore lies to the left of the
+/// box, at a negative x, while a swap of the axes would put it to the right,
+/// and overflow before its block start lies past the physical right edge.
+///
+/// Taffy reports a box whose content does not overflow, and a run that does
+/// not lay the box out, as an all-zero rectangle. That rectangle holds no
+/// overflow and stays zero in either direction, which also means that an
+/// output without layout data, which carries no padding box either, has
+/// nothing to convert.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct OverflowFrame {
+    /// The block axis runs from right to left (`vertical-rl`, `sideways-rl`).
+    pub(super) block_reversed: bool,
+    /// The inline axis is read from the physical bottom: taffy runs it with
+    /// the direction `rtl`.
+    pub(super) inline_reversed: bool,
+    /// The padding box on the layout axes: the inline size by the block size.
+    /// These are the extents the reversed axes are mirrored within.
+    pub(super) padding_box: Size<f32>,
+}
+
+impl OverflowFrame {
+    /// The rectangle on physical axes of `rect` on the layout axes.
+    pub(super) fn physical(self, rect: Rect<f32>) -> Rect<f32> {
+        if rect == Rect::ZERO {
+            return rect;
+        }
+        let block = self.padding_box.height;
+        let inline = self.padding_box.width;
+        let (left, right) = if self.block_reversed {
+            (block - rect.bottom, block - rect.top)
+        } else {
+            (rect.top, rect.bottom)
+        };
+        let (top, bottom) = if self.inline_reversed {
+            (inline - rect.right, inline - rect.left)
+        } else {
+            (rect.left, rect.right)
+        };
+        Rect {
+            left,
+            right,
+            top,
+            bottom,
+        }
+    }
+
+    /// The rectangle on the layout axes of `rect` on physical axes: the
+    /// inverse of [`Self::physical`].
+    pub(super) fn on_layout_axes(self, rect: Rect<f32>) -> Rect<f32> {
+        if rect == Rect::ZERO {
+            return rect;
+        }
+        let block = self.padding_box.height;
+        let inline = self.padding_box.width;
+        let (top, bottom) = if self.block_reversed {
+            (block - rect.right, block - rect.left)
+        } else {
+            (rect.left, rect.right)
+        };
+        let (left, right) = if self.inline_reversed {
+            (inline - rect.bottom, inline - rect.top)
+        } else {
+            (rect.top, rect.bottom)
+        };
+        Rect {
+            left,
+            right,
+            top,
+            bottom,
+        }
     }
 }
 

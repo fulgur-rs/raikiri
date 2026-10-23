@@ -266,8 +266,89 @@ fn a_container_output_swaps_the_sizes_for_either_block_direction() {
                 height: 180.0
             }
         );
-        assert_eq!(output.scrollable_overflow_rect, rect(0.0, 13.0, 0.0, 11.0));
         assert_eq!(output.baselines, Baselines::NONE);
+    }
+}
+
+/// An adapter for a container whose borders on the layout axes are 1 and 2
+/// on the inline sides and 3 and 4 on the block sides.
+fn bordered_adapter(right_to_left: bool, inline_reversed: bool) -> AxisAdapter {
+    AxisAdapter {
+        right_to_left,
+        inline_reversed,
+        container_border: rect(1.0, 2.0, 3.0, 4.0),
+    }
+}
+
+/// A container output of 180 along the inline axis and 120 along the block
+/// axis, whose scrollable overflow starts 5 before the inline start and 10
+/// before the block start, reaches 30 along the inline axis, and ends 140
+/// along the block axis, past the padding box.
+fn overflowing_output() -> LayoutOutput {
+    LayoutOutput {
+        size: Size {
+            width: 180.0,
+            height: 120.0,
+        },
+        scrollable_overflow_rect: rect(-5.0, 30.0, -10.0, 140.0),
+        ..LayoutOutput::HIDDEN
+    }
+}
+
+#[test]
+fn a_container_overflow_keeps_its_offsets_from_the_left_in_vertical_lr() {
+    let output = AxisAdapter::new(false).container_output(overflowing_output());
+    // The block axis is the physical x axis, in the same direction.
+    assert_eq!(
+        output.scrollable_overflow_rect,
+        rect(-10.0, 140.0, -5.0, 30.0)
+    );
+}
+
+#[test]
+fn a_container_overflow_is_mirrored_within_the_padding_box_in_vertical_rl() {
+    // The padding box is 120 - 3 - 4 = 113 wide along the block axis. The
+    // overflow that ends 140 from the block start is 27 to the left of the
+    // box, and the 10 before the block start reaches 10 past the physical
+    // right edge.
+    let output = bordered_adapter(true, false).container_output(overflowing_output());
+    assert_eq!(
+        output.scrollable_overflow_rect,
+        rect(-27.0, 123.0, -5.0, 30.0)
+    );
+    // Without borders the padding box is the border box.
+    let output = AxisAdapter::new(true).container_output(overflowing_output());
+    assert_eq!(
+        output.scrollable_overflow_rect,
+        rect(-20.0, 130.0, -5.0, 30.0)
+    );
+}
+
+#[test]
+fn a_container_overflow_is_mirrored_along_the_inline_axis_when_it_is_reversed() {
+    // The padding box is 180 - 1 - 2 = 177 high along the inline axis, and
+    // the overflow is measured from its bottom.
+    let output = bordered_adapter(false, true).container_output(overflowing_output());
+    assert_eq!(
+        output.scrollable_overflow_rect,
+        rect(-10.0, 140.0, 147.0, 182.0)
+    );
+    let output = bordered_adapter(true, true).container_output(overflowing_output());
+    assert_eq!(
+        output.scrollable_overflow_rect,
+        rect(-27.0, 123.0, 147.0, 182.0)
+    );
+}
+
+#[test]
+fn an_overflow_rect_that_is_zero_stays_zero() {
+    let output = LayoutOutput {
+        scrollable_overflow_rect: Rect::ZERO,
+        ..overflowing_output()
+    };
+    for right_to_left in BLOCK_DIRECTIONS {
+        let output = bordered_adapter(right_to_left, true).container_output(output.clone());
+        assert_eq!(output.scrollable_overflow_rect, Rect::ZERO);
     }
 }
 
@@ -518,7 +599,7 @@ fn a_child_output_enters_the_layout_axes_and_leaves_them_unchanged() {
             static_position(20.0, 50.0, AxisStaticEdge::Center),
         ));
 
-        let on_layout_axes = adapter.child_output(physical.clone());
+        let on_layout_axes = adapter.child_output(physical.clone(), Rect::ZERO);
 
         assert_eq!(
             on_layout_axes.size,
@@ -714,4 +795,180 @@ fn a_child_output_is_mirrored_for_the_direction_of_the_frame() {
         }
     );
     assert_eq!(right_to_left.align.keyword, AxisStaticEdge::End);
+}
+
+#[test]
+fn a_placed_layout_mirrors_the_overflow_within_the_padding_box_of_the_child() {
+    // 70 by 30 on the layout axes with borders of 1 and 2 on the inline sides
+    // and 3 and 4 on the block sides: a padding box of 67 by 23.
+    let on_layout_axes = Layout {
+        size: Size {
+            width: 70.0,
+            height: 30.0,
+        },
+        border: rect(1.0, 2.0, 3.0, 4.0),
+        scrollable_overflow_rect: rect(-5.0, 20.0, -2.0, 40.0),
+        ..Layout::new()
+    };
+
+    let left_to_right = AxisAdapter::new(false).placed_layout(&on_layout_axes, 100.0);
+    assert_eq!(
+        left_to_right.scrollable_overflow_rect,
+        rect(-2.0, 40.0, -5.0, 20.0)
+    );
+    // The overflow 17 past the block end of the child lies to its left.
+    let right_to_left = AxisAdapter::new(true).placed_layout(&on_layout_axes, 100.0);
+    assert_eq!(
+        right_to_left.scrollable_overflow_rect,
+        rect(23.0 - 40.0, 23.0 + 2.0, -5.0, 20.0)
+    );
+    let reversed = bordered_adapter(true, true).placed_layout(&on_layout_axes, 100.0);
+    assert_eq!(
+        reversed.scrollable_overflow_rect,
+        rect(23.0 - 40.0, 23.0 + 2.0, 67.0 - 20.0, 67.0 + 5.0)
+    );
+}
+
+#[test]
+fn a_child_overflow_goes_to_the_layout_axes_and_back_through_the_placed_layout() {
+    // A child that is 31 wide and 7 high with borders of 2, 3, 5 and 1 on its
+    // left, right, top and bottom sides, and overflow in physical
+    // coordinates that lies past its right edge and below its bottom edge.
+    let border = rect(2.0, 3.0, 5.0, 1.0);
+    let physical = LayoutOutput {
+        size: Size {
+            width: 31.0,
+            height: 7.0,
+        },
+        scrollable_overflow_rect: rect(-4.0, 50.0, -1.0, 20.0),
+        ..LayoutOutput::HIDDEN
+    };
+    for (right_to_left, inline_reversed) in [(false, false), (true, false), (true, true)] {
+        let adapter = bordered_adapter(right_to_left, inline_reversed);
+        let on_layout_axes = adapter.child_output(physical.clone(), border);
+        // The padding box is 26 wide, along the block axis, and 1 high,
+        // along the inline axis.
+        let expected = match (right_to_left, inline_reversed) {
+            (false, false) => rect(-1.0, 20.0, -4.0, 50.0),
+            (true, false) => rect(-1.0, 20.0, 26.0 - 50.0, 26.0 + 4.0),
+            (_, _) => rect(1.0 - 20.0, 1.0 + 1.0, 26.0 - 50.0, 26.0 + 4.0),
+        };
+        assert_eq!(on_layout_axes.scrollable_overflow_rect, expected);
+
+        let placed = adapter.placed_layout(
+            &Layout {
+                size: on_layout_axes.size,
+                border: rect(border.top, border.bottom, border.left, border.right),
+                scrollable_overflow_rect: on_layout_axes.scrollable_overflow_rect,
+                ..Layout::new()
+            },
+            100.0,
+        );
+        assert_eq!(
+            placed.scrollable_overflow_rect, physical.scrollable_overflow_rect,
+            "right_to_left: {right_to_left}, inline_reversed: {inline_reversed}"
+        );
+    }
+}
+
+/// The adapter built for a frame of a container styled `container_css`,
+/// whose block axis runs from right to left when `right_to_left` is set.
+fn adapter_for_container(container_css: &str, right_to_left: bool) -> AxisAdapter {
+    let (mut doc, cascade, child, _) = fixture_with_styles(container_css, "display:block");
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let frame = TransposedBlock::new(&mut tree, parent, vec![child], right_to_left);
+    let (adapter, _) = with_transposed_frame(&mut tree, frame, |tree| {
+        AxisAdapter::for_frame(tree.context.transposed_blocks.last().unwrap())
+    });
+    adapter
+}
+
+#[test]
+fn a_frame_gives_the_borders_of_its_container_on_the_layout_axes() {
+    // The inline sides of a vertical container are its physical top and
+    // bottom, the block sides its physical right and left.
+    let adapter = adapter_for_container(
+        "display:block;writing-mode:vertical-rl;border-style:solid;\
+         border-top-width:3px;border-right-width:5px;\
+         border-bottom-width:7px;border-left-width:11px",
+        true,
+    );
+    let border = adapter.container_border;
+    assert_eq!(border.left + border.right, 3.0 + 7.0);
+    assert_eq!(border.top + border.bottom, 5.0 + 11.0);
+}
+
+#[test]
+fn a_frame_reads_a_reversed_inline_direction_from_its_container() {
+    let inline_reversed =
+        |css: &str, right_to_left| adapter_for_container(css, right_to_left).inline_reversed;
+    assert!(!inline_reversed("writing-mode:vertical-rl", true));
+    assert!(!inline_reversed("writing-mode:vertical-lr", false));
+    assert!(inline_reversed(
+        "writing-mode:vertical-rl;direction:rtl",
+        true
+    ));
+    assert!(inline_reversed(
+        "writing-mode:vertical-lr;direction:rtl",
+        false
+    ));
+    // `sideways-lr` runs its lines from the bottom to the top.
+    assert!(inline_reversed("writing-mode:sideways-lr", false));
+    assert!(!inline_reversed("writing-mode:sideways-rl", true));
+}
+
+/// The scrollable overflow rectangle that a child styled `child_css`, with a
+/// 50 by 20 box in it, hands to a container whose block axis runs from right
+/// to left when `right_to_left` is set.
+fn laid_out_child_overflow(child_css: &str, right_to_left: bool) -> Rect<f32> {
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let child = doc.append_element(Some(body), "div", Some(child_css));
+    doc.append_element(
+        Some(child),
+        "div",
+        Some("display:block;width:50px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let frame = TransposedBlock::new(&mut tree, body, vec![child], right_to_left);
+    let (output, _) = with_transposed_frame(&mut tree, frame, |tree| {
+        tree.compute_adapted_child(NodeId::from(child), item_inputs(), true)
+            .expect("the frame holds the child")
+    });
+    output.scrollable_overflow_rect
+}
+
+#[test]
+fn the_overflow_of_a_laid_out_child_is_mirrored_within_its_padding_box() {
+    // A 31 by 7 child with a 50 by 20 box in it: in physical coordinates its
+    // overflow reaches 50 to the right and 20 down. In `vertical-rl` the right
+    // edge of the child is its block start, so the 19 that lie past it are
+    // before the block start: the layout rectangle starts 19 above the top.
+    // The inline axis is the physical y axis, as it is.
+    let child_css = "display:block;width:31px;height:7px";
+    assert_eq!(
+        laid_out_child_overflow(child_css, false),
+        rect(0.0, 20.0, 0.0, 50.0)
+    );
+    assert_eq!(
+        laid_out_child_overflow(child_css, true),
+        rect(0.0, 20.0, 31.0 - 50.0, 31.0)
+    );
+}
+
+#[test]
+fn the_borders_of_a_laid_out_child_stay_out_of_the_extent_it_is_mirrored_within() {
+    // The 2px borders widen the border box to 35, but the overflow is
+    // measured from the padding box, 31 wide. The rectangle reaches 2 before
+    // the padding box on the physical left and top, where the borders lie.
+    let child_css = "display:block;width:31px;height:7px;border:2px solid";
+    assert_eq!(
+        laid_out_child_overflow(child_css, true),
+        rect(-2.0, 20.0, 31.0 - 50.0, 31.0 + 2.0)
+    );
 }

@@ -405,3 +405,155 @@ fn a_placed_child_gets_its_physical_layout_from_the_block_start_edge() {
     assert_eq!(right_to_left.location, Point { x: 50.0, y: 8.0 });
     assert_eq!(right_to_left.border, physical_rect(transposed.border, true));
 }
+
+/// The four ways the layout axes can run against the physical ones.
+const OVERFLOW_ORIENTATIONS: [(bool, bool); 4] =
+    [(false, false), (true, false), (false, true), (true, true)];
+
+/// A padding box 80 along the inline axis and 60 along the block axis.
+fn overflow_frame(block_reversed: bool, inline_reversed: bool) -> OverflowFrame {
+    OverflowFrame {
+        block_reversed,
+        inline_reversed,
+        padding_box: Size {
+            width: 80.0,
+            height: 60.0,
+        },
+    }
+}
+
+/// The physical position of a point at `(inline, block)` from the scroll
+/// origin of the padding box of `overflow_frame`.
+fn physical_point(frame: OverflowFrame, inline: f32, block: f32) -> (f32, f32) {
+    let x = if frame.block_reversed {
+        frame.padding_box.height - block
+    } else {
+        block
+    };
+    let y = if frame.inline_reversed {
+        frame.padding_box.width - inline
+    } else {
+        inline
+    };
+    (x, y)
+}
+
+#[test]
+fn overflow_in_vertical_lr_swaps_the_axes() {
+    let frame = overflow_frame(false, false);
+    assert_eq!(
+        frame.physical(rect(-5.0, 30.0, -10.0, 75.0)),
+        rect(-10.0, 75.0, -5.0, 30.0)
+    );
+}
+
+#[test]
+fn overflow_past_the_block_end_of_vertical_rl_lies_left_of_the_box() {
+    let frame = overflow_frame(true, false);
+    // The block axis is 60 long. The overflow reaches 75 from the block
+    // start, 15 past the block end, which is the physical left edge; the 10
+    // before the block start lie past the physical right edge.
+    assert_eq!(
+        frame.physical(rect(-5.0, 30.0, -10.0, 75.0)),
+        rect(-15.0, 70.0, -5.0, 30.0)
+    );
+}
+
+#[test]
+fn overflow_past_the_inline_end_of_a_reversed_inline_axis_lies_above_the_box() {
+    let frame = overflow_frame(false, true);
+    // The inline axis is 80 long and read from the physical bottom: the
+    // overflow 95 along it is 15 above the top edge, and the 5 before the
+    // inline start lie below the bottom edge.
+    assert_eq!(
+        frame.physical(rect(-5.0, 95.0, 0.0, 20.0)),
+        rect(0.0, 20.0, -15.0, 85.0)
+    );
+}
+
+#[test]
+fn overflow_that_stays_inside_the_padding_box_stays_inside_it() {
+    // Content in the first 20 of the 60 along the block axis is at the
+    // right-hand end of the box in vertical-rl.
+    let frame = overflow_frame(true, false);
+    assert_eq!(
+        frame.physical(rect(0.0, 30.0, 0.0, 20.0)),
+        rect(40.0, 60.0, 0.0, 30.0)
+    );
+}
+
+#[test]
+fn overflow_agrees_with_the_position_of_each_of_its_corners() {
+    let overflow = rect(-5.0, 30.0, -10.0, 75.0);
+    for (block_reversed, inline_reversed) in OVERFLOW_ORIENTATIONS {
+        let frame = overflow_frame(block_reversed, inline_reversed);
+        let corners = [
+            physical_point(frame, overflow.left, overflow.top),
+            physical_point(frame, overflow.right, overflow.top),
+            physical_point(frame, overflow.left, overflow.bottom),
+            physical_point(frame, overflow.right, overflow.bottom),
+        ];
+        let min =
+            |value: fn(&(f32, f32)) -> f32| corners.iter().map(value).fold(f32::MAX, f32::min);
+        let max =
+            |value: fn(&(f32, f32)) -> f32| corners.iter().map(value).fold(f32::MIN, f32::max);
+        assert_eq!(
+            frame.physical(overflow),
+            rect(min(|c| c.0), max(|c| c.0), min(|c| c.1), max(|c| c.1)),
+            "block reversed: {block_reversed}, inline reversed: {inline_reversed}"
+        );
+    }
+}
+
+#[test]
+fn overflow_returns_to_the_layout_axes_by_the_same_mirroring() {
+    for rect in [
+        rect(-5.0, 30.0, -10.0, 75.0),
+        rect(0.0, 80.0, 0.0, 60.0),
+        rect(-12.5, 0.0, 0.0, 2.25),
+        rect(0.0, 100.0, -3.0, 0.0),
+    ] {
+        for (block_reversed, inline_reversed) in OVERFLOW_ORIENTATIONS {
+            let frame = overflow_frame(block_reversed, inline_reversed);
+            assert_eq!(frame.on_layout_axes(frame.physical(rect)), rect);
+            assert_eq!(frame.physical(frame.on_layout_axes(rect)), rect);
+        }
+    }
+}
+
+#[test]
+fn a_zero_overflow_rect_holds_nothing_to_mirror() {
+    for (block_reversed, inline_reversed) in OVERFLOW_ORIENTATIONS {
+        let frame = overflow_frame(block_reversed, inline_reversed);
+        assert_eq!(frame.physical(Rect::ZERO), Rect::ZERO);
+        assert_eq!(frame.on_layout_axes(Rect::ZERO), Rect::ZERO);
+    }
+}
+
+#[test]
+fn the_padding_box_is_the_border_box_less_the_borders() {
+    assert_eq!(
+        padding_box(
+            Size {
+                width: 100.0,
+                height: 50.0
+            },
+            rect(1.0, 2.0, 3.0, 4.0)
+        ),
+        Size {
+            width: 97.0,
+            height: 43.0
+        }
+    );
+    // Borders larger than the box leave nothing.
+    assert_eq!(
+        padding_box(
+            Size {
+                width: 2.0,
+                height: 2.0
+            },
+            rect(3.0, 3.0, 3.0, 3.0)
+        ),
+        Size::ZERO
+    );
+}

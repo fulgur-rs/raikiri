@@ -28,8 +28,17 @@
 //! what a flex or grid container needs on top of them: its margins never
 //! collapse with a child's across a conversion, as flex and grid items
 //! establish formatting contexts of their own. Baselines are dropped by the
-//! conversion, and a scrollable overflow rectangle is swapped without being
-//! mirrored.
+//! conversion. A scrollable overflow rectangle is mapped by
+//! [`OverflowFrame`] instead of being swapped: its offsets are measured from
+//! the corner of the padding box where the box starts scrolling, and in
+//! physical coordinates, from the top left corner, they are mirrored within
+//! the padding box wherever the block axis runs from right to left or the
+//! inline axis from the bottom. A child hands over its rectangle in physical
+//! coordinates too, whatever its own direction is, so the one the container
+//! gets is mirrored the same way. A child whose layout still returns the
+//! rectangle measured from its own scroll origin, such as a block container
+//! in `vertical-rl` or a horizontal box under `direction: rtl`, is not
+//! corrected here.
 //!
 //! Orthogonal-flow sizing of an item (stretching it, resolving its automatic
 //! sizes) is not done here: the inputs reach the child as they were.
@@ -40,23 +49,32 @@
 //! that follows, once the container's frame is left, works on physical
 //! coordinates.
 
-use taffy::{Layout, LayoutInput, LayoutOutput, NodeId};
+use taffy::util::ResolveOrZero;
+use taffy::{CoreStyle, Layout, LayoutInput, LayoutOutput, NodeId, Rect, Size};
 
+use super::resolve_calc;
 use super::transposed_axes::{
-    physical_layout, transpose_child_output_to_vertical, transpose_inputs,
-    transpose_output_to_physical,
+    OverflowFrame, padding_box, physical_layout, swap, transpose_child_output_to_vertical,
+    transpose_inputs, transpose_output_to_physical,
 };
 use super::vertical_block::TransposedBlock;
 use crate::layout::context::LayoutSession;
 
 /// The conversions for one container whose layout axes are the axes of a
 /// vertical writing mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct AxisAdapter {
     /// Whether the block axis runs from right to left: `vertical-rl` and
     /// `sideways-rl`. `vertical-lr` and `sideways-lr` run it from left to
     /// right.
     right_to_left: bool,
+    /// Whether taffy runs the inline axis of the container from its far end,
+    /// which is what it does under a reversed direction: the scrollable
+    /// overflow of the container is then measured from the physical bottom.
+    inline_reversed: bool,
+    /// The borders of the container on its layout axes, which bound the
+    /// padding box its scrollable overflow is measured in.
+    container_border: Rect<f32>,
 }
 
 /// The inputs for a child, on the child's physical axes.
@@ -71,13 +89,36 @@ pub(super) struct ChildInputs {
 }
 
 impl AxisAdapter {
+    /// The adapter for a container without borders whose inline axis runs
+    /// from the physical top. A frame knows more about its container: see
+    /// [`Self::for_frame`].
+    #[cfg(test)]
     pub(super) fn new(right_to_left: bool) -> Self {
-        Self { right_to_left }
+        Self {
+            right_to_left,
+            inline_reversed: false,
+            container_border: Rect::ZERO,
+        }
     }
 
     /// The adapter for the container `frame` was built for.
     pub(super) fn for_frame(frame: &TransposedBlock) -> Self {
-        Self::new(frame.right_to_left())
+        Self {
+            right_to_left: frame.right_to_left(),
+            inline_reversed: frame.inline_reversed(),
+            container_border: frame.container_border(),
+        }
+    }
+
+    /// How a scrollable overflow rectangle maps to physical coordinates and
+    /// back, for a box with the given padding box on the layout axes, in
+    /// the frame of this container.
+    fn overflow_frame(self, padding_box: Size<f32>) -> OverflowFrame {
+        OverflowFrame {
+            block_reversed: self.right_to_left,
+            inline_reversed: self.inline_reversed,
+            padding_box,
+        }
     }
 
     /// The inputs of the container on its layout axes, given those on
@@ -96,19 +137,33 @@ impl AxisAdapter {
     /// mirrored within in `vertical-rl`. Only an output that comes with
     /// out-of-flow data has it in full: one that answers a request for a
     /// single axis carries no such data, and its other size may be zero. The
-    /// margins of the container are left to its parent, which reads them from
-    /// the box's style.
+    /// scrollable overflow rectangle comes with the layout data too; it is
+    /// mirrored within the padding box, the border box less the borders of
+    /// the container, and a zero one stays zero. The margins of the
+    /// container are left to its parent, which reads them from the box's
+    /// style.
     pub(super) fn container_output(self, output: LayoutOutput) -> LayoutOutput {
         let extent = output.size.height;
-        transpose_output_to_physical(output, self.right_to_left, extent, false)
+        let overflow = self
+            .overflow_frame(padding_box(output.size, self.container_border))
+            .physical(output.scrollable_overflow_rect);
+        let mut output = transpose_output_to_physical(output, self.right_to_left, extent, false);
+        output.scrollable_overflow_rect = overflow;
+        output
     }
 
     /// The physical layout of a child taffy placed at `layout` in a
     /// container whose physical border box is `container_width` wide. The
     /// location is measured from the left edge of the container, so in
     /// `vertical-rl` it is `container_width - block offset - child width`.
+    /// The scrollable overflow of the child is mirrored within its own
+    /// padding box.
     pub(super) fn placed_layout(self, layout: &Layout, container_width: f32) -> Layout {
-        physical_layout(layout, container_width, self.right_to_left)
+        let mut placed = physical_layout(layout, container_width, self.right_to_left);
+        placed.scrollable_overflow_rect = self
+            .overflow_frame(padding_box(layout.size, layout.border))
+            .physical(layout.scrollable_overflow_rect);
+        placed
     }
 
     /// The inputs for a child, given those taffy built on layout axes.
@@ -124,10 +179,26 @@ impl AxisAdapter {
 
     /// The output of a child on layout axes, given the physical one. The
     /// child's own physical width is the extent its block axis is mirrored
-    /// within.
-    pub(super) fn child_output(self, output: LayoutOutput) -> LayoutOutput {
+    /// within, and the scrollable overflow rectangle of the child, which is
+    /// in physical coordinates, is mirrored within its padding box:
+    /// `border` holds the borders of the child on its physical sides.
+    pub(super) fn child_output(self, output: LayoutOutput, border: Rect<f32>) -> LayoutOutput {
         let extent = output.size.width;
-        transpose_child_output_to_vertical(output, self.right_to_left, extent, false)
+        // The sides of the border on the layout axes: the physical top and
+        // bottom are the inline sides, the left and right the block sides.
+        let layout_border = Rect {
+            left: border.top,
+            right: border.bottom,
+            top: border.left,
+            bottom: border.right,
+        };
+        let overflow = self
+            .overflow_frame(padding_box(swap(output.size), layout_border))
+            .on_layout_axes(output.scrollable_overflow_rect);
+        let mut output =
+            transpose_child_output_to_vertical(output, self.right_to_left, extent, false);
+        output.scrollable_overflow_rect = overflow;
+        output
     }
 }
 
@@ -153,8 +224,13 @@ impl LayoutSession<'_> {
             let adapter = AxisAdapter::for_frame(frame);
             let child = adapter.child_inputs(inputs);
             let padding_basis = child.padding_basis.filter(|_| flows_horizontally);
+            // Borders are lengths, so they resolve without a basis.
+            let border = tree
+                .physical_style(usize::from(node_id))
+                .border()
+                .resolve_or_zero(None, resolve_calc);
             let output = tree.dispatch_physical_child(node_id, child.inputs, padding_basis, None);
-            adapter.child_output(output)
+            adapter.child_output(output, border)
         })
     }
 }
