@@ -1,5 +1,7 @@
+use crate::layout::protocol::{LayoutInput, NodeId, RunMode};
 use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
-use taffy::{CoreStyle, FlexboxItemStyle, NodeId};
+use raikiri_layout_geometry::Size;
+use taffy::{CoreStyle, FlexboxItemStyle};
 
 #[test]
 fn flex_intrinsic_probe_records_and_restores_its_temporary_limit() {
@@ -83,20 +85,20 @@ fn flex_item_container_resolves_edges_during_indefinite_main_axis_measurement() 
     let padding = tree.style_view(child).padding();
     tree.context.flex_item_percent_bases.push((
         parent,
-        taffy::Size {
+        Size {
             width: Some(100.0),
             height: Some(100.0),
         },
     ));
     let output = tree.compute_child_layout_with_block_ctx(
         NodeId::from(child),
-        taffy::LayoutInput {
-            run_mode: taffy::RunMode::ComputeSize,
-            parent_size: taffy::Size {
+        LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            parent_size: Size {
                 width: None,
                 height: Some(100.0),
             },
-            ..taffy::LayoutInput::HIDDEN
+            ..LayoutInput::HIDDEN
         },
         None,
     );

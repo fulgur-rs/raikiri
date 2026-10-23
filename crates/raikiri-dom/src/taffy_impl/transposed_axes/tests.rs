@@ -1,12 +1,13 @@
 use super::*;
-use taffy::tree::RunMode;
-use taffy::{
-    AlignmentSafety, AvailableSpace, AxisStaticAlign, Baselines, NodeId, OofCandidate,
-    OofPositioningArea, Position, SizingMode,
+use crate::layout::protocol::{
+    AvailableSpace, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, Baselines, NodeId,
+    OofCandidate, OofPositioningArea, RunMode, SizingMode,
 };
+use raikiri_layout_geometry::Line;
+use taffy::{AlignmentSafety, Position};
 
-fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Rect<f32> {
-    Rect {
+fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Edges<f32> {
+    Edges {
         left,
         right,
         top,
@@ -36,15 +37,15 @@ fn candidate(x: AxisStaticPosition, y: AxisStaticPosition) -> OofCandidate {
 
 #[test]
 fn reversing_a_center_static_position_keeps_its_alignment_centered() {
-    let position = taffy::AxisStaticPosition {
-        area: taffy::Line {
+    let position = AxisStaticPosition {
+        area: Line {
             start: 10.0,
             end: 40.0,
         },
-        align: taffy::AxisStaticAlign {
-            keyword: taffy::AxisStaticEdge::Center,
+        align: AxisStaticAlign {
+            keyword: AxisStaticEdge::Center,
             safety: taffy::AlignmentSafety::Safe,
-            fallback: taffy::AxisStaticEdge::End,
+            fallback: AxisStaticEdge::End,
         },
     };
 
@@ -52,14 +53,14 @@ fn reversing_a_center_static_position_keeps_its_alignment_centered() {
 
     assert_eq!(
         reversed.area,
-        taffy::Line {
+        Line {
             start: 60.0,
             end: 90.0
         }
     );
-    assert_eq!(reversed.align.keyword, taffy::AxisStaticEdge::Center);
+    assert_eq!(reversed.align.keyword, AxisStaticEdge::Center);
     assert_eq!(reversed.align.safety, taffy::AlignmentSafety::Safe);
-    assert_eq!(reversed.align.fallback, taffy::AxisStaticEdge::Start);
+    assert_eq!(reversed.align.fallback, AxisStaticEdge::Start);
 }
 
 #[test]
@@ -220,7 +221,7 @@ fn transposed_output() -> LayoutOutput {
         top_margin: CollapsibleMarginSet::from_margin(4.0),
         bottom_margin: CollapsibleMarginSet::from_margin(6.0),
         margins_can_collapse_through: true,
-        oof_positioning_area: Some(taffy::OofPositioningArea {
+        oof_positioning_area: Some(OofPositioningArea {
             size: Size {
                 width: 180.0,
                 height: 100.0,
@@ -360,7 +361,7 @@ fn a_child_output_round_trips_through_the_transposed_axes() {
 
 #[test]
 fn a_placed_child_gets_its_physical_layout_from_the_block_start_edge() {
-    let transposed = Layout {
+    let transposed = BoxLayout {
         order: 3,
         location: Point { x: 8.0, y: 20.0 },
         size: Size {
@@ -536,8 +537,8 @@ fn overflow_returns_to_the_layout_axes_by_the_same_mirroring() {
 fn a_zero_overflow_rect_holds_nothing_to_mirror() {
     for (block_reversed, inline_reversed) in OVERFLOW_ORIENTATIONS {
         let frame = overflow_frame(block_reversed, inline_reversed);
-        assert_eq!(frame.physical(Rect::ZERO), Rect::ZERO);
-        assert_eq!(frame.on_layout_axes(Rect::ZERO), Rect::ZERO);
+        assert_eq!(frame.physical(Edges::ZERO), Edges::ZERO);
+        assert_eq!(frame.on_layout_axes(Edges::ZERO), Edges::ZERO);
     }
 }
 

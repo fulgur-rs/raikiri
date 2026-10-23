@@ -3,6 +3,7 @@ use crate::layout::style_views::tests::fixture;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use taffy::CoreStyle;
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 
 #[test]
 fn batched_content_limits_preserve_unrelated_pass_updates_after_unwind() {
@@ -88,8 +89,8 @@ fn batched_oof_scopes_restore_four_raw_constraints_and_keep_unrelated_updates() 
                     }
                     if calls == 2 {
                         for child in [first, second] {
-                            assert_eq!(tree.style_view(child).min_size(), Size::auto());
-                            assert_eq!(tree.style_view(child).max_size(), Size::auto());
+                            assert_eq!(tree.style_view(child).min_size(), StyleSize::auto());
+                            assert_eq!(tree.style_view(child).max_size(), StyleSize::auto());
                         }
                         saw_raw = true;
                     }

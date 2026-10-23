@@ -1,6 +1,7 @@
 use super::{BlockFormattingContext, BoxProbe};
-use taffy::CollapsibleMarginSet;
-use taffy::{Clear, Direction, FloatDirection, Point, Size};
+use crate::layout::protocol::CollapsibleMarginSet;
+use raikiri_layout_geometry::{Point, Size};
+use taffy::{Clear, Direction, FloatDirection};
 
 #[test]
 fn rollback_preserves_prior_floats_and_discards_speculative_clearance_and_ceiling() {

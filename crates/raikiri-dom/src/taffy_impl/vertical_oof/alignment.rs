@@ -19,10 +19,13 @@
 //! is `auto`, which the static position handles. The scrollable overflow
 //! Taffy merged from the boxes is recomputed for their new positions.
 
+use crate::layout::protocol::{NodeId, OofPositioningArea};
+use raikiri_layout_geometry::{Edges, Line, Point, Size};
+use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
 use taffy::util::MaybeResolve;
 use taffy::{
     AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, CoreStyle, Direction,
-    LayoutPartialTree, Line, NodeId, OofPositioningArea, Overflow, Point, Rect, Size,
+    LayoutPartialTree, Overflow,
 };
 
 use super::super::grid_oof::GridAreas;
@@ -221,11 +224,11 @@ fn hoisted_overflow(
     tree: &LayoutSession<'_>,
     children: &[usize],
     area: OofPositioningArea,
-    container_overflow: Point<Overflow>,
-) -> Rect<f32> {
+    container_overflow: StylePoint<Overflow>,
+) -> Edges<f32> {
     let container_scrolls =
         container_overflow.x.is_scroll_container() || container_overflow.y.is_scroll_container();
-    let mut rect = Rect::ZERO;
+    let mut rect = Edges::ZERO;
     for &child in children {
         let layout = tree.nodes[child].unrounded_layout;
         let style = tree.physical_style(child);
@@ -252,11 +255,11 @@ fn hoisted_overflow(
 fn overflow_contribution(
     location: Point<f32>,
     size: Size<f32>,
-    overflow_rect: Rect<f32>,
-    overflow: Point<Overflow>,
+    overflow_rect: Edges<f32>,
+    overflow: StylePoint<Overflow>,
     contain: Contain,
     container_scrolls: bool,
-) -> Rect<f32> {
+) -> Edges<f32> {
     let clips = overflow.x.is_scroll_container()
         || overflow.y.is_scroll_container()
         || contain.contains_scrollable_overflow();
@@ -275,7 +278,7 @@ fn overflow_contribution(
         },
     };
     if end.width <= 0.0 || end.height <= 0.0 {
-        return Rect::ZERO;
+        return Edges::ZERO;
     }
     let start = Point {
         x: if propagates_x {
@@ -289,7 +292,7 @@ fn overflow_contribution(
             0.0
         },
     };
-    let contribution = Rect {
+    let contribution = Edges {
         left: location.x + start.x,
         right: location.x + end.width,
         top: location.y + start.y,
@@ -297,7 +300,7 @@ fn overflow_contribution(
     };
     // What lies before the origin of a scroll container cannot be reached.
     if container_scrolls && (contribution.right <= 0.0 || contribution.bottom <= 0.0) {
-        Rect::ZERO
+        Edges::ZERO
     } else {
         contribution
     }
@@ -313,7 +316,7 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     area: OofPositioningArea,
-) -> Option<Rect<f32>> {
+) -> Option<Edges<f32>> {
     align_children(tree, idx, area, None)
 }
 
@@ -326,7 +329,7 @@ pub(in crate::taffy_impl) fn align_hoisted_children_in_grid(
     idx: usize,
     area: OofPositioningArea,
     grid: Option<&GridAreas<'_>>,
-) -> Option<Rect<f32>> {
+) -> Option<Edges<f32>> {
     align_children(tree, idx, area, grid)
 }
 
@@ -336,7 +339,7 @@ pub(in crate::taffy_impl) fn hoisted_overflow_rect(
     tree: &LayoutSession<'_>,
     idx: usize,
     area: OofPositioningArea,
-) -> Rect<f32> {
+) -> Edges<f32> {
     let overflow = tree.physical_style(idx).overflow();
     hoisted_overflow(tree, &hoisted_children(tree, idx), area, overflow)
 }
@@ -346,7 +349,7 @@ fn align_children(
     idx: usize,
     area: OofPositioningArea,
     grid: Option<&GridAreas<'_>>,
-) -> Option<Rect<f32>> {
+) -> Option<Edges<f32>> {
     // Only a box laid out on vertical axes has the physical axes swapped.
     block_right_to_left(tree, idx)?;
     let mode = used_writing_mode(tree, idx);

@@ -9,12 +9,16 @@
 //!   style getter marker impls
 
 use crate::LayoutStyle as Style;
-use taffy::tree::{RequestedAxis, RunMode};
+use crate::layout::protocol::{
+    AvailableSpace, Baselines, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId,
+    OofCandidates, RequestedAxis, RunMode, SizingMode,
+};
+use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
+use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
 use taffy::{
-    AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
-    DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
-    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, MaybeMath, NodeId,
-    Position as TaffyPosition, Size, TraversePartialTree, TraverseTree, compute_cached_layout,
+    BoxGenerationMode, CacheTree, CoreStyle, DetailedGridInfo, ExpandedDimension,
+    LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree,
+    MaybeMath, Position as TaffyPosition, TraversePartialTree, TraverseTree, compute_cached_layout,
     compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
@@ -349,8 +353,8 @@ fn ifc_horizontal_edges(style: &Style, parent_inline_size: Option<f32>) -> (f32,
     )
 }
 
-fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect<f32> {
-    taffy::Rect {
+fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> Edges<f32> {
+    Edges {
         top: ifc_edge(style.padding.top, parent_inline_size)
             + ifc_edge(style.border.top, parent_inline_size),
         right: ifc_edge(style.padding.right, parent_inline_size)
@@ -622,7 +626,7 @@ impl LayoutPartialTree for LayoutSession<'_> {
     /// drains the buffer to an observer or eprintln (see the documentation for
     /// the diagnostics buffer below).
     /// The session context drops this buffer when the layout operation ends.
-    fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
+    fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &BoxLayout) {
         self.note_transposed_layout(usize::from(node_id));
         self.store_unrounded_layout(usize::from(node_id), layout);
     }
@@ -711,7 +715,7 @@ impl LayoutSession<'_> {
         self.sync_layout_cache_mutations();
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
-        if inputs.run_mode == taffy::RunMode::PerformLayout {
+        if inputs.run_mode == RunMode::PerformLayout {
             let idx = usize::from(node_id);
             self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
         }
@@ -806,7 +810,7 @@ impl LayoutSession<'_> {
                     && !contained_width
                     && tree.physical_style(idx).size().width.is_auto()
                     && (inputs.known_dimensions.width.is_none()
-                        || inputs.sizing_mode != taffy::SizingMode::ContentSize)
+                        || inputs.sizing_mode != SizingMode::ContentSize)
                 {
                     return compute_inline_block_shrink_wrap(tree, node_id, inputs, block_ctx);
                 }
@@ -815,7 +819,7 @@ impl LayoutSession<'_> {
             // its content on the axis its container stretched it along.
             if !empty
                 && inputs.known_dimensions.width.is_some()
-                && inputs.sizing_mode == taffy::SizingMode::InherentSize
+                && inputs.sizing_mode == SizingMode::InherentSize
                 && tree.context.orthogonal_block_in_layout != Some(idx)
                 && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
             {
@@ -1122,7 +1126,7 @@ impl LayoutSession<'_> {
         // box sits along it: it exposes none and is synthesized from its
         // border box instead.
         if self.is_orthogonal_to_parent(usize::from(node_id)) {
-            output.baselines = taffy::Baselines::NONE;
+            output.baselines = Baselines::NONE;
         }
         output
     }
@@ -1189,7 +1193,7 @@ fn compute_ifc_root(
     // leaf is given the width the ratio settles and no ratio, and the height
     // follows once the content is measured.
     let ratio = layout_style.aspect_ratio.filter(|_| {
-        inputs.sizing_mode == taffy::SizingMode::InherentSize
+        inputs.sizing_mode == SizingMode::InherentSize
             && tree.nodes[idx].multicol.is_none()
             && tree.nodes[idx]
                 .ifc
@@ -1236,10 +1240,10 @@ fn compute_ifc_root(
     // too (taffy passes it as the available width); otherwise the
     // box shrinks to fit.
     let stretched_width = inputs.known_dimensions.width.is_some()
-        || (inputs.sizing_mode == taffy::SizingMode::InherentSize
+        || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_width(&style, inputs.parent_size.width));
     let stretched_height = inputs.known_dimensions.height.is_some()
-        || (inputs.sizing_mode == taffy::SizingMode::InherentSize
+        || (inputs.sizing_mode == SizingMode::InherentSize
             && ifc_has_definite_height(&style, inputs.parent_size.height));
     let writing_mode = tree.nodes[idx]
         .ifc
@@ -1290,7 +1294,7 @@ fn compute_ifc_root(
     let mut content_baseline = None;
     let mut leading_margin = CollapsibleMarginSet::ZERO;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
-    let mut nested_oof_candidates = taffy::OofCandidates::new();
+    let mut nested_oof_candidates = OofCandidates::new();
     let mut measure = measure;
     let auto_vertical_block_size = tree.nodes[idx]
         .ifc
@@ -1534,7 +1538,7 @@ fn ifc_min_content_width(
 ) -> f32 {
     let probe = LayoutInput {
         run_mode: RunMode::ComputeSize,
-        sizing_mode: taffy::SizingMode::ContentSize,
+        sizing_mode: SizingMode::ContentSize,
         axis: RequestedAxis::Both,
         known_dimensions: Size::NONE,
         known_dimensions_are_definite: Size {
@@ -1546,7 +1550,7 @@ fn ifc_min_content_width(
             width: AvailableSpace::MinContent,
             height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: taffy::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     };
     compute_ifc_root(tree, node_id, probe, None).size.width
 }
@@ -1674,7 +1678,7 @@ struct IfcMeasure {
     /// Border plus padding on the left and right.
     edges: (f32, f32),
     /// Border plus padding on every physical side.
-    insets: taffy::Rect<f32>,
+    insets: Edges<f32>,
     /// Leading block margins leave the content box through the root's top edge.
     top_margin_escapes: bool,
     /// The root's bottom margin may collapse with its last block child's.
@@ -1694,7 +1698,7 @@ struct IfcMeasurement {
     first_baseline: Option<f32>,
     top_margin: CollapsibleMarginSet,
     bottom_margin: CollapsibleMarginSet,
-    oof_candidates: taffy::OofCandidates,
+    oof_candidates: OofCandidates,
 }
 
 impl IfcMeasurement {
@@ -1703,7 +1707,7 @@ impl IfcMeasurement {
         first_baseline: None,
         top_margin: CollapsibleMarginSet::ZERO,
         bottom_margin: CollapsibleMarginSet::ZERO,
-        oof_candidates: taffy::OofCandidates::new(),
+        oof_candidates: OofCandidates::new(),
     };
 }
 
@@ -2131,7 +2135,7 @@ fn measure_ifc_root(
     let oof_candidates = if measure.run_mode == RunMode::PerformLayout {
         lines.oof_candidates.clone()
     } else {
-        taffy::OofCandidates::new()
+        OofCandidates::new()
     };
     if measure.run_mode == RunMode::PerformLayout
         && let Some(mut root) = tree.nodes[idx].ifc.take()
@@ -2183,13 +2187,13 @@ fn fragmentation_context_for_ifc(
 }
 
 /// Whether `overflow` makes a box a scroll container on either axis.
-fn is_scroll_container(overflow: taffy::Point<taffy::Overflow>) -> bool {
+fn is_scroll_container(overflow: StylePoint<taffy::Overflow>) -> bool {
     overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
 }
 
 /// Keep each baseline of a scroll container within its border box, whose
 /// block size is `height`.
-fn clamp_baselines(baselines: &mut taffy::Baselines, height: f32) {
+fn clamp_baselines(baselines: &mut Baselines, height: f32) {
     for baseline in [&mut baselines.first, &mut baselines.last] {
         *baseline = baseline.map(|offset| offset.max(0.0).min(height));
     }
@@ -2766,14 +2770,14 @@ fn center_absolute_children_in_block_axis(
     };
     let (gutter_x, gutter_y) = (gutter(overflow.y), gutter(overflow.x));
     let padding_box = if direction == taffy::Direction::Rtl {
-        taffy::Rect {
+        Edges {
             left: border.left + gutter_x,
             right: size.width - border.right,
             top: border.top,
             bottom: size.height - border.bottom - gutter_y,
         }
     } else {
-        taffy::Rect {
+        Edges {
             left: border.left,
             right: size.width - border.right - gutter_x,
             top: border.top,
@@ -3296,7 +3300,7 @@ fn align_auto_grid_abspos_children(
         .padding()
         .resolve_or_zero(percent_basis, resolve_calc);
 
-    let placed: Vec<(usize, taffy::Layout)> = tree
+    let placed: Vec<(usize, BoxLayout)> = tree
         .context
         .taffy_hoisted_children
         .get(&idx)
@@ -3304,16 +3308,8 @@ fn align_auto_grid_abspos_children(
         .flatten()
         .filter_map(|child| {
             let child = usize::from(*child);
-            auto_grid_abspos_aligned_layout(
-                tree,
-                idx,
-                child,
-                size,
-                border,
-                padding,
-                taffy::Point::ZERO,
-            )
-            .map(|layout| (child, layout))
+            auto_grid_abspos_aligned_layout(tree, idx, child, size, border, padding, Point::ZERO)
+                .map(|layout| (child, layout))
         })
         .collect();
 
@@ -3330,10 +3326,7 @@ pub(super) fn align_hoisted_grid_abspos_children(
     children: &[NodeId],
 ) {
     let owner = usize::from(owner);
-    let owner_origin = tree
-        .document
-        .layout_origin_of(owner)
-        .unwrap_or(taffy::Point::ZERO);
+    let owner_origin = tree.document.layout_origin_of(owner).unwrap_or(Point::ZERO);
     let placed: Vec<_> = children
         .iter()
         .copied()
@@ -3349,11 +3342,8 @@ pub(super) fn align_hoisted_grid_abspos_children(
                 return None;
             }
             let grid_layout = tree.nodes[grid].unrounded_layout;
-            let grid_origin = tree
-                .document
-                .layout_origin_of(grid)
-                .unwrap_or(taffy::Point::ZERO);
-            let grid_to_owner = taffy::Point {
+            let grid_origin = tree.document.layout_origin_of(grid).unwrap_or(Point::ZERO);
+            let grid_to_owner = Point {
                 x: grid_origin.x - owner_origin.x,
                 y: grid_origin.y - owner_origin.y,
             };
@@ -3380,10 +3370,10 @@ fn auto_grid_abspos_aligned_layout(
     grid: usize,
     child: usize,
     size: Size<f32>,
-    border: taffy::Rect<f32>,
-    padding: taffy::Rect<f32>,
-    grid_to_owner: taffy::Point<f32>,
-) -> Option<taffy::Layout> {
+    border: Edges<f32>,
+    padding: Edges<f32>,
+    grid_to_owner: Point<f32>,
+) -> Option<BoxLayout> {
     if tree.nodes[child].is_display_none() || tree.taffy_parent_of(child) != Some(grid) {
         return None;
     }
@@ -3393,7 +3383,7 @@ fn auto_grid_abspos_aligned_layout(
     // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
     // §10.6.4).
     let style_margin = style.margin();
-    let margin = taffy::Rect {
+    let margin = Edges {
         left: if style_margin.left.is_auto() {
             0.0
         } else {
@@ -3478,7 +3468,8 @@ impl LayoutSession<'_> {
         idx: usize,
         inputs: &LayoutInput,
     ) -> (Size<Option<f32>>, Size<f32>, Option<f32>) {
-        use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero, SizingMode};
+        use crate::layout::protocol::SizingMode;
+        use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero};
 
         let style = self.physical_style(idx);
         let parent_size = inputs.parent_size;

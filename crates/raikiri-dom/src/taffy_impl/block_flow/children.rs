@@ -4,14 +4,17 @@ use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
+    LayoutInput, LayoutOutput, NodeId, OofCandidates, RunMode,
+};
 use crate::node::FormattingContext;
 use crate::taffy_impl::resolve_calc;
+use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
 use taffy::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, BlockItemStyle,
-    BoxGenerationMode, Clear, CollapsibleMarginSet, CoreStyle, Direction, Float, FloatDirection,
-    LayoutInput, LayoutOutput, Line, MaybeResolve, NodeId, Point, Position, Rect, RunMode, Size,
-    TraversePartialTree,
+    BlockItemStyle, BoxGenerationMode, Clear, CoreStyle, Direction, Float, FloatDirection,
+    MaybeResolve, Position, TraversePartialTree,
 };
 
 pub(super) struct Flow {
@@ -19,11 +22,11 @@ pub(super) struct Flow {
     pub leading: CollapsibleMarginSet,
     pub trailing: CollapsibleMarginSet,
     pub through: bool,
-    pub overflow: Rect<f32>,
-    pub float_overflow: Rect<f32>,
+    pub overflow: Edges<f32>,
+    pub float_overflow: Edges<f32>,
     pub baselines: Baselines,
     pub placed: Vec<NodeId>,
-    pub oof_candidates: taffy::OofCandidates,
+    pub oof_candidates: OofCandidates,
 }
 
 fn place_inline_axis(
@@ -33,7 +36,7 @@ fn place_inline_axis(
     insets: [f32; 2],
     (area_start, area_width): (f32, f32),
     used_width: f32,
-    margin: &mut Rect<f32>,
+    margin: &mut Edges<f32>,
 ) -> f32 {
     let free = area_width - used_width;
     let (left_auto, right_auto) = (style.margin.left.is_auto(), style.margin.right.is_auto());
@@ -59,7 +62,7 @@ fn place_inline_axis(
     area_start + offset
 }
 
-fn margins(style: &Style, basis: f32) -> Rect<f32> {
+fn margins(style: &Style, basis: f32) -> Edges<f32> {
     style
         .margin
         .map(|edge| edge.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
@@ -196,7 +199,7 @@ pub(super) fn relative(
     if !matches!(style.position, Position::Relative | Position::Sticky) {
         return Point::ZERO;
     }
-    let inset = taffy::Rect {
+    let inset = Edges {
         left: style.inset.left.maybe_resolve(parent.width, resolve_calc),
         right: style.inset.right.maybe_resolve(parent.width, resolve_calc),
         top: style.inset.top.maybe_resolve(parent.height, resolve_calc),
@@ -224,8 +227,8 @@ fn overflow(
     metrics: Metrics,
     output: &LayoutOutput,
     location: Point<f32>,
-) -> Rect<f32> {
-    let mut rect = Rect {
+) -> Edges<f32> {
+    let mut rect = Edges {
         left: location.x,
         right: location.x + output.size.width,
         top: location.y,
@@ -279,11 +282,11 @@ pub(super) fn layout(
         leading: CollapsibleMarginSet::ZERO,
         trailing: CollapsibleMarginSet::ZERO,
         through: true,
-        overflow: Rect::ZERO,
-        float_overflow: Rect::ZERO,
+        overflow: Edges::ZERO,
+        float_overflow: Edges::ZERO,
         baselines: Baselines::NONE,
         placed: Vec::new(),
-        oof_candidates: taffy::OofCandidates::new(),
+        oof_candidates: OofCandidates::new(),
     };
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut pending = CollapsibleMarginSet::ZERO;
@@ -718,7 +721,7 @@ pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow
     }
     flow.baselines.first = flow.baselines.first.map(|baseline| baseline + offset);
     flow.baselines.last = flow.baselines.last.map(|baseline| baseline + offset);
-    if flow.overflow != Rect::ZERO {
+    if flow.overflow != Edges::ZERO {
         flow.overflow.top += offset;
         flow.overflow.bottom += offset;
     }

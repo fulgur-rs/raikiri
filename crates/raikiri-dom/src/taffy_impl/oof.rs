@@ -7,13 +7,14 @@
 use super::grid_oof;
 use crate::document::OofCoordinate;
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{
+    AvailableSpace, LayoutOutput, NodeId, OofCandidate, OofPositioningArea,
+};
 use crate::layout::style_views::ReadRole;
+use raikiri_layout_geometry::Size;
 use raikiri_layout_style::LayoutStyleView;
 use taffy::CoreStyle;
-use taffy::{
-    DetailedLayoutInfo, LayoutContainingBlock, LayoutOutput, LayoutPartialTree, NodeId,
-    OofCandidate, OofLayoutResult, OofPositioningArea,
-};
+use taffy::{DetailedLayoutInfo, LayoutContainingBlock, LayoutPartialTree, OofLayoutResult};
 
 impl LayoutContainingBlock for LayoutSession<'_> {
     type OofItemStyle<'a>
@@ -151,7 +152,7 @@ fn layout_candidates_of(
 pub(crate) fn compute_root_layout_with_content_limits(
     tree: &mut LayoutSession<'_>,
     root: NodeId,
-    available_space: taffy::Size<taffy::AvailableSpace>,
+    available_space: Size<AvailableSpace>,
 ) {
     super::content_limits::with_oof_content_limits(tree, None, &[root], |tree| {
         taffy::compute_root_layout(tree, root, available_space);

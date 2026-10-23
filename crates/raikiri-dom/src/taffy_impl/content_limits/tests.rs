@@ -14,14 +14,16 @@ use super::{
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::test_support::{block_fixture, block_fixture_with_ahem};
 use crate::layout::layout_single_page;
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
+};
 use crate::layout::test_support::{
     absolute_rect, bridged_style, page_box_800x600, restyle, with_ahem,
 };
 use crate::node::FormattingContext;
-use taffy::{
-    AvailableSpace, LayoutInput, LayoutOutput, LengthPercentageAuto, Line, NodeId, RequestedAxis,
-    RunMode, Size, SizingMode,
-};
+use raikiri_layout_geometry::{Line, Size};
+use taffy::LengthPercentageAuto;
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 
 /// What the box under test holds.
 #[derive(Clone, Copy)]
@@ -95,11 +97,11 @@ fn replaced_keyword_bounds_handles_nonreplaced_missing_invalid_and_sized_nodes()
         }
     }
     let limits = ContentLimits {
-        min: Size {
+        min: StyleSize {
             width: taffy::Dimension::min_content(),
             height: taffy::Dimension::auto(),
         },
-        max: Size {
+        max: StyleSize {
             width: taffy::Dimension::max_content(),
             height: taffy::Dimension::auto(),
         },
@@ -142,11 +144,11 @@ fn replaced_keyword_bounds_follow_the_box_the_ratio_relates() {
     // A 2:1 border box 100px high is 200px wide; the ratio of the content box
     // would give a 90px high content box 180px beside the 40px of padding.
     let limits = ContentLimits {
-        min: Size {
+        min: StyleSize {
             width: taffy::Dimension::min_content(),
             height: taffy::Dimension::auto(),
         },
-        max: Size::auto(),
+        max: StyleSize::auto(),
     };
     let inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,

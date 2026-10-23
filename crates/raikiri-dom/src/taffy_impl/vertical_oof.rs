@@ -22,8 +22,10 @@
 //! from the alignment of `alignment`; the page layout rewrites them only for
 //! the auto margins of the boxes that the root contains.
 
+use crate::layout::protocol::{AvailableSpace, LayoutInput};
+use raikiri_layout_geometry::Size;
 use taffy::util::{MaybeResolve, ResolveOrZero};
-use taffy::{AvailableSpace, CoreStyle, LayoutInput, Position as TaffyPosition, Size};
+use taffy::{CoreStyle, Position as TaffyPosition};
 
 use super::resolve_calc;
 use crate::document::Document;

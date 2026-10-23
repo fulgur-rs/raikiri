@@ -1,16 +1,19 @@
 use crate::Document;
-use crate::layout::test_support::{restyle, with_bridged_session};
-use raikiri_style::property::{DisplayValue, PositionValue};
-use taffy::{
-    AvailableSpace, Float, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
+use crate::layout::protocol::{
+    AvailableSpace, AxisStaticEdge, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
+    SizingMode,
 };
+use crate::layout::test_support::{restyle, with_bridged_session};
+use raikiri_layout_geometry::{Line, Size};
+use raikiri_style::property::{DisplayValue, PositionValue};
+use taffy::Float;
 
 fn block_layout(
     tree: &mut Document,
     node_id: NodeId,
     inputs: LayoutInput,
     context: Option<&mut super::context::BlockContext<'_>>,
-) -> taffy::LayoutOutput {
+) -> LayoutOutput {
     with_bridged_session(tree, |session| {
         crate::taffy_impl::block_layout(session, node_id, inputs, context)
     })
@@ -147,7 +150,7 @@ fn inline_absolute_candidates_keep_the_rtl_float_slot_point() {
     assert_eq!(candidate.static_position.x.area.start, 125.0);
     assert_eq!(
         candidate.static_position.x.align.keyword,
-        taffy::AxisStaticEdge::End
+        AxisStaticEdge::End
     );
     assert_eq!(candidate.static_position.y.area.start, 0.0);
 }
@@ -349,7 +352,7 @@ fn block_alignment_moves_the_exported_baseline() {
 /// A block `root` holding a 20px-tall flex container whose only item is
 /// `item_height` tall and shifted by `item_margin_top`, with `overflow` set on
 /// the container.
-fn baseline_probe(overflow: &str, item_height: f32, item_margin_top: f32) -> taffy::LayoutOutput {
+fn baseline_probe(overflow: &str, item_height: f32, item_margin_top: f32) -> LayoutOutput {
     let mut tree = Document::new();
     let root = tree.append_element(
         Some(0),

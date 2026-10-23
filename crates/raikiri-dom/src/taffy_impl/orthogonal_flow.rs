@@ -15,9 +15,12 @@
 //! following the available height the parent passes down.
 
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
+};
 use crate::node::FormattingContext;
-use taffy::tree::{RequestedAxis, RunMode};
-use taffy::{AvailableSpace, LayoutInput, LayoutOutput, NodeId, Position as TaffyPosition, Size};
+use raikiri_layout_geometry::Size;
+use taffy::Position as TaffyPosition;
 
 use raikiri_style::property::DisplayValue;
 use taffy::{BlockItemStyle, CoreStyle};

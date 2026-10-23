@@ -1,18 +1,18 @@
 use super::*;
+use crate::layout::protocol::{
+    AvailableSpace, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, Baselines,
+    CollapsibleMarginSet, OofCandidate, OofPositioningArea, RequestedAxis, RunMode, SizingMode,
+};
 use crate::layout::style_views::tests::fixture_with_styles;
 use crate::taffy_impl::vertical_block::{TransposedBlock, with_transposed_frame};
-use taffy::tree::{RequestedAxis, RunMode};
-use taffy::{
-    AlignmentSafety, AvailableSpace, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition,
-    Baselines, CollapsibleMarginSet, Line, OofCandidate, OofPositioningArea, Point, Position, Rect,
-    Size, SizingMode,
-};
+use raikiri_layout_geometry::{Edges, Line, Point, Size};
+use taffy::{AlignmentSafety, Position};
 
 /// The two block directions: `vertical-lr` and `vertical-rl`.
 const BLOCK_DIRECTIONS: [bool; 2] = [false, true];
 
-fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Rect<f32> {
-    Rect {
+fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Edges<f32> {
+    Edges {
         left,
         right,
         top,
@@ -350,12 +350,12 @@ fn a_container_overflow_is_mirrored_along_the_inline_axis_when_it_is_reversed() 
 #[test]
 fn an_overflow_rect_that_is_zero_stays_zero() {
     let output = LayoutOutput {
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         ..overflowing_output()
     };
     for right_to_left in BLOCK_DIRECTIONS {
         let output = bordered_adapter(right_to_left, true).container_output(output.clone());
-        assert_eq!(output.scrollable_overflow_rect, Rect::ZERO);
+        assert_eq!(output.scrollable_overflow_rect, Edges::ZERO);
     }
 }
 
@@ -486,13 +486,13 @@ fn the_inline_axis_is_never_mirrored() {
     // An item taffy placed flush with the inline end (the far end of the
     // inline axis, which is where a reversed inline direction puts the first
     // item) stays at the far end of the physical y axis.
-    let on_layout_axes = Layout {
+    let on_layout_axes = BoxLayout {
         location: Point { x: 150.0, y: 8.0 },
         size: Size {
             width: 30.0,
             height: 20.0,
         },
-        ..Layout::new()
+        ..BoxLayout::new()
     };
     for right_to_left in BLOCK_DIRECTIONS {
         let placed = AxisAdapter::new(right_to_left).placed_layout(&on_layout_axes, 100.0);
@@ -503,7 +503,7 @@ fn the_inline_axis_is_never_mirrored() {
 
 #[test]
 fn a_placed_layout_starts_from_the_left_edge_in_vertical_lr() {
-    let on_layout_axes = Layout {
+    let on_layout_axes = BoxLayout {
         order: 3,
         location: Point { x: 20.0, y: 8.0 },
         size: Size {
@@ -549,7 +549,7 @@ fn a_placed_layout_starts_from_the_left_edge_in_vertical_lr() {
 
 #[test]
 fn a_placed_layout_starts_from_the_right_edge_in_vertical_rl() {
-    let on_layout_axes = Layout {
+    let on_layout_axes = BoxLayout {
         order: 3,
         location: Point { x: 20.0, y: 8.0 },
         size: Size {
@@ -559,7 +559,7 @@ fn a_placed_layout_starts_from_the_right_edge_in_vertical_rl() {
         border: rect(1.0, 2.0, 3.0, 4.0),
         padding: rect(5.0, 6.0, 7.0, 8.0),
         margin: rect(9.0, 10.0, 11.0, 12.0),
-        ..Layout::new()
+        ..BoxLayout::new()
     };
 
     let placed = AxisAdapter::new(true).placed_layout(&on_layout_axes, 100.0);
@@ -606,7 +606,7 @@ fn a_child_output_enters_the_layout_axes_and_leaves_them_unchanged() {
             static_position(20.0, 50.0, AxisStaticEdge::Center),
         ));
 
-        let on_layout_axes = adapter.child_output(physical.clone(), Rect::ZERO, 3.5);
+        let on_layout_axes = adapter.child_output(physical.clone(), Edges::ZERO, 3.5);
         // The algorithm aligns the child by the baseline it is given.
         assert_eq!(
             on_layout_axes.baselines,
@@ -816,14 +816,14 @@ fn a_child_output_is_mirrored_for_the_direction_of_the_frame() {
 fn a_placed_layout_mirrors_the_overflow_within_the_padding_box_of_the_child() {
     // 70 by 30 on the layout axes with borders of 1 and 2 on the inline sides
     // and 3 and 4 on the block sides: a padding box of 67 by 23.
-    let on_layout_axes = Layout {
+    let on_layout_axes = BoxLayout {
         size: Size {
             width: 70.0,
             height: 30.0,
         },
         border: rect(1.0, 2.0, 3.0, 4.0),
         scrollable_overflow_rect: rect(-5.0, 20.0, -2.0, 40.0),
-        ..Layout::new()
+        ..BoxLayout::new()
     };
 
     let left_to_right = AxisAdapter::new(false).placed_layout(&on_layout_axes, 100.0);
@@ -871,11 +871,11 @@ fn a_child_overflow_goes_to_the_layout_axes_and_back_through_the_placed_layout()
         assert_eq!(on_layout_axes.scrollable_overflow_rect, expected);
 
         let placed = adapter.placed_layout(
-            &Layout {
+            &BoxLayout {
                 size: on_layout_axes.size,
                 border: rect(border.top, border.bottom, border.left, border.right),
                 scrollable_overflow_rect: on_layout_axes.scrollable_overflow_rect,
-                ..Layout::new()
+                ..BoxLayout::new()
             },
             100.0,
         );
@@ -936,7 +936,7 @@ fn a_frame_reads_a_reversed_inline_direction_from_its_container() {
 /// The scrollable overflow rectangle that a child styled `child_css`, with a
 /// 50 by 20 box in it, hands to a container whose block axis runs from right
 /// to left when `right_to_left` is set.
-fn laid_out_child_overflow(child_css: &str, right_to_left: bool) -> Rect<f32> {
+fn laid_out_child_overflow(child_css: &str, right_to_left: bool) -> Edges<f32> {
     let mut doc = crate::Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
