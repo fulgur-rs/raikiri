@@ -1,9 +1,9 @@
 use super::*;
 use crate::property::{
-    BorderRadius, BorderStyle, BoxShadowItem, CalcLengthPercentage, CssColor, Length,
-    LengthPercentageCalc, LetterSpacingValue, Outline, OutlineColor, OutlineStyle,
-    RelativeCalcLengthPercentage, Sides, TabSize, TextDecorationThickness, TextShadowColor,
-    TextUnderlineOffset,
+    Angle, BorderRadius, BorderStyle, BoxShadowItem, CalcLengthPercentage, CssColor, CssPosition,
+    CssPositionOffset, Length, LengthPercentageCalc, LetterSpacingValue, Outline, OutlineColor,
+    OutlineStyle, RelativeCalcLengthPercentage, Sides, TabSize, TextDecorationThickness,
+    TextShadowColor, TextUnderlineOffset,
 };
 use crate::specified::SpecifiedValues;
 
@@ -2577,4 +2577,131 @@ fn a_resolved_calc_that_is_no_length_folds_to_zero() {
         fold_resolved_calc(ComputedLengthPercentageOrAuto::Px(3.0)),
         ComputedLengthPercentageOrCalc::Px(3.0)
     );
+}
+
+#[test]
+fn lifting_a_computed_position_keeps_each_edge_and_calc() {
+    let computed = ComputedCssPosition {
+        horizontal: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(8.0)),
+        vertical: ComputedCssPositionOffset::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: -4.0,
+        }),
+    };
+    assert_eq!(
+        lift_css_position(computed),
+        CssPosition {
+            horizontal: CssPositionOffset::End(Length::Px(8.0)),
+            vertical: CssPositionOffset::Calc(CalcLengthPercentage {
+                percent: 50.0,
+                px: -4.0,
+            }),
+        }
+    );
+    let percent = ComputedCssPosition {
+        horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(25.0)),
+        vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(75.0)),
+    };
+    assert_eq!(
+        lift_css_position(percent),
+        CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(25.0)),
+            vertical: CssPositionOffset::End(Length::Percent(75.0)),
+        }
+    );
+}
+
+#[test]
+fn lifting_a_computed_box_shadow_list_keeps_inset_and_currentcolor() {
+    let red = TextShadowColor::Resolved(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    let computed = [
+        ComputedBoxShadowItem {
+            offset_x: ComputedLength(1.0),
+            offset_y: ComputedLength(2.0),
+            blur_radius: ComputedLength(3.0),
+            spread_radius: ComputedLength(4.0),
+            color: red,
+            inset: false,
+        },
+        ComputedBoxShadowItem {
+            offset_x: ComputedLength(-5.0),
+            offset_y: ComputedLength(0.0),
+            blur_radius: ComputedLength(0.0),
+            spread_radius: ComputedLength(0.0),
+            color: TextShadowColor::CurrentColor,
+            inset: true,
+        },
+    ];
+    let lifted = lift_box_shadow(&computed);
+    assert_eq!(
+        *lifted,
+        vec![
+            BoxShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(3.0),
+                spread_radius: Length::Px(4.0),
+                color: red,
+                inset: false,
+            },
+            BoxShadowItem {
+                offset_x: Length::Px(-5.0),
+                offset_y: Length::Px(0.0),
+                blur_radius: Length::Px(0.0),
+                spread_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+                inset: true,
+            },
+        ]
+    );
+    assert!(lift_box_shadow(&[]).is_empty());
+}
+
+#[test]
+fn lifting_a_computed_transform_list_keeps_every_function() {
+    let calc = CalcLengthPercentage {
+        percent: 10.0,
+        px: 5.0,
+    };
+    let computed = [
+        ComputedTransformFunction::Matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+        ComputedTransformFunction::Translate(
+            ComputedLengthPercentageOrCalc::Px(7.0),
+            ComputedLengthPercentageOrCalc::Calc(calc),
+        ),
+        ComputedTransformFunction::TranslateX(ComputedLengthPercentageOrCalc::Percent(20.0)),
+        ComputedTransformFunction::TranslateY(ComputedLengthPercentageOrCalc::Px(-3.0)),
+        ComputedTransformFunction::Scale(2.0, 3.0),
+        ComputedTransformFunction::ScaleX(4.0),
+        ComputedTransformFunction::ScaleY(5.0),
+        ComputedTransformFunction::Rotate(Angle(30.0)),
+        ComputedTransformFunction::Skew(Angle(10.0), Angle(20.0)),
+        ComputedTransformFunction::SkewX(Angle(15.0)),
+        ComputedTransformFunction::SkewY(Angle(25.0)),
+    ];
+    assert_eq!(
+        *lift_transform(&computed),
+        vec![
+            TransformFunction::Matrix([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+            TransformFunction::Translate(
+                LengthPercentageOrCalc::Length(Length::Px(7.0)),
+                LengthPercentageOrCalc::Calc(calc),
+            ),
+            TransformFunction::TranslateX(LengthPercentageOrCalc::Length(Length::Percent(20.0))),
+            TransformFunction::TranslateY(LengthPercentageOrCalc::Length(Length::Px(-3.0))),
+            TransformFunction::Scale(2.0, 3.0),
+            TransformFunction::ScaleX(4.0),
+            TransformFunction::ScaleY(5.0),
+            TransformFunction::Rotate(Angle(30.0)),
+            TransformFunction::Skew(Angle(10.0), Angle(20.0)),
+            TransformFunction::SkewX(Angle(15.0)),
+            TransformFunction::SkewY(Angle(25.0)),
+        ]
+    );
+    assert!(lift_transform(&[]).is_empty());
 }

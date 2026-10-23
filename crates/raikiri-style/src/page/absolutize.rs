@@ -6,29 +6,28 @@ use std::sync::Arc;
 use crate::cascade::{ResolvedAgainstInherited, resolve_relative_font_size};
 use crate::property::{
     BackgroundSize, Border, BorderColor, BorderImageOutsetSide, BorderImageWidthSide, BorderRadius,
-    BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset,
-    FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand,
-    GridInflexibleBreadth, GridShorthand, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LengthPercentageCalc, LengthPercentageOrCalc, Outline, OutlineColor, OutlineStyle, OverflowXY,
-    PropertyValue, Sides, TextDecorationInset, TextDecorationShorthand, TextDecorationThickness,
-    TextIndentLength, TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset,
-    TransformFunction, resolve_overflow,
+    BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, FlexBasisValue,
+    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth,
+    GridShorthand, GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
+    GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
+    LengthPercentageOrCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
+    TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
+    TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
+    resolve_overflow,
 };
 use crate::resolve::{
-    ComputedBackgroundSize, ComputedCssPositionOffset, ComputedGridTemplateTracks,
-    ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
-    ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedTextIndent, ResolveContext, lift_border_spacing,
-    lift_flex_basis, lift_length_percentage_or_calc, lift_length_percentage_or_normal,
-    lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing,
-    resolve_background_size, resolve_border_radius, resolve_border_spacing,
-    resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_css_position,
-    resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_calc, resolve_length_percentage_or_normal, resolve_letter_spacing,
-    resolve_line_height, resolve_margin_length_or_auto,
-    resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    ComputedBackgroundSize, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
+    ComputedGridTrackList, ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTextIndent, ResolveContext,
+    lift_border_spacing, lift_flex_basis, lift_length_percentage_or_calc,
+    lift_length_percentage_or_normal, lift_letter_spacing, lift_line_height, lift_tab_size,
+    lift_text_indent, lift_word_spacing, resolve_background_size, resolve_border_radius,
+    resolve_border_spacing, resolve_border_with_width_provenance, resolve_box_shadow_item,
+    resolve_css_position, resolve_flex_basis, resolve_grid_auto_track_list,
+    resolve_grid_template_tracks, resolve_length, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_calc,
+    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
+    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_indent_calc,
     resolve_text_shadow_item, resolve_vertical_align, resolve_word_spacing,
 };
@@ -140,25 +139,12 @@ impl PageLengthBasis<'_> {
     /// `background-position: <position>` — same round-trip as [`Self::lp`],
     /// applied to each edge/offset via [`resolve_css_position`].
     fn css_position(self, specified: CssPosition) -> CssPosition {
-        fn lift(computed: ComputedLengthPercentage) -> Length {
-            match computed {
-                ComputedLengthPercentage::Px(v) => Length::Px(v),
-                ComputedLengthPercentage::Percent(p) => Length::Percent(p),
-            }
-        }
-        fn lift_offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
-            match computed {
-                ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
-                ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
-                ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
-            }
-        }
-        let computed =
-            resolve_css_position(specified, self.font_size, self.own_line_height, self.ctx);
-        CssPosition {
-            horizontal: lift_offset(computed.horizontal),
-            vertical: lift_offset(computed.vertical),
-        }
+        crate::resolve::lift_css_position(resolve_css_position(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ))
     }
     /// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` —
     /// same mapping shape as [`Self::lp`], with `normal` preserved (unlike

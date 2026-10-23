@@ -3110,24 +3110,12 @@ fn absolutized_css_position(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> CssPosition {
-    let computed = resolve_css_position(specified, font_size, own_line_height, ctx);
-    fn lift(l: ComputedLengthPercentage) -> Length {
-        match l {
-            ComputedLengthPercentage::Px(v) => Length::Px(v),
-            ComputedLengthPercentage::Percent(p) => Length::Percent(p),
-        }
-    }
-    fn lift_offset(c: ComputedCssPositionOffset) -> CssPositionOffset {
-        match c {
-            ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
-            ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
-            ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
-        }
-    }
-    CssPosition {
-        horizontal: lift_offset(computed.horizontal),
-        vertical: lift_offset(computed.vertical),
-    }
+    lift_css_position(resolve_css_position(
+        specified,
+        font_size,
+        own_line_height,
+        ctx,
+    ))
 }
 
 fn resolve_gradient_color_stops(
@@ -3965,6 +3953,79 @@ pub fn lift_length_percentage_or_calc(
         }
         ComputedLengthPercentageOrCalc::Calc(calc) => LengthPercentageOrCalc::Calc(calc),
     }
+}
+
+/// Lift a computed `<position>` back to its specified form. Each offset keeps
+/// its edge and its percentage, so a lift followed by absolutization gives the
+/// computed value again.
+pub(crate) fn lift_css_position(computed: ComputedCssPosition) -> CssPosition {
+    fn offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
+        match computed {
+            ComputedCssPositionOffset::Start(v) => {
+                CssPositionOffset::Start(lift_length_percentage(v))
+            }
+            ComputedCssPositionOffset::End(v) => CssPositionOffset::End(lift_length_percentage(v)),
+            ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
+        }
+    }
+    CssPosition {
+        horizontal: offset(computed.horizontal),
+        vertical: offset(computed.vertical),
+    }
+}
+
+/// Lift the computed `box-shadow` list back to its specified form.
+pub(crate) fn lift_box_shadow(computed: &[ComputedBoxShadowItem]) -> Arc<Vec<BoxShadowItem>> {
+    if computed.is_empty() {
+        return crate::property::empty_box_shadow_list();
+    }
+    Arc::new(
+        computed
+            .iter()
+            .map(|item| BoxShadowItem {
+                offset_x: Length::Px(item.offset_x.0),
+                offset_y: Length::Px(item.offset_y.0),
+                blur_radius: Length::Px(item.blur_radius.0),
+                spread_radius: Length::Px(item.spread_radius.0),
+                color: item.color,
+                inset: item.inset,
+            })
+            .collect(),
+    )
+}
+
+/// Lift the computed `transform` function list back to its specified form.
+pub(crate) fn lift_transform(
+    computed: &[ComputedTransformFunction],
+) -> Arc<Vec<TransformFunction>> {
+    if computed.is_empty() {
+        return crate::property::empty_transform_list();
+    }
+    Arc::new(
+        computed
+            .iter()
+            .map(|function| match *function {
+                ComputedTransformFunction::Matrix(m) => TransformFunction::Matrix(m),
+                ComputedTransformFunction::Translate(x, y) => TransformFunction::Translate(
+                    lift_length_percentage_or_calc(x),
+                    lift_length_percentage_or_calc(y),
+                ),
+                ComputedTransformFunction::TranslateX(x) => {
+                    TransformFunction::TranslateX(lift_length_percentage_or_calc(x))
+                }
+                ComputedTransformFunction::TranslateY(y) => {
+                    TransformFunction::TranslateY(lift_length_percentage_or_calc(y))
+                }
+                ComputedTransformFunction::Scale(x, y) => TransformFunction::Scale(x, y),
+                ComputedTransformFunction::ScaleX(x) => TransformFunction::ScaleX(x),
+                ComputedTransformFunction::ScaleY(y) => TransformFunction::ScaleY(y),
+                ComputedTransformFunction::Rotate(a) => TransformFunction::Rotate(a),
+                ComputedTransformFunction::Skew(x, y) => TransformFunction::Skew(x, y),
+                ComputedTransformFunction::SkewX(x) => TransformFunction::SkewX(x),
+                ComputedTransformFunction::SkewY(y) => TransformFunction::SkewY(y),
+            })
+            .collect(),
+    )
 }
 
 /// Lift a computed `flex-basis` back to its specified form, keeping each

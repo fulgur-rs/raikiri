@@ -1423,6 +1423,56 @@ fn css_wide_keywords_resolve_for_the_defaulting_table_in_the_page_and_its_margin
 }
 
 #[test]
+fn css_wide_keywords_lift_the_computed_shadow_transform_and_position_of_the_root() {
+    use crate::resolve::{
+        ComputedBoxShadowItem, ComputedCssPosition, ComputedCssPositionOffset, ComputedLength,
+        ComputedLengthPercentage, ComputedLengthPercentageOrCalc, ComputedTransformFunction,
+    };
+    let start = |v| ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(v));
+    let mut root = ComputedValues::initial();
+    root.box_shadow = Arc::new(vec![ComputedBoxShadowItem {
+        offset_x: ComputedLength(2.0),
+        offset_y: ComputedLength(3.0),
+        blur_radius: ComputedLength(4.0),
+        spread_radius: ComputedLength(0.0),
+        color: TextShadowColor::CurrentColor,
+        inset: true,
+    }]);
+    root.transform = Arc::new(vec![ComputedTransformFunction::TranslateX(
+        ComputedLengthPercentageOrCalc::Px(9.0),
+    )]);
+    root.object_position = ComputedCssPosition {
+        horizontal: start(5.0),
+        vertical: start(6.0),
+    };
+    // A margin box inherits from the page, and the page takes the root's
+    // computed value only because it says `inherit` itself.
+    let page = page(
+        "@page { box-shadow: inherit; transform: inherit; object-position: inherit; \
+         @top-left { content: 'x'; box-shadow: inherit; transform: inherit; \
+                     object-position: inherit } \
+         @top-center { content: 'x'; box-shadow: initial; transform: unset; \
+                       object-position: initial } }",
+        &root,
+    );
+    let style = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        page.margin_box_style(&rule, None)
+    };
+    let inherited = style(PageMarginBoxSlot::TopLeft);
+    assert_eq!(inherited.box_shadow, root.box_shadow);
+    assert_eq!(inherited.transform, root.transform);
+    assert_eq!(inherited.object_position, root.object_position);
+    let initial = style(PageMarginBoxSlot::TopCenter);
+    assert!(initial.box_shadow.is_empty());
+    assert!(initial.transform.is_empty());
+    assert_eq!(
+        initial.object_position,
+        ComputedValues::initial().object_position
+    );
+}
+
+#[test]
 fn a_margin_box_keeps_the_block_size_keywords() {
     // A margin box fills its page margin for `height: auto`, so it has to see
     // the keywords that size it to its content, which an element computes to

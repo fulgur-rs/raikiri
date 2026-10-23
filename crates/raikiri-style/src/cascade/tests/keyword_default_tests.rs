@@ -235,6 +235,36 @@ const CASES: &[(&str, bool, &[&str])] = &[
         &["3px", "from-font", "5px"],
     ),
     ("text-decoration-inset", false, &["3px 4px", "auto", "5px"]),
+    ("content", false, &["\"a\"", "\"b\"", "\"c\""]),
+    (
+        "string-set",
+        false,
+        &["title \"a\"", "title \"b\"", "name \"c\""],
+    ),
+    (
+        "box-shadow",
+        false,
+        &["1px 2px 3px 4px red", "inset 2px 2px blue", "5px 5px green"],
+    ),
+    (
+        "object-position",
+        false,
+        &["10px 20px", "30% 40%", "right 5px bottom 6px"],
+    ),
+    (
+        "transform",
+        false,
+        &[
+            "translate(10px, 20%)",
+            "rotate(45deg) scale(2)",
+            "skewX(10deg)",
+        ],
+    ),
+    (
+        "transform-origin",
+        false,
+        &["10px 20px", "30% 40%", "right bottom 8px"],
+    ),
 ];
 
 /// The shorthands over properties of the table, with the same three kinds of
