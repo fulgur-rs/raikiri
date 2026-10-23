@@ -232,6 +232,35 @@ fn every_property_serializes_its_initial_value() {
 }
 
 #[test]
+fn aspect_ratio_serializes_the_computed_keyword_and_ratio() {
+    assert_eq!(
+        ComputedProperty::from_name("ASPECT-RATIO"),
+        Some(ComputedProperty::AspectRatio)
+    );
+    let mut computed = ComputedValues::initial();
+    assert_eq!(
+        ComputedProperty::AspectRatio.serialize(&computed),
+        Some("auto".to_owned())
+    );
+    computed.aspect_ratio = crate::property::AspectRatioValue {
+        auto: false,
+        ratio: Some((1.3, 1.0)),
+    };
+    assert_eq!(
+        ComputedProperty::AspectRatio.serialize(&computed),
+        Some("1.3 / 1".to_owned())
+    );
+    computed.aspect_ratio = crate::property::AspectRatioValue {
+        auto: true,
+        ratio: Some((0.0, 1.0)),
+    };
+    assert_eq!(
+        ComputedProperty::AspectRatio.serialize(&computed),
+        Some("auto 0 / 1".to_owned())
+    );
+}
+
+#[test]
 fn text_decoration_inset_serializes_resolved_ch_lengths() {
     let mut computed = ComputedValues::initial();
     computed.text_decoration_inset = crate::resolve::ComputedTextDecorationInset::Lengths {

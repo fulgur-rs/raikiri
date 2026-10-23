@@ -73,6 +73,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             &LengthPercentageOrCalc::RelativeCalc(*calc),
         )),
         PropertyValue::ColumnSpan(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::AspectRatio(value) => Some(serialize_aspect_ratio(*value)),
         PropertyValue::PaddingTop(l)
         | PropertyValue::PaddingRight(l)
         | PropertyValue::PaddingBottom(l)
@@ -658,7 +659,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderImageSource(..)
         | PropertyValue::BorderImage(..)
         | PropertyValue::ObjectFit(..)
-        | PropertyValue::AspectRatio(..)
         | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(..)
@@ -1021,6 +1021,19 @@ pub(crate) fn serialize_alpha_channel(alpha: u8) -> String {
 
 pub(crate) fn serialize_number(value: f32) -> String {
     format_css_number(value)
+}
+
+/// Serializes `aspect-ratio` as `[auto] [<w> / <h>]`: `auto` first, and a
+/// lone number written out as `<number> / 1` (CSS Box Sizing 4 §5.1).
+fn serialize_aspect_ratio(value: AspectRatioValue) -> String {
+    let ratio = value.ratio.map(|(width, height)| {
+        format!("{} / {}", serialize_number(width), serialize_number(height))
+    });
+    match (value.auto, ratio) {
+        (true, Some(ratio)) => format!("auto {ratio}"),
+        (false, Some(ratio)) => ratio,
+        (_, None) => "auto".to_owned(),
+    }
 }
 
 /// Serializes a [`CssColor`] as legacy `rgb()`/`rgba()` notation. CSS Color 4

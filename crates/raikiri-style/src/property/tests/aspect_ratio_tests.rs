@@ -152,3 +152,25 @@ fn a_degenerate_ratio_relates_the_content_box_of_the_natural_ratio() {
     // The same for a ratio that overflows to infinity.
     assert!(ratio(f32::MAX, f32::MIN_POSITIVE).relates_content_box(Some(3.0)));
 }
+
+#[test]
+fn aspect_ratio_serializes_auto_first_and_a_lone_number_as_a_ratio_to_one() {
+    for (source, expected) in [
+        ("auto", "auto"),
+        ("16", "16 / 1"),
+        ("1/1", "1 / 1"),
+        ("16.3 / 9.4", "16.3 / 9.4"),
+        ("16 /9", "16 / 9"),
+        ("0 / 0", "0 / 0"),
+        ("auto 16", "auto 16 / 1"),
+        ("16 auto", "auto 16 / 1"),
+        ("4 / 3 auto", "auto 4 / 3"),
+    ] {
+        let value = parse_entire(source, "aspect-ratio").expect(source);
+        assert_eq!(
+            super::super::serialize_value(&value).as_deref(),
+            Some(expected),
+            "{source:?}"
+        );
+    }
+}

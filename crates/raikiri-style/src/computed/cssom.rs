@@ -78,6 +78,7 @@ pub enum ComputedProperty {
     LetterSpacing,
     WordSpacing,
     ColumnSpan,
+    AspectRatio,
 }
 
 impl ComputedProperty {
@@ -144,6 +145,7 @@ impl ComputedProperty {
         Self::LetterSpacing,
         Self::WordSpacing,
         Self::ColumnSpan,
+        Self::AspectRatio,
     ];
 
     /// Looks up a property by name, ASCII case-insensitively. Legacy aliases
@@ -214,6 +216,7 @@ impl ComputedProperty {
             "letter-spacing" => Self::LetterSpacing,
             "word-spacing" => Self::WordSpacing,
             "column-span" => Self::ColumnSpan,
+            "aspect-ratio" => Self::AspectRatio,
             _ => return None,
         })
     }
@@ -347,6 +350,9 @@ impl ComputedProperty {
             }
             ComputedProperty::TextSpacingTrim => computed.text_spacing_trim.as_css_str(),
             ComputedProperty::ColumnSpan => computed.column_span.as_css_str(),
+            ComputedProperty::AspectRatio => {
+                return serialize_value(&PropertyValue::AspectRatio(computed.aspect_ratio));
+            }
             ComputedProperty::TextAutospace => {
                 return serialize_value(&PropertyValue::TextAutospace(computed.text_autospace));
             }
