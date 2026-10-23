@@ -6,7 +6,7 @@
 //! content size, baselines, collapsed margins and the out-of-flow candidates
 //! found inside it). The layout code names these types through this module.
 //! The layout library's own types are only named in the adapter that talks to
-//! the library (`layout::taffy_adapter`), which converts to and from these.
+//! the library ([`crate::layout::taffy_adapter`]), which converts to and from these.
 //!
 //! The types have the shape of the library's types of the same name: the same
 //! fields and the same variants. Two parts of the library's types are opaque

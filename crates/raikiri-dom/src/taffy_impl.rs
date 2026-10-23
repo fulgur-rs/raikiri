@@ -3,7 +3,7 @@
 //! The session lays a box out by dispatching on its display: block, flex, grid,
 //! table, multicolumn and leaf layouts, with a per-node result cache. The layout
 //! library's algorithms call back into the session through the trait
-//! implementations in `layout::taffy_adapter`, which convert their arguments to
+//! implementations in [`crate::layout::taffy_adapter`], which convert their arguments to
 //! the types the methods here take:
 //! - `child_ids` / `child_count` / `get_child_id`: the children of a node
 //! - `cache_get` / `cache_store` / `cache_clear`: the per-node result cache
