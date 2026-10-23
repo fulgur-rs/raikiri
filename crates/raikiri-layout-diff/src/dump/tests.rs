@@ -279,3 +279,15 @@ fn images_of_content_and_markers_are_written_with_their_placement() {
 fn an_image_event_without_a_placement_says_so() {
     assert_eq!(placement(None), "-");
 }
+
+#[test]
+fn a_margin_box_without_text_has_no_runs_or_lines() {
+    let text = text_of(
+        "<style>@page { size: 300px 200px; margin: 40px; \
+         @top-left { content: ''; background: #ccc; border: 1px solid } } \
+         body { margin: 0 }</style><p>x</p>",
+    );
+    assert!(text.contains("margin_boxes: 1\n"), "{text}");
+    assert!(!text.contains("source=MarginBox"), "{text}");
+    assert!(!text.contains("  shaped "), "{text}");
+}

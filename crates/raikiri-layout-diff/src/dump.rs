@@ -27,7 +27,7 @@
 use std::fmt::Write as _;
 
 use raikiri_dom::Document;
-use raikiri_html::{DocumentLayout, Fragment, Page, PaintEvent, PositionedGlyphRun};
+use raikiri_html::{DocumentLayout, Fragment, MarginBox, Page, PaintEvent, PositionedGlyphRun};
 use raikiri_traits::PaintRect;
 
 use crate::node_layout::NodeBox;
@@ -122,36 +122,41 @@ fn page(out: &mut String, page: &Page<'_>) {
     let boxes = page.margin_boxes();
     let _ = writeln!(out, "margin_boxes: {}", boxes.len());
     for margin_box in &boxes {
-        let _ = writeln!(out, "{margin_box:#?}");
-        // The box's `Debug` form counts the shaped lines of its text; the
-        // glyphs and their places are written here. Text in a vertical
-        // writing mode has no glyph runs, so its lines are listed with the
-        // pieces they hold.
-        for run in &margin_box.text_runs() {
-            text_run(out, run);
-        }
-        if let Some(text) = &margin_box.text {
-            let _ = writeln!(out, "  shaped {:?}", text.shaped());
-            for (index, line) in text.shaped().lines().iter().enumerate() {
-                let _ = writeln!(
-                    out,
-                    "    line {index} mode={:?} block_offset={} metrics={:?}",
-                    line.writing_mode(),
-                    number(line.block_offset()),
-                    line.metrics(),
-                );
-                if line.writing_mode().is_vertical() {
-                    for piece in line.fragments() {
-                        let _ = writeln!(out, "      {piece:?}");
-                    }
-                }
-            }
-        }
+        self::margin_box(out, margin_box);
     }
     let links: Vec<_> = page.links().collect();
     let _ = writeln!(out, "links: {}", links.len());
     for link in &links {
         let _ = writeln!(out, "{link:#?}");
+    }
+}
+
+/// Writes a page-margin box: its fields, the glyph runs of its text, and the
+/// shaped lines behind them. The box's `Debug` form counts the lines; text in
+/// a vertical writing mode has no glyph runs, so its lines are listed with the
+/// pieces they hold.
+fn margin_box(out: &mut String, margin_box: &MarginBox) {
+    let _ = writeln!(out, "{margin_box:#?}");
+    for run in margin_box.text_runs() {
+        text_run(out, &run);
+    }
+    let Some(text) = &margin_box.text else {
+        return;
+    };
+    let _ = writeln!(out, "  shaped {:?}", text.shaped());
+    for (index, line) in text.shaped().lines().iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "    line {index} mode={:?} block_offset={} metrics={:?}",
+            line.writing_mode(),
+            number(line.block_offset()),
+            line.metrics(),
+        );
+        if line.writing_mode().is_vertical() {
+            for piece in line.fragments() {
+                let _ = writeln!(out, "      {piece:?}");
+            }
+        }
     }
 }
 
