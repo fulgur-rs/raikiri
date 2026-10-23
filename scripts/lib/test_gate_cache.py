@@ -45,6 +45,17 @@ echo "release: ${FAKE_RUSTC_RELEASE:-1.0.0}"
 """
 
 
+# `date -u +%Y%m%dT%H%M%SZ` is how save stamps an entry; FAKE_STAMP pins it so
+# that two saves can start in "the same second".
+FAKE_DATE = """#!/usr/bin/env bash
+if [[ -n "${FAKE_STAMP:-}" && "$*" == "-u +%Y%m%dT%H%M%SZ" ]]; then
+  echo "$FAKE_STAMP"
+  exit 0
+fi
+exec "$FAKE_REAL_DATE" "$@"
+"""
+
+
 def _write_executable(path: Path, text: str) -> None:
     path.write_text(text)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -62,12 +73,14 @@ class GateCacheTest(unittest.TestCase):
         fakebin.mkdir()
         _write_executable(fakebin / "cargo", FAKE_CARGO)
         _write_executable(fakebin / "rustc", FAKE_RUSTC)
+        _write_executable(fakebin / "date", FAKE_DATE)
         self.env = dict(
             os.environ,
             PATH=f"{fakebin}:{os.environ['PATH']}",
             FAKE_TARGET=str(self.target),
             FAKE_CALLS=str(self.calls),
             RAIKIRI_GATE_CACHE_DIR=str(self.cache),
+            FAKE_REAL_DATE=shutil.which("date"),
         )
         self.env.pop("CARGO_TARGET_DIR", None)
 
@@ -385,6 +398,21 @@ class GateCacheTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(old.exists())
         self.assertTrue(fresh.exists())  # its saver may still be running
+
+    def test_saves_in_the_same_second_do_not_share_part_files(self):
+        stamp = {"FAKE_STAMP": "20990101T000000Z"}
+        self._populate_target()
+        first = self._run("save", RAIKIRI_GATE_CACHE_PART_BYTES="100", **stamp)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        shutil.rmtree(self.target)
+        self._populate_target()
+        second = self._run("save", **stamp)  # fewer, larger parts than the first
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(len(self._entries(".info")), 2)
+        shutil.rmtree(self.target)
+        result = self._run("restore")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.target / "llvm-cov-target/debug/deps/serde-1.rlib").exists())
 
     def test_status_marks_the_entry_restore_would_use(self):
         name = self._save_one_entry()

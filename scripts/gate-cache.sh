@@ -309,13 +309,16 @@ do_save() {
   [[ -d "$CACHE_DIR" ]] || mkdir -p "$CACHE_DIR" ||
     die "cannot create $CACHE_DIR."
 
-  local toolchain lock stamp name probe tmp_info members=() dir
+  local toolchain lock stamp uniq name probe tmp_info members=() dir
   toolchain="$(toolchain_id)"
   lock="$(lock_id)"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  name="gate-target-${stamp}-tc${toolchain}-lock${lock}"
-  probe="$CACHE_DIR/.tmp.$$.$stamp.probe"
-  tmp_info="$CACHE_DIR/.tmp.$$.$stamp.info"
+  # Random id: two saves that start in the same second must not share part
+  # files (split reuses one name space per prefix) or an .info.
+  uniq="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+  name="gate-target-${stamp}-${uniq}-tc${toolchain}-lock${lock}"
+  probe="$CACHE_DIR/.tmp.$$.$uniq.probe"
+  tmp_info="$CACHE_DIR/.tmp.$$.$uniq.info"
   CLEANUP_FILES=("$probe" "$tmp_info")
   # Prove the cache is writable before removing anything from the checkout.
   : >"$probe" || die "cannot write to $CACHE_DIR; nothing was removed."
