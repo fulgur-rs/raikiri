@@ -249,7 +249,7 @@ pub(super) fn element_transform(
     // The painter turns the box about its transform origin, on the box it
     // paints: the layout box moved by every offset, in page coordinates and
     // snapped to whole pixels.
-    let size = node.unrounded_layout.size;
+    let size = node.layout.size;
     let (dx, dy) = page.flow_shift(placed.repeat);
     let x = page.content_box.x + placed.x + ancestors.0 + offset.0 + dx;
     let y = page.content_box.y + placed.y + ancestors.1 + offset.1 + dy;

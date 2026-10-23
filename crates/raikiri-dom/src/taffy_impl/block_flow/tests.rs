@@ -65,7 +65,7 @@ fn minimum_height_drops_the_last_child_margin_it_separates() {
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The margin neither escapes the block nor adds to the height that
     // `min-height` fixed.
-    assert_eq!(tree.nodes[child].unrounded_layout.size.height, 80.0);
+    assert_eq!(tree.nodes[child].layout.size.height, 80.0);
     assert_eq!(output.size.height, 80.0);
 }
 
@@ -115,7 +115,7 @@ fn fixed_children_do_not_participate_in_block_flow() {
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(output.size.height, 10.0);
-    assert_eq!(tree.nodes[sibling].unrounded_layout.location.y, 0.0);
+    assert_eq!(tree.nodes[sibling].layout.location.y, 0.0);
     let candidate = output.oof_candidates.iter().next().unwrap();
     assert_eq!(candidate.node, NodeId::from(fixed));
     assert_eq!(candidate.position, OofPosition::Fixed);
@@ -221,7 +221,7 @@ fn float_avoiding_blocks_align_within_the_available_slot() {
             ),
         );
         block_layout(&mut tree, NodeId::from(root), inputs(), None);
-        assert_eq!(tree.nodes[child].unrounded_layout.location.x, expected);
+        assert_eq!(tree.nodes[child].layout.location.x, expected);
     }
 }
 
@@ -247,7 +247,7 @@ fn fit_content_children_keep_the_finite_available_width() {
     input.available_space.width = AvailableSpace::Definite(150.0);
     block_layout(&mut tree, NodeId::from(root), input, None);
     assert_eq!(
-        tree.nodes[child].unrounded_layout.size,
+        tree.nodes[child].layout.size,
         Size {
             width: 150.0,
             height: 20.0
@@ -270,8 +270,8 @@ fn intrinsic_width_children_use_their_final_width_for_auto_margins() {
     );
     block(&mut tree, child, 50.0, 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    assert_eq!(tree.nodes[child].unrounded_layout.location.x, 75.0);
-    assert_eq!(tree.nodes[child].unrounded_layout.size.width, 50.0);
+    assert_eq!(tree.nodes[child].layout.location.x, 75.0);
+    assert_eq!(tree.nodes[child].layout.size.width, 50.0);
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn block_distribution_alignment_uses_the_single_subject_fallback() {
         );
         let child = block(&mut tree, root, 40.0, 20.0);
         block_layout(&mut tree, NodeId::from(root), inputs(), None);
-        assert_eq!(tree.nodes[child].unrounded_layout.location.y, 40.0);
+        assert_eq!(tree.nodes[child].layout.location.y, 40.0);
     }
 }
 
@@ -327,7 +327,7 @@ fn block_alignment_moves_scrollable_overflow_with_the_children() {
     restyle(&mut tree, child, "display:flow-root");
     block(&mut tree, child, 40.0, 150.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    assert_eq!(tree.nodes[child].unrounded_layout.location.y, 80.0);
+    assert_eq!(tree.nodes[child].layout.location.y, 80.0);
     assert_eq!(output.scrollable_overflow_rect.bottom, 230.0);
 }
 
@@ -604,9 +604,9 @@ fn a_formatting_context_pushed_below_an_adjoining_float_separates_its_margin() {
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The box does not fit beside the float, so its margin no longer
     // collapses with the parent's and the float stays at the top.
-    assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 0.0);
-    assert_eq!(tree.nodes[float].unrounded_layout.location.y, 0.0);
-    assert_eq!(tree.nodes[context].unrounded_layout.location.y, 200.0);
+    assert_eq!(tree.nodes[outer].layout.location.y, 0.0);
+    assert_eq!(tree.nodes[float].layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].layout.location.y, 200.0);
     assert_eq!(output.size.height, 201.0);
 }
 
@@ -628,10 +628,10 @@ fn a_formatting_context_beside_an_adjoining_float_keeps_its_margin() {
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The box fits beside the float, so the margin escapes and carries
     // the float down with it.
-    assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 50.0);
-    assert_eq!(tree.nodes[float].unrounded_layout.location.y, 0.0);
-    assert_eq!(tree.nodes[context].unrounded_layout.location.y, 0.0);
-    assert_eq!(tree.nodes[context].unrounded_layout.location.x, 100.0);
+    assert_eq!(tree.nodes[outer].layout.location.y, 50.0);
+    assert_eq!(tree.nodes[float].layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].layout.location.x, 100.0);
 }
 
 #[test]
@@ -650,8 +650,8 @@ fn a_formatting_context_clearing_an_adjoining_float_starts_below_it() {
     restyle(&mut tree, context, "clear:left");
     restyle(&mut tree, context, "margin-top:300px");
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 0.0);
-    assert_eq!(tree.nodes[context].unrounded_layout.location.y, 50.0);
+    assert_eq!(tree.nodes[outer].layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].layout.location.y, 50.0);
     assert_eq!(output.size.height, 100.0);
 }
 
@@ -676,12 +676,9 @@ fn clearance_under_an_unresolved_origin_excludes_the_escaping_margin() {
     let mut root_inputs = inputs();
     root_inputs.vertical_margins_are_collapsible.start = true;
     block_layout(&mut tree, NodeId::from(root), root_inputs, None);
-    let inner_y = tree.nodes[inner].unrounded_layout.location.y;
+    let inner_y = tree.nodes[inner].layout.location.y;
     assert_eq!(inner_y, 50.0);
-    assert_eq!(
-        inner_y + tree.nodes[cleared].unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(inner_y + tree.nodes[cleared].layout.location.y, 100.0);
 }
 
 #[test]
@@ -703,12 +700,9 @@ fn clearance_under_an_unresolved_origin_counts_the_block_margin_once() {
     root_inputs.vertical_margins_are_collapsible.start = true;
     block_layout(&mut tree, NodeId::from(root), root_inputs, None);
     // `inner` sits below its own margin collapsed with `first`'s: 1 + 49.
-    let inner_y = tree.nodes[inner].unrounded_layout.location.y;
+    let inner_y = tree.nodes[inner].layout.location.y;
     assert_eq!(inner_y, 50.0);
-    assert_eq!(
-        inner_y + tree.nodes[cleared].unrounded_layout.location.y,
-        150.0
-    );
+    assert_eq!(inner_y + tree.nodes[cleared].layout.location.y, 150.0);
 }
 
 #[test]
@@ -724,11 +718,8 @@ fn clearance_past_a_float_on_the_same_strut_keeps_the_float_coordinates() {
     let mut root_inputs = inputs();
     root_inputs.vertical_margins_are_collapsible.start = true;
     block_layout(&mut tree, NodeId::from(root), root_inputs, None);
-    let float_y = tree.nodes[float].unrounded_layout.location.y;
-    assert_eq!(
-        tree.nodes[cleared].unrounded_layout.location.y,
-        float_y + 10.0
-    );
+    let float_y = tree.nodes[float].layout.location.y;
+    assert_eq!(tree.nodes[cleared].layout.location.y, float_y + 10.0);
 }
 
 #[test]
@@ -745,8 +736,8 @@ fn a_last_child_margin_escapes_when_min_height_equals_the_content() {
     restyle(&mut tree, child, "margin-bottom:100px");
     let next = block(&mut tree, root, 100.0, 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    assert_eq!(tree.nodes[parent].unrounded_layout.size.height, 20.0);
-    assert_eq!(tree.nodes[next].unrounded_layout.location.y, 120.0);
+    assert_eq!(tree.nodes[parent].layout.size.height, 20.0);
+    assert_eq!(tree.nodes[next].layout.location.y, 120.0);
 }
 
 fn flow_root_container(tree: &mut Document) -> usize {
@@ -821,7 +812,7 @@ fn a_formatting_context_taller_than_its_gap_moves_below_the_float_it_would_overl
     // after 10px while the box goes on for 30.
     let tall = formatting_context_box(&mut tree, root, Some(40.0), 30.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    let layout = tree.nodes[tall].unrounded_layout;
+    let layout = tree.nodes[tall].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
 }
 
@@ -847,7 +838,7 @@ fn a_formatting_context_no_taller_than_its_gap_stays_beside_the_first_float() {
     );
     let short = formatting_context_box(&mut tree, root, Some(40.0), 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    let layout = tree.nodes[short].unrounded_layout;
+    let layout = tree.nodes[short].layout;
     assert_eq!((layout.location.x, layout.location.y), (140.0, 0.0));
 }
 
@@ -875,7 +866,7 @@ fn a_formatting_context_that_fits_no_band_goes_below_all_the_floats() {
     // right float for 30px more.
     let wide = formatting_context_box(&mut tree, root, Some(130.0), 20.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    let layout = tree.nodes[wide].unrounded_layout;
+    let layout = tree.nodes[wide].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 40.0));
 }
 
@@ -896,7 +887,7 @@ fn a_formatting_context_slides_to_the_room_every_band_it_reaches_shares() {
     // keeps clear of it too.
     let sliding = formatting_context_box(&mut tree, root, Some(50.0), 30.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    let layout = tree.nodes[sliding].unrounded_layout;
+    let layout = tree.nodes[sliding].layout;
     assert_eq!((layout.location.x, layout.location.y), (100.0, 0.0));
 }
 
@@ -915,7 +906,7 @@ fn an_auto_width_formatting_context_narrows_to_the_room_every_band_it_reaches_sh
     );
     let stretching = formatting_context_box(&mut tree, root, None, 30.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    let layout = tree.nodes[stretching].unrounded_layout;
+    let layout = tree.nodes[stretching].layout;
     assert_eq!(
         (layout.location.x, layout.location.y, layout.size.width),
         (100.0, 0.0, 100.0)
@@ -953,7 +944,7 @@ fn an_auto_width_formatting_context_narrows_to_the_narrowest_of_several_bands() 
     // The box reaches all three bands, and the last starts furthest in.
     let stretching = formatting_context_box(&mut tree, root, None, 25.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    let layout = tree.nodes[stretching].unrounded_layout;
+    let layout = tree.nodes[stretching].layout;
     assert_eq!(
         (layout.location.x, layout.location.y, layout.size.width),
         (180.0, 0.0, 20.0)
@@ -983,7 +974,7 @@ fn a_square_formatting_context_settles_in_the_widest_room_it_fits_beside_the_flo
     // narrows it to 10px. Only 10px tall, it no longer reaches that band, and
     // the room left is the 40px the first two bands share, where it is a
     // 40px square that ends as the last band starts.
-    let layout = tree.nodes[square].unrounded_layout;
+    let layout = tree.nodes[square].layout;
     assert_eq!(
         (
             layout.location.x,

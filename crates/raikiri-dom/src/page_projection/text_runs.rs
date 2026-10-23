@@ -129,7 +129,7 @@ pub(super) fn prepare_markers(
     }
     for owner in owners {
         let node = &document.nodes[owner];
-        let layout = node.unrounded_layout;
+        let layout = node.layout;
         // Only a usable image replaces the list-style-type text fallback.
         if document.list_marker_image(owner).is_some() {
             continue;
@@ -677,7 +677,7 @@ pub(super) fn box_paint_shift(
         });
     }
     // Percentages resolve against the border box (CSS Transforms 1 §6).
-    let size = node.unrounded_layout.size;
+    let size = node.layout.size;
     // A fragment's percentages resolve against that fragment, which the
     // runs of a paragraph do not know.
     if fragmented
@@ -710,7 +710,7 @@ fn used_columns(document: &Document, id: usize) -> usize {
     let Some(style) = node.multicol else {
         return 1;
     };
-    let content_width = node.unrounded_layout.content_box_width();
+    let content_width = node.layout.content_box_width();
     crate::fragment::FragmentationContext::resolve(content_width, None, style)
         .map_or(1, |context| context.column_count)
 }
@@ -1059,7 +1059,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                 .filter(|&&child| laid_out(child))
                 .find_map(|&child| {
                     let line = first_line(document, cascade, child)?;
-                    let top = document.nodes[child].unrounded_layout.location.y
+                    let top = document.nodes[child].layout.location.y
                         - layout_applied_relative_offset_y(document, cascade, child);
                     ((top + line.baseline - baseline).abs() < 0.01).then_some(top + line.center)
                 })
@@ -1081,7 +1081,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                     None => {
                         // The lines start inside the border and padding,
                         // moved down by any pagination shift.
-                        let layout = node.unrounded_layout;
+                        let layout = node.layout;
                         let top = y + layout.border.top + layout.padding.top + lines.shift_of(0);
                         return lines.lines.first().map(|line| FirstLine {
                             baseline: top
@@ -1096,7 +1096,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         };
         // A relative offset moves the child, not the item's marker, so the
         // offset that layout already applied is taken back out.
-        y += document.nodes[child].unrounded_layout.location.y
+        y += document.nodes[child].layout.location.y
             - layout_applied_relative_offset_y(document, cascade, child);
         id = child;
     }
@@ -1158,7 +1158,7 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
     // A relative offset moves the item's box, not the line the grid
     // takes its baseline from.
     let item_node = &document.nodes[item];
-    let item_layout = item_node.unrounded_layout;
+    let item_layout = item_node.layout;
     let top = item_layout.location.y - layout_applied_relative_offset_y(document, cascade, item);
     let bottom = item_layout.size.height;
     // Layout containment suppresses the item's own baseline, so one is

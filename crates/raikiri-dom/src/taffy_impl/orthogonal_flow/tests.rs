@@ -200,6 +200,6 @@ fn sideways_percentage_padding_uses_the_containing_block_inline_extent() {
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
         assert!(!doc.nodes[parent].is_ifc_root());
         assert!(doc.nodes[child].is_ifc_root());
-        assert_eq!(doc.nodes[child].unrounded_layout.size.width, 30.0);
+        assert_eq!(doc.nodes[child].layout.size.width, 30.0);
     }
 }

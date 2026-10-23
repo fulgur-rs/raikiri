@@ -45,14 +45,10 @@ fn inline_relative_image_uses_taffy_inset_once_when_painted() {
     let cascade = cascade(&document, &rules).expect("cascade succeeds");
     layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout succeeds");
 
-    let body_location = document.get_node(body).unwrap().unrounded_layout.location;
-    let container_location = document
-        .get_node(container)
-        .unwrap()
-        .unrounded_layout
-        .location;
-    let first_location = document.get_node(first).unwrap().unrounded_layout.location;
-    let second_location = document.get_node(second).unwrap().unrounded_layout.location;
+    let body_location = document.get_node(body).unwrap().layout().location;
+    let container_location = document.get_node(container).unwrap().layout().location;
+    let first_location = document.get_node(first).unwrap().layout().location;
+    let second_location = document.get_node(second).unwrap().layout().location;
     let first_x = body_location.x + container_location.x + first_location.x;
     let first_y = body_location.y + container_location.y + first_location.y;
     let second_x = body_location.x + container_location.x + second_location.x;

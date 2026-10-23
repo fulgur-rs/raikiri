@@ -81,7 +81,7 @@ fn an_avoiding_box_in_an_auto_height_single_column_grid_item_grows_the_grid() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let grid_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!(
         (ys, grid_height),
         (vec![60.0, 100.0, 160.0, 240.0, 250.0], 190.0)
@@ -105,7 +105,7 @@ fn a_flow_root_grows_around_a_moved_float_only_as_far_as_its_flow() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let root_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((ys, root_height), (vec![60.0, 100.0, 210.0], 150.0));
 }
 
@@ -125,7 +125,7 @@ fn the_flow_after_a_block_with_a_hanging_float_follows_its_moved_content() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let wrapper_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((ys, wrapper_height), (vec![60.0, 100.0, 160.0], 100.0));
 }
 
@@ -145,7 +145,7 @@ fn a_shared_ifc_block_child_reports_its_float_from_the_content_edge() {
         block(doc, child, "float:left;width:20px;height:50px");
     });
     assert!(doc.nodes[paragraph].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 82.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 82.0);
 }
 
 #[test]
@@ -173,14 +173,14 @@ fn a_second_line_inline_branch_does_not_add_its_origin_to_float_end() {
         &doc,
         paragraph,
         inline,
-        doc.nodes[inline].unrounded_layout.location.y,
+        doc.nodes[inline].layout.location.y,
     );
-    let expected = doc.nodes[float].unrounded_layout.location.y
-        + doc.nodes[float].unrounded_layout.size.height
-        + doc.nodes[float].unrounded_layout.margin.bottom;
+    let expected = doc.nodes[float].layout.location.y
+        + doc.nodes[float].layout.size.height
+        + doc.nodes[float].layout.margin.bottom;
 
     assert!(doc.nodes[paragraph].is_ifc_root());
-    assert!(doc.nodes[float].unrounded_layout.location.y > 0.0);
+    assert!(doc.nodes[float].layout.location.y > 0.0);
     assert_eq!(
         super::super::same_bfc_float_end_in_subtree(
             &doc,
@@ -220,18 +220,18 @@ fn a_relative_inline_child_offset_is_removed_from_float_end() {
         &doc,
         paragraph,
         inline,
-        doc.nodes[inline].unrounded_layout.location.y,
+        doc.nodes[inline].layout.location.y,
     );
-    let float_end = doc.nodes[float].unrounded_layout.location.y
-        + doc.nodes[float].unrounded_layout.size.height
-        + doc.nodes[float].unrounded_layout.margin.bottom;
+    let float_end = doc.nodes[float].layout.location.y
+        + doc.nodes[float].layout.size.height
+        + doc.nodes[float].layout.margin.bottom;
     let expected = float_end - 20.0;
     let paragraph_entry = super::super::same_bfc_float_end_in_subtree(
         &doc,
         &cascade,
         body,
         paragraph,
-        doc.nodes[paragraph].unrounded_layout.location.y,
+        doc.nodes[paragraph].layout.location.y,
     );
     let inline_entry =
         super::super::same_bfc_float_end_in_subtree(&doc, &cascade, body, inline, inline_top);
@@ -266,7 +266,7 @@ fn a_nested_float_in_a_footnote_is_excluded_from_bfc_extent() {
             &cascade,
             doc.parent_of(wrapper).unwrap(),
             wrapper,
-            doc.nodes[wrapper].unrounded_layout.location.y,
+            doc.nodes[wrapper].layout.location.y,
         ),
         f32::NEG_INFINITY
     );
@@ -276,7 +276,7 @@ fn a_nested_float_in_a_footnote_is_excluded_from_bfc_extent() {
             &cascade,
             doc.parent_of(wrapper).unwrap(),
             footnote,
-            doc.nodes[footnote].unrounded_layout.location.y,
+            doc.nodes[footnote].layout.location.y,
         ),
         f32::NEG_INFINITY
     );
@@ -336,10 +336,10 @@ fn an_untracked_ifc_sibling_float_follows_the_moved_block() {
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     let body = doc.parent_of(outer).unwrap();
 
-    doc.nodes[moved].unrounded_layout.location.y = 40.0;
-    doc.nodes[wrapper].unrounded_layout.location.y = 0.0;
-    doc.nodes[float].unrounded_layout.location.y = 0.0;
-    doc.nodes[float].unrounded_layout.size.height = 80.0;
+    doc.nodes[moved].layout.location.y = 40.0;
+    doc.nodes[wrapper].layout.location.y = 0.0;
+    doc.nodes[float].layout.location.y = 0.0;
+    doc.nodes[float].layout.size.height = 80.0;
     let doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let grown = super::super::grown_auto_height(
         &doc,
@@ -402,14 +402,14 @@ fn margin_truncation_stops_at_an_unchanged_fixed_height_ancestor() {
     });
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
-    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    let moved_y = doc.nodes[moved].layout.location.y;
     let mut doc = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
 
     super::super::move_box_by_truncated_margin(&mut doc, &cascade, moved, -10.0, body);
 
-    assert_eq!(doc.nodes[moved].unrounded_layout.location.y, moved_y - 10.0);
-    assert_eq!(doc.nodes[inner].unrounded_layout.size.height, 20.0);
-    assert_eq!(doc.nodes[outer].unrounded_layout.size.height, 200.0);
+    assert_eq!(doc.nodes[moved].layout.location.y, moved_y - 10.0);
+    assert_eq!(doc.nodes[inner].layout.size.height, 20.0);
+    assert_eq!(doc.nodes[outer].layout.size.height, 200.0);
 }
 
 #[test]
@@ -425,11 +425,11 @@ fn a_footnote_float_on_contents_does_not_hide_its_child_float() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     let doc = super::paginating(&mut doc, &cascade);
-    let branch_top = doc.nodes[wrapper].unrounded_layout.location.y;
+    let branch_top = doc.nodes[wrapper].layout.location.y;
     let expected = branch_top
-        + doc.nodes[float].unrounded_layout.location.y
-        + doc.nodes[float].unrounded_layout.size.height
-        + doc.nodes[float].unrounded_layout.margin.bottom;
+        + doc.nodes[float].layout.location.y
+        + doc.nodes[float].layout.size.height
+        + doc.nodes[float].layout.margin.bottom;
 
     assert_eq!(cascade.computed[contents].float, FloatValue::Footnote);
     assert!(!super::super::is_floating_box_for_pagination(
@@ -497,7 +497,7 @@ fn a_local_ifc_root_holds_its_own_float_end() {
         block(doc, root, "float:left;width:20px;height:50px");
     });
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 72.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 72.0);
 }
 
 #[test]
@@ -509,8 +509,8 @@ fn a_nested_bfc_hides_its_overflowing_float_from_the_outer_bfc() {
         inner = block(doc, outer, "display:flow-root;height:20px");
         block(doc, inner, "float:left;width:20px;height:50px");
     });
-    assert_eq!(doc.nodes[inner].unrounded_layout.size.height, 20.0);
-    assert_eq!(doc.nodes[outer].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[inner].layout.size.height, 20.0);
+    assert_eq!(doc.nodes[outer].layout.size.height, 20.0);
 }
 
 #[test]
@@ -530,7 +530,7 @@ fn a_flow_root_grows_when_the_moved_content_passes_a_hanging_float() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let root_height = doc.nodes[ids[0]].layout.size.height;
     // The moved box ends at 160, below the float's 130 end.
     assert_eq!((ys, root_height), (vec![60.0, 100.0, 160.0], 100.0));
 }
@@ -552,7 +552,7 @@ fn a_flow_root_grows_for_a_float_after_the_moved_block() {
         (
             page_flow_y(&doc, root),
             page_flow_y(&doc, moved),
-            doc.nodes[root].unrounded_layout.size.height,
+            doc.nodes[root].layout.size.height,
             page_flow_y(&doc, later_float),
             page_flow_y(&doc, following),
         ),
@@ -597,17 +597,17 @@ fn an_ifc_float_already_followed_by_a_moved_block_counts_only_its_real_extent_gr
             .any(|&(block, _)| block == moved)
     );
 
-    doc.nodes[earlier_float].unrounded_layout.location.y = 0.0;
-    doc.nodes[earlier_float].unrounded_layout.size.height = 100.0;
-    doc.nodes[moved].unrounded_layout.location.y = 40.0;
-    doc.nodes[moved].unrounded_layout.size.height = 10.0;
-    doc.nodes[later_float].unrounded_layout.location.y = 0.0;
-    doc.nodes[later_float].unrounded_layout.size.height = 80.0;
+    doc.nodes[earlier_float].layout.location.y = 0.0;
+    doc.nodes[earlier_float].layout.size.height = 100.0;
+    doc.nodes[moved].layout.location.y = 40.0;
+    doc.nodes[moved].layout.size.height = 10.0;
+    doc.nodes[later_float].layout.location.y = 0.0;
+    doc.nodes[later_float].layout.size.height = 80.0;
     let mut doc = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
     let followed = super::super::follow_ifc_block(&mut doc, paragraph, moved, 0.0, 10.0, 40.0);
 
     assert!(followed.shifted.contains(&later_float));
-    assert_eq!(doc.nodes[later_float].unrounded_layout.location.y, 40.0);
+    assert_eq!(doc.nodes[later_float].layout.location.y, 40.0);
     let grown = super::super::grown_auto_height(
         &doc, &cascade, paragraph, moved, 40.0, 40.0, 40.0, true, body, &followed,
     )
@@ -657,30 +657,21 @@ fn an_ifc_float_inside_a_followed_inline_wrapper_counts_only_its_real_extent_gro
             .any(|&(block, _)| block == moved)
     );
 
-    doc.nodes[earlier_float].unrounded_layout.location.y = 0.0;
-    doc.nodes[earlier_float].unrounded_layout.size.height = 100.0;
-    doc.nodes[moved].unrounded_layout.location.y = 40.0;
-    doc.nodes[moved].unrounded_layout.size.height = 10.0;
-    doc.nodes[wrapper].unrounded_layout.location.y = 0.0;
-    doc.nodes[stationary_nested_float]
-        .unrounded_layout
-        .location
-        .y = -1.0;
-    doc.nodes[later_float].unrounded_layout.location.y = 0.0;
-    doc.nodes[later_float].unrounded_layout.size.height = 65.0;
+    doc.nodes[earlier_float].layout.location.y = 0.0;
+    doc.nodes[earlier_float].layout.size.height = 100.0;
+    doc.nodes[moved].layout.location.y = 40.0;
+    doc.nodes[moved].layout.size.height = 10.0;
+    doc.nodes[wrapper].layout.location.y = 0.0;
+    doc.nodes[stationary_nested_float].layout.location.y = -1.0;
+    doc.nodes[later_float].layout.location.y = 0.0;
+    doc.nodes[later_float].layout.size.height = 65.0;
     let mut doc = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
     let followed = super::super::follow_ifc_block(&mut doc, paragraph, moved, 0.0, 10.0, 40.0);
 
     assert!(followed.shifted.contains(&later_float));
     assert!(!followed.shifted.contains(&stationary_nested_float));
-    assert_eq!(
-        doc.nodes[stationary_nested_float]
-            .unrounded_layout
-            .location
-            .y,
-        -1.0
-    );
-    assert_eq!(doc.nodes[later_float].unrounded_layout.location.y, 40.0);
+    assert_eq!(doc.nodes[stationary_nested_float].layout.location.y, -1.0);
+    assert_eq!(doc.nodes[later_float].layout.location.y, 40.0);
     let grown = super::super::grown_auto_height(
         &doc, &cascade, paragraph, moved, 40.0, 40.0, 40.0, true, body, &followed,
     )
@@ -704,7 +695,7 @@ fn a_scroll_container_grows_around_a_moved_float() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let root_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((ys, root_height), (vec![60.0, 160.0], 100.0));
 }
 
@@ -730,10 +721,7 @@ fn a_moved_float_grows_an_indefinite_percentage_context_but_not_a_fixed_one() {
         });
         assert_eq!(page_flow_y(&doc, root), 60.0);
         assert_eq!(page_flow_y(&doc, float), 100.0);
-        assert_eq!(
-            doc.nodes[root].unrounded_layout.size.height,
-            expected_height
-        );
+        assert_eq!(doc.nodes[root].layout.size.height, expected_height);
         assert_eq!(page_flow_y(&doc, following), 60.0 + expected_height);
     }
 }
@@ -757,7 +745,7 @@ fn a_hanging_float_two_blocks_down_still_takes_up_the_move() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let root_height = doc.nodes[ids[0]].layout.size.height;
     // The block after the wrapper follows the moved box to 160; the
     // flow-root still ends with the float at 210.
     assert_eq!((ys, root_height), (vec![60.0, 100.0, 160.0, 210.0], 150.0));
@@ -778,7 +766,7 @@ fn a_formatting_context_grows_with_a_float_that_moved_inside_a_min_height_block(
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let root_height = doc.nodes[ids[0]].layout.size.height;
     // The float moves with its block to 100..250, and the flow-root holds it.
     assert_eq!((ys, root_height), (vec![60.0, 100.0, 250.0], 190.0));
 }
@@ -813,14 +801,14 @@ fn a_moved_ifc_block_child_keeps_its_origin_in_ancestor_float_extent() {
             &cascade,
             doc.parent_of(root).unwrap(),
             paragraph,
-            doc.nodes[paragraph].unrounded_layout.location.y,
+            doc.nodes[paragraph].layout.location.y,
         ),
         190.0
     );
     assert_eq!(
         (
             page_flow_y(&doc, moved),
-            doc.nodes[root].unrounded_layout.size.height,
+            doc.nodes[root].layout.size.height,
             page_flow_y(&doc, following),
         ),
         (100.0, 190.0, 250.0)
@@ -850,7 +838,7 @@ fn a_formatting_context_keeps_its_max_height_when_a_float_moves_inside_a_min_hei
         assert_eq!(
             (
                 page_flow_y(&doc, root),
-                doc.nodes[root].unrounded_layout.size.height,
+                doc.nodes[root].layout.size.height,
                 page_flow_y(&doc, following),
             ),
             (60.0, expected_height, expected_following_y),
@@ -914,7 +902,7 @@ fn a_forced_break_in_a_two_column_grid_does_not_grow_the_grid() {
         block(doc, item, "display:block;height:20px;break-before:page");
         block(doc, grid, "display:block;height:40px");
     });
-    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let grid_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!(grid_height, 40.0);
 }
 
@@ -936,7 +924,7 @@ fn a_grid_item_holding_a_float_does_not_grow_past_it() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let item_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let item_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((ys, item_height), (vec![60.0, 100.0, 210.0], 150.0));
 }
 
@@ -955,7 +943,7 @@ fn a_one_column_grid_grows_from_its_items_in_row_order() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let grid_height = doc.nodes[ids[0]].layout.size.height;
     // The avoiding box in the second row moves from 80 to 100.
     assert_eq!((ys, grid_height), (vec![60.0, 240.0], 180.0));
 }
@@ -1018,7 +1006,7 @@ fn a_grid_item_in_a_fixed_row_keeps_its_track_size() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let grid_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((ys, grid_height), (vec![60.0, 80.0, 210.0], 150.0));
 }
 
@@ -1087,7 +1075,7 @@ fn a_grid_item_in_an_explicit_auto_row_grows_the_grid() {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let grid_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((ys, grid_height), (vec![60.0, 100.0, 160.0, 240.0], 180.0));
 }
 
@@ -1184,7 +1172,7 @@ fn assert_avoiding_box_in_a_bounded_grid_stays(grid_css: &str) {
         ids.push(block(doc, body, "display:block;height:10px"));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let grid_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((ys, grid_height), (vec![60.0, 80.0, 210.0], 150.0));
 }
 

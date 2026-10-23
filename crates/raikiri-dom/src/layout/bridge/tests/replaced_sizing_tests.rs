@@ -55,7 +55,7 @@ fn laid_out_with_natural_box(
 }
 
 fn size(doc: &Document, node: usize) -> (f32, f32) {
-    let size = doc.nodes[node].unrounded_layout.size;
+    let size = doc.nodes[node].layout.size;
     (size.width, size.height)
 }
 
@@ -983,10 +983,7 @@ fn child_in_container(container_css: &str, tag: &str, css: &str) -> (f32, (f32, 
             doc.set_element_attributes(child, vec![("viewBox".into(), "0 0 2 1".into())]);
         }
     });
-    (
-        doc.nodes[child].unrounded_layout.location.x,
-        size(&doc, child),
-    )
+    (doc.nodes[child].layout.location.x, size(&doc, child))
 }
 
 #[test]
@@ -1176,7 +1173,7 @@ fn image_box_in_container(container_css: &str, image_css: &str) -> ((f32, f32), 
         let container = doc.append_element(Some(body), "div", Some(container_css));
         image = doc.append_element(Some(container), "img", Some(image_css));
     });
-    let location = doc.nodes[image].unrounded_layout.location;
+    let location = doc.nodes[image].layout.location;
     ((location.x, location.y), size(&doc, image))
 }
 

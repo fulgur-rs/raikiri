@@ -130,7 +130,7 @@ pub(crate) fn prepare(
         );
         let parent_owner = if out_of_flow { None } else { parent_owner };
         parent_owners[node_id] = parent_owner;
-        let layout = node.unrounded_layout;
+        let layout = node.layout;
         let origin = (
             layout.border.left + layout.padding.left,
             layout.border.top + layout.padding.top,

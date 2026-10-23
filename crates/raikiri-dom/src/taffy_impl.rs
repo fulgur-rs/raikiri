@@ -616,8 +616,8 @@ impl LayoutSession<'_> {
     /// The **only** path by which the layout algorithms write layout into the
     /// arena.
     ///
-    /// Storing through [`LayoutSession::store_unrounded_layout`] here structurally
-    /// guarantees that `Node.unrounded_layout` contains no non-finite f32 values.
+    /// Storing through [`LayoutSession::store_layout`] here structurally
+    /// guarantees that `Node.layout` contains no non-finite f32 values.
     /// The input guard in the bridge (`layout::sanitize_taffy`) alone cannot
     /// close the gap: nested percentages compound at the used-value layer
     /// and can become non-finite again. See the documentation for
@@ -632,7 +632,7 @@ impl LayoutSession<'_> {
     /// The session context drops this buffer when the layout operation ends.
     pub(crate) fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &BoxLayout) {
         self.note_transposed_layout(usize::from(node_id));
-        self.store_unrounded_layout(usize::from(node_id), layout);
+        self.store_layout(usize::from(node_id), layout);
     }
 
     /// Lay out the node under `inputs`, from its cache when it holds a result
@@ -2269,7 +2269,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         {
             stack.push((
                 child,
-                doc.nodes[child].unrounded_layout.location.y,
+                doc.nodes[child].layout.location.y,
                 (f32::NEG_INFINITY, f32::INFINITY),
             ));
         }
@@ -2282,7 +2282,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         let clip = if node.kind() != raikiri_traits::NodeKind::Text
             && is_scroll_container(doc.physical_style(idx).overflow())
         {
-            let bottom = offset_y + node.unrounded_layout.size.height;
+            let bottom = offset_y + node.layout.size.height;
             (
                 offset_y.max(outer_clip.0).min(outer_clip.1),
                 bottom.max(outer_clip.0).min(outer_clip.1),
@@ -2292,7 +2292,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         };
         if node.flags.contains(NodeFlags::IS_IFC_ROOT) {
             if let Some(line_baseline) = node.ifc.as_ref().and_then(|root| root.last_baseline()) {
-                let layout = &node.unrounded_layout;
+                let layout = &node.layout;
                 let baseline = offset_y + layout.padding.top + layout.border.top + line_baseline;
                 if baseline.is_finite() {
                     last_baseline = Some(baseline.max(clip.0).min(clip.1));
@@ -2308,11 +2308,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
                 && !doc.nodes[child].is_display_none()
                 && doc.nodes[child].taffy_position() != TaffyPosition::Absolute
             {
-                stack.push((
-                    child,
-                    offset_y + doc.nodes[child].unrounded_layout.location.y,
-                    clip,
-                ));
+                stack.push((child, offset_y + doc.nodes[child].layout.location.y, clip));
             }
         }
     }
@@ -2803,7 +2799,7 @@ fn center_absolute_children_in_block_axis(
         let (Some(start), Some(end)) = (start, end) else {
             continue;
         };
-        let mut layout = tree.nodes[child].unrounded_layout;
+        let mut layout = tree.nodes[child].layout;
         let box_size = if block_is_height {
             layout.size.height
         } else {
@@ -2846,7 +2842,7 @@ fn center_absolute_children_in_block_axis(
             let (Some(start), Some(end)) = (start, end) else {
                 continue;
             };
-            let mut layout = tree.nodes[child].unrounded_layout;
+            let mut layout = tree.nodes[child].layout;
             let free_space = area.bottom - area.top - start - end - layout.size.height;
             if free_space >= 0.0 {
                 continue;
@@ -3327,7 +3323,7 @@ pub(super) fn align_hoisted_grid_abspos_children(
             {
                 return None;
             }
-            let grid_layout = tree.nodes[grid].unrounded_layout;
+            let grid_layout = tree.nodes[grid].layout;
             let grid_origin = tree.document.layout_origin_of(grid).unwrap_or(Point::ZERO);
             let grid_to_owner = Point {
                 x: grid_origin.x - owner_origin.x,
@@ -3365,7 +3361,7 @@ fn auto_grid_abspos_aligned_layout(
     }
     let parent_style = tree.physical_style(grid);
     let style = tree.physical_style(child);
-    let mut layout = tree.nodes[child].unrounded_layout;
+    let mut layout = tree.nodes[child].layout;
     // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
     // §10.6.4).
     let style_margin = style.margin();

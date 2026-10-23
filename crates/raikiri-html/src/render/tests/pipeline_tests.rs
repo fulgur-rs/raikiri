@@ -2167,7 +2167,7 @@ fn pipeline_keeps_an_inline_holding_a_float_to_its_line() {
             .filter(|node| node.tag_name() == Some(tag))
             .nth(nth)
             .expect("element")
-            .unrounded_layout
+            .layout()
             .size
             .height
     };
@@ -2187,12 +2187,7 @@ fn tops_by_id(out: &PipelineOutput, ids: &[&str]) -> Vec<f32> {
             let mut top = 0.0;
             let mut current = Some(node);
             while let Some(i) = current {
-                top += document
-                    .get_node(i)
-                    .expect("node")
-                    .unrounded_layout
-                    .location
-                    .y;
+                top += document.get_node(i).expect("node").layout().location.y;
                 current = document.layout_parent_of(i);
             }
             top

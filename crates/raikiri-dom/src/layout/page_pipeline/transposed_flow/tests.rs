@@ -128,7 +128,7 @@ fn the_block_end_margin_of_the_body_does_not_add_a_page() {
     assert_eq!(absolute_rect(&doc, ids[1]), (180.0, 0.0, 600.0, 600.0));
     assert_eq!(absolute_rect(&doc, ids[2]), (-800.0, 0.0, 800.0, 600.0));
     // The body's margins stay outside its border box on physical axes.
-    let layout = doc.nodes[ids[0]].unrounded_layout;
+    let layout = doc.nodes[ids[0]].layout;
     assert_eq!((layout.margin.left, layout.margin.right), (20.0, 20.0));
     assert_eq!((layout.padding.left, layout.padding.right), (0.0, 0.0));
 }
@@ -504,7 +504,7 @@ fn pagination_axis_changes_discard_cached_table_preparation() {
         crate::layout::table::GRID_BUILDS.with(|count| count.get()),
         1
     );
-    let physical_cell = session.nodes[cell].unrounded_layout.size;
+    let physical_cell = session.nodes[cell].layout.size;
     TransposedDocument::with_transposed(
         &mut session,
         root,
@@ -525,7 +525,7 @@ fn pagination_axis_changes_discard_cached_table_preparation() {
         crate::layout::table::GRID_BUILDS.with(|count| count.get()),
         2
     );
-    assert_eq!(session.nodes[cell].unrounded_layout.size, physical_cell);
+    assert_eq!(session.nodes[cell].layout.size, physical_cell);
 }
 
 #[test]

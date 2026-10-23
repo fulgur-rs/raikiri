@@ -108,7 +108,7 @@ fn collect(
                 .into_iter()
                 .all(|child| {
                     tree.nodes[child].kind() == NodeKind::Text
-                        && tree.nodes[child].unrounded_layout.size.height == 0.0
+                        && tree.nodes[child].layout.size.height == 0.0
                 })
             && node
                 .authored_writing_mode

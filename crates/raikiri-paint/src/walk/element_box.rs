@@ -825,7 +825,7 @@ fn generated_content_advance(
         .filter_map(|child_id| document.get_node(*child_id))
         .filter(|child| child.kind() == NodeKind::Text)
         .map(|child| {
-            (child.unrounded_layout.location.x + child.unrounded_layout.size.width
+            (child.layout().location.x + child.layout().size.width
                 - cv.border.left.width().px()
                 - paint_padding.left)
                 .max(0.0)
@@ -853,8 +853,8 @@ fn in_flow_child_end(
             ) {
                 return None;
             }
-            let child_y = abs_y + child.unrounded_layout.location.y;
-            end(child_y, child.unrounded_layout.size.height)
+            let child_y = abs_y + child.layout().location.y;
+            end(child_y, child.layout().size.height)
         })
         .fold(None, |maximum, value| {
             Some(maximum.map_or(value, |current: f32| current.max(value)))

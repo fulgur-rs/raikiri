@@ -119,7 +119,7 @@ fn relative_insets_with_box_tree(
         }
         let block = document.ifc_layout_node(block?.key)?;
         Some(if is_spanner_in(document, cascade, node_id) {
-            block.unrounded_layout.content_box_width()
+            block.layout.content_box_width()
         } else {
             column_content_width(block)
         })
@@ -309,7 +309,7 @@ fn is_non_atomic_inline(document: &Document, boxes: BoxTree<'_>, node_id: usize)
 /// The content-box width of `block`, or of one of its columns when it is a
 /// multi-column container.
 fn column_content_width(block: &Node) -> f32 {
-    let width = block.unrounded_layout.content_box_width();
+    let width = block.layout.content_box_width();
     block
         .multicol
         .and_then(|style| FragmentationContext::resolve(width, None, style))

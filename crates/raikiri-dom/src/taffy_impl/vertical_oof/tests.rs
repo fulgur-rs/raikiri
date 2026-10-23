@@ -239,7 +239,7 @@ fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
     );
     session.compute_child_layout_with_block_ctx(NodeId::from(container), inputs, None);
 
-    assert_eq!(session.nodes[absolute].unrounded_layout.size.height, 200.0);
+    assert_eq!(session.nodes[absolute].layout.size.height, 200.0);
     assert!(session.context.vertical_oof_containing_blocks.is_empty());
 }
 
@@ -474,9 +474,7 @@ fn the_overflow_of_a_moved_box_is_that_of_its_new_position() {
     // box to the left edge and let it overflow to the right.
     let overflow = |container_css: &str, child_css: &str| {
         let (doc, container, _) = aligned_document(container_css, child_css);
-        let rect = doc.nodes[container]
-            .unrounded_layout
-            .scrollable_overflow_rect;
+        let rect = doc.nodes[container].layout.scrollable_overflow_rect;
         (rect.left, rect.right, rect.top, rect.bottom)
     };
     let wide = "left:0;right:0;width:150px;align-self:end";
@@ -522,9 +520,7 @@ fn the_overflow_of_a_box_moved_in_a_container_with_lines_is_that_of_its_new_posi
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
     assert_eq!(absolute_rect(&doc, child).0, -50.0);
-    let rect = doc.nodes[container]
-        .unrounded_layout
-        .scrollable_overflow_rect;
+    let rect = doc.nodes[container].layout.scrollable_overflow_rect;
     assert_eq!((rect.left, rect.right), (-50.0, 100.0));
 }
 

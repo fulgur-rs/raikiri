@@ -108,7 +108,7 @@ fn size_probe_does_not_cache_cell_layout_or_temporary_widths() {
     input.run_mode = RunMode::PerformLayout;
     let wide = compute_table_layout_in_session(&mut session, table.into(), input);
     assert!(wide.size.width > narrow.size.width);
-    assert_eq!(session.nodes[first].unrounded_layout.size.width, 100.0);
+    assert_eq!(session.nodes[first].layout.size.width, 100.0);
     session.record_pass_override(
         first,
         width_override(ComputedLengthPercentageOrAuto::Px(20.0)),
@@ -116,7 +116,7 @@ fn size_probe_does_not_cache_cell_layout_or_temporary_widths() {
     session.table_layout_node_mut(first).cache.clear();
     let restored = compute_table_layout_in_session(&mut session, table.into(), input);
     assert_eq!(restored.size, narrow.size);
-    assert_eq!(session.nodes[first].unrounded_layout.size.width, 20.0);
+    assert_eq!(session.nodes[first].layout.size.width, 20.0);
 }
 
 #[test]
@@ -178,13 +178,13 @@ fn collapsed_column_probes_restore_the_same_borders_and_cell_geometry() {
     let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let input = column_probe_input();
     let original = compute_table_layout_in_session(&mut session, table.into(), input);
-    let geometry = session.nodes[first + 1].unrounded_layout;
+    let geometry = session.nodes[first + 1].layout;
     let grid = super::super::build_table_grid(&session, table).unwrap();
     let borders = super::super::snapshot_borders(&session, &grid);
     for _ in 0..3 {
         let repeated = compute_table_layout_in_session(&mut session, table.into(), input);
         assert_eq!(repeated.size, original.size);
-        assert_eq!(session.nodes[first + 1].unrounded_layout, geometry);
+        assert_eq!(session.nodes[first + 1].layout, geometry);
         let repeated_borders = super::super::snapshot_borders(&session, &grid);
         assert_eq!(repeated_borders.cells, borders.cells);
         assert_eq!(repeated_borders.rows, borders.rows);
@@ -385,7 +385,7 @@ fn subtree_geometry(tree: &LayoutSession<'_>, root: usize) -> Vec<String> {
         let node = &tree.nodes[idx];
         geometry.push(format!(
             "{idx}: {:?} paint={:?}",
-            node.unrounded_layout, node.collapsed_border
+            node.layout, node.collapsed_border
         ));
         pending.extend(node.children.iter().rev().copied());
     }
@@ -418,9 +418,9 @@ fn table_descendant_geometry_agrees_across_cold_warm_and_forced_miss() {
             cold.len() > 15,
             "{views}: cells, rows and descendants laid out"
         );
-        assert_eq!(tree.nodes[block].unrounded_layout.size.height, 12.0);
-        assert_eq!(tree.nodes[item].unrounded_layout.size.height, 6.0);
-        assert!(tree.nodes[item].unrounded_layout.size.width > 20.0);
+        assert_eq!(tree.nodes[block].layout.size.height, 12.0);
+        assert_eq!(tree.nodes[item].layout.size.height, 6.0);
+        assert!(tree.nodes[item].layout.size.width > 20.0);
 
         let warm_output = tree.compute_child_layout_with_block_ctx(id, input, None);
         assert_eq!(

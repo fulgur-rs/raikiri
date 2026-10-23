@@ -128,21 +128,19 @@ fn move_top(document: &mut Document, id: usize, delta: f32) {
     }
     // A box shorter than the move ends up empty above its first row, and
     // grows over its rows again when the table is finished.
-    let layout = &mut document.nodes[id].unrounded_layout;
+    let layout = &mut document.nodes[id].layout;
     layout.location.y += delta;
     layout.size.height = (layout.size.height - delta).max(0.0);
     if let Some(grid) = &mut document.nodes[id].table_grid_box {
         grid.height = (grid.height - delta).max(0.0);
     }
     for child in document.nodes[id].children.clone() {
-        document.nodes[child].unrounded_layout.location.y -= delta;
+        document.nodes[child].layout.location.y -= delta;
     }
 }
 
 fn absolute_y(document: &Document, node: usize) -> f32 {
     document
         .inclusive_layout_ancestors(node)
-        .fold(0.0, |y, id| {
-            y + document.nodes[id].unrounded_layout.location.y
-        })
+        .fold(0.0, |y, id| y + document.nodes[id].layout.location.y)
 }

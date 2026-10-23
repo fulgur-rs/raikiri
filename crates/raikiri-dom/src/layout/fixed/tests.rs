@@ -416,7 +416,7 @@ fn fixed_boxes_in_hidden_subtrees_are_left_alone() {
         "display:none",
         "position:fixed;left:5px;top:6px;width:20px;height:10px",
     );
-    assert_eq!(doc.nodes[fixed].unrounded_layout.size.width, 0.0);
+    assert_eq!(doc.nodes[fixed].layout.size.width, 0.0);
 }
 
 #[test]
@@ -572,7 +572,7 @@ fn fixed_boxes_are_placed_against_a_transformed_ancestor_other_than_the_parent()
     let (fixed_x, fixed_y, _, _) = absolute_rect(&doc, fixed);
     let (cb_x, cb_y, _, _) = absolute_rect(&doc, containing_block);
     assert_eq!(
-        doc.nodes[fixed].unrounded_layout.location,
+        doc.nodes[fixed].layout.location,
         Point {
             x: fixed_x - cb_x,
             y: fixed_y - cb_y,

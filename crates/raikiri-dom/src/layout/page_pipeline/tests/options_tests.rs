@@ -310,7 +310,7 @@ fn options_preserves_variable_page_geometry() {
     assert_eq!(
         children
             .iter()
-            .map(|&id| document.nodes[id].unrounded_layout.size.width)
+            .map(|&id| document.nodes[id].layout.size.width)
             .collect::<Vec<_>>(),
         [50.0, 75.0, 50.0]
     );
@@ -386,7 +386,7 @@ fn options_preserves_one_sided_geometry_schedules() {
         assert_eq!(
             children
                 .iter()
-                .map(|&id| document.nodes[id].unrounded_layout.size.width)
+                .map(|&id| document.nodes[id].layout.size.width)
                 .collect::<Vec<_>>(),
             sizes
         );

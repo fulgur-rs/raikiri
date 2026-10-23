@@ -201,7 +201,7 @@ fn a_vertical_paragraph_breaks_its_lines_at_a_block_before_without_its_edges() {
     .expect("layout");
     let root = &fixture.doc.nodes[fixture.root];
     assert_eq!(root.ifc_lines().expect("lines").len(), 2);
-    assert_eq!(root.unrounded_layout.size.width, 20.0);
+    assert_eq!(root.layout.size.width, 20.0);
 }
 
 #[test]

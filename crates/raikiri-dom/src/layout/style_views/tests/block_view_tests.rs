@@ -301,7 +301,7 @@ fn native_sticky_flex_grid_insets_keep_the_bridge_position() {
             crate::layout::test_support::page_box_800x600(),
         )
         .unwrap();
-        assert_eq!(doc.nodes[child].unrounded_layout.location, Point::ZERO);
+        assert_eq!(doc.nodes[child].layout.location, Point::ZERO);
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         tree.prepare_style_views();
         for role in [

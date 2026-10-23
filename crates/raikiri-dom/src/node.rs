@@ -435,10 +435,10 @@ impl FormattingContext {
 /// Arena node implemented with a NodeData tagged union.
 ///
 /// Kind-independent fields needed by paint, cascade, and layout (children and
-/// unrounded_layout) remain on Node; kind-specific fields reside in [`NodeData`]
+/// the laid-out box) remain on Node; kind-specific fields reside in [`NodeData`]
 /// variants. `kind` and `tag_name` are read through accessors
-/// (`node.kind()`, `node.tag_name()`); `children` and `unrounded_layout`
-/// remain public.
+/// (`node.kind()`, `node.tag_name()`), and so is the laid-out box
+/// ([`Node::layout`]); `children` remains public.
 #[derive(Debug, Clone)]
 pub struct Node {
     /// CSS display and position captured for this layout pass.
@@ -634,48 +634,14 @@ pub struct Node {
     pub(crate) cache: LayoutCache,
     /// Shodo paragraph state; set only on nodes flagged [`NodeFlags::IS_IFC_ROOT`].
     pub(crate) ifc: Option<Box<crate::layout::ifc::root::IfcRoot>>,
-    /// Taffy layout result, populated by compute_root_layout.
+    /// The box this node was last laid out as. Other crates read it through
+    /// [`Node::layout`] and cannot write it.
     ///
-    /// # Value range contract: all `f32` fields are finite and clamped to `[-1e7, 1e7]`
-    ///
-    /// `location.{x,y}` / `size.{width,height}` / `content_size.{width,height}`
-    /// / `scrollbar_size.{width,height}` / `border.{left,right,top,bottom}` /
-    /// `padding.{left,right,top,bottom}` / `margin.{left,right,top,bottom}` are
-    /// always **finite** and symmetrically clamped to
-    /// `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]` (`[-1e7, 1e7]`, where
-    /// `MAX_TAFFY_MAGNITUDE` is private to the `raikiri_dom::layout` module).
-    /// Values that became `NaN` during computation have already fallen back to
-    /// `0.0`. Raw taffy output containing `±Inf` is never written to this field.
-    /// `order` (`u32`) is outside this contract because it cannot be non-finite.
-    ///
-    /// Only finiteness and the magnitude limit are guaranteed. Box model
-    /// containment (CSS Box 3's content ⊆ padding ⊆ border) is not preserved:
-    /// fields are clamped independently, so simultaneous saturation of
-    /// `size.width` and `padding.{left,right}` can make
-    /// `size.width - padding.left - padding.right` negative.
-    ///
-    /// [`crate::layout::context::LayoutSession::store_unrounded_layout`], through which taffy's
-    /// `set_unrounded_layout` and the table algorithm store whole layouts,
-    /// enforces this contract (see the docs for
-    /// [`crate::layout::sanitize::sanitize_taffy_layout`] for details and
-    /// evidence).
-    /// Although this field is `pub`, no public API yields an external `&mut Node`:
-    /// `Document::nodes` and constructors such as [`Node::new_document`] are
-    /// `pub(crate)`, and [`crate::Document::get_node`] returns only `&Node`.
-    /// External callers therefore cannot write it without passing through this
-    /// choke point.
-    ///
-    /// This `pub` field is directly observable outside the crate through
-    /// [`crate::Document::get_node`]. Both the raikiri-paint walker
-    /// (`crates/raikiri-paint/src/walk.rs`, which directly accumulates
-    /// `location.x`/`y`) and raikiri's page-scene extraction
-    /// (`crates/raikiri/src/page_scene.rs`, which copies `location.{x,y}` and
-    /// `size.{width,height}` directly into `Fragment`) read it without further
-    /// validation. This contract is the sole protection for consumers against
-    /// non-finite geometry at the dom-to-paint boundary. Type, field shape, and
-    /// access pattern are unchanged; this documentation states only the
-    /// behavioral contract for the **set of observable values** at that boundary.
-    pub unrounded_layout: BoxLayout,
+    /// Written through [`crate::layout::context::LayoutSession::store_layout`],
+    /// which enforces the value range contract of [`BoxLayout`] (see
+    /// [`crate::layout::sanitize::sanitize_taffy_layout`] for the reasoning
+    /// and measurements).
+    pub(crate) layout: BoxLayout,
     /// The content-box height that percentages inside this box resolved
     /// against at its last final layout, as taffy's block algorithm derives
     /// it: `None` when that height was not definite.
@@ -809,7 +775,7 @@ impl Node {
             parent: None,
             cache: LayoutCache::new(),
             ifc: None,
-            unrounded_layout: BoxLayout::with_order(0),
+            layout: BoxLayout::with_order(0),
             percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
@@ -874,6 +840,23 @@ impl Node {
     }
 
     // ─── inherent accessor methods ─────────────────
+
+    /// The box this node was last laid out as.
+    ///
+    /// Every `f32` of it is finite and within `[-1e7, 1e7]`, as [`BoxLayout`]
+    /// documents, so a reader can add and compare these values without a
+    /// guard of its own. The paint walker of raikiri-paint (which accumulates
+    /// `location` down the tree) and the page-scene extraction of raikiri
+    /// (which copies `location` and `size` into fragments) rely on exactly
+    /// that: this contract is their only protection against non-finite
+    /// geometry at the boundary between layout and painting.
+    ///
+    /// The layout engine is the only writer: the value cannot be changed from
+    /// outside this crate.
+    #[inline]
+    pub fn layout(&self) -> &BoxLayout {
+        &self.layout
+    }
 
     /// Return this Node's [`NodeKind`].
     ///
@@ -1081,7 +1064,7 @@ impl Node {
     #[doc(hidden)]
     pub fn ifc_physical_content_size(&self) -> Option<shodo::geometry::PhysicalSize> {
         self.ifc.as_ref()?.lines.as_ref()?;
-        let layout = self.unrounded_layout;
+        let layout = self.layout;
         Some(shodo::geometry::PhysicalSize {
             width: layout.content_box_width().max(0.0),
             height: layout.content_box_height().max(0.0),

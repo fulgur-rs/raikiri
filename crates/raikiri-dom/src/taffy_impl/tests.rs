@@ -593,8 +593,8 @@ fn grid_abspos_static_alignment_uses_the_content_box_and_parent_percentage_basis
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
 
-    let grid_layout = doc.nodes[grid].unrounded_layout;
-    let child_layout = doc.nodes[child].unrounded_layout;
+    let grid_layout = doc.nodes[grid].layout;
+    let child_layout = doc.nodes[child].layout;
     let grid_origin = doc.layout_origin_of(grid).unwrap();
     let child_origin = doc.layout_origin_of(child).unwrap();
     assert_eq!(

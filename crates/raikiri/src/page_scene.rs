@@ -68,8 +68,8 @@ use std::collections::{BTreeMap, HashMap};
 /// # Unit contract issue: `Pt` currently carries CSS px, not PDF pt
 ///
 /// `build_page_scene` populates `PageMetadata.size` and [`Fragment`] fields
-/// (of this `Pt` type) with **CSS px** values (1/96 in, from PageBox / taffy
-/// `unrounded_layout`). This documentation promises "PDF point 1/72 in", so a
+/// (of this `Pt` type) with **CSS px** values (1/96 in, from PageBox and the
+/// layout of each node). This documentation promises "PDF point 1/72 in", so a
 /// fulgur consumer that reads these values as pt gets about 33% geometry drift.
 /// The byte-identical raster path is unaffected: paint walks the Node arena
 /// again in CSS px. Unit conversion or a type rename is deferred to future
@@ -626,7 +626,7 @@ fn node_border_box(
     node: &Node,
     (parent_abs_x, parent_abs_y): (Pt, Pt),
 ) -> ((Pt, Pt), SceneRect) {
-    let layout = node.unrounded_layout;
+    let layout = node.layout();
     let (abs_x, abs_y) = dom
         .layout_origin_of(idx)
         .map(|origin| (origin.x, origin.y))
@@ -668,7 +668,7 @@ impl IfcParagraphs {
         if !node.is_ifc_root() {
             return;
         }
-        let layout = node.unrounded_layout;
+        let layout = node.layout();
         let origin = (
             abs_x + layout.border.left + layout.padding.left,
             abs_y + layout.border.top + layout.padding.top,

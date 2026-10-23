@@ -229,7 +229,7 @@ fn hoisted_overflow(
         container_overflow.x.is_scroll_container() || container_overflow.y.is_scroll_container();
     let mut rect = Edges::ZERO;
     for &child in children {
-        let layout = tree.nodes[child].unrounded_layout;
+        let layout = tree.nodes[child].layout;
         let style = tree.physical_style(child);
         let location = Point {
             x: layout.location.x - area.offset.x,
@@ -368,7 +368,7 @@ fn align_children(
             None => overall_area,
         };
         let child_mode = used_writing_mode(tree, child);
-        let mut layout = tree.nodes[child].unrounded_layout;
+        let mut layout = tree.nodes[child].layout;
         let (child_inset, child_margin, child_direction, align_self, justify_self) = {
             let style = tree.physical_style(child);
             (

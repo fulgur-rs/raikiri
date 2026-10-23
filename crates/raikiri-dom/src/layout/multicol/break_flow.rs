@@ -633,7 +633,7 @@ pub(super) fn layout(
                 return fallback.height;
             };
             if first {
-                let mut layout = tree.nodes[item.node].unrounded_layout;
+                let mut layout = tree.nodes[item.node].layout;
                 layout.size = Size {
                     width: item.width,
                     height: item.height,

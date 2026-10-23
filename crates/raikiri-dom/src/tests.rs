@@ -76,7 +76,7 @@ fn all_three_display_modes_layout_non_degenerate() {
                 height: AvailableSpace::Definite(600.0),
             },
         );
-        let layout = doc.nodes[layout_root].unrounded_layout;
+        let layout = doc.nodes[layout_root].layout;
         assert!(
             layout.size.width > 0.0 && layout.size.height > 0.0,
             "display={display:?} produced degenerate size ({}x{})",
@@ -120,7 +120,7 @@ fn independent_documents_lay_out_in_parallel() {
                             height: AvailableSpace::Definite(600.0),
                         },
                     );
-                    let l = doc.nodes[layout_root].unrounded_layout;
+                    let l = doc.nodes[layout_root].layout;
                     (l.size.width, l.size.height)
                 })
             })
@@ -403,7 +403,7 @@ fn empty_display_none_leaf_produces_hidden_layout() {
             height: AvailableSpace::Definite(600.0),
         },
     );
-    let layout = doc.nodes[hidden].unrounded_layout;
+    let layout = doc.nodes[hidden].layout;
     assert_eq!(
         layout.size.width, 0.0,
         "display:none leaf should produce zero-size layout"
@@ -423,7 +423,7 @@ fn empty_display_none_leaf_produces_hidden_layout() {
             height: AvailableSpace::Definite(600.0),
         },
     );
-    let layout2 = doc2.nodes[hidden_parent].unrounded_layout;
+    let layout2 = doc2.nodes[hidden_parent].layout;
     assert_eq!(
         layout2.size.width, 0.0,
         "display:none container should produce zero-size layout"
@@ -465,7 +465,7 @@ fn layout_cache_invalidated_after_mutation() {
             height: AvailableSpace::Definite(600.0),
         },
     );
-    let first_height = doc.nodes[root].unrounded_layout.size.height;
+    let first_height = doc.nodes[root].layout.size.height;
 
     // Add a second child — root height should change (2 leaves = ~100)
     doc.append_element(Some(root), "b", Some(leaf_style));
@@ -478,7 +478,7 @@ fn layout_cache_invalidated_after_mutation() {
             height: AvailableSpace::Definite(600.0),
         },
     );
-    let second_height = doc.nodes[root].unrounded_layout.size.height;
+    let second_height = doc.nodes[root].layout.size.height;
 
     // If cache wasn't invalidated, second_height would equal first_height (stale)
     assert_ne!(
@@ -511,7 +511,7 @@ fn many_mutations_still_yield_correct_layout() {
             height: AvailableSpace::Definite(9999.0),
         },
     );
-    let h = doc.nodes[root].unrounded_layout.size.height;
+    let h = doc.nodes[root].layout.size.height;
     // 200 children * 10px stacked = 2000px (block layout).
     assert!(
         (h - 2000.0).abs() < 0.5,
@@ -538,8 +538,8 @@ fn a_text_leaf_outside_every_paragraph_measures_zero() {
         },
     );
 
-    assert_eq!(doc.nodes[text].unrounded_layout.size.height, 0.0);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 0.0);
+    assert_eq!(doc.nodes[text].layout.size.height, 0.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 0.0);
 }
 
 // ── Public-surface smoke test ─────────────
@@ -587,7 +587,7 @@ fn node_accessors_are_callable_from_external_call_site() {
     let t = doc.append_text(e, "hi");
     let node = doc.get_node(e).unwrap();
     let _ = &node.children;
-    let _ = &node.unrounded_layout;
+    let _ = &node.layout;
     let _ = node.kind();
     let _ = node.tag_name();
     let _ = node.is_in_document();
@@ -609,7 +609,7 @@ fn node_accessors_are_callable_from_external_call_site() {
 /// `<LayoutSession as taffy::LayoutPartialTree>::set_unrounded_layout`
 /// (`crates/raikiri-dom/src/layout/taffy_adapter/tree.rs`). `compute_root_layout` invokes
 /// that trait method itself as part of committing every node's computed
-/// layout, so the child's `unrounded_layout` is guaranteed finite; the
+/// layout, so the child's `layout` is guaranteed finite; the
 /// assertion below confirms exactly that (finite, non-default output) rather
 /// than silently relying on it.
 ///
@@ -618,7 +618,7 @@ fn node_accessors_are_callable_from_external_call_site() {
 /// No hang: `compute_root_layout` returns well within the 10s bound for every
 /// non-finite field this test sets (width/height `+Inf`/`NaN`, padding and
 /// margin mixing `NaN`, `+Inf`, `-Inf`, and a `+Inf` percentage), and it is not
-/// a silently skipped no-op either, since the child's `unrounded_layout` is
+/// a silently skipped no-op either, since the child's `layout` is
 /// asserted to be both non-default and finite. The test does not assert
 /// *which* values taffy produces; it pins the **timing** (no livelock) and the
 /// **finiteness invariant** under directly adversarial input.
@@ -629,7 +629,7 @@ fn taffy_block_layout_does_not_hang_on_nonfinite_computed_geometry() {
     use std::time::Duration;
 
     /// Returns `(doc, cascade, root, first_pathological_child)` — the child id
-    /// is needed after layout to check its `unrounded_layout` (non-vacuity:
+    /// is needed after layout to check its `layout` (non-vacuity:
     /// distinguishes "actually laid out" from "silently skipped no-op", which a
     /// bare timing pass/fail cannot).
     fn build_nonfinite_document() -> (Document, raikiri_style::CascadeResult, usize, usize) {
@@ -688,7 +688,7 @@ fn taffy_block_layout_does_not_hang_on_nonfinite_computed_geometry() {
                     height: AvailableSpace::Definite(600.0),
                 },
             );
-            layout_is_non_default_and_finite(&doc.nodes[a].unrounded_layout)
+            layout_is_non_default_and_finite(&doc.nodes[a].layout)
         }));
         let _ = tx.send(result);
     });
@@ -701,7 +701,7 @@ fn taffy_block_layout_does_not_hang_on_nonfinite_computed_geometry() {
     match rx.recv_timeout(Duration::from_secs(10)) {
         Ok(Ok(non_vacuous)) => assert!(
             non_vacuous,
-            "compute_root_layout completed but child 'a' (pathological, non-finite geometry) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or the sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize this test rather than deleting this assertion"
+            "compute_root_layout completed but child 'a' (pathological, non-finite geometry) has a default-sized or non-finite layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or the sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize this test rather than deleting this assertion"
         ),
         Ok(Err(_panic_payload)) => panic!(
             "taffy::compute_root_layout (or the post-layout assertion) panicked on non-finite geometry — re-characterize this test (it previously pinned 'completes without panic or hang')"
@@ -738,16 +738,10 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
             height: AvailableSpace::Definite(300.0),
         },
     );
+    assert_eq!(doc.nodes[first].layout.location, Point { x: 0.0, y: 0.0 });
+    assert_eq!(doc.nodes[second].layout.location, Point { x: 0.0, y: 35.0 });
     assert_eq!(
-        doc.nodes[first].unrounded_layout.location,
-        Point { x: 0.0, y: 0.0 }
-    );
-    assert_eq!(
-        doc.nodes[second].unrounded_layout.location,
-        Point { x: 0.0, y: 35.0 }
-    );
-    assert_eq!(
-        doc.nodes[root].unrounded_layout.size,
+        doc.nodes[root].layout.size,
         Size {
             width: 60.0,
             height: 65.0
@@ -786,11 +780,8 @@ fn programmatic_flow_root_keeps_a_descendant_margin_inside_its_box() {
                 height: AvailableSpace::Definite(300.0),
             },
         );
-        assert_eq!(
-            doc.nodes[container].unrounded_layout.location.y,
-            container_y
-        );
-        assert_eq!(doc.nodes[child].unrounded_layout.location.y, child_y);
-        assert_eq!(doc.nodes[root].unrounded_layout.size.height, total_height);
+        assert_eq!(doc.nodes[container].layout.location.y, container_y);
+        assert_eq!(doc.nodes[child].layout.location.y, child_y);
+        assert_eq!(doc.nodes[root].layout.size.height, total_height);
     }
 }

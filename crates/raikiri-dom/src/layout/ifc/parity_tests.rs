@@ -6,7 +6,7 @@ fn size(text: &str, css: &str) -> (f32, f32) {
     let (mut doc, cascade, root) = ahem_paragraph(text, css);
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    let size = doc.nodes[root].unrounded_layout.size;
+    let size = doc.nodes[root].layout.size;
     (size.width, size.height)
 }
 

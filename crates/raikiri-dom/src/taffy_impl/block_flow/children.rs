@@ -728,7 +728,7 @@ pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow
     }
     flow.oof_candidates.translate(Point { x: 0.0, y: offset });
     for &node in &flow.placed {
-        let mut layout = tree.nodes[usize::from(node)].unrounded_layout;
+        let mut layout = tree.nodes[usize::from(node)].layout;
         layout.location.y += offset;
         tree.set_unrounded_layout(node, &layout);
     }

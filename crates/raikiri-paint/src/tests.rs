@@ -793,7 +793,7 @@ fn paint_single_page_skips_zero_size_subtree() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     // The hidden element should have zero layout size (taffy LayoutOutput::HIDDEN).
-    let hidden_layout = doc.get_node(hidden).unwrap().unrounded_layout;
+    let hidden_layout = doc.get_node(hidden).unwrap().layout();
     assert_eq!(
         hidden_layout.size.width, 0.0,
         "display:none should have zero size after taffy layout"
@@ -872,7 +872,7 @@ fn paint_single_page_paints_zero_size_display_block_subtree() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     // Sanity check: honor the explicit zero width and height.
-    let container_layout = doc.get_node(container).unwrap().unrounded_layout;
+    let container_layout = doc.get_node(container).unwrap().layout();
     assert_eq!(
         container_layout.size.width, 0.0,
         "zero-size Display::Block container should keep size.width = 0"
@@ -1267,14 +1267,14 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
 
     // The paragraph's top margin collapses through its ordinary body;
     // accumulating both boxes must still reach (20,20) in page-area space.
-    let p_loc = doc.get_node(p).unwrap().unrounded_layout.location;
+    let p_loc = doc.get_node(p).unwrap().layout().location;
     assert!(
         p_loc.x >= 20.0,
         "p.location.x should reflect margin=20, got {}",
         p_loc.x
     );
     assert!(
-        p_loc.y + doc.get_node(body).unwrap().unrounded_layout.location.y >= 20.0,
+        p_loc.y + doc.get_node(body).unwrap().layout().location.y >= 20.0,
         "the body's collapsed margin must contribute to the paragraph origin"
     );
 
@@ -1283,7 +1283,7 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
         [body, p, text]
             .iter()
             .fold((0.0f32, 0.0f32), |(ax, ay), &id| {
-                let loc = doc.get_node(id).unwrap().unrounded_layout.location;
+                let loc = doc.get_node(id).unwrap().layout().location;
                 (ax + loc.x, ay + loc.y)
             });
 
@@ -1307,18 +1307,18 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
         "translation.x = {}, expected accumulated = {} (body {} + p {} + text {})",
         coeffs[4],
         expected_x,
-        doc.get_node(body).unwrap().unrounded_layout.location.x,
-        doc.get_node(p).unwrap().unrounded_layout.location.x,
-        doc.get_node(text).unwrap().unrounded_layout.location.x,
+        doc.get_node(body).unwrap().layout().location.x,
+        doc.get_node(p).unwrap().layout().location.x,
+        doc.get_node(text).unwrap().layout().location.x,
     );
     assert!(
         (coeffs[5] - expected_y as f64).abs() < epsilon,
         "translation.y = {}, expected accumulated = {} (body {} + p {} + text {})",
         coeffs[5],
         expected_y,
-        doc.get_node(body).unwrap().unrounded_layout.location.y,
-        doc.get_node(p).unwrap().unrounded_layout.location.y,
-        doc.get_node(text).unwrap().unrounded_layout.location.y,
+        doc.get_node(body).unwrap().layout().location.y,
+        doc.get_node(p).unwrap().layout().location.y,
+        doc.get_node(text).unwrap().layout().location.y,
     );
 }
 
@@ -1790,8 +1790,8 @@ fn img_element_paints_its_decoded_pixels() {
     // sy)` composes to coeffs `[sx, 0, 0, sy, tx, ty]` (kurbo's `Mul for
     // Affine`), so `as_coeffs()[0]`/`[3]` are the scale factors and
     // `[4]`/`[5]` are the translation.
-    let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
-    let img_loc = doc.get_node(img).unwrap().unrounded_layout.location;
+    let body_loc = doc.get_node(body).unwrap().layout().location;
+    let img_loc = doc.get_node(img).unwrap().layout().location;
     let expected_x = (body_loc.x + img_loc.x) as f64;
     let expected_y = (body_loc.y + img_loc.y) as f64;
     let coeffs = fill.transform.as_coeffs();
@@ -2194,9 +2194,9 @@ fn img_padding_percentage_resolves_against_width_not_height() {
         })
         .expect("expected an image fill command in the recorded scene");
 
-    let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
-    let container_loc = doc.get_node(container).unwrap().unrounded_layout.location;
-    let img_loc = doc.get_node(img).unwrap().unrounded_layout.location;
+    let body_loc = doc.get_node(body).unwrap().layout().location;
+    let container_loc = doc.get_node(container).unwrap().layout().location;
+    let img_loc = doc.get_node(img).unwrap().layout().location;
     // Border-box top plus 20% of the containing block width (100px).
     let expected_content_y = (body_loc.y + container_loc.y + img_loc.y + 20.0) as f64;
     let coeffs = fill.transform.as_coeffs();
@@ -2278,8 +2278,8 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
             _ => None,
         })
         .expect("expected an image fill command in the recorded scene");
-    let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
-    let img_loc = doc.get_node(img).unwrap().unrounded_layout.location;
+    let body_loc = doc.get_node(body).unwrap().layout().location;
+    let img_loc = doc.get_node(img).unwrap().layout().location;
     let expected_content_y = (body_loc.y + img_loc.y + 16.0) as f64;
     let coeffs = fill.transform.as_coeffs();
     assert!((coeffs[5] - expected_content_y).abs() < 1e-4);

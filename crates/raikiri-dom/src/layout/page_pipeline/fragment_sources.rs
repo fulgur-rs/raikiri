@@ -428,8 +428,8 @@ pub(super) fn overflow_clip_sources(
         })
         .map(|source| {
             let id = source.node_id.0 as usize;
-            let border = document.nodes[id].unrounded_layout.border;
-            let padding = document.nodes[id].unrounded_layout.padding;
+            let border = document.nodes[id].layout.border;
+            let padding = document.nodes[id].layout.padding;
             let border_box =
                 PaintRect::new(source.abs_x, source.abs_y, source.width, source.height);
             (

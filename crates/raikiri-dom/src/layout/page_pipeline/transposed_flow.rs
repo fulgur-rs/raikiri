@@ -322,7 +322,7 @@ impl TransposedDocument {
             .map(|key| layout_frame(document, key).filter(|frame| !outside.contains(frame)))
             .collect();
         let physical: Vec<BoxLayout> = (0..keys)
-            .map(|key| document.table_layout_node_mut(key).unrounded_layout)
+            .map(|key| document.table_layout_node_mut(key).layout)
             .collect();
         let frame_width =
             |key: usize| frames[key].map_or(page_area_width, |frame| physical[frame].size.width);
@@ -352,7 +352,7 @@ impl TransposedDocument {
             .collect();
         document.document.layout_cache_context.invalidate();
         for (key, &layout) in transposed.iter().enumerate() {
-            document.table_layout_node_mut(key).unrounded_layout = layout;
+            document.table_layout_node_mut(key).layout = layout;
         }
         document.document.pagination_block_styles = block_styles;
         document.context.table_cache.clear();
@@ -409,14 +409,14 @@ impl TransposedDocument {
                     .find(|(index, _)| *index == old_index)
                     .map(|(_, key)| *key);
                 if let Some(index) = key.and_then(|key| document.nodes.layout_index(key)) {
-                    document.nodes[index].unrounded_layout = *physical;
+                    document.nodes[index].layout = *physical;
                 }
             }
             return false;
         }
         let keys = self.physical.len();
         let current: Vec<BoxLayout> = (0..keys)
-            .map(|key| document.table_layout_node_mut(key).unrounded_layout)
+            .map(|key| document.table_layout_node_mut(key).layout)
             .collect();
         for key in 0..keys {
             let frame = self.frames[key];
@@ -432,7 +432,7 @@ impl TransposedDocument {
                     frame.map_or(self.page_area_width, |frame| current[frame].size.height);
                 self.axes.physical_layout(current[key], parent_width)
             };
-            document.table_layout_node_mut(key).unrounded_layout = layout;
+            document.table_layout_node_mut(key).layout = layout;
         }
         document.context.table_cache.clear();
         document.context.pagination_on_transposed_axes = false;

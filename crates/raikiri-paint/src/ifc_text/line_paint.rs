@@ -41,8 +41,8 @@ pub(super) fn kept_whole_box(
             Rect::from_origin_size(
                 (f64::from(base.x), f64::from(base.y + base.shift_y)),
                 (
-                    f64::from(node.unrounded_layout.content_box_width()),
-                    f64::from(node.unrounded_layout.content_box_height()),
+                    f64::from(node.layout().content_box_width()),
+                    f64::from(node.layout().content_box_height()),
                 ),
             )
         })

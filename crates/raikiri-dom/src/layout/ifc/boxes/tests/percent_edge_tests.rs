@@ -106,7 +106,7 @@ fn a_shrink_to_fit_root_takes_percentages_as_zero_for_its_size() {
     for css in ["float:left", "display:inline-block", "position:absolute"] {
         let (doc, root, tail) = padded(css, "padding-left:50%");
         assert_eq!(
-            doc.nodes[root].unrounded_layout.size.width, 30.0,
+            doc.nodes[root].layout.size.width, 30.0,
             "{css} is sized without the padding"
         );
         assert_eq!(text_start(&doc, root, tail), (0, 35.0), "{css}");

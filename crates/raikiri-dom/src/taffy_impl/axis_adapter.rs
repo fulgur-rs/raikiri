@@ -299,7 +299,7 @@ impl LayoutSession<'_> {
         });
         let output = adapter.container_output(output);
         for child in frame.into_placed() {
-            let layout = &mut self.nodes[child].unrounded_layout;
+            let layout = &mut self.nodes[child].layout;
             *layout = adapter.placed_layout(layout, output.size.width);
         }
         output

@@ -562,7 +562,7 @@ fn absolute_pieces(
         // The containing block's block offset in the columns laid end to end.
         let flow_top = first.column as f32 * column_height + first.top;
         for node in absolute_children(tree, child) {
-            let layout = tree.nodes[node].unrounded_layout;
+            let layout = tree.nodes[node].layout;
             let start = flow_top + layout.location.y;
             // Descendants that overflow the box are cut with it. The overflow
             // rect is measured from the padding box, so shift it by the
@@ -1261,7 +1261,7 @@ fn push_wrapped_wrapper(
 ) -> Option<Vec<usize>> {
     let first = pieces.first()?;
     let parent_first = parents.first()?;
-    let mut layout = tree.nodes[wrapper].unrounded_layout;
+    let mut layout = tree.nodes[wrapper].layout;
     let x = layout.location.x;
     let size = layout.size;
     layout.location = Point {
@@ -1334,7 +1334,7 @@ fn push_wrapped_block(
 ) -> Option<()> {
     let first = pieces.first()?;
     let wrapper_first = parents.first()?;
-    let mut layout = tree.nodes[leaf].unrounded_layout;
+    let mut layout = tree.nodes[leaf].layout;
     let x = layout.location.x;
     let size = layout.size;
     layout.location = Point {
@@ -1437,7 +1437,7 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
                 )
             }
             Insets::Laid => {
-                let layout = &tree.nodes[child].unrounded_layout;
+                let layout = &tree.nodes[child].layout;
                 (
                     layout.padding.top + layout.border.top,
                     layout.padding.bottom + layout.border.bottom,
@@ -1508,14 +1508,7 @@ pub(super) fn fill_rows(
 ) -> Option<Rows> {
     let items: Vec<Item> = children
         .iter()
-        .map(|&child| {
-            item(
-                tree,
-                child,
-                tree.nodes[child].unrounded_layout.size.height,
-                None,
-            )
-        })
+        .map(|&child| item(tree, child, tree.nodes[child].layout.size.height, None))
         .collect();
     fill_item_rows(
         &items,
@@ -1737,7 +1730,7 @@ pub(super) fn layout(
                     item(
                         tree,
                         leaf,
-                        tree.nodes[leaf].unrounded_layout.size.height,
+                        tree.nodes[leaf].layout.size.height,
                         Some(Insets::Laid),
                     )
                 }));
@@ -1886,7 +1879,7 @@ pub(super) fn layout(
                 });
         }
         previous_column = pieces.last()?.column;
-        let mut layout = tree.nodes[child].unrounded_layout;
+        let mut layout = tree.nodes[child].layout;
         layout.order = order as u32;
         layout.size = size;
         layout.location = Point {

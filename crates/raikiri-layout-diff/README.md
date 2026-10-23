@@ -148,7 +148,7 @@ report a difference when there is one. To check it:
    `document.finalize_oof_layout()`:
 
    ```rust
-   document.nodes[body_id].unrounded_layout.size.width += 0.001;
+   document.nodes[body_id].layout.size.width += 0.001;
    ```
 
    and run the script again. Every case now differs: the field diff shows the
@@ -163,7 +163,12 @@ only use what both trees have. Reading the laid-out box of a node is the one
 place that depends on how a tree stores it, and it is in
 `src/node_layout.rs`. If a pull request changes how nodes keep their layout,
 that file is where to say how to read it in the new tree and in the old one;
-`scripts/layout-diff.sh` runs the same file on both.
+`scripts/layout-diff.sh` runs the same file on both. Rust cannot test whether a
+type has a field, so `build.rs` looks at the sources of the `raikiri-dom` crate
+the tool is built against (`src/node.rs`) and sets a cfg that says which way
+that tree reads a node's box; `node_layout.rs` has one definition per cfg.
+Adapt both together, and drop the definition of the old way once the
+merge-base has the new one.
 
 The manifest the script builds with (`tool_manifest` in
 `scripts/layout-diff.sh`) lists the same dependencies as this crate's

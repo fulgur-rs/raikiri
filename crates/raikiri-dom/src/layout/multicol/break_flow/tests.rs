@@ -169,14 +169,8 @@ fn review_fixed_height_descendants_are_not_replayed_across_columns() {
         </div>"#,
     );
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 150.0)]);
-    assert_eq!(
-        doc.nodes[id(&doc, "first")].unrounded_layout.location.y,
-        0.0
-    );
-    assert_eq!(
-        doc.nodes[id(&doc, "second")].unrounded_layout.location.y,
-        75.0
-    );
+    assert_eq!(doc.nodes[id(&doc, "first")].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[id(&doc, "second")].layout.location.y, 75.0);
 }
 
 #[test]
@@ -186,7 +180,7 @@ fn review_container_fragment_keeps_its_border_box_width() {
             "<div id='columns' style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:{width};height:130px;padding:10px;border:5px solid blue'><div style='height:20px;break-before:avoid'></div></div>",
         ));
         let root = id(&doc, "columns");
-        assert_eq!(doc.nodes[root].unrounded_layout.size.width, expected);
+        assert_eq!(doc.nodes[root].layout.size.width, expected);
         assert_eq!(boxes(&doc, "columns"), vec![(0, 0.0, 0.0, expected, 130.0)]);
     }
 }
@@ -253,7 +247,7 @@ fn fixed_height_flow_advance_preserves_visible_descendant_overflow() {
     assert_eq!(boxes(&doc, "short"), vec![(1, 50.0, 0.0, 50.0, 10.0)]);
     assert_eq!(boxes(&doc, "last"), vec![(1, 50.0, 10.0, 50.0, 90.0)]);
     let child = doc.nodes[id(&doc, "short")].children[0];
-    assert_eq!(doc.nodes[child].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[child].layout.size.height, 20.0);
 }
 
 #[test]
@@ -339,14 +333,8 @@ fn an_inline_block_that_fits_a_column_stays_atomic() {
         Point::ZERO,
     );
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 80.0)]);
-    assert_eq!(
-        doc.nodes[id(&doc, "first")].unrounded_layout.location.y,
-        0.0
-    );
-    assert_eq!(
-        doc.nodes[id(&doc, "second")].unrounded_layout.location.y,
-        40.0
-    );
+    assert_eq!(doc.nodes[id(&doc, "first")].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[id(&doc, "second")].layout.location.y, 40.0);
 }
 
 #[test]
@@ -354,10 +342,7 @@ fn geometry_block_margins_preserve_the_following_box_position() {
     let doc = laid_out(
         r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:50px"><div style="height:10px;margin-bottom:10px"></div><div id="next" style="height:20px;break-before:avoid-column"></div></div>"#,
     );
-    assert_eq!(
-        doc.nodes[id(&doc, "next")].unrounded_layout.location.y,
-        20.0
-    );
+    assert_eq!(doc.nodes[id(&doc, "next")].layout.location.y, 20.0);
 }
 
 #[test]
@@ -365,12 +350,9 @@ fn geometry_a_decorated_wrapper_preserves_its_content_inset_and_width() {
     let doc = laid_out(
         r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px"><div id="wrapper" style="width:30px;padding-top:10px;border-top:2px solid"><div id="first" style="height:20px"></div><div style="height:20px;break-before:avoid"></div></div></div>"#,
     );
-    let wrapper = &doc.nodes[id(&doc, "wrapper")].unrounded_layout;
+    let wrapper = &doc.nodes[id(&doc, "wrapper")].layout;
     assert_eq!(wrapper.size.width, 30.0);
-    assert_eq!(
-        doc.nodes[id(&doc, "first")].unrounded_layout.location.y,
-        12.0
-    );
+    assert_eq!(doc.nodes[id(&doc, "first")].layout.location.y, 12.0);
 }
 
 #[test]
@@ -386,8 +368,8 @@ fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
         };
         let reference = laid_out(&markup(""));
         let mut doc = laid_out(&markup("break-before:avoid-column"));
-        let target = &doc.nodes[id(&doc, "target")].unrounded_layout;
-        let original = &reference.nodes[id(&reference, "target")].unrounded_layout;
+        let target = &doc.nodes[id(&doc, "target")].layout;
+        let original = &reference.nodes[id(&reference, "target")].layout;
         assert_eq!(target.size.width, original.size.width, "{css}");
         assert_eq!(target.location.x, original.location.x, "{css}");
         let root = id(&doc, "columns");
@@ -417,8 +399,8 @@ fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
         let mut doc = laid_out(&markup("break-before:avoid-column"));
         let geometry = |tree: &Document| {
             (
-                tree.nodes[id(tree, "wrapper")].unrounded_layout.size,
-                tree.nodes[id(tree, "next")].unrounded_layout.location.y,
+                tree.nodes[id(tree, "wrapper")].layout.size,
+                tree.nodes[id(tree, "next")].layout.location.y,
             )
         };
         if geometry(&doc) != geometry(&reference) {
@@ -446,11 +428,8 @@ fn geometry_overflow_wrapper_preserves_float_occupied_height() {
     let reference = laid_out(&markup(""));
     let doc = laid_out(&markup("break-before:avoid-column"));
     assert_eq!(
-        doc.nodes[id(&doc, "next")].unrounded_layout.location.y,
-        reference.nodes[id(&reference, "next")]
-            .unrounded_layout
-            .location
-            .y,
+        doc.nodes[id(&doc, "next")].layout.location.y,
+        reference.nodes[id(&reference, "next")].layout.location.y,
     );
 }
 
@@ -464,11 +443,8 @@ fn geometry_clearance_preserves_the_existing_following_box_position() {
     let reference = laid_out(&markup(""));
     let doc = laid_out(&markup("break-before:avoid-column"));
     assert_eq!(
-        doc.nodes[id(&doc, "next")].unrounded_layout.location.y,
-        reference.nodes[id(&reference, "next")]
-            .unrounded_layout
-            .location
-            .y,
+        doc.nodes[id(&doc, "next")].layout.location.y,
+        reference.nodes[id(&reference, "next")].layout.location.y,
     );
 }
 
@@ -521,7 +497,7 @@ fn security_fanout_budget_stops_before_remeasuring_descendants() {
         let (mut doc, root, context) = fanout_flow(1024, atomic);
         doc.fragment_tree.limit = 64;
         let last = id(&doc, "leaf-1023");
-        assert_eq!(doc.nodes[last].unrounded_layout.size.height, 0.0);
+        assert_eq!(doc.nodes[last].layout.size.height, 0.0);
         layout(
             &mut doc,
             root,
@@ -534,7 +510,7 @@ fn security_fanout_budget_stops_before_remeasuring_descendants() {
         );
         observed.push((
             atomic,
-            doc.nodes[last].unrounded_layout.size.height,
+            doc.nodes[last].layout.size.height,
             doc.fragment_tree.limit_exceeded,
             doc.fragment_tree.fragments.len(),
         ));
@@ -556,10 +532,7 @@ fn security_fanout_budget_preserves_under_budget_layout_and_typed_error() {
         if count == 4 {
             assert!(result.is_ok());
             assert!(!doc.fragment_tree.limit_exceeded);
-            assert_eq!(
-                doc.nodes[id(&doc, "leaf-3")].unrounded_layout.size.height,
-                1.0
-            );
+            assert_eq!(doc.nodes[id(&doc, "leaf-3")].layout.size.height, 1.0);
         } else {
             assert!(matches!(
                 result,
@@ -603,10 +576,7 @@ fn security_atomic_measurement_work_is_shared_and_resets_on_clear() {
     layout(&mut doc, second, context, size, Point::ZERO);
     assert!(doc.fragment_tree.limit_exceeded);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
-    assert_eq!(
-        doc.nodes[id(&doc, "other-3")].unrounded_layout.size.height,
-        0.0
-    );
+    assert_eq!(doc.nodes[id(&doc, "other-3")].layout.size.height, 0.0);
     doc.fragment_tree.clear();
     assert_eq!(doc.fragment_tree.break_flow_work_used, 0);
     layout(&mut doc, second, context, size, Point::ZERO);
@@ -635,10 +605,7 @@ fn security_remaining_fragment_capacity_bounds_measurement_work() {
     assert_eq!(doc.fragment_tree.break_flow_work_used, 1);
     layout(&mut doc, second, context, size, Point::ZERO);
     assert!(doc.fragment_tree.limit_exceeded);
-    assert_eq!(
-        doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
-        0.0
-    );
+    assert_eq!(doc.nodes[id(&doc, "last")].layout.size.height, 0.0);
     assert_eq!(doc.fragment_tree.fragments.len(), 10);
 }
 
@@ -666,17 +633,11 @@ fn security_measurement_budget_charges_repeated_wrapper_visits_at_the_boundary()
         );
         if limit == 8 {
             assert!(doc.fragment_tree.limit_exceeded);
-            assert_eq!(
-                doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
-                0.0
-            );
+            assert_eq!(doc.nodes[id(&doc, "last")].layout.size.height, 0.0);
         } else {
             assert!(!doc.fragment_tree.limit_exceeded);
             assert_eq!(doc.fragment_tree.break_flow_work_used, 9);
-            assert_eq!(
-                doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
-                1.0
-            );
+            assert_eq!(doc.nodes[id(&doc, "last")].layout.size.height, 1.0);
         }
     }
 }
@@ -1077,8 +1038,8 @@ fn review_multiple_float_fallback_matches_the_unconstrained_geometry() {
             "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='a' style='float:left;width:30px;height:20px'></div><div id='b' style='float:left;width:30px;height:20px'></div><div style='height:20px;{edge}'></div></div>"
         ));
         observed.push([
-            doc.nodes[id(&doc, "a")].unrounded_layout,
-            doc.nodes[id(&doc, "b")].unrounded_layout,
+            doc.nodes[id(&doc, "a")].layout,
+            doc.nodes[id(&doc, "b")].layout,
         ]);
     }
     assert_eq!(observed[0], observed[1]);
@@ -1281,14 +1242,8 @@ fn review_formatting_context_auto_height_keeps_measured_child_positions() {
         ));
         assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 30.0)]);
         assert!(boxes(&doc, "child").is_empty());
-        assert_eq!(
-            doc.nodes[id(&doc, "child")].unrounded_layout.location.y,
-            0.0
-        );
-        assert_eq!(
-            doc.nodes[id(&doc, "child")].unrounded_layout.size.height,
-            30.0
-        );
+        assert_eq!(doc.nodes[id(&doc, "child")].layout.location.y, 0.0);
+        assert_eq!(doc.nodes[id(&doc, "child")].layout.size.height, 30.0);
     }
 }
 

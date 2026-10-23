@@ -113,7 +113,7 @@ fn replaced_keyword_positions_use_parent_content_edges_and_half_x_height() {
         assert!(doc.get_node(root).unwrap().is_ifc_root());
         assert!(!doc.get_node(child).unwrap().in_ifc_subtree());
         assert_eq!(
-            doc.get_node(child).unwrap().unrounded_layout.location.y,
+            doc.get_node(child).unwrap().layout().location.y,
             top,
             "{wrapper}/{align}"
         );
@@ -203,7 +203,7 @@ fn legacy_paint_does_not_align_blockified_or_out_of_flow_boxes_to_parent_metrics
             layout_single_page(&mut doc, &cascade, page()).unwrap();
             assert!(!doc.get_node(root).unwrap().is_ifc_root());
             assert!(doc.get_node(item).unwrap().is_ifc_root());
-            assert_eq!(doc.get_node(item).unwrap().unrounded_layout.location.y, 0.0);
+            assert_eq!(doc.get_node(item).unwrap().layout().location.y, 0.0);
             let scene = scene(&doc, &cascade);
             let baselines: Vec<f64> = scene
                 .commands
