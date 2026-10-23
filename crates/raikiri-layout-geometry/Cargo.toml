@@ -1,0 +1,16 @@
+[package]
+name = "raikiri-layout-geometry"
+version.workspace = true
+description = "Geometry and box-layout result types shared by raikiri's layout engine and its consumers"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The names below are re-exports of Taffy types for now, so this crate needs
+# Taffy until they are defined here.
+taffy = { workspace = true }
+
+[lints]
+workspace = true

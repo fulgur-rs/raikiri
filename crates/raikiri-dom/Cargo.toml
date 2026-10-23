@@ -19,6 +19,7 @@ cssparser      = { workspace = true }
 shodo          = { workspace = true }
 skrifa         = { workspace = true }
 raikiri-style  = { workspace = true }
+raikiri-layout-geometry = { workspace = true }
 raikiri-layout-style = { workspace = true }
 raikiri-traits = { workspace = true }
 rayon          = "1.8"
