@@ -5135,3 +5135,8 @@ css/css-grid/alignment/self-baseline/grid-self-baseline-003.html
 css/css-grid/alignment/self-baseline/grid-self-baseline-vertical-lr-003.html
 css/css-grid/alignment/self-baseline/grid-self-baseline-vertical-rl-001.html
 css/css-grid/alignment/self-baseline/grid-self-baseline-vertical-rl-003.html
+
+# --- aspect-ratio parsing (WPT pin 97ea26e2, Linux, 2026-10-23) ---
+# aspect-ratio specified values serialize as `[auto] <w> / <h>` with a lone number written as `<number> / 1`, so the valid page reads back the expected text, and the invalid page keeps rejecting the grammar's near misses. aspect-ratio-computed.html passes too, but the report skips pages that call only test_computed_value, so it stays out.
+css/css-sizing/aspect-ratio/parsing/aspect-ratio-invalid.html
+css/css-sizing/aspect-ratio/parsing/aspect-ratio-valid.html
