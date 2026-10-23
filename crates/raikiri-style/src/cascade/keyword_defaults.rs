@@ -20,10 +20,10 @@ use crate::property::{
     PropertyValue, TextIndentValue,
 };
 use crate::resolve::{
-    ComputedColumnWidth, lift_border_spacing, lift_flex_basis, lift_length_percentage_or_normal,
-    lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_decoration_inset,
-    lift_text_decoration_thickness, lift_text_indent, lift_text_underline_offset,
-    lift_word_spacing,
+    ComputedColumnWidth, lift_border_spacing, lift_box_shadow, lift_css_position, lift_flex_basis,
+    lift_length_percentage_or_normal, lift_letter_spacing, lift_line_height, lift_tab_size,
+    lift_text_decoration_inset, lift_text_decoration_thickness, lift_text_indent,
+    lift_text_underline_offset, lift_transform, lift_word_spacing,
 };
 
 static INITIAL: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
@@ -193,6 +193,17 @@ keyword_defaults! {
     };
     TextDecorationInset, false => {
         PropertyValue::TextDecorationInset(lift_text_decoration_inset(source.text_decoration_inset))
+    };
+    Content, false => PropertyValue::Content(dup(&source.content));
+    StringSet, false => PropertyValue::StringSet(dup(&source.string_set));
+    BoxShadow, false => PropertyValue::BoxShadow(lift_box_shadow(&source.box_shadow));
+    ObjectPosition, false => PropertyValue::ObjectPosition(lift_css_position(source.object_position));
+    Transform, false => PropertyValue::Transform(lift_transform(&source.transform));
+    TransformOrigin, false => {
+        PropertyValue::TransformOrigin(
+            lift_css_position(source.transform_origin),
+            Length::Px(source.transform_origin_z.0),
+        )
     };
 }
 

@@ -908,16 +908,18 @@ fn string_set_rejects_reserved_css_wide_keyword_as_name() {
     // spec §1.1.1 + CSS Values 4 §4.2
     // <https://www.w3.org/TR/css-values-4/#custom-idents>:
     // `<custom-ident>` excludes CSS-wide keywords.
-    // If the first identifier is `inherit`, try_parse rewinds, leaving no entries → None.
+    // A CSS-wide keyword as the first identifier parses as the keyword alone, and the
+    // leftover `"x"` makes the declaration fail the whole-value check, so these use
+    // `parse_entire`.
     //
     // Note: if the first identifier is `none`, the top-level alternative runs first,
     // returning `Some(empty)`; downstream `expect_exhausted` drops the declaration
     // because of leftover tokens (at rule.rs level). This case is not checked by
     // parse_value alone.
-    assert_eq!(parse("inherit \"x\"", "string-set"), None);
-    assert_eq!(parse("initial \"x\"", "string-set"), None);
-    assert_eq!(parse("unset \"x\"", "string-set"), None);
-    assert_eq!(parse("revert \"x\"", "string-set"), None);
+    assert_eq!(parse_entire("inherit \"x\"", "string-set"), None);
+    assert_eq!(parse_entire("initial \"x\"", "string-set"), None);
+    assert_eq!(parse_entire("unset \"x\"", "string-set"), None);
+    assert_eq!(parse_entire("revert \"x\"", "string-set"), None);
     assert_eq!(parse("default \"x\"", "string-set"), None);
 }
 

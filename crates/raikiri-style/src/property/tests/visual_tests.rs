@@ -2472,10 +2472,8 @@ fn object_position_rejects_bg_position_only_3_value_edge_offset_forms() {
 }
 
 #[test]
-fn object_position_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "object-position"), None, "{keyword}");
-    }
+fn object_position_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("object-position");
 }
 
 #[test]
@@ -3333,10 +3331,14 @@ fn transform_rejects_unknown_function() {
 }
 
 #[test]
-fn transform_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "transform"), None, "{keyword}");
-    }
+fn transform_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("transform");
+}
+
+#[test]
+fn transform_origin_and_box_shadow_retain_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("transform-origin");
+    assert_css_wide_keywords_deferred("box-shadow");
 }
 
 #[test]
