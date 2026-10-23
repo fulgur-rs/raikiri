@@ -55,7 +55,6 @@ fn entry(key: BoxKey, px: f32) -> (BoxKey, OwnedPropertyOverride) {
 #[test]
 fn scoped_override_production_invalidates_a_b_a_cache_and_late_outer_store() {
     use raikiri_layout_style::ViewContext;
-    use taffy::CacheTree;
 
     let (mut doc, cascade, child, _) = fixture();
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);

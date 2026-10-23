@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::protocol::{LayoutInput, RequestedAxis, RunMode, SizingMode};
+use crate::layout::taffy_adapter::IntoEdges;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
 use raikiri_layout_geometry::Line;
 
@@ -771,7 +772,7 @@ fn physical_facts(session: &LayoutSession<'_>, key: usize) -> Facts {
 fn swapped_facts(axes: FlowAxes, session: &LayoutSession<'_>, key: usize) -> Facts {
     use taffy::CoreStyle;
     let view = session.style_view(key);
-    let margin = axes.rect(view.margin());
+    let margin = axes.rect(view.margin().into_edges());
     (
         view.size().width,
         view.min_size().width,

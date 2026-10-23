@@ -20,12 +20,11 @@
 //! Taffy merged from the boxes is recomputed for their new positions.
 
 use crate::layout::protocol::{NodeId, OofPositioningArea};
+use crate::layout::taffy_adapter::MaybeResolve;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
-use taffy::util::MaybeResolve;
 use taffy::{
-    AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, CoreStyle, Direction,
-    LayoutPartialTree, Overflow,
+    AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, CoreStyle, Direction, Overflow,
 };
 
 use super::super::grid_oof::GridAreas;

@@ -4,16 +4,16 @@
 ## Why this exists
 
 raikiri-dom lays boxes out by calling Taffy, and the layout results, the layout
-call types and the node handle that Taffy defines have leaked into every layer:
+call types and the node handle that Taffy defines used to leak into every layer:
 the paint walk, the page pipeline, the inline engine, tables and multicol all
-name `taffy::Layout`, `taffy::Size`, `taffy::LayoutInput` and so on directly.
-The migration to types owned by this repository (a dependency-free geometry
-crate plus a call-protocol module inside raikiri-dom) is done in two steps:
-first every import path is switched to the owned names while the owned names
-are still aliases of the Taffy types, then the definitions are replaced in one
-change. This lint keeps the first step from going backwards while it is in
-flight, and fixes the end state afterwards: no Taffy output-type name outside
-the adapter and the view crate.
+named `taffy::Layout`, `taffy::Size`, `taffy::LayoutInput` and so on directly.
+Those names are now types owned by this repository: a dependency-free geometry
+crate (`raikiri-layout-geometry`) and a call-protocol module inside raikiri-dom
+(`layout::protocol`). The only code that names Taffy's output types is the
+adapter module (`layout::taffy_adapter`), which converts between the two, and
+the view crate. This lint keeps it that way: it pins what still names a Taffy
+output type outside those places and fails when the number goes up, so the
+remaining uses can only be removed, never added to.
 
 ## What is counted
 
@@ -63,9 +63,11 @@ shows how many there are (`-v` lists them) so the exceptions stay visible.
 ## Where it is not counted
 
 `taffy_boundary_exempt.txt` lists path prefixes (a trailing `/` means a
-directory) that may name Taffy types freely: the view crate, the geometry crate
-and the protocol module that re-export the Taffy types, and the adapter once it
-exists. Everything else is held to the ratchet.
+directory) that may name Taffy types freely: the view crate, which implements
+Taffy's style traits over computed values, and the adapter module, which
+converts between the owned names and Taffy's and holds the tree-trait
+implementations and the calls into Taffy's algorithms. Everything else is held
+to the ratchet.
 
 The owned names shown in the failure output come from two places. Geometry and
 the box layout result live in the `raikiri-layout-geometry` crate and can be
@@ -77,16 +79,10 @@ exists.
 
 Some counted names have no owned replacement because they are handed straight
 back to Taffy and belong in the adapter: `Cache`, `ClearState`,
-`DetailedGridInfo`, `DetailedGridTracksInfo`, `DetailedGridItemsInfo`,
-`DetailedLayoutInfo` and `OofLayoutResult` (shown as "(adapter only)" in the
-failure output). Their uses stay pinned in the baseline until the adapter module
-exists and takes them; they are not a reason to add an ignore marker.
-
-The tree-trait implementations and the calls into Taffy's algorithms will end
-up in the adapter, but they are not exempt yet. The import-path step switches
-them too (the types are still identical, so the code compiles unchanged), and
-the adapter module is added to the exempt list when the definitions are
-replaced.
+`DetailedGridInfo`, `DetailedGridTracksInfo`, `DetailedGridItemsInfo` and
+`DetailedLayoutInfo` (shown as "(adapter only)" in the failure output). A use
+outside the adapter is pinned in the baseline; it is not a reason to add an
+ignore marker.
 
 ## The ratchet
 
@@ -157,7 +153,7 @@ OUTPUT_NAMES: dict[str, str] = {
     "DetailedGridTracksInfo": "(adapter only)",
     "DetailedGridItemsInfo": "(adapter only)",
     "DetailedLayoutInfo": "(adapter only)",
-    "OofLayoutResult": "(adapter only)",
+    "OofLayoutResult": "crate::layout::protocol::OofLayoutResult",
 }
 
 # A failing file lists at most this many occurrences; -v lists all of them.

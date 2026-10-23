@@ -38,12 +38,28 @@ pub enum Shape {
     Flex,
     /// Grid track sizing.
     Grid,
+    /// A flex container that is the containing block of many absolutely
+    /// positioned children.
+    FlexOof,
+    /// A grid container that is the containing block of many absolutely
+    /// positioned children.
+    GridOof,
     /// Balanced columns.
     Multicol,
 }
 
 // cov:ignore: bench-only item; workspace tests do not instrument this target.
 impl Shape {
+    /// How many text-bearing items `document(self, items)` holds. The out-of-flow
+    /// shapes hold `items` boxes without text, next to a tenth as many items with
+    /// text.
+    pub fn text_items(self, items: usize) -> usize {
+        match self {
+            Self::FlexOof | Self::GridOof => oof_in_flow_items(items),
+            _ => items,
+        }
+    }
+
     /// Stable benchmark identifier.
     pub fn name(self) -> &'static str {
         match self {
@@ -54,12 +70,26 @@ impl Shape {
             Self::TableSpans => "table_spans",
             Self::Flex => "flex",
             Self::Grid => "grid",
+            Self::FlexOof => "flex_oof",
+            Self::GridOof => "grid_oof",
             Self::Multicol => "multicol",
         }
     }
 }
 
+/// The children of an out-of-flow shape that stay in flow, so that the
+/// container has content of its own next to the positioned boxes.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
+fn oof_in_flow_items(items: usize) -> usize {
+    (items / 10).max(1)
+}
+
 /// Build `items` paragraphs, items or table rows inside one formatting context.
+///
+/// The out-of-flow shapes hold `items` children: the first
+/// [`oof_in_flow_items`] stay in flow and the others are absolutely positioned
+/// boxes (every tenth one fixed), mixing boxes placed by insets, boxes placed by
+/// their static position and, in the grid, boxes placed against a grid area.
 // cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn document(shape: Shape, items: usize) -> String {
     let css = match shape {
@@ -70,6 +100,22 @@ pub fn document(shape: Shape, items: usize) -> String {
             ".container { display: flex; flex-wrap: wrap; gap: 4px } .item { width: 100px }"
         }
         Shape::Grid => ".container { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 4px }",
+        Shape::FlexOof => {
+            ".container { display: flex; position: relative; flex-wrap: wrap; gap: 4px; height: 400px } \
+             .item { width: 100px } \
+             .oof { position: absolute; width: 20px; height: 10px } \
+             .a { left: 10px; top: 5px } .b { right: 3px; bottom: 3px } \
+             .c { align-self: center; justify-self: end } \
+             .f { position: fixed; left: 1px; top: 1px }"
+        }
+        Shape::GridOof => {
+            ".container { display: grid; position: relative; grid-template-columns: 1fr 2fr 1fr; gap: 4px; height: 400px } \
+             .oof { position: absolute; width: 20px; height: 10px } \
+             .a { grid-column: 2 / 3; grid-row: 1 / 3; left: 2px; top: 2px } \
+             .b { grid-column: 3; right: 3px; bottom: 3px } \
+             .c { align-self: end; justify-self: center } \
+             .f { position: fixed; left: 1px; top: 1px }"
+        }
         Shape::Multicol => ".container { column-count: 3; column-gap: 16px; column-fill: balance }",
     };
     let mut html = format!(
@@ -119,6 +165,18 @@ pub fn document(shape: Shape, items: usize) -> String {
                 }
                 Shape::Flex | Shape::Grid => {
                     write!(html, "<div class=item>Item {item}</div>").unwrap();
+                }
+                Shape::FlexOof | Shape::GridOof => {
+                    if item < oof_in_flow_items(items) {
+                        write!(html, "<div class=item>Item {item}</div>").unwrap();
+                    } else {
+                        let placement = if item % 10 == 9 {
+                            "f"
+                        } else {
+                            ["a", "b", "c"][item % 3]
+                        };
+                        write!(html, "<div class=\"oof {placement}\"></div>").unwrap();
+                    }
                 }
                 _ => {
                     write!(html, "<p>Item {item}: alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu.</p>").unwrap();
@@ -200,8 +258,8 @@ pub fn check_shape(dom: &raikiri::Document, cascade: &raikiri::CascadeResult, sh
         .expect("formatting context root");
     let computed = &cascade.computed[id];
     let display = match shape {
-        Shape::Flex => DisplayValue::Flex,
-        Shape::Grid => DisplayValue::Grid,
+        Shape::Flex | Shape::FlexOof => DisplayValue::Flex,
+        Shape::Grid | Shape::GridOof => DisplayValue::Grid,
         Shape::TableFixed | Shape::TableAuto | Shape::TableSpans => DisplayValue::Table,
         _ => DisplayValue::Block,
     };
@@ -275,4 +333,63 @@ pub fn check_layout(dom: &raikiri::Document, expected_items: usize) {
         text_nodes >= expected_items,
         "layout lost text: {text_nodes} < {expected_items}"
     );
+}
+
+/// Verify the laid-out document of `shape`: every text node has lines and every
+/// visible element has geometry and, for the out-of-flow shapes, every
+/// positioned box was placed.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
+pub fn check_document(dom: &raikiri::Document, shape: Shape, items: usize) {
+    check_layout(dom, shape.text_items(items));
+    if matches!(shape, Shape::FlexOof | Shape::GridOof) {
+        check_oof_layout(dom, items - shape.text_items(items));
+    }
+}
+
+/// Verify every out-of-flow box was laid out against its containing block: it
+/// has the size its style gives it, and every kind of placement (`a` insets
+/// from the top left, `b` insets from the bottom right, `c` the static
+/// position, `f` fixed) moved its boxes away from the origin.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
+fn check_oof_layout(dom: &raikiri::Document, expected: usize) {
+    const KINDS: [&str; 4] = ["a", "b", "c", "f"];
+    let mut found = [0usize; 4];
+    let mut placed = [0usize; 4];
+    for id in 0..dom.node_count() {
+        let node = dom.get_node(id).expect("arena node");
+        let Some(class) = node.attribute("class") else {
+            continue;
+        };
+        let mut names = class.split_whitespace();
+        if names.next() != Some("oof") {
+            continue;
+        }
+        let placement = names.next();
+        let kind = KINDS
+            .iter()
+            .position(|kind| Some(*kind) == placement)
+            .expect("an out-of-flow element names its placement");
+        found[kind] += 1;
+        let layout = &node.unrounded_layout;
+        assert_eq!(
+            (layout.size.width, layout.size.height),
+            (20.0, 10.0),
+            "out-of-flow element {id} was not sized by its style"
+        );
+        if layout.location.x != 0.0 || layout.location.y != 0.0 {
+            placed[kind] += 1;
+        }
+    }
+    assert_eq!(
+        found.iter().sum::<usize>(),
+        expected,
+        "out-of-flow elements in the document"
+    );
+    for (kind, name) in KINDS.iter().enumerate() {
+        assert!(found[kind] > 0, "no out-of-flow element placed as {name}");
+        assert_eq!(
+            placed[kind], found[kind],
+            "out-of-flow elements placed as {name} left at the origin"
+        );
+    }
 }

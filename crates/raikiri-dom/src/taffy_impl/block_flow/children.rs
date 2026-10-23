@@ -6,15 +6,15 @@ use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
-    LayoutInput, LayoutOutput, NodeId, OofCandidates, RunMode,
+    LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RunMode,
 };
+use crate::layout::taffy_adapter::{IntoEdges, MaybeResolve};
 use crate::node::FormattingContext;
 use crate::taffy_impl::resolve_calc;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
 use taffy::{
-    BlockItemStyle, BoxGenerationMode, Clear, CoreStyle, Direction, Float, FloatDirection,
-    MaybeResolve, Position, TraversePartialTree,
+    BlockItemStyle, BoxGenerationMode, Clear, CoreStyle, Direction, Float, FloatDirection, Position,
 };
 
 pub(super) struct Flow {
@@ -65,6 +65,7 @@ fn place_inline_axis(
 fn margins(style: &Style, basis: f32) -> Edges<f32> {
     style
         .margin
+        .into_edges()
         .map(|edge| edge.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
 }
 
@@ -352,9 +353,9 @@ pub(super) fn layout(
                             == &raikiri_style::property::PositionValue::Fixed
                         || style.position == Position::Fixed
                     {
-                        Position::Fixed
+                        OofPosition::Fixed
                     } else {
-                        Position::Absolute
+                        OofPosition::Absolute
                     },
                     static_position,
                 );
@@ -729,6 +730,6 @@ pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow
     for &node in &flow.placed {
         let mut layout = tree.nodes[usize::from(node)].unrounded_layout;
         layout.location.y += offset;
-        taffy::LayoutPartialTree::set_unrounded_layout(tree, node, &layout);
+        tree.set_unrounded_layout(node, &layout);
     }
 }

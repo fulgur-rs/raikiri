@@ -1,7 +1,7 @@
 use crate::Document;
 use crate::layout::protocol::{
-    AvailableSpace, AxisStaticEdge, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
-    SizingMode,
+    AvailableSpace, AxisStaticEdge, LayoutInput, LayoutOutput, NodeId, OofPosition, RequestedAxis,
+    RunMode, SizingMode,
 };
 use crate::layout::test_support::{restyle, with_bridged_session};
 use raikiri_layout_geometry::{Line, Size};
@@ -116,9 +116,9 @@ fn fixed_children_do_not_participate_in_block_flow() {
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(output.size.height, 10.0);
     assert_eq!(tree.nodes[sibling].unrounded_layout.location.y, 0.0);
-    let candidate = output.oof_candidates.as_slice().first().unwrap();
+    let candidate = output.oof_candidates.iter().next().unwrap();
     assert_eq!(candidate.node, NodeId::from(fixed));
-    assert_eq!(candidate.position, taffy::Position::Fixed);
+    assert_eq!(candidate.position, OofPosition::Fixed);
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn inline_absolute_candidates_keep_the_rtl_float_slot_point() {
         session.nodes[abs].set_box_properties(DisplayValue::Inline, PositionValue::Absolute);
         crate::taffy_impl::block_layout(session, NodeId::from(root), inputs(), None)
     });
-    let candidate = output.oof_candidates.as_slice().first().unwrap();
+    let candidate = output.oof_candidates.iter().next().unwrap();
     assert_eq!(candidate.static_position.x.area.start, 125.0);
     assert_eq!(
         candidate.static_position.x.align.keyword,

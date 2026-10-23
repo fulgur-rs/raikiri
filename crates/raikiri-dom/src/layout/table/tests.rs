@@ -1,8 +1,8 @@
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
-    AvailableSpace, LayoutInput, LayoutOutput, NodeId, OofCandidates, RequestedAxis, RunMode,
-    SizingMode,
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RequestedAxis,
+    RunMode, SizingMode,
 };
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_style::property::{
@@ -428,7 +428,7 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
         let session_cascade = crate::layout::test_support::cascaded(&doc);
         let mut session =
             crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
-        taffy::LayoutPartialTree::compute_child_layout(&mut session, NodeId::from(key), inputs)
+        session.compute_child_layout(NodeId::from(key), inputs)
     };
     assert_eq!(
         output.size,
@@ -2300,13 +2300,13 @@ fn table_oof_candidates_use_the_border_area() {
         }
     );
     assert_eq!(area.offset, Point { x: 2.0, y: 2.0 });
-    let candidates = output.oof_candidates.as_slice();
+    let candidates = output.oof_candidates.to_vec();
     assert_eq!(candidates.len(), 2);
     assert_eq!(candidates[0].node, NodeId::from(fixed));
-    assert_eq!(candidates[0].position, taffy::Position::Fixed);
+    assert_eq!(candidates[0].position, OofPosition::Fixed);
     assert_eq!(candidates[0].order, 0);
     assert_eq!(candidates[1].node, NodeId::from(absolute));
-    assert_eq!(candidates[1].position, taffy::Position::Absolute);
+    assert_eq!(candidates[1].position, OofPosition::Absolute);
     assert_eq!(candidates[1].order, 1);
 }
 
@@ -2355,7 +2355,6 @@ fn in_flow_caption_bubbles_uncontained_fixed_candidates() {
 
     let candidate = output
         .oof_candidates
-        .as_slice()
         .iter()
         .find(|candidate| candidate.node == NodeId::from(fixed))
         .expect("fixed descendant bubbles out of the in-flow caption");

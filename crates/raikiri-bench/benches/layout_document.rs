@@ -27,6 +27,8 @@ fn bench_layout(c: &mut Criterion) {
         Shape::TableSpans,
         Shape::Flex,
         Shape::Grid,
+        Shape::FlexOof,
+        Shape::GridOof,
         Shape::Multicol,
     ] {
         for items in [100, 1000] {
@@ -39,7 +41,7 @@ fn bench_layout(c: &mut Criterion) {
                     workloads::check_shape(&document.dom, &cascade, shape);
                     raikiri_dom::layout_single_page(&mut document.dom, &cascade, page)
                         .expect("probe layout");
-                    workloads::check_layout(&document.dom, items);
+                    workloads::check_document(&document.dom, shape, items);
                     html
                 });
                 b.iter_batched_ref(

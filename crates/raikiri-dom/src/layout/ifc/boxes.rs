@@ -12,9 +12,11 @@ use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, LayoutInput,
-    LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPositioningArea, RequestedAxis, RunMode,
-    SizingMode,
+    LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPosition, OofPositioningArea,
+    RequestedAxis, RunMode, SizingMode,
 };
+use crate::layout::style_views::ReadRole;
+use crate::layout::taffy_adapter::{IntoEdges, ResolveOrZero};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext, BoxProbe};
 use crate::taffy_impl::{fit_content_room, measure_against_parent_height, resolve_calc};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
@@ -26,11 +28,7 @@ use shodo::{
     FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
 };
 use std::collections::{HashMap, HashSet};
-use taffy::util::ResolveOrZero;
-use taffy::{
-    BlockContainerStyle, BlockItemStyle, Clear, CoreStyle, FloatDirection, LayoutPartialTree,
-    Position,
-};
+use taffy::{BlockContainerStyle, BlockItemStyle, Clear, CoreStyle, FloatDirection};
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
 /// laid out as a box of its own and painted by the walk.
@@ -1580,6 +1578,7 @@ fn shorten(base: LineSpace, tentative: &[TentativeFloat]) -> LineSpace {
 fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Edges<f32> {
     tree.physical_style(node)
         .margin()
+        .into_edges()
         .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
 }
 
@@ -2409,8 +2408,8 @@ fn layout_vertical_block_child(
 /// box that is not a scroll container. Flow roots, flex and grid containers
 /// and scroll containers establish formatting contexts of their own.
 fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> bool {
-    use taffy::{CoreStyle, LayoutBlockContainer};
-    let style = tree.get_block_container_style(NodeId::from(node));
+    use taffy::CoreStyle;
+    let style = tree.query_style(node, ReadRole::BlockContainer);
     let overflow = style.overflow();
     tree.nodes[node].taffy_display() == taffy::Display::Block
         && !crate::taffy_impl::is_table_box(tree.nodes[node].display())
@@ -2749,7 +2748,7 @@ fn used_block_width_with_edge_basis(
     dimension_basis: f32,
     edge_basis: f32,
 ) -> Option<f32> {
-    use taffy::util::MaybeResolve;
+    use crate::layout::taffy_adapter::MaybeResolve;
     tree.physical_style(node)
         .size()
         .width
@@ -2770,7 +2769,7 @@ fn clamp_block_width_with_edge_basis(
     edge_basis: f32,
     width: f32,
 ) -> f32 {
-    use taffy::util::MaybeResolve;
+    use crate::layout::taffy_adapter::MaybeResolve;
     let style = tree.physical_style(node);
     let adjustment = box_sizing_adjustment(tree, node, edge_basis);
     let min = style
@@ -2788,7 +2787,7 @@ fn clamp_block_width_with_edge_basis(
 }
 
 fn used_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Option<f32> {
-    use taffy::util::MaybeResolve;
+    use crate::layout::taffy_adapter::MaybeResolve;
     tree.physical_style(node)
         .size()
         .height
@@ -2797,7 +2796,7 @@ fn used_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Optio
 }
 
 fn clamp_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32, height: f32) -> f32 {
-    use taffy::util::MaybeResolve;
+    use crate::layout::taffy_adapter::MaybeResolve;
     let style = tree.physical_style(node);
     let adjustment = box_sizing_height_adjustment(tree, node, basis);
     let min = style
@@ -3018,7 +3017,7 @@ fn relative_inset(
     height: Option<f32>,
     axes: IfcAxes,
 ) -> (f32, f32) {
-    use taffy::util::MaybeResolve;
+    use crate::layout::taffy_adapter::MaybeResolve;
     let inset = tree.physical_style(node).inset();
     if !matches!(
         tree.nodes[node].taffy_position(),
@@ -3164,6 +3163,7 @@ impl BoxEdges {
             padding: style.padding().resolve_or_zero(Some(basis), resolve_calc),
             margin: style
                 .margin()
+                .into_edges()
                 .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0)),
         }
     }
@@ -3224,7 +3224,7 @@ pub(crate) fn place_out_of_flow(
     border_box: Size<f32>,
     output: &mut LayoutOutput,
 ) {
-    use taffy::util::MaybeResolve;
+    use crate::layout::taffy_adapter::MaybeResolve;
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
         return;
     };
@@ -3341,9 +3341,9 @@ pub(crate) fn place_out_of_flow(
         };
         let Some(cb) = inline_cb else {
             let position = if tree.nodes[node].position() == &PositionValue::Fixed {
-                Position::Fixed
+                OofPosition::Fixed
             } else {
-                Position::Absolute
+                OofPosition::Absolute
             };
             // A box that was block-level sits below the line of its anchor
             // and is aligned in the static-position rectangle of the content

@@ -336,7 +336,7 @@ fn an_inline_block_that_fits_a_column_stays_atomic() {
             width: 100.0,
             height: 100.0,
         },
-        Point::zero(),
+        Point::ZERO,
     );
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 80.0)]);
     assert_eq!(
@@ -530,7 +530,7 @@ fn security_fanout_budget_stops_before_remeasuring_descendants() {
                 width: 100.0,
                 height: 100.0,
             },
-            Point::zero(),
+            Point::ZERO,
         );
         observed.push((
             atomic,
@@ -596,11 +596,11 @@ fn security_atomic_measurement_work_is_shared_and_resets_on_clear() {
         width: 100.0,
         height: 100.0,
     };
-    layout(&mut doc, first, context, size, Point::zero());
+    layout(&mut doc, first, context, size, Point::ZERO);
     assert!(!doc.fragment_tree.limit_exceeded);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
     assert_eq!(doc.fragment_tree.fragments.len(), 2);
-    layout(&mut doc, second, context, size, Point::zero());
+    layout(&mut doc, second, context, size, Point::ZERO);
     assert!(doc.fragment_tree.limit_exceeded);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
     assert_eq!(
@@ -609,7 +609,7 @@ fn security_atomic_measurement_work_is_shared_and_resets_on_clear() {
     );
     doc.fragment_tree.clear();
     assert_eq!(doc.fragment_tree.break_flow_work_used, 0);
-    layout(&mut doc, second, context, size, Point::zero());
+    layout(&mut doc, second, context, size, Point::ZERO);
     assert!(!doc.fragment_tree.limit_exceeded);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
 }
@@ -630,10 +630,10 @@ fn security_remaining_fragment_capacity_bounds_measurement_work() {
         width: 100.0,
         height: 100.0,
     };
-    layout(&mut doc, first, context, size, Point::zero());
+    layout(&mut doc, first, context, size, Point::ZERO);
     assert_eq!(doc.fragment_tree.fragments.len(), 10);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 1);
-    layout(&mut doc, second, context, size, Point::zero());
+    layout(&mut doc, second, context, size, Point::ZERO);
     assert!(doc.fragment_tree.limit_exceeded);
     assert_eq!(
         doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
@@ -662,7 +662,7 @@ fn security_measurement_budget_charges_repeated_wrapper_visits_at_the_boundary()
                 width: 100.0,
                 height: 100.0,
             },
-            Point::zero(),
+            Point::ZERO,
         );
         if limit == 8 {
             assert!(doc.fragment_tree.limit_exceeded);
@@ -826,7 +826,7 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
                     width: 100.0,
                     height: 100.0
                 },
-                Point::zero()
+                Point::ZERO
             ),
             100.0
         );
@@ -851,7 +851,7 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
                 width: 100.0,
                 height: 100.0,
             },
-            Point::zero(),
+            Point::ZERO,
         );
         assert!(doc.fragment_tree.limit_exceeded);
         assert_eq!(doc.fragment_tree.fragments.len(), limit);
@@ -872,7 +872,7 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
             width: 100.0,
             height: 100.0,
         },
-        Point::zero(),
+        Point::ZERO,
     );
     assert!(empty.fragment_tree.limit_exceeded);
     let (mut doc, root, mut context) = prepared_flow();
@@ -886,7 +886,7 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
                 width: 100.0,
                 height: 100.0
             },
-            Point::zero()
+            Point::ZERO
         ),
         100.0
     );
@@ -927,7 +927,7 @@ fn collection_stops_and_unwinds_ancestors_when_the_budget_was_exhausted() {
                 width: 100.0,
                 height: 100.0
             },
-            Point::zero()
+            Point::ZERO
         ),
         100.0
     );
@@ -1003,7 +1003,7 @@ fn review_auto_width_atomic_inline_box_preserves_its_measured_width() {
             width: 100.0,
             height: 100.0,
         },
-        Point::zero(),
+        Point::ZERO,
     );
     assert_eq!(boxes(&doc, "atomic")[0].3, 20.0);
 }

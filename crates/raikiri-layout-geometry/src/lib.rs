@@ -1,10 +1,10 @@
 //! Geometry and box-layout result types for raikiri's layout engine.
 //!
 //! The paint walk, the page pipeline and the layout algorithms all pass sizes,
-//! points, edge widths and the placement of a box around. This crate is where
-//! those types are named, so that code outside the layout adapter does not have
-//! to name the layout library's types. It has no dependency on the DOM, the
-//! style system or the layout algorithms.
+//! points, edge widths and the placement of a box around. This crate defines
+//! those types, so that code outside the layout adapter does not have to name
+//! the layout library's types. It has no dependency on the DOM, the style
+//! system, the layout algorithms or the layout library.
 //!
 //! - [`Size`] is a `width` / `height` pair.
 //! - [`Point`] is an `x` / `y` pair.
@@ -19,14 +19,20 @@
 //!   `location`, `size`, `border`, `padding`, `margin`, `scrollbar_size`,
 //!   `scrollable_overflow_rect`, `order`, plus the content-box and scroll-extent
 //!   helpers.
+//! - [`MaybeMath`] does minimum, maximum, clamp, addition and subtraction on
+//!   sizes and lengths of which some may be missing.
 //!
-//! The field names above are the contract. Today the names are re-exports of
-//! the corresponding Taffy types, so values pass between this crate's types and
-//! Taffy's without conversion. The definitions will move into this crate and
-//! the dependency on Taffy will go away; code that sticks to the names and
-//! fields listed here keeps compiling when that happens.
+//! The field names above are the contract: they are the names the layout
+//! library uses, so code that reads or builds these values by field does not
+//! change when it moves between the two.
 
-pub use taffy::{Layout as BoxLayout, Line, Point, Rect as Edges, Size};
+mod box_layout;
+mod geometry;
+mod math;
+
+pub use box_layout::BoxLayout;
+pub use geometry::{Edges, Line, Point, Size};
+pub use math::MaybeMath;
 
 #[cfg(test)]
 mod tests;

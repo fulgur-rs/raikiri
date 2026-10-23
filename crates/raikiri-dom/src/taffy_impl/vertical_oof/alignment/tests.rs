@@ -234,7 +234,7 @@ fn contribution(overflow: Overflow, contain: Contain, container_scrolls: bool) -
             top: -5.0,
             bottom: 90.0,
         },
-        Point {
+        StylePoint {
             x: overflow,
             y: overflow,
         },

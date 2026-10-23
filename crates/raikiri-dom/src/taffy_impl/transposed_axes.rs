@@ -105,7 +105,7 @@ pub(super) fn transpose_output_to_physical(
             y: area.offset.x,
         },
     });
-    for candidate in output.oof_candidates.as_mut_slice() {
+    output.oof_candidates.for_each_mut(|candidate| {
         let inline_axis = candidate.static_position.x;
         let block_axis = candidate.static_position.y;
         candidate.static_position = Point {
@@ -116,7 +116,7 @@ pub(super) fn transpose_output_to_physical(
             },
             y: inline_axis,
         };
-    }
+    });
     swap_output_axes(output, oof_positioning_area, preserve_margin_collapse)
 }
 
@@ -140,7 +140,7 @@ pub(super) fn transpose_child_output_to_vertical(
             },
         },
     });
-    for candidate in output.oof_candidates.as_mut_slice() {
+    output.oof_candidates.for_each_mut(|candidate| {
         let physical_inline_axis = candidate.static_position.y;
         let physical_block_axis = candidate.static_position.x;
         candidate.static_position = Point {
@@ -151,7 +151,7 @@ pub(super) fn transpose_child_output_to_vertical(
                 physical_block_axis
             },
         };
-    }
+    });
     swap_output_axes(output, oof_positioning_area, preserve_margin_collapse)
 }
 

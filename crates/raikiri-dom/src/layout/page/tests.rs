@@ -1346,8 +1346,7 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
     ] {
         let output = {
             let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
-            taffy::LayoutPartialTree::compute_child_layout(
-                &mut session,
+            session.compute_child_layout(
                 NodeId::from(svg),
                 LayoutInput {
                     run_mode: RunMode::ComputeSize,

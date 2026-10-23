@@ -14,15 +14,15 @@ use crate::layout::protocol::{
     AvailableSpace, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId, RequestedAxis,
     RunMode, SizingMode,
 };
+use crate::layout::taffy_adapter::ResolveOrZero;
+use crate::layout::taffy_adapter::algorithms::float_intrinsic_width_calculator;
 use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};
+use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
-use taffy::{
-    BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutPartialTree, MaybeMath, Position,
-    ResolveOrZero, TraversePartialTree,
-};
+use taffy::{BlockItemStyle, BoxGenerationMode, CoreStyle, Float, Position};
 
 /// Whether a block child's normal flow shares its parent's float context.
 fn shares_context(style: &Style) -> bool {
@@ -111,7 +111,7 @@ fn intrinsic_widths(
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut width = 0.0_f32;
     let mut spanning = 0.0_f32;
-    let mut floats = taffy::FloatIntrinsicWidthCalculator::new(space);
+    let mut floats = float_intrinsic_width_calculator(space);
     for child in children {
         let style = child_style(tree, child);
         if style.box_generation_mode() == BoxGenerationMode::None

@@ -104,7 +104,18 @@ The second command emits CSV to stdout and Cargo diagnostics to stderr. Fixing
 the Rayon pool to one worker improves reproducibility; these numbers do not
 characterize parallel scaling. Production defaults still apply to IFC selection.
 Smoke-run the timing cases with `-- --test`; the allocation binary always runs
-its six cases and checks formatting context and laid-out content.
+its ten cases and checks formatting context and laid-out content.
+
+`flex_oof` and `grid_oof` add a container that is the containing block of many
+absolutely positioned children. Of the `items` boxes, `items / 10` (at least
+one) are ordinary items with text and the rest are empty and out of flow. Nine
+in ten of the out-of-flow boxes are absolute and one in ten is fixed; the
+absolute ones are placed by insets, by their static position (`align-self` and
+`justify-self`) or, in the grid, against a grid area. The
+fixture exercises the out-of-flow candidates that bubble up from each child and
+the positioning pass of the container, so it covers the layout call protocol
+of out-of-flow boxes that `flex_*` and `grid_*` do not reach. The timing cases
+run as `layout_document/(flex|grid)_oof_{100,1000}`.
 
 Measurements on 2026-10-21 used Rust 1.91.0, Taffy 0.15.0, Linux x86_64,
 AMD Ryzen 5 5600G (6 cores / 12 logical CPUs), the repository release profile,

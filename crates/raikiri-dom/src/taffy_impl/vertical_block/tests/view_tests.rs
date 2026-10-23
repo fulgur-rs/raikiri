@@ -370,8 +370,8 @@ fn frame_baked_edges_preserve_duplicate_override_precedence() {
 
 #[test]
 fn materialized_calc_survives_frame_and_bridge_retirement() {
+    use crate::layout::taffy_adapter::MaybeResolve;
     use std::sync::Arc;
-    use taffy::MaybeResolve;
     for batched in [false, true] {
         let (mut doc, cascade, child, _) =
             fixture_with_styles("display:block", "display:block;width:31px;height:7px");
@@ -466,8 +466,8 @@ fn frame_capture_keeps_publication_and_foundation_stamps() {
 
 #[test]
 fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
+    use crate::layout::taffy_adapter::MaybeResolve;
     use std::sync::Arc;
-    use taffy::MaybeResolve;
     for batched in [false, true] {
         let (mut doc, cascade, child, _) =
             fixture_with_styles("display:block", "display:block;width:31px;height:7px");

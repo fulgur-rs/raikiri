@@ -106,14 +106,20 @@ fn main() {
     page.width = 640.0;
     page.height = 480.0;
     println!("workload,items,sample,nodes,allocations,allocated_bytes");
-    for shape in [Shape::Flex, Shape::Grid, Shape::Inline] {
+    for shape in [
+        Shape::Flex,
+        Shape::Grid,
+        Shape::Inline,
+        Shape::FlexOof,
+        Shape::GridOof,
+    ] {
         for items in [100, 1000] {
             let html = workloads::document(shape, items);
             // Warm shared caches and verify the requested formatting context.
             let (mut probe, cascade) = workloads::single_page_input(&html, &resources);
             workloads::check_shape(&probe.dom, &cascade, shape);
             raikiri_dom::layout_single_page(&mut probe.dom, &cascade, page).expect("probe layout");
-            workloads::check_layout(&probe.dom, items);
+            workloads::check_document(&probe.dom, shape, items);
             drop((probe, cascade));
             for sample in 1..=5 {
                 let (mut document, cascade) = workloads::single_page_input(&html, &resources);
@@ -125,7 +131,7 @@ fn main() {
                     allocations > 0 && bytes > 0,
                     "allocator instrumentation is active"
                 );
-                workloads::check_layout(&document.dom, items);
+                workloads::check_document(&document.dom, shape, items);
                 println!(
                     "{},{items},{sample},{},{allocations},{bytes}",
                     shape.name(),

@@ -8,6 +8,7 @@ use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientat
 use raikiri_style::{PseudoElem, StyleNodeId};
 use settled::Settled;
 use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> is style input
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
 
 mod clamp_warnings;
 mod settled;
@@ -1161,11 +1162,11 @@ fn bridge_content_limits(
         }
     };
     ContentLimits {
-        min: Size {
+        min: StyleSize {
             width: keyword(cv.min_width, "min-width"),
             height: keyword(cv.min_height, "min-height"),
         },
-        max: Size {
+        max: StyleSize {
             width: keyword(cv.max_width, "max-width"),
             height: keyword(cv.max_height, "max-height"),
         },

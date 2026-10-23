@@ -134,7 +134,6 @@ fn intrinsic_scope_keeps_earlier_child_bounds() {
 #[test]
 fn intrinsic_scope_isolates_probe_cache_and_rejects_late_outer_store() {
     use raikiri_layout_style::ViewContext;
-    use taffy::CacheTree;
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
     let parent = doc.nodes[child].parent.unwrap();

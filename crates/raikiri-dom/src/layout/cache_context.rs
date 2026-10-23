@@ -1,3 +1,4 @@
+use crate::layout::taffy_adapter::LayoutCache;
 use crate::{layout::context::LayoutSession, node::arena::BoxKey};
 use raikiri_layout_style::{PercentBasis, ViewContext};
 use raikiri_style::property::WritingMode;
@@ -441,7 +442,7 @@ impl LayoutCacheContext {
 #[derive(Debug)]
 pub(crate) struct SavedLayoutCache {
     key: BoxKey,
-    cache: taffy::Cache,
+    cache: LayoutCache,
     epoch: Option<CacheEpoch>,
 }
 
@@ -456,7 +457,7 @@ impl LayoutSession<'_> {
         self.document.layout_cache_context.set_stamp(key, 0);
         SavedLayoutCache {
             key,
-            cache: std::mem::replace(&mut self.nodes[idx].cache, taffy::Cache::new()),
+            cache: std::mem::replace(&mut self.nodes[idx].cache, LayoutCache::new()),
             epoch,
         }
     }

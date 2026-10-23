@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::layout::context::LayoutSession;
-use taffy::{BlockItemStyle, TraversePartialTree};
+use taffy::BlockItemStyle;
 
 /// Truncate the root and descendant leading margins for one pagination pass.
 pub(super) fn truncate_flow(

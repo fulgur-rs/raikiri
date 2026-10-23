@@ -1,6 +1,6 @@
 //! raikiri-dom — DOM data model + layout engine (taffy + the shodo inline engine) + GCPM runtime side.
 //!
-//! Implements the node arena, taffy 6 trait implementations, and raikiri_traits::Dom co-design.
+//! Implements the node arena, the layout dispatch over taffy, and raikiri_traits::Dom co-design.
 //! For details, see §4, raikiri-dom scope, in the original design.
 
 // Public module rustdoc cross-links some crate-private helpers (e.g.
@@ -13,7 +13,7 @@
 //!
 //! - [`document`] — `Document` arena + `append_element` / `append_text`
 //! - `node`     — `Node` struct (crate-private, no rustdoc entry)
-//! - [`taffy_impl`] — taffy 6 layout trait impls + `unsafe impl Send for Document`
+//! - [`taffy_impl`] — the layout dispatch and its algorithms + `unsafe impl Send for Document`
 //! - [`dom_impl`] — `raikiri_traits::{Dom, Node, Element}` +
 //!   `raikiri_style::{StyleDom, StyleNode, StyleElement}` impls + `NodeRef` /
 //!   `ElementRef` types (both trait families over one arena, see file header)

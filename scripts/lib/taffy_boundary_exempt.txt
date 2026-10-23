@@ -4,11 +4,10 @@
 # Used by scripts/lib/taffy_boundary_lint.py, which documents what is counted.
 #
 # Only the places that are allowed to know Taffy belong here: the view crate
-# that implements Taffy's style traits, the crate and the module that define the
-# owned layout names (while those are still aliases of the Taffy types), and
-# the adapter module once it exists. Do not add a file to make a regression
-# pass; mark a real exception on its line instead.
+# that implements Taffy's style traits and the adapter module, which converts
+# between the owned layout names and Taffy's. Do not add a file to make a
+# regression pass; mark a real exception on its line instead.
 
 crates/raikiri-layout-style/       # view crate: implements Taffy's style traits over computed values
-crates/raikiri-layout-geometry/    # owned geometry names, re-exported from Taffy for now
-crates/raikiri-dom/src/layout/protocol.rs  # owned layout-call names, re-exported from Taffy for now
+crates/raikiri-dom/src/layout/taffy_adapter.rs   # adapter: the module root
+crates/raikiri-dom/src/layout/taffy_adapter/     # adapter: conversions, tree trait impls, algorithm calls
