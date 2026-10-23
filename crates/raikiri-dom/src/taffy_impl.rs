@@ -1092,18 +1092,6 @@ impl LayoutSession<'_> {
         {
             output.baselines.first = Some(baseline);
         }
-        // A vertical ifc root with block children but no line of its own
-        // takes the baseline of the first of them that has one.
-        if vertical
-            && inputs.run_mode == RunMode::PerformLayout
-            && output.baselines.first.is_none()
-            && self.nodes[usize::from(node_id)]
-                .flags
-                .contains(NodeFlags::IS_IFC_ROOT)
-        {
-            output.baselines.first =
-                first_child_baseline(self, usize::from(node_id), output.size.width);
-        }
         // A scroll container exports baselines clamped to its border box
         // (CSS Box Alignment 3 §9.1), so content scrolled out of view does
         // not move the baseline its parent aligns to.
@@ -1135,11 +1123,6 @@ impl LayoutSession<'_> {
         // border box instead.
         if self.is_orthogonal_to_parent(usize::from(node_id)) {
             output.baselines = taffy::Baselines::NONE;
-        }
-        // The parent of a vertical block reads the baseline back from here
-        // when it has none of its own.
-        if vertical && inputs.run_mode == RunMode::PerformLayout {
-            self.nodes[usize::from(node_id)].vertical_first_baseline = output.baselines.first;
         }
         output
     }
@@ -1442,12 +1425,29 @@ fn compute_ifc_root(
     // The baseline of a horizontal root lies below the top edge of its border
     // box; that of a vertical root, along the block axis from the edge its
     // block starts at.
-    let baseline_inset = if on_vertical_axes(tree, idx) {
+    let vertical_axes = on_vertical_axes(tree, idx);
+    let baseline_inset = if vertical_axes {
         block_start_inset
     } else {
         top_inset
     };
     output.baselines.first = content_baseline.map(|baseline| baseline + baseline_inset);
+    // A vertical root with block children takes the baseline of whichever of
+    // its first line and its first block child with one comes first in the
+    // block axis. An inline-block exposes its last line instead, and falls
+    // back on the first block child only when it has no line.
+    if vertical_axes && inputs.run_mode == RunMode::PerformLayout {
+        let block = first_block_baseline(tree, idx).map(|baseline| baseline + baseline_inset);
+        output.baselines.first = match (output.baselines.first, block) {
+            (Some(line), Some(block))
+                if tree.nodes[idx].display()
+                    != raikiri_style::property::DisplayValue::InlineBlock =>
+            {
+                Some(line.min(block))
+            }
+            (line, block) => line.or(block),
+        };
+    }
     output.oof_candidates.append(&mut nested_oof_candidates);
     if inputs.run_mode == RunMode::PerformLayout {
         crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size, &mut output);
@@ -2197,38 +2197,26 @@ fn dominant_baseline(tree: &LayoutSession<'_>, idx: usize) -> shodo::geometry::B
     }
 }
 
-/// The first baseline of the vertical box `idx`, whose border box is `width`
-/// wide, found in the baselines its children exported: that of the first
-/// in-flow child with the same block direction that has one. It is an offset
-/// along the block axis from the block-start border edge of `idx`.
+/// The first baseline of the block children of the vertical ifc root `idx`:
+/// that of the first in-flow block-level child that has one, as an offset
+/// along the block axis from the block-start edge of the root's content box.
 ///
-/// The baseline a child exported already is the one its own formatting context
-/// gave it, clamped when it scrolls, so a flex container's item order and a
-/// scroll container's border box are taken into account.
-fn first_child_baseline(doc: &LayoutSession<'_>, idx: usize, width: f32) -> Option<f32> {
-    let right_to_left = block_right_to_left(doc, idx)?;
-    for &child in &doc.nodes[idx].children {
+/// The children's layouts recorded it when the root placed them, from the
+/// baseline each exported: the one its own formatting context gave it,
+/// clamped when it scrolls, and measured from its place in normal flow
+/// whatever its relative offset. The children of a `display: contents` element
+/// count as the root's own.
+fn first_block_baseline(doc: &LayoutSession<'_>, idx: usize) -> Option<f32> {
+    doc.nodes[idx].children.iter().find_map(|&child| {
         let node = &doc.nodes[child];
-        if !node.is_in_document()
-            || node.is_display_none()
-            || node.kind() == raikiri_traits::NodeKind::Text
-            || node.taffy_position() == TaffyPosition::Absolute
-            || taffy::BlockItemStyle::float(&doc.physical_style(child)) != taffy::Float::None
-            || block_right_to_left(doc, child) != Some(right_to_left)
-        {
-            continue;
+        if !node.is_in_document() || node.is_display_none() {
+            None
+        } else if node.display() == raikiri_style::property::DisplayValue::Contents {
+            first_block_baseline(doc, child)
+        } else {
+            node.vertical_first_baseline
         }
-        if let Some(baseline) = node.vertical_first_baseline {
-            let layout = &node.unrounded_layout;
-            let start = if right_to_left {
-                width - (layout.location.x + layout.size.width)
-            } else {
-                layout.location.x
-            };
-            return Some(start + baseline);
-        }
-    }
-    None
+    })
 }
 
 /// Return the first baseline of an inline-block from the descendant layout

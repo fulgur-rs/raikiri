@@ -2376,6 +2376,14 @@ fn layout_vertical_block_child(
         };
         child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, inline_basis);
+        // The baseline the block exported, where normal flow placed it: the
+        // root's own baseline may come from it. A block whose block axis runs
+        // the other way measures its baseline from the opposite edge.
+        tree.nodes[node].vertical_first_baseline = output
+            .baselines
+            .first
+            .filter(|_| crate::taffy_impl::block_right_to_left(tree, node) == Some(vertical_rl))
+            .map(|baseline| block_start + baseline);
     }
     let collapses_through = !has_clearance && margins_can_collapse_through;
     BlockChild {

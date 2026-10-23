@@ -496,9 +496,10 @@ pub struct Node {
     /// First baseline of a flex container from its border edge, as its last
     /// layout found it (CSS Flexbox 1 §8.5).
     pub(crate) flex_first_baseline: Option<f32>,
-    /// First baseline a box laid out on vertical axes exported to its parent in
-    /// its last performed layout, as an offset along its block axis from its
-    /// block-start border edge.
+    /// First baseline a block child of a vertical inline formatting root
+    /// exported, as an offset along the root's block axis from the block-start
+    /// edge of the root's content box. The root records it when it places the
+    /// child in normal flow.
     pub(crate) vertical_first_baseline: Option<f32>,
     /// Computed `break-before` value consumed by column fragmentation.
     pub(crate) break_before: BreakBetween,

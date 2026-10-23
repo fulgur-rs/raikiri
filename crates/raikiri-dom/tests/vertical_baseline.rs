@@ -379,6 +379,84 @@ fn a_wrapper_gives_the_item_the_baseline_its_child_exported() {
     }
 }
 
+/// A row flex container with the item `a`, the item under test `item`, and the
+/// item `d`, which sit on the container's baseline.
+fn baseline_row(item: &str) -> String {
+    format!(
+        r#"<div id=c style="display:flex;writing-mode:vertical-rl;align-items:baseline;width:200px;height:100px"><div id=a style="line-height:10px">X</div>{item}<div id=d style="line-height:30px">X</div></div>"#
+    )
+}
+
+#[test]
+fn the_item_takes_the_first_baseline_in_the_order_of_the_block_axis() {
+    // A block child ahead of the text, or text ahead of the block child, gives
+    // the item its baseline, whichever it is: the 40px line of `p` is centred
+    // 20px across, the 10px line of the text 45px or 5px.
+    check(
+        &baseline_row(r#"<div id=w><div id=p style="line-height:40px">X</div>X</div>"#),
+        &[
+            ("a", (183.0, 8.0, 10.0, 10.0)),
+            ("w", (158.0, 18.0, 50.0, 10.0)),
+            ("p", (168.0, 18.0, 40.0, 10.0)),
+            ("d", (173.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    check(
+        &baseline_row(r#"<div id=w>X<div id=p style="line-height:40px">X</div></div>"#),
+        &[
+            ("a", (188.0, 8.0, 10.0, 10.0)),
+            ("w", (148.0, 18.0, 50.0, 10.0)),
+            ("p", (148.0, 18.0, 40.0, 10.0)),
+            ("d", (178.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_contents_element_passes_the_baseline_of_its_children() {
+    // The children of a `display: contents` element count as the item's own.
+    check(
+        &baseline_row(
+            r#"<div id=w><div style="display:contents"><div id=p style="line-height:40px">X</div></div><div id=q style="line-height:10px">X</div></div>"#,
+        ),
+        &[
+            ("a", (183.0, 8.0, 10.0, 10.0)),
+            ("w", (158.0, 18.0, 50.0, 10.0)),
+            ("p", (168.0, 18.0, 40.0, 10.0)),
+            ("q", (158.0, 18.0, 10.0, 10.0)),
+            ("d", (173.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_relative_offset_does_not_move_the_baseline() {
+    // The block moves from its place in flow, not the baseline of the item
+    // around it, with a length or a percentage of the item's width.
+    check(
+        &baseline_row(
+            r#"<div id=w><div id=p style="line-height:40px;position:relative;left:10px">X</div></div>"#,
+        ),
+        &[
+            ("a", (183.0, 8.0, 10.0, 10.0)),
+            ("w", (168.0, 18.0, 40.0, 10.0)),
+            ("p", (178.0, 18.0, 40.0, 10.0)),
+            ("d", (173.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    check(
+        &baseline_row(
+            r#"<div id=w style="width:50px"><div id=p style="line-height:40px;position:relative;left:10%">X</div></div>"#,
+        ),
+        &[
+            ("a", (183.0, 8.0, 10.0, 10.0)),
+            ("w", (158.0, 18.0, 50.0, 10.0)),
+            ("p", (173.0, 18.0, 40.0, 10.0)),
+            ("d", (173.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+}
+
 #[test]
 fn baseline_alignment_works_on_each_flex_line() {
     // Each flex line shares a baseline of its own, and `direction` does not move it.
