@@ -4000,10 +4000,10 @@ css_keywords!(ContentAlignmentValue {
 /// - **(b) unsupported**: `self-start`/`self-end` (part of `<self-position>`,
 ///   keywords relative to writing mode) are not implemented because taffy's
 ///   `AlignItemsKeyword` has no matching variants.
-/// - **(b) unsupported**: the `first` prefix for `<baseline-position>` is
-///   not accepted. `last baseline` is kept apart from `baseline` only for its
-///   fallback alignment (spec §9 "Fallback Alignment"); taffy aligns both to
-///   the first baseline.
+/// - **(b) unsupported**: `last baseline` is kept apart from `baseline` only
+///   for its fallback alignment (spec §9 "Fallback Alignment"); taffy aligns
+///   both to the first baseline. `first baseline` is the same value as
+///   `baseline`.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelfAlignmentValue {

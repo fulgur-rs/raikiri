@@ -1274,6 +1274,21 @@ fn align_items_parse_self_position_and_baseline() {
 }
 
 #[test]
+fn first_baseline_is_baseline() {
+    assert_eq!(
+        parse("first baseline", "align-items"),
+        Some(PropertyValue::AlignItems(SelfAlignmentValue::Baseline))
+    );
+    assert_eq!(
+        parse("first baseline", "align-self"),
+        Some(PropertyValue::AlignSelf(AlignSelfValue::Value(
+            SelfAlignmentValue::Baseline
+        )))
+    );
+    assert_eq!(parse("first", "align-items"), None);
+}
+
+#[test]
 fn last_baseline_is_kept_apart_from_baseline() {
     assert_eq!(
         parse("last baseline", "align-items"),
