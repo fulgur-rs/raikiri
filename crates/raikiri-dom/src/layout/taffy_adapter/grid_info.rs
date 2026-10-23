@@ -14,7 +14,7 @@ pub(crate) struct GridItemLines {
 }
 
 /// How many rows a grid has before, in and after its explicit grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct GridRowCounts {
     /// The implicit rows before the explicit grid.
     pub(crate) negative_implicit: u16,
