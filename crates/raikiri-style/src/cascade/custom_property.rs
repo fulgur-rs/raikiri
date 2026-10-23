@@ -989,6 +989,21 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        PropertyValue::GridArea(shorthand) => match key {
+            crate::property::PropertyKey::GridRowStart => {
+                PropertyValue::GridRowStart(shorthand.row_start.clone())
+            }
+            crate::property::PropertyKey::GridColumnStart => {
+                PropertyValue::GridColumnStart(shorthand.column_start.clone())
+            }
+            crate::property::PropertyKey::GridRowEnd => {
+                PropertyValue::GridRowEnd(shorthand.row_end.clone())
+            }
+            crate::property::PropertyKey::GridColumnEnd => {
+                PropertyValue::GridColumnEnd(shorthand.column_end.clone())
+            }
+            _ => return None,
+        },
         PropertyValue::GridRow(shorthand) => match key {
             crate::property::PropertyKey::GridRowStart => {
                 PropertyValue::GridRowStart(shorthand.start)

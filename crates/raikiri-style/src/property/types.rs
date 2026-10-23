@@ -4480,12 +4480,9 @@ pub enum GridAutoFlowValue {
 /// invalid." [`is_reserved_grid_line_name`] and [`parse_grid_line`] enforce
 /// the respective constraints.
 ///
-/// The bare `<custom-ident>` alternative (without an index) is folded into
-/// [`Self::NamedLine`] with an explicit index of `1`. Taffy 0.12 treats `0`
-/// in `GridPlacement::NamedLine` as an "unspecified" sentinel and normalizes
-/// it to `1` internally (`NamedLineResolver::find_line_index` checks
-/// `if idx == 0 { idx = 1; }`). Supplying `1` in this crate preserves that
-/// meaning.
+/// A bare `<custom-ident>` stays distinct in [`Self::Named`]: it first
+/// selects an edge of a named area, then falls back to the first named line.
+/// [`Self::NamedLine`] carries an explicit integer and only selects lines.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum GridLineValue {
@@ -4499,8 +4496,8 @@ pub enum GridLineValue {
     /// accompanying `<integer>`. Only this variant triggers the copy rule
     /// for an omitted second component of [`GridLineShorthand`] (the spec
     /// says "if the first value is a `<custom-ident>`"). [`Self::NamedLine`]
-    /// does not: it is a separate `<integer> && <custom-ident>` alternative,
-    /// in which an omitted `<integer>` is treated as an explicit `1`.
+    /// does not: its separate `<integer> && <custom-ident>` alternative
+    /// contains an explicit integer.
     /// See the [`parse_grid_line`] docs.
     Named(SmolStr),
     /// `[ [ <integer> ] && <custom-ident>? ]` — a named-line reference with
@@ -7913,6 +7910,7 @@ impl PropertyKey {
                 | PropertyKey::PlaceContent
                 | PropertyKey::PlaceItems
                 | PropertyKey::PlaceSelf
+                | PropertyKey::GridArea
                 | PropertyKey::GridRow
                 | PropertyKey::GridColumn
                 | PropertyKey::Overflow
@@ -11239,10 +11237,9 @@ pub enum PropertyValue {
     /// clipping axis paints its content.
     OverflowClipMargin(OverflowClipMargin),
     /// `grid-area` shorthand — placement for one grid item. Shared behind an
-    /// [`Arc`] so that it does not set the size of every `PropertyValue`: it
-    /// reaches the cascade unexpanded, where a winning value is cloned for
-    /// every element it applies to, and cloning an `Arc` only counts a
-    /// reference.
+    /// [`Arc`] so that it does not set the size of every `PropertyValue`.
+    /// [`crate::rule::expand_shorthand_into`] distributes the parsed edges
+    /// into four longhands before the cascade resolves their precedence.
     GridArea(Arc<GridAreaShorthand>),
     /// `grid` shorthand — its `<'grid-template'>` alternative, which also
     /// resets the implicit grid and placement properties.
@@ -13818,6 +13815,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "outline-offset" => PropertyKey::OutlineOffset,
         "overflow-clip-margin" => PropertyKey::OverflowClipMargin,
         "grid" => PropertyKey::Grid,
+        "grid-area" => PropertyKey::GridArea,
         "grid-template" => PropertyKey::GridTemplate,
         "grid-template-columns" => PropertyKey::GridTemplateColumns,
         "grid-template-rows" => PropertyKey::GridTemplateRows,

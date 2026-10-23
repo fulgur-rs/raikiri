@@ -3804,7 +3804,7 @@ impl ResolvedAgainstInherited {
 /// per-family expanders in `crate::rule` (e.g. [`crate::rule::expand_border`]).
 /// The shorthand forms the cascade keeps whole
 /// ([`crate::rule::KeyClass::Retained`]) do arrive here and set their fields
-/// directly: `grid`, `grid-area` and `white-space` values, and the
+/// directly: `white-space` values, and the
 /// `text-wrap` / `text-spacing` shorthand a `var()` value of one substitutes
 /// into after winner selection.
 ///

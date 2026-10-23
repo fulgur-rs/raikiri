@@ -584,6 +584,16 @@ fn deferred_projection_covers_supported_shorthands() {
             vec![PropertyKey::AlignContent, PropertyKey::JustifyContent],
         ),
         (
+            "grid-area",
+            "a / b / c",
+            vec![
+                PropertyKey::GridRowStart,
+                PropertyKey::GridColumnStart,
+                PropertyKey::GridRowEnd,
+                PropertyKey::GridColumnEnd,
+            ],
+        ),
+        (
             "grid-row",
             "2 / 5",
             vec![PropertyKey::GridRowStart, PropertyKey::GridRowEnd],

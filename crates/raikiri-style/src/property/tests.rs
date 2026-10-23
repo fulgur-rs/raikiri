@@ -51,6 +51,7 @@ mod box_model_tests;
 mod color_tests;
 mod common_tests;
 mod content_tests;
+mod grid_area_tests;
 mod hyphenate_limit_chars_tests;
 mod keyword_tests;
 mod layout_tests;

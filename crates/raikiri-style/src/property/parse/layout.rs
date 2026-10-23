@@ -873,18 +873,26 @@ fn grid_track_list_obeys_auto_repeat_constraint(list: &GridTrackList) -> bool {
     })
 }
 
-/// Parses `grid-template-columns` / `grid-template-rows`:
-/// `none | <track-list> | <auto-track-list>` (CSS Grid Layout Module Level 1 §7.2
-/// <https://www.w3.org/TR/css-grid-1/#track-sizing>); see the
-/// [`GridTemplateTracks`] docs.
+/// Parses `grid-area: <grid-line> [ / <grid-line> ]{0,3}` (CSS Grid
+/// Layout Module Level 1 §8.4
+/// <https://www.w3.org/TR/css-grid-1/#placement-shorthands>).
+/// Omitted edges copy a bare name from the corresponding start edge;
+/// other start values supply `auto` instead.
 pub(super) fn parse_grid_area_shorthand(input: &mut Parser<'_, '_>) -> Option<GridAreaShorthand> {
+    let optional_line = |input: &mut Parser<'_, '_>, start: &GridLineValue| {
+        if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+            parse_grid_line(input)
+        } else {
+            Some(match start {
+                GridLineValue::Named(name) => GridLineValue::Named(name.clone()),
+                _ => GridLineValue::Auto,
+            })
+        }
+    };
     let row_start = parse_grid_line(input)?;
-    input.try_parse(|i| i.expect_delim('/')).ok()?;
-    let column_start = parse_grid_line(input)?;
-    input.try_parse(|i| i.expect_delim('/')).ok()?;
-    let row_end = parse_grid_line(input)?;
-    input.try_parse(|i| i.expect_delim('/')).ok()?;
-    let column_end = parse_grid_line(input)?;
+    let column_start = optional_line(input, &row_start)?;
+    let row_end = optional_line(input, &row_start)?;
+    let column_end = optional_line(input, &column_start)?;
     Some(GridAreaShorthand {
         row_start,
         column_start,
