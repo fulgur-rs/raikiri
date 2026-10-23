@@ -5056,3 +5056,9 @@ css/css-contain/contain-size-fieldset-004.html
 # --- floats in a vertical paragraph (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
 # A float in a vertical paragraph pushes the lines along the inline axis, so the inline-block that follows the float is placed beside it as in the reference; KEEP in two audit-vacuous-passes runs.
 css/css-writing-modes/float-vlr-014.html
+
+# --- vertical flex containers on their own writing-mode axes (WPT pin 97ea26e2, EXACT, Linux, 2026-10-23) ---
+# A flex container in a vertical writing mode lays its items out on the axes of its own writing mode, so block-size sets the physical width and auto margins center on the cross axis as in the reference; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/auto-margins-003.html
+css/css-flexbox/gap-003-lr.html
+css/css-flexbox/gap-003-rl.html
