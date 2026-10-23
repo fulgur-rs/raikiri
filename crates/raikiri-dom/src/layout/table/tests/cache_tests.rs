@@ -98,14 +98,14 @@ fn size_probe_does_not_cache_cell_layout_or_temporary_widths() {
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut input = column_probe_input();
-    input.run_mode = taffy::tree::RunMode::ComputeSize;
+    input.run_mode = RunMode::ComputeSize;
     let narrow = compute_table_layout_in_session(&mut session, table.into(), input);
     session.record_pass_override(
         first,
         width_override(ComputedLengthPercentageOrAuto::Px(100.0)),
     );
     session.table_layout_node_mut(first).cache.clear();
-    input.run_mode = taffy::tree::RunMode::PerformLayout;
+    input.run_mode = RunMode::PerformLayout;
     let wide = compute_table_layout_in_session(&mut session, table.into(), input);
     assert!(wide.size.width > narrow.size.width);
     assert_eq!(session.nodes[first].unrounded_layout.size.width, 100.0);
@@ -404,7 +404,7 @@ fn table_descendant_geometry_agrees_across_cold_warm_and_forced_miss() {
         if views {
             crate::layout::style_views::tests::prepare_all_layout_views(&mut tree);
         }
-        let id = taffy::NodeId::from(table);
+        let id = NodeId::from(table);
         let input = column_probe_input();
         GRID_BUILDS.with(|count| count.set(0));
         let cold_output = tree.compute_child_layout_with_block_ctx(id, input, None);

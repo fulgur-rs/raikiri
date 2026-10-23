@@ -10,10 +10,15 @@ use authored::AuthoredBox;
 
 use super::*;
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
+};
 use crate::layout::style_views::ReadRole;
 use crate::node::FormattingContext;
+use raikiri_layout_geometry::{BoxLayout, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 use taffy::{BlockItemStyle, CoreStyle, FlexboxContainerStyle, FlexboxItemStyle, MaybeResolve};
+use taffy::{Rect as StyleRect, Size as StyleSize}; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and Size<Dimension> are style input
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
@@ -59,7 +64,7 @@ fn relative_inline_offset(style: &LayoutStyleView<'_>, width: f32) -> f32 {
 /// it gets no width.
 fn with_keyword_width(
     tree: &mut LayoutSession<'_>,
-    node_id: TaffyNodeId,
+    node_id: NodeId,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
     use taffy::ExpandedDimension as Keyword;
@@ -107,7 +112,7 @@ fn with_keyword_width(
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 pub(crate) fn compute_multicol_layout(
     tree: &mut LayoutSession<'_>,
-    node_id: TaffyNodeId,
+    node_id: NodeId,
     inputs: LayoutInput,
     block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
@@ -561,7 +566,7 @@ fn column_child_input(
             width: AvailableSpace::Definite(column_width),
             height: available_height,
         },
-        vertical_margins_are_collapsible: TaffyLine::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     }
 }
 
@@ -975,8 +980,8 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
             || margin.right != zero_margin
             || margin.bottom != zero_margin
             || margin.left != zero_margin
-            || style.padding() != Rect::zero()
-            || style.border() != Rect::zero()
+            || style.padding() != StyleRect::zero()
+            || style.border() != StyleRect::zero()
             || !node.multicol_auto_width
             || !style.min_size().width.is_auto()
             || !style.max_size().width.is_auto()
@@ -1020,7 +1025,7 @@ fn painted_wrapper_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<usize>
 
 fn relayout_nested_multicol_children(
     tree: &mut LayoutSession<'_>,
-    node_id: TaffyNodeId,
+    node_id: NodeId,
     context: FragmentationContext,
     border_box_size: Size<f32>,
     has_fragmentainer_height_constraint: bool,
@@ -1168,7 +1173,7 @@ fn layout_column_group(
             if matches!(tree.nodes[child].data, NodeData::Text(_)) {
                 tree.nodes[child].cache.clear();
             }
-            let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
+            let output = tree.compute_child_layout(NodeId::from(child), child_inputs);
             let layout = tree.nodes[child].unrounded_layout;
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
@@ -1259,7 +1264,7 @@ fn layout_column_group(
                 if matches!(tree.nodes[child].data, NodeData::Text(_)) {
                     tree.nodes[child].cache.clear();
                 }
-                let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
+                let output = tree.compute_child_layout(NodeId::from(child), child_inputs);
                 if tree.fragment_tree.limit_exceeded {
                     return fallback_height;
                 }
@@ -1416,7 +1421,7 @@ fn layout_column_group(
         child_layout.margin.right = margin_right;
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
-        tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
+        tree.set_unrounded_layout(NodeId::from(child), &child_layout);
         if let Some(placement) = planned {
             if let Some(root) = tree.nodes[child].ifc.as_mut() {
                 root.multicol_fragments = Some(placement.fragments.clone());

@@ -87,7 +87,7 @@ pub(super) fn prepared_borders(
     table_idx: usize,
     grid: &TableGrid,
     parent_width: Option<f32>,
-    table_border: Rect<f32>,
+    table_border: Edges<f32>,
 ) -> Rc<PreparedBorders> {
     doc.sync_layout_cache_mutations();
     doc.context

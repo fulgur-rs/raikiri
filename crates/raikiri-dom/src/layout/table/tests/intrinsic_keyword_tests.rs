@@ -93,8 +93,8 @@ fn compute_table_width_with_cells(
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
     let inputs = LayoutInput {
-        run_mode: taffy::RunMode::ComputeSize,
-        axis: taffy::RequestedAxis::Horizontal,
+        run_mode: RunMode::ComputeSize,
+        axis: RequestedAxis::Horizontal,
         parent_size: Size {
             width: Some(200.0),
             height: None,
@@ -107,7 +107,7 @@ fn compute_table_width_with_cells(
     };
 
     super::with_layout_session(&mut doc, |session| {
-        super::compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+        super::compute_table_layout_in_session(session, NodeId::from(table), inputs)
             .size
             .width
     })
