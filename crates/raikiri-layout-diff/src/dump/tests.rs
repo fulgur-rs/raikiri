@@ -211,3 +211,71 @@ fn long_text_is_quoted_up_to_a_limit() {
     let text = text_of("<p>abcdefghijklmnopqrstuvwx</p>");
     assert!(text.contains("text=\"abcdefghijklmnopqrstuvwx\""), "{text}");
 }
+
+#[test]
+fn the_text_of_margin_boxes_is_written_glyph_by_glyph() {
+    let text = text_of(
+        "<style>@page { size: 300px 200px; margin: 40px; \
+         @top-center { content: 'Header ' counter(page) } \
+         @left-middle { content: 'Side'; writing-mode: vertical-rl } } \
+         body { margin: 0; font: 20px/20px Ahem }</style><p>hello</p>",
+    );
+    assert!(text.contains("margin_boxes: 2\n"), "{text}");
+    // A box with horizontal text has runs like the text of the page.
+    assert!(text.contains("source=MarginBox(TopCenter)"), "{text}");
+    assert!(text.contains("text=\"Header 1\""), "{text}");
+    assert!(
+        text.contains("  shaped StandaloneText { lines: [Line {"),
+        "{text}"
+    );
+    assert!(text.contains("    line 0 mode=HorizontalTb "), "{text}");
+    // A box in a vertical writing mode has none, so its lines list their
+    // pieces.
+    assert!(!text.contains("source=MarginBox(LeftMiddle)"), "{text}");
+    assert!(text.contains("    line 0 mode=VerticalRl "), "{text}");
+    assert!(text.contains("      GlyphRun(GlyphRunView {"), "{text}");
+    // The pieces of horizontal lines are the runs above, not repeated.
+    assert_eq!(text.matches("      GlyphRun(").count(), 1, "{text}");
+}
+
+#[test]
+fn a_page_that_moves_margin_box_text_changes_the_text() {
+    let page = |align: &str| {
+        text_of(&format!(
+            "<style>@page {{ size: 300px 200px; margin: 40px; \
+             @top-center {{ content: 'Header'; text-align: {align} }} }} \
+             body {{ margin: 0 }}</style><p>x</p>"
+        ))
+    };
+    assert_eq!(page("left"), page("left"));
+    assert_ne!(page("left"), page("right"));
+}
+
+#[test]
+fn images_of_content_and_markers_are_written_with_their_placement() {
+    let text = text_of(
+        "<style>@page { size: 200px 100px; margin: 0 } \
+         body { margin: 0; font: 20px/20px Ahem } p { margin: 0 } \
+         .a::before { content: 'ab ' url(https://example.test/i.png) ' cd' } \
+         .b::after { content: url(https://example.test/j.png) } \
+         ul { list-style-image: url(https://example.test/k.png) }</style>\
+         <p class=a>x</p><p class=b>y</p><ul><li>item</li></ul>",
+    );
+    for expected in [
+        "  marker_image owner=",
+        "placement=https://example.test/k.png [",
+        "  generated_image owner=",
+        " kind=Before index=0 placement=https://example.test/i.png [",
+        " kind=After index=0 placement=https://example.test/j.png [",
+        " text_position=Some((TextLineId {",
+    ] {
+        assert!(text.contains(expected), "{expected:?} is missing:\n{text}");
+    }
+    // Every image is the same placeholder, so a content image is 8 by 4 px.
+    assert!(text.contains(" 8.0 4.0]"), "{text}");
+}
+
+#[test]
+fn an_image_event_without_a_placement_says_so() {
+    assert_eq!(placement(None), "-");
+}

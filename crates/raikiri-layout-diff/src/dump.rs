@@ -7,7 +7,9 @@
 //!
 //! - the page API a consumer such as fulgur reads: the page geometry, the
 //!   root box, the fragments, the positioned glyph runs, the paint order, the
-//!   page-margin boxes and the links of every page;
+//!   page-margin boxes with the glyphs of their text, and the links of every
+//!   page. The paint events of list-marker images and of images of `content`
+//!   are written with the place the page gave them;
 //! - the laid-out box of every node of each distinct laid-out document, read
 //!   through [`crate::node_layout::NodeBox`].
 //!
@@ -115,12 +117,36 @@ fn page(out: &mut String, page: &Page<'_>) {
     let events = page.paint_order();
     let _ = writeln!(out, "paint_order: {}", events.len());
     for event in &events {
-        paint_event(out, event);
+        paint_event(out, event, page);
     }
     let boxes = page.margin_boxes();
     let _ = writeln!(out, "margin_boxes: {}", boxes.len());
     for margin_box in &boxes {
         let _ = writeln!(out, "{margin_box:#?}");
+        // The box's `Debug` form counts the shaped lines of its text; the
+        // glyphs and their places are written here. Text in a vertical
+        // writing mode has no glyph runs, so its lines are listed with the
+        // pieces they hold.
+        for run in &margin_box.text_runs() {
+            text_run(out, run);
+        }
+        if let Some(text) = &margin_box.text {
+            let _ = writeln!(out, "  shaped {:?}", text.shaped());
+            for (index, line) in text.shaped().lines().iter().enumerate() {
+                let _ = writeln!(
+                    out,
+                    "    line {index} mode={:?} block_offset={} metrics={:?}",
+                    line.writing_mode(),
+                    number(line.block_offset()),
+                    line.metrics(),
+                );
+                if line.writing_mode().is_vertical() {
+                    for piece in line.fragments() {
+                        let _ = writeln!(out, "      {piece:?}");
+                    }
+                }
+            }
+        }
     }
     let links: Vec<_> = page.links().collect();
     let _ = writeln!(out, "links: {}", links.len());
@@ -191,7 +217,17 @@ fn text_run(out: &mut String, run: &PositionedGlyphRun<'_>) {
     }
 }
 
-fn paint_event(out: &mut String, event: &PaintEvent<'_>) {
+/// The URL and rectangle a page prepared for an image, or `-` when it
+/// prepared none.
+fn placement(placed: Option<(&url::Url, PaintRect)>) -> String {
+    placed.map_or_else(
+        || "-".to_owned(),
+        |(url, placed)| format!("{url} {}", rect(&placed)),
+    )
+}
+
+fn paint_event(out: &mut String, event: &PaintEvent<'_>, page: &Page<'_>) {
+    let document = page.paint_inputs().0;
     match event {
         PaintEvent::Box(fragment) => self::fragment(out, "box", fragment),
         PaintEvent::OuterBoxShadow(fragment) => self::fragment(out, "outer_box_shadow", fragment),
@@ -224,8 +260,29 @@ fn paint_event(out: &mut String, event: &PaintEvent<'_>) {
                 u8::from(piece.has_end_edge),
             );
         }
-        // Clips, opacity and transform groups, text lines, images and column
-        // rules hold plain data only.
+        // The events of images name them; where a page placed them is kept
+        // in the document.
+        PaintEvent::MarkerImage(owner) => {
+            let _ = writeln!(
+                out,
+                "  marker_image owner={} placement={}",
+                owner.0,
+                placement(document.page_marker_image(page.index(), *owner)),
+            );
+        }
+        PaintEvent::GeneratedImage(image) => {
+            let _ = writeln!(
+                out,
+                "  generated_image owner={} kind={:?} index={} placement={} text_position={:?}",
+                image.owner.0,
+                image.kind,
+                image.index,
+                placement(document.page_generated_image(page.index(), *image)),
+                page.generated_image_text_position(*image),
+            );
+        }
+        // Clips, opacity and transform groups, text lines and column rules
+        // hold plain data only.
         other => {
             let _ = writeln!(out, "  {other:?}");
         }

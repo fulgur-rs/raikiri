@@ -54,12 +54,14 @@ use std::io::{BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutConfig, LayoutOptions, LayoutStatus, MediaContext, MediaType,
     PageDefaults, RenderResources, parse_html_with_resources,
 };
-use raikiri_traits::{PageBox, RenderError};
+use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox, RenderError};
+use url::Url;
 
 /// The size, in CSS px, of the page every case is laid out on unless the
 /// document sets its own, and of the viewport its media queries see.
@@ -352,6 +354,32 @@ fn render_unguarded(case: &str, setup: &Setup) -> String {
     }
 }
 
+/// Width and height, in px, of the image every `content` image stands for.
+const PLACEHOLDER_IMAGE: (u32, u32) = (8, 4);
+
+/// An image source that decodes nothing: every URL is the same opaque
+/// placeholder. Images of `::before` and `::after` content are placed from
+/// their pixels, so without a source they would never reach the layout, and
+/// the placement of a real image is irrelevant to a comparison of two builds.
+struct PlaceholderImages(Arc<DecodedImage>);
+
+impl PlaceholderImages {
+    fn new() -> Self {
+        let (width, height) = PLACEHOLDER_IMAGE;
+        Self(Arc::new(DecodedImage {
+            width,
+            height,
+            rgba: [0, 0, 255, 255].repeat((width * height) as usize),
+        }))
+    }
+}
+
+impl ImagePixelSource for PlaceholderImages {
+    fn get_decoded(&self, _: &Url) -> Option<Arc<DecodedImage>> {
+        Some(Arc::clone(&self.0))
+    }
+}
+
 /// Parses and lays out the HTML document `bytes` and writes its canonical
 /// text. `base_url` is the address the document is parsed at.
 fn lay_out(bytes: &[u8], base_url: Option<url::Url>, setup: &Setup) -> String {
@@ -359,7 +387,8 @@ fn lay_out(bytes: &[u8], base_url: Option<url::Url>, setup: &Setup) -> String {
         .root
         .as_ref()
         .map(|root| files::RootedFiles { root: root.clone() });
-    let mut resources = RenderResources::new();
+    let images = PlaceholderImages::new();
+    let mut resources = RenderResources::new().image_pixel_source(&images);
     if let Some(files) = &files {
         resources = resources.network_provider(files);
     }

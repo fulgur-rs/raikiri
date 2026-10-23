@@ -75,7 +75,9 @@ and hashes it. The text has two parts, described in `src/dump.rs`:
 - the **page API** that a consumer such as fulgur reads, for every page: the
   geometry, the root box, the fragments with their rectangles, the positioned
   glyph runs (origin, advance, ascent, descent, glyphs, decorations, shadows),
-  the paint order, the page-margin boxes and the links;
+  the paint order including the place of every list-marker image and image
+  of `content`, the page-margin boxes with the glyphs of their text (the
+  pieces of each line for text in a vertical writing mode), and the links;
 - the **layout of every node** of each laid-out document: `order`, `location`,
   `size`, `scrollable_overflow_rect`, `scrollbar_size`, and the `border`,
   `padding` and `margin` sizes. Pages laid out again after a change of the
@@ -170,6 +172,9 @@ The manifest the script builds with (`tool_manifest` in
 - A case that panics is caught and recorded, and the cases after it in the
   same process run on whatever state the panic left behind. A new panic can
   therefore show as more than one difference; look at the first one in the list.
+- Images are not decoded. Every image of a list marker or of `content` is the
+  same 8 by 4 px placeholder, so where a page puts it is compared but not its
+  real size or pixels. No other image is loaded either.
 - Only print layout is compared, on one page size. Screen layout is not.
 - Files that read other files do so under `--html-root`, which the script sets
   to the WPT checkout; a generated case reads none.
