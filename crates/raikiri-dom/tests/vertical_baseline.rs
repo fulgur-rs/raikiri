@@ -388,7 +388,7 @@ fn baseline_row(item: &str) -> String {
 }
 
 #[test]
-fn the_item_takes_the_first_baseline_in_the_order_of_the_block_axis() {
+fn the_item_takes_the_first_baseline_in_content_order() {
     // A block child ahead of the text, or text ahead of the block child, gives
     // the item its baseline, whichever it is: the 40px line of `p` is centred
     // 20px across, the 10px line of the text 45px or 5px.
@@ -408,6 +408,30 @@ fn the_item_takes_the_first_baseline_in_the_order_of_the_block_axis() {
             ("w", (148.0, 18.0, 50.0, 10.0)),
             ("p", (148.0, 18.0, 40.0, 10.0)),
             ("d", (178.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    // A negative margin can put the later box ahead of the first line along the
+    // block axis, but not ahead of it in the content: the text still decides.
+    check(
+        &baseline_row(
+            r#"<div id=w>X<div id=p style="line-height:40px;margin-right:-40px">X</div></div>"#,
+        ),
+        &[
+            ("a", (188.0, 8.0, 10.0, 10.0)),
+            ("w", (188.0, 18.0, 10.0, 10.0)),
+            ("p", (188.0, 18.0, 40.0, 10.0)),
+            ("d", (178.0, 28.0, 30.0, 10.0)),
+        ],
+    );
+    check(
+        &baseline_row(
+            r#"<div id=w><div id=p style="line-height:40px;margin-left:-5px">X</div>X</div>"#,
+        ),
+        &[
+            ("a", (183.0, 8.0, 10.0, 10.0)),
+            ("w", (163.0, 18.0, 45.0, 10.0)),
+            ("p", (168.0, 18.0, 40.0, 10.0)),
+            ("d", (173.0, 28.0, 30.0, 10.0)),
         ],
     );
 }

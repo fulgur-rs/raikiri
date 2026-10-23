@@ -1434,18 +1434,35 @@ fn compute_ifc_root(
     output.baselines.first = content_baseline.map(|baseline| baseline + baseline_inset);
     // A vertical root with block children takes the baseline of whichever of
     // its first line and its first block child with one comes first in the
-    // block axis. An inline-block exposes its last line instead, and falls
-    // back on the first block child only when it has no line.
+    // content, whatever margins put where. An inline-block exposes its last
+    // line instead, and falls back on the first block child only when it has
+    // no line.
     if vertical_axes && inputs.run_mode == RunMode::PerformLayout {
-        let block = first_block_baseline(tree, idx).map(|baseline| baseline + baseline_inset);
+        let block = first_block_baseline(tree, idx);
+        let block_first = |child| {
+            tree.nodes[idx]
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .is_none_or(|lines| {
+                    lines
+                        .block_line_starts
+                        .iter()
+                        .any(|&(node, first)| node == child && first == 0)
+                })
+        };
         output.baselines.first = match (output.baselines.first, block) {
-            (Some(line), Some(block))
+            (Some(line), Some((child, baseline)))
                 if tree.nodes[idx].display()
                     != raikiri_style::property::DisplayValue::InlineBlock =>
             {
-                Some(line.min(block))
+                Some(if block_first(child) {
+                    baseline + baseline_inset
+                } else {
+                    line
+                })
             }
-            (line, block) => line.or(block),
+            (line, block) => line.or(block.map(|(_, baseline)| baseline + baseline_inset)),
         };
     }
     output.oof_candidates.append(&mut nested_oof_candidates);
@@ -2197,16 +2214,16 @@ fn dominant_baseline(tree: &LayoutSession<'_>, idx: usize) -> shodo::geometry::B
     }
 }
 
-/// The first baseline of the block children of the vertical ifc root `idx`:
-/// that of the first in-flow block-level child that has one, as an offset
-/// along the block axis from the block-start edge of the root's content box.
+/// The first block child of the vertical ifc root `idx` that has a baseline,
+/// with that baseline: an offset along the block axis from the block-start
+/// edge of the root's content box. The children of a `display: contents`
+/// element count as the root's own.
 ///
 /// The children's layouts recorded it when the root placed them, from the
 /// baseline each exported: the one its own formatting context gave it,
 /// clamped when it scrolls, and measured from its place in normal flow
-/// whatever its relative offset. The children of a `display: contents` element
-/// count as the root's own.
-fn first_block_baseline(doc: &LayoutSession<'_>, idx: usize) -> Option<f32> {
+/// whatever its relative offset.
+fn first_block_baseline(doc: &LayoutSession<'_>, idx: usize) -> Option<(usize, f32)> {
     doc.nodes[idx].children.iter().find_map(|&child| {
         let node = &doc.nodes[child];
         if !node.is_in_document() || node.is_display_none() {
@@ -2215,6 +2232,7 @@ fn first_block_baseline(doc: &LayoutSession<'_>, idx: usize) -> Option<f32> {
             first_block_baseline(doc, child)
         } else {
             node.vertical_first_baseline
+                .map(|baseline| (child, baseline))
         }
     })
 }
