@@ -7,6 +7,8 @@ use super::inline_boxes::{BoxRect, InlineBoxPiece, forced_break_boxes, inline_bo
 use super::root::IfcRoot;
 use crate::Document;
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::LayoutOutput;
+use raikiri_layout_geometry::{Point, Size};
 use raikiri_traits::NodeKind;
 use std::collections::HashMap;
 
@@ -92,7 +94,7 @@ pub(crate) fn record_inline_boxes(
             // inside the root's border box by its physical left and top insets.
             None => (-geometry.insets.left, -geometry.insets.top),
         };
-        let output = taffy::LayoutOutput::from_outer_size(taffy::Size {
+        let output = LayoutOutput::from_outer_size(Size {
             width: rect.map_or(0.0, |r| r.width),
             height: rect.map_or(0.0, |r| r.height),
         });
@@ -103,7 +105,7 @@ pub(crate) fn record_inline_boxes(
             .iter()
             .find(|(id, _)| *id == element)
             .map_or((0.0, 0.0), |(_, offset)| *offset);
-        let location = taffy::Point {
+        let location = Point {
             x: rect.map_or(0.0, |r| r.x - origin.0) + own.0,
             y: rect.map_or(0.0, |r| r.y - origin.1) + own.1,
         };
