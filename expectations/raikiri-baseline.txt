@@ -5067,3 +5067,71 @@ css/css-flexbox/gap-003-rl.html
 # --- XHTML reftests parsed as XML (WPT pin 97ea26e2, EXACT, Linux, 2026-10-23) ---
 # An XHTML reftest is parsed as XML, so a self-closing `<div/>` is a sibling of the next element instead of its parent, and the flex items sit as in the reference; KEEP in two audit-vacuous-passes runs.
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml
+
+# --- flex containers in vertical writing modes (WPT pin 97ea26e2, EXACT, Linux, 2026-10-23) ---
+# Items, gaps, wrapping, auto margins, percentage padding and the scroll origin of a flex container in a vertical writing mode follow the axes of its own writing mode, so test and reference match, and the layout matches Chromium's; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/css-flexbox-row-reverse-wrap-reverse.html
+css/css-flexbox/css-flexbox-row-reverse-wrap.html
+css/css-flexbox/css-flexbox-row-reverse.html
+css/css-flexbox/css-flexbox-row-wrap-reverse.html
+css/css-flexbox/css-flexbox-row-wrap.html
+css/css-flexbox/flexbox-align-self-vert-001.xhtml
+css/css-flexbox/flexbox-align-self-vert-003.xhtml
+css/css-flexbox/flexbox-basic-block-horiz-001v.xhtml
+css/css-flexbox/flexbox-basic-block-vert-001.xhtml
+css/css-flexbox/flexbox-basic-block-vert-001v.xhtml
+css/css-flexbox/flexbox-basic-canvas-horiz-001v.xhtml
+css/css-flexbox/flexbox-column-row-gap-002.html
+css/css-flexbox/flexbox-flex-wrap-vert-002.html
+css/css-flexbox/flexbox-justify-content-vert-001a.xhtml
+css/css-flexbox/flexbox-justify-content-vert-001b.xhtml
+css/css-flexbox/flexbox-justify-content-vert-002.xhtml
+css/css-flexbox/flexbox-justify-content-vert-003.xhtml
+css/css-flexbox/flexbox-justify-content-vert-004.xhtml
+css/css-flexbox/flexbox-sizing-vert-001.xhtml
+css/css-flexbox/flexbox-writing-mode-002.html
+css/css-flexbox/flexbox-writing-mode-003.html
+css/css-flexbox/flexbox-writing-mode-005.html
+css/css-flexbox/flexbox-writing-mode-006.html
+css/css-flexbox/flexbox-writing-mode-008.html
+css/css-flexbox/flexbox-writing-mode-009.html
+css/css-flexbox/flexbox-writing-mode-014.html
+css/css-flexbox/flexbox-writing-mode-015.html
+css/css-flexbox/flexbox-writing-mode-slr-rtl.html
+css/css-flexbox/flexbox-writing-mode-slr.html
+css/css-flexbox/flexbox-writing-mode-srl-rtl.html
+css/css-flexbox/flexbox-writing-mode-srl.html
+css/css-flexbox/flexbox_writing_mode_vertical_lays_out_contents_from_top_to_bottom.html
+css/css-flexbox/grid-flex-item-001.html
+css/css-flexbox/overflow-top-left.html
+css/css-flexbox/percentage-padding-003.html
+css/css-flexbox/percentage-padding-004.html
+css/css-writing-modes/sideways-lr-main-axis.html
+
+# --- grid items and absolute children in vertical writing modes (WPT pin 97ea26e2, EXACT, Linux, 2026-10-23) ---
+# Absolutely positioned and percentage-sized children of a grid container in a vertical writing mode resolve against the axes of their own writing mode, so test and reference match, and the layout matches Chromium's; KEEP in two audit-vacuous-passes runs.
+css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-003.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-vertWM-001.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-vertWM-002.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-vertWM-003.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-vertWM-004.html
+css/css-grid/abspos/grid-positioned-children-writing-modes-001.html
+css/css-grid/firefox-bug-1881495.html
+css/css-grid/grid-items/grid-item-percentage-sizes-001.html
+css/css-grid/grid-items/grid-item-percentage-sizes-003.html
+
+# --- baseline alignment in vertical flex and grid (WPT pin 97ea26e2, EXACT, Linux, 2026-10-23) ---
+# Items of a vertical flex or grid container align by baseline along the axes of their own writing mode, with the central baseline for vertical text and a synthesized baseline for boxes without a line, so test and reference match, and the layout matches Chromium's; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/baseline-synthesis-001.html
+css/css-flexbox/baseline-synthesis-002.html
+css/css-flexbox/baseline-synthesis-003.html
+css/css-flexbox/baseline-synthesis-004.html
+css/css-flexbox/baseline-synthesis-vert-lr-line-under.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-last-baseline-001.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-last-baseline-002.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-vertWM-last-baseline-003.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-vertWM-last-baseline-004.html
+css/css-grid/alignment/self-baseline/grid-self-baseline-003.html
+css/css-grid/alignment/self-baseline/grid-self-baseline-vertical-lr-003.html
+css/css-grid/alignment/self-baseline/grid-self-baseline-vertical-rl-001.html
+css/css-grid/alignment/self-baseline/grid-self-baseline-vertical-rl-003.html
