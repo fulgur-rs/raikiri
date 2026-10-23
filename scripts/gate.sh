@@ -10,6 +10,10 @@
 #                       under cargo-llvm-cov and need a clean *.rs tree.
 #   --with-bench       Also run the optional cascade benchmark comparison.
 #
+# Environment:
+#   RAIKIRI_GATE_CACHE=0   Do not restore the shared third-party build cache
+#                           (scripts/gate-cache.sh) before the instrumented build.
+#
 # Exit status is 0 when every applicable check passes. The output records the
 # commands and their results for the caller to inspect.
 
@@ -185,6 +189,16 @@ if [[ "$SKIP_COVERAGE" -eq 0 ]]; then
     exit 1
   fi
   TEST_CMD=(cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --no-report)
+
+  # Seed an empty target/ with the shared third-party build cache so only the
+  # workspace crates compile (see scripts/gate-cache.sh). Best effort: with no
+  # cache entry, or when target/ already holds an instrumented build, it does
+  # nothing. RAIKIRI_GATE_CACHE=0 skips it.
+  if [[ "${RAIKIRI_GATE_CACHE:-1}" != "0" ]]; then
+    echo "-- scripts/gate-cache.sh restore --"
+    "$SCRIPT_DIR/gate-cache.sh" restore || echo "(cache restore failed; building from scratch)"
+    echo
+  fi
 
   # A clean is required before measuring: an incremental run reuses stale
   # profile data and, after comment-only edits, reports false uncovered lines.
