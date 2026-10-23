@@ -1,6 +1,7 @@
 use crate::Document;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{page_box_800x600, with_ahem};
+use raikiri_layout_geometry::Size;
 use raikiri_style::{build_rule_tree, cascade};
 
 #[test]
@@ -381,7 +382,7 @@ fn vertical_root_percentage_padding_uses_the_icb_inline_size() {
         );
         assert_eq!(
             doc.nodes[html].unrounded_layout.size,
-            taffy::Size {
+            Size {
                 width: 100.0,
                 height: 80.0
             },

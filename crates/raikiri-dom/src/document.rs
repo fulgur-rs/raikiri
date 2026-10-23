@@ -26,6 +26,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use raikiri_layout_geometry::Point;
 use raikiri_traits::{QuirksMode, StylesheetKind};
 
 use crate::fragment::FragmentTree;
@@ -37,8 +38,8 @@ pub(crate) struct OofCoordinate {
     pub(crate) static_owner: usize,
     pub(crate) follow_static_x: bool,
     pub(crate) follow_static_y: bool,
-    pub(crate) initial_owner_origin: Option<taffy::Point<f32>>,
-    pub(crate) initial_static_origin: Option<taffy::Point<f32>>,
+    pub(crate) initial_owner_origin: Option<Point<f32>>,
+    pub(crate) initial_static_origin: Option<Point<f32>>,
 }
 
 pub(crate) mod ancestors;

@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
+use raikiri_layout_geometry::Point;
 use raikiri_style::{build_rule_tree, cascade};
 
 /// `html > body(margin:0) > div(parent_css) > div(wrapper_css) > div(fixed_css)`
@@ -572,7 +573,7 @@ fn fixed_boxes_are_placed_against_a_transformed_ancestor_other_than_the_parent()
     let (cb_x, cb_y, _, _) = absolute_rect(&doc, containing_block);
     assert_eq!(
         doc.nodes[fixed].unrounded_layout.location,
-        taffy::Point {
+        Point {
             x: fixed_x - cb_x,
             y: fixed_y - cb_y,
         },

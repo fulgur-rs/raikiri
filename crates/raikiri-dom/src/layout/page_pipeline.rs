@@ -1188,7 +1188,7 @@ fn layout_single_page_with_table_projection(
                 content_width,
                 content_height,
             );
-            let available_space = taffy::Size {
+            let available_space = Size {
                 width: AvailableSpace::Definite(content_width),
                 height: AvailableSpace::Definite(content_height),
             };
@@ -1197,14 +1197,14 @@ fn layout_single_page_with_table_projection(
         })?;
     crate::taffy_impl::compute_root_layout_with_content_limits(
         document,
-        TaffyNodeId::from(icb),
+        protocol::NodeId::from(icb),
         available_space,
     );
     take_layout_failure(document)?;
     super::fixed::correct_root_oof_auto_margins(
         document,
         icb,
-        taffy::Size {
+        Size {
             width: content_width,
             height: content_height,
         },

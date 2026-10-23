@@ -5,11 +5,12 @@ mod preparation_tests;
 pub(super) mod scoped_override_tests;
 pub(crate) use scoped_override_tests::with_setup_inspector;
 
-use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession};
+use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession, protocol};
 use crate::{Document, LayoutStyle};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, build_rule_tree, cascade};
 use taffy::CoreStyle;
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
 
 pub(crate) fn fixture() -> (Document, raikiri_style::CascadeResult, usize, usize) {
     fixture_with_styles("display:flex", "width:31px;height:7px")
@@ -258,7 +259,7 @@ fn initial_containing_block_recipe_uses_page_dimensions() {
         tree.style_view(icb),
         &LayoutStyle {
             display: taffy::Display::Block,
-            size: taffy::Size {
+            size: StyleSize {
                 width: taffy::Dimension::length(123.0),
                 height: taffy::Dimension::length(456.0),
             },
@@ -639,7 +640,7 @@ fn flex_grid_queries_preserve_legacy_claims_and_prepared_facts() {
                 let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", &css);
                 let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
                 apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-                let id = taffy::NodeId::from(child);
+                let id = protocol::NodeId::from(child);
                 assert!(tree.style_view(child).is_containing_block().fixed);
                 assert!(
                     tree.get_core_container_style(id)

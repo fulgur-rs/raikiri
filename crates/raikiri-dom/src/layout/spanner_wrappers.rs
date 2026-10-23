@@ -253,7 +253,7 @@ fn holds_lines(
 /// Makes the box of `id` a `display: contents` one, as the bridge does for
 /// an element that is one.
 fn lift_into_container(doc: &mut LayoutSession<'_>, id: usize) {
-    doc.nodes[id].unrounded_layout = taffy::Layout::default();
+    doc.nodes[id].unrounded_layout = BoxLayout::default();
     doc.nodes[id].multicol_auto_width = true;
     doc.nodes[id].has_logical_min_block_size = false;
     let position = doc.nodes[id].position().clone();

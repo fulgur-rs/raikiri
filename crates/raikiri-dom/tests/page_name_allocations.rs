@@ -75,6 +75,7 @@ fn unnamed_first_page_selection_allocates_nothing() {
 
 #[test]
 fn flat_taffy_child_walk_allocates_nothing() {
+    use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the public Document tree traits take Taffy's id
     use taffy::TraversePartialTree;
     for width in [0, 1, 128] {
         let mut doc = Document::new();
@@ -84,9 +85,9 @@ fn flat_taffy_child_walk_allocates_nothing() {
             .collect();
         doc.mark_in_document_flags();
         ALLOCATIONS.with(|count| count.set(Some(0)));
-        let mut children = doc.child_ids(taffy::NodeId::from(parent));
+        let mut children = doc.child_ids(TaffyNodeId::from(parent));
         for &child in &expected {
-            assert_eq!(children.next(), Some(taffy::NodeId::from(child)));
+            assert_eq!(children.next(), Some(TaffyNodeId::from(child)));
         }
         assert_eq!(children.next(), None);
         assert_eq!(children.next(), None);

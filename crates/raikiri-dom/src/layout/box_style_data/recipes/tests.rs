@@ -7,6 +7,7 @@ use raikiri_style::{
     ComputedBorderSpacing, ComputedLengthPercentageOrAuto as L,
     property::{BorderCollapseValue, CaptionSideValue, WritingMode},
 };
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
 use taffy::{
     CoreStyle, FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
     GridItemStyle as GI,
@@ -65,7 +66,7 @@ fn icb_recipe_keeps_physical_dimensions_and_independent_direction() {
         let legacy = LayoutStyle {
             display: taffy::Display::Block,
             direction,
-            size: taffy::Size {
+            size: StyleSize {
                 width: taffy::Dimension::length(80.0),
                 height: taffy::Dimension::length(120.0),
             },

@@ -1183,7 +1183,7 @@ fn stretched_column_flex_image_keeps_the_known_cross_size() {
     layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
     assert_eq!(
         doc.nodes[image].unrounded_layout.size,
-        taffy::Size {
+        Size {
             width: 800.0,
             height: 400.0
         }
@@ -1246,7 +1246,7 @@ fn ratio_only_inline_svg_uses_the_containing_width() {
         layout_single_page(&mut doc, &cascade, page).unwrap();
         assert_eq!(
             doc.nodes[svg].unrounded_layout.size,
-            taffy::Size {
+            Size {
                 width: expected_width,
                 height: expected_height
             }
@@ -1303,8 +1303,11 @@ fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
 
 #[test]
 fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
+    use crate::layout::protocol::{
+        AvailableSpace, LayoutInput, NodeId, RequestedAxis, RunMode, SizingMode,
+    };
+    use raikiri_layout_geometry::Size;
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{AvailableSpace, LayoutInput, NodeId, Size, SizingMode};
     let mut doc = Document::new();
     let svg = doc.append_element(
         Some(0),
@@ -1347,9 +1350,9 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
                 &mut session,
                 NodeId::from(svg),
                 LayoutInput {
-                    run_mode: taffy::RunMode::ComputeSize,
+                    run_mode: RunMode::ComputeSize,
                     sizing_mode,
-                    axis: taffy::RequestedAxis::Both,
+                    axis: RequestedAxis::Both,
                     parent_size: Size {
                         width: Some(800.0),
                         height: Some(600.0),
@@ -1369,9 +1372,7 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
 /// Lay out a body with `body_style` holding one empty block child and an
 /// absolutely positioned child, returning the page content width and the
 /// body and block layouts plus the absolute child's page-coordinate origin.
-fn lay_out_body_with_children(
-    body_style: &str,
-) -> (f32, taffy::Layout, taffy::Layout, taffy::Point<f32>) {
+fn lay_out_body_with_children(body_style: &str) -> (f32, BoxLayout, BoxLayout, Point<f32>) {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();

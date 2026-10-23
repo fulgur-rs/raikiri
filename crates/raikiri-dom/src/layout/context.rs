@@ -5,7 +5,9 @@ use std::ops::{Deref, DerefMut};
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::LayoutWarn;
+use crate::layout::protocol::{self, LayoutInput};
 use crate::node::arena::BoxKey;
+use raikiri_layout_geometry::Size;
 
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
@@ -21,7 +23,7 @@ pub(crate) struct LayoutContext {
     pub(crate) transposed_frame_serial: u64,
     pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
-    pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
+    pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
@@ -42,12 +44,12 @@ pub(crate) struct LayoutContext {
     /// The final layout inputs observed for out-of-flow candidates during a
     /// preliminary positioning pass, before their intrinsic limits are
     /// installed.
-    pub(crate) oof_content_limit_inputs: Vec<HashMap<usize, taffy::LayoutInput>>,
+    pub(crate) oof_content_limit_inputs: Vec<HashMap<usize, LayoutInput>>,
     /// Nested candidate wrappers skip their own prepasses while an outer
     /// candidate wrapper is gathering unconstrained positioning inputs.
     pub(crate) oof_content_limit_prepass_depth: usize,
     pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<smol_str::SmolStr>>,
-    pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
+    pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) text_group: TextGroupScope,
     /// The least space a line leaves unfilled so far in the group being
@@ -88,7 +90,7 @@ pub(crate) enum TextGroupScope {
 #[derive(Debug)]
 pub(crate) struct NodeLayoutState {
     pub(crate) box_key: BoxKey,
-    pub(crate) taffy_child_walks: Option<Vec<taffy::NodeId>>,
+    pub(crate) taffy_child_walks: Option<Vec<protocol::NodeId>>,
 }
 
 pub(crate) struct LayoutSession<'doc> {

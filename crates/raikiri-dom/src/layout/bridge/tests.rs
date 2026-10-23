@@ -1,5 +1,7 @@
 use super::*;
 use crate::layout::test_support::{bridged_display, bridged_style};
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentageAuto> is style input
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
 
 #[test]
 fn apply_computed_to_style_bridges_display_to_taffy() {
@@ -266,9 +268,9 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     // calls apply_computed_to_style, then asserts body.style.margin.
     // The inline style also checks raikiri-style's shorthand and longhand margin parsing.
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{LengthPercentageAuto, Rect};
+    use taffy::LengthPercentageAuto;
 
-    fn margin_for(inline: &str) -> Rect<LengthPercentageAuto> {
+    fn margin_for(inline: &str) -> StyleRect<LengthPercentageAuto> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", Some(inline));
@@ -284,7 +286,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     //   Rect.top,right,bottom,left (to prevent a silent positional transpose).
     assert_eq!(
         margin_for("margin: 10px 20px 30px 40px"),
-        Rect {
+        StyleRect {
             top: LengthPercentageAuto::length(10.0),
             right: LengthPercentageAuto::length(20.0),
             bottom: LengthPercentageAuto::length(30.0),
@@ -295,7 +297,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     // Case 2: shorthand `margin: auto` → auto() on all four sides.
     assert_eq!(
         margin_for("margin: auto"),
-        Rect {
+        StyleRect {
             top: LengthPercentageAuto::auto(),
             right: LengthPercentageAuto::auto(),
             bottom: LengthPercentageAuto::auto(),
@@ -308,7 +310,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     //   percentages 0–100 to taffy fractions 0.0–1.0 by dividing by 100.
     assert_eq!(
         margin_for("margin-left: 50%"),
-        Rect {
+        StyleRect {
             top: LengthPercentageAuto::length(0.0),
             right: LengthPercentageAuto::length(0.0),
             bottom: LengthPercentageAuto::length(0.0),
@@ -329,7 +331,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     //   See the docs for `resolve::pt_to_px`.
     assert_eq!(
         margin_for("margin-top: 10pt"),
-        Rect {
+        StyleRect {
             top: LengthPercentageAuto::length(10.0 * 4.0 / 3.0),
             right: LengthPercentageAuto::length(0.0),
             bottom: LengthPercentageAuto::length(0.0),
@@ -355,7 +357,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
     // The inline style also checks raikiri-style's shorthand and longhand padding parsing.
     use raikiri_style::{build_rule_tree, cascade};
 
-    fn padding_for(inline: &str) -> Rect<LengthPercentage> {
+    fn padding_for(inline: &str) -> StyleRect<LengthPercentage> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", Some(inline));
@@ -372,7 +374,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
     //   orders fields top,right,bottom,left; `Rect` orders left,right,top,bottom.
     assert_eq!(
         padding_for("padding: 5px 10px 15px 20px"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(5.0),
             right: LengthPercentage::length(10.0),
             bottom: LengthPercentage::length(15.0),
@@ -385,7 +387,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
     //   percentages 0–100 to taffy fractions 0.0–1.0 by dividing by 100.
     assert_eq!(
         padding_for("padding-left: 5%"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(0.0),
             right: LengthPercentage::length(0.0),
             bottom: LengthPercentage::length(0.0),
@@ -401,7 +403,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
     //   (`4.0` happens to be bit-identical to 3*4/3, but the expression states the policy.)
     assert_eq!(
         padding_for("padding-top: 3pt"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(3.0 * 4.0 / 3.0),
             right: LengthPercentage::length(0.0),
             bottom: LengthPercentage::length(0.0),
@@ -527,7 +529,7 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
     // changing the default when the property is unspecified.
     use raikiri_style::{build_rule_tree, cascade};
 
-    fn min_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
+    fn min_for(inline: Option<&str>) -> StyleSize<LengthPercentageAuto> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", None::<&str>);
@@ -547,7 +549,7 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
     // Case 2: `min-width: 100px; min-height: 50%` → length + percent.
     assert_eq!(
         min_for(Some("min-width: 100px; min-height: 50%")),
-        Size {
+        StyleSize {
             width: LengthPercentageAuto::length(100.0),
             height: LengthPercentageAuto::percent(0.5),
         }
@@ -577,7 +579,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     // match the taffy default.
     use raikiri_style::{build_rule_tree, cascade};
 
-    fn max_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
+    fn max_for(inline: Option<&str>) -> StyleSize<LengthPercentageAuto> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", None::<&str>);
@@ -597,7 +599,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     // Case 2: `max-width: 100px; max-height: 50%` → length + percent.
     assert_eq!(
         max_for(Some("max-width: 100px; max-height: 50%")),
-        Size {
+        StyleSize {
             width: LengthPercentageAuto::length(100.0),
             height: LengthPercentageAuto::percent(0.5),
         }
@@ -689,9 +691,9 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     // `border-top: ...` is not yet supported by the parser;
     // see computed.rs lines 228–229.
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{LengthPercentage, Rect};
+    use taffy::LengthPercentage;
 
-    fn border_for(inline: &str) -> Rect<LengthPercentage> {
+    fn border_for(inline: &str) -> StyleRect<LengthPercentage> {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", Some(inline));
@@ -707,7 +709,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     //   Pin the Rect.top/right/bottom/left ↔ Sides.top/right/bottom/left field-name mapping.
     assert_eq!(
         border_for("border: 5px solid red"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(5.0),
             right: LengthPercentage::length(5.0),
             bottom: LengthPercentage::length(5.0),
@@ -722,7 +724,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     //   breaks, 5.0 leaks through; this case is the canary.
     assert_eq!(
         border_for("border: 5px none red"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(0.0),
             right: LengthPercentage::length(0.0),
             bottom: LengthPercentage::length(0.0),
@@ -738,7 +740,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     //   difference from `none` is conflict resolution for collapsed table borders.
     assert_eq!(
         border_for("border: 5px hidden red"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(0.0),
             right: LengthPercentage::length(0.0),
             bottom: LengthPercentage::length(0.0),
@@ -752,7 +754,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     //   (CSS Values 4 §6.2: 1pt = 96/72 px = 4/3 px). Keep the right-hand side as an expression for bit-identical f32.
     assert_eq!(
         border_for("border-top-width: 3pt; border-top-style: solid"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(3.0 * 4.0 / 3.0),
             right: LengthPercentage::length(0.0),
             bottom: LengthPercentage::length(0.0),
@@ -771,7 +773,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     //   Length::Px(3.0) end to end.
     assert_eq!(
         border_for("border-top-width: medium; border-top-style: solid"),
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(3.0),
             right: LengthPercentage::length(0.0),
             bottom: LengthPercentage::length(0.0),
@@ -813,7 +815,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
 #[test]
 fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{LengthPercentage, Rect};
+    use taffy::LengthPercentage;
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
@@ -831,7 +833,7 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
     // border-style unset (initial `none`) must gate width to 0 all the way to taffy.
     assert_eq!(
         bridged_style(&mut doc, &cr, body).border,
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(0.0),
             right: LengthPercentage::length(0.0),
             bottom: LengthPercentage::length(0.0),
@@ -850,7 +852,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     // This test catches regressions that collapse values to 0.0; all
     // expected values are nonzero and derived from font-size.
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{Dimension, LengthPercentage, LengthPercentageAuto, Rect};
+    use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("font-size: 20px"));
@@ -872,7 +874,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     // 2em × 20px = 40px (previously 0.0).
     assert_eq!(
         style.padding,
-        Rect {
+        StyleRect {
             top: LengthPercentage::length(40.0),
             right: LengthPercentage::length(40.0),
             bottom: LengthPercentage::length(40.0),
@@ -882,7 +884,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     // 1.5rem × 20px (root font-size) = 30px (previously 0.0).
     assert_eq!(
         style.margin,
-        Rect {
+        StyleRect {
             top: LengthPercentageAuto::length(30.0),
             right: LengthPercentageAuto::length(30.0),
             bottom: LengthPercentageAuto::length(30.0),
@@ -1898,7 +1900,7 @@ fn apply_computed_to_style_bridges_the_fit_content_function_limit_to_taffy() {
 }
 
 /// The Taffy size bridged for each `(parent css, child tag, child css)`.
-fn bridged_sizes(cases: &[(&str, &str, &str)]) -> Vec<taffy::Size<Dimension>> {
+fn bridged_sizes(cases: &[(&str, &str, &str)]) -> Vec<StyleSize<Dimension>> {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -1933,8 +1935,8 @@ fn bridged_content_limits(
     cases: &[(&str, &str, &str)],
 ) -> Vec<(
     crate::taffy_impl::content_limits::ContentLimits,
-    taffy::Size<LengthPercentageAuto>,
-    taffy::Size<LengthPercentageAuto>,
+    StyleSize<LengthPercentageAuto>,
+    StyleSize<LengthPercentageAuto>,
 )> {
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -1982,11 +1984,11 @@ fn a_block_in_normal_flow_records_its_keyword_min_and_max_sizes() {
         assert_eq!(
             limits,
             ContentLimits {
-                min: taffy::Size {
+                min: StyleSize {
                     width: Dimension::min_content(),
                     height: Dimension::max_content(),
                 },
-                max: taffy::Size {
+                max: StyleSize {
                     width: Dimension::fit_content(),
                     height: Dimension::fit_content_px(10.0),
                 },
@@ -1994,8 +1996,8 @@ fn a_block_in_normal_flow_records_its_keyword_min_and_max_sizes() {
             "{display} in {parent}"
         );
         // Taffy cannot hold a keyword and sees no constraint.
-        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
-        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(min, StyleSize::<LengthPercentageAuto>::auto());
+        assert_eq!(max, StyleSize::<LengthPercentageAuto>::auto());
     }
 }
 
@@ -2015,19 +2017,19 @@ fn a_flex_or_grid_container_records_its_keyword_min_and_max_sizes() {
         assert_eq!(
             limits,
             ContentLimits {
-                min: taffy::Size {
+                min: StyleSize {
                     width: Dimension::min_content(),
                     height: Dimension::max_content(),
                 },
-                max: taffy::Size {
+                max: StyleSize {
                     width: Dimension::fit_content(),
                     height: Dimension::fit_content_px(10.0),
                 },
             },
             "display:{display}"
         );
-        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
-        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(min, StyleSize::<LengthPercentageAuto>::auto());
+        assert_eq!(max, StyleSize::<LengthPercentageAuto>::auto());
     }
 }
 
@@ -2044,19 +2046,19 @@ fn a_flex_or_grid_item_records_its_keyword_min_and_max_sizes() {
         assert_eq!(
             limits,
             ContentLimits {
-                min: taffy::Size {
+                min: StyleSize {
                     width: Dimension::min_content(),
                     height: Dimension::max_content(),
                 },
-                max: taffy::Size {
+                max: StyleSize {
                     width: Dimension::fit_content(),
                     height: Dimension::fit_content_px(10.0),
                 },
             },
             "{parent}"
         );
-        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
-        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(min, StyleSize::<LengthPercentageAuto>::auto());
+        assert_eq!(max, StyleSize::<LengthPercentageAuto>::auto());
     }
 }
 
@@ -2733,7 +2735,7 @@ fn changing_a_block_parent_to_flex_refreshes_inline_size_containment_before_clas
     doc.set_element_inline_style(parent, Some("display:flex;align-items:start".into()));
     let second = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout_single_page(&mut doc, &second, page_box_800x600()).unwrap();
-    assert_eq!(doc.nodes[child].unrounded_layout.size, taffy::Size::ZERO);
+    assert_eq!(doc.nodes[child].unrounded_layout.size, Size::ZERO);
 }
 
 #[test]
@@ -2760,14 +2762,14 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
         let fresh_style = cascade(&fresh, &build_rule_tree(&fresh)).unwrap();
         crate::layout_single_page(&mut fresh, &fresh_style, page_box_800x600()).unwrap();
         let expected = fresh.nodes[fresh_child].unrounded_layout.size;
-        assert_eq!(expected, taffy::Size::ZERO);
+        assert_eq!(expected, Size::ZERO);
 
         let (mut changed, parent, child) = fixture("display:table");
         let first = cascade(&changed, &build_rule_tree(&changed)).unwrap();
         crate::layout_single_page(&mut changed, &first, page_box_800x600()).unwrap();
         assert_eq!(
             changed.nodes[child].unrounded_layout.size,
-            taffy::Size {
+            Size {
                 width: 40.0,
                 height: 20.0
             }

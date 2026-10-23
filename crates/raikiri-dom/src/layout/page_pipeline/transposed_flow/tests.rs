@@ -1,5 +1,7 @@
 use super::*;
+use crate::layout::protocol::{LayoutInput, RequestedAxis, RunMode, SizingMode};
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
+use raikiri_layout_geometry::Line;
 
 /// Paginate an 800x600 page holding a root styled `html_css` and a body
 /// styled `body_css` (Ahem text, 10px lines) with one block child per entry
@@ -476,21 +478,21 @@ fn pagination_axis_changes_discard_cached_table_preparation() {
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     let mut session = LayoutSession::bridged(&mut doc, &cascade);
-    let input = taffy::LayoutInput {
-        run_mode: taffy::RunMode::PerformLayout,
-        sizing_mode: taffy::SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Horizontal,
-        known_dimensions: taffy::Size::NONE,
-        parent_size: taffy::Size::NONE,
-        available_space: taffy::Size {
-            width: taffy::AvailableSpace::MaxContent,
-            height: taffy::AvailableSpace::MaxContent,
+    let input = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Horizontal,
+        known_dimensions: Size::NONE,
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
         },
-        known_dimensions_are_definite: taffy::Size {
+        known_dimensions_are_definite: Size {
             width: false,
             height: false,
         },
-        vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     };
     let layout = |session: &mut LayoutSession<'_>| {
         crate::layout::table::compute_table_layout(session, table.into(), input)
@@ -584,21 +586,21 @@ fn pagination_queries_and_updates_are_rejected() {
         Box::new(move |s| {
             s.compute_child_layout(
                 root.into(),
-                taffy::LayoutInput {
-                    run_mode: taffy::RunMode::PerformLayout,
-                    sizing_mode: taffy::SizingMode::InherentSize,
-                    axis: taffy::RequestedAxis::Horizontal,
-                    known_dimensions: taffy::Size::NONE,
-                    parent_size: taffy::Size::NONE,
-                    available_space: taffy::Size {
-                        width: taffy::AvailableSpace::MaxContent,
-                        height: taffy::AvailableSpace::MaxContent,
+                LayoutInput {
+                    run_mode: RunMode::PerformLayout,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: RequestedAxis::Horizontal,
+                    known_dimensions: Size::NONE,
+                    parent_size: Size::NONE,
+                    available_space: Size {
+                        width: AvailableSpace::MaxContent,
+                        height: AvailableSpace::MaxContent,
                     },
-                    known_dimensions_are_definite: taffy::Size {
+                    known_dimensions_are_definite: Size {
                         width: false,
                         height: false,
                     },
-                    vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+                    vertical_margins_are_collapsible: Line::FALSE,
                 },
             );
         }),

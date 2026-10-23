@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_layout_geometry::Point;
 
 #[test]
 fn block_view_prepares_normal_source_and_text_keys() {
@@ -194,7 +195,7 @@ fn block_view_materialized_input_reads_real_getters_and_bridge_alignment() {
     let input = style_input::child(&tree, child);
     assert_eq!(
         input.size,
-        taffy::Size {
+        StyleSize {
             width: taffy::Dimension::length(31.0),
             height: taffy::Dimension::length(7.0)
         }
@@ -300,10 +301,7 @@ fn native_sticky_flex_grid_insets_keep_the_bridge_position() {
             crate::layout::test_support::page_box_800x600(),
         )
         .unwrap();
-        assert_eq!(
-            doc.nodes[child].unrounded_layout.location,
-            taffy::Point::ZERO
-        );
+        assert_eq!(doc.nodes[child].unrounded_layout.location, Point::ZERO);
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         tree.prepare_style_views();
         for role in [

@@ -1,4 +1,6 @@
 use super::*;
+use crate::layout::protocol::{LayoutInput, RequestedAxis, RunMode, SizingMode};
+use raikiri_layout_geometry::Line;
 use raikiri_traits::PageBox;
 
 /// Lay out `<body>` 100px wide with `build` adding its content, giving each
@@ -567,10 +569,10 @@ fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured
             let session_cascade = crate::layout::test_support::cascaded(&doc);
             let mut session =
                 crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
-            let inputs = taffy::LayoutInput {
-                run_mode: taffy::RunMode::ComputeSize,
-                sizing_mode: taffy::SizingMode::InherentSize,
-                axis: taffy::RequestedAxis::Both,
+            let inputs = LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
                 known_dimensions: Size {
                     width: None,
                     height,
@@ -584,14 +586,19 @@ fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured
                     height: None,
                 },
                 available_space: Size {
-                    width: taffy::AvailableSpace::MaxContent,
-                    height: taffy::AvailableSpace::MaxContent,
+                    width: AvailableSpace::MaxContent,
+                    height: AvailableSpace::MaxContent,
                 },
-                vertical_margins_are_collapsible: taffy::Line::FALSE,
+                vertical_margins_are_collapsible: Line::FALSE,
             };
-            crate::taffy_impl::block_layout(&mut session, taffy::NodeId::from(parent), inputs, None)
-                .size
-                .width
+            crate::taffy_impl::block_layout(
+                &mut session,
+                protocol::NodeId::from(parent),
+                inputs,
+                None,
+            )
+            .size
+            .width
         })
         .collect();
     assert_eq!(widths, [50.0, 25.0, 30.0, 50.0]);

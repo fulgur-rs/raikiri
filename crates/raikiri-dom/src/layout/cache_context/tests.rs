@@ -1,5 +1,9 @@
 use super::*;
+use crate::layout::protocol::{
+    self, AvailableSpace, LayoutInput, LayoutOutput, RequestedAxis, RunMode, SizingMode,
+};
 use crate::{Document, layout::context::LayoutSession, node::arena::BoxKey};
+use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{PercentBasis, ViewContext};
 use raikiri_style::property::WritingMode;
 
@@ -267,28 +271,28 @@ fn basis_tags_and_alignment_axes_remain_distinct() {
     }
 }
 
-fn layout_input(width: f32) -> taffy::LayoutInput {
-    taffy::LayoutInput {
-        run_mode: taffy::RunMode::ComputeSize,
-        sizing_mode: taffy::SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
-        known_dimensions: taffy::Size {
+fn layout_input(width: f32) -> LayoutInput {
+    LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
             width: Some(width),
             height: None,
         },
-        known_dimensions_are_definite: taffy::Size {
+        known_dimensions_are_definite: Size {
             width: true,
             height: false,
         },
-        parent_size: taffy::Size {
+        parent_size: Size {
             width: None,
             height: None,
         },
-        available_space: taffy::Size {
-            width: taffy::AvailableSpace::MaxContent,
-            height: taffy::AvailableSpace::MaxContent,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: taffy::Line::TRUE,
+        vertical_margins_are_collapsible: Line::TRUE,
     }
 }
 
@@ -298,15 +302,15 @@ fn first_store_in_new_epoch_clears_every_old_input() {
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     let a = layout_input(10.0);
     let b = layout_input(20.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &a, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &a, LayoutOutput::HIDDEN);
     });
     tree.layout_cache_context.invalidate();
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &b, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &b, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &a).is_none());
         assert!(tree.cache_get(id, &b).is_some());
     });
@@ -318,15 +322,15 @@ fn stale_outer_store_keeps_valid_same_node_inner_cache() {
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     let a = layout_input(10.0);
     let b = layout_input(20.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
         tree.layout_cache_context.invalidate();
         tree.with_cache_frame(0, ViewContext::default(), |tree| {
-            tree.cache_store(id, &b, taffy::LayoutOutput::HIDDEN);
+            tree.cache_store(id, &b, LayoutOutput::HIDDEN);
         });
-        tree.cache_store(id, &a, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &a, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &a).is_none());
         assert!(tree.cache_get(id, &b).is_some());
     });
@@ -354,9 +358,9 @@ fn pending_document_mutation_rejects_parent_cache_before_child_read() {
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let input = layout_input(10.0);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
     });
     tree.layout_dirty = true;
     assert!(tree.cache_get(id, &input).is_none());
@@ -386,7 +390,7 @@ fn later_session_does_not_reuse_unfinished_child_walk() {
     {
         let session_cascade = crate::layout::test_support::cascaded(&doc);
         let tree = LayoutSession::bridged(&mut doc, &session_cascade);
-        tree.node_state(0).unwrap().taffy_child_walks = Some(vec![taffy::NodeId::from(0usize)]);
+        tree.node_state(0).unwrap().taffy_child_walks = Some(vec![protocol::NodeId::from(0usize)]);
     }
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let tree = LayoutSession::bridged(&mut doc, &session_cascade);
@@ -411,7 +415,7 @@ fn walk_session_rollover_does_not_revive_a_previous_walk() {
     let key = BoxKey::Source(0);
     store(&mut cache, key, context(WritingMode::HorizontalTb));
     cache.begin_session();
-    cache.node_state(key, false).taffy_child_walks = Some(vec![taffy::NodeId::from(0usize)]);
+    cache.node_state(key, false).taffy_child_walks = Some(vec![protocol::NodeId::from(0usize)]);
     cache.walk_session = u64::MAX;
     cache.begin_session();
     assert!(cache.node_state(key, false).taffy_child_walks.is_none());
@@ -499,12 +503,12 @@ fn publications_preserve_key_identity_across_large_and_small_worksets() {
 #[test]
 fn publication_sync_preserves_new_walk_in_either_query_order() {
     let key = BoxKey::Source(0);
-    let child = taffy::NodeId::from(2usize);
+    let child = protocol::NodeId::from(2usize);
     for walk_first in [true, false] {
         let mut cache = LayoutCacheContext::default();
         cache.begin_session();
         store_view(&mut cache, key, ViewContext::default());
-        cache.node_state(key, false).taffy_child_walks = Some(vec![taffy::NodeId::from(1usize)]);
+        cache.node_state(key, false).taffy_child_walks = Some(vec![protocol::NodeId::from(1usize)]);
         cache.publish_metadata();
         let epoch = cache.epoch();
         if walk_first {
@@ -531,7 +535,7 @@ fn publication_sync_preserves_new_walk_in_either_query_order() {
 fn transient_override_keeps_walk_and_session_change_keeps_cache() {
     let mut cache = LayoutCacheContext::default();
     let key = BoxKey::Source(0);
-    let child = taffy::NodeId::from(1usize);
+    let child = protocol::NodeId::from(1usize);
     cache.begin_session();
     cache.publish_metadata();
     cache.override_changed(key);
@@ -560,7 +564,7 @@ fn metadata_publication_resets_context_even_after_epoch_exhaustion() {
     cache.override_changed(key);
     let frame = cache.enter_view(key, view);
     cache.leave(frame);
-    cache.node_state(key, false).taffy_child_walks = Some(vec![taffy::NodeId::from(1usize)]);
+    cache.node_state(key, false).taffy_child_walks = Some(vec![protocol::NodeId::from(1usize)]);
     cache.publish_metadata();
     assert_eq!(
         cache.fingerprint(key, view),

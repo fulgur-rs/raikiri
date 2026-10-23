@@ -9,8 +9,9 @@ mod box_properties;
 
 use box_properties::BoxProperties;
 pub(crate) use box_properties::BoxPropertiesRef;
+use raikiri_layout_geometry::{BoxLayout, Size};
 use smol_str::SmolStr;
-use taffy::{Cache, Layout};
+use taffy::Cache;
 
 use crate::fragment::{MulticolGroup, MulticolStyle};
 
@@ -586,7 +587,7 @@ pub struct Node {
     pub(crate) fixed_position: bool,
     /// The physical axes in which size containment sizes this box as if it
     /// had no content (CSS Containment 2 §3.1, §3.2).
-    pub(crate) size_containment: taffy::Size<bool>,
+    pub(crate) size_containment: Size<bool>,
     /// The `min-*` and `max-*` sizes of this box that are intrinsic sizing
     /// keywords, which Taffy's style cannot hold; layout resolves them to
     /// lengths when it lays the box out.
@@ -674,7 +675,7 @@ pub struct Node {
     /// non-finite geometry at the dom-to-paint boundary. Type, field shape, and
     /// access pattern are unchanged; this documentation states only the
     /// behavioral contract for the **set of observable values** at that boundary.
-    pub unrounded_layout: Layout,
+    pub unrounded_layout: BoxLayout,
     /// The content-box height that percentages inside this box resolved
     /// against at its last final layout, as taffy's block algorithm derives
     /// it: `None` when that height was not definite.
@@ -792,7 +793,7 @@ impl Node {
             claims_absolute_oof: false,
             claims_fixed_oof: false,
             fixed_position: false,
-            size_containment: taffy::Size {
+            size_containment: Size {
                 width: false,
                 height: false,
             },
@@ -808,7 +809,7 @@ impl Node {
             parent: None,
             cache: Cache::new(),
             ifc: None,
-            unrounded_layout: Layout::with_order(0),
+            unrounded_layout: BoxLayout::with_order(0),
             percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,

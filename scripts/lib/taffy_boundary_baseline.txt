@@ -15,40 +15,11 @@
 # Do not raise a number to make a regression pass; use the owned names, or mark
 # a real exception on its line with `// taffy-boundary-lint:ignore: <reason>`.
 
-2 crates/raikiri-dom/src/document.rs
-11 crates/raikiri-dom/src/document/tests/taffy_filter_tests.rs
-1 crates/raikiri-dom/src/layout/block_axis_style.rs
-1 crates/raikiri-dom/src/layout/box_style_data/recipes/tests.rs
-1 crates/raikiri-dom/src/layout/bridge.rs
-1 crates/raikiri-dom/src/layout/bridge/settled.rs
-22 crates/raikiri-dom/src/layout/bridge/tests.rs
-1 crates/raikiri-dom/src/layout/bridge/tests/content_limit_bridge_tests.rs
-8 crates/raikiri-dom/src/layout/bridge/tests/replaced_sizing_tests.rs
 2 crates/raikiri-dom/src/layout/cache_context.rs
-26 crates/raikiri-dom/src/layout/cache_context/tests.rs
-19 crates/raikiri-dom/src/layout/cache_context/tests/restore_tests.rs
-5 crates/raikiri-dom/src/layout/context.rs
-1 crates/raikiri-dom/src/layout/fixed/tests.rs
-1 crates/raikiri-dom/src/layout/initial_containing_block/tests.rs
-6 crates/raikiri-dom/src/layout/mod.rs
-12 crates/raikiri-dom/src/layout/page/tests.rs
-2 crates/raikiri-dom/src/layout/page_pipeline.rs
-21 crates/raikiri-dom/src/layout/page_pipeline/tests.rs
-1 crates/raikiri-dom/src/layout/page_pipeline/tests/oof_coordinate_tests.rs
-22 crates/raikiri-dom/src/layout/page_pipeline/transposed_flow/tests.rs
-1 crates/raikiri-dom/src/layout/root_box.rs
-1 crates/raikiri-dom/src/layout/spanner_wrappers.rs
-4 crates/raikiri-dom/src/layout/style_views/metadata.rs
-2 crates/raikiri-dom/src/layout/style_views/tests.rs
-2 crates/raikiri-dom/src/layout/style_views/tests/block_view_tests.rs
-16 crates/raikiri-dom/src/layout/style_views/tests/scoped_override_tests.rs
-1 crates/raikiri-dom/src/layout/test_support.rs
-4 crates/raikiri-dom/src/node.rs
-3 crates/raikiri-dom/src/paint_rules/tests.rs
+1 crates/raikiri-dom/src/layout/context.rs
+1 crates/raikiri-dom/src/node.rs
 3 crates/raikiri-dom/src/taffy_impl.rs
 2 crates/raikiri-dom/src/taffy_impl/content_limits.rs
 3 crates/raikiri-dom/src/taffy_impl/grid_oof.rs
 2 crates/raikiri-dom/src/taffy_impl/oof.rs
-21 crates/raikiri-dom/src/tests.rs
-2 crates/raikiri-dom/tests/page_name_allocations.rs
 4 crates/raikiri-html/src/tests.rs

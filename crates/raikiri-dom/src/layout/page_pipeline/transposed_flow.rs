@@ -77,9 +77,9 @@ impl FlowAxes {
         }
     }
 
-    fn rect<T: Copy>(self, rect: Rect<T>) -> Rect<T> {
+    fn rect<T: Copy>(self, rect: Edges<T>) -> Edges<T> {
         let (top, right, bottom, left) = self.sides(rect.top, rect.right, rect.bottom, rect.left);
-        Rect {
+        Edges {
             left,
             right,
             top,
@@ -87,10 +87,10 @@ impl FlowAxes {
         }
     }
 
-    fn physical_rect<T: Copy>(self, rect: Rect<T>) -> Rect<T> {
+    fn physical_rect<T: Copy>(self, rect: Edges<T>) -> Edges<T> {
         let (top, right, bottom, left) =
             self.physical_sides(rect.top, rect.right, rect.bottom, rect.left);
-        Rect {
+        Edges {
             left,
             right,
             top,
@@ -111,13 +111,13 @@ impl FlowAxes {
 
     /// The layout of a box on transposed axes. `parent_width` is the
     /// physical width of the box its location is relative to.
-    fn layout(self, layout: TaffyLayout, parent_width: f32) -> TaffyLayout {
+    fn layout(self, layout: BoxLayout, parent_width: f32) -> BoxLayout {
         let block_start = if self.right_to_left {
             parent_width - layout.location.x - layout.size.width
         } else {
             layout.location.x
         };
-        TaffyLayout {
+        BoxLayout {
             order: layout.order,
             location: Point {
                 x: layout.location.y,
@@ -141,14 +141,14 @@ impl FlowAxes {
     /// The physical layout of a box laid out on transposed axes.
     /// `parent_width` is the physical width of the box its location is
     /// relative to: the transposed height of that box.
-    fn physical_layout(self, layout: TaffyLayout, parent_width: f32) -> TaffyLayout {
+    fn physical_layout(self, layout: BoxLayout, parent_width: f32) -> BoxLayout {
         let width = layout.size.height;
         let x = if self.right_to_left {
             parent_width - layout.location.y - width
         } else {
             layout.location.y
         };
-        TaffyLayout {
+        BoxLayout {
             order: layout.order,
             location: Point {
                 x,
@@ -252,9 +252,9 @@ pub(super) struct TransposedDocument {
     /// `None` for the page area.
     frames: Vec<Option<usize>>,
     /// The physical layout of each layout key before pagination.
-    physical: Vec<TaffyLayout>,
+    physical: Vec<BoxLayout>,
     /// The layout of each key as it was handed to the paginator.
-    transposed: Vec<TaffyLayout>,
+    transposed: Vec<BoxLayout>,
     live_keys: Vec<(usize, crate::node::arena::BoxKey)>,
     generated_generation: u64,
     prepared_stamp: crate::layout::box_style_data::PreparedStamp,
@@ -321,14 +321,14 @@ impl TransposedDocument {
         let frames: Vec<Option<usize>> = (0..keys)
             .map(|key| layout_frame(document, key).filter(|frame| !outside.contains(frame)))
             .collect();
-        let physical: Vec<TaffyLayout> = (0..keys)
+        let physical: Vec<BoxLayout> = (0..keys)
             .map(|key| document.table_layout_node_mut(key).unrounded_layout)
             .collect();
         let frame_width =
             |key: usize| frames[key].map_or(page_area_width, |frame| physical[frame].size.width);
         // The boxes around the body stay where they are, so that offsets
         // summed up to the page area are those of the body's coordinates.
-        let transposed: Vec<TaffyLayout> = (0..keys)
+        let transposed: Vec<BoxLayout> = (0..keys)
             .map(|key| {
                 if outside.contains(&key) {
                     physical[key]
@@ -415,7 +415,7 @@ impl TransposedDocument {
             return false;
         }
         let keys = self.physical.len();
-        let current: Vec<TaffyLayout> = (0..keys)
+        let current: Vec<BoxLayout> = (0..keys)
             .map(|key| document.table_layout_node_mut(key).unrounded_layout)
             .collect();
         for key in 0..keys {

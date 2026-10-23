@@ -57,7 +57,7 @@ pub(super) fn truncate(
                 + parent_node.unrounded_layout.padding.top
         };
         let children: Vec<usize> = document
-            .child_ids(TaffyNodeId::from(parent))
+            .child_ids(protocol::NodeId::from(parent))
             .map(usize::from)
             .collect();
         let mut first_in_flow = true;

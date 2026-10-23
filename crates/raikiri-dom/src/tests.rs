@@ -1,12 +1,14 @@
 use super::*;
+use crate::layout::protocol::{self, AvailableSpace};
+use raikiri_layout_geometry::{BoxLayout, Point, Size};
 use raikiri_traits::{Dom, Element, Node, NodeId, NodeKind};
-use taffy::{AvailableSpace, Display, Size};
+use taffy::Display;
 
 /// Lays out the subtree under `root` as taffy does, in a session over `doc`
 /// whose styles are bridged from the cascade of the inline styles.
 fn compute_root_layout(
     doc: &mut Document,
-    root: taffy::NodeId,
+    root: protocol::NodeId,
     available_space: Size<AvailableSpace>,
 ) {
     let rules = raikiri_style::build_rule_tree(doc);
@@ -18,7 +20,7 @@ fn compute_root_layout(
 fn compute_root_layout_with(
     doc: &mut Document,
     cascade: &raikiri_style::CascadeResult,
-    root: taffy::NodeId,
+    root: protocol::NodeId,
     available_space: Size<AvailableSpace>,
 ) {
     let mut session = crate::layout::context::LayoutSession::bridged(doc, cascade);
@@ -64,7 +66,7 @@ fn all_three_display_modes_layout_non_degenerate() {
         let (mut doc, layout_root) = build_document(display);
         compute_root_layout(
             &mut doc,
-            taffy::NodeId::from(layout_root),
+            protocol::NodeId::from(layout_root),
             Size {
                 width: AvailableSpace::Definite(800.0),
                 height: AvailableSpace::Definite(600.0),
@@ -108,7 +110,7 @@ fn independent_documents_lay_out_in_parallel() {
                 s.spawn(move || {
                     compute_root_layout(
                         &mut doc,
-                        taffy::NodeId::from(layout_root),
+                        protocol::NodeId::from(layout_root),
                         Size {
                             width: AvailableSpace::Definite(800.0),
                             height: AvailableSpace::Definite(600.0),
@@ -391,7 +393,7 @@ fn empty_display_none_leaf_produces_hidden_layout() {
     );
     compute_root_layout(
         &mut doc,
-        taffy::NodeId::from(hidden),
+        protocol::NodeId::from(hidden),
         Size {
             width: AvailableSpace::Definite(800.0),
             height: AvailableSpace::Definite(600.0),
@@ -411,7 +413,7 @@ fn empty_display_none_leaf_produces_hidden_layout() {
     doc2.append_element(Some(hidden_parent), "child", None::<&str>);
     compute_root_layout(
         &mut doc2,
-        taffy::NodeId::from(hidden_parent),
+        protocol::NodeId::from(hidden_parent),
         Size {
             width: AvailableSpace::Definite(800.0),
             height: AvailableSpace::Definite(600.0),
@@ -453,7 +455,7 @@ fn layout_cache_invalidated_after_mutation() {
     // First layout
     compute_root_layout(
         &mut doc,
-        taffy::NodeId::from(root),
+        protocol::NodeId::from(root),
         Size {
             width: AvailableSpace::Definite(800.0),
             height: AvailableSpace::Definite(600.0),
@@ -466,7 +468,7 @@ fn layout_cache_invalidated_after_mutation() {
 
     compute_root_layout(
         &mut doc,
-        taffy::NodeId::from(root),
+        protocol::NodeId::from(root),
         Size {
             width: AvailableSpace::Definite(800.0),
             height: AvailableSpace::Definite(600.0),
@@ -499,7 +501,7 @@ fn many_mutations_still_yield_correct_layout() {
     }
     compute_root_layout(
         &mut doc,
-        taffy::NodeId::from(root),
+        protocol::NodeId::from(root),
         Size {
             width: AvailableSpace::Definite(800.0),
             height: AvailableSpace::Definite(9999.0),
@@ -518,7 +520,6 @@ fn a_text_leaf_outside_every_paragraph_measures_zero() {
     // A text node that no paragraph lays out (here: no paragraph roots were
     // assigned at all) is a taffy leaf with no size, so it adds nothing to
     // its parent's height.
-    use taffy::{AvailableSpace, NodeId as TaffyNodeId, Size};
 
     let mut doc = Document::new();
     let root = doc.append_element(Some(0), "root", Some("display:block;width:400px"));
@@ -526,7 +527,7 @@ fn a_text_leaf_outside_every_paragraph_measures_zero() {
 
     compute_root_layout(
         &mut doc,
-        TaffyNodeId::from(root),
+        protocol::NodeId::from(root),
         Size {
             width: AvailableSpace::Definite(800.0),
             height: AvailableSpace::Definite(600.0),
@@ -659,8 +660,8 @@ fn taffy_block_layout_does_not_hang_on_nonfinite_computed_geometry() {
     // side isn't needed to determine `non_default` for the fixed test
     // fixture below never executes, but that's still finite coverage of
     // the boolean's meaning, not a gap in what's tested.
-    fn layout_is_non_default_and_finite(layout: &taffy::Layout) -> bool {
-        let default_size = taffy::Layout::new().size;
+    fn layout_is_non_default_and_finite(layout: &BoxLayout) -> bool {
+        let default_size = BoxLayout::new().size;
         let non_default =
             layout.size.width != default_size.width || layout.size.height != default_size.height;
         let finite = layout.size.width.is_finite()
@@ -677,7 +678,7 @@ fn taffy_block_layout_does_not_hang_on_nonfinite_computed_geometry() {
             compute_root_layout_with(
                 &mut doc,
                 &cascade,
-                taffy::NodeId::from(root),
+                protocol::NodeId::from(root),
                 Size {
                     width: AvailableSpace::Definite(800.0),
                     height: AvailableSpace::Definite(600.0),
@@ -727,7 +728,7 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
     );
     compute_root_layout(
         &mut doc,
-        taffy::NodeId::from(root),
+        protocol::NodeId::from(root),
         Size {
             width: AvailableSpace::Definite(200.0),
             height: AvailableSpace::Definite(300.0),
@@ -735,11 +736,11 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
     );
     assert_eq!(
         doc.nodes[first].unrounded_layout.location,
-        taffy::Point { x: 0.0, y: 0.0 }
+        Point { x: 0.0, y: 0.0 }
     );
     assert_eq!(
         doc.nodes[second].unrounded_layout.location,
-        taffy::Point { x: 0.0, y: 35.0 }
+        Point { x: 0.0, y: 35.0 }
     );
     assert_eq!(
         doc.nodes[root].unrounded_layout.size,
@@ -775,7 +776,7 @@ fn programmatic_flow_root_keeps_a_descendant_margin_inside_its_box() {
         );
         compute_root_layout(
             &mut doc,
-            taffy::NodeId::from(root),
+            protocol::NodeId::from(root),
             Size {
                 width: AvailableSpace::Definite(200.0),
                 height: AvailableSpace::Definite(300.0),
