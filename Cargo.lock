@@ -2623,6 +2623,7 @@ dependencies = [
  "criterion",
  "cssparser",
  "raikiri-html",
+ "raikiri-layout-geometry",
  "raikiri-layout-style",
  "raikiri-net",
  "raikiri-style",
@@ -2720,6 +2721,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "raikiri-layout-geometry"
+version = "0.0.1"
+dependencies = [
+ "taffy 0.15.0",
+]
+
+[[package]]
 name = "raikiri-layout-style"
 version = "0.0.1"
 dependencies = [
@@ -2755,6 +2763,7 @@ dependencies = [
  "peniko",
  "raikiri-dom",
  "raikiri-html",
+ "raikiri-layout-geometry",
  "raikiri-style",
  "raikiri-svg",
  "raikiri-traits",

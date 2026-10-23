@@ -8,6 +8,7 @@ use super::{
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
+use raikiri_layout_geometry::Edges;
 use raikiri_style::property::{
     BackgroundImage, BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, Sides,
 };
@@ -99,7 +100,7 @@ struct InlineBox<'a> {
     full_radius: ComputedBorderRadius,
     /// What the piece leaves around its content box once the border is taken
     /// off.
-    padding: taffy::Rect<f32>,
+    padding: Edges<f32>,
     /// The start and size of the border box along the axis.
     piece_start: f32,
     piece_size: f32,
@@ -144,7 +145,7 @@ impl<'a> InlineBox<'a> {
         let has_background_image = cv.has_background_image();
         let (border, radius, full_radius) =
             carried_edges(cv, progression, (low_edge, high_edge), transformed);
-        let padding = taffy::Rect {
+        let padding = Edges {
             left: (content.x - outer.x - border.left.width().px()).max(0.0),
             right: ((outer.x + outer.width)
                 - (content.x + content.width)

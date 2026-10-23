@@ -366,6 +366,17 @@ if ! "$SCRIPT_DIR/orphan-tests-lint.sh"; then
 fi
 echo
 
+echo "-- scripts/taffy-boundary-lint.sh --"
+# Keeps Taffy's layout-result, geometry and layout-call types from spreading
+# further while they are being replaced by the owned names: the remaining uses
+# are pinned per file in scripts/lib/taffy_boundary_baseline.txt and may only go
+# down. See scripts/lib/taffy_boundary_lint.py's module docstring.
+if ! "$SCRIPT_DIR/taffy-boundary-lint.sh"; then
+  echo "FAIL: scripts/taffy-boundary-lint.sh found a Taffy output type outside its pinned uses"
+  FAIL=1
+fi
+echo
+
 echo "-- cargo clippy --workspace --all-targets -- -D warnings --"
 if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
   echo "FAIL: cargo clippy --workspace --all-targets --locked -- -D warnings"

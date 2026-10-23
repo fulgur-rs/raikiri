@@ -3154,7 +3154,7 @@ fn third_review_relative_caption_retains_paint_side_insets() {
     );
     assert_eq!(
         doc.get_node(caption).unwrap().unrounded_layout.location,
-        taffy::Point { x: 0.0, y: 0.0 }
+        raikiri_layout_geometry::Point { x: 0.0, y: 0.0 }
     );
     doc.project_pages(
         &computed,

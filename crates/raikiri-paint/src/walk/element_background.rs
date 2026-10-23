@@ -43,7 +43,7 @@ pub(super) struct ElementBackgroundLayer<'a> {
     pub(super) origin: VisualBox,
     pub(super) border_radius: &'a ComputedBorderRadius,
     pub(super) border: &'a Sides<ComputedBorder>,
-    pub(super) padding: &'a taffy::Rect<f32>,
+    pub(super) padding: &'a raikiri_layout_geometry::Edges<f32>,
     pub(super) env: BackgroundEnv,
     pub(super) size: &'a ComputedBackgroundSize,
     pub(super) position: &'a ComputedCssPosition,
