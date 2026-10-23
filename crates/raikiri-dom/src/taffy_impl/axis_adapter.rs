@@ -52,12 +52,11 @@
 //! that follows, once the container's frame is left, works on physical
 //! coordinates.
 
+use crate::layout::protocol::{Baselines, LayoutInput, LayoutOutput, NodeId};
+use raikiri_layout_geometry::{BoxLayout, Edges, Size};
 use raikiri_style::property::WritingMode;
 use taffy::util::ResolveOrZero;
-use taffy::{
-    Baselines, CoreStyle, Layout, LayoutInput, LayoutOutput, NodeId, Rect, Size,
-    TraversePartialTree,
-};
+use taffy::{CoreStyle, TraversePartialTree};
 
 use super::resolve_calc;
 use super::transposed_axes::{
@@ -85,7 +84,7 @@ pub(super) struct AxisAdapter {
     inline_reversed: bool,
     /// The borders of the container on its layout axes, which bound the
     /// padding box its scrollable overflow is measured in.
-    container_border: Rect<f32>,
+    container_border: Edges<f32>,
 }
 
 /// The inputs for a child, on the child's physical axes.
@@ -108,7 +107,7 @@ impl AxisAdapter {
         Self {
             right_to_left,
             inline_reversed: false,
-            container_border: Rect::ZERO,
+            container_border: Edges::ZERO,
         }
     }
 
@@ -170,7 +169,7 @@ impl AxisAdapter {
     /// `vertical-rl` it is `container_width - block offset - child width`.
     /// The scrollable overflow of the child is mirrored within its own
     /// padding box.
-    pub(super) fn placed_layout(self, layout: &Layout, container_width: f32) -> Layout {
+    pub(super) fn placed_layout(self, layout: &BoxLayout, container_width: f32) -> BoxLayout {
         let mut placed = physical_layout(layout, container_width, self.right_to_left);
         placed.scrollable_overflow_rect = self
             .overflow_frame(padding_box(layout.size, layout.border))
@@ -199,13 +198,13 @@ impl AxisAdapter {
     pub(super) fn child_output(
         self,
         output: LayoutOutput,
-        border: Rect<f32>,
+        border: Edges<f32>,
         baseline: f32,
     ) -> LayoutOutput {
         let extent = output.size.width;
         // The sides of the border on the layout axes: the physical top and
         // bottom are the inline sides, the left and right the block sides.
-        let layout_border = Rect {
+        let layout_border = Edges {
             left: border.top,
             right: border.bottom,
             top: border.left,

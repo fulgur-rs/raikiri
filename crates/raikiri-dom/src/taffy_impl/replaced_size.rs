@@ -3,10 +3,12 @@
 use super::{calc_has_percentage, resolve_calc};
 use crate::LayoutStyle as Style;
 use crate::image_geometry::constrain_with_ratio;
+use crate::layout::protocol::{AvailableSpace, LayoutInput, SizingMode};
 use crate::taffy_impl::content_limits::ContentLimits;
+use raikiri_layout_geometry::Size;
 use taffy::{
-    BoxSizing, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto, LayoutInput,
-    LengthPercentageAuto, MaybeResolve, ResolveOrZero, Size, SizingMode,
+    BoxSizing, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto, LengthPercentageAuto,
+    MaybeResolve, ResolveOrZero,
 };
 
 /// The content-box size a replaced leaf takes when `width`, `height` or both
@@ -53,8 +55,8 @@ pub(super) fn auto_sides_size(
         return None;
     }
     let basis = inputs.parent_size;
-    let is_min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent
-        || inputs.available_space.height == taffy::AvailableSpace::MinContent;
+    let is_min_content = inputs.available_space.width == AvailableSpace::MinContent
+        || inputs.available_space.height == AvailableSpace::MinContent;
     let edges = padding_and_border(style, basis.width);
     let insets = ratio_box_insets(style, edges, content_box_ratio);
     let height_for = |width: f32| height_for_width(width, ratio, insets);
@@ -207,8 +209,8 @@ pub(super) fn keyword_bounds(
     }
 
     let basis = inputs.parent_size;
-    let is_min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent
-        || inputs.available_space.height == taffy::AvailableSpace::MinContent;
+    let is_min_content = inputs.available_space.width == AvailableSpace::MinContent
+        || inputs.available_space.height == AvailableSpace::MinContent;
     let edges = padding_and_border(style, basis.width);
     let insets = ratio_box_insets(style, edges, content_box_ratio);
     let min_content = Size {

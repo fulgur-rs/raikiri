@@ -1,10 +1,9 @@
 //! Shared block and inline flow state over public float placement.
 
+use crate::layout::protocol::CollapsibleMarginSet;
+use raikiri_layout_geometry::{Point, Size};
 use std::sync::Arc;
-use taffy::{
-    BfcSlot, Clear, CollapsibleMarginSet, ContentSlot, Direction, FloatContext, FloatDirection,
-    Point, Size,
-};
+use taffy::{BfcSlot, Clear, ContentSlot, Direction, FloatContext, FloatDirection};
 
 /// How much wider than a slot a box may be and still count as fitting it.
 const FIT_SLACK: f32 = 0.001;

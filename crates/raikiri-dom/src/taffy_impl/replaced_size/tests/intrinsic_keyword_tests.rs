@@ -1,12 +1,15 @@
 use super::*;
+use crate::layout::protocol::RequestedAxis;
 use crate::taffy_impl::content_limits::ContentLimits;
 use crate::taffy_impl::replaced_size::keyword_bounds;
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and its relatives are style input
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 
 fn inputs() -> LayoutInput {
     LayoutInput {
         run_mode: RunMode::ComputeSize,
         sizing_mode: SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
+        axis: RequestedAxis::Both,
         known_dimensions: Size::NONE,
         known_dimensions_are_definite: Size {
             width: false,
@@ -21,7 +24,7 @@ fn inputs() -> LayoutInput {
     }
 }
 
-fn limits(min: Size<Dimension>, max: Size<Dimension>) -> ContentLimits {
+fn limits(min: StyleSize<Dimension>, max: StyleSize<Dimension>) -> ContentLimits {
     ContentLimits { min, max }
 }
 
@@ -44,11 +47,11 @@ fn ratio_style(width: Dimension, height: Dimension) -> Style {
 fn min_width_min_content_transfers_height_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(10.0), Dimension::length(100.0));
     let limits = limits(
-        Size {
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        Size::auto(),
+        StyleSize::auto(),
     );
 
     assert_eq!(
@@ -64,11 +67,11 @@ fn min_width_min_content_transfers_height_bound_through_natural_ratio() {
 fn min_height_min_content_transfers_width_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(100.0), Dimension::length(10.0));
     let limits = limits(
-        Size {
+        StyleSize {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
-        Size::auto(),
+        StyleSize::auto(),
     );
 
     assert_eq!(
@@ -84,8 +87,8 @@ fn min_height_min_content_transfers_width_bound_through_natural_ratio() {
 fn max_width_min_content_transfers_height_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(1000.0), Dimension::length(100.0));
     let limits = limits(
-        Size::auto(),
-        Size {
+        StyleSize::auto(),
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
@@ -104,8 +107,8 @@ fn max_width_min_content_transfers_height_bound_through_natural_ratio() {
 fn max_height_min_content_transfers_width_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(100.0), Dimension::length(1000.0));
     let limits = limits(
-        Size::auto(),
-        Size {
+        StyleSize::auto(),
+        StyleSize {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
@@ -123,11 +126,11 @@ fn max_height_min_content_transfers_width_bound_through_natural_ratio() {
 #[test]
 fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
     let limits = limits(
-        Size {
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        Size::auto(),
+        StyleSize::auto(),
     );
     let without_ratio = Style::default();
     let with_ratio = ratio_style(Dimension::auto(), Dimension::auto());
@@ -155,12 +158,12 @@ fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
 fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
     let style = Style {
         box_sizing: taffy::BoxSizing::ContentBox,
-        padding: taffy::Rect {
+        padding: StyleRect {
             left: taffy::LengthPercentage::length(5.0),
             right: taffy::LengthPercentage::length(5.0),
             ..Style::default().padding
         },
-        border: taffy::Rect {
+        border: StyleRect {
             left: taffy::LengthPercentage::length(1.0),
             right: taffy::LengthPercentage::length(1.0),
             ..Style::default().border
@@ -168,11 +171,11 @@ fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
         ..ratio_style(Dimension::auto(), Dimension::auto())
     };
     let limits = limits(
-        Size {
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        Size::auto(),
+        StyleSize::auto(),
     );
 
     assert_eq!(
@@ -192,16 +195,16 @@ fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
 fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
     let style = Style {
         box_sizing: taffy::BoxSizing::ContentBox,
-        size: Size {
+        size: StyleSize {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
-        padding: taffy::Rect {
+        padding: StyleRect {
             left: taffy::LengthPercentage::length(5.0),
             right: taffy::LengthPercentage::length(5.0),
             ..Style::default().padding
         },
-        border: taffy::Rect {
+        border: StyleRect {
             left: taffy::LengthPercentage::length(1.0),
             right: taffy::LengthPercentage::length(1.0),
             ..Style::default().border
@@ -209,8 +212,8 @@ fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
         ..ratio_style(Dimension::auto(), Dimension::auto())
     };
     let limits = limits(
-        Size::auto(),
-        Size {
+        StyleSize::auto(),
+        StyleSize {
             width: Dimension::max_content(),
             height: Dimension::auto(),
         },
@@ -233,11 +236,11 @@ fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
 fn keyword_bounds_transfer_all_min_and_max_sides_through_the_ratio() {
     let style = ratio_style(Dimension::auto(), Dimension::auto());
     let limits = limits(
-        Size {
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::min_content(),
         },
-        Size {
+        StyleSize {
             width: Dimension::max_content(),
             height: Dimension::max_content(),
         },
@@ -254,11 +257,11 @@ fn keyword_bounds_transfer_all_min_and_max_sides_through_the_ratio() {
 #[test]
 fn keyword_bounds_reject_nonpositive_natural_dimensions() {
     let limits = limits(
-        Size {
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        Size::auto(),
+        StyleSize::auto(),
     );
 
     assert_eq!(
@@ -280,19 +283,19 @@ fn keyword_bounds_reject_nonpositive_natural_dimensions() {
 fn conflicting_numeric_bounds_raise_max_to_min() {
     let style = Style {
         aspect_ratio: Some(1.0),
-        min_size: Size {
+        min_size: StyleSize {
             width: taffy::LengthPercentageAuto::length(100.0),
             height: taffy::LengthPercentageAuto::auto(),
         },
-        max_size: Size {
+        max_size: StyleSize {
             width: taffy::LengthPercentageAuto::length(50.0),
             height: taffy::LengthPercentageAuto::auto(),
         },
         ..Style::default()
     };
     let limits = limits(
-        Size::auto(),
-        Size {
+        StyleSize::auto(),
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
@@ -320,11 +323,11 @@ fn cyclic_percentage_still_uses_zero_basis_with_intrinsic_limits() {
     ));
     let style = ratio_style(Dimension::auto(), height);
     let limits = limits(
-        Size {
+        StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        Size::auto(),
+        StyleSize::auto(),
     );
     let mut layout_inputs = inputs();
     layout_inputs.available_space.width = AvailableSpace::MinContent;

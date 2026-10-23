@@ -1,7 +1,10 @@
 use crate::Document;
 use crate::layout::layout_single_page;
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, NodeId, RequestedAxis, RunMode, SizingMode,
+};
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::{AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode};
+use raikiri_layout_geometry::{Line, Size};
 
 /// Rects of a column of two Ahem paragraphs in a positioned container under
 /// a root with `root_css`. `column_css` styles the column.
@@ -153,12 +156,12 @@ fn only_an_absolute_child_of_the_vertical_containing_block_gets_its_inline_size(
         .context
         .vertical_oof_containing_blocks
         .push((container, 120.0));
-    let inputs = taffy::LayoutInput::HIDDEN;
+    let inputs = LayoutInput::HIDDEN;
     let resolved = super::absolute_child_inputs(&session, absolute, inputs);
     assert_eq!(resolved.parent_size.height, Some(120.0));
     assert_eq!(
         resolved.available_space.height,
-        taffy::AvailableSpace::Definite(120.0)
+        AvailableSpace::Definite(120.0)
     );
     let unchanged = super::absolute_child_inputs(&session, in_flow, inputs);
     assert_eq!(unchanged.parent_size.height, inputs.parent_size.height);

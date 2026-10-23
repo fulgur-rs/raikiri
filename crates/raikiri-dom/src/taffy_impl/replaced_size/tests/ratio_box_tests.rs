@@ -1,13 +1,16 @@
 use super::*;
+use crate::layout::protocol::RequestedAxis;
 use crate::taffy_impl::content_limits::ContentLimits;
 use crate::taffy_impl::replaced_size::keyword_bounds;
-use taffy::{BoxSizing, LengthPercentage, Rect};
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and its relatives are style input
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::{BoxSizing, LengthPercentage};
 
 fn inputs(known_width: Option<f32>) -> LayoutInput {
     LayoutInput {
         run_mode: RunMode::ComputeSize,
         sizing_mode: SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
+        axis: RequestedAxis::Both,
         known_dimensions: Size {
             width: known_width,
             height: None,
@@ -32,7 +35,7 @@ fn padded_border_box(ratio: f32) -> Style {
     Style {
         aspect_ratio: Some(ratio),
         box_sizing: BoxSizing::BorderBox,
-        padding: Rect {
+        padding: StyleRect {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(80.0),
             top: LengthPercentage::length(0.0),
@@ -106,7 +109,7 @@ fn a_content_box_box_relates_its_content_boxes_whatever_the_ratio_is() {
 #[test]
 fn an_authored_side_gives_the_other_side_through_the_border_box_ratio() {
     let width = Style {
-        size: Size {
+        size: StyleSize {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
@@ -117,7 +120,7 @@ fn an_authored_side_gives_the_other_side_through_the_border_box_ratio() {
         size(20.0, 50.0)
     );
     let height = Style {
-        size: Size {
+        size: StyleSize {
             width: Dimension::auto(),
             height: Dimension::length(100.0),
         },
@@ -163,7 +166,7 @@ fn a_ratio_the_box_states_replaces_the_natural_ratio_of_its_natural_size() {
     );
     // A `min-height` of 200px moves the width along the border box ratio.
     let min_height = Style {
-        min_size: Size {
+        min_size: StyleSize {
             width: taffy::LengthPercentageAuto::auto(),
             height: taffy::LengthPercentageAuto::length(200.0),
         },
@@ -196,11 +199,11 @@ fn keyword_bounds_transfer_across_the_border_box_ratio() {
     // 10px of padding at the bottom is taken off. A content box ratio would
     // give a content box of 60 by 30, so a border box 40px high.
     let style = Style {
-        size: Size {
+        size: StyleSize {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
-        padding: Rect {
+        padding: StyleRect {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(40.0),
             top: LengthPercentage::length(0.0),
@@ -209,11 +212,11 @@ fn keyword_bounds_transfer_across_the_border_box_ratio() {
         ..padded_border_box(2.0)
     };
     let limits = ContentLimits {
-        min: Size {
+        min: StyleSize {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
-        max: Size::auto(),
+        max: StyleSize::auto(),
     };
     let border_box = keyword_bounds(&style, &inputs(None), natural(), limits, false).unwrap();
     let content_box = keyword_bounds(&style, &inputs(None), natural(), limits, true).unwrap();
@@ -230,7 +233,7 @@ fn keyword_bounds_carry_a_height_bound_to_the_width_across_the_border_box_ratio(
     // box of 80px. A content box ratio would double the 50px high content box
     // instead.
     let style = Style {
-        padding: Rect {
+        padding: StyleRect {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(40.0),
             top: LengthPercentage::length(0.0),
@@ -239,11 +242,11 @@ fn keyword_bounds_carry_a_height_bound_to_the_width_across_the_border_box_ratio(
         ..padded_border_box(2.0)
     };
     let limits = ContentLimits {
-        min: Size {
+        min: StyleSize {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
-        max: Size::auto(),
+        max: StyleSize::auto(),
     };
     let border_box = keyword_bounds(&style, &inputs(None), natural(), limits, false).unwrap();
     let content_box = keyword_bounds(&style, &inputs(None), natural(), limits, true).unwrap();
@@ -258,11 +261,11 @@ fn a_keyword_width_takes_the_border_box_width_the_authored_height_gives() {
     // A 2:1 border box 100px high is 200px wide; the content box ratio would
     // give the 90px high content box 180px and a 220px wide border box.
     let style = Style {
-        size: Size {
+        size: StyleSize {
             width: Dimension::auto(),
             height: Dimension::length(100.0),
         },
-        padding: Rect {
+        padding: StyleRect {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(40.0),
             top: LengthPercentage::length(0.0),
@@ -271,11 +274,11 @@ fn a_keyword_width_takes_the_border_box_width_the_authored_height_gives() {
         ..padded_border_box(2.0)
     };
     let limits = ContentLimits {
-        min: Size {
+        min: StyleSize {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        max: Size::auto(),
+        max: StyleSize::auto(),
     };
     let border_box = keyword_bounds(&style, &inputs(None), natural(), limits, false).unwrap();
     let content_box = keyword_bounds(&style, &inputs(None), natural(), limits, true).unwrap();
@@ -290,15 +293,15 @@ fn a_keyword_height_never_falls_below_the_padding_across_the_border_box_ratio() 
     // at the bottom, so the content box the width gives is empty and a
     // `max-height` that stands for it is the padding alone.
     let style = Style {
-        size: Size {
+        size: StyleSize {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
         ..padded_border_box(4.0)
     };
     let limits = ContentLimits {
-        min: Size::auto(),
-        max: Size {
+        min: StyleSize::auto(),
+        max: StyleSize {
             width: Dimension::auto(),
             height: Dimension::max_content(),
         },
@@ -311,11 +314,11 @@ fn a_keyword_height_never_falls_below_the_padding_across_the_border_box_ratio() 
 /// A `border-box` replaced box with a ratio of 1 and 20px of padding on the
 /// right and 10px at the bottom, its `min-*` and `max-*` sizes as given.
 fn small_padded_square(
-    min: Size<taffy::LengthPercentageAuto>,
-    max: Size<taffy::LengthPercentageAuto>,
+    min: StyleSize<taffy::LengthPercentageAuto>,
+    max: StyleSize<taffy::LengthPercentageAuto>,
 ) -> Style {
     Style {
-        padding: Rect {
+        padding: StyleRect {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(20.0),
             top: LengthPercentage::length(0.0),
@@ -330,7 +333,7 @@ fn small_padded_square(
 #[test]
 fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
     use taffy::LengthPercentageAuto as Length;
-    let none = Size {
+    let none = StyleSize {
         width: Length::auto(),
         height: Length::auto(),
     };
@@ -340,7 +343,7 @@ fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
     for (name, min, max, expected) in [
         (
             "min-width: 80px",
-            Size {
+            StyleSize {
                 width: Length::length(80.0),
                 height: Length::auto(),
             },
@@ -349,11 +352,11 @@ fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
         ),
         (
             "max-width: 30px",
-            Size {
+            StyleSize {
                 width: Length::auto(),
                 height: Length::auto(),
             },
-            Size {
+            StyleSize {
                 width: Length::length(30.0),
                 height: Length::auto(),
             },
@@ -362,7 +365,7 @@ fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
         (
             "max-height: 30px",
             none,
-            Size {
+            StyleSize {
                 width: Length::auto(),
                 height: Length::length(30.0),
             },

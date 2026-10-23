@@ -1,17 +1,16 @@
 //! Resolve the physical box constraints used by project block flow.
 
 use crate::LayoutStyle as Style;
+use crate::layout::protocol::{LayoutInput, SizingMode};
 use crate::taffy_impl::resolve_calc;
-use taffy::{
-    BoxSizing, CoreStyle, LayoutInput, MaybeMath, MaybeResolve, Overflow, Rect, ResolveOrZero,
-    Size, SizingMode,
-};
+use raikiri_layout_geometry::{Edges, Size};
+use taffy::{BoxSizing, CoreStyle, MaybeMath, MaybeResolve, Overflow, ResolveOrZero};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Metrics {
-    pub padding: Rect<f32>,
-    pub border: Rect<f32>,
-    pub inset: Rect<f32>,
+    pub padding: Edges<f32>,
+    pub border: Edges<f32>,
+    pub inset: Edges<f32>,
     pub scrollbar: Size<f32>,
     pub preferred: Size<Option<f32>>,
     pub min: Size<Option<f32>>,

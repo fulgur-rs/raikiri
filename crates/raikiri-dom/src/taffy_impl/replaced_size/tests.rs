@@ -1,8 +1,11 @@
 use super::auto_sides_size;
 use crate::LayoutStyle as Style;
+use crate::layout::protocol::{AvailableSpace, LayoutInput, RequestedAxis, RunMode, SizingMode};
 use crate::taffy_impl::push_calc;
+use raikiri_layout_geometry::{Line, Size};
 use raikiri_style::property::CalcLengthPercentage;
-use taffy::{AvailableSpace, Dimension, LayoutInput, Line, RunMode, Size, SizingMode};
+use taffy::Dimension;
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 
 mod intrinsic_keyword_tests;
 mod ratio_box_tests;
@@ -20,7 +23,7 @@ fn a_percentage_calc_on_a_replaced_min_content_width_uses_zero_basis() {
     ));
     let style = Style {
         aspect_ratio: Some(2.0),
-        size: Size {
+        size: StyleSize {
             width,
             height: Dimension::auto(),
         },
@@ -29,7 +32,7 @@ fn a_percentage_calc_on_a_replaced_min_content_width_uses_zero_basis() {
     let inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,
         sizing_mode: SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
+        axis: RequestedAxis::Both,
         known_dimensions: Size::NONE,
         known_dimensions_are_definite: Size {
             width: false,

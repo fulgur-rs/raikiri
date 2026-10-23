@@ -20,23 +20,23 @@
 //! it to physical coordinates by mirroring within the padding box, for the
 //! callers that need the rectangle in physical coordinates.
 
-use taffy::tree::RequestedAxis;
-use taffy::{
-    AbsoluteAxis, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, Layout, LayoutInput,
-    LayoutOutput, Line, Point, Rect, Size,
+use crate::layout::protocol::{
+    AbsoluteAxis, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet,
+    LayoutInput, LayoutOutput, OofPositioningArea, RequestedAxis,
 };
+use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 
 /// `rect` with its physical sides moved to the transposed sides they map
 /// to: top and bottom become left and right, and the block-start side
 /// becomes the top.
 #[cfg(test)]
-pub(super) fn transpose_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
+pub(super) fn transpose_rect<T: Copy>(rect: Edges<T>, right_to_left: bool) -> Edges<T> {
     let (block_start, block_end) = if right_to_left {
         (rect.right, rect.left)
     } else {
         (rect.left, rect.right)
     };
-    Rect {
+    Edges {
         left: rect.top,
         right: rect.bottom,
         top: block_start,
@@ -45,13 +45,13 @@ pub(super) fn transpose_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rec
 }
 
 /// Map sides from the transposed geometry back to physical coordinates.
-fn physical_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
+fn physical_rect<T: Copy>(rect: Edges<T>, right_to_left: bool) -> Edges<T> {
     let (left, right) = if right_to_left {
         (rect.bottom, rect.top)
     } else {
         (rect.top, rect.bottom)
     };
-    Rect {
+    Edges {
         left,
         right,
         top: rect.left,
@@ -94,19 +94,17 @@ pub(super) fn transpose_output_to_physical(
     reverse_extent: f32,
     preserve_margin_collapse: bool,
 ) -> LayoutOutput {
-    let oof_positioning_area = output
-        .oof_positioning_area
-        .map(|area| taffy::OofPositioningArea {
-            size: swap(area.size),
-            offset: Point {
-                x: if right_to_left {
-                    reverse_extent - area.offset.y - area.size.height
-                } else {
-                    area.offset.y
-                },
-                y: area.offset.x,
+    let oof_positioning_area = output.oof_positioning_area.map(|area| OofPositioningArea {
+        size: swap(area.size),
+        offset: Point {
+            x: if right_to_left {
+                reverse_extent - area.offset.y - area.size.height
+            } else {
+                area.offset.y
             },
-        });
+            y: area.offset.x,
+        },
+    });
     for candidate in output.oof_candidates.as_mut_slice() {
         let inline_axis = candidate.static_position.x;
         let block_axis = candidate.static_position.y;
@@ -131,19 +129,17 @@ pub(super) fn transpose_child_output_to_vertical(
     reverse_extent: f32,
     preserve_margin_collapse: bool,
 ) -> LayoutOutput {
-    let oof_positioning_area = output
-        .oof_positioning_area
-        .map(|area| taffy::OofPositioningArea {
-            size: swap(area.size),
-            offset: Point {
-                x: area.offset.y,
-                y: if right_to_left {
-                    reverse_extent - area.offset.x - area.size.width
-                } else {
-                    area.offset.x
-                },
+    let oof_positioning_area = output.oof_positioning_area.map(|area| OofPositioningArea {
+        size: swap(area.size),
+        offset: Point {
+            x: area.offset.y,
+            y: if right_to_left {
+                reverse_extent - area.offset.x - area.size.width
+            } else {
+                area.offset.x
             },
-        });
+        },
+    });
     for candidate in output.oof_candidates.as_mut_slice() {
         let physical_inline_axis = candidate.static_position.y;
         let physical_block_axis = candidate.static_position.x;
@@ -168,7 +164,7 @@ pub(super) fn transpose_child_output_to_vertical(
 /// caller whose box has none of the kind the other side reads resets them.
 fn swap_output_axes(
     output: LayoutOutput,
-    oof_positioning_area: Option<taffy::OofPositioningArea>,
+    oof_positioning_area: Option<OofPositioningArea>,
     preserve_margin_collapse: bool,
 ) -> LayoutOutput {
     let top_margin = if preserve_margin_collapse {
@@ -206,7 +202,7 @@ fn reverse_static_position(position: AxisStaticPosition, extent: f32) -> AxisSta
             start: extent - position.area.end,
             end: extent - position.area.start,
         },
-        align: taffy::AxisStaticAlign {
+        align: AxisStaticAlign {
             keyword: reverse_edge(position.align.keyword),
             safety: position.align.safety,
             fallback: reverse_edge(position.align.fallback),
@@ -216,8 +212,8 @@ fn reverse_static_position(position: AxisStaticPosition, extent: f32) -> AxisSta
 
 /// A scrollable overflow rectangle, measured along the inline and block
 /// axes from the scroll origin, with its axes swapped.
-fn swap_rect_axes(rect: Rect<f32>) -> Rect<f32> {
-    Rect {
+fn swap_rect_axes(rect: Edges<f32>) -> Edges<f32> {
+    Edges {
         left: rect.top,
         right: rect.bottom,
         top: rect.left,
@@ -227,7 +223,7 @@ fn swap_rect_axes(rect: Rect<f32>) -> Rect<f32> {
 
 /// The size of the padding box inside a border box of `border_box`, given
 /// its `border` on the same axes.
-pub(super) fn padding_box(border_box: Size<f32>, border: Rect<f32>) -> Size<f32> {
+pub(super) fn padding_box(border_box: Size<f32>, border: Edges<f32>) -> Size<f32> {
     Size {
         width: (border_box.width - border.left - border.right).max(0.0),
         height: (border_box.height - border.top - border.bottom).max(0.0),
@@ -267,8 +263,8 @@ pub(super) struct OverflowFrame {
 
 impl OverflowFrame {
     /// The rectangle on physical axes of `rect` on the layout axes.
-    pub(super) fn physical(self, rect: Rect<f32>) -> Rect<f32> {
-        if rect == Rect::ZERO {
+    pub(super) fn physical(self, rect: Edges<f32>) -> Edges<f32> {
+        if rect == Edges::ZERO {
             return rect;
         }
         let block = self.padding_box.height;
@@ -283,7 +279,7 @@ impl OverflowFrame {
         } else {
             (rect.left, rect.right)
         };
-        Rect {
+        Edges {
             left,
             right,
             top,
@@ -293,8 +289,8 @@ impl OverflowFrame {
 
     /// The rectangle on the layout axes of `rect` on physical axes: the
     /// inverse of [`Self::physical`].
-    pub(super) fn on_layout_axes(self, rect: Rect<f32>) -> Rect<f32> {
-        if rect == Rect::ZERO {
+    pub(super) fn on_layout_axes(self, rect: Edges<f32>) -> Edges<f32> {
+        if rect == Edges::ZERO {
             return rect;
         }
         let block = self.padding_box.height;
@@ -309,7 +305,7 @@ impl OverflowFrame {
         } else {
             (rect.top, rect.bottom)
         };
-        Rect {
+        Edges {
             left,
             right,
             top,
@@ -321,12 +317,12 @@ impl OverflowFrame {
 /// The physical layout of a child placed by taffy at `layout` in a
 /// transposed container whose physical width is `container_width`.
 pub(super) fn physical_layout(
-    layout: &Layout,
+    layout: &BoxLayout,
     container_width: f32,
     right_to_left: bool,
-) -> Layout {
+) -> BoxLayout {
     let block_start = layout.location.y;
-    Layout {
+    BoxLayout {
         order: layout.order,
         location: Point {
             x: if right_to_left {

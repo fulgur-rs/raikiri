@@ -25,12 +25,13 @@
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
 
-use taffy::tree::{RequestedAxis, RunMode};
-use taffy::util::{MaybeResolve, ResolveOrZero};
-use taffy::{
-    AvailableSpace, BlockItemStyle, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, Line, NodeId,
-    Position as TaffyPosition, Rect, Size, SizingMode, TraversePartialTree,
+use crate::layout::protocol::{
+    AvailableSpace, Baselines, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
+    SizingMode,
 };
+use raikiri_layout_geometry::{Edges, Line, Size};
+use taffy::util::{MaybeResolve, ResolveOrZero};
+use taffy::{BlockItemStyle, BoxSizing, CoreStyle, Position as TaffyPosition, TraversePartialTree};
 
 use super::block_flow::compute_block_flow;
 use super::resolve_calc;
@@ -123,8 +124,8 @@ impl TransposedBlock {
 
     /// The borders of the container on its layout axes; zero until the frame
     /// holds its views.
-    pub(super) fn container_border(&self) -> Rect<f32> {
-        self.container_view.as_ref().map_or(Rect::ZERO, |input| {
+    pub(super) fn container_border(&self) -> Edges<f32> {
+        self.container_view.as_ref().map_or(Edges::ZERO, |input| {
             input.view().border().resolve_or_zero(None, resolve_calc)
         })
     }
@@ -538,7 +539,7 @@ impl LayoutSession<'_> {
             // A child's baselines are offsets from its own block-start edge,
             // which is this container's only when the block axes agree.
             if !same_vertical_block_mode(tree, block.container, idx) {
-                output.baselines = taffy::Baselines::NONE;
+                output.baselines = Baselines::NONE;
             }
             output
         })

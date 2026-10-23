@@ -3,6 +3,7 @@ use crate::layout::{
     context::LayoutSession,
     style_views::{ReadRole, tests::fixture_with_styles},
 };
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 use taffy::{CoreStyle, LengthPercentage};
 
 fn frame(
@@ -37,7 +38,7 @@ fn opposite_frames_keep_independent_view_geometry() {
         let query = tree.query_style(child, ReadRole::BlockItem);
         assert_eq!(
             query.size(),
-            Size {
+            StyleSize {
                 width: taffy::Dimension::length(7.0),
                 height: taffy::Dimension::length(31.0)
             }
@@ -98,7 +99,7 @@ fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
     with_transposed_frame(&mut tree, block, |tree| {
         assert_eq!(
             tree.query_style(child, ReadRole::BlockItem).size(),
-            Size {
+            StyleSize {
                 width: taffy::Dimension::length(7.0),
                 height: taffy::Dimension::length(31.0)
             }
@@ -107,7 +108,7 @@ fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
         assert_eq!(physical.size(), physical_before);
         assert_eq!(
             physical.size(),
-            Size {
+            StyleSize {
                 width: taffy::Dimension::length(31.0),
                 height: taffy::Dimension::length(7.0)
             }
@@ -191,7 +192,7 @@ fn late_override_preserves_unrelated_frame_property() {
         let query = tree.query_style(child, ReadRole::BlockItem);
         assert_eq!(
             query.size(),
-            Size {
+            StyleSize {
                 width: taffy::Dimension::length(91.0),
                 height: taffy::Dimension::length(31.0)
             }
@@ -557,7 +558,7 @@ fn a_physical_read_of_a_vertical_box_keeps_the_physical_axes() {
     let physical = tree.physical_style(child);
     assert_eq!(
         physical.size(),
-        Size {
+        StyleSize {
             width: taffy::Dimension::length(31.0),
             height: taffy::Dimension::length(7.0)
         }

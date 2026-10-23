@@ -2,16 +2,17 @@
 
 use super::sizing::Metrics;
 use crate::LayoutStyle as Style;
-use taffy::{
-    AlignItems, AxisStaticPosition, Direction, Line, OofCandidate, OofCandidates,
-    OofPositioningArea, Point, Position, Size,
+use crate::layout::protocol::{
+    AxisStaticPosition, NodeId, OofCandidate, OofCandidates, OofPositioningArea,
 };
+use raikiri_layout_geometry::{Line, Point, Size};
+use taffy::{AlignItems, Direction, Position};
 
 /// Record the out-of-flow child `node` of a block container for the
 /// containing block that claims it.
 pub(super) fn push_candidate(
     candidates: &mut OofCandidates,
-    node: taffy::NodeId,
+    node: NodeId,
     order: usize,
     position: Position,
     static_position: Point<AxisStaticPosition>,

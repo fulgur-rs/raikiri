@@ -1,8 +1,10 @@
 use super::super::*;
 use crate::layout::style_views::tests::fixture_with_styles;
+use raikiri_layout_geometry::Edges;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::{CoreStyle, Dimension, LengthPercentage, Rect};
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and its relatives are style input
+use taffy::{CoreStyle, Dimension, LengthPercentage};
 
 /// A document whose child has a fixed size and a padding the frames carry.
 fn fixture() -> (crate::Document, raikiri_style::CascadeResult, usize, usize) {
@@ -24,7 +26,7 @@ fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> Transp
 }
 
 /// The transposed padding of `child` in every pushed frame.
-fn frame_paddings(tree: &LayoutSession<'_>, child: usize) -> Vec<Rect<LengthPercentage>> {
+fn frame_paddings(tree: &LayoutSession<'_>, child: usize) -> Vec<StyleRect<LengthPercentage>> {
     tree.context
         .transposed_blocks
         .iter()
@@ -43,7 +45,7 @@ fn scoped_override_updates_existing_transposed_snapshots_and_preserves_padding()
     push_transposed_frame(&mut tree, inner);
     let paddings = frame_paddings(&tree, child);
     let zero = LengthPercentage::length(0.0);
-    let unpadded = Rect {
+    let unpadded = Edges {
         left: zero,
         right: zero,
         top: zero,
@@ -308,7 +310,7 @@ fn border_scope_transposes_opposite_frames() {
             let physical = tree.style_view(child).border();
             assert_eq!(
                 physical,
-                Rect {
+                StyleRect {
                     top: LengthPercentage::length(11.0),
                     right: LengthPercentage::length(12.0),
                     bottom: LengthPercentage::length(13.0),
@@ -324,7 +326,7 @@ fn border_scope_transposes_opposite_frames() {
                 let view = block.child_views[&child].view();
                 assert_eq!(
                     view.border(),
-                    Rect {
+                    StyleRect {
                         left: LengthPercentage::length(11.0),
                         right: LengthPercentage::length(13.0),
                         top: LengthPercentage::length(top),
