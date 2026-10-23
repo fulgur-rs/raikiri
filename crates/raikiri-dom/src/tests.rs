@@ -701,7 +701,7 @@ fn taffy_block_layout_does_not_hang_on_nonfinite_computed_geometry() {
     match rx.recv_timeout(Duration::from_secs(10)) {
         Ok(Ok(non_vacuous)) => assert!(
             non_vacuous,
-            "compute_root_layout completed but child 'a' (pathological, non-finite geometry) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or the sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/taffy_impl.rs) did not fire as expected — re-characterize this test rather than deleting this assertion"
+            "compute_root_layout completed but child 'a' (pathological, non-finite geometry) has a default-sized or non-finite unrounded_layout — either taffy silently skipped it (this test would be vacuous re: 'no hang', since a skipped node also 'completes' instantly) or the sanitize_taffy_layout output guard (set_unrounded_layout, crates/raikiri-dom/src/layout/dispatch.rs) did not fire as expected — re-characterize this test rather than deleting this assertion"
         ),
         Ok(Err(_panic_payload)) => panic!(
             "taffy::compute_root_layout (or the post-layout assertion) panicked on non-finite geometry — re-characterize this test (it previously pinned 'completes without panic or hang')"

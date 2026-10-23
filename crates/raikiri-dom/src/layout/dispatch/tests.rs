@@ -12,9 +12,9 @@ use crate::layout::context::LayoutSession;
 
 #[test]
 fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
+    use crate::layout::dispatch::block_flow::context::BlockFormattingContext;
     use crate::layout::ifc::test_support::block_fixture_with_ahem;
     use crate::layout::protocol::AvailableSpace;
-    use crate::taffy_impl::block_flow::context::BlockFormattingContext;
     use taffy::Clear;
 
     fn fixture() -> (crate::Document, usize) {
@@ -79,7 +79,9 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
     let (mut doc, wrapper) = fixture();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
-    assert!(crate::taffy_impl::vertical_block::has_same_vertical_block_parent(&session, wrapper));
+    assert!(
+        crate::layout::dispatch::vertical_block::has_same_vertical_block_parent(&session, wrapper)
+    );
     let mut owner = BlockFormattingContext::new();
     let mut context = owner.root_block_context();
     context.set_width(100.0);

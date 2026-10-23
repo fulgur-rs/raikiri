@@ -10,7 +10,7 @@ impl LayoutSession<'_> {
     ) -> R {
         self.sync_layout_cache_mutations();
         self.cache_override_changed(idx);
-        if resolve_border && crate::taffy_impl::is_table_box(self.nodes[idx].display()) {
+        if resolve_border && crate::layout::dispatch::is_table_box(self.nodes[idx].display()) {
             self.context.table_cache.clear();
         }
         let effective_basis = self
@@ -26,7 +26,7 @@ impl LayoutSession<'_> {
         let previous_basis = self.begin_edge_recording(idx, basis);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(self)));
         self.cache_override_changed(idx);
-        if resolve_border && crate::taffy_impl::is_table_box(self.nodes[idx].display()) {
+        if resolve_border && crate::layout::dispatch::is_table_box(self.nodes[idx].display()) {
             self.context.table_cache.clear();
         }
         self.context.resolved_edge_bases.pop();

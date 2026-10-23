@@ -1497,7 +1497,7 @@ fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit()
     );
 
     // (e) The Comment does not leak into the taffy layout tree. TaffyChildIter
-    //     uses the is_in_document() filter (raikiri-dom/src/taffy_impl.rs),
+    //     uses the is_in_document() filter (raikiri-dom/src/layout/dispatch.rs),
     //     so the body’s taffy child_count is 1 (only `<p>`). This behavior is
     //     already checked by `taffy_child_ids_and_count_filter_out_template_descendants`,
     //     but assert it here independently for the Comment/PI path as a

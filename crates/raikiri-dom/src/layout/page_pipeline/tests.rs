@@ -1813,7 +1813,7 @@ fn order_is_ignored_for_non_flex_grid_children() {
 #[test]
 fn nested_normal_flow_descendant_clears_ancestor_level_float() {
     // `LayoutBlockContainer::compute_block_child_layout`'s override in
-    // `taffy_impl` only matters when a float and content that reacts to
+    // `dispatch` only matters when a float and content that reacts to
     // it are at *different* nesting depths — direct siblings share one
     // `compute_block_layout` invocation (and hence one taffy
     // `BlockFormattingContext`) regardless of the override. This

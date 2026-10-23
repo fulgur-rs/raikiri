@@ -438,7 +438,7 @@ fn same_generation_and_address_rebind_changed_scalar_and_calc_values() {
         match second {
             L::Px(value) => assert_eq!(width, taffy::Dimension::length(value)),
             L::Calc(value) => assert_eq!(
-                crate::taffy_impl::resolve_calc(width.into_raw().calc_value(), 100.0),
+                crate::layout::dispatch::resolve_calc(width.into_raw().calc_value(), 100.0),
                 value.px + value.percent
             ),
             _ => unreachable!(),
@@ -582,7 +582,7 @@ fn assert_fresh_copy_rebridges(
         .width
         .into_raw()
         .calc_value();
-    assert_eq!(crate::taffy_impl::resolve_calc(pointer, 100.0), 60.0);
+    assert_eq!(crate::layout::dispatch::resolve_calc(pointer, 100.0), 60.0);
 }
 
 #[test]
@@ -697,5 +697,5 @@ fn failed_rebinding_keeps_replaced_prepared_data_until_full_recovery() {
         .width
         .into_raw()
         .calc_value();
-    assert_eq!(crate::taffy_impl::resolve_calc(pointer, 100.0), 45.0);
+    assert_eq!(crate::layout::dispatch::resolve_calc(pointer, 100.0), 45.0);
 }

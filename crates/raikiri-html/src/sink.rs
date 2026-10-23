@@ -1162,7 +1162,7 @@ fn assemble_document(
     // by `mark_in_document_flags` step 2. Therefore:
     //
     // - The TaffyChildIter is_in_document filter excludes them from layout child
-    //   counts (raikiri-dom/src/taffy_impl.rs:38,61,71).
+    //   counts (raikiri-dom/src/layout/dispatch.rs:38,61,71).
     // - extract_inline_stylesheets / find_head_element / find_body skip them via
     //   the is_in_document() and Element gates.
     // - All cascade and paint traversals skip them through the same gates.

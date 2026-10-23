@@ -1,8 +1,8 @@
 use super::style_views::metadata::{size_containment, sizing_flags as view_sizing_flags};
 use super::*;
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::node::{FormattingContext, Node};
-use crate::taffy_impl::content_limits::ContentLimits;
 use clamp_warnings::{report_non_finite_rest, report_non_finite_sizes};
 use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
@@ -84,7 +84,7 @@ pub(crate) fn lays_out_vertically(cascade: &CascadeResult, idx: usize) -> bool {
 /// even in vertical writing.
 pub(crate) fn uses_vertical_axes(cascade: &CascadeResult, idx: usize) -> bool {
     lays_out_vertically(cascade, idx)
-        && !crate::taffy_impl::is_table_box(cascade.computed[idx].display)
+        && !crate::layout::dispatch::is_table_box(cascade.computed[idx].display)
 }
 
 /// The vertical `inline-size` / `block-size` mapping of `idx`, when the box
@@ -311,7 +311,7 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].fixed_position = cv.position == PositionValue::Fixed;
         // A resolver may give the natural size and leave its ratio unset; the
         // ratio of that size is then the natural one.
-        let natural_ratio = crate::taffy_impl::leaf_intrinsic_ratio(&doc.nodes[idx]);
+        let natural_ratio = crate::layout::dispatch::leaf_intrinsic_ratio(&doc.nodes[idx]);
         let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio, false);
         let mut settled = Settled::of(cv);
         settled.has_aspect_ratio = preferred_ratio.is_some();
@@ -385,7 +385,7 @@ fn apply_computed_to_style_in_session_inner(
         // Keep the owners of the limits' calc payloads in the document, which
         // the limits point into.
         let mut calc_values = Vec::new();
-        let content_limit_values = if crate::taffy_impl::is_table_box(raw_cv.display)
+        let content_limit_values = if crate::layout::dispatch::is_table_box(raw_cv.display)
             || crate::paint_rules::is_replaced_element(doc.document, idx)
         {
             raw_cv
@@ -1207,12 +1207,12 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
                 Dimension::fit_content_percent(sanitize_taffy(p / 100.0, site, diag))
             }
             ComputedLengthPercentageOrCalc::Calc(value) => {
-                let pointer = crate::taffy_impl::push_calc(calc_values, value, true);
+                let pointer = crate::layout::dispatch::push_calc(calc_values, value, true);
                 Dimension::fit_content_calc(pointer)
             }
         },
         ComputedLengthPercentageOrAuto::Calc(value) => {
-            let pointer = crate::taffy_impl::push_calc(calc_values, value, true);
+            let pointer = crate::layout::dispatch::push_calc(calc_values, value, true);
             Dimension::calc(pointer)
         }
     }

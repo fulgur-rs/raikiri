@@ -140,7 +140,7 @@ pub(crate) fn bridged_style(
     node: usize,
 ) -> crate::LayoutStyle {
     let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
-    crate::taffy_impl::block_flow::style_input::physical(&session, node)
+    crate::layout::dispatch::block_flow::style_input::physical(&session, node)
 }
 
 /// The display of `node` once `cascade` is bridged into `doc`, in the terms

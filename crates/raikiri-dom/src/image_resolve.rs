@@ -1,7 +1,7 @@
 //! Pre-layout `<img>` intrinsic-size resolution.
 //!
 //! Runs once before taffy layout, writes results onto [`crate::node::Node`], so the taffy
-//! leaf-measure closures (`crate::taffy_impl`) stay synchronous flat reads
+//! leaf-measure closures (`crate::layout::dispatch`) stay synchronous flat reads
 //! with no new integration logic into taffy's own trait surface. Each pass
 //! reconciles the current result, including clearing stale sizes for removed
 //! or invalid `src` values. A changed intrinsic size marks layout caches dirty

@@ -10,13 +10,13 @@ pub(crate) use positioned::aligned_static_position;
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::{LayoutSession, TextGroupScope};
+use crate::layout::dispatch::{measure_against_parent_height, resolve_calc};
 use crate::layout::protocol::{
     AvailableSpace, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId, RequestedAxis,
     RunMode, SizingMode,
 };
 use crate::layout::taffy_adapter::ResolveOrZero;
 use crate::layout::taffy_adapter::algorithms::float_intrinsic_width_calculator;
-use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};

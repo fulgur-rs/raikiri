@@ -1,11 +1,11 @@
 use super::*;
+use crate::layout::dispatch::vertical_block::{TransposedBlock, with_transposed_frame};
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, Baselines,
     CollapsibleMarginSet, OofCandidate, OofPosition, OofPositioningArea, RequestedAxis, RunMode,
     SizingMode, StaticAlignSafety,
 };
 use crate::layout::style_views::tests::fixture_with_styles;
-use crate::taffy_impl::vertical_block::{TransposedBlock, with_transposed_frame};
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 
 /// The two block directions: `vertical-lr` and `vertical-rl`.

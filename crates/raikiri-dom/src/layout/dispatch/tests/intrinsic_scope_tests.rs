@@ -88,7 +88,7 @@ thread_local! {
     static SAW_PRIOR_BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-pub(in crate::taffy_impl) fn before_child_bounds(tree: &LayoutSession<'_>, idx: usize) {
+pub(in crate::layout::dispatch) fn before_child_bounds(tree: &LayoutSession<'_>, idx: usize) {
     if let Some((first, second)) = CHILD_PAIR.get()
         && idx == second
     {

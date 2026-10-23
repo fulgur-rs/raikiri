@@ -311,7 +311,7 @@ fn overflow_contribution(
 ///
 /// Returns the scrollable overflow of all the boxes at their positions, to
 /// replace what Taffy merged for them, when a box moved.
-pub(in crate::taffy_impl) fn align_hoisted_children(
+pub(in crate::layout::dispatch) fn align_hoisted_children(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     area: OofPositioningArea,
@@ -323,7 +323,7 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
 /// in the grid area of its grid placement within `area`, the padding box of
 /// the container. Without the `grid` areas, which taffy reports only from a
 /// layout it performs, every box is aligned in `area`.
-pub(in crate::taffy_impl) fn align_hoisted_children_in_grid(
+pub(in crate::layout::dispatch) fn align_hoisted_children_in_grid(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     area: OofPositioningArea,
@@ -334,7 +334,7 @@ pub(in crate::taffy_impl) fn align_hoisted_children_in_grid(
 
 /// The scrollable overflow that the boxes `idx` is the containing block of
 /// contribute at their positions, laid out against `area`.
-pub(in crate::taffy_impl) fn hoisted_overflow_rect(
+pub(in crate::layout::dispatch) fn hoisted_overflow_rect(
     tree: &LayoutSession<'_>,
     idx: usize,
     area: OofPositioningArea,

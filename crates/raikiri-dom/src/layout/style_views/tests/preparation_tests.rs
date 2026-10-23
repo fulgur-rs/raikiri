@@ -389,7 +389,7 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
             .unwrap();
         assert!(owner.upgrade().is_none());
         assert_eq!(
-            crate::taffy_impl::resolve_calc(
+            crate::layout::dispatch::resolve_calc(
                 session
                     .style_view(child)
                     .size()

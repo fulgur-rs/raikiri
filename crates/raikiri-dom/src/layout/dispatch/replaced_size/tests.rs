@@ -1,7 +1,7 @@
 use super::auto_sides_size;
 use crate::LayoutStyle as Style;
+use crate::layout::dispatch::push_calc;
 use crate::layout::protocol::{AvailableSpace, LayoutInput, RequestedAxis, RunMode, SizingMode};
-use crate::taffy_impl::push_calc;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_style::property::CalcLengthPercentage;
 use taffy::Dimension;
@@ -54,7 +54,7 @@ fn a_percentage_calc_on_a_replaced_min_content_width_uses_zero_basis() {
                 width: 100.0,
                 height: 50.0,
             },
-            crate::taffy_impl::content_limits::ContentLimits::NONE,
+            crate::layout::dispatch::content_limits::ContentLimits::NONE,
             true,
         ),
         Some(Size {

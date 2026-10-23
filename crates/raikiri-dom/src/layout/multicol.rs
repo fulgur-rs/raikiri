@@ -52,7 +52,7 @@ fn relative_inline_offset(style: &LayoutStyleView<'_>, width: f32) -> f32 {
     }
     let inset = style.inset();
     let resolve = |value: LengthPercentageAuto| {
-        value.maybe_resolve(Some(width), crate::taffy_impl::resolve_calc)
+        value.maybe_resolve(Some(width), crate::layout::dispatch::resolve_calc)
     };
     resolve(inset.left)
         .or(resolve(inset.right).map(|right| -right))
@@ -87,7 +87,7 @@ fn with_keyword_width(
         probe.run_mode = RunMode::ComputeSize;
         probe.axis = RequestedAxis::Horizontal;
         probe.available_space.width = space;
-        crate::taffy_impl::block_layout(tree, node_id, probe, None)
+        crate::layout::dispatch::block_layout(tree, node_id, probe, None)
             .size
             .width
     };
@@ -120,10 +120,10 @@ pub(crate) fn compute_multicol_layout(
 ) -> LayoutOutput {
     let index = usize::from(node_id);
     if tree.fragment_tree.limit_exceeded {
-        return crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
+        return crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     }
     let Some(style) = tree.nodes[index].multicol else {
-        return crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
+        return crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     };
     let inputs = with_keyword_width(tree, node_id, inputs);
 
@@ -157,7 +157,7 @@ pub(crate) fn compute_multicol_layout(
     };
     let Some(context) = FragmentationContext::resolve(available_width, available_height, style)
     else {
-        return crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
+        return crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     };
 
     // Keep the existing foundational post-pass authoritative for standalone
@@ -223,7 +223,7 @@ pub(crate) fn compute_multicol_layout(
         .checked_sub(1)
         .and_then(|outer| tree.context.fragmentation_stack[outer].available_height);
     tree.context.fragmentation_stack.push(context);
-    let mut output = crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
+    let mut output = crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     if tree.fragment_tree.limit_exceeded {
         tree.context.fragmentation_stack.truncate(stack_depth);
         return output;
@@ -580,7 +580,7 @@ fn column_definite_margins(
 ) -> (Option<f32>, Option<f32>) {
     let margin = style.margin();
     let resolve = |value: LengthPercentageAuto| {
-        value.maybe_resolve(Some(column_width), crate::taffy_impl::resolve_calc)
+        value.maybe_resolve(Some(column_width), crate::layout::dispatch::resolve_calc)
     };
     (resolve(margin.left), resolve(margin.right))
 }
@@ -654,7 +654,7 @@ pub(crate) fn multicol_definite_dimension(
     let resolved = match value.expand() {
         ExpandedDimension::Length(px) => px,
         ExpandedDimension::Percent(percent) => basis * percent,
-        ExpandedDimension::Calc(pointer) => crate::taffy_impl::resolve_calc(pointer, basis),
+        ExpandedDimension::Calc(pointer) => crate::layout::dispatch::resolve_calc(pointer, basis),
         ExpandedDimension::Auto
         | ExpandedDimension::MinContent
         | ExpandedDimension::MaxContent
@@ -673,7 +673,9 @@ fn multicol_resolve_inset(_tree: &Document, value: LengthPercentage, basis: f32)
     let resolved = match value.expand() {
         ExpandedLengthPercentage::Length(px) => px,
         ExpandedLengthPercentage::Percent(percent) => basis * percent,
-        ExpandedLengthPercentage::Calc(pointer) => crate::taffy_impl::resolve_calc(pointer, basis),
+        ExpandedLengthPercentage::Calc(pointer) => {
+            crate::layout::dispatch::resolve_calc(pointer, basis)
+        }
     };
     if resolved.is_finite() {
         resolved.max(0.0)

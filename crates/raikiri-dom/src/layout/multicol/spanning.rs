@@ -118,7 +118,7 @@ pub(super) fn layout(
                 .filter_map(|value| {
                     value.maybe_resolve(
                         Some(context.available_width),
-                        crate::taffy_impl::resolve_calc,
+                        crate::layout::dispatch::resolve_calc,
                     )
                 })
                 .sum::<f32>();

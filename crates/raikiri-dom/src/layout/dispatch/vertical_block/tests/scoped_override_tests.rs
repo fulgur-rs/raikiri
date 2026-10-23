@@ -353,7 +353,7 @@ fn border_scope_transposes_opposite_frames() {
                     .unwrap()
                     .view()
                     .border(),
-                style_rect(crate::taffy_impl::transposed_axes::transpose_rect(
+                style_rect(crate::layout::dispatch::transposed_axes::transpose_rect(
                     physical.into_edges(),
                     false
                 ))

@@ -591,7 +591,7 @@ pub struct Node {
     /// The `min-*` and `max-*` sizes of this box that are intrinsic sizing
     /// keywords, which Taffy's style cannot hold; layout resolves them to
     /// lengths when it lays the box out.
-    pub(crate) content_limits: crate::taffy_impl::content_limits::ContentLimits,
+    pub(crate) content_limits: crate::layout::dispatch::content_limits::ContentLimits,
     /// The `text-group-align` of this box (CSS Text 4), which makes it the
     /// root of a group of the lines in its block formatting context.
     pub(crate) text_group_align: shodo::style::TextGroupAlign,
@@ -797,7 +797,7 @@ impl Node {
                 width: false,
                 height: false,
             },
-            content_limits: crate::taffy_impl::content_limits::ContentLimits::NONE,
+            content_limits: crate::layout::dispatch::content_limits::ContentLimits::NONE,
             text_group_align: shodo::style::TextGroupAlign::None,
             order: 0,
             order_modified_children: Box::new([]),

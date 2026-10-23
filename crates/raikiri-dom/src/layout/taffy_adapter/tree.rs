@@ -10,9 +10,9 @@ use super::GridInfo;
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::TaffyChildIter;
 use crate::layout::protocol::{LayoutInput, NodeId};
 use crate::layout::style_views::ReadRole;
-use crate::taffy_impl::TaffyChildIter;
 use raikiri_layout_geometry::BoxLayout;
 use raikiri_layout_style::LayoutStyleView;
 use taffy::{
@@ -86,7 +86,7 @@ impl LayoutPartialTree for LayoutSession<'_> {
     }
 
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
-        crate::taffy_impl::resolve_calc(val, basis)
+        crate::layout::dispatch::resolve_calc(val, basis)
     }
 
     fn compute_child_layout(

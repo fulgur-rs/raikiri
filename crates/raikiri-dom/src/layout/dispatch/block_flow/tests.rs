@@ -15,7 +15,7 @@ fn block_layout(
     context: Option<&mut super::context::BlockContext<'_>>,
 ) -> LayoutOutput {
     with_bridged_session(tree, |session| {
-        crate::taffy_impl::block_layout(session, node_id, inputs, context)
+        crate::layout::dispatch::block_layout(session, node_id, inputs, context)
     })
 }
 
@@ -144,7 +144,7 @@ fn inline_absolute_candidates_keep_the_rtl_float_slot_point() {
         // The bridge blockifies an absolutely positioned box; this one stands
         // for a box whose static position is that of an inline-level box.
         session.nodes[abs].set_box_properties(DisplayValue::Inline, PositionValue::Absolute);
-        crate::taffy_impl::block_layout(session, NodeId::from(root), inputs(), None)
+        crate::layout::dispatch::block_layout(session, NodeId::from(root), inputs(), None)
     });
     let candidate = output.oof_candidates.iter().next().unwrap();
     assert_eq!(candidate.static_position.x.area.start, 125.0);

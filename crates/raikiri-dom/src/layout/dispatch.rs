@@ -1178,7 +1178,7 @@ fn compute_ifc_root(
         .ifc
         .as_ref()
         .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb)
-        && !crate::taffy_impl::vertical_block::has_same_vertical_block_parent(tree, idx)
+        && !crate::layout::dispatch::vertical_block::has_same_vertical_block_parent(tree, idx)
     {
         block_ctx = None;
     }

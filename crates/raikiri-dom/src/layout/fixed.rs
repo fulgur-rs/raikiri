@@ -237,16 +237,18 @@ pub(crate) fn correct_root_oof_auto_margins(
             (
                 inset
                     .left
-                    .maybe_resolve(Some(area_size.width), crate::taffy_impl::resolve_calc),
+                    .maybe_resolve(Some(area_size.width), crate::layout::dispatch::resolve_calc),
                 inset
                     .right
-                    .maybe_resolve(Some(area_size.width), crate::taffy_impl::resolve_calc),
-                inset
-                    .top
-                    .maybe_resolve(Some(area_size.height), crate::taffy_impl::resolve_calc),
-                inset
-                    .bottom
-                    .maybe_resolve(Some(area_size.height), crate::taffy_impl::resolve_calc),
+                    .maybe_resolve(Some(area_size.width), crate::layout::dispatch::resolve_calc),
+                inset.top.maybe_resolve(
+                    Some(area_size.height),
+                    crate::layout::dispatch::resolve_calc,
+                ),
+                inset.bottom.maybe_resolve(
+                    Some(area_size.height),
+                    crate::layout::dispatch::resolve_calc,
+                ),
                 margin.left.is_auto(),
                 margin.right.is_auto(),
                 margin.top.is_auto(),

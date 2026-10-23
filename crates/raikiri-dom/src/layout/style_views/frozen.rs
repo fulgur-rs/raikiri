@@ -60,11 +60,11 @@ impl FrozenViewInput {
             let padding = input
                 .view()
                 .padding()
-                .resolve_or_zero(None, crate::taffy_impl::resolve_calc);
+                .resolve_or_zero(None, crate::layout::dispatch::resolve_calc);
             let border = input
                 .view()
                 .border()
-                .resolve_or_zero(None, crate::taffy_impl::resolve_calc);
+                .resolve_or_zero(None, crate::layout::dispatch::resolve_calc);
             for (properties, edges) in [
                 (
                     [
@@ -117,7 +117,7 @@ impl FrozenViewInput {
         let padding = taffy::ResolveOrZero::resolve_or_zero(
             self.view().padding(),
             basis,
-            crate::taffy_impl::resolve_calc,
+            crate::layout::dispatch::resolve_calc,
         );
         self.context.resolved_padding = Some(padding);
     }

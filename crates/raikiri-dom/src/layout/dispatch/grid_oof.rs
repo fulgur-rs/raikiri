@@ -15,8 +15,8 @@
 //! reach, on the wrong axes.
 
 use crate::layout::protocol::{NodeId, OofCandidates, OofLayoutResult, OofPositioningArea};
-use crate::layout::taffy_adapter::OofSpan;
 use crate::layout::taffy_adapter::GridInfo;
+use crate::layout::taffy_adapter::OofSpan;
 use crate::layout::taffy_adapter::algorithms::{claims_position, compute_oof_layout_for_area};
 use raikiri_layout_geometry::{Edges, Point, Size};
 use taffy::{ContainingBlockClaims, Direction, GridItemStyle, GridPlacement};

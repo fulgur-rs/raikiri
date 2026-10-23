@@ -13,13 +13,13 @@ use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::{fit_content_room, resolve_calc};
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
 use crate::layout::taffy_adapter::{LayoutCache, MaybeResolve, ResolveOrZero};
 use crate::node::FormattingContext;
-use crate::taffy_impl::{fit_content_room, resolve_calc};
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
@@ -77,7 +77,7 @@ fn is_oof_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
 }
 
 fn is_table_content_limits(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    crate::taffy_impl::is_table_box(tree.nodes[idx].display())
+    crate::layout::dispatch::is_table_box(tree.nodes[idx].display())
 }
 
 fn is_replaced_content(tree: &LayoutSession<'_>, idx: usize) -> bool {

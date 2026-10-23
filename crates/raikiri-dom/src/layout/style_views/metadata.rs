@@ -173,7 +173,7 @@ pub(in crate::layout) fn size_containment(
     if !cv.contain.contains(Contain::INLINE_SIZE) {
         return none;
     }
-    let vertical = crate::taffy_impl::used_writing_mode(doc, idx).is_vertical();
+    let vertical = crate::layout::dispatch::used_writing_mode(doc, idx).is_vertical();
     Size {
         width: !vertical,
         height: vertical,

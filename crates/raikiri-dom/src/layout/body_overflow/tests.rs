@@ -70,7 +70,7 @@ fn laid_out_body_overflow(html_css: &str, body_css: &str) -> (TaffyOverflow, f32
         page_box_800x600(),
     )
     .expect("layout");
-    let overflow = crate::taffy_impl::block_flow::style_input::physical(&session, body)
+    let overflow = crate::layout::dispatch::block_flow::style_input::physical(&session, body)
         .overflow
         .y;
     drop(session);
@@ -96,7 +96,7 @@ fn a_body_outside_html_keeps_its_overflow() {
     let cascade = cascade(&doc, &rules).expect("cascade");
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let overflow = |session: &crate::layout::context::LayoutSession<'_>| {
-        crate::taffy_impl::block_flow::style_input::physical(session, body).overflow
+        crate::layout::dispatch::block_flow::style_input::physical(session, body).overflow
     };
     let before = overflow(&session);
     session.propagate_viewport_overflow(&cascade, body);
