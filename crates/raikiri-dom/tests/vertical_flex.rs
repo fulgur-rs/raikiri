@@ -1,6 +1,8 @@
 //! Flex containers in vertical writing modes lay out on the axes of their own
 //! writing mode: the main axis of a row is the inline axis, the physical
-//! height, and that of a column is the block axis, the physical width.
+//! height, and that of a column is the block axis, the physical width. The
+//! absolutely positioned children of flex and grid containers are placed by
+//! those axes too.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
@@ -86,6 +88,31 @@ fn check(body: &str, expected: &[(&str, Rect)]) {
             (x, y, width, height)
         );
     }
+}
+
+/// The border box of the absolutely positioned `#a` styled `child_css` in a
+/// positioned 120px by 200px flex container `#c` styled `flex_css`.
+fn absolute_box(flex_css: &str, child_css: &str) -> Rect {
+    let body = format!(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;{flex_css}"><div id=a style="position:absolute;{child_css}"></div></div>"#
+    );
+    border_boxes(&body)
+        .into_iter()
+        .find(|(id, _)| id == "a")
+        .expect("no fragment for #a")
+        .1
+}
+
+fn assert_absolute_box(flex_css: &str, child_css: &str, expected: Rect) {
+    let found = absolute_box(flex_css, child_css);
+    let close = |a: f32, b: f32| (a - b).abs() <= TOLERANCE;
+    assert!(
+        close(found.0, expected.0)
+            && close(found.1, expected.1)
+            && close(found.2, expected.2)
+            && close(found.3, expected.3),
+        "{flex_css} | {child_css}: #a is {found:?}, expected {expected:?}"
+    );
 }
 
 #[test]
@@ -1091,6 +1118,924 @@ fn horizontal_items_of_a_vertical_flex_row_resolve_percentages_against_the_conta
             ("a", (8.0, 8.0, 300.0, 170.0)),
             ("x", (8.0, 28.0, 300.0, 20.0)),
             ("b", (288.0, 178.0, 20.0, 30.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_flex_aligns_the_static_position_of_an_absolute_box_by_its_own_axes() {
+    // The static position of an absolutely positioned child is that of the
+    // sole flex item: `justify-content` places it along the inline axis,
+    // `align-items` and its own `align-self` along the block axis. The
+    // 120px by 200px container is at (8, 8) and the box is 30px by 10px.
+    for (flex_css, child_css, expected) in [
+        (
+            "writing-mode:vertical-rl;justify-content:center;align-items:flex-start",
+            "width:30px;height:10px",
+            (98.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;flex-direction:column;justify-content:flex-end;align-items:center",
+            "width:30px;height:10px",
+            (8.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;flex-direction:row-reverse;align-items:flex-end",
+            "width:30px;height:10px",
+            (8.0, 198.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;flex-wrap:wrap-reverse;align-items:flex-end;justify-content:flex-end",
+            "width:30px;height:10px",
+            (98.0, 198.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;justify-content:space-between",
+            "width:30px;height:10px",
+            (98.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;align-items:flex-start",
+            "width:30px;height:10px;align-self:flex-end",
+            (8.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl;justify-content:center;align-items:flex-start",
+            "width:30px;height:10px",
+            (98.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl;flex-direction:row-reverse;align-items:flex-end",
+            "width:30px;height:10px",
+            (8.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl;flex-direction:column;justify-content:center;align-items:flex-end",
+            "width:30px;height:10px",
+            (53.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl;justify-content:space-between",
+            "width:30px;height:10px",
+            (98.0, 198.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;justify-content:center;align-items:flex-start",
+            "width:30px;height:10px",
+            (8.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;flex-direction:column;justify-content:flex-end;align-items:center",
+            "width:30px;height:10px",
+            (98.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;flex-direction:row-reverse;align-items:flex-end",
+            "width:30px;height:10px",
+            (98.0, 198.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;flex-wrap:wrap-reverse;align-items:flex-end;justify-content:flex-end",
+            "width:30px;height:10px",
+            (8.0, 198.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;justify-content:space-between",
+            "width:30px;height:10px",
+            (8.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;align-items:flex-start",
+            "width:30px;height:10px;align-self:flex-end",
+            (98.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl;justify-content:center;align-items:flex-start",
+            "width:30px;height:10px",
+            (8.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl;flex-direction:row-reverse;align-items:flex-end",
+            "width:30px;height:10px",
+            (98.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl;flex-direction:column;justify-content:center;align-items:flex-end",
+            "width:30px;height:10px",
+            (53.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl;justify-content:space-between",
+            "width:30px;height:10px",
+            (8.0, 198.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;justify-content:center;align-items:flex-start",
+            "width:30px;height:10px",
+            (98.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;flex-direction:column;justify-content:flex-end;align-items:center",
+            "width:30px;height:10px",
+            (8.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;flex-direction:row-reverse;align-items:flex-end",
+            "width:30px;height:10px",
+            (8.0, 198.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;justify-content:center;align-items:flex-start",
+            "width:30px;height:10px",
+            (8.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;flex-direction:column;justify-content:flex-end;align-items:center",
+            "width:30px;height:10px",
+            (98.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;flex-direction:row-reverse;align-items:flex-end",
+            "width:30px;height:10px",
+            (98.0, 8.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;justify-content:center;align-items:center",
+            "margin:3px 4px 5px 6px;width:30px;height:10px",
+            (54.0, 102.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;padding:7px 5px 3px 9px;border:2px solid;justify-content:center;align-items:center",
+            "width:30px;height:10px",
+            (55.0, 105.0, 30.0, 10.0),
+        ),
+    ] {
+        assert_absolute_box(flex_css, child_css, expected);
+    }
+}
+
+#[test]
+fn vertical_flex_takes_an_axis_with_an_inset_out_of_the_static_position() {
+    // An inset in an axis places the box in that axis; the other axis keeps
+    // the static position.
+    for (flex_css, child_css, expected) in [
+        (
+            "writing-mode:vertical-rl;justify-content:center",
+            "top:10px;width:30px;height:10px",
+            (98.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;justify-content:center;align-items:center",
+            "left:10px;width:30px;height:10px",
+            (18.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;justify-content:center;align-items:center",
+            "right:10px;bottom:5px;width:30px;height:10px",
+            (88.0, 193.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;justify-content:center;align-items:center",
+            "right:10px;width:30px;height:10px",
+            (88.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl;justify-content:flex-end;align-items:center",
+            "top:10px;width:30px;height:10px",
+            (53.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;justify-content:center;align-items:flex-end",
+            "left:10px;width:30px;height:10px",
+            (18.0, 103.0, 30.0, 10.0),
+        ),
+    ] {
+        assert_absolute_box(flex_css, child_css, expected);
+    }
+}
+
+#[test]
+fn vertical_flex_aligns_an_absolute_box_with_both_insets_by_the_axes_of_the_container() {
+    // With both insets of an axis definite the box is placed by `align-self`
+    // along the block axis and `justify-self` along the inline axis of the
+    // containing block, whose writing mode and direction decide which
+    // physical edge is the start.
+    for (flex_css, child_css, expected) in [
+        (
+            "writing-mode:vertical-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-rl;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (88.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:ltr",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px",
+            (18.0, 18.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:end",
+            (88.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:center;align-self:center",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:end;align-self:start",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:sideways-lr;direction:rtl",
+            "left:10px;right:10px;top:10px;bottom:10px;width:30px;height:10px;justify-self:self-end;align-self:self-start",
+            (18.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl",
+            "left:0;right:0;top:0;bottom:0;margin:auto;width:30px;height:10px",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-lr",
+            "left:0;right:0;top:0;bottom:0;margin:auto;width:30px;height:10px",
+            (53.0, 103.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;justify-content:center;align-items:center",
+            "top:10px;bottom:10px;width:30px;height:10px;justify-self:end",
+            (53.0, 188.0, 30.0, 10.0),
+        ),
+        (
+            "writing-mode:vertical-rl;justify-content:center;align-items:center",
+            "left:10px;right:10px;width:30px;height:10px;align-self:end",
+            (18.0, 103.0, 30.0, 10.0),
+        ),
+    ] {
+        assert_absolute_box(flex_css, child_css, expected);
+    }
+}
+
+#[test]
+fn vertical_flex_places_absolute_boxes_nested_in_other_boxes() {
+    // vertical-rl: the containing block is an ancestor of the container, which is static; the static position is still the container's.
+    check(
+        r#"<div id=w style="position:relative;margin-top:20px;width:300px;height:300px"><div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;position:static;justify-content:center;align-items:flex-start"><div id=a style="position:absolute;width:30px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 20.0, 300.0, 300.0)),
+            ("c", (8.0, 20.0, 120.0, 200.0)),
+            ("a", (98.0, 115.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-rl: same, in a column container.
+    check(
+        r#"<div id=w style="position:relative;margin-top:20px;width:300px;height:300px"><div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;position:static;flex-direction:column;justify-content:flex-end;align-items:center"><div id=a style="position:absolute;width:30px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 20.0, 300.0, 300.0)),
+            ("c", (8.0, 20.0, 120.0, 200.0)),
+            ("a", (8.0, 115.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-rl: the containing block is a vertical block of the other axis than the container.
+    check(
+        r#"<div id=w style="position:relative;writing-mode:vertical-rl;width:300px;height:300px"><div id=c style="display:flex;width:100px;height:100px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 8.0, 300.0, 300.0)),
+            ("c", (208.0, 8.0, 100.0, 100.0)),
+            ("a", (248.0, 53.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: the containing block is a horizontal ancestor.
+    check(
+        r#"<div id=w style="position:relative;width:300px;height:300px"><div id=c style="display:flex;writing-mode:vertical-rl;width:100px;height:100px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 8.0, 300.0, 300.0)),
+            ("c", (8.0, 8.0, 100.0, 100.0)),
+            ("a", (48.0, 53.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: the containing block is a vertical flex container of the other writing mode.
+    check(
+        r#"<div id=w style="position:relative;display:flex;writing-mode:vertical-lr;width:300px;height:300px"><div id=c style="display:flex;writing-mode:vertical-rl;width:100px;height:100px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 8.0, 300.0, 300.0)),
+            ("c", (8.0, 8.0, 100.0, 100.0)),
+            ("a", (48.0, 53.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a grandchild with insets on the far sides.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;right:5px;bottom:3px;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (98.0, 8.0, 30.0, 20.0)),
+            ("a", (113.0, 195.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a grandchild with auto insets keeps its place in the flow of the item.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (98.0, 8.0, 30.0, 20.0)),
+            ("a", (118.0, 8.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a grandchild with insets on the near sides.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;left:5px;top:3px;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (98.0, 8.0, 30.0, 20.0)),
+            ("a", (13.0, 11.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a grandchild of a nested container with its own alignment.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=i style="display:flex;writing-mode:vertical-rl;width:60px;height:80px;justify-content:center;align-items:center;margin:5px"><div id=a style="position:absolute;right:5px;bottom:3px;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (63.0, 13.0, 60.0, 80.0)),
+            ("a", (103.0, 195.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a nested container is the containing block of its own box.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=i style="display:flex;position:relative;writing-mode:vertical-rl;width:60px;height:80px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (68.0, 8.0, 60.0, 80.0)),
+            ("a", (88.0, 43.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a horizontal container nested in the vertical one.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;align-items:flex-start"><div id=i style="display:flex;position:relative;writing-mode:horizontal-tb;width:60px;height:80px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (68.0, 8.0, 60.0, 80.0)),
+            ("a", (88.0, 43.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a table cell inside the container.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=t style="display:table;writing-mode:horizontal-tb"><div style="display:table-cell;width:40px;height:30px"><div id=a style="position:absolute;right:2px;bottom:3px;width:10px;height:10px"></div></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("t", (8.0, 8.0, 120.0, 30.0)),
+            ("a", (116.0, 195.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a grid inside the container.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=i style="display:grid;writing-mode:vertical-rl;width:60px;height:80px;grid-template-columns:30px 30px;grid-template-rows:20px 20px;align-items:center;justify-items:end;position:static"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (68.0, 8.0, 60.0, 80.0)),
+            ("a", (88.0, 78.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a fixed box takes the static position of the container.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;justify-content:center;align-items:flex-start"><div id=a style="position:fixed;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (98.0, 103.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a box that sizes by its content and percentages of the containing block.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;width:300px;height:200px"><div id=a style="position:absolute">XXXXX</div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (298.0, 8.0, 10.0, 50.0)),
+        ],
+    );
+    // vertical-rl: percentage size and insets.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;"><div id=a style="position:absolute;left:10%;top:10%;width:50%;height:20%"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (20.0, 28.0, 60.0, 40.0)),
+        ],
+    );
+    // vertical-rl: a container sized by its content.
+    check(
+        r#"<div id=c style="display:flex;position:relative;writing-mode:vertical-rl;justify-content:center;align-items:center;float:left"><div id=i style="width:30px;height:60px"></div><div id=a style="position:absolute;width:20px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 30.0, 60.0)),
+            ("i", (8.0, 8.0, 30.0, 60.0)),
+            ("a", (13.0, 33.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: an item beside the box.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-rl;width:300px;height:200px"><div id=i style="width:30px;height:20px"></div><div id=a style="position:absolute;width:40px;height:50px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("i", (278.0, 8.0, 30.0, 20.0)),
+            ("a", (268.0, 8.0, 40.0, 50.0)),
+        ],
+    );
+    // vertical-lr: the containing block is an ancestor of the container, which is static; the static position is still the container's.
+    check(
+        r#"<div id=w style="position:relative;margin-top:20px;width:300px;height:300px"><div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;position:static;justify-content:center;align-items:flex-start"><div id=a style="position:absolute;width:30px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 20.0, 300.0, 300.0)),
+            ("c", (8.0, 20.0, 120.0, 200.0)),
+            ("a", (8.0, 115.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: same, in a column container.
+    check(
+        r#"<div id=w style="position:relative;margin-top:20px;width:300px;height:300px"><div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;position:static;flex-direction:column;justify-content:flex-end;align-items:center"><div id=a style="position:absolute;width:30px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 20.0, 300.0, 300.0)),
+            ("c", (8.0, 20.0, 120.0, 200.0)),
+            ("a", (98.0, 115.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: the containing block is a vertical block of the other axis than the container.
+    check(
+        r#"<div id=w style="position:relative;writing-mode:vertical-lr;width:300px;height:300px"><div id=c style="display:flex;width:100px;height:100px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 8.0, 300.0, 300.0)),
+            ("c", (8.0, 8.0, 100.0, 100.0)),
+            ("a", (48.0, 53.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: the containing block is a horizontal ancestor.
+    check(
+        r#"<div id=w style="position:relative;width:300px;height:300px"><div id=c style="display:flex;writing-mode:vertical-lr;width:100px;height:100px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 8.0, 300.0, 300.0)),
+            ("c", (8.0, 8.0, 100.0, 100.0)),
+            ("a", (48.0, 53.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: the containing block is a vertical flex container of the other writing mode.
+    check(
+        r#"<div id=w style="position:relative;display:flex;writing-mode:vertical-rl;width:300px;height:300px"><div id=c style="display:flex;writing-mode:vertical-lr;width:100px;height:100px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 8.0, 300.0, 300.0)),
+            ("c", (208.0, 8.0, 100.0, 100.0)),
+            ("a", (248.0, 53.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a grandchild with insets on the far sides.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;right:5px;bottom:3px;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (113.0, 195.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a grandchild with auto insets keeps its place in the flow of the item.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (8.0, 8.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a grandchild with insets on the near sides.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;left:5px;top:3px;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (13.0, 11.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a grandchild of a nested container with its own alignment.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=i style="display:flex;writing-mode:vertical-lr;width:60px;height:80px;justify-content:center;align-items:center;margin:5px"><div id=a style="position:absolute;right:5px;bottom:3px;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (13.0, 13.0, 60.0, 80.0)),
+            ("a", (103.0, 195.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a nested container is the containing block of its own box.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=i style="display:flex;position:relative;writing-mode:vertical-lr;width:60px;height:80px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 60.0, 80.0)),
+            ("a", (28.0, 43.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a horizontal container nested in the vertical one.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;align-items:flex-start"><div id=i style="display:flex;position:relative;writing-mode:horizontal-tb;width:60px;height:80px;justify-content:center;align-items:center"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 60.0, 80.0)),
+            ("a", (28.0, 43.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a table cell inside the container.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=t style="display:table;writing-mode:horizontal-tb"><div style="display:table-cell;width:40px;height:30px"><div id=a style="position:absolute;right:2px;bottom:3px;width:10px;height:10px"></div></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("t", (8.0, 8.0, 120.0, 30.0)),
+            ("a", (116.0, 195.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a grid inside the container.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=i style="display:grid;writing-mode:vertical-lr;width:60px;height:80px;grid-template-columns:30px 30px;grid-template-rows:20px 20px;align-items:center;justify-items:end;position:static"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 60.0, 80.0)),
+            ("a", (28.0, 78.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a fixed box takes the static position of the container.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;justify-content:center;align-items:flex-start"><div id=a style="position:fixed;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (8.0, 103.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a box that sizes by its content and percentages of the containing block.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;width:300px;height:200px"><div id=a style="position:absolute">XXXXX</div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (8.0, 8.0, 10.0, 50.0)),
+        ],
+    );
+    // vertical-lr: percentage size and insets.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;"><div id=a style="position:absolute;left:10%;top:10%;width:50%;height:20%"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (20.0, 28.0, 60.0, 40.0)),
+        ],
+    );
+    // vertical-lr: a container sized by its content.
+    check(
+        r#"<div id=c style="display:flex;position:relative;writing-mode:vertical-lr;justify-content:center;align-items:center;float:left"><div id=i style="width:30px;height:60px"></div><div id=a style="position:absolute;width:20px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 30.0, 60.0)),
+            ("i", (8.0, 8.0, 30.0, 60.0)),
+            ("a", (13.0, 33.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: an item beside the box.
+    check(
+        r#"<div id=c style="display:flex;position:relative;width:120px;height:200px;writing-mode:vertical-lr;width:300px;height:200px"><div id=i style="width:30px;height:20px"></div><div id=a style="position:absolute;width:40px;height:50px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("i", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (8.0, 8.0, 40.0, 50.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_grid_places_absolute_boxes_by_the_axes_of_the_grid() {
+    // The grid is 120px by 200px with columns of 50px and 70px along the
+    // inline axis and rows of 40px and 30px along the block axis.
+    // vertical-rl: a static position is aligned by the axes of the grid.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;align-items:center;justify-items:end"><div id=a style="position:absolute;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (53.0, 198.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-rl: without alignment the box is at the block-start and inline-start corner.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;"><div id=a style="position:absolute;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (98.0, 8.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a box placed in a grid area keeps the alignment of the area.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;align-items:center;justify-items:center"><div id=a style="position:absolute;grid-column:2;grid-row:1;width:20px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (58.0, 128.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a box placed in a grid area with every inset zero fills the area.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;"><div id=a style="position:absolute;grid-column:2;grid-row:1;top:0;right:0;bottom:0;left:0"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (8.0, 58.0, 120.0, 150.0)),
+        ],
+    );
+    // vertical-rl: insets and self-alignment in a grid area.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;"><div id=a style="position:absolute;grid-column:2;grid-row:1;top:0;right:0;bottom:0;left:0;width:20px;height:10px;justify-self:end;align-self:center"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (58.0, 198.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a grandchild with insets on the far sides.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;right:5px;bottom:3px;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (98.0, 8.0, 30.0, 20.0)),
+            ("a", (113.0, 195.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a fixed box takes the static position of the grid.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;align-items:center;justify-items:end"><div id=a style="position:fixed;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (53.0, 198.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-rl: the containing block is an ancestor of the grid.
+    check(
+        r#"<div id=w style="position:relative;margin-top:20px;width:300px;height:300px"><div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;position:static;align-items:center;justify-items:end"><div id=a style="position:absolute;width:30px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 20.0, 300.0, 300.0)),
+            ("c", (8.0, 20.0, 120.0, 200.0)),
+            ("a", (53.0, 210.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-rl: a flex container in a grid cell.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl"><div id=i style="display:flex;writing-mode:vertical-rl;justify-content:center;align-items:center;position:static"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (88.0, 8.0, 40.0, 50.0)),
+            ("a", (98.0, 28.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-rl: the inline direction reversed.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-rl;direction:rtl"><div id=a style="position:absolute;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (98.0, 198.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a static position is aligned by the axes of the grid.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;align-items:center;justify-items:end"><div id=a style="position:absolute;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (53.0, 198.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: without alignment the box is at the block-start and inline-start corner.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;"><div id=a style="position:absolute;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (8.0, 8.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a box placed in a grid area keeps the alignment of the area.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;align-items:center;justify-items:center"><div id=a style="position:absolute;grid-column:2;grid-row:1;width:20px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (58.0, 128.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a box placed in a grid area with every inset zero fills the area.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;"><div id=a style="position:absolute;grid-column:2;grid-row:1;top:0;right:0;bottom:0;left:0"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (8.0, 58.0, 120.0, 150.0)),
+        ],
+    );
+    // vertical-lr: insets and self-alignment in a grid area.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;"><div id=a style="position:absolute;grid-column:2;grid-row:1;top:0;right:0;bottom:0;left:0;width:20px;height:10px;justify-self:end;align-self:center"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (58.0, 198.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a grandchild with insets on the far sides.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;"><div id=i style="width:30px;height:20px"><div id=a style="position:absolute;right:5px;bottom:3px;width:10px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 30.0, 20.0)),
+            ("a", (113.0, 195.0, 10.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a fixed box takes the static position of the grid.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;align-items:center;justify-items:end"><div id=a style="position:fixed;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (53.0, 198.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: the containing block is an ancestor of the grid.
+    check(
+        r#"<div id=w style="position:relative;margin-top:20px;width:300px;height:300px"><div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;position:static;align-items:center;justify-items:end"><div id=a style="position:absolute;width:30px;height:10px"></div></div></div>"#,
+        &[
+            ("w", (8.0, 20.0, 300.0, 300.0)),
+            ("c", (8.0, 20.0, 120.0, 200.0)),
+            ("a", (53.0, 210.0, 30.0, 10.0)),
+        ],
+    );
+    // vertical-lr: a flex container in a grid cell.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr"><div id=i style="display:flex;writing-mode:vertical-lr;justify-content:center;align-items:center;position:static"><div id=a style="position:absolute;width:20px;height:10px"></div></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("i", (8.0, 8.0, 40.0, 50.0)),
+            ("a", (18.0, 28.0, 20.0, 10.0)),
+        ],
+    );
+    // vertical-lr: the inline direction reversed.
+    check(
+        r#"<div id=c style="display:grid;position:relative;width:120px;height:200px;grid-template-columns:50px 70px;grid-template-rows:40px 30px;writing-mode:vertical-lr;direction:rtl"><div id=a style="position:absolute;width:30px;height:10px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 120.0, 200.0)),
+            ("a", (8.0, 198.0, 30.0, 10.0)),
         ],
     );
 }

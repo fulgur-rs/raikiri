@@ -2816,11 +2816,20 @@ fn flex_layout_sized(
             }
         },
     );
+    let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);
     }
     tree.context.flex_item_percent_bases.pop();
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
+    // Taffy aligns the boxes by the physical axes of `horizontal-tb`; a flex
+    // container on the axes of a vertical writing mode aligns them by its own.
+    if inputs.run_mode == RunMode::PerformLayout
+        && let Some(area) = output.oof_positioning_area
+        && let Some(hoisted_overflow) = vertical_oof::align_hoisted_children(tree, idx, area)
+    {
+        output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
+    }
     output
 }
 
@@ -3022,8 +3031,8 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     output
 }
 
-/// Share Grid static alignment with fixed-box relayout, where page-area
-/// sizing can change the child's margin-box size after this dispatch.
+/// The shares of the free space of its grid area that Grid static alignment
+/// leaves before an absolutely positioned child.
 ///
 /// `overflows` tells, per axis, whether the child's margin box is larger than
 /// the content box it is aligned in: a safe alignment of an overflowing box
@@ -3033,7 +3042,7 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 /// the axes of `horizontal-tb`; see [`auto_grid_abspos_vertical_alignment`]
 /// for one laid out on vertical axes.
 // spec: https://www.w3.org/TR/css-align-3/#overflow-values
-pub(crate) fn auto_grid_abspos_static_alignment(
+fn auto_grid_abspos_static_alignment(
     child: &LayoutStyleView<'_>,
     parent: &LayoutStyleView<'_>,
     overflows: Size<bool>,

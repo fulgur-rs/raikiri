@@ -1,5 +1,4 @@
-//! Absolutely positioned children of block containers in vertical writing
-//! modes.
+//! Absolutely positioned children of containers in vertical writing modes.
 //!
 //! Block layout runs on physical axes, so a vertical block container with
 //! only out-of-flow children ends with a zero physical height. Taffy hands
@@ -14,6 +13,14 @@
 //! it to the out-of-flow children as their available inline size, and moves
 //! their static position to the block-start edge. Its `alignment` submodule
 //! aligns them by the axes of the writing mode.
+//!
+//! A flex or grid container laid out on the axes of its own writing mode
+//! converts the positioning area and the static positions of its
+//! out-of-flow children to physical axes when it leaves that frame, so those
+//! children are placed like the children of a block container. Their
+//! coordinates come from Taffy's positioning of the candidates (`oof`) and
+//! from the alignment of `alignment`; the page layout rewrites them only for
+//! the auto margins of the boxes that the root contains.
 
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{AvailableSpace, CoreStyle, LayoutInput, Position as TaffyPosition, Size};
