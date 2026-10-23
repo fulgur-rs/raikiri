@@ -18,11 +18,9 @@ skrifa         = { workspace = true }
 anyrender      = { workspace = true }
 peniko         = { workspace = true }
 kurbo          = { workspace = true }
-taffy          = { workspace = true }
 url            = { workspace = true }
 
 [dev-dependencies]
-taffy                = { workspace = true }
 raikiri-html         = { workspace = true }
 # Backs `benches/walk.rs` — the regression detector for `paint_document`'s
 # per-element DFS walk (`crates/raikiri-paint/src/walk.rs`), the paint-side

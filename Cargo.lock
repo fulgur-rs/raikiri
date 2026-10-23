@@ -2662,7 +2662,6 @@ dependencies = [
  "rustc-hash",
  "shodo",
  "smol_str",
- "taffy 0.15.0",
  "url",
 ]
 
@@ -2766,7 +2765,6 @@ dependencies = [
  "raikiri-traits",
  "shodo",
  "skrifa 0.44.0",
- "taffy 0.15.0",
  "url",
 ]
 

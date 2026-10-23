@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::context::LayoutSession;
-use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the public Document tree traits take Taffy's id
+use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the session's tree traits take Taffy's id
 use taffy::TraversePartialTree;
 
 #[test]
@@ -156,19 +156,15 @@ fn document_child_indexing_matches_filtered_flat_tree_order() {
     let last = doc.append_element(Some(parent), "section", None::<&str>);
     doc.mark_in_document_flags();
 
-    let parent_id = TaffyNodeId::from(parent);
-    let expected = [first, nested_first, nested_second, last].map(TaffyNodeId::from);
-    let children: Vec<_> = <Document as TraversePartialTree>::child_ids(&doc, parent_id).collect();
+    let expected = [first, nested_first, nested_second, last];
+    let children: Vec<_> = doc.layout_child_ids(parent).collect();
 
     assert_eq!(children, expected);
-    assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, parent_id),
-        expected.len()
-    );
+    assert_eq!(doc.layout_child_ids(parent).count(), expected.len());
     for (index, child) in expected.into_iter().enumerate() {
         assert_eq!(
-            <Document as TraversePartialTree>::get_child_id(&doc, parent_id, index),
-            child,
+            doc.layout_child_ids(parent).nth(index),
+            Some(child),
             "Document child index {index}"
         );
     }

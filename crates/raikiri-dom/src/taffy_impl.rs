@@ -385,7 +385,7 @@ fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> Edges<f32> 
 /// container's origin, so positions summed along the DOM ancestors are
 /// unchanged. A `display: contents` element holding only inline content
 /// remains one node, standing in for the anonymous item of that text.
-pub struct TaffyChildIter<'a> {
+pub(crate) struct TaffyChildIter<'a> {
     doc: &'a Document,
     flatten: bool,
     /// Whether the children are those of a source box, among which an
@@ -525,6 +525,20 @@ impl LayoutSession<'_> {
                     taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
                 )
             })
+    }
+}
+
+impl Document {
+    /// The children of `node` that take part in layout, in layout order, as
+    /// arena indices.
+    ///
+    /// These are the flat-tree children that generate boxes: nodes outside the
+    /// document (comments, processing instructions, a `<template>` contents
+    /// fragment) and whitespace-only text that makes no box are left out, and
+    /// the children of a `display: contents` child stand in for it.
+    #[doc(hidden)]
+    pub fn layout_child_ids(&self, node: usize) -> impl Iterator<Item = usize> + '_ {
+        TaffyChildIter::new(self, node, false)
     }
 }
 
