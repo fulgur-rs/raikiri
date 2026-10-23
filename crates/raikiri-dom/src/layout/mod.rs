@@ -42,6 +42,7 @@ use taffy::{
 pub(crate) mod block_axis_style;
 pub(crate) mod box_style_data;
 pub(crate) mod context;
+pub(crate) mod protocol;
 pub(crate) mod style_views;
 pub(crate) mod table;
 
