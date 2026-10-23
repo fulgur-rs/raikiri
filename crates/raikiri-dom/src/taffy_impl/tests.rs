@@ -3,6 +3,7 @@ mod child_walk_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;
 mod style_view_tests;
+mod vertical_grid_tests;
 use crate::layout::context::LayoutSession;
 
 #[test]

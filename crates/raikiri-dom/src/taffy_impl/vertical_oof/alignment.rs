@@ -25,9 +25,11 @@ use taffy::{
     LayoutPartialTree, Line, NodeId, OofPositioningArea, Overflow, Point, Rect, Size,
 };
 
+use super::super::grid_oof::GridAreas;
 use super::super::{block_right_to_left, hoisted_children, resolve_calc};
 use super::used_writing_mode;
 use crate::layout::context::LayoutSession;
+use crate::layout::style_views::ReadRole;
 use raikiri_style::property::WritingMode;
 
 /// A physical axis of the positioning area.
@@ -314,6 +316,48 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
     idx: usize,
     area: OofPositioningArea,
 ) -> Option<Rect<f32>> {
+    align_children(tree, idx, area, None)
+}
+
+/// [`align_hoisted_children`] for a vertical grid container, aligning each box
+/// in the grid area of its grid placement within `area`, the padding box of
+/// the container. Without the `grid` areas, which taffy reports only from a
+/// layout it performs, every box is aligned in `area`.
+pub(in crate::taffy_impl) fn align_hoisted_children_in_grid(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    area: OofPositioningArea,
+    grid: Option<&GridAreas<'_>>,
+) -> Option<Rect<f32>> {
+    align_children(tree, idx, area, grid)
+}
+
+/// The scrollable overflow that the boxes `idx` is the containing block of
+/// contribute at their positions, laid out against `area`.
+pub(in crate::taffy_impl) fn hoisted_overflow_rect(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    area: OofPositioningArea,
+) -> Rect<f32> {
+    let (direction, overflow) = {
+        let container = tree.physical_style(idx);
+        (container.direction(), container.overflow())
+    };
+    hoisted_overflow(
+        tree,
+        &hoisted_children(tree, idx),
+        area,
+        direction,
+        overflow,
+    )
+}
+
+fn align_children(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    area: OofPositioningArea,
+    grid: Option<&GridAreas<'_>>,
+) -> Option<Rect<f32>> {
     // Only a box laid out on vertical axes has the physical axes swapped.
     block_right_to_left(tree, idx)?;
     let mode = used_writing_mode(tree, idx);
@@ -322,8 +366,16 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
         (container.direction(), container.overflow())
     };
     let children = hoisted_children(tree, idx);
+    let overall_area = area;
     let mut moved_any = false;
     for &child in &children {
+        let area = match grid {
+            Some(grid) => {
+                let style = tree.query_style(child, ReadRole::Oof);
+                grid.positioning_area(&style, direction, overall_area)
+            }
+            None => overall_area,
+        };
         let child_mode = used_writing_mode(tree, child);
         let mut layout = tree.nodes[child].unrounded_layout;
         let (child_inset, child_margin, child_direction, align_self, justify_self) = {
@@ -420,7 +472,7 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
             moved_any = true;
         }
     }
-    moved_any.then(|| hoisted_overflow(tree, &children, area, direction, overflow))
+    moved_any.then(|| hoisted_overflow(tree, &children, overall_area, direction, overflow))
 }
 
 #[cfg(test)]

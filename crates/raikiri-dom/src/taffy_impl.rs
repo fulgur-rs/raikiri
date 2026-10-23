@@ -12,10 +12,10 @@ use crate::LayoutStyle as Style;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
     AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
-    DetailedGridInfo, ExpandedDimension, GridItemStyle, Layout, LayoutBlockContainer,
-    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
-    MaybeMath, NodeId, Position as TaffyPosition, Size, TraversePartialTree, TraverseTree,
-    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
+    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, MaybeMath, NodeId,
+    Position as TaffyPosition, Size, TraversePartialTree, TraverseTree, compute_cached_layout,
+    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -1136,6 +1136,7 @@ mod tests;
 mod axis_adapter;
 pub(crate) mod block_flow;
 pub(crate) mod content_limits;
+mod grid_oof;
 mod intrinsic_scopes;
 use intrinsic_scopes::{with_flex_intrinsic_probe, with_flex_item_basis_bounds};
 mod oof;
@@ -2637,7 +2638,7 @@ fn center_absolute_children_in_block_axis(
     idx: usize,
     inputs: &LayoutInput,
     size: Size<f32>,
-    grid: Option<&DetailedGridInfo<smol_str::SmolStr>>,
+    grid: Option<&grid_oof::GridAreas<'_>>,
 ) {
     use taffy::{MaybeResolve, Overflow, ResolveOrZero};
 
@@ -2694,12 +2695,7 @@ fn center_absolute_children_in_block_axis(
             continue;
         }
         let area = match grid {
-            Some(grid) => grid.resolve_absolute_grid_area(
-                GridItemStyle::grid_row(&style),
-                GridItemStyle::grid_column(&style),
-                direction,
-                padding_box,
-            ),
+            Some(grid) => grid.area(&style, direction, padding_box),
             None => padding_box,
         };
         let (area_start, area_end, start, end) = if block_is_height {
@@ -2744,12 +2740,7 @@ fn center_absolute_children_in_block_axis(
                 continue;
             }
             let area = match grid {
-                Some(grid) => grid.resolve_absolute_grid_area(
-                    GridItemStyle::grid_row(&style),
-                    GridItemStyle::grid_column(&style),
-                    direction,
-                    padding_box,
-                ),
+                Some(grid) => grid.area(&style, direction, padding_box),
                 None => padding_box,
             };
             let start = inset
@@ -2980,28 +2971,54 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
         width: size.width.map(|width| (width - inset.width).max(0.0)),
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
+    let right_to_left = grid_oof::right_to_left(tree, idx);
     let mut output = content_limits::with_grid_item_content_limits(
         tree,
         node_id,
         inputs,
         parent_size,
-        |tree, node_id, inputs| compute_grid_layout(tree, node_id, inputs),
+        |tree, node_id, inputs| {
+            if right_to_left.is_some() {
+                // The container runs its algorithm on the axes of its own
+                // writing mode.
+                tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                    compute_grid_layout(tree, node_id, inputs)
+                })
+            } else {
+                compute_grid_layout(tree, node_id, inputs)
+            }
+        },
     );
+    let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);
     }
     // Taffy reports the tracks only from a layout it performs.
     let grid = tree.context.grid_layout_info.remove(&idx);
-    if let Some(taffy::DetailedLayoutInfo::Grid(grid)) = grid {
-        center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(&grid));
+    let axes = grid_oof::GridAxes::new(right_to_left, output.size.width);
+    let areas = grid_oof::GridAreas::of(grid.as_ref(), axes);
+    if let Some(areas) = &areas {
+        center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(areas));
     }
-    align_auto_grid_abspos_children(
-        tree,
-        idx,
-        inputs.run_mode,
-        inputs.parent_size.width,
-        output.size,
-    );
+    // The grid's own padding percentages refer to the inline size of its
+    // containing block.
+    let percent_basis = match axes {
+        Some(_) => vertical_block::containing_inline_size(tree, idx, &inputs),
+        None => inputs.parent_size.width,
+    };
+    // Taffy aligns the boxes by the physical axes of `horizontal-tb`; a grid on
+    // the axes of a vertical writing mode aligns them by its own.
+    let vertical_area = output
+        .oof_positioning_area
+        .filter(|_| axes.is_some() && inputs.run_mode == RunMode::PerformLayout);
+    if let Some(area) = vertical_area {
+        vertical_oof::align_hoisted_children_in_grid(tree, idx, area, areas.as_ref());
+    }
+    align_auto_grid_abspos_children(tree, idx, inputs.run_mode, percent_basis, output.size);
+    if let Some(area) = vertical_area {
+        output.scrollable_overflow_rect =
+            in_flow_overflow.union(vertical_oof::hoisted_overflow_rect(tree, idx, area));
+    }
     output
 }
 
@@ -3011,12 +3028,78 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 /// `overflows` tells, per axis, whether the child's margin box is larger than
 /// the content box it is aligned in: a safe alignment of an overflowing box
 /// aligns as `start` (CSS Box Alignment 3 §4.4).
+///
+/// The shares are those of the physical x and y axes of a grid laid out on
+/// the axes of `horizontal-tb`; see [`auto_grid_abspos_vertical_alignment`]
+/// for one laid out on vertical axes.
 // spec: https://www.w3.org/TR/css-align-3/#overflow-values
 pub(crate) fn auto_grid_abspos_static_alignment(
     child: &LayoutStyleView<'_>,
     parent: &LayoutStyleView<'_>,
     overflows: Size<bool>,
 ) -> Option<Size<f32>> {
+    let alignment = auto_grid_abspos_axis_alignment(child, parent, overflows)?;
+    Some(Size {
+        width: if alignment.inline_reversed {
+            1.0 - alignment.inline
+        } else {
+            alignment.inline
+        },
+        height: alignment.block,
+    })
+}
+
+/// [`auto_grid_abspos_static_alignment`] for a grid laid out on the axes of a
+/// vertical writing mode, whose block axis runs from right to left when
+/// `right_to_left`: the inline axis is the physical y axis, and the block axis
+/// the physical x axis. `overflows` is on physical axes.
+fn auto_grid_abspos_vertical_alignment(
+    child: &LayoutStyleView<'_>,
+    parent: &LayoutStyleView<'_>,
+    overflows: Size<bool>,
+    right_to_left: bool,
+) -> Option<Size<f32>> {
+    let alignment = auto_grid_abspos_axis_alignment(
+        child,
+        parent,
+        Size {
+            width: overflows.height,
+            height: overflows.width,
+        },
+    )?;
+    Some(Size {
+        width: if right_to_left {
+            1.0 - alignment.block
+        } else {
+            alignment.block
+        },
+        height: if alignment.inline_reversed {
+            1.0 - alignment.inline
+        } else {
+            alignment.inline
+        },
+    })
+}
+
+/// How a grid aligns an out-of-flow child along its own axes.
+struct AxisAlignment {
+    /// The share of the free space before the box along the inline axis, from
+    /// the inline-start edge.
+    inline: f32,
+    /// The share along the block axis, from the block-start edge.
+    block: f32,
+    /// Whether the inline-start edge is the physical end edge.
+    inline_reversed: bool,
+}
+
+/// The static alignment of `child` in its grid `parent` on the axes of the
+/// grid's writing mode, when all of its insets and grid-placement properties
+/// are `auto`. `overflows` is (inline, block).
+fn auto_grid_abspos_axis_alignment(
+    child: &LayoutStyleView<'_>,
+    parent: &LayoutStyleView<'_>,
+    overflows: Size<bool>,
+) -> Option<AxisAlignment> {
     use taffy::{
         AlignItemsKeyword, AlignmentSafety, GridContainerStyle, GridItemStyle, GridPlacement,
     };
@@ -3060,24 +3143,20 @@ pub(crate) fn auto_grid_abspos_static_alignment(
             _ => 0.0,
         }
     };
-    let inline = alignment_fraction(
-        child.bridge_justify_self(),
-        GridContainerStyle::justify_items(parent),
-        true,
-        overflows.width,
-    );
-    Some(Size {
-        width: if parent_direction == taffy::Direction::Rtl {
-            1.0 - inline
-        } else {
-            inline
-        },
-        height: alignment_fraction(
+    Some(AxisAlignment {
+        inline: alignment_fraction(
+            child.bridge_justify_self(),
+            GridContainerStyle::justify_items(parent),
+            true,
+            overflows.width,
+        ),
+        block: alignment_fraction(
             child.bridge_align_self(),
             GridContainerStyle::align_items(parent),
             false,
             overflows.height,
         ),
+        inline_reversed: parent_direction == taffy::Direction::Rtl,
     })
 }
 
@@ -3239,7 +3318,12 @@ fn auto_grid_abspos_aligned_layout(
         width: free_width < 0.0,
         height: free_height < 0.0,
     };
-    let alignment = auto_grid_abspos_static_alignment(&style, &parent_style, overflows)?;
+    let alignment = match grid_oof::right_to_left(tree, grid) {
+        Some(right_to_left) => {
+            auto_grid_abspos_vertical_alignment(&style, &parent_style, overflows, right_to_left)?
+        }
+        None => auto_grid_abspos_static_alignment(&style, &parent_style, overflows)?,
+    };
     layout.location.x =
         grid_to_owner.x + border.left + padding.left + margin.left + alignment.width * free_width;
     layout.location.y =
@@ -3488,15 +3572,17 @@ impl LayoutGridContainer for LayoutSession<'_> {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         let rows = row_sizing_functions(&self.physical_style(parent), &detailed_grid_info.rows);
+        // The rows run along the block axis: the physical height, or the
+        // physical width in a vertical writing mode.
+        let vertical = grid_oof::right_to_left(self, parent).is_some();
         self.nodes[parent].grid_items_without_baseline = children
             .iter()
             .zip(detailed_grid_info.items.iter())
             .filter(|&(&child, item)| {
                 let spanned = usize::from(item.row_start.saturating_sub(1))
                     ..usize::from(item.row_end.saturating_sub(1));
-                self.physical_style(child)
-                    .size()
-                    .height
+                let size = self.physical_style(child).size();
+                (if vertical { size.width } else { size.height })
                     .into_raw()
                     .uses_percentage()
                     && rows.get(spanned).is_some_and(|rows| {

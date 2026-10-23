@@ -872,9 +872,9 @@ pub struct ComputedValues {
     /// browsers treat it like `auto`. Not a CSS property.
     pub height_keyword: Option<ContentSizeKeyword>,
     /// Whether the box this element's children are placed in lays them out
-    /// on horizontal axes in every writing mode: a grid or table box, or a
-    /// multicol flow. A `display: contents` or `display: none` element
-    /// has no box, so it passes on its parent's value. Not a CSS property.
+    /// on horizontal axes in every writing mode: a table box or a multicol
+    /// flow. A `display: contents` or `display: none` element has no box,
+    /// so it passes on its parent's value. Not a CSS property.
     pub horizontal_children: bool,
     /// The writing mode of the ruby that this element's ruby annotations
     /// belong to: the parent's value for a ruby annotation container, which

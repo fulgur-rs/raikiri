@@ -839,16 +839,24 @@ fn grid_item_area_bases(
                 && node.taffy_position() != taffy::Position::Absolute
         })
         .collect::<Vec<_>>();
+    // The areas are on the layout axes of the grid, which are the physical
+    // ones swapped in a vertical writing mode.
+    let vertical = super::grid_oof::right_to_left(tree, parent).is_some();
     children
         .into_iter()
         .enumerate()
         .filter_map(|(item_index, child)| {
             let (_, area) = grid.item_grid_area(item_index)?;
+            let (width, height) = if vertical {
+                (area.height, area.width)
+            } else {
+                (area.width, area.height)
+            };
             Some((
                 usize::from(child),
                 Size {
-                    width: Some(area.width),
-                    height: Some(area.height),
+                    width: Some(width),
+                    height: Some(height),
                 },
             ))
         })
