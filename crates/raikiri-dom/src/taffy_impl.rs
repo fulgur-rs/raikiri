@@ -1102,7 +1102,7 @@ impl LayoutSession<'_> {
                 .contains(NodeFlags::IS_IFC_ROOT)
         {
             output.baselines.first =
-                vertical_first_baseline(self, usize::from(node_id), output.size.width);
+                first_child_baseline(self, usize::from(node_id), output.size.width);
         }
         // A scroll container exports baselines clamped to its border box
         // (CSS Box Alignment 3 §9.1), so content scrolled out of view does
@@ -1135,6 +1135,11 @@ impl LayoutSession<'_> {
         // border box instead.
         if self.is_orthogonal_to_parent(usize::from(node_id)) {
             output.baselines = taffy::Baselines::NONE;
+        }
+        // The parent of a vertical block reads the baseline back from here
+        // when it has none of its own.
+        if vertical && inputs.run_mode == RunMode::PerformLayout {
+            self.nodes[usize::from(node_id)].vertical_first_baseline = output.baselines.first;
         }
         output
     }
@@ -2193,14 +2198,14 @@ fn dominant_baseline(tree: &LayoutSession<'_>, idx: usize) -> shodo::geometry::B
 }
 
 /// The first baseline of the vertical box `idx`, whose border box is `width`
-/// wide, found in the layouts stored for its descendants: that of the first
+/// wide, found in the baselines its children exported: that of the first
 /// in-flow child with the same block direction that has one. It is an offset
 /// along the block axis from the block-start border edge of `idx`.
 ///
-/// A child that is an ifc root has the baseline of its first line, measured
-/// from the block-start edge of its content box; any other child has the one
-/// of its own children.
-fn vertical_first_baseline(doc: &LayoutSession<'_>, idx: usize, width: f32) -> Option<f32> {
+/// The baseline a child exported already is the one its own formatting context
+/// gave it, clamped when it scrolls, so a flex container's item order and a
+/// scroll container's border box are taken into account.
+fn first_child_baseline(doc: &LayoutSession<'_>, idx: usize, width: f32) -> Option<f32> {
     let right_to_left = block_right_to_left(doc, idx)?;
     for &child in &doc.nodes[idx].children {
         let node = &doc.nodes[child];
@@ -2213,26 +2218,8 @@ fn vertical_first_baseline(doc: &LayoutSession<'_>, idx: usize, width: f32) -> O
         {
             continue;
         }
-        let layout = &node.unrounded_layout;
-        let line = node
-            .ifc
-            .as_ref()
-            .filter(|_| node.flags.contains(NodeFlags::IS_IFC_ROOT))
-            .and_then(|root| root.lines.as_ref())
-            .and_then(|lines| {
-                crate::layout::ifc::flow::first_baseline_of(lines, dominant_baseline(doc, child))
-            })
-            .map(|baseline| {
-                let (padding, border) = if right_to_left {
-                    (layout.padding.right, layout.border.right)
-                } else {
-                    (layout.padding.left, layout.border.left)
-                };
-                padding + border + baseline
-            });
-        if let Some(baseline) =
-            line.or_else(|| vertical_first_baseline(doc, child, layout.size.width))
-        {
+        if let Some(baseline) = node.vertical_first_baseline {
+            let layout = &node.unrounded_layout;
             let start = if right_to_left {
                 width - (layout.location.x + layout.size.width)
             } else {

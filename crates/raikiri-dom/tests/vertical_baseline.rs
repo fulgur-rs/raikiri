@@ -336,6 +336,50 @@ fn a_nested_block_skips_the_children_without_a_baseline() {
 }
 
 #[test]
+fn a_wrapper_gives_the_item_the_baseline_its_child_exported() {
+    // A block around a box passes on the baseline that box exported, not one
+    // found again in its content. A scroll container exports a baseline clamped
+    // to its border box: the 40px line of `s` is centred 20px across, but `s` is
+    // 10px wide, so the item takes 10px with or without the wrapper.
+    for scroller in [
+        r#"<div id=s style="overflow:hidden;width:10px;line-height:40px">XX</div>"#,
+        r#"<div id=w><div id=s style="overflow:hidden;width:10px;line-height:40px">XX</div></div>"#,
+    ] {
+        check(
+            &format!(
+                r#"<div id=c style="display:flex;writing-mode:vertical-rl;align-items:baseline;width:200px;height:100px"><div id=a style="line-height:10px">X</div>{scroller}<div id=d style="line-height:30px">X</div></div>"#
+            ),
+            &[
+                ("c", (8.0, 8.0, 200.0, 100.0)),
+                ("a", (188.0, 8.0, 10.0, 10.0)),
+                ("s", (193.0, 18.0, 10.0, 20.0)),
+                ("d", (178.0, 38.0, 30.0, 10.0)),
+            ],
+        );
+    }
+    // A flex container exports the baseline of its first item in layout order,
+    // so `order` decides it, and a wrapper does not change that.
+    for flex in [
+        r#"<div id=f style="display:flex"><div id=f1 style="line-height:10px">X</div><div id=f2 style="line-height:40px;order:-1">X</div></div>"#,
+        r#"<div id=w><div id=f style="display:flex"><div id=f1 style="line-height:10px">X</div><div id=f2 style="line-height:40px;order:-1">X</div></div></div>"#,
+    ] {
+        check(
+            &format!(
+                r#"<div id=c style="display:flex;writing-mode:vertical-rl;align-items:baseline;width:200px;height:100px"><div id=a style="line-height:10px">X</div>{flex}<div id=d style="line-height:30px">X</div></div>"#
+            ),
+            &[
+                ("c", (8.0, 8.0, 200.0, 100.0)),
+                ("a", (183.0, 8.0, 10.0, 10.0)),
+                ("f", (168.0, 18.0, 40.0, 20.0)),
+                ("f1", (168.0, 28.0, 40.0, 10.0)),
+                ("f2", (168.0, 18.0, 40.0, 10.0)),
+                ("d", (173.0, 38.0, 30.0, 10.0)),
+            ],
+        );
+    }
+}
+
+#[test]
 fn baseline_alignment_works_on_each_flex_line() {
     // Each flex line shares a baseline of its own, and `direction` does not move it.
     check(

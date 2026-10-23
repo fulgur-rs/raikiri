@@ -496,6 +496,10 @@ pub struct Node {
     /// First baseline of a flex container from its border edge, as its last
     /// layout found it (CSS Flexbox 1 §8.5).
     pub(crate) flex_first_baseline: Option<f32>,
+    /// First baseline a box laid out on vertical axes exported to its parent in
+    /// its last performed layout, as an offset along its block axis from its
+    /// block-start border edge.
+    pub(crate) vertical_first_baseline: Option<f32>,
     /// Computed `break-before` value consumed by column fragmentation.
     pub(crate) break_before: BreakBetween,
     /// Computed `break-after` value consumed by column fragmentation.
@@ -752,6 +756,7 @@ impl Node {
             table_grid_box: None,
             table_first_baseline: None,
             flex_first_baseline: None,
+            vertical_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
