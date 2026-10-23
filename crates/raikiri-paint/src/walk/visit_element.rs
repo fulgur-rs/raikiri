@@ -8,17 +8,13 @@ use super::paint_walk::PaintWalk;
 use crate::text;
 use anyrender::PaintScene;
 use raikiri_dom::Node;
+use raikiri_layout_geometry::BoxLayout;
 use raikiri_traits::NodeId;
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Paint the element `node` of `visit`, laid out as `layout`, and push
     /// the frames that paint its children.
-    pub(super) fn visit_element(
-        &mut self,
-        visit: &VisitFrame,
-        node: &'w Node,
-        layout: taffy::Layout,
-    ) {
+    pub(super) fn visit_element(&mut self, visit: &VisitFrame, node: &'w Node, layout: BoxLayout) {
         let node_id = visit.node_id;
         let (document, cascade) = (self.document, self.cascade);
         // An atomic inline an ellipsis removed from its line is not

@@ -365,7 +365,7 @@ fn element_background_paints_the_gradient_over_its_color() {
         cv.color,
         &cv.border_radius,
         &cv.border,
-        &taffy::Rect {
+        &Edges {
             left: 0.0,
             right: 0.0,
             top: 0.0,
@@ -411,7 +411,7 @@ fn rounded_box_color_and_gradient_are_clipped_to_the_curve_together() {
             cv.color,
             &cv.border_radius,
             &cv.border,
-            &taffy::Rect {
+            &Edges {
                 left: 0.0,
                 right: 0.0,
                 top: 0.0,
@@ -473,7 +473,7 @@ fn gradient_keeps_its_clip_inside_a_matching_border() {
         cv.color,
         &cv.border_radius,
         &cv.border,
-        &taffy::Rect {
+        &Edges {
             left: 0.0,
             right: 0.0,
             top: 0.0,
@@ -509,7 +509,7 @@ fn raster_element_background(cv: &ComputedValues, width: u32, height: u32) -> Ve
         cv.color,
         &cv.border_radius,
         &cv.border,
-        &taffy::Rect {
+        &Edges {
             left: 0.0,
             right: 0.0,
             top: 0.0,
@@ -815,7 +815,7 @@ fn border_area_gradients_paint_the_ring() {
         cv.color,
         &cv.border_radius,
         &cv.border,
-        &taffy::Rect {
+        &Edges {
             left: 0.0,
             right: 0.0,
             top: 0.0,
