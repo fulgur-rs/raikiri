@@ -7,7 +7,7 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct CellBorderState {
     pub(super) node_id: usize,
-    pub(super) widths: Rect<LengthPercentage>,
+    pub(super) widths: StyleRect<LengthPercentage>,
     pub(super) paint: Option<Sides<ComputedBorder>>,
     authored: Option<Sides<ComputedBorder>>,
 }
@@ -18,7 +18,7 @@ pub(super) struct BorderState {
     pub(super) rows: Vec<(usize, Option<Sides<ComputedBorder>>)>,
     slots: HashMap<usize, usize>,
     row_slots: HashMap<usize, usize>,
-    row_widths: HashMap<usize, Rect<LengthPercentage>>,
+    row_widths: HashMap<usize, StyleRect<LengthPercentage>>,
 }
 
 impl BorderState {

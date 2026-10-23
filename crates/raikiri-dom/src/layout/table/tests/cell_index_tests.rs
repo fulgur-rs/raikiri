@@ -332,7 +332,7 @@ fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
             );
             assert_eq!(
                 layout.location,
-                taffy::Point {
+                Point {
                     x: 4.0 + (i % 2) as f32 * 34.0,
                     y: 4.0 + (i / 2) as f32 * 14.0
                 }
@@ -370,7 +370,7 @@ fn collapsed_boundary_search_work_grows_with_grid_area() {
         TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.set(0));
         super::resolve_collapsed_cell_borders_in_document(&mut doc, &grid, &index);
         let lines =
-            super::compute_collapsed_lines_in_document(&mut doc, &grid, &index, &Rect::ZERO, None);
+            super::compute_collapsed_lines_in_document(&mut doc, &grid, &index, &Edges::ZERO, None);
         let visits = TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.get());
         let area = usize::from(side).pow(2);
         eprintln!("{side}x{side}: {visits} cell lookup steps");

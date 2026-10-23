@@ -64,7 +64,7 @@ fn supported_with_wrapped_blocks(
     let mut boxes = Vec::new();
     for child in rendered_elements(tree, parent) {
         let node = layout_node(tree, child);
-        let has_inset = style_of(tree, child).inset() != Rect::auto();
+        let has_inset = style_of(tree, child).inset() != StyleRect::auto();
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
@@ -144,7 +144,8 @@ pub(super) fn starts_the_outer_columns(tree: &LayoutSession<'_>, id: usize) -> b
 /// Whether `child` is a block that can be sliced at a column end, leaving
 /// aside what it contains.
 fn is_plain_block(tree: &LayoutSession<'_>, child: usize) -> bool {
-    style_of(tree, child).inset() == Rect::auto() && is_plain_block_ignoring_insets(tree, child)
+    style_of(tree, child).inset() == StyleRect::auto()
+        && is_plain_block_ignoring_insets(tree, child)
 }
 
 /// [`is_plain_block`] for a box whose insets the caller accepts.
@@ -327,7 +328,7 @@ fn wrapped_block_tree(
             leaf_count += 1;
         } else {
             if !allow_sliced_wrappers
-                || style_of(tree, child).inset() != Rect::auto()
+                || style_of(tree, child).inset() != StyleRect::auto()
                 || !is_plain_wrapper_ignoring_insets(tree, child)
             {
                 return None;
@@ -1267,7 +1268,7 @@ fn push_wrapped_wrapper(
         x: x + context.column_offset_x(first.column) - context.column_offset_x(parent_first.column),
         y: first.top - parent_first.top,
     };
-    tree.set_unrounded_layout(TaffyNodeId::from(wrapper), &layout);
+    tree.set_unrounded_layout(NodeId::from(wrapper), &layout);
     let mut records = Vec::with_capacity(pieces.len());
     for (index, piece) in pieces.iter().enumerate() {
         let parent_index = parents
@@ -1341,7 +1342,7 @@ fn push_wrapped_block(
             - context.column_offset_x(wrapper_first.column),
         y: first.top - wrapper_first.top,
     };
-    tree.set_unrounded_layout(TaffyNodeId::from(leaf), &layout);
+    tree.set_unrounded_layout(NodeId::from(leaf), &layout);
     let sliced = pieces.len() > 1 && slices_decorations(tree, leaf);
     let mut taken = 0.0f32;
     for (index, piece) in pieces.iter().enumerate() {
@@ -1700,7 +1701,7 @@ pub(super) fn layout(
     for &child in children {
         tree.nodes[child].cache.clear();
         let output = tree.compute_child_layout(
-            TaffyNodeId::from(child),
+            NodeId::from(child),
             super::column_child_layout_input(
                 tree,
                 child,
@@ -1892,7 +1893,7 @@ pub(super) fn layout(
             x: origin.x + context.column_offset_x(first.column),
             y: origin.y + first.top,
         };
-        tree.set_unrounded_layout(TaffyNodeId::from(child), &layout);
+        tree.set_unrounded_layout(NodeId::from(child), &layout);
         let mut records = Vec::with_capacity(pieces.len());
         // How far each piece of a sliced box is moved up.
         let mut shifts = Vec::with_capacity(pieces.len());

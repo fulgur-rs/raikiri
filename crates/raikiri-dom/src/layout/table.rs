@@ -37,21 +37,23 @@ use raikiri_style::property::{
     BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, PositionValue, Sides,
     TableLayoutValue, VerticalAlign, WritingMode,
 };
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> is style input
 use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
-use taffy::tree::{RunMode, SizingMode};
 use taffy::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, BlockItemStyle, CoreStyle,
-    ExpandedDimension, Layout as TaffyLayout, LayoutInput, LayoutOutput, LayoutPartialTree,
-    LengthPercentage, NodeId, OofCandidate, OofCandidates, OofPositioningArea, Point, Position,
-    Rect, Size,
+    BlockItemStyle, CoreStyle, ExpandedDimension, LayoutPartialTree, LengthPercentage, Position,
 };
 
 use crate::document::Document;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId,
+    OofCandidate, OofCandidates, OofPositioningArea, RequestedAxis, RunMode, SizingMode,
+};
 use crate::layout::style_views::ReadRole;
 use crate::taffy_impl::content_limits::ContentLimits;
+use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
@@ -130,7 +132,7 @@ struct CellPlacement {
     row_span: u16,
     specified_width: Dimension,
     specified_min_width: Dimension,
-    resolved: Option<TaffyLayout>,
+    resolved: Option<BoxLayout>,
     natural_height: f32,
     baseline: f32,
     /// The row-height pass's layout, kept when the final layout at the row
@@ -142,7 +144,7 @@ struct CellPlacement {
 #[derive(Debug, Clone, Copy)]
 struct RowPassLayout {
     width: f32,
-    scrollable_overflow_rect: Rect<f32>,
+    scrollable_overflow_rect: Edges<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -186,9 +188,9 @@ fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertic
         run_mode: RunMode::ComputeSize,
         sizing_mode: SizingMode::InherentSize,
         axis: if vertical {
-            taffy::tree::RequestedAxis::Vertical
+            RequestedAxis::Vertical
         } else {
-            taffy::tree::RequestedAxis::Horizontal
+            RequestedAxis::Horizontal
         },
         known_dimensions: Size::NONE,
         parent_size: Size::NONE,
@@ -208,7 +210,7 @@ fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertic
             width: false,
             height: false,
         },
-        vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     };
     let min_inputs = probe(AvailableSpace::MinContent);
     let max_inputs = probe(AvailableSpace::MaxContent);
@@ -309,7 +311,7 @@ fn layout_table_caption(
         LayoutInput {
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,
-            axis: taffy::tree::RequestedAxis::Both,
+            axis: RequestedAxis::Both,
             known_dimensions: Size {
                 width: known_width,
                 height: known_height,
@@ -324,11 +326,11 @@ fn layout_table_caption(
                     .map(AvailableSpace::Definite)
                     .unwrap_or(AvailableSpace::MaxContent),
             },
-            known_dimensions_are_definite: taffy::geometry::Size {
+            known_dimensions_are_definite: Size {
                 width: known_width.is_some(),
                 height: known_height.is_some(),
             },
-            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+            vertical_margins_are_collapsible: Line::FALSE,
         },
     );
     let mut margin_left =
@@ -366,7 +368,7 @@ fn layout_table_caption(
         (false, true) => *end = remaining,
         (false, false) => {}
     }
-    let layout = TaffyLayout {
+    let layout = BoxLayout {
         order: 0,
         location: Point {
             x: margin_left,
@@ -377,7 +379,7 @@ fn layout_table_caption(
         scrollbar_size: Size::ZERO,
         padding: padding.resolve_or_zero(Some(parent_width), crate::taffy_impl::resolve_calc),
         border: border.resolve_or_zero(Some(parent_width), crate::taffy_impl::resolve_calc),
-        margin: Rect {
+        margin: Edges {
             left: margin_left,
             right: margin_right,
             top: margin_top,
@@ -1418,7 +1420,7 @@ fn table_part_claimants(
 fn dispatch_table_part_oof(
     doc: &mut LayoutSession<'_>,
     claimants: &[usize],
-    parts: &std::collections::HashMap<usize, TaffyLayout>,
+    parts: &std::collections::HashMap<usize, BoxLayout>,
     projected: bool,
     candidates: &mut OofCandidates,
 ) {
@@ -1481,7 +1483,7 @@ fn position_source_table_parts(
     doc: &mut LayoutSession<'_>,
     table: usize,
     grid: &TableGrid,
-    parts: Option<std::collections::HashMap<usize, TaffyLayout>>,
+    parts: Option<std::collections::HashMap<usize, BoxLayout>>,
 ) {
     let Some(parts) = parts else {
         return;
@@ -1494,7 +1496,7 @@ fn position_source_table_parts(
         .unwrap_or_default()
         .to_vec()
     {
-        doc.nodes[part].unrounded_layout = TaffyLayout::new();
+        doc.nodes[part].unrounded_layout = BoxLayout::new();
     }
     if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
         for &id in parts.keys() {
@@ -1611,9 +1613,9 @@ fn source_part_boxes(
     rows: &[f32],
     origins: (&[f32], &[f32]),
     vertical: bool,
-) -> std::collections::HashMap<usize, TaffyLayout> {
+) -> std::collections::HashMap<usize, BoxLayout> {
     let boundary = doc.table_parts_boundary(table);
-    let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    let mut parts: std::collections::HashMap<usize, BoxLayout> = Default::default();
     let (col_x, row_y) = origins;
     let width = col_x
         .get(columns.len().saturating_sub(1))
@@ -1621,7 +1623,7 @@ fn source_part_boxes(
         .map_or(0.0, |(x, width)| {
             x + width - col_x.first().copied().unwrap_or(0.0)
         });
-    let mut vertical_rows: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    let mut vertical_rows: std::collections::HashMap<usize, BoxLayout> = Default::default();
     if vertical {
         for cell in &grid.cells {
             let layout = cell
@@ -1634,7 +1636,7 @@ fn source_part_boxes(
         }
     }
     for (index, &marker) in grid.rows.iter().enumerate() {
-        let mut rect = TaffyLayout::new();
+        let mut rect = BoxLayout::new();
         rect.location = Point {
             x: col_x.first().copied().unwrap_or(0.0),
             y: row_y[index],
@@ -1671,7 +1673,7 @@ fn is_source_table_part(doc: &Document, id: usize) -> bool {
     )
 }
 
-fn extend_part_bounds(part: &mut TaffyLayout, other: &TaffyLayout) {
+fn extend_part_bounds(part: &mut BoxLayout, other: &BoxLayout) {
     let right = (part.location.x + part.size.width).max(other.location.x + other.size.width);
     let bottom = (part.location.y + part.size.height).max(other.location.y + other.size.height);
     part.location.x = part.location.x.min(other.location.x);
@@ -2166,18 +2168,18 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
         LayoutInput {
             run_mode: RunMode::ComputeSize,
             sizing_mode: SizingMode::InherentSize,
-            axis: taffy::tree::RequestedAxis::Horizontal,
+            axis: RequestedAxis::Horizontal,
             known_dimensions: Size::NONE,
             parent_size: Size::NONE,
             available_space: Size {
                 width: axis,
                 height: AvailableSpace::MAX_CONTENT,
             },
-            known_dimensions_are_definite: taffy::geometry::Size {
+            known_dimensions_are_definite: Size {
                 width: true,
                 height: true,
             },
-            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+            vertical_margins_are_collapsible: Line::FALSE,
         },
     );
     doc.context.ifc_width_probe = false;
@@ -2996,7 +2998,7 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
             LayoutInput {
                 run_mode: RunMode::PerformLayout,
                 sizing_mode: SizingMode::InherentSize,
-                axis: taffy::tree::RequestedAxis::Horizontal,
+                axis: RequestedAxis::Horizontal,
                 known_dimensions: Size {
                     width: Some(cell_width),
                     height: None,
@@ -3009,11 +3011,11 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
                     width: AvailableSpace::Definite(cell_width),
                     height: AvailableSpace::MAX_CONTENT,
                 },
-                known_dimensions_are_definite: taffy::geometry::Size {
+                known_dimensions_are_definite: Size {
                     width: true,
                     height: true,
                 },
-                vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+                vertical_margins_are_collapsible: Line::FALSE,
             },
         )
     };
@@ -3231,7 +3233,7 @@ fn place_cells(
                 LayoutInput {
                     run_mode: RunMode::PerformLayout,
                     sizing_mode: SizingMode::InherentSize,
-                    axis: taffy::tree::RequestedAxis::Horizontal,
+                    axis: RequestedAxis::Horizontal,
                     known_dimensions: Size {
                         width: Some(cell_width),
                         height: Some(cell_height),
@@ -3244,11 +3246,11 @@ fn place_cells(
                         width: AvailableSpace::Definite(cell_width),
                         height: AvailableSpace::Definite(cell_height),
                     },
-                    known_dimensions_are_definite: taffy::geometry::Size {
+                    known_dimensions_are_definite: Size {
                         width: true,
                         height: true,
                     },
-                    vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+                    vertical_margins_are_collapsible: Line::FALSE,
                 },
             );
             (output.scrollable_overflow_rect, output.oof_candidates)
@@ -3326,7 +3328,7 @@ fn place_cells(
                 doc.store_unrounded_layout(child, &child_layout);
             }
         }
-        let layout = TaffyLayout {
+        let layout = BoxLayout {
             order: order as u32,
             location: Point {
                 x: cell_x,
@@ -3340,7 +3342,7 @@ fn place_cells(
             scrollbar_size: Size::ZERO,
             padding,
             border,
-            margin: Rect::ZERO,
+            margin: Edges::ZERO,
         };
         cell.resolved = Some(layout);
         doc.store_unrounded_layout(cell.node_id, &layout);
@@ -3407,7 +3409,7 @@ fn reposition_cells_for_vertical_writing(
             LayoutInput {
                 run_mode: RunMode::PerformLayout,
                 sizing_mode: SizingMode::InherentSize,
-                axis: taffy::tree::RequestedAxis::Both,
+                axis: RequestedAxis::Both,
                 known_dimensions: Size {
                     width: Some(cell_width),
                     height: Some(height),
@@ -3424,7 +3426,7 @@ fn reposition_cells_for_vertical_writing(
                     width: true,
                     height: true,
                 },
-                vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+                vertical_margins_are_collapsible: Line::FALSE,
             },
         );
         let node = doc
@@ -3548,11 +3550,11 @@ fn resolve_length(lp: taffy::style::LengthPercentage, basis: Option<f32>) -> f32
 /// Resolve a table's padding or border widths (`rect`) against the width of
 /// its containing block (CSS 2.1 §8.4).
 fn resolve_table_rect(
-    rect: &Rect<taffy::style::LengthPercentage>,
+    rect: &StyleRect<taffy::style::LengthPercentage>,
     parent_size: Size<Option<f32>>,
-) -> Rect<f32> {
+) -> Edges<f32> {
     let w_basis = parent_size.width;
-    Rect {
+    Edges {
         left: resolve_length(rect.left, w_basis),
         right: resolve_length(rect.right, w_basis),
         top: resolve_length(rect.top, w_basis),
@@ -3766,7 +3768,7 @@ impl CollapsedLines {
         self.outer_left + self.outer_right - self.col_overlaps.iter().sum::<f32>()
     }
 
-    fn separate(table_border: &Rect<f32>) -> Self {
+    fn separate(table_border: &Edges<f32>) -> Self {
         Self {
             col_overlaps: Vec::new(),
             row_overlaps: Vec::new(),
@@ -4191,7 +4193,7 @@ impl ColumnsInPlace {
         doc: &Document,
         grid: &TableGrid,
         collapsed_rows: &[bool],
-        table_border: &Rect<f32>,
+        table_border: &Edges<f32>,
         basis: Option<f32>,
     ) -> Self {
         let rows_shown = without_collapsed_rows(grid, collapsed_rows);
@@ -4281,7 +4283,7 @@ fn border_width_with_columns_in_place(
     collapsed_rows: &[bool],
     shown: &TableGrid,
     table_idx: usize,
-    metrics: (&Rect<f32>, Option<f32>),
+    metrics: (&Edges<f32>, Option<f32>),
 ) -> (f32, BorderState) {
     let (table_border, basis) = metrics;
     let rows_shown = without_collapsed_rows(grid, collapsed_rows);
@@ -4304,14 +4306,14 @@ fn compute_collapsed_lines(
     state: &BorderState,
     grid: &TableGrid,
     index: &CellIndex,
-    table_border: &Rect<f32>,
+    table_border: &Edges<f32>,
     basis: Option<f32>,
 ) -> CollapsedLines {
     let n = grid.n_cols as usize;
     let m = grid.rows.len();
 
     // Per-cell border cache (row-major over grid.cells).
-    let borders: Vec<Rect<f32>> = grid
+    let borders: Vec<Edges<f32>> = grid
         .cells
         .iter()
         .map(|c| {

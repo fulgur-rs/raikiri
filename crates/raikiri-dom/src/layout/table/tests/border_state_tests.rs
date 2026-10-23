@@ -214,7 +214,7 @@ fn border_state_mixes_width_without_replacing_paint() {
     );
     let epoch = tree.layout_cache_context.publication_epoch();
     let columns = super::super::ColumnsInPlace::new(&grid, 7.0, in_place, remaining)
-        .with_row_overlaps(&tree, &grid, &[false], &Rect::ZERO, None);
+        .with_row_overlaps(&tree, &grid, &[false], &Edges::ZERO, None);
     assert_eq!(
         columns.in_place.cell(cell).unwrap().widths.top,
         LengthPercentage::length(29.0)

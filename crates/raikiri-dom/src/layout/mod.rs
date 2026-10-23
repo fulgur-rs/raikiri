@@ -16,7 +16,7 @@ use crate::document::Document;
 use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
 use crate::taffy_impl::block_flow::context::BlockContext;
-use protocol::{AvailableSpace, LayoutInput, LayoutOutput, RequestedAxis, RunMode, SizingMode};
+use protocol::AvailableSpace;
 use raikiri_layout_geometry::{BoxLayout, Edges, Point, Size};
 use raikiri_style::property::{
     AlignSelfValue, BreakBetween, CalcLengthPercentage, ClearValue, ColumnCountValue,
@@ -38,10 +38,6 @@ use taffy::{
     Float as TaffyFloat, LayoutPartialTree, LengthPercentage, LengthPercentageAuto,
     Overflow as TaffyOverflow, Position as TaffyPosition,
 };
-
-// The multicol modules read these under their old local names through `use super::*`.
-use protocol::NodeId as TaffyNodeId;
-use raikiri_layout_geometry::{BoxLayout as TaffyLayout, Edges as Rect, Line as TaffyLine};
 
 pub(crate) mod block_axis_style;
 pub(crate) mod box_style_data;
