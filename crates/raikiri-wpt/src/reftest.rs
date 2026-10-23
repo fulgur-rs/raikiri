@@ -16,6 +16,7 @@ mod viewport_units;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use crate::document_syntax::DocumentSyntax;
 use crate::runner::{TestOutcome, Tolerance};
 use viewport_units::{
     expand_css_viewport_units_with_axes, expand_css_viewport_units_with_media_basis,
@@ -138,6 +139,8 @@ pub(crate) trait CascadeImagePreparer {
 }
 
 pub(crate) struct PrintRenderResources<'a> {
+    pub(crate) syntax: DocumentSyntax,
+    pub(crate) mirror_page_margin: bool,
     pub(crate) network: Option<&'a dyn raikiri_traits::NetworkProvider>,
     pub(crate) parse_base_url: Option<&'a raikiri::Url>,
     pub(crate) base_url: Option<&'a raikiri::Url>,
@@ -910,8 +913,22 @@ pub fn render_raikiri_file_pages(
         path: path.to_path_buf(),
         source,
     })?;
-    render_raikiri_pages_inner(&html, width, height, path.parent(), path.parent())
-        .map_err(map_raster_or_raikiri_error)
+    render_raikiri_pages_inner_with_canvases(
+        &html,
+        width,
+        height,
+        path.parent(),
+        path.parent(),
+        InlineEngineChoice {
+            syntax: DocumentSyntax::for_path(path),
+            ..Default::default()
+        },
+        None,
+        None,
+        None,
+        None,
+    )
+    .map_err(map_raster_or_raikiri_error)
 }
 
 fn map_raster_or_raikiri_error(error: Box<dyn std::error::Error>) -> ReftestError {
@@ -1766,7 +1783,7 @@ fn default_margin_insertions(page_rules: &[PageRuleEdges]) -> Vec<(usize, String
     }
 }
 
-fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
+fn should_mirror_default_page_margin(test_html: &str, reference_html: &str) -> bool {
     let test_rules = scan_page_rules(test_html);
     let has_unqualified = test_rules.iter().any(|rule| rule.unqualified);
     // Only mirror the pure UA fallback.  If the test has an authored margin,
@@ -1777,15 +1794,15 @@ fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
             .filter(|rule| rule.unqualified)
             .all(|rule| !rule.has_authored_edge());
     if !test_uses_only_default_margin {
-        return reference_html.to_owned();
+        return false;
     }
     let reference_has_authored_edge = scan_page_rules(reference_html)
         .iter()
         .any(PageRuleEdges::has_authored_edge);
     if reference_has_authored_edge {
-        return reference_html.to_owned();
+        return false;
     }
-    format!("<style>@page {{ margin: 48px; }}</style>{reference_html}")
+    true
 }
 
 // Resolve page-context units once using the same nominal basis as the probe.
@@ -2384,12 +2401,31 @@ pub(crate) fn resolved_live_viewport_document(
 }
 
 /// Parse and configure one WPT document for a live JavaScript DOM backend.
+#[cfg(test)]
 pub(crate) fn prepare_wpt_live_document(
     html: &str,
     width: u32,
     height: u32,
     page_base: &Path,
     wpt_root: &Path,
+) -> Result<LiveWptSetup, String> {
+    prepare_wpt_live_document_with_syntax(
+        html,
+        width,
+        height,
+        page_base,
+        wpt_root,
+        DocumentSyntax::Html,
+    )
+}
+
+pub(crate) fn prepare_wpt_live_document_with_syntax(
+    html: &str,
+    width: u32,
+    height: u32,
+    page_base: &Path,
+    wpt_root: &Path,
+    syntax: DocumentSyntax,
 ) -> Result<LiveWptSetup, String> {
     use raikiri::{MediaContext, PageBox, PageContextQuery};
 
@@ -2415,8 +2451,9 @@ pub(crate) fn prepare_wpt_live_document(
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
-    let mut uncascaded =
-        raikiri_html::parse(html.as_bytes(), &opts).map_err(|error| format!("parse: {error:?}"))?;
+    let mut uncascaded = syntax
+        .parse(html.as_bytes(), &opts)
+        .map_err(|error| format!("parse: {error}"))?;
     let document_base_url =
         raikiri_html::effective_document_base_url(&uncascaded, stylesheet_base.as_ref());
 
@@ -2648,6 +2685,7 @@ fn render_raikiri_pages_inner(
         InlineEngineChoice {
             require_inline_fonts: false,
             print_page_margin: false,
+            ..Default::default()
         },
         None,
         None,
@@ -2737,8 +2775,10 @@ fn restore_focus(document: &mut raikiri_dom::Document, focused: &dynamic::Focuse
 }
 
 /// The fonts and page setup of one rendering.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct InlineEngineChoice {
+    syntax: DocumentSyntax,
+    mirror_page_margin: bool,
     require_inline_fonts: bool,
     /// Print with wptrunner's page margins.
     print_page_margin: bool,
@@ -2749,6 +2789,7 @@ impl InlineEngineChoice {
         Self {
             require_inline_fonts: config.require_inline_fonts,
             print_page_margin: print,
+            ..Default::default()
         }
     }
 }
@@ -2797,6 +2838,8 @@ fn render_raikiri_pages_inner_with_canvases(
         width,
         height,
         PrintRenderResources {
+            syntax: engine.syntax,
+            mirror_page_margin: engine.mirror_page_margin,
             network: stylesheet_network
                 .as_ref()
                 .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
@@ -2887,7 +2930,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
         layout_pages, layout_pages_with_options, page_content_insets_for_page,
         page_margins_for_page,
     };
-    use raikiri_html::parse;
 
     let canvas_bitmaps = resources.canvas_bitmaps;
     let animation_styles = resources.animation_styles;
@@ -2913,7 +2955,17 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // before resolving viewport units so both the content box and `vh` use the
     // same print viewport as the reference renderer.
     let html = inject_default_page_margin(html);
-    let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+    let parse_document = || {
+        let mut parsed = resources.syntax.parse(html.as_bytes(), &opts)?;
+        if resources.mirror_page_margin {
+            parsed.stylesheet_sources.insert(
+                0,
+                raikiri_html::StylesheetSource::new("@page { margin: 48px; }".into(), None),
+            );
+        }
+        Ok::<_, String>(parsed)
+    };
+    let mut uncascaded = parse_document()?;
     if let Some(styles) = animation_styles {
         restore_animation_styles(&mut uncascaded.dom, styles)?;
     }
@@ -3109,7 +3161,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // documents can keep the already-laid-out result and avoid a second full
     // parse/layout pass.
     let (mut uncascaded, slices, mut cascade, page_tree, mut continuations) = if geometry_varies {
-        let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+        let mut fresh = parse_document()?;
         if let Some(styles) = animation_styles {
             restore_animation_styles(&mut fresh.dom, styles)?;
         }
@@ -4060,12 +4112,17 @@ where
     let print = is_print_reftest(&pair.test);
     let config = config.for_test(&pair.test);
     // A printed reference gets the print page margin on its own.
-    let ref_html = if print {
-        ref_prepared.html
-    } else {
-        mirror_default_page_margin(&test_prepared.html, &ref_prepared.html)
+    let mirror_page_margin =
+        !print && should_mirror_default_page_margin(&test_prepared.html, &ref_prepared.html);
+    let test_engine = InlineEngineChoice {
+        syntax: test_prepared.syntax,
+        ..InlineEngineChoice::of(&config, print)
     };
-    let engine = InlineEngineChoice::of(&config, print);
+    let ref_engine = InlineEngineChoice {
+        syntax: ref_prepared.syntax,
+        mirror_page_margin,
+        ..InlineEngineChoice::of(&config, print)
+    };
     let test_doc = render_raikiri_pages_inner_with_canvases(
         &test_prepared.html,
         config.width,
@@ -4076,7 +4133,7 @@ where
             None
         },
         pair.test.parent(),
-        engine,
+        test_engine,
         Some(&test_prepared.animation_styles),
         Some(test_prepared.canvases),
         Some(&test_prepared.custom_highlight_ranges),
@@ -4084,7 +4141,7 @@ where
     )
     .map_err(map_raster_or_raikiri_error)?;
     let ref_doc = render_raikiri_pages_inner_with_canvases(
-        &ref_html,
+        &ref_prepared.html,
         config.width,
         config.height,
         if resolve_images {
@@ -4093,7 +4150,7 @@ where
             None
         },
         pair.reference.parent(),
-        engine,
+        ref_engine,
         Some(&ref_prepared.animation_styles),
         Some(ref_prepared.canvases),
         Some(&ref_prepared.custom_highlight_ranges),

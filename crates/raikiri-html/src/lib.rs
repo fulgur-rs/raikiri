@@ -3,6 +3,8 @@
 //! - Parser layer: html5ever wrapper ([`RaikiriTreeSink`]) with the [`parse()`] /
 //!   [`parse_with_sink`] entry points that produce a pre-cascade
 //!   [`UncascadedDocument`].
+//! - XHTML: [`parse_xhtml`] builds the same document through XML parsing,
+//!   preserving self-closing elements and namespaces.
 //! - Document layer: [`parse_html`] / [`parse_html_with_limits`] /
 //!   [`parse_html_with_resources`] assemble a cascaded [`HtmlDocument`];
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
@@ -28,6 +30,7 @@ mod resources;
 mod sink;
 mod types;
 pub mod ua;
+mod xhtml;
 
 // cov:ignore: public re-export declarations have no executable body
 pub use cascade::{
@@ -68,6 +71,7 @@ pub use resources::{
 pub use sink::RaikiriTreeSink;
 pub use types::{ParseOptions, StylesheetPart, StylesheetSource, UncascadedDocument};
 pub use ua::MINIMAL_UA_CSS;
+pub use xhtml::{XhtmlParseError, parse_xhtml};
 
 // Types that appear in the signatures above, re-exported so a consumer that
 // depends only on this crate (plus `raikiri-dom` / `raikiri-traits`) can name

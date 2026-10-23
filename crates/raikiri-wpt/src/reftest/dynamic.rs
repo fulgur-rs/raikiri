@@ -11,6 +11,7 @@ use raikiri_style::{StyleDom, StyleElement, StyleNode};
 /// [`raikiri_dom::Document::set_canvases_in_tree_order_owned`] before paint.
 #[derive(Debug)]
 pub(super) struct PreparedDynamic {
+    pub syntax: DocumentSyntax,
     /// Serialized document after scripts ran (or the original source when no
     /// scripts were present).
     pub html: String,
@@ -241,15 +242,17 @@ pub(super) fn prepare(
     suffix: &str,
     config: ReftestConfig,
 ) -> Result<PreparedDynamic, ReftestError> {
-    let parsed = raikiri_html::parse(
-        html.as_bytes(),
-        &raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .map_err(|e| ReftestError::RaikiriRender(format!("parse readiness: {e:?}")))?;
+    let syntax = DocumentSyntax::for_path(path);
+    let parsed = syntax
+        .parse(
+            html.as_bytes(),
+            &raikiri::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .map_err(|e| ReftestError::RaikiriRender(format!("parse readiness: {e:?}")))?;
     // Static fast path: no scripts and no reftest-wait means no JS, no
     // canvas, no URL needed. Returns the original source verbatim so static
     // reftests never see a serialization round-trip. A reftest-wait document
@@ -257,6 +260,7 @@ pub(super) fn prepare(
     // fails closed instead of silently passing.
     if !has_script_elements(&parsed.dom) && !waiting(&parsed.dom) {
         return Ok(PreparedDynamic {
+            syntax,
             html: html.to_owned(),
             canvases: Vec::new(),
             animation_styles: Vec::new(),
@@ -271,8 +275,15 @@ pub(super) fn prepare(
         .ancestors()
         .find(|p| p.join("resources/testharness.js").is_file())
         .unwrap_or(parent);
-    let setup = prepare_wpt_live_document(html, config.width, config.height, parent, wpt_root)
-        .map_err(ReftestError::RaikiriRender)?;
+    let setup = prepare_wpt_live_document_with_syntax(
+        html,
+        config.width,
+        config.height,
+        parent,
+        wpt_root,
+        syntax,
+    )
+    .map_err(ReftestError::RaikiriRender)?;
     let url = raikiri::Url::from_file_path(path).map_err(|_| {
         ReftestError::RaikiriRender("dynamic reftest needs an absolute path".into())
     })?;
@@ -305,6 +316,8 @@ pub(super) fn prepare(
         let html = serialize(host.document(), &report)?;
         let canvases = host.document_mut().take_canvases_in_tree_order();
         Ok(PreparedDynamic {
+            // The live DOM serializer produces HTML, including HTML void elements.
+            syntax: DocumentSyntax::Html,
             html,
             canvases,
             animation_styles,
@@ -335,6 +348,7 @@ pub(super) fn prepare(
         let html = serialize(runtime.document(), &report)?;
         let canvases = runtime.take_canvases_in_tree_order();
         return Ok(PreparedDynamic {
+            syntax: DocumentSyntax::Html,
             html,
             canvases,
             animation_styles,

@@ -29,7 +29,10 @@ use raikiri_js::runtime::RunReport;
 // `crate::runner::TestOutcome`.
 pub use raikiri_js_wasmtime_harness::SubtestOutcome;
 
-use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
+use crate::document_syntax::DocumentSyntax;
+use crate::reftest::{
+    DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document_with_syntax,
+};
 use crate::wpt_host::WptDocumentHost;
 
 /// Why a page produced no trustworthy list of subtest results.
@@ -128,14 +131,15 @@ fn prepare_host(path: &Path, wpt_root: &Path) -> Result<WptDocumentHost, PageErr
     let html = std::fs::read_to_string(&page)
         .map_err(|error| PageError::Host(format!("{}: {error}", page.display())))?;
     let page_dir = page.parent().unwrap_or(wpt_root);
-    let setup = prepare_wpt_live_document(
+    let setup = prepare_wpt_live_document_with_syntax(
         &html,
         DEFAULT_REFTTEST_WIDTH,
         DEFAULT_REFTTEST_HEIGHT,
         page_dir,
         wpt_root,
+        DocumentSyntax::for_path(path),
     )
-    .map_err(PageError::Host)?; // cov:ignore: the page was read as valid UTF-8 and HTML parsing recovers from markup errors.
+    .map_err(PageError::Host)?;
     let mut host = WptDocumentHost::new(setup, wpt_root);
     if let Some(url) = std::fs::canonicalize(&page)
         .ok()

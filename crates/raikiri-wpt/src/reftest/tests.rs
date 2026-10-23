@@ -1,4 +1,5 @@
 use super::*;
+mod xhtml_tests;
 
 #[test]
 fn print_margin_currentcolor_and_inherited_expression_match_literal_pixels() {
@@ -75,6 +76,7 @@ fn animation_viewport_units_are_resolved_after_geometry_reparse() {
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
         print_page_margin: false,
+        ..Default::default()
     };
     let actual = render_raikiri_pages_inner_with_canvases(
         &source,
@@ -509,6 +511,7 @@ fn focus_sidecar_is_restored_after_geometry_reparse() {
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
         print_page_margin: false,
+        ..Default::default()
     };
     let focused = |path: &[usize], visible| dynamic::FocusedPath {
         path: path.to_vec(),
@@ -569,6 +572,7 @@ fn animation_style_sidecar_is_restored_after_geometry_reparse() {
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
         print_page_margin: false,
+        ..Default::default()
     };
     let rendered = render_raikiri_pages_inner_with_canvases(
         &source,
@@ -710,16 +714,14 @@ fn named_page_does_not_receive_fallback_when_unqualified_rule_exists() {
 fn default_page_margin_is_mirrored_to_reference_without_page_edges() {
     let test = "<style>@page :first { size: portrait; } @page { size: landscape; }</style>";
     let reference = "<style>body { margin: 0; }</style>Landscape";
-    let mirrored = mirror_default_page_margin(test, reference);
-    assert!(mirrored.starts_with("<style>@page { margin: 48px; }</style>"));
-    assert!(mirrored.ends_with(reference));
+    assert!(should_mirror_default_page_margin(test, reference));
 }
 
 #[test]
 fn explicit_reference_page_margin_is_not_overridden_by_mirroring() {
     let test = "<style>@page { size: 300px; }</style>";
     let reference = "<style>@page { margin: 0; }</style>Reference";
-    assert_eq!(mirror_default_page_margin(test, reference), reference);
+    assert!(!should_mirror_default_page_margin(test, reference));
 }
 
 #[test]
@@ -1951,6 +1953,7 @@ fn render_with_engine(html: &str) -> RenderedDocument {
         InlineEngineChoice {
             require_inline_fonts: false,
             print_page_margin: false,
+            ..Default::default()
         },
         None,
         None,
@@ -3011,6 +3014,7 @@ fn render_in_checkout(root: &Path, html: &str) -> RenderedDocument {
         InlineEngineChoice {
             require_inline_fonts: false,
             print_page_margin: false,
+            ..Default::default()
         },
         None,
         None,
@@ -3150,6 +3154,7 @@ fn a_canvas_on_a_later_page_of_another_width_keeps_its_bitmap() {
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
         print_page_margin: false,
+        ..Default::default()
     };
     // A resource base gives the rendering an image resolver and cascade
     // image preparation, which the relayout of the wide page uses too.
