@@ -10,14 +10,16 @@
 //! A property joins by adding one row to the table below: its key, whether it
 //! is inherited, and the specified value its computed field converts back to.
 //! A row also lets the parser keep the keyword for that property instead of
-//! dropping the declaration.
+//! dropping the declaration. A row whose computed value reads back wrongly for
+//! the initial style, because it depends on another property, adds an
+//! `initial =>` value of its own.
 
 use std::sync::LazyLock;
 
 use crate::computed::ComputedValues;
 use crate::property::{
-    ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue, PropertyKey,
-    PropertyValue, TextIndentValue,
+    BORDER_WIDTH_MEDIUM_PX, ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue,
+    PropertyKey, PropertyValue, TextIndentValue,
 };
 use crate::resolve::{
     ComputedColumnWidth, lift_border_spacing, lift_box_shadow, lift_css_position, lift_flex_basis,
@@ -52,7 +54,10 @@ fn lift_column_width(computed: ComputedColumnWidth) -> ColumnWidthValue {
 }
 
 macro_rules! keyword_defaults {
-    ($source:ident; $($key:ident, $inherited:literal => $value:expr;)*) => {
+    (
+        $source:ident;
+        $($key:ident, $inherited:literal => $value:expr $(, initial => $initial:expr)?;)*
+    ) => {
         /// Whether a CSS-wide keyword on `key` is resolved by this table.
         pub(crate) const fn covers(key: PropertyKey) -> bool {
             matches!(key, $(PropertyKey::$key)|*)
@@ -63,6 +68,15 @@ macro_rules! keyword_defaults {
             match key {
                 $(PropertyKey::$key => $inherited,)*
                 _ => false,
+            }
+        }
+
+        /// The specified value that `initial` gives `key` when it is not the
+        /// one the initial style reads back as; `None` for any other key.
+        fn initial_value(key: PropertyKey) -> Option<PropertyValue> {
+            match key {
+                $($(PropertyKey::$key => Some($initial),)?)*
+                _ => None,
             }
         }
 
@@ -205,6 +219,13 @@ keyword_defaults! {
             Length::Px(source.transform_origin_z.0),
         )
     };
+    OutlineWidth, false => PropertyValue::OutlineWidth(Length::Px(source.outline.width().0)),
+        initial => PropertyValue::OutlineWidth(Length::Px(BORDER_WIDTH_MEDIUM_PX));
+    OutlineStyle, false => PropertyValue::OutlineStyle(source.outline.style());
+    OutlineColor, false => PropertyValue::OutlineColor(source.outline.color);
+    OutlineOffset, false => PropertyValue::OutlineOffset(Length::Px(source.outline_offset.0));
+    TextDecorationColor, false => PropertyValue::TextDecorationColor(source.text_decoration_color);
+    TextEmphasisColor, true => PropertyValue::TextEmphasisColor(source.text_emphasis_color);
 }
 
 /// The value the CSS-wide `keyword` gives the property `key` under the parent
@@ -221,5 +242,8 @@ pub(crate) fn defaulting_value(
             is_inherited(key)
         }
     };
+    if !from_parent && let Some(value) = initial_value(key) {
+        return Some(value);
+    }
     specified_from(key, if from_parent { inherited } else { &INITIAL })
 }
