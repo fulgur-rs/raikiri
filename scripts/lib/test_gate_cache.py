@@ -202,7 +202,7 @@ class GateCacheTest(unittest.TestCase):
         shutil.rmtree(self.target)
         result = self._run("restore")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("no entry for this toolchain", result.stdout)
+        self.assertIn("no usable entry for this toolchain", result.stdout)
         self.assertFalse(self.target.exists())
 
     def test_a_different_rustc_does_not_match(self):
@@ -210,7 +210,7 @@ class GateCacheTest(unittest.TestCase):
         shutil.rmtree(self.target)
         result = self._run("restore", FAKE_RUSTC_RELEASE="2.0.0")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("no entry for this toolchain", result.stdout)
+        self.assertIn("no usable entry for this toolchain", result.stdout)
 
     def test_incomplete_entries_are_ignored(self):
         name = self._save_one_entry()
@@ -219,7 +219,7 @@ class GateCacheTest(unittest.TestCase):
         archive.write_bytes(archive.read_bytes()[:-8])  # size no longer matches .info
         result = self._run("restore")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("no entry for this toolchain", result.stdout)
+        self.assertIn("no usable entry for this toolchain", result.stdout)
         self.assertFalse(self.target.exists())
 
     def test_archive_without_an_info_file_is_not_an_entry(self):
@@ -228,7 +228,7 @@ class GateCacheTest(unittest.TestCase):
         (self.cache / f"{name}.info").unlink()
         result = self._run("restore")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("no entry for this toolchain", result.stdout)
+        self.assertIn("no usable entry for this toolchain", result.stdout)
 
     def test_a_corrupt_archive_fails_without_leaving_partial_directories(self):
         name = self._save_one_entry()
@@ -261,6 +261,47 @@ class GateCacheTest(unittest.TestCase):
         self.assertNotIn("gate-target-20000101T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb.info", remaining)
         self.assertNotIn("gate-target-20000102T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb.info", remaining)
         self.assertEqual(len(self._entries(".tar.gz")), 3)
+
+    def test_broken_entries_do_not_push_usable_ones_out(self):
+        self.cache.mkdir()
+        for day in (1, 2):
+            stem = f"gate-target-2000010{day}T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb"
+            (self.cache / f"{stem}.tar.gz").write_bytes(b"x")
+            (self.cache / f"{stem}.info").write_text("bytes=1\n")
+        for day in (1, 2, 3):  # newer than any real entry, but the archives are missing
+            stem = f"gate-target-209001{day:02d}T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb"
+            (self.cache / f"{stem}.info").write_text("bytes=1\n")
+        self._populate_target()
+        result = self._run("save")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        remaining = self._entries(".tar.gz")
+        self.assertEqual(len(remaining), 3)  # the new entry and both old ones
+        self.assertEqual(len(self._entries(".info")), 6)  # fresh broken ones stay
+
+    def test_broken_entries_are_dropped_after_a_day(self):
+        self.cache.mkdir()
+        stem = "gate-target-20000101T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb"
+        info = self.cache / f"{stem}.info"
+        info.write_text("bytes=1\n")
+        two_days_ago = info.stat().st_mtime - 2 * 86400
+        os.utime(info, (two_days_ago, two_days_ago))
+        self._populate_target()
+        result = self._run("save")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(f"{stem}.info", self._entries(".info"))
+
+    def test_save_that_cannot_write_the_cache_leaves_the_checkout_alone(self):
+        self._populate_target()
+        self.cache.mkdir()
+        self.cache.chmod(0o500)
+        self.addCleanup(self.cache.chmod, 0o700)
+        if os.access(self.cache, os.W_OK):  # running as root: permissions do not apply
+            self.skipTest("cache directory is writable despite chmod")
+        result = self._run("save")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("nothing was removed", result.stderr)
+        self.assertTrue((self.target / "llvm-cov-target/debug/deps/ws-a").exists())
+        self.assertNotIn("clean", self.calls.read_text())
 
     def test_save_leaves_no_temporary_files_behind(self):
         self._save_one_entry()

@@ -227,11 +227,14 @@ build する。同一マシンで複数 worktree が並走すると CPU・メモ
   `scripts/gate-cache.sh restore` を自動で呼び、共有 cache
   (`/mnt/project-files/cache/raikiri-gate/`、無ければ `~/.cache/raikiri-gate-target`) から
   third-party の build 成果物を `target/` に戻す。cache が無い、または `target/` に計装
-  build が既にあるときは何もしない。`RAIKIRI_GATE_CACHE=0` で無効。
+  build が既にあるときは何もしない。`--skip-coverage` では使わない。`RAIKIRI_GATE_CACHE=0` で無効。
   `scripts/gate-cache.sh save` で cache を更新する。**破壊的**: workspace crate の成果物と
   incremental を消してから詰めるので、その checkout の gate を使い終えてから走らせる。
   Cargo.lock が大きく動いたとき、toolchain や cargo-llvm-cov を上げたときに更新する
   (別の rustc / cargo-llvm-cov で作った entry は使われない)。`status` で現状を確認できる。
+  cargo は Cargo.lock から消えた crate version の成果物を消さないため、restore した target/ から
+  save を重ねると entry が膨らむ。作り直すときは `RAIKIRI_GATE_CACHE=0` で cold build した
+  target/ から save する。
 
 ## loopback を使う Rust test は sandbox 外で実行する
 
