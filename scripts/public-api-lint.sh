@@ -31,4 +31,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/repo_root.sh
 source "$SCRIPT_DIR/lib/repo_root.sh"
 
+cd "$REPO_ROOT"
+# cargo doc and the scratch directory of the lint go under the pinned TMPDIR,
+# as for the other gate scripts.
+# shellcheck source=lib/tmpdir.sh
+source "$SCRIPT_DIR/lib/tmpdir.sh"
+
 exec python3 "$SCRIPT_DIR/lib/public_api_lint.py" --repo-root "$REPO_ROOT" "$@"

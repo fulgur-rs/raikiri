@@ -587,7 +587,7 @@ fn node_accessors_are_callable_from_external_call_site() {
     let t = doc.append_text(e, "hi");
     let node = doc.get_node(e).unwrap();
     let _ = &node.children;
-    let _ = &node.layout;
+    let _ = node.layout();
     let _ = node.kind();
     let _ = node.tag_name();
     let _ = node.is_in_document();

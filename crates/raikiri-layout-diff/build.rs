@@ -29,11 +29,18 @@ fn main() {
     // `src/node_layout.rs` reads a node's box one way in trees where `Node`
     // has a `layout()` accessor and another way in the trees before it.
     println!("cargo::rustc-check-cfg=cfg(node_layout_accessor)");
+    // `dom_source_dir` reads the dependency path from the manifest.
+    println!("cargo::rerun-if-changed=Cargo.toml");
     let node_source = dom_source_dir().join("src/node.rs");
     println!("cargo::rerun-if-changed={}", node_source.display());
     let source = std::fs::read_to_string(&node_source)
         .unwrap_or_else(|error| panic!("read {}: {error}", node_source.display()));
-    if source.contains("pub fn layout(&self)") {
+    // Only a line that starts with the signature counts, so a comment that
+    // quotes it does not.
+    if source
+        .lines()
+        .any(|line| line.trim_start().starts_with("pub fn layout(&self)"))
+    {
         println!("cargo::rustc-cfg=node_layout_accessor");
     }
 }
@@ -52,7 +59,11 @@ fn dom_source_dir() -> PathBuf {
         .expect("read this crate's manifest");
     manifest
         .lines()
-        .filter(|line| line.trim_start().starts_with("raikiri-dom"))
+        .filter(|line| {
+            line.trim_start()
+                .strip_prefix("raikiri-dom")
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        })
         .find_map(|line| {
             let path = line.split("path = \"").nth(1)?;
             Some(PathBuf::from(path.split('"').next()?))

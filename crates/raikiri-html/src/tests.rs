@@ -1497,7 +1497,7 @@ fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit()
     // (e) The Comment does not leak into the layout tree. The layout children
     //     use the is_in_document() filter (raikiri-dom/src/taffy_impl.rs), so
     //     the body has one layout child (only `<p>`). This behavior is already
-    //     checked by `taffy_child_ids_and_count_filter_out_template_descendants`
+    //     checked by `taffy_child_ids_and_count_filter_out_comment_and_pi_variants`
     //     in raikiri-dom, but assert it here independently for the Comment/PI
     //     path as a regression check.
     let layout_body_children: Vec<usize> = doc.layout_child_ids(body_id.0 as usize).collect();
