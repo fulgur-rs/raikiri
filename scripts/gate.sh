@@ -202,12 +202,16 @@ if [[ "$SKIP_COVERAGE" -eq 0 ]]; then
   echo
 
   # cargo-llvm-cov only runs doctests with the nightly-only --doctests flag,
-  # so the instrumented run above skips them. Run them uninstrumented here;
-  # this builds only the library targets, not the test binaries.
-  DOC_TEST_CMD=(cargo test --doc --workspace --features raikiri-net/http-ureq --locked)
+  # so the instrumented run above skips them. Run them with cargo test --doc
+  # on top of the artifacts that run just built (scripts/lib/instrumented-run.sh)
+  # so no crate is compiled a second time. The doctest profile data is
+  # discarded, which keeps the report scoped to the suites cargo-llvm-cov ran.
+  DOC_TEST_CMD=("$SCRIPT_DIR/lib/instrumented-run.sh" cargo test --doc --workspace --features raikiri-net/http-ureq --locked)
   echo "-- ${DOC_TEST_CMD[*]} --"
   if ! "${DOC_TEST_CMD[@]}"; then
     echo "FAIL: ${DOC_TEST_CMD[*]}"
+    echo "      (if instrumented-run.sh says the instrumented build is missing,"
+    echo "      fix the cargo llvm-cov failure above first)"
     FAIL=1
   fi
   echo
@@ -380,9 +384,19 @@ if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p raikiri-net --features ht
 fi
 echo
 
-echo "-- cargo run --locked -p raikiri-wpt --bin validate-expectations --"
-if ! cargo run --locked -p raikiri-wpt --bin validate-expectations --; then
+if [[ "$SKIP_COVERAGE" -eq 0 ]]; then
+  # The instrumented run built this binary for raikiri-wpt's bin tests; reuse
+  # it. `cargo run -p raikiri-wpt` selects fewer packages, so cargo unifies
+  # features differently and recompiles the dependency graph.
+  VALIDATE_CMD=("$SCRIPT_DIR/lib/instrumented-run.sh" --bin validate-expectations)
+else
+  VALIDATE_CMD=(cargo run --locked -p raikiri-wpt --bin validate-expectations --)
+fi
+echo "-- ${VALIDATE_CMD[*]} --"
+if ! "${VALIDATE_CMD[@]}"; then
   echo "FAIL: expectation files are malformed, conflicting, or need review"
+  echo "      (or, with coverage on, the instrumented build above did not produce"
+  echo "      the binary; see the instrumented-run.sh message)"
   FAIL=1
 fi
 echo
