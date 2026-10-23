@@ -305,3 +305,25 @@ inline test は分離する、新規ファイルは最初から `tests.rs` で�
 同じ扱い)。分離の際は `scripts/orphan-tests-lint.sh` (`scripts/gate.sh` と CI の両方に
 組み込み済み) で宣言漏れが無いことを確認すること。検出ロジックは
 `scripts/lib/orphan_tests_check.py` 参照。
+
+## Taffy の出力型は所有型の名前で書く (`scripts/taffy-boundary-lint.sh`)
+
+layout の結果・幾何・layout 呼び出しの型 (`taffy::Layout`、`Size`、`Point`、`Line`、`Rect`、
+`LayoutInput`、`LayoutOutput`、`AvailableSpace`、`NodeId` など) は、Taffy ではなく raikiri
+が所有する名前で書く。今はどちらも同じ型の別名なので、import を替えるだけで挙動は変わらない。
+
+- 幾何と box の layout 結果: `raikiri-layout-geometry` crate の `Size` / `Point` / `Line` /
+  `Edges` (Taffy の `Rect`。x / y / width / height の矩形ではなく 4 辺の値) / `BoxLayout`
+  (Taffy の `Layout`)。
+- layout の呼び出し規約 (`LayoutInput` など): raikiri-dom 内部の `crate::layout::protocol`。
+  raikiri-dom の外には出さない。
+
+`scripts/taffy-boundary-lint.sh` (`scripts/gate.sh` と CI の両方に組み込み済み) は、`taffy::`
+から始まる path でこれらの名前を書いた箇所を数え、ファイル単位の件数を
+`scripts/lib/taffy_boundary_baseline.txt` に固定する。件数は**減らす方向にだけ**動かせる。
+増やすと失敗し、減らしたのに baseline を下げ忘れても失敗する (下げ忘れた余白に後から追加が
+隠れるため)。下げるには `scripts/taffy-boundary-lint.sh --update-baseline` (件数が pin を超えているファイルが
+1 つでもあれば拒否する。ファイルを移した場合は baseline の path を手で書き換える)。数える範囲、入力側の `Size<Dimension>` などを除外する同一行の
+`// taffy-boundary-lint:ignore: <理由>` marker、例外にする path の一覧
+(`scripts/lib/taffy_boundary_exempt.txt`) は `scripts/lib/taffy_boundary_lint.py` の
+docstring を参照。baseline を上げて回帰を通さないこと。

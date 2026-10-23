@@ -128,6 +128,11 @@ jobs:
         # needs no Rust toolchain, but runs in the same job as other cheap lints.
         run: scripts/orphan-tests-lint.sh
 
+      - name: Taffy boundary lint
+        # Same command as scripts/gate.sh. Pure Python; the per-file baseline
+        # of remaining Taffy output-type uses may only go down.
+        run: scripts/taffy-boundary-lint.sh
+
       - name: Test (workspace, locked)
         # Cover library, integration, doctest, and binary unit tests, including
         # validate_expectations_bin.rs (end-to-end via assert_cmd, landed in yps)
