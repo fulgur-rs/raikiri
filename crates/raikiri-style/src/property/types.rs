@@ -7915,6 +7915,9 @@ impl PropertyKey {
                 | PropertyKey::GridColumn
                 | PropertyKey::Overflow
                 | PropertyKey::Columns
+                | PropertyKey::Outline
+                | PropertyKey::TextDecoration
+                | PropertyKey::TextEmphasis
         )
     }
 }

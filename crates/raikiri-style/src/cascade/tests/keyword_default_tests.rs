@@ -265,6 +265,11 @@ const CASES: &[(&str, bool, &[&str])] = &[
         false,
         &["10px 20px", "30% 40%", "right bottom 8px"],
     ),
+    ("outline-style", false, &["dashed", "dotted", "double"]),
+    ("outline-color", false, &["red", "blue", "green"]),
+    ("outline-offset", false, &["3px", "5px", "-2px"]),
+    ("text-decoration-color", false, &["red", "blue", "green"]),
+    ("text-emphasis-color", true, &["red", "blue", "green"]),
 ];
 
 /// The shorthands over properties of the table, with the same three kinds of
@@ -314,6 +319,25 @@ const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         &["hidden scroll", "scroll", "clip hidden"],
     ),
     ("columns", false, &["30px 3", "50px 2", "auto 4"]),
+    (
+        "outline",
+        false,
+        &["4px solid red", "2px dashed blue", "3px dotted green"],
+    ),
+    (
+        "text-decoration",
+        false,
+        &[
+            "underline wavy red",
+            "overline dotted blue",
+            "line-through double green",
+        ],
+    ),
+    (
+        "text-emphasis",
+        true,
+        &["dot red", "circle blue", "sesame green"],
+    ),
 ];
 
 /// The computed values of a parent styled `parent` and of its child `p`
@@ -334,13 +358,19 @@ fn same(left: &ComputedValues, right: &ComputedValues) -> bool {
     format!("{left:?}") == format!("{right:?}")
 }
 
+/// Rows with a test of their own: the computed value depends on another
+/// property, so a case that sets only this one cannot tell the keywords apart.
+const SEPARATE_TESTS: &[&str] = &["outline-width"];
+
 #[test]
 fn every_table_row_has_a_case() {
     for key in KEYS {
         assert!(
             CASES
                 .iter()
-                .any(|(name, ..)| property_key_for_name(name) == Some(*key)),
+                .map(|(name, ..)| name)
+                .chain(SEPARATE_TESTS)
+                .any(|name| property_key_for_name(name) == Some(*key)),
             "no case for {key:?}"
         );
     }
@@ -454,6 +484,53 @@ fn every_longhand_of_a_shorthand_case_resolves_the_keyword() {
 }
 
 #[test]
+fn outline_width_keywords_take_the_computed_width() {
+    // A width computes to zero while the style is `none`, so the parent
+    // needs a visible outline for the keyword to carry a width at all.
+    let visible = "outline-width: 4px; outline-style: solid";
+    let width = |parent: &str, sheets: &[(&str, Origin)], css: &str| {
+        child(parent, sheets, css).outline.width().0
+    };
+    let with =
+        |keyword: &str| format!("#target {{ outline-style: dashed; outline-width: {keyword} }}");
+    assert_eq!(width(visible, &[], &with("inherit")), 4.0);
+    // `medium`, the initial width, is 3px.
+    assert_eq!(width(visible, &[], &with("initial")), 3.0);
+    assert_eq!(width(visible, &[], &with("unset")), 3.0);
+    // The parent's computed width is zero, and that is what `inherit` takes.
+    assert_eq!(width("outline-width: 4px", &[], &with("inherit")), 0.0);
+    // Without a style of its own, the initial width still computes to zero.
+    assert_eq!(
+        width(
+            visible,
+            &[],
+            "#target { outline-width: 6px; outline-width: initial }"
+        ),
+        0.0
+    );
+    // `revert` and `revert-layer` roll back to the user agent's width.
+    let user_agent = [("p { outline-width: 7px }", Origin::UserAgent)];
+    for keyword in ["revert", "revert-layer"] {
+        assert_eq!(
+            width(visible, &user_agent, &with(keyword)),
+            7.0,
+            "{keyword}"
+        );
+    }
+    // A keyword substituted from `var()` resolves like a literal one.
+    for keyword in ["inherit", "initial", "unset"] {
+        let through_var = format!(
+            "#target {{ --kw: {keyword}; outline-style: dashed; outline-width: var(--kw) }}"
+        );
+        assert_eq!(
+            width(visible, &[], &through_var),
+            width(visible, &[], &with(keyword)),
+            "{keyword}"
+        );
+    }
+}
+
+#[test]
 fn an_important_keyword_beats_a_later_normal_declaration() {
     let css = "#target { box-sizing: inherit !important } p { box-sizing: content-box }";
     let inherited = child("box-sizing: border-box", &[], css);
@@ -476,14 +553,17 @@ fn a_keyword_substituted_from_var_resolves_like_a_literal() {
 
 #[test]
 fn a_keyword_substituted_from_var_resolves_on_a_shorthand() {
-    let parent = "gap: 3px 4px; flex: 2 3 10px; font: italic 20px/2 serif; overflow: hidden scroll";
+    let parent = "gap: 3px 4px; flex: 2 3 10px; font: italic 20px/2 serif; overflow: hidden scroll; \
+                  outline: 4px solid red; text-decoration: underline wavy red; \
+                  text-emphasis: dot red";
     for keyword in ["inherit", "initial", "unset"] {
         let through_var = child(
             parent,
             &[],
             &format!(
                 "#target {{ --kw: {keyword}; gap: var(--kw); flex: var(--kw); font: var(--kw); \
-                 overflow: var(--kw) }}"
+                 overflow: var(--kw); outline: var(--kw); text-decoration: var(--kw); \
+                 text-emphasis: var(--kw) }}"
             ),
         );
         let literal = child(
@@ -491,7 +571,8 @@ fn a_keyword_substituted_from_var_resolves_on_a_shorthand() {
             &[],
             &format!(
                 "#target {{ --kw: {keyword}; gap: {keyword}; flex: {keyword}; \
-                 font: {keyword}; overflow: {keyword} }}"
+                 font: {keyword}; overflow: {keyword}; outline: {keyword}; \
+                 text-decoration: {keyword}; text-emphasis: {keyword} }}"
             ),
         );
         assert!(same(&through_var, &literal), "{keyword}");
