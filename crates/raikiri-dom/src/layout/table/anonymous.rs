@@ -5,6 +5,7 @@
 use crate::Document;
 use crate::node::arena::BoxKey;
 use crate::node::{Node, NodeFlags};
+use raikiri_layout_geometry::BoxLayout;
 use raikiri_style::property::DisplayValue;
 use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::LayoutError;
@@ -43,7 +44,7 @@ pub(crate) struct AnonymousTable {
     /// The used boxes of `parts` relative to the table, as table layout
     /// last placed them. Their stored boxes add the table's location, so
     /// boxes summed along DOM ancestors place them in the table.
-    pub(crate) relative_parts: Vec<taffy::Layout>,
+    pub(crate) relative_parts: Vec<BoxLayout>,
 }
 
 #[derive(Debug, Clone)]
@@ -531,7 +532,7 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     // Source parts may no longer contain anonymous cells on this pass. Their
     // previous parent-relative boxes must not shift ordinary table cells.
     for &id in &doc.table_objects.materialized_parts {
-        doc.nodes[id].unrounded_layout = taffy::Layout::new();
+        doc.nodes[id].unrounded_layout = BoxLayout::new();
     }
     // An unsuccessful rebuild must not expose cells from the previous pass.
     doc.table_objects = TableObjects::default();

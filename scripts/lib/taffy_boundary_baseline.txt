@@ -30,7 +30,7 @@
 5 crates/raikiri-dom/src/layout/context.rs
 1 crates/raikiri-dom/src/layout/fixed/tests.rs
 1 crates/raikiri-dom/src/layout/initial_containing_block/tests.rs
-12 crates/raikiri-dom/src/layout/mod.rs
+6 crates/raikiri-dom/src/layout/mod.rs
 12 crates/raikiri-dom/src/layout/page/tests.rs
 2 crates/raikiri-dom/src/layout/page_pipeline.rs
 21 crates/raikiri-dom/src/layout/page_pipeline/tests.rs
@@ -42,12 +42,6 @@
 2 crates/raikiri-dom/src/layout/style_views/tests.rs
 2 crates/raikiri-dom/src/layout/style_views/tests/block_view_tests.rs
 16 crates/raikiri-dom/src/layout/style_views/tests/scoped_override_tests.rs
-32 crates/raikiri-dom/src/layout/table.rs
-2 crates/raikiri-dom/src/layout/table/anonymous.rs
-28 crates/raikiri-dom/src/layout/table/tests.rs
-3 crates/raikiri-dom/src/layout/table/tests/cache_tests.rs
-1 crates/raikiri-dom/src/layout/table/tests/cell_index_tests.rs
-3 crates/raikiri-dom/src/layout/table/tests/intrinsic_keyword_tests.rs
 1 crates/raikiri-dom/src/layout/test_support.rs
 4 crates/raikiri-dom/src/node.rs
 3 crates/raikiri-dom/src/paint_rules/tests.rs

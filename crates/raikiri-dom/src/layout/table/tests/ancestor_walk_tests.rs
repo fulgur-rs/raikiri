@@ -1,5 +1,6 @@
-use super::super::{TableGrid, TaffyLayout, position_source_table_parts};
+use super::super::{TableGrid, position_source_table_parts};
 use super::*;
+use raikiri_layout_geometry::BoxLayout;
 use raikiri_traits::PaintRect;
 use std::collections::HashMap;
 
@@ -17,7 +18,7 @@ fn a_rowspan_registers_its_shared_group_once_and_excludes_the_table_boundary() {
     let second = element(group, "tr", DisplayValue::TableRow);
     let cell = element(first, "td", DisplayValue::TableCell);
     let rect = |y, height| {
-        let mut layout = TaffyLayout::new();
+        let mut layout = BoxLayout::new();
         layout.location.y = y;
         layout.size = Size {
             width: 20.0,

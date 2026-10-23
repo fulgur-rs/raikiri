@@ -139,7 +139,8 @@ fn border_scope_in_place_panic_restores_remaining() {
         ..Sides::all(collapsed_candidate(BorderStyle::Solid, 2.0, CssColor::BLACK).border)
     });
     let mut grid = super::super::cache::table_grid(&mut tree, table).unwrap();
-    let prepared = super::super::cache::prepared_borders(&mut tree, table, &grid, None, Rect::ZERO);
+    let prepared =
+        super::super::cache::prepared_borders(&mut tree, table, &grid, None, Edges::ZERO);
     let columns = prepared.columns_in_place.as_ref().unwrap();
     let entries = columns.remaining.entries(&tree);
     FIRST_CELL.set(Some(first));
@@ -197,7 +198,7 @@ fn prepared_state(
     table: usize,
 ) -> std::rc::Rc<super::super::cache::PreparedBorders> {
     let grid = super::super::cache::table_grid(tree, table).unwrap();
-    super::super::cache::prepared_borders(tree, table, &grid, None, Rect::ZERO)
+    super::super::cache::prepared_borders(tree, table, &grid, None, Edges::ZERO)
 }
 
 #[test]

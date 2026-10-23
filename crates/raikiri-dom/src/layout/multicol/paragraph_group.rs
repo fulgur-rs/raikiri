@@ -1,6 +1,6 @@
 use super::*;
 
-type Measurement = (usize, LayoutOutput, TaffyLayout, f32, f32, f32);
+type Measurement = (usize, LayoutOutput, BoxLayout, f32, f32, f32);
 
 pub(super) struct Group {
     /// One entry per paragraph visited, from the chunk's first paragraph.

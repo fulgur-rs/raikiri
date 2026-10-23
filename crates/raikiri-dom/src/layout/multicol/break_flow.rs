@@ -169,14 +169,14 @@ fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::
         || margin.right != zero
         || margin.bottom != zero
         || margin.left != zero
-        || style.padding() != Rect::zero()
-        || style.border() != Rect::zero()
-        || style.inset() != Rect::auto()
+        || style.padding() != StyleRect::zero()
+        || style.border() != StyleRect::zero()
+        || style.inset() != StyleRect::auto()
         || BlockItemStyle::clear(&style) != taffy::Clear::None
         || (!atomic(tree, id)
             && (!node.multicol_auto_width
-                || style.min_size() != Size::auto()
-                || style.max_size() != Size::auto()
+                || style.min_size() != StyleSize::auto()
+                || style.max_size() != StyleSize::auto()
                 || style.overflow() != visible))
 }
 
@@ -334,7 +334,7 @@ fn collect(
         context.available_height,
         AvailableSpace::MaxContent,
     );
-    let output = tree.compute_child_layout(TaffyNodeId::from(id), input);
+    let output = tree.compute_child_layout(NodeId::from(id), input);
     let before = descendant_edge(tree, id, true, 0);
     let after = descendant_edge(tree, id, false, 0);
     if atomic(tree, id) {
@@ -642,7 +642,7 @@ pub(super) fn layout(
                     x: x + item.inline_offset,
                     y,
                 };
-                tree.set_unrounded_layout(TaffyNodeId::from(item.node), &layout);
+                tree.set_unrounded_layout(NodeId::from(item.node), &layout);
                 tree.fragment_tree.reparent_roots(item.node, id);
                 first = false;
             }
