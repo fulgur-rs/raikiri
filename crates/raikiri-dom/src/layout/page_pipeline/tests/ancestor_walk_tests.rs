@@ -20,6 +20,37 @@ fn defensive_ancestor_position_skips_inline_frames_and_stops_at_root() {
 }
 
 #[test]
+fn defensive_ancestor_position_starts_an_anonymous_cell_at_its_own_offset() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let owner = doc.append_element(Some(body), "div", Some("display:block;margin-top:30px"));
+    let first = doc.append_element(Some(owner), "div", Some("display:table-row"));
+    let second = doc.append_element(Some(owner), "div", Some("display:table-row"));
+    doc.append_text(first, "A");
+    doc.append_text(second, "B");
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    // Rows outside a table get an anonymous table and one anonymous cell per
+    // row. The cells have no node in the source arena: the walk starts at the
+    // cell's own offset and continues from the source row it stands for, and
+    // ends where the coordinate-owner fast path does.
+    let cell = doc.nodes.anonymous_cell_key(1);
+    assert_eq!(doc.ifc_source_owner(cell), second);
+    let fallback = current_abs_y_fallback(&doc, cell);
+    assert!(fallback > current_abs_y_fallback(&doc, first));
+    assert_eq!(
+        Some(fallback),
+        doc.layout_origin_of(cell).map(|origin| origin.y)
+    );
+}
+
+#[test]
 fn defensive_ancestor_position_bounds_a_cycle() {
     let mut doc = Document::new();
     let a = doc.append_element(Some(0), "div", None::<&str>);
