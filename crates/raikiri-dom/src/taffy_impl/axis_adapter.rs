@@ -271,7 +271,16 @@ impl LayoutSession<'_> {
         self.with_frame_set_aside(usize::from(node_id), |tree, frame| {
             let adapter = AxisAdapter::for_frame(frame);
             let child = adapter.child_inputs(inputs);
-            let padding_basis = child.padding_basis.filter(|_| pads_on_physical_axes);
+            // Taffy measures the flex base size of an item without a parent
+            // size on the main axis; the container's definite inline size is
+            // recorded for the item's percentage edges.
+            let padding_basis = child
+                .padding_basis
+                .or_else(|| {
+                    super::flex_item_percent_basis(tree, usize::from(node_id))
+                        .and_then(|basis| basis.height)
+                })
+                .filter(|_| pads_on_physical_axes);
             // Borders are lengths, so they resolve without a basis.
             let border = tree
                 .physical_style(usize::from(node_id))

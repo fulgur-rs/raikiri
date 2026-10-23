@@ -1033,3 +1033,64 @@ fn vertical_flex_root_paginates_along_its_block_axis() {
     assert_eq!(flex[0][0], ("t0".to_owned(), (160.0, 0.0, 40.0, 100.0)));
     assert_eq!(flex[2][1], ("t11".to_owned(), (120.0, 0.0, 40.0, 100.0)));
 }
+
+#[test]
+fn horizontal_items_of_a_vertical_flex_row_resolve_percentages_against_the_container_height() {
+    // The percentage padding and margin of a horizontal item of a vertical
+    // flex container refer to the inline size of the container, its height,
+    // also while the container measures the flex base size of the item.
+    check(
+        r#"<div id=c style="display:flex;writing-mode:vertical-rl;width:300px;height:200px"><div id=a style="writing-mode:horizontal-tb;padding-top:10%"><div id=x style="height:20px"></div></div><div id=b style="width:20px;height:30px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (8.0, 8.0, 300.0, 40.0)),
+            ("x", (8.0, 28.0, 300.0, 20.0)),
+            ("b", (288.0, 48.0, 20.0, 30.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="display:flex;writing-mode:vertical-lr;width:300px;height:200px"><div id=a style="writing-mode:horizontal-tb;padding:10% 5%"><div id=x style="height:20px"></div></div><div id=b style="width:20px;height:30px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (8.0, 8.0, 300.0, 60.0)),
+            ("x", (18.0, 28.0, 280.0, 20.0)),
+            ("b", (8.0, 68.0, 20.0, 30.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="display:flex;writing-mode:vertical-rl;width:300px;height:200px"><div id=a style="writing-mode:horizontal-tb;margin-top:10%"><div id=x style="height:20px"></div></div><div id=b style="width:20px;height:30px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (8.0, 28.0, 300.0, 20.0)),
+            ("x", (8.0, 28.0, 300.0, 20.0)),
+            ("b", (288.0, 48.0, 20.0, 30.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="display:flex;flex-direction:column;writing-mode:vertical-rl;width:300px;height:200px"><div id=a style="writing-mode:horizontal-tb;padding:10%"><div id=x style="height:20px"></div></div><div id=b style="width:20px;height:30px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (268.0, 8.0, 40.0, 200.0)),
+            ("x", (288.0, 28.0, 0.0, 20.0)),
+            ("b", (248.0, 8.0, 20.0, 30.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="display:flex;flex-wrap:wrap;writing-mode:vertical-rl;width:300px;height:200px"><div id=a style="writing-mode:horizontal-tb;padding-top:10%"><div id=x style="height:20px"></div></div><div id=b style="width:20px;height:150px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (8.0, 8.0, 300.0, 40.0)),
+            ("x", (8.0, 28.0, 300.0, 20.0)),
+            ("b", (288.0, 48.0, 20.0, 150.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="display:flex;writing-mode:vertical-rl;width:300px;height:200px"><div id=a style="writing-mode:horizontal-tb;padding-top:10%;flex:1"><div id=x style="height:20px"></div></div><div id=b style="width:20px;height:30px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 300.0, 200.0)),
+            ("a", (8.0, 8.0, 300.0, 170.0)),
+            ("x", (8.0, 28.0, 300.0, 20.0)),
+            ("b", (288.0, 178.0, 20.0, 30.0)),
+        ],
+    );
+}
