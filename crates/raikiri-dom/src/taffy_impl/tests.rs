@@ -1,4 +1,7 @@
 use super::*;
+use crate::layout::protocol::{RequestedAxis, RunMode, SizingMode};
+use raikiri_layout_geometry::{Edges, Line, Point};
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 mod child_walk_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;
@@ -10,8 +13,9 @@ use crate::layout::context::LayoutSession;
 #[test]
 fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
     use crate::layout::ifc::test_support::block_fixture_with_ahem;
+    use crate::layout::protocol::AvailableSpace;
     use crate::taffy_impl::block_flow::context::BlockFormattingContext;
-    use taffy::{AvailableSpace, Clear, Line, RunMode, SizingMode};
+    use taffy::Clear;
 
     fn fixture() -> (crate::Document, usize) {
         let mut wrapper = 0;
@@ -51,7 +55,7 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
         LayoutInput {
             run_mode: RunMode::ComputeSize,
             sizing_mode: SizingMode::InherentSize,
-            axis: taffy::RequestedAxis::Both,
+            axis: RequestedAxis::Both,
             known_dimensions: Size {
                 width: known_width,
                 height: None,
@@ -148,9 +152,9 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
     });
     let mut doc = fixture.doc;
     let input = LayoutInput {
-        run_mode: taffy::RunMode::PerformLayout,
-        sizing_mode: taffy::SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
         known_dimensions: Size {
             width: Some(100.0),
             height: None,
@@ -167,7 +171,7 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
             width: AvailableSpace::Definite(100.0),
             height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: taffy::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     };
 
     let session_cascade = crate::layout::test_support::cascaded(&doc);
@@ -213,9 +217,9 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
         });
         let mut doc = fixture.doc;
         let input = LayoutInput {
-            run_mode: taffy::RunMode::PerformLayout,
-            sizing_mode: taffy::SizingMode::InherentSize,
-            axis: taffy::RequestedAxis::Both,
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
             known_dimensions: Size {
                 width: Some(100.0),
                 height: None,
@@ -232,7 +236,7 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
                 width: AvailableSpace::Definite(100.0),
                 height: AvailableSpace::MaxContent,
             },
-            vertical_margins_are_collapsible: taffy::Line::FALSE,
+            vertical_margins_are_collapsible: Line::FALSE,
         };
 
         let session_cascade = crate::layout::test_support::cascaded(&doc);
@@ -386,11 +390,11 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     // CSS 2.1 10.7: a percentage `max-height` against an indefinite
     // containing block height is treated as `none`.
     let style = Style {
-        size: Size {
+        size: StyleSize {
             width: taffy::Dimension::auto(),
             height: taffy::Dimension::length(100.0),
         },
-        max_size: Size {
+        max_size: StyleSize {
             width: taffy::LengthPercentageAuto::auto(),
             height: taffy::LengthPercentageAuto::percent(0.5),
         },
@@ -411,7 +415,7 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
         false,
     );
     let style = Style {
-        max_size: Size {
+        max_size: StyleSize {
             width: taffy::LengthPercentageAuto::auto(),
             height: taffy::LengthPercentageAuto::calc(calc_ptr),
         },
@@ -434,7 +438,7 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     );
     let length = taffy::LengthPercentageAuto::calc(length_ptr);
     let style = Style {
-        max_size: Size {
+        max_size: StyleSize {
             width: taffy::LengthPercentageAuto::auto(),
             height: length,
         },
@@ -682,9 +686,9 @@ fn grid_alignment_ignores_children_owned_by_another_grid() {
             grid,
             child,
             Size::ZERO,
-            taffy::Rect::ZERO,
-            taffy::Rect::ZERO,
-            taffy::Point::ZERO,
+            Edges::ZERO,
+            Edges::ZERO,
+            Point::ZERO,
         )
         .is_none()
     );

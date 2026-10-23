@@ -1,5 +1,9 @@
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
+};
 use crate::layout::style_views::tests::fixture;
+use raikiri_layout_geometry::{Line, Size};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use taffy::CoreStyle;
 
@@ -12,7 +16,7 @@ fn assert_unrelated_pass_height_survives(panic_body: bool) {
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         super::super::with_content_limits(
             &mut tree,
-            taffy::NodeId::from(child),
+            NodeId::from(child),
             content_limit_inputs(),
             |tree, _, _| {
                 assert!(!tree.style_view(child).min_size().width.is_auto());
@@ -25,7 +29,7 @@ fn assert_unrelated_pass_height_survives(panic_body: bool) {
                 if panic_body {
                     panic!("unwind after an unrelated pass update");
                 }
-                taffy::LayoutOutput::HIDDEN
+                LayoutOutput::HIDDEN
             },
         );
     }));
@@ -87,25 +91,25 @@ fn content_limit_resolved_scope_keeps_large_finite_used_values() {
     );
 }
 
-pub(super) fn content_limit_inputs() -> taffy::LayoutInput {
-    taffy::LayoutInput {
-        run_mode: taffy::RunMode::ComputeSize,
-        sizing_mode: taffy::SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
-        known_dimensions: taffy::Size::NONE,
-        known_dimensions_are_definite: taffy::Size {
+pub(super) fn content_limit_inputs() -> LayoutInput {
+    LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
             width: false,
             height: false,
         },
-        parent_size: taffy::Size {
+        parent_size: Size {
             width: Some(100.0),
             height: None,
         },
-        available_space: taffy::Size {
-            width: taffy::AvailableSpace::Definite(100.0),
-            height: taffy::AvailableSpace::MaxContent,
+        available_space: Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: taffy::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     }
 }
 
@@ -116,28 +120,18 @@ fn intrinsic_limit_install_and_restore_are_visible_to_the_view() {
     let mut session = LayoutSession::bridged(&mut doc, &cascade);
     let original = session.style_view(child).min_size();
     let inputs = content_limit_inputs();
-    super::super::with_content_limits(
-        &mut session,
-        taffy::NodeId::from(child),
-        inputs,
-        |tree, _, _| {
-            let old = tree.style_view(child).min_size();
-            assert!(!old.width.is_auto());
-            assert_eq!(tree.style_view(child).min_size(), old);
-            taffy::LayoutOutput::HIDDEN
-        },
-    );
+    super::super::with_content_limits(&mut session, NodeId::from(child), inputs, |tree, _, _| {
+        let old = tree.style_view(child).min_size();
+        assert!(!old.width.is_auto());
+        assert_eq!(tree.style_view(child).min_size(), old);
+        LayoutOutput::HIDDEN
+    });
     assert_eq!(session.style_view(child).min_size(), original);
     assert_eq!(session.style_override_depth(child), 0);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        super::super::with_content_limits(
-            &mut session,
-            taffy::NodeId::from(child),
-            inputs,
-            |_, _, _| {
-                panic!("intrinsic scope unwind");
-            },
-        );
+        super::super::with_content_limits(&mut session, NodeId::from(child), inputs, |_, _, _| {
+            panic!("intrinsic scope unwind");
+        });
     }));
     assert!(panic.is_err());
     assert_eq!(session.style_view(child).min_size(), original);
@@ -154,7 +148,7 @@ fn width_limit_scope_restores_after_callback_unwinds() {
         super::super::with_width_limits(
             &mut session,
             child,
-            taffy::Size {
+            Size {
                 width: Some(100.0),
                 height: None,
             },
@@ -182,28 +176,23 @@ fn oof_raw_prepass_temporarily_clears_numeric_limits_in_both_readers() {
     crate::layout::test_support::with_ahem(&mut doc);
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let original = tree.style_view(child).min_size();
-    let inputs = taffy::LayoutInput {
-        run_mode: taffy::RunMode::ComputeSize,
-        parent_size: taffy::Size {
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        parent_size: Size {
             width: Some(100.0),
             height: Some(100.0),
         },
-        ..taffy::LayoutInput::HIDDEN
+        ..LayoutInput::HIDDEN
     };
     let mut saw_raw = false;
-    super::super::with_oof_content_limits(
-        &mut tree,
-        Some(&[taffy::NodeId::from(child)]),
-        &[],
-        |tree| {
-            if let Some(capture) = tree.context.oof_content_limit_inputs.last_mut() {
-                capture.insert(child, inputs);
-            }
-            let min = tree.style_view(child).min_size();
-            saw_raw |= min.width.is_auto();
-            assert_eq!(tree.style_view(child).min_size(), min);
-        },
-    );
+    super::super::with_oof_content_limits(&mut tree, Some(&[NodeId::from(child)]), &[], |tree| {
+        if let Some(capture) = tree.context.oof_content_limit_inputs.last_mut() {
+            capture.insert(child, inputs);
+        }
+        let min = tree.style_view(child).min_size();
+        saw_raw |= min.width.is_auto();
+        assert_eq!(tree.style_view(child).min_size(), min);
+    });
     assert!(saw_raw);
     assert_eq!(tree.style_view(child).min_size(), original);
     assert_eq!(tree.style_override_depth(child), 0);
@@ -216,18 +205,10 @@ fn height_only_content_limit_keeps_the_callers_available_width() {
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let mut inputs = content_limit_inputs();
     inputs.known_dimensions.width = Some(20.0);
-    inputs.available_space.width = taffy::AvailableSpace::Definite(77.0);
-    super::super::with_content_limits(
-        &mut tree,
-        taffy::NodeId::from(child),
-        inputs,
-        |_, _, inputs| {
-            assert_eq!(inputs.known_dimensions.width, Some(20.0));
-            assert_eq!(
-                inputs.available_space.width,
-                taffy::AvailableSpace::Definite(77.0)
-            );
-            taffy::LayoutOutput::HIDDEN
-        },
-    );
+    inputs.available_space.width = AvailableSpace::Definite(77.0);
+    super::super::with_content_limits(&mut tree, NodeId::from(child), inputs, |_, _, inputs| {
+        assert_eq!(inputs.known_dimensions.width, Some(20.0));
+        assert_eq!(inputs.available_space.width, AvailableSpace::Definite(77.0));
+        LayoutOutput::HIDDEN
+    });
 }

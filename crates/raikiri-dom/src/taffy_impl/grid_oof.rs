@@ -14,11 +14,12 @@
 //! tracks instead would leave the named grid areas, which taffy keeps out of
 //! reach, on the wrong axes.
 
+use crate::layout::protocol::{NodeId, OofCandidate, OofCandidates, OofPositioningArea};
+use raikiri_layout_geometry::{Edges, Point, Size};
 use smol_str::SmolStr;
 use taffy::{
     ContainingBlockClaims, DetailedGridInfo, DetailedLayoutInfo, Direction, GridItemStyle,
-    GridPlacement, NodeId, OofCandidate, OofCandidates, OofLayoutResult, OofPositioningArea, Point,
-    Rect, Size,
+    GridPlacement, OofLayoutResult,
 };
 
 use super::vertical_block::block_right_to_left;
@@ -63,13 +64,13 @@ impl GridAxes {
     /// `rect`, in physical coordinates, on layout axes: the inline axis is
     /// the physical y axis, and the block axis the physical x axis, mirrored
     /// in `vertical-rl`.
-    fn to_layout(self, rect: Rect<f32>) -> Rect<f32> {
+    fn to_layout(self, rect: Edges<f32>) -> Edges<f32> {
         let (top, bottom) = if self.right_to_left {
             (self.width - rect.right, self.width - rect.left)
         } else {
             (rect.left, rect.right)
         };
-        Rect {
+        Edges {
             left: rect.top,
             right: rect.bottom,
             top,
@@ -78,13 +79,13 @@ impl GridAxes {
     }
 
     /// `rect`, in layout coordinates, on physical axes.
-    fn to_physical(self, rect: Rect<f32>) -> Rect<f32> {
+    fn to_physical(self, rect: Edges<f32>) -> Edges<f32> {
         let (left, right) = if self.right_to_left {
             (self.width - rect.bottom, self.width - rect.top)
         } else {
             (rect.top, rect.bottom)
         };
-        Rect {
+        Edges {
             left,
             right,
             top: rect.left,
@@ -120,8 +121,8 @@ impl<'a> GridAreas<'a> {
         &self,
         style: &LayoutStyleView<'_>,
         direction: Direction,
-        padding_box: Rect<f32>,
-    ) -> Rect<f32> {
+        padding_box: Edges<f32>,
+    ) -> Edges<f32> {
         let resolve = |padding_box| {
             self.info.resolve_absolute_grid_area(
                 GridItemStyle::grid_row(style),
@@ -147,7 +148,7 @@ impl<'a> GridAreas<'a> {
         let grid_area = self.area(
             style,
             direction,
-            Rect {
+            Edges {
                 left: area.offset.x,
                 right: area.offset.x + area.size.width,
                 top: area.offset.y,
@@ -204,7 +205,7 @@ pub(super) fn compute_oof_layout(
     let mut result = OofLayoutResult {
         hoisted: Vec::new(),
         unclaimed: OofCandidates::new(),
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
     };
     let mut lay_out = |tree: &mut LayoutSession<'_>, candidates: &[OofCandidate], area| {
         if candidates.is_empty() {

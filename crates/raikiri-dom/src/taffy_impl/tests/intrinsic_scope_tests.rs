@@ -1,11 +1,15 @@
 use super::super::{with_flex_intrinsic_probe, with_flex_item_basis_bounds};
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
+};
 use crate::layout::{
     context::LayoutSession,
     style_views::tests::{fixture_with_styles, with_setup_inspector},
 };
+use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::{CoreStyle, Dimension, FlexboxItemStyle, LengthPercentageAuto as Lpa, NodeId};
+use taffy::{CoreStyle, Dimension, FlexboxItemStyle, LengthPercentageAuto as Lpa};
 
 #[test]
 fn intrinsic_scope_preserves_unrelated_updates() {
@@ -136,43 +140,43 @@ fn intrinsic_scope_isolates_probe_cache_and_rejects_late_outer_store() {
     let parent = doc.nodes[child].parent.unwrap();
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let id = NodeId::from(child);
-    let input = taffy::LayoutInput {
-        run_mode: taffy::RunMode::ComputeSize,
-        sizing_mode: taffy::SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
-        known_dimensions: taffy::Size::NONE,
-        known_dimensions_are_definite: taffy::Size {
+    let input = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
             width: false,
             height: false,
         },
-        parent_size: taffy::Size::NONE,
-        available_space: taffy::Size {
-            width: taffy::AvailableSpace::MaxContent,
-            height: taffy::AvailableSpace::MaxContent,
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: taffy::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     };
     tree.with_cache_frame(child, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &input).is_some());
         let ordinary_epoch = tree.layout_cache_context.epoch();
         with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
             with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
                 assert!(tree.cache_get(id, &input).is_none());
                 tree.with_cache_frame(child, ViewContext::default(), |tree| {
-                    tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+                    tree.cache_store(id, &input, LayoutOutput::HIDDEN);
                     assert!(tree.cache_get(id, &input).is_some());
                 });
             });
         });
         assert!(tree.layout_cache_context.epoch() > ordinary_epoch);
         assert!(tree.cache_get(id, &input).is_none());
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &input).is_none());
     });
     tree.with_cache_frame(child, ViewContext::default(), |tree| {
         assert!(tree.cache_get(id, &input).is_none());
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &input).is_some());
     });
 }

@@ -9,18 +9,22 @@
 //! `min_size` and `max_size` then reads the sizes the keywords stand for.
 
 use std::collections::HashMap;
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
+};
 use crate::node::FormattingContext;
 use crate::taffy_impl::{fit_content_room, resolve_calc};
+use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
 use taffy::{
-    AvailableSpace, BoxSizing, Cache, CoreStyle, Dimension, ExpandedDimension, LayoutInput,
-    LayoutOutput, LengthPercentageAuto, Line, MaybeResolve, NodeId, RequestedAxis, ResolveOrZero,
-    RunMode, Size, SizingMode,
+    BoxSizing, Cache, CoreStyle, Dimension, ExpandedDimension, LengthPercentageAuto, MaybeResolve,
+    ResolveOrZero,
 };
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
@@ -29,14 +33,14 @@ use taffy::{
 /// such keyword is `auto` here; Taffy's style carries every other size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ContentLimits {
-    pub min: Size<Dimension>,
-    pub max: Size<Dimension>,
+    pub min: StyleSize<Dimension>,
+    pub max: StyleSize<Dimension>,
 }
 
 impl ContentLimits {
     pub(crate) const NONE: Self = Self {
-        min: Size::auto(),
-        max: Size::auto(),
+        min: StyleSize::auto(),
+        max: StyleSize::auto(),
     };
 
     fn has_width(&self) -> bool {

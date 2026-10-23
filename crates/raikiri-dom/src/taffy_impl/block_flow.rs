@@ -10,14 +10,18 @@ pub(crate) use positioned::aligned_static_position;
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::{LayoutSession, TextGroupScope};
+use crate::layout::protocol::{
+    AvailableSpace, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId, RequestedAxis,
+    RunMode, SizingMode,
+};
 use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};
+use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
 use taffy::{
-    AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutInput, LayoutOutput,
-    LayoutPartialTree, Line, MaybeMath, NodeId, Position, Rect, RequestedAxis, ResolveOrZero,
-    RunMode, Size, SizingMode, TraversePartialTree,
+    BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutPartialTree, MaybeMath, Position,
+    ResolveOrZero, TraversePartialTree,
 };
 
 /// Whether a block child's normal flow shares its parent's float context.
@@ -388,7 +392,7 @@ fn layout_context(
     let mut overflow = flow.overflow.union(flow.float_overflow);
     if style.direction == taffy::Direction::Rtl {
         let origin = width - metrics.border.right;
-        overflow = Rect {
+        overflow = Edges {
             left: (origin - overflow.right).min(0.0),
             right: (origin - overflow.left).max(0.0),
             top: overflow.top - metrics.border.top,
@@ -425,12 +429,12 @@ fn layout_context(
         top_margin: if collapse_start {
             flow.leading
         } else {
-            taffy::CollapsibleMarginSet::ZERO
+            CollapsibleMarginSet::ZERO
         },
         bottom_margin: if collapse_end && !minimum_separates {
             flow.trailing
         } else {
-            taffy::CollapsibleMarginSet::ZERO
+            CollapsibleMarginSet::ZERO
         },
         margins_can_collapse_through: collapse_start
             && collapse_end
@@ -446,12 +450,12 @@ fn commit(
     order: usize,
     metrics: Metrics,
     output: &LayoutOutput,
-    location: taffy::Point<f32>,
-    margin: Rect<f32>,
+    location: Point<f32>,
+    margin: Edges<f32>,
 ) {
     tree.set_unrounded_layout(
         node,
-        &taffy::Layout {
+        &BoxLayout {
             order: order as u32,
             location,
             size: output.size,

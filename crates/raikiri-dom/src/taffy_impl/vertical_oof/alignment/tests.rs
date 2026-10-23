@@ -1,4 +1,5 @@
 use super::*;
+use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
 
 /// A box in a positioning area that spans 10..110 of its container.
 fn axis_box(
@@ -220,14 +221,14 @@ fn a_scroll_container_lets_the_box_overflow_in_the_scrolling_direction() {
 
 /// The contribution of a 50px square box at (10, 20) whose own overflow
 /// rect is `(-5, -5)..(80, 90)`.
-fn contribution(overflow: Overflow, contain: Contain, container_scrolls: bool) -> Rect<f32> {
+fn contribution(overflow: Overflow, contain: Contain, container_scrolls: bool) -> Edges<f32> {
     overflow_contribution(
         Point { x: 10.0, y: 20.0 },
         Size {
             width: 50.0,
             height: 50.0,
         },
-        Rect {
+        Edges {
             left: -5.0,
             right: 80.0,
             top: -5.0,
@@ -242,8 +243,8 @@ fn contribution(overflow: Overflow, contain: Contain, container_scrolls: bool) -
     )
 }
 
-fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Rect<f32> {
-    Rect {
+fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Edges<f32> {
+    Edges {
         left,
         right,
         top,
@@ -288,15 +289,15 @@ fn a_box_without_extent_contributes_nothing() {
             width: 0.0,
             height: 50.0,
         },
-        Rect::ZERO,
-        Point {
+        Edges::ZERO,
+        StylePoint {
             x: Overflow::Visible,
             y: Overflow::Visible,
         },
         Contain::NONE,
         false,
     );
-    assert_eq!(empty, Rect::ZERO);
+    assert_eq!(empty, Edges::ZERO);
 }
 
 #[test]
@@ -308,8 +309,8 @@ fn a_scroll_container_cannot_reach_a_box_before_its_origin() {
                 width: 50.0,
                 height: 50.0,
             },
-            Rect::ZERO,
-            Point {
+            Edges::ZERO,
+            StylePoint {
                 x: Overflow::Visible,
                 y: Overflow::Visible,
             },
@@ -317,6 +318,6 @@ fn a_scroll_container_cannot_reach_a_box_before_its_origin() {
             container_scrolls,
         )
     };
-    assert_eq!(contribute(true), Rect::ZERO);
+    assert_eq!(contribute(true), Edges::ZERO);
     assert_eq!(contribute(false), rect(-80.0, -30.0, 0.0, 50.0));
 }
