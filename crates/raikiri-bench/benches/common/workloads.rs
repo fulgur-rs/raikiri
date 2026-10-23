@@ -362,9 +362,10 @@ fn check_oof_layout(dom: &raikiri::Document, expected: usize) {
         if names.next() != Some("oof") {
             continue;
         }
+        let placement = names.next();
         let kind = KINDS
             .iter()
-            .position(|kind| Some(*kind) == names.next())
+            .position(|kind| Some(*kind) == placement)
             .expect("an out-of-flow element names its placement");
         found[kind] += 1;
         let layout = &node.unrounded_layout;
