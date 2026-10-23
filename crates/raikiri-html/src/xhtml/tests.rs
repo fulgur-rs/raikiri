@@ -264,7 +264,7 @@ fn dom_projection_enforces_its_own_node_budget_before_attaching_elements() {
 }
 
 #[test]
-fn dom_projection_enforces_its_node_budget_when_final_text_is_flushed() {
+fn dom_projection_reserves_final_text_node_budget_before_finish() {
     use raikiri_traits::{LimitKind, ParseError, RenderLimits};
     let xml = roxmltree::Document::parse("<root>text</root>").unwrap();
     let mut limits = RenderLimits::default();

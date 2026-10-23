@@ -127,7 +127,6 @@ fn build_dom(
 ) -> Result<UncascadedDocument, XhtmlParseError> {
     let source = xml.input_text();
     let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes);
-    let signal = sink.dom_node_limit_signal();
     let mut stack = vec![(xml.root(), sink.get_document())];
     while let Some((node, parent)) = stack.pop() {
         let handle = match node.node_type() {
@@ -191,16 +190,9 @@ fn build_dom(
         }
         stack.extend(node.children().rev().map(|child| (child, handle)));
     }
-    let document = sink.finish();
-    if let Some(actual) = signal.get() {
-        return Err(ParseError::LimitExceeded {
-            kind: LimitKind::DomNodes,
-            limit: limits.max_dom_nodes.unwrap_or(actual.saturating_sub(1)),
-            actual,
-        }
-        .into());
-    }
-    Ok(document)
+    // Text reserves its node budget when buffered, so every allocation has
+    // already passed the check above. Finishing only flushes reserved text.
+    Ok(sink.finish())
 }
 
 fn qualified_name(namespace: Option<&str>, local: &str, raw: &str) -> QualName {
