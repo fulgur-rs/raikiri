@@ -496,6 +496,11 @@ pub struct Node {
     /// First baseline of a flex container from its border edge, as its last
     /// layout found it (CSS Flexbox 1 §8.5).
     pub(crate) flex_first_baseline: Option<f32>,
+    /// First baseline a block child of a vertical inline formatting root
+    /// exported, as an offset along the root's block axis from the block-start
+    /// edge of the root's content box. The root records it when it places the
+    /// child in normal flow.
+    pub(crate) vertical_first_baseline: Option<f32>,
     /// Computed `break-before` value consumed by column fragmentation.
     pub(crate) break_before: BreakBetween,
     /// Computed `break-after` value consumed by column fragmentation.
@@ -555,6 +560,11 @@ pub struct Node {
     pub(crate) used_writing_mode: WritingMode,
     /// Whether any inclusive ancestor declares a vertical writing mode.
     pub(crate) under_vertical_writing: bool,
+    /// Whether the dominant baseline of this box's lines is the central
+    /// baseline: a typographic vertical writing mode whose text is not set
+    /// sideways (CSS Writing Modes 4 §4.2). Every other box uses the
+    /// alphabetic baseline. Recomputed by the style bridge.
+    pub(crate) central_baseline: bool,
     /// Whether this node has an authored logical `min-block-size` constraint
     /// paired with `break-inside: avoid`. The used value is bridged
     /// to Taffy's physical min-size fields, while fragmentation needs the
@@ -747,6 +757,7 @@ impl Node {
             table_grid_box: None,
             table_first_baseline: None,
             flex_first_baseline: None,
+            vertical_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -774,6 +785,7 @@ impl Node {
             authored_writing_mode: None,
             used_writing_mode: WritingMode::HorizontalTb,
             under_vertical_writing: false,
+            central_baseline: false,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
             contains_absolute_boxes: false,

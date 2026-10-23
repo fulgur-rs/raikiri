@@ -1,8 +1,8 @@
 use super::*;
 use taffy::tree::RunMode;
 use taffy::{
-    AlignmentSafety, AvailableSpace, AxisStaticAlign, NodeId, OofCandidate, OofPositioningArea,
-    Position, SizingMode,
+    AlignmentSafety, AvailableSpace, AxisStaticAlign, Baselines, NodeId, OofCandidate,
+    OofPositioningArea, Position, SizingMode,
 };
 
 fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Rect<f32> {
@@ -227,6 +227,10 @@ fn transposed_output() -> LayoutOutput {
             },
             offset: Point { x: 5.0, y: 7.0 },
         }),
+        baselines: Baselines {
+            first: Some(3.0),
+            last: None,
+        },
         ..LayoutOutput::HIDDEN
     };
     output.oof_candidates.push(candidate(
@@ -260,7 +264,14 @@ fn a_transposed_output_returns_to_physical_axes_from_the_block_start_edge() {
     let placed = output.oof_candidates.as_slice()[0].static_position;
     assert_eq!(placed.x, static_position(10.0, 30.0, AxisStaticEdge::End));
     assert_eq!(placed.y, static_position(2.0, 4.0, AxisStaticEdge::Start));
-    assert_eq!(output.baselines, Baselines::NONE);
+    // A baseline is an offset along the block axis on both sides.
+    assert_eq!(
+        output.baselines,
+        Baselines {
+            first: Some(3.0),
+            last: None
+        }
+    );
 }
 
 #[test]

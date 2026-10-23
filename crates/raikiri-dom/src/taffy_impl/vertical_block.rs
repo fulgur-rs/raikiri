@@ -135,6 +135,17 @@ impl TransposedBlock {
         self.own_axes.is_some()
     }
 
+    /// The container the frame was built for.
+    pub(super) fn container(&self) -> usize {
+        self.container
+    }
+
+    /// The writing mode the container is laid out on the axes of, when it is
+    /// a flex or grid container.
+    pub(super) fn own_writing_mode(&self) -> Option<WritingMode> {
+        self.own_axes
+    }
+
     /// Resolve the percentages of the padding of the container against
     /// `basis`, the inline size of its containing block. The views of the
     /// frame must be prepared.
@@ -518,7 +529,18 @@ impl LayoutSession<'_> {
                 child_block_ctx,
             );
             let reverse_extent = output.size.width;
-            transpose_child_output_to_vertical(output, right_to_left, reverse_extent, share_context)
+            let mut output = transpose_child_output_to_vertical(
+                output,
+                right_to_left,
+                reverse_extent,
+                share_context,
+            );
+            // A child's baselines are offsets from its own block-start edge,
+            // which is this container's only when the block axes agree.
+            if !same_vertical_block_mode(tree, block.container, idx) {
+                output.baselines = taffy::Baselines::NONE;
+            }
+            output
         })
     }
 }

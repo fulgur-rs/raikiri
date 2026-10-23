@@ -266,6 +266,7 @@ fn apply_computed_to_style_in_session_inner(
             doc.nodes[idx].table_first_baseline = None;
         }
         doc.nodes[idx].flex_first_baseline = None;
+        doc.nodes[idx].vertical_first_baseline = None;
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].collapsed_border = None;
@@ -637,6 +638,16 @@ fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
             || node
                 .authored_writing_mode
                 .is_some_and(WritingMode::is_vertical);
+        // Text in a typographic vertical mode sits on the central baseline
+        // unless it is set sideways; the sideways modes are horizontal
+        // typographic modes.
+        node.central_baseline = matches!(
+            node.used_writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        ) && cascade
+            .computed
+            .get(id)
+            .is_some_and(|cv| cv.text_orientation != TextOrientation::Sideways);
         pending.extend(node.children.iter().copied());
     }
 }

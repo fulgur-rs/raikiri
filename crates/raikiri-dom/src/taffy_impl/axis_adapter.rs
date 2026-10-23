@@ -27,8 +27,11 @@
 //! The conversions are those of [`super::transposed_axes`]. The adapter fixes
 //! what a flex or grid container needs on top of them: its margins never
 //! collapse with a child's across a conversion, as flex and grid items
-//! establish formatting contexts of their own. Baselines are dropped by the
-//! conversion. A scrollable overflow rectangle is mapped by
+//! establish formatting contexts of their own. Baselines need no conversion:
+//! a box in a vertical writing mode reports them as offsets along its block
+//! axis from its block-start border edge, which is the layout y axis. What
+//! the adapter adds is the baseline of an item that has none in that form
+//! (see [`item_baseline`]). A scrollable overflow rectangle is mapped by
 //! [`OverflowFrame`] instead of being swapped: its offsets are measured from
 //! the corner of the padding box where the box starts scrolling, and in
 //! physical coordinates, from the top left corner, they are mirrored within
@@ -49,9 +52,11 @@
 //! that follows, once the container's frame is left, works on physical
 //! coordinates.
 
+use raikiri_style::property::WritingMode;
 use taffy::util::ResolveOrZero;
 use taffy::{
-    CoreStyle, Layout, LayoutInput, LayoutOutput, NodeId, Rect, Size, TraversePartialTree,
+    Baselines, CoreStyle, Layout, LayoutInput, LayoutOutput, NodeId, Rect, Size,
+    TraversePartialTree,
 };
 
 use super::resolve_calc;
@@ -60,8 +65,8 @@ use super::transposed_axes::{
     transpose_inputs, transpose_output_to_physical,
 };
 use super::vertical_block::{
-    TransposedBlock, containing_inline_size, prepare_frame_views, resolve_child_padding,
-    with_transposed_frame,
+    TransposedBlock, block_right_to_left, containing_inline_size, prepare_frame_views,
+    resolve_child_padding, with_transposed_frame,
 };
 use super::vertical_oof::used_writing_mode;
 use crate::layout::context::LayoutSession;
@@ -147,7 +152,8 @@ impl AxisAdapter {
     /// mirrored within the padding box, the border box less the borders of
     /// the container, and a zero one stays zero. The margins of the
     /// container are left to its parent, which reads them from the box's
-    /// style.
+    /// style. The baselines of the container stay as they are: they are
+    /// offsets along the block axis already.
     pub(super) fn container_output(self, output: LayoutOutput) -> LayoutOutput {
         let extent = output.size.height;
         let overflow = self
@@ -188,7 +194,14 @@ impl AxisAdapter {
     /// within, and the scrollable overflow rectangle of the child, which is
     /// in physical coordinates, is mirrored within its padding box:
     /// `border` holds the borders of the child on its physical sides.
-    pub(super) fn child_output(self, output: LayoutOutput, border: Rect<f32>) -> LayoutOutput {
+    /// `baseline` is the baseline the algorithm aligns the child by, from
+    /// [`item_baseline`].
+    pub(super) fn child_output(
+        self,
+        output: LayoutOutput,
+        border: Rect<f32>,
+        baseline: f32,
+    ) -> LayoutOutput {
         let extent = output.size.width;
         // The sides of the border on the layout axes: the physical top and
         // bottom are the inline sides, the left and right the block sides.
@@ -204,7 +217,50 @@ impl AxisAdapter {
         let mut output =
             transpose_child_output_to_vertical(output, self.right_to_left, extent, false);
         output.scrollable_overflow_rect = overflow;
+        output.baselines = Baselines {
+            first: Some(baseline),
+            last: None,
+        };
         output
+    }
+}
+
+/// The baseline of the item `idx` that the algorithm of the container `frame`
+/// aligns it by, as an offset along the block axis from the block-start
+/// border edge of the item; `output` is the physical output of the item.
+///
+/// The baseline that items share is the dominant baseline of the container
+/// (CSS Box Alignment 3 §9.2): the central baseline in a vertical writing
+/// mode whose text is not set sideways, the alphabetic one otherwise. An item
+/// that is a vertical box with the container's block direction gives the
+/// baseline of its first line, on the baseline that is dominant for the
+/// item's own text. Every other item, one in an orthogonal flow, one
+/// without lines, or one whose lines run against the block direction of the
+/// container, has its baseline synthesized from its border box: the middle of
+/// the box for the central baseline, and the line-under edge of the
+/// container's writing mode for the alphabetic one (CSS Align 3 §9.1).
+///
+/// An item with the opposite block direction would form a baseline-sharing
+/// group of its own; the synthesized baseline approximates that.
+/// spec: <https://www.w3.org/TR/css-align-3/#baseline-terms>
+fn item_baseline(
+    tree: &LayoutSession<'_>,
+    frame: &TransposedBlock,
+    idx: usize,
+    output: &LayoutOutput,
+) -> f32 {
+    let same_block_direction = block_right_to_left(tree, idx) == Some(frame.right_to_left());
+    if same_block_direction && let Some(baseline) = output.baselines.first {
+        return baseline;
+    }
+    let block_size = output.size.width;
+    if tree.nodes[frame.container()].central_baseline {
+        block_size / 2.0
+    } else if frame.own_writing_mode() == Some(WritingMode::VerticalLr) {
+        // Line-under is the left edge, where the block axis starts.
+        0.0
+    } else {
+        block_size
     }
 }
 
@@ -287,7 +343,8 @@ impl LayoutSession<'_> {
                 .border()
                 .resolve_or_zero(None, resolve_calc);
             let output = tree.dispatch_physical_child(node_id, child.inputs, padding_basis, None);
-            adapter.child_output(output, border)
+            let baseline = item_baseline(tree, frame, usize::from(node_id), &output);
+            adapter.child_output(output, border, baseline)
         })
     }
 }

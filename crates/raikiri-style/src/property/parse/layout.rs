@@ -329,6 +329,10 @@ fn parse_axis_self_alignment(
         input.expect_ident_matching("baseline").ok()?;
         return Some(SelfAlignmentValue::LastBaseline);
     }
+    if ident.eq_ignore_ascii_case("first") {
+        input.expect_ident_matching("baseline").ok()?;
+        return Some(SelfAlignmentValue::Baseline);
+    }
     let value = match ident.to_ascii_lowercase().as_str() {
         "normal" => SelfAlignmentValue::Normal,
         "stretch" => SelfAlignmentValue::Stretch,

@@ -22,8 +22,8 @@
 
 use taffy::tree::RequestedAxis;
 use taffy::{
-    AbsoluteAxis, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet, Layout,
-    LayoutInput, LayoutOutput, Line, Point, Rect, Size,
+    AbsoluteAxis, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, Layout, LayoutInput,
+    LayoutOutput, Line, Point, Rect, Size,
 };
 
 /// `rect` with its physical sides moved to the transposed sides they map
@@ -160,9 +160,12 @@ pub(super) fn transpose_child_output_to_vertical(
 }
 
 /// The part of an output conversion that does not depend on the direction:
-/// swap the sizes and the overflow rectangle, drop the baselines, and keep
-/// the margin collapsing state only when the caller says both sides share a
-/// block formatting context.
+/// swap the sizes and the overflow rectangle, and keep the margin collapsing
+/// state only when the caller says both sides share a block formatting
+/// context. The baselines are carried over as they are: a box in a vertical
+/// writing mode reports them as offsets along its block axis from its
+/// block-start border edge, which is the layout y axis on this side too. A
+/// caller whose box has none of the kind the other side reads resets them.
 fn swap_output_axes(
     output: LayoutOutput,
     oof_positioning_area: Option<taffy::OofPositioningArea>,
@@ -181,7 +184,6 @@ fn swap_output_axes(
     LayoutOutput {
         size: swap(output.size),
         scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
-        baselines: Baselines::NONE,
         top_margin,
         bottom_margin,
         margins_can_collapse_through: preserve_margin_collapse
