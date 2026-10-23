@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::document_syntax::DocumentSyntax;
+
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri::{
@@ -38,6 +40,7 @@ pub fn render_screen_url(
         })
         .map_err(|error| ScreenRenderError::new(format!("document fetch failed: {error:?}")))?;
 
+    let syntax = DocumentSyntax::for_content_type(resource.content_type.as_deref());
     let fallback_base_url = resource.final_url;
     let encoding = resource.encoding.as_deref().unwrap_or("unspecified");
     let stylesheet_provider = StylesheetUrlProvider { provider };
@@ -46,7 +49,7 @@ pub fn render_screen_url(
         network: Some(&stylesheet_provider),
         base_url: Some(fallback_base_url.clone()),
     };
-    let mut uncascaded = raikiri::parse(resource.bytes.as_ref(), &options).map_err(|error| {
+    let mut uncascaded = syntax.parse(resource.bytes.as_ref(), &options).map_err(|error| {
         ScreenRenderError::new(format!(
             "HTML parse failed for {fallback_base_url} (declared encoding: {encoding}): {error:?}"
         ))

@@ -5,6 +5,7 @@
 //! `oracle` modules for the execution path (spec §12.4, §12.9, §12.10).
 
 pub mod baseline_report;
+mod document_syntax;
 pub mod expectations;
 mod http_resources;
 pub mod lint;

@@ -2657,6 +2657,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-svg",
  "raikiri-traits",
+ "roxmltree 0.21.1",
  "rustc-hash",
  "shodo",
  "smol_str",

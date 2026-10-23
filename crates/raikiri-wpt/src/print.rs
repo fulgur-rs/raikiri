@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::document_syntax::DocumentSyntax;
+
 use raikiri::{Body, Method, NetworkProvider, ParseOptions, Request, ResourceKind, Url};
 use raikiri_html::effective_document_base_url;
 use raikiri_net::{ImageResolver, SystemHttpProvider};
@@ -33,17 +35,20 @@ pub fn render_print_url(
         })
         .map_err(|error| PrintRenderError::new(format!("document fetch failed: {error:?}")))?;
 
+    let syntax = DocumentSyntax::for_content_type(resource.content_type.as_deref());
     let fallback_base_url = resource.final_url;
     let probe_options = ParseOptions {
         extra_stylesheets: &[],
         network: None,
         base_url: Some(fallback_base_url.clone()),
     };
-    let base_probe = raikiri::parse(resource.bytes.as_ref(), &probe_options).map_err(|error| {
-        PrintRenderError::new(format!(
-            "HTML base URL parse failed for {fallback_base_url}: {error:?}"
-        ))
-    })?;
+    let base_probe = syntax
+        .parse(resource.bytes.as_ref(), &probe_options)
+        .map_err(|error| {
+            PrintRenderError::new(format!(
+                "HTML base URL parse failed for {fallback_base_url}: {error:?}"
+            ))
+        })?;
     let base_url = effective_document_base_url(&base_probe, Some(&fallback_base_url))
         .unwrap_or_else(|| fallback_base_url.clone());
     let html = String::from_utf8_lossy(resource.bytes.as_ref());
@@ -63,6 +68,8 @@ pub fn render_print_url(
         width,
         height,
         PrintRenderResources {
+            syntax,
+            mirror_page_margin: false,
             network: Some(&stylesheet_provider),
             parse_base_url: Some(&fallback_base_url),
             base_url: Some(&base_url),
