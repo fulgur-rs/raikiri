@@ -606,8 +606,8 @@ fn node_accessors_are_callable_from_external_call_site() {
 ///
 /// **What this does *not* bypass**: the output-side guard,
 /// `sanitize_taffy_layout`, called unconditionally from
-/// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
-/// (`crates/raikiri-dom/src/taffy_impl.rs`). `compute_root_layout` invokes
+/// `<LayoutSession as taffy::LayoutPartialTree>::set_unrounded_layout`
+/// (`crates/raikiri-dom/src/layout/taffy_adapter/tree.rs`). `compute_root_layout` invokes
 /// that trait method itself as part of committing every node's computed
 /// layout, so the child's `unrounded_layout` is guaranteed finite; the
 /// assertion below confirms exactly that (finite, non-default output) rather

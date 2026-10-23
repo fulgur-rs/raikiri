@@ -333,22 +333,40 @@ pub fn check_layout(dom: &raikiri::Document, expected_items: usize) {
     );
 }
 
-/// Verify every out-of-flow box was laid out against its containing block: it
-/// has the size its style gives it, and the boxes are not all left at the
-/// origin.
+/// Verify the laid-out document of `shape`: every text node has lines and every
+/// visible element has geometry and, for the out-of-flow shapes, every
+/// positioned box was placed.
 // cov:ignore: bench-only item; workspace tests do not instrument this target.
-pub fn check_oof_layout(dom: &raikiri::Document, expected: usize) {
-    let mut found = 0;
-    let mut placed = 0;
+pub fn check_document(dom: &raikiri::Document, shape: Shape, items: usize) {
+    check_layout(dom, shape.text_items(items));
+    if matches!(shape, Shape::FlexOof | Shape::GridOof) {
+        check_oof_layout(dom, items - shape.text_items(items));
+    }
+}
+
+/// Verify every out-of-flow box was laid out against its containing block: it
+/// has the size its style gives it, and every kind of placement (`a` insets
+/// from the top left, `b` insets from the bottom right, `c` the static
+/// position, `f` fixed) moved its boxes away from the origin.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
+fn check_oof_layout(dom: &raikiri::Document, expected: usize) {
+    const KINDS: [&str; 4] = ["a", "b", "c", "f"];
+    let mut found = [0usize; 4];
+    let mut placed = [0usize; 4];
     for id in 0..dom.node_count() {
         let node = dom.get_node(id).expect("arena node");
-        let is_oof = node
-            .attribute("class")
-            .is_some_and(|class| class.split_whitespace().any(|name| name == "oof"));
-        if !is_oof {
+        let Some(class) = node.attribute("class") else {
+            continue;
+        };
+        let mut names = class.split_whitespace();
+        if names.next() != Some("oof") {
             continue;
         }
-        found += 1;
+        let kind = KINDS
+            .iter()
+            .position(|kind| Some(*kind) == names.next())
+            .expect("an out-of-flow element names its placement");
+        found[kind] += 1;
         let layout = &node.unrounded_layout;
         assert_eq!(
             (layout.size.width, layout.size.height),
@@ -356,12 +374,19 @@ pub fn check_oof_layout(dom: &raikiri::Document, expected: usize) {
             "out-of-flow element {id} was not sized by its style"
         );
         if layout.location.x != 0.0 || layout.location.y != 0.0 {
-            placed += 1;
+            placed[kind] += 1;
         }
     }
-    assert_eq!(found, expected, "out-of-flow elements in the document");
-    assert!(
-        placed * 2 > found,
-        "only {placed} of {found} out-of-flow elements were placed"
+    assert_eq!(
+        found.iter().sum::<usize>(),
+        expected,
+        "out-of-flow elements in the document"
     );
+    for (kind, name) in KINDS.iter().enumerate() {
+        assert!(found[kind] > 0, "no out-of-flow element placed as {name}");
+        assert_eq!(
+            placed[kind], found[kind],
+            "out-of-flow elements placed as {name} left at the origin"
+        );
+    }
 }

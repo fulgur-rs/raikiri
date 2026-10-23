@@ -367,7 +367,7 @@ fn layout_warn_display_is_human_readable() {
 // (`sanitize_taffy_layout`).
 
 /// Predicate for the invariant guaranteed by [`sanitize_taffy_layout`] — all f32 fields of
-/// [`taffy::Layout`] are finite.
+/// [`BoxLayout`] are finite.
 ///
 /// Examine all fields, not just the 4 fields that paint actually reads (for the same reason as the guard
 /// side).

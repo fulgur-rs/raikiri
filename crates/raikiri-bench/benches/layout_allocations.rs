@@ -97,14 +97,6 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, usize, usize) {
     (result, COUNT.load(Relaxed), BYTES.load(Relaxed))
 }
 
-// cov:ignore: benchmark-only validation, exercised by the release smoke run.
-fn check(dom: &raikiri::Document, shape: Shape, items: usize) {
-    workloads::check_layout(dom, shape.text_items(items));
-    if matches!(shape, Shape::FlexOof | Shape::GridOof) {
-        workloads::check_oof_layout(dom, items - shape.text_items(items));
-    }
-}
-
 // cov:ignore: benchmark entry point, exercised by the release smoke run.
 fn main() {
     // Each call joins its layout workers before measurement ends. Run this
@@ -127,7 +119,7 @@ fn main() {
             let (mut probe, cascade) = workloads::single_page_input(&html, &resources);
             workloads::check_shape(&probe.dom, &cascade, shape);
             raikiri_dom::layout_single_page(&mut probe.dom, &cascade, page).expect("probe layout");
-            check(&probe.dom, shape, items);
+            workloads::check_document(&probe.dom, shape, items);
             drop((probe, cascade));
             for sample in 1..=5 {
                 let (mut document, cascade) = workloads::single_page_input(&html, &resources);
@@ -139,7 +131,7 @@ fn main() {
                     allocations > 0 && bytes > 0,
                     "allocator instrumentation is active"
                 );
-                check(&document.dom, shape, items);
+                workloads::check_document(&document.dom, shape, items);
                 println!(
                     "{},{items},{sample},{},{allocations},{bytes}",
                     shape.name(),

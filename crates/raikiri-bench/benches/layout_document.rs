@@ -41,10 +41,7 @@ fn bench_layout(c: &mut Criterion) {
                     workloads::check_shape(&document.dom, &cascade, shape);
                     raikiri_dom::layout_single_page(&mut document.dom, &cascade, page)
                         .expect("probe layout");
-                    workloads::check_layout(&document.dom, shape.text_items(items));
-                    if matches!(shape, Shape::FlexOof | Shape::GridOof) {
-                        workloads::check_oof_layout(&document.dom, items - shape.text_items(items));
-                    }
+                    workloads::check_document(&document.dom, shape, items);
                     html
                 });
                 b.iter_batched_ref(

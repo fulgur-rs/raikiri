@@ -366,3 +366,168 @@ fn a_leaf_is_measured_with_the_inputs_the_library_passes() {
         }
     }
 }
+
+/// The owned `MaybeMath` does what the library's does: the geometry crate and
+/// the protocol carry their own copies of the implementations, and nothing but
+/// this comparison ties them to the library's.
+mod maybe_math {
+    use super::*;
+    use raikiri_layout_geometry::MaybeMath as OwnMaybeMath;
+
+    fn floats() -> [f32; 7] {
+        [f32::NAN, f32::INFINITY, -0.0, 0.0, 7.5, -3.0, 1e7]
+    }
+
+    fn options() -> Vec<Option<f32>> {
+        floats().into_iter().map(Some).chain([None]).collect()
+    }
+
+    fn spaces() -> Vec<AvailableSpace> {
+        floats()
+            .into_iter()
+            .map(AvailableSpace::Definite)
+            .chain([AvailableSpace::MinContent, AvailableSpace::MaxContent])
+            .collect()
+    }
+
+    macro_rules! same_results {
+        ($lhs:expr, $rhs:expr, $second:expr, $convert:expr) => {{
+            let (lhs, rhs, second) = ($lhs, $rhs, $second);
+            let convert = $convert;
+            let own = [
+                bits_of(&convert(OwnMaybeMath::maybe_min(lhs, rhs))),
+                bits_of(&convert(OwnMaybeMath::maybe_max(lhs, rhs))),
+                bits_of(&convert(OwnMaybeMath::maybe_add(lhs, rhs))),
+                bits_of(&convert(OwnMaybeMath::maybe_sub(lhs, rhs))),
+                bits_of(&convert(OwnMaybeMath::maybe_clamp(lhs, rhs, second))),
+            ];
+            let theirs = [
+                bits_of(&convert(taffy::MaybeMath::maybe_min(lhs, rhs))),
+                bits_of(&convert(taffy::MaybeMath::maybe_max(lhs, rhs))),
+                bits_of(&convert(taffy::MaybeMath::maybe_add(lhs, rhs))),
+                bits_of(&convert(taffy::MaybeMath::maybe_sub(lhs, rhs))),
+                bits_of(&convert(taffy::MaybeMath::maybe_clamp(lhs, rhs, second))),
+            ];
+            assert_eq!(own, theirs, "{lhs:?} against {rhs:?} and {second:?}");
+        }};
+    }
+
+    #[test]
+    fn optional_lengths_against_optional_lengths() {
+        for lhs in options() {
+            for rhs in options() {
+                for second in options() {
+                    same_results!(lhs, rhs, second, |value: Option<f32>| value);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn optional_lengths_against_plain_lengths() {
+        for lhs in options() {
+            for rhs in floats() {
+                for second in floats() {
+                    same_results!(lhs, rhs, second, |value: Option<f32>| value);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plain_lengths_against_optional_lengths() {
+        for lhs in floats() {
+            for rhs in options() {
+                for second in options() {
+                    same_results!(lhs, rhs, second, |value: f32| value);
+                }
+            }
+        }
+    }
+
+    // The library's result is converted to the protocol's type for the
+    // comparison, so both sides print as the protocol's `AvailableSpace`.
+
+    #[test]
+    fn available_spaces_against_plain_lengths() {
+        for lhs in spaces() {
+            for rhs in floats() {
+                for second in floats() {
+                    let own_lhs = lhs;
+                    let taffy_lhs = lhs.into_taffy();
+                    let own = [
+                        OwnMaybeMath::maybe_min(own_lhs, rhs),
+                        OwnMaybeMath::maybe_max(own_lhs, rhs),
+                        OwnMaybeMath::maybe_add(own_lhs, rhs),
+                        OwnMaybeMath::maybe_sub(own_lhs, rhs),
+                        OwnMaybeMath::maybe_clamp(own_lhs, rhs, second),
+                    ]
+                    .map(|space: AvailableSpace| bits_of(&space));
+                    let theirs = [
+                        taffy::MaybeMath::maybe_min(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_max(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_add(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_sub(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_clamp(taffy_lhs, rhs, second),
+                    ]
+                    .map(|space: taffy::AvailableSpace| {
+                        bits_of(&AvailableSpace::from_taffy(space))
+                    });
+                    assert_eq!(own, theirs, "{lhs:?} against {rhs:?} and {second:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn available_spaces_against_optional_lengths() {
+        for lhs in spaces() {
+            for rhs in options() {
+                for second in options() {
+                    let taffy_lhs = lhs.into_taffy();
+                    let own = [
+                        OwnMaybeMath::maybe_min(lhs, rhs),
+                        OwnMaybeMath::maybe_max(lhs, rhs),
+                        OwnMaybeMath::maybe_add(lhs, rhs),
+                        OwnMaybeMath::maybe_sub(lhs, rhs),
+                        OwnMaybeMath::maybe_clamp(lhs, rhs, second),
+                    ]
+                    .map(|space: AvailableSpace| bits_of(&space));
+                    let theirs = [
+                        taffy::MaybeMath::maybe_min(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_max(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_add(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_sub(taffy_lhs, rhs),
+                        taffy::MaybeMath::maybe_clamp(taffy_lhs, rhs, second),
+                    ]
+                    .map(|space: taffy::AvailableSpace| {
+                        bits_of(&AvailableSpace::from_taffy(space))
+                    });
+                    assert_eq!(own, theirs, "{lhs:?} against {rhs:?} and {second:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sizes_apply_the_operations_per_axis() {
+        let widths = options();
+        for (index, &width) in widths.iter().enumerate() {
+            let own_lhs = Size {
+                width,
+                height: widths[(index + 3) % widths.len()],
+            };
+            let own_rhs = Size {
+                width: widths[(index + 1) % widths.len()],
+                height: widths[(index + 5) % widths.len()],
+            };
+            let own = OwnMaybeMath::maybe_add(own_lhs, own_rhs);
+            let theirs: taffy::Size<Option<f32>> =
+                taffy::MaybeMath::maybe_add(own_lhs.into_taffy(), own_rhs.into_taffy());
+            assert_eq!(
+                bits_of(&own),
+                bits_of(&Size::<Option<f32>>::from_taffy(theirs))
+            );
+        }
+    }
+}

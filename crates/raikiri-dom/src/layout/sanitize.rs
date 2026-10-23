@@ -112,7 +112,7 @@ use crate::layout::context::LayoutSession;
 /// deriving a constant specifically for fractions.
 ///
 /// **The resolution was placed on the output side** — [`sanitize_taffy_layout`] clamps taffy's
-/// [`taffy::Layout`] **after resolution** with the same `[-MAX, MAX]`. This is depth-independent.
+/// [`BoxLayout`] **after resolution** with the same `[-MAX, MAX]`. This is depth-independent.
 ///
 /// The cascade stage to which this clamp belongs is the **actual value**.
 /// (CSS Cascade 5 §4.6 "Actual Values",
@@ -211,7 +211,7 @@ pub(crate) const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 /// Initially, I judged that passing this observer all the way to the main site would affect the public
 /// signature, so I kept it silent: `sanitize_*` is deep within `bridge_*` → `apply_computed_to_style` →
 /// `layout_single_page`, and the output choke point (`sanitize_taffy_layout`) is called from
-/// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout` — this is a fixed trait method signature
+/// `<LayoutSession as taffy::LayoutPartialTree>::set_unrounded_layout` — this is a fixed trait method signature
 /// on the `taffy` crate side, so **an observation argument cannot be added**.
 ///
 /// I introduced a common [`crate::diag::emit_warn_via`] mechanism and solved these two points as follows:
@@ -343,7 +343,7 @@ pub(crate) enum LayoutWarn {
         suppressed: usize,
     },
     /// One or more subtrees had a broken **box model invariant** and were
-    /// reset to a deterministic zero [`taffy::Layout`] by
+    /// reset to a deterministic zero [`BoxLayout`] by
     /// [`enforce_layout_invariants`]. This is a different failure class than
     /// [`LayoutWarn::NonFiniteClamped`]: that variant fires when a single
     /// `f32` field was out of range, this one fires when every individual
@@ -443,7 +443,7 @@ pub(crate) fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
     }
 }
 
-/// An **output-side** guard that passes all f32 fields of [`taffy::Layout`] resolved by taffy to
+/// An **output-side** guard that passes all f32 fields of [`BoxLayout`] resolved by taffy to
 /// [`sanitize_taffy`].
 ///
 /// # Why on the output side (cannot be closed by an input-side bound)
@@ -456,8 +456,8 @@ pub(crate) fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 ///
 /// # Single call site (choke point)
 ///
-/// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
-/// (`taffy_impl.rs`) — the **only** path through which Taffy writes layout back to the arena (all block /
+/// `<LayoutSession as taffy::LayoutPartialTree>::set_unrounded_layout`
+/// (`layout/taffy_adapter/tree.rs`) — the **only** path through which Taffy writes layout back to the arena (all block /
 /// flexbox / grid / leaf algorithms in `taffy-0.12.1` pass through this single method). Therefore,
 /// "`Node.unrounded_layout` never contains non-finite values" is a structural invariant and cannot be
 /// broken by a forgotten call, unlike an afterthought, batch range check.
@@ -620,7 +620,7 @@ impl LayoutSession<'_> {
 ///
 /// The design decision to adopt "deterministic fallback" instead of "input restriction," "intermediate
 /// saturation," or "layout abort" has been finalized. Among the two fallback value proposals considered
-/// ("0 size" and "nearest finite parent size"), **0 size** is chosen. [`taffy::Layout::with_order`]
+/// ("0 size" and "nearest finite parent size"), **0 size** is chosen. [`BoxLayout::with_order`]
 /// (keeping only `order`, all others zero) was selected for two reasons: (a) it trivially and recursively
 /// satisfies the content box invariant (`0 - 0 - 0 = 0 >= 0`) and places the subtree at its parent's
 /// origin, so filling the entire subtree with this value does not create new violations (whereas
@@ -694,7 +694,7 @@ pub(crate) fn enforce_layout_invariants(document: &mut LayoutSession<'_>, root_i
 
 /// The fallback body of [`enforce_layout_invariants`] — overwrites the `unrounded_layout` of the subtree
 /// rooted at `root_idx` (only nodes actually visited by taffy, `is_in_document()` filter) with
-/// [`taffy::Layout::with_order`] (which only keeps `order` and sets all others to zero). Iterative (`Vec`
+/// [`BoxLayout::with_order`] (which only keeps `order` and sets all others to zero). Iterative (`Vec`
 /// stack) — recursion is not used, precisely because the target is a deep DOM (see the "traversal is not
 /// recursive" section of [`enforce_layout_invariants`]).
 fn zero_layout_subtree(document: &mut LayoutSession<'_>, root_idx: usize) {
