@@ -15,6 +15,7 @@ members = [
     "crates/raikiri-vrt",
     "crates/raikiri-bench",
     "crates/raikiri-cascade-diff",
+    "crates/raikiri-layout-diff",
     "crates/raikiri-js",
 ]
 

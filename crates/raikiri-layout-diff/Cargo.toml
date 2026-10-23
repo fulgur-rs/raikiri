@@ -1,0 +1,21 @@
+[package]
+name = "raikiri-layout-diff"
+version.workspace = true
+description = "Differential layout checker: dumps canonicalized layout results so two builds of raikiri-dom can be compared bit for bit"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# `scripts/layout-diff.sh` also builds this crate's sources outside the
+# workspace, against the merge-base checkout of the path crates below, with a
+# generated manifest. Keep that manifest's dependency list in step with this
+# one: the same path crates, and the same version requirements for the others.
+[dependencies]
+raikiri-dom = { workspace = true }
+raikiri-html = { workspace = true }
+raikiri-traits = { workspace = true }
+url = { workspace = true }
+
+[lints]
+workspace = true

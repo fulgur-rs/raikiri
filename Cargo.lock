@@ -2710,6 +2710,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "raikiri-layout-diff"
+version = "0.0.1"
+dependencies = [
+ "raikiri-dom",
+ "raikiri-html",
+ "raikiri-traits",
+ "url",
+]
+
+[[package]]
 name = "raikiri-layout-style"
 version = "0.0.1"
 dependencies = [
