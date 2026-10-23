@@ -95,14 +95,3 @@
 21 crates/raikiri-dom/src/tests.rs
 2 crates/raikiri-dom/tests/page_name_allocations.rs
 4 crates/raikiri-html/src/tests.rs
-9 crates/raikiri-paint/src/walk.rs
-1 crates/raikiri-paint/src/walk/element_background.rs
-12 crates/raikiri-paint/src/walk/element_box.rs
-2 crates/raikiri-paint/src/walk/inline_box.rs
-1 crates/raikiri-paint/src/walk/inline_svg.rs
-11 crates/raikiri-paint/src/walk/tests.rs
-5 crates/raikiri-paint/src/walk/tests/gradient_tests.rs
-1 crates/raikiri-paint/src/walk/visit_element.rs
-1 crates/raikiri-paint/src/walk/visit_text.rs
-1 crates/raikiri-paint/tests/table_alignment.rs
-3 crates/raikiri-paint/tests/table_anonymous_cells.rs

@@ -10,6 +10,7 @@ license.workspace = true
 cssparser      = { workspace = true }
 raikiri-traits = { workspace = true }
 raikiri-dom    = { workspace = true }
+raikiri-layout-geometry = { workspace = true }
 raikiri-style  = { workspace = true }
 raikiri-svg    = { workspace = true }
 shodo          = { workspace = true }

@@ -508,7 +508,7 @@ fn ifc_block_direction_matches_used_margin_constraints() {
             let left = if direction == "rtl" { rtl_x } else { ltr_x };
             assert_eq!(
                 doc.get_node(block).unwrap().unrounded_layout.location,
-                taffy::Point { x: left, y: 10.0 }
+                raikiri_layout_geometry::Point { x: left, y: 10.0 }
             );
             let (mut reference, body) = document();
             let text_left = if direction == "rtl" { 90 } else { 0 };
@@ -802,7 +802,7 @@ fn anonymous_rows_share_a_rowspan_background_through_contents_groups() {
     let computed = layout(&mut doc);
     assert_eq!(
         doc.get_node(table).unwrap().unrounded_layout.size,
-        taffy::Size {
+        raikiri_layout_geometry::Size {
             width: 20.0,
             height: 20.0
         }
@@ -858,7 +858,7 @@ fn anonymous_block_cells_preserve_placement_with_installed_font_bootstrap() {
     let computed = layout(&mut doc);
     assert_eq!(
         doc.get_node(table).unwrap().unrounded_layout.size,
-        taffy::Size {
+        raikiri_layout_geometry::Size {
             width: 30.0,
             height: 40.0
         }

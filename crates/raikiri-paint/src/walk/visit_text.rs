@@ -6,11 +6,12 @@ use super::paint_walk::PaintWalk;
 use super::{box_intersects_page, fixed_background_viewport};
 use anyrender::PaintScene;
 use raikiri_dom::Node;
+use raikiri_layout_geometry::BoxLayout;
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Paint the lines of the text node `node` of `visit`, laid out as
     /// `layout`, when it is a paragraph that belongs on this page.
-    pub(super) fn visit_text(&mut self, visit: &VisitFrame, node: &'w Node, layout: taffy::Layout) {
+    pub(super) fn visit_text(&mut self, visit: &VisitFrame, node: &'w Node, layout: BoxLayout) {
         let VisitFrame {
             node_id,
             parent_abs_x,

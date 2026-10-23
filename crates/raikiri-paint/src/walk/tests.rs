@@ -2387,7 +2387,7 @@ fn background_clipped_to_an_area_the_borders_leave_empty_paints_nothing() {
         bottom: side,
         left: side,
     };
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
@@ -2461,7 +2461,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
         bottom: zero_border,
         left: zero_border,
     };
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
@@ -3156,7 +3156,7 @@ fn background_rounded_color_and_image_are_clipped_to_the_curve_together() {
         bottom: border,
         left: border,
     };
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
@@ -3280,7 +3280,7 @@ fn fixed_background_layer_is_positioned_in_the_page_area_and_clipped_to_its_box(
         }
     }
     let border = bordered_sides(2.0, BorderStyle::Solid, BorderColor::CurrentColor);
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 3.0,
         right: 3.0,
         bottom: 3.0,
@@ -3496,7 +3496,7 @@ fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
     }
     let (position, repeat) = background_repeat_fixture("no-repeat", "center");
     let border = bordered_sides(0.0, BorderStyle::None, BorderColor::CurrentColor);
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
@@ -3632,7 +3632,7 @@ fn background_is_pulled_in_from_a_rounded_edge_only_when_the_border_hides_it() {
         b: 0,
         a: 255,
     });
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
@@ -3729,21 +3729,21 @@ fn background_element_origins_clips_and_rounded_images() {
         bottom: zero_border,
         left: zero_border,
     };
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
         left: 0.0,
     };
     // Border-box origin and content-box clip with padding.
-    let mut padded = taffy::Rect {
+    let mut padded = Edges {
         top: 5.0,
         right: 5.0,
         bottom: 5.0,
         left: 5.0,
     };
     let _ = &mut padded;
-    let content_padding = taffy::Rect {
+    let content_padding = Edges {
         top: 5.0,
         right: 5.0,
         bottom: 5.0,
@@ -5400,7 +5400,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
             &ResolveContext::new(ComputedLength(16.0)),
         ),
     };
-    let padding = taffy::Rect {
+    let padding = Edges {
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
@@ -7103,7 +7103,7 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let layout = taffy::Layout::new();
+    let layout = BoxLayout::new();
     let place = |id: usize, page_origin: f32| {
         fixed_position_px(
             &cascade.computed[id],

@@ -2753,6 +2753,7 @@ dependencies = [
  "peniko",
  "raikiri-dom",
  "raikiri-html",
+ "raikiri-layout-geometry",
  "raikiri-style",
  "raikiri-svg",
  "raikiri-traits",

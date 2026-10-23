@@ -24,6 +24,7 @@ use raikiri_dom::image_geometry::{
     rounded_background_tile_size,
 };
 use raikiri_dom::{CounterSnapshots, Document, StandaloneAlign};
+use raikiri_layout_geometry::{BoxLayout, Edges};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor, BorderStyle,
     ConicGradient, CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient,
@@ -1800,7 +1801,7 @@ pub(crate) fn paint_page_margin_boxes(
 /// Height from an ifc root's border-box top that its painted lines reach:
 /// lines that overflow the box (overflow is visible) are still drawn, so a
 /// page that holds only those lines must not skip the root.
-fn ifc_paint_extent(node: &raikiri_dom::Node, layout: &taffy::Layout) -> f32 {
+fn ifc_paint_extent(node: &raikiri_dom::Node, layout: &BoxLayout) -> f32 {
     let lines = node.ifc_size().map_or(0.0, |(_, height)| height);
     layout
         .size
@@ -2251,10 +2252,7 @@ fn img_src_url(document: &Document, node_id: usize) -> Option<url::Url> {
 /// percentage/px padding keeps the painter's historical containing-width
 /// calculation, while a mixed `calc()` takes the exact used value from layout.
 /// This keeps backgrounds and images aligned with the geometry.
-fn used_padding_for_paint(
-    cv: &raikiri_style::ComputedValues,
-    layout: &taffy::Layout,
-) -> taffy::Rect<f32> {
+fn used_padding_for_paint(cv: &raikiri_style::ComputedValues, layout: &BoxLayout) -> Edges<f32> {
     if cv.display == DisplayValue::TableCell {
         return layout.padding;
     }
@@ -2271,7 +2269,7 @@ fn used_padding_for_paint(
             value.resolve(reference)
         }
     };
-    taffy::Rect {
+    Edges {
         top: choose(cv.padding.top, layout.padding.top),
         right: choose(cv.padding.right, layout.padding.right),
         bottom: choose(cv.padding.bottom, layout.padding.bottom),
@@ -2294,7 +2292,7 @@ fn paint_image(
     abs_x: f32,
     abs_y: f32,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &taffy::Rect<f32>,
+    padding: &Edges<f32>,
     object_fit: ObjectFit,
     object_position: &ComputedCssPosition,
     visible: bool,
@@ -2395,7 +2393,7 @@ fn paint_canvas(
     abs_x: f32,
     abs_y: f32,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &taffy::Rect<f32>,
+    padding: &Edges<f32>,
     object_fit: ObjectFit,
     object_position: &ComputedCssPosition,
     visible: bool,
@@ -2538,7 +2536,7 @@ pub(crate) fn paint_element_background(
     current_color: CssColor,
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &taffy::Rect<f32>,
+    padding: &Edges<f32>,
     env: BackgroundEnv,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
@@ -2577,7 +2575,7 @@ fn paint_element_background_layers(
     current_color: CssColor,
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &taffy::Rect<f32>,
+    padding: &Edges<f32>,
     env: BackgroundEnv,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
@@ -4187,7 +4185,7 @@ fn transform_translation(
 #[allow(clippy::too_many_arguments)]
 fn fixed_position_px(
     cv: &raikiri_style::ComputedValues,
-    layout: &taffy::Layout,
+    layout: &BoxLayout,
     static_position: (f32, f32),
     rtl: bool,
     page_width: f32,

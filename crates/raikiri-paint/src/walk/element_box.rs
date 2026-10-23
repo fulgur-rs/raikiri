@@ -11,6 +11,7 @@ use super::{
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use raikiri_dom::{Document, FragmentRect, Node};
+use raikiri_layout_geometry::{BoxLayout, Edges};
 use raikiri_style::property::{BorderStyle, PositionValue};
 use raikiri_style::{
     CascadeResult, ComputedBorder, ComputedBorderRadius, ComputedLengthPercentageOrAuto,
@@ -63,14 +64,14 @@ pub(super) struct ElementBox<'w> {
     pub(super) node: &'w Node,
     pub(super) node_id: usize,
     pub(super) cv: &'w ComputedValues,
-    pub(super) layout: taffy::Layout,
+    pub(super) layout: BoxLayout,
     pub(super) fragment_id: Option<usize>,
     pub(super) inside_fixed: bool,
     pub(super) inside_fixed_containing_block: bool,
     pub(super) abs_x: f32,
     pub(super) abs_y: f32,
     pub(super) generates_box: bool,
-    pub(super) paint_padding: taffy::Rect<f32>,
+    pub(super) paint_padding: Edges<f32>,
     pub(super) paint_border_radius: ComputedBorderRadius,
     pub(super) child_shift_y: f32,
     pub(super) pos_dx: f32,
@@ -104,7 +105,7 @@ struct Placement<'w> {
     abs_x: f32,
     abs_y: f32,
     generates_box: bool,
-    paint_padding: taffy::Rect<f32>,
+    paint_padding: Edges<f32>,
     paint_border_radius: ComputedBorderRadius,
     child_shift_y: f32,
     pos_dx: f32,
@@ -151,7 +152,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         &mut self,
         inputs: BoxInputs,
         node: &'w Node,
-        layout: taffy::Layout,
+        layout: BoxLayout,
     ) -> Option<ElementBox<'w>> {
         let BoxInputs {
             node_id,
@@ -241,7 +242,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn grow_for_generated_flow(
         &mut self,
         node_id: usize,
-        layout: taffy::Layout,
+        layout: BoxLayout,
         placement: &Placement<'w>,
         extent: &mut PageExtent,
     ) {
@@ -278,12 +279,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
 
     /// Where the box of the element `inputs.node_id` lies, before any
     /// transform or fragmentainer clip applies.
-    fn placement(
-        &self,
-        inputs: &BoxInputs,
-        node: &'w Node,
-        layout: taffy::Layout,
-    ) -> Placement<'w> {
+    fn placement(&self, inputs: &BoxInputs, node: &'w Node, layout: BoxLayout) -> Placement<'w> {
         let BoxInputs {
             node_id,
             parent_abs_x,
@@ -464,7 +460,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn fixed_offset(
         &self,
         cv: &ComputedValues,
-        layout: &taffy::Layout,
+        layout: &BoxLayout,
         (abs_x, abs_y): (f32, f32),
     ) -> (f32, f32) {
         let PageGeometry {
@@ -495,7 +491,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn push_transform(
         &mut self,
         cv: &ComputedValues,
-        layout: taffy::Layout,
+        layout: BoxLayout,
         paint_x: f32,
         paint_y: f32,
     ) -> bool {
@@ -517,7 +513,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     fn cut_by_fragmentainers(
         &mut self,
         inputs: &BoxInputs,
-        layout: taffy::Layout,
+        layout: BoxLayout,
         paint_x: f32,
         paint_y: f32,
     ) -> FragmentCut {
@@ -606,7 +602,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         &self,
         inputs: &BoxInputs,
         node: &'w Node,
-        layout: taffy::Layout,
+        layout: BoxLayout,
         placement: &Placement<'w>,
         cut: &FragmentCut,
     ) -> PageExtent {
@@ -640,7 +636,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         &self,
         inputs: &BoxInputs,
         node: &'w Node,
-        layout: taffy::Layout,
+        layout: BoxLayout,
         placement: &Placement<'w>,
         paint_y: f32,
     ) -> bool {
@@ -822,7 +818,7 @@ fn generated_content_advance(
     document: &Document,
     node: &Node,
     cv: &ComputedValues,
-    paint_padding: taffy::Rect<f32>,
+    paint_padding: Edges<f32>,
 ) -> f32 {
     node.children
         .iter()

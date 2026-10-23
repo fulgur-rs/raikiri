@@ -4,6 +4,7 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use raikiri_dom::Document;
 use raikiri_dom::inline_svg_style::InlineSvgElementDeclarations;
+use raikiri_layout_geometry::Edges;
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::{DecodedImage, NodeId, RenderWarning, ResourceKind, WarningKind};
 
@@ -41,7 +42,7 @@ impl<'a> InlineSvg<'a> {
         node_id: usize,
         (width, height): (f32, f32),
         (abs_x, abs_y): (f32, f32),
-        padding: &taffy::Rect<f32>,
+        padding: &Edges<f32>,
     ) -> Self {
         let bl = cv.border.left.width().px();
         let bt = cv.border.top.width().px();
