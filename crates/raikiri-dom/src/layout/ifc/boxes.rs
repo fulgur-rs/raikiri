@@ -10,8 +10,14 @@ use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
+use crate::layout::protocol::{
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, LayoutInput,
+    LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPositioningArea, RequestedAxis, RunMode,
+    SizingMode,
+};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext, BoxProbe};
 use crate::taffy_impl::{fit_content_room, measure_against_parent_height, resolve_calc};
+use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::{LineOptions, TextGroupAlign};
@@ -22,10 +28,8 @@ use shodo::{
 use std::collections::{HashMap, HashSet};
 use taffy::util::ResolveOrZero;
 use taffy::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, BlockContainerStyle, BlockItemStyle, Clear,
-    CollapsibleMarginSet, CoreStyle, FloatDirection, LayoutInput, LayoutPartialTree, Line,
-    OofCandidate, OofCandidates, OofPositioningArea, Point, Position, RequestedAxis, RunMode, Size,
-    SizingMode,
+    BlockContainerStyle, BlockItemStyle, Clear, CoreStyle, FloatDirection, LayoutPartialTree,
+    Position,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -57,15 +61,15 @@ pub(crate) struct TentativeFloat {
     pub(crate) direction: FloatDirection,
     pub(crate) clear: Clear,
     pub(crate) margin_box: Size<f32>,
-    pub(crate) margin: taffy::Rect<f32>,
+    pub(crate) margin: Edges<f32>,
     /// What `perform_child_layout` returned for the float.
-    pub(crate) output: taffy::LayoutOutput,
+    pub(crate) output: LayoutOutput,
 }
 
 struct RunBoxesOutcome {
     lines: IfcLines,
     continuation: Option<BreakToken>,
-    atomic_outputs: Vec<(usize, taffy::LayoutOutput)>,
+    atomic_outputs: Vec<(usize, LayoutOutput)>,
     /// The generated block still open where the segment stopped.
     open_block: Option<generated_blocks::OpenBlock>,
     /// Where the next segment's first line starts.
@@ -1308,7 +1312,7 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
             let mut layout = tree.nodes[b.node].unrounded_layout;
             layout.location.x += dx;
             layout.location.y += dy;
-            tree.set_unrounded_layout(taffy::NodeId::from(b.node), &layout);
+            tree.set_unrounded_layout(NodeId::from(b.node), &layout);
         }
     }
 }
@@ -1376,7 +1380,7 @@ fn inline_padding_box(
         .resolve_or_zero(Some(basis), resolve_calc);
     let mut spanned: Vec<_> = pieces.iter().filter(|piece| piece.node == inline).collect();
     if spanned.is_empty() {
-        border = taffy::Rect::ZERO;
+        border = Edges::ZERO;
         spanned = pieces
             .iter()
             .filter(|piece| tree.ancestors(piece.node).any(|id| id == inline))
@@ -1573,7 +1577,7 @@ fn shorten(base: LineSpace, tentative: &[TentativeFloat]) -> LineSpace {
 
 /// Margins of `node` resolved against `basis`, the root's content width; `auto`
 /// is zero.
-fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> taffy::Rect<f32> {
+fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Edges<f32> {
     tree.physical_style(node)
         .margin()
         .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
@@ -1595,11 +1599,11 @@ fn perform_box_layout(
     height_basis: Option<f32>,
     known_width: Option<f32>,
     available: f32,
-) -> taffy::LayoutOutput {
+) -> LayoutOutput {
     // What taffy's `perform_child_layout` does; that helper is private to
     // taffy.
     tree.compute_child_layout(
-        taffy::NodeId::from(node),
+        NodeId::from(node),
         LayoutInput {
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,
@@ -1676,7 +1680,7 @@ fn measure_float(
 /// once the lines are final.
 pub(crate) struct AtomicMeasure {
     pub(crate) sizes: AtomicSizes,
-    pub(crate) outputs: Vec<(usize, taffy::LayoutOutput)>,
+    pub(crate) outputs: Vec<(usize, LayoutOutput)>,
 }
 
 /// Measure every atomic inline of the root at the paragraph's content width.
@@ -1813,10 +1817,7 @@ struct BlockChild {
     collapses_through: bool,
 }
 
-fn translated_child_oof_candidates(
-    output: &taffy::LayoutOutput,
-    location: taffy::Point<f32>,
-) -> OofCandidates {
+fn translated_child_oof_candidates(output: &LayoutOutput, location: Point<f32>) -> OofCandidates {
     let mut candidates = output.oof_candidates.clone();
     candidates.translate(location);
     candidates
@@ -1951,7 +1952,7 @@ fn layout_block_child(
             vertical_margins_are_collapsible: Line::TRUE,
         };
         let output = tree.compute_child_layout_with_block_ctx(
-            taffy::NodeId::from(node),
+            NodeId::from(node),
             inputs,
             Some(&mut child_ctx),
         );
@@ -2022,7 +2023,7 @@ fn layout_block_child(
             relative_height(&geometry),
             geometry.axes,
         );
-        let location = taffy::Point {
+        let location = Point {
             x: geometry.edges.0 + margin.left + dx,
             y: geometry.top_edge + top + dy,
         };
@@ -2119,7 +2120,7 @@ fn layout_vertical_block_child(
     let mut slot_separated = false;
     let mut inline_stretch = (inline_basis - margin.top - margin.bottom).max(0.0);
     let height = if !shares_context && (forced_clearance || ctx.has_active_floats(min_y)) {
-        let node_id = taffy::NodeId::from(node);
+        let node_id = NodeId::from(node);
         let placed = ctx.find_box_slot(
             min_y,
             [margin.top, margin.bottom],
@@ -2272,7 +2273,7 @@ fn layout_vertical_block_child(
                     Line::FALSE
                 },
             };
-            let node_id = taffy::NodeId::from(node);
+            let node_id = NodeId::from(node);
             let output = if shares_context {
                 tree.context.keep_text_group =
                     !matches!(tree.context.text_group, TextGroupScope::None);
@@ -2370,7 +2371,7 @@ fn layout_vertical_block_child(
     let mut child_candidates = OofCandidates::new();
     if perform {
         let (dx, dy) = relative_inset(tree, node, basis, relative_height(&geometry), geometry.axes);
-        let location = taffy::Point {
+        let location = Point {
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
         };
@@ -2409,7 +2410,7 @@ fn layout_vertical_block_child(
 /// and scroll containers establish formatting contexts of their own.
 fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> bool {
     use taffy::{CoreStyle, LayoutBlockContainer};
-    let style = tree.get_block_container_style(taffy::NodeId::from(node));
+    let style = tree.get_block_container_style(NodeId::from(node));
     let overflow = style.overflow();
     tree.nodes[node].taffy_display() == taffy::Display::Block
         && !crate::taffy_impl::is_table_box(tree.nodes[node].display())
@@ -2482,7 +2483,7 @@ fn layout_formatting_context_child(
                             width,
                             width,
                         );
-                        tree.compute_child_layout(taffy::NodeId::from(node), inputs)
+                        tree.compute_child_layout(NodeId::from(node), inputs)
                             .size
                             .height
                     }
@@ -2491,7 +2492,7 @@ fn layout_formatting_context_child(
             .slot;
         (
             slot.stretch_width.max(-x_margins),
-            taffy::Point {
+            Point {
                 x: slot.x,
                 y: slot.y,
             },
@@ -2500,7 +2501,7 @@ fn layout_formatting_context_child(
     } else {
         (
             geometry.width - x_margins,
-            taffy::Point {
+            Point {
                 x: geometry.edges.0,
                 y: min_y,
             },
@@ -2523,7 +2524,7 @@ fn layout_formatting_context_child(
         width,
         stretch,
     );
-    let output = tree.compute_child_layout(taffy::NodeId::from(node), inputs);
+    let output = tree.compute_child_layout(NodeId::from(node), inputs);
     // `auto` side margins share the room the box leaves; beside floats the
     // slot already holds the non-`auto` margins.
     let free = (stretch - output.size.width).max(0.0);
@@ -2558,7 +2559,7 @@ fn layout_formatting_context_child(
             relative_height(&geometry),
             geometry.axes,
         );
-        let location = taffy::Point {
+        let location = Point {
             x: position.x + extra_left + dx,
             y: geometry.top_edge + top + dy,
         };
@@ -2701,8 +2702,7 @@ fn content_keyword_width(
             available_space: Size { width, height },
             vertical_margins_are_collapsible: Line::FALSE,
         };
-        let output =
-            tree.compute_child_layout_with_block_ctx(taffy::NodeId::from(node), inputs, None);
+        let output = tree.compute_child_layout_with_block_ctx(NodeId::from(node), inputs, None);
         if horizontal {
             output.size.width
         } else {
@@ -2862,7 +2862,7 @@ fn truncate_for_text_overflow(
 fn hide_truncated_atomics(
     tree: &mut LayoutSession<'_>,
     lines: &[shodo::Line],
-    outputs: &[(usize, taffy::LayoutOutput)],
+    outputs: &[(usize, LayoutOutput)],
 ) {
     if outputs.is_empty() {
         return;
@@ -2888,7 +2888,7 @@ fn hide_truncated_atomics(
 fn place_atomics(
     tree: &mut LayoutSession<'_>,
     lines: &[shodo::Line],
-    outputs: &[(usize, taffy::LayoutOutput)],
+    outputs: &[(usize, LayoutOutput)],
     geometry: FlowGeometry,
     rtl: bool,
 ) -> OofCandidates {
@@ -2933,7 +2933,7 @@ fn place_atomics(
             }
             let direction = if rtl { Direction::Rtl } else { Direction::Ltr };
             let physical = IfcAxes::new(geometry.axes.writing_mode(), direction).rect(size, rect);
-            let location = taffy::Point {
+            let location = Point {
                 x: geometry.edges.0 + physical.x + dx,
                 y: geometry.insets.top + physical.y + dy,
             };
@@ -2970,7 +2970,7 @@ pub(crate) fn move_atomics_to_columns(
                     let mut layout = tree.nodes[node].unrounded_layout;
                     layout.location.x += dx;
                     layout.location.y += dy;
-                    tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
+                    tree.set_unrounded_layout(NodeId::from(node), &layout);
                 }
             },
         );
@@ -3058,11 +3058,7 @@ fn relative_inset(
 /// An inline-block that is a scroll container has none: it sits on its
 /// bottom margin edge (CSS 2.1 10.8.1). `overflow: clip` does not make a
 /// scroll container (CSS Overflow 3 §3.1).
-fn atomic_baseline(
-    tree: &LayoutSession<'_>,
-    node: usize,
-    output: &taffy::LayoutOutput,
-) -> Option<f32> {
+fn atomic_baseline(tree: &LayoutSession<'_>, node: usize, output: &LayoutOutput) -> Option<f32> {
     let overflow = tree.physical_style(node).overflow();
     let scrolls = |overflow| !matches!(overflow, taffy::Overflow::Visible | taffy::Overflow::Clip);
     if scrolls(overflow.x) || scrolls(overflow.y) {
@@ -3116,7 +3112,7 @@ pub(crate) fn commit_float(
             );
             (physical.x, physical.y)
         };
-        let location = taffy::Point {
+        let location = Point {
             x: x + float.margin.left,
             y: y + float.margin.top,
         };
@@ -3136,8 +3132,8 @@ pub(crate) fn commit_float(
 pub(crate) fn commit_child_layout(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    output: &taffy::LayoutOutput,
-    location: taffy::Point<f32>,
+    output: &LayoutOutput,
+    location: Point<f32>,
     basis: f32,
 ) {
     let edges = session_edges(tree, node, basis);
@@ -3147,17 +3143,17 @@ pub(crate) fn commit_child_layout(
 /// The border, padding and margin of a box, resolved against one basis.
 #[derive(Clone, Copy)]
 pub(crate) struct BoxEdges {
-    border: taffy::Rect<f32>,
-    padding: taffy::Rect<f32>,
-    margin: taffy::Rect<f32>,
+    border: Edges<f32>,
+    padding: Edges<f32>,
+    margin: Edges<f32>,
 }
 
 impl BoxEdges {
     /// A box with no edges.
     pub(crate) const ZERO: Self = Self {
-        border: taffy::Rect::ZERO,
-        padding: taffy::Rect::ZERO,
-        margin: taffy::Rect::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     /// The edges `style` states, with percentages of `basis` and `auto`
@@ -3182,11 +3178,11 @@ pub(crate) fn session_edges(tree: &LayoutSession<'_>, node: usize, basis: f32) -
 pub(crate) fn commit_child_layout_with_edges(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    output: &taffy::LayoutOutput,
-    location: taffy::Point<f32>,
+    output: &LayoutOutput,
+    location: Point<f32>,
     edges: BoxEdges,
 ) {
-    let layout = taffy::Layout {
+    let layout = BoxLayout {
         order: tree.nodes[node].unrounded_layout.order,
         location,
         size: output.size,
@@ -3196,7 +3192,7 @@ pub(crate) fn commit_child_layout_with_edges(
         padding: edges.padding,
         margin: edges.margin,
     };
-    tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
+    tree.set_unrounded_layout(NodeId::from(node), &layout);
 }
 
 /// A padding box in the coordinates of the root's border box.
@@ -3226,7 +3222,7 @@ pub(crate) fn place_out_of_flow(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     border_box: Size<f32>,
-    output: &mut taffy::LayoutOutput,
+    output: &mut LayoutOutput,
 ) {
     use taffy::util::MaybeResolve;
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
@@ -3283,7 +3279,7 @@ pub(crate) fn place_out_of_flow(
     let mut pieces = None;
     // The root's own style, for the boxes that take a static position.
     let mut container_style = None;
-    let mut candidates = taffy::OofCandidates::new();
+    let mut candidates = OofCandidates::new();
     for node in positioned {
         let inline_cb = positioned_inline_ancestor(tree, idx, owner, node)
             .and_then(|inline| {
@@ -3370,7 +3366,7 @@ pub(crate) fn place_out_of_flow(
                     } else {
                         taffy::Direction::Ltr
                     },
-                    taffy::Line {
+                    Line {
                         start: content_left,
                         end: content_left + lines.width,
                     },
@@ -3378,7 +3374,7 @@ pub(crate) fn place_out_of_flow(
                 )
             };
             candidates.push(OofCandidate {
-                node: taffy::NodeId::from(node),
+                node: NodeId::from(node),
                 order: tree.nodes[node].unrounded_layout.order,
                 position,
                 static_position,
@@ -3423,7 +3419,7 @@ pub(crate) fn place_out_of_flow(
         let available =
             (cb.width - margin.left - margin.right - left.unwrap_or(0.0) - right.unwrap_or(0.0))
                 .max(0.0);
-        let node_id = taffy::NodeId::from(node);
+        let node_id = NodeId::from(node);
         let inputs = LayoutInput {
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::ContentSize,
@@ -3479,7 +3475,7 @@ pub(crate) fn place_out_of_flow(
             (None, Some(bottom)) => cb.y + cb.height - bottom - output.size.height - margin.bottom,
             (None, None) => static_y + margin.top,
         };
-        commit_child_layout(tree, node, &output, taffy::Point { x, y }, cb.width);
+        commit_child_layout(tree, node, &output, Point { x, y }, cb.width);
     }
     if !candidates.is_empty() {
         output.oof_candidates.append(&mut candidates);
@@ -3724,7 +3720,7 @@ fn content_sizes_on_axis(
     let vertical = axis == RequestedAxis::Vertical;
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
         let output = tree.compute_child_layout(
-            taffy::NodeId::from(node),
+            NodeId::from(node),
             LayoutInput {
                 run_mode: RunMode::ComputeSize,
                 sizing_mode: SizingMode::InherentSize,
