@@ -77,17 +77,19 @@ impl Shape {
     }
 }
 
-/// The items of an out-of-flow shape that stay in flow, so that the container
-/// has content of its own next to the `items` positioned boxes.
+/// The children of an out-of-flow shape that stay in flow, so that the
+/// container has content of its own next to the positioned boxes.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn oof_in_flow_items(items: usize) -> usize {
     (items / 10).max(1)
 }
 
 /// Build `items` paragraphs, items or table rows inside one formatting context.
 ///
-/// The out-of-flow shapes hold `items` absolutely positioned boxes (every tenth
-/// one fixed), mixing boxes placed by insets, boxes placed by their static
-/// position and, in the grid, boxes placed against a grid area.
+/// The out-of-flow shapes hold `items` children: the first
+/// [`oof_in_flow_items`] stay in flow and the others are absolutely positioned
+/// boxes (every tenth one fixed), mixing boxes placed by insets, boxes placed by
+/// their static position and, in the grid, boxes placed against a grid area.
 // cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn document(shape: Shape, items: usize) -> String {
     let css = match shape {

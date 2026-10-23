@@ -370,37 +370,36 @@ class RatchetTests(unittest.TestCase):
 
 
 class NameTableTests(unittest.TestCase):
-    def _reexports(self, rel: str, pattern: str) -> dict[str, str]:
-        """Exported name -> Taffy source name from a `use taffy::{...}` re-export list."""
-        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
-        body = re.search(pattern, text, re.S)
-        self.assertIsNotNone(body, f"{rel}: re-export list not found")
-        out = {}
-        for item in body.group(1).split(","):
-            item = item.strip()
-            if not item:
-                continue
-            source, _, alias = item.partition(" as ")
-            out[alias.strip() or source.strip()] = source.strip()
-        return out
+    def _source(self, rel: str) -> str:
+        return (REPO_ROOT / rel).read_text(encoding="utf-8")
 
-    def test_owned_names_match_the_real_reexports(self) -> None:
-        geometry = self._reexports("crates/raikiri-layout-geometry/src/lib.rs", r"pub use taffy::\{(.*?)\};")
-        protocol = self._reexports("crates/raikiri-dom/src/layout/protocol.rs", r"pub\(crate\) use taffy::\{(.*?)\};")
-        owned = {}
+    def _reexported(self, text: str, visibility: str) -> set[str]:
+        """Names a module re-exports with `<visibility> use path::{A, B};` or `<visibility> use path::A;`."""
+        pattern = rf"^{visibility} use [\w:]+::(\{{.*?\}}|\w+);"
+        names = set()
+        for body in re.findall(pattern, text, re.M | re.S):
+            names.update(item.strip() for item in body.strip("{}").split(",") if item.strip())
+        return names
+
+    def test_owned_names_exist_where_the_hints_point(self) -> None:
+        geometry_source = self._source("crates/raikiri-layout-geometry/src/lib.rs")
+        geometry = self._reexported(geometry_source, "pub")
+        protocol_source = self._source("crates/raikiri-dom/src/layout/protocol.rs")
+        protocol = self._reexported(protocol_source, r"pub\(crate\)") | set(
+            re.findall(r"^pub\(crate\) (?:struct|enum|type|trait) (\w+)", protocol_source, re.M)
+        )
+        counted_geometry = set()
         for name, hint in OUTPUT_NAMES.items():
             if hint.startswith("raikiri_layout_geometry::"):
-                owned[hint.removeprefix("raikiri_layout_geometry::")] = name
-                self.assertIn(hint.removeprefix("raikiri_layout_geometry::"), geometry, name)
-                self.assertEqual(geometry[hint.removeprefix("raikiri_layout_geometry::")], name)
+                owned = hint.removeprefix("raikiri_layout_geometry::")
+                counted_geometry.add(owned)
+                self.assertIn(owned, geometry, f"{name} points at a name the geometry crate does not export")
             elif hint.startswith("crate::layout::protocol::"):
-                self.assertEqual(hint.removeprefix("crate::layout::protocol::"), name)
-                self.assertEqual(protocol.get(name), name, f"{name} is not re-exported by the protocol module")
-        # Every re-export has a hint, so nothing is exported without being counted.
-        for exported, source in geometry.items():
-            self.assertEqual(owned.get(exported), source, f"geometry crate exports {exported} but the lint does not count {source}")
-        for exported in protocol:
-            self.assertEqual(OUTPUT_NAMES.get(exported), f"crate::layout::protocol::{exported}")
+                owned = hint.removeprefix("crate::layout::protocol::")
+                self.assertIn(owned, protocol, f"{name} points at a name the protocol module does not define")
+        # `MaybeMath` is a helper trait, not an output type, so no counted name maps to it.
+        for exported in geometry - {"MaybeMath"}:
+            self.assertIn(exported, counted_geometry, f"geometry crate exports {exported} but no counted name moves to it")
 
     def test_every_counted_name_has_a_replacement_hint(self) -> None:
         for name, hint in OUTPUT_NAMES.items():

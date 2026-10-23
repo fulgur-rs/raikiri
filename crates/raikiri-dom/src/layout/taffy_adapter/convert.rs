@@ -599,9 +599,12 @@ impl FromTaffy for OofPosition {
 
     /// The library emits a candidate only for a box that is out of flow, whose
     /// position is `Absolute` or `Fixed`. The positions that are in flow are
-    /// not candidates and have no counterpart; they read as `Absolute`.
+    /// not candidates and have no counterpart; they read as `Absolute`, and a
+    /// debug build stops at one so that a library that starts to emit them is
+    /// noticed.
     #[inline]
     fn from_taffy(value: taffy::Position) -> Self {
+        debug_assert!(value.is_out_of_flow(), "a candidate is out of flow");
         match value {
             taffy::Position::Fixed => OofPosition::Fixed,
             taffy::Position::Absolute

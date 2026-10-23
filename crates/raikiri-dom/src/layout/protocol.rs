@@ -177,24 +177,6 @@ impl MaybeMath<Option<f32>, AvailableSpace> for AvailableSpace {
     }
 }
 
-impl From<f32> for AvailableSpace {
-    #[inline]
-    fn from(value: f32) -> Self {
-        AvailableSpace::Definite(value)
-    }
-}
-
-impl From<Option<f32>> for AvailableSpace {
-    /// A definite space for `Some`, max-content for `None`.
-    #[inline]
-    fn from(option: Option<f32>) -> Self {
-        match option {
-            Some(value) => AvailableSpace::Definite(value),
-            None => AvailableSpace::MaxContent,
-        }
-    }
-}
-
 /// Whether a box is laid out in full or only measured.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum RunMode {

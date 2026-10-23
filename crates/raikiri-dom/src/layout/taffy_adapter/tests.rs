@@ -21,11 +21,12 @@ use crate::layout::protocol::{
 };
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 
-mod cache_keys;
-mod resolve;
-mod round_trip;
-mod variants;
-mod wrappers;
+mod cache_keys_tests;
+mod resolve_tests;
+mod round_trip_tests;
+mod tree_tests;
+mod variants_tests;
+mod wrappers_tests;
 
 /// The floats that conversions must not change: every bit pattern that takes a
 /// special path in a comparison or a sign test, and the range bounds.
