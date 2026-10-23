@@ -29,17 +29,6 @@
 19 crates/raikiri-dom/src/layout/cache_context/tests/restore_tests.rs
 5 crates/raikiri-dom/src/layout/context.rs
 1 crates/raikiri-dom/src/layout/fixed/tests.rs
-62 crates/raikiri-dom/src/layout/ifc/boxes.rs
-3 crates/raikiri-dom/src/layout/ifc/boxes/tests.rs
-5 crates/raikiri-dom/src/layout/ifc/boxes/tests/vertical_bfc_tests.rs
-5 crates/raikiri-dom/src/layout/ifc/flow.rs
-1 crates/raikiri-dom/src/layout/ifc/flow/tests.rs
-1 crates/raikiri-dom/src/layout/ifc/generated_blocks.rs
-8 crates/raikiri-dom/src/layout/ifc/parent.rs
-1 crates/raikiri-dom/src/layout/ifc/parent/tests.rs
-3 crates/raikiri-dom/src/layout/ifc/records.rs
-3 crates/raikiri-dom/src/layout/ifc/root.rs
-2 crates/raikiri-dom/src/layout/ifc/root/tests.rs
 1 crates/raikiri-dom/src/layout/initial_containing_block/tests.rs
 12 crates/raikiri-dom/src/layout/mod.rs
 12 crates/raikiri-dom/src/layout/page/tests.rs

@@ -5,6 +5,7 @@ use super::boxes::IfcBox;
 use super::clear_breaks::ClearBreakIndex;
 use super::first_letter::LetterStyle;
 use super::projection::{Projected, ProjectedIfc};
+use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use raikiri_style::ComputedTextIndent;
 use shodo::font::FontCollection;
 use shodo::geometry::WritingMode;
@@ -156,7 +157,7 @@ pub(crate) struct IfcLines {
     /// Shared, so cloning a root or a document does not copy them.
     pub(crate) lines: Arc<Vec<Line>>,
     /// Out-of-flow candidates bubbled from in-flow child layouts.
-    pub(crate) oof_candidates: taffy::OofCandidates,
+    pub(crate) oof_candidates: OofCandidates,
     /// Sum of the line advances.
     pub(crate) height: f32,
     /// True when some line was laid out beside a float (its space was
@@ -164,12 +165,12 @@ pub(crate) struct IfcLines {
     pub(crate) beside_floats: bool,
     /// Bottom margins of a last block child that collapse through the root's
     /// bottom edge with the root's own (CSS 2.1 8.3.1); not in `height`.
-    pub(crate) escaping_margin: taffy::CollapsibleMarginSet,
+    pub(crate) escaping_margin: CollapsibleMarginSet,
     /// Collapsed top margins of a block child that starts the paragraph, with
     /// no line or separating block above it (CSS 2.1 8.3.1). Eligible roots
     /// return them to the parent instead of placing them inside their content
     /// box. `None` when the paragraph starts otherwise.
-    pub(crate) leading_block_margin: Option<taffy::CollapsibleMarginSet>,
+    pub(crate) leading_block_margin: Option<CollapsibleMarginSet>,
     /// Each block child of the root with the index of the first line after
     /// it.
     pub(crate) block_line_starts: Vec<(usize, usize)>,

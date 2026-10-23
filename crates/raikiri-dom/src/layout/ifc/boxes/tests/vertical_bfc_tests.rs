@@ -3,13 +3,15 @@ use crate::layout::context::LayoutSession;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::layout::layout_single_page;
+use crate::layout::protocol::CollapsibleMarginSet;
 use crate::layout::test_support::{
     absolute_rect, ahem_paragraph_with, ahem_paragraph_with_atomic, ifc_ahem_fonts,
     page_box_800x600, with_ahem,
 };
 use crate::taffy_impl::block_flow::context::BlockFormattingContext;
+use raikiri_layout_geometry::{Edges, Size};
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
-use taffy::{Clear, CollapsibleMarginSet, FloatDirection, Size};
+use taffy::{Clear, FloatDirection};
 
 type BoxRect = (f32, f32, f32, f32);
 
@@ -110,7 +112,7 @@ fn vertical_geometry() -> FlowGeometry {
             width: 100.0,
             height: 40.0,
         },
-        taffy::Rect::ZERO,
+        Edges::ZERO,
     )
 }
 
@@ -340,7 +342,7 @@ fn layout_vertical_rtl_independent_bfc_child(margins: &str) -> BoxRect {
             width: 100.0,
             height: 40.0,
         },
-        taffy::Rect::ZERO,
+        Edges::ZERO,
     );
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
@@ -406,7 +408,7 @@ fn vertical_independent_bfc_slot_probes_height_and_rtl_auto_margins() {
             width: 100.0,
             height: 40.0,
         },
-        taffy::Rect::ZERO,
+        Edges::ZERO,
     );
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut session = LayoutSession::bridged(&mut doc, &session_cascade);

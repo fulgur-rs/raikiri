@@ -1,7 +1,7 @@
 use crate::layout::ifc::test_support::{block_fixture, span};
 use crate::node::NodeFlags;
 use crate::{Document, document::OofCoordinate};
-use taffy::Point;
+use raikiri_layout_geometry::Point;
 
 #[test]
 fn a_box_under_inline_elements_is_located_from_the_root() {
