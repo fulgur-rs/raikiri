@@ -455,6 +455,40 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
 }
 
 #[test]
+fn a_non_finite_ifc_content_bound_is_the_initial_value() {
+    let style = Style {
+        min_size: StyleSize {
+            width: taffy::LengthPercentageAuto::auto(),
+            height: taffy::LengthPercentageAuto::length(f32::INFINITY),
+        },
+        max_size: StyleSize {
+            width: taffy::LengthPercentageAuto::auto(),
+            height: taffy::LengthPercentageAuto::length(f32::NAN),
+        },
+        ..Style::default()
+    };
+    assert_eq!(
+        ifc_content_height_bounds(&style, Some(80.0), None),
+        (0.0, f32::INFINITY)
+    );
+}
+
+#[test]
+fn implicit_rows_are_auto_without_grid_auto_rows() {
+    use taffy::prelude::TaffyAuto;
+
+    let rows = GridRowCounts {
+        negative_implicit: 1,
+        explicit: 0,
+        positive_implicit: 2,
+    };
+    assert_eq!(
+        row_sizing_functions(&Style::default(), rows),
+        vec![taffy::TrackSizingFunction::AUTO; 3]
+    );
+}
+
+#[test]
 fn the_fit_content_limit_resolves_against_the_basis_it_needs() {
     let limit =
         |size: taffy::Dimension, basis: Option<f32>| fit_content_limit(size.expand(), basis);

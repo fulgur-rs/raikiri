@@ -2530,6 +2530,7 @@ fn compute_inline_block_shrink_wrap(
     let (lo, hi) = if min_w <= max_w {
         (min_w, max_w)
     } else {
+        // cov:ignore: min-content never exceeds max-content; this only keeps `clamp` from seeing inverted bounds
         (max_w, min_w)
     };
     let fit = match inputs.available_space.width {

@@ -168,6 +168,111 @@ fn only_an_absolute_child_of_the_vertical_containing_block_gets_its_inline_size(
 }
 
 #[test]
+fn an_absolute_child_with_both_block_insets_keeps_its_inputs() {
+    let mut doc = Document::new();
+    let container = doc.append_element(Some(0), "div", None::<&str>);
+    let absolute = doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;position:absolute;top:0;bottom:0"),
+    );
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    session
+        .context
+        .vertical_oof_containing_blocks
+        .push((container, 120.0));
+
+    // Both insets fix the physical height, so the inline size of the
+    // containing block does not take part.
+    assert_eq!(
+        super::absolute_child_inputs(&session, absolute, LayoutInput::HIDDEN),
+        LayoutInput::HIDDEN
+    );
+}
+
+/// The multicol style of a container with two columns.
+fn two_columns() -> crate::fragment::MulticolStyle {
+    crate::fragment::MulticolStyle {
+        rtl: false,
+        count: Some(2),
+        width: None,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
+        gap: 0.0,
+        gap_percent: None,
+        height_definite: true,
+        horizontal: true,
+        orphans: 2,
+        widows: 2,
+    }
+}
+
+/// `containing_block_inline_size` of a `vertical-rl` block inside a multicol
+/// container, styled with `container_css` and holding an absolutely
+/// positioned child, laid out in a space of `height` physical height.
+fn inline_size_in(container_css: &str, height: AvailableSpace) -> Option<f32> {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let container = doc.append_element(
+        Some(html),
+        "div",
+        Some(format!(
+            "display:block;position:relative;writing-mode:vertical-rl;{container_css}"
+        )),
+    );
+    doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;position:absolute"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    session.nodes[html].multicol = Some(two_columns());
+    let inputs = LayoutInput {
+        available_space: Size {
+            width: AvailableSpace::Definite(300.0),
+            height,
+        },
+        ..LayoutInput::HIDDEN
+    };
+    super::containing_block_inline_size(&session, container, &inputs)
+}
+
+#[test]
+fn the_inline_size_of_a_containing_block_needs_a_definite_space() {
+    assert_eq!(
+        inline_size_in("", AvailableSpace::Definite(200.0)),
+        Some(200.0)
+    );
+    assert_eq!(inline_size_in("", AvailableSpace::MaxContent), None);
+    assert_eq!(inline_size_in("", AvailableSpace::MinContent), None);
+}
+
+#[test]
+fn the_inline_size_of_a_containing_block_is_what_its_margins_leave() {
+    let space = AvailableSpace::Definite(200.0);
+    assert_eq!(inline_size_in("margin:10px 0", space), Some(180.0));
+    // An auto margin counts as zero.
+    assert_eq!(
+        inline_size_in("margin-top:auto;margin-bottom:10px", space),
+        Some(190.0)
+    );
+    assert_eq!(inline_size_in("margin:150px 0", space), Some(0.0));
+}
+
+#[test]
+fn the_inline_size_of_a_containing_block_follows_its_height_limits() {
+    let space = AvailableSpace::Definite(200.0);
+    assert_eq!(inline_size_in("max-height:50px", space), Some(50.0));
+    assert_eq!(inline_size_in("min-height:300px", space), Some(300.0));
+    assert_eq!(
+        inline_size_in("max-height:250px;min-height:120px", space),
+        Some(200.0)
+    );
+}
+
+#[test]
 fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -187,18 +292,7 @@ fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     // Model the vertical block as a descendant of a multicol container.
-    session.nodes[html].multicol = Some(crate::fragment::MulticolStyle {
-        rtl: false,
-        count: Some(2),
-        width: None,
-        column_fill: raikiri_style::property::ColumnFillValue::Balance,
-        gap: 0.0,
-        gap_percent: None,
-        height_definite: true,
-        horizontal: true,
-        orphans: 2,
-        widows: 2,
-    });
+    session.nodes[html].multicol = Some(two_columns());
     assert_eq!(
         session.nodes[container].formatting_context,
         crate::node::FormattingContext::Block

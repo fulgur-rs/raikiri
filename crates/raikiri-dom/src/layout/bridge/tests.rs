@@ -2063,6 +2063,19 @@ fn a_flex_or_grid_item_records_its_keyword_min_and_max_sizes() {
 }
 
 #[test]
+fn a_keyword_limit_with_a_calc_is_left_for_taffy_to_resolve() {
+    let [(limits, ..)] = bridged_content_limits(&[(
+        "display:block",
+        "div",
+        "display:block;min-width:fit-content(calc(50% - 10px));max-height:fit-content(25%)",
+    )])[..] else {
+        panic!("one case");
+    };
+    assert!(limits.min.width.is_fit_content_calc());
+    assert_eq!(limits.max.height, Dimension::fit_content_percent(0.25));
+}
+
+#[test]
 fn a_size_that_is_no_keyword_is_no_content_limit() {
     use crate::layout::dispatch::content_limits::ContentLimits;
 
