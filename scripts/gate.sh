@@ -409,6 +409,17 @@ if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p raikiri-net --features ht
 fi
 echo
 
+echo "-- scripts/public-api-lint.sh --"
+# Fails when a public item of a consumer-facing crate names a Taffy type in its
+# signature, fields or trait impls. It reads the rustdoc JSON of the workspace,
+# which it builds itself (cargo doc --no-deps, reusing the dependency build of
+# the steps above). See scripts/lib/public_api_lint.py's module docstring.
+if ! "$SCRIPT_DIR/public-api-lint.sh"; then
+  echo "FAIL: scripts/public-api-lint.sh found a Taffy type in a public API"
+  FAIL=1
+fi
+echo
+
 if [[ "$SKIP_COVERAGE" -eq 0 ]]; then
   # The instrumented run built this binary for raikiri-wpt's bin tests; reuse
   # it. `cargo run -p raikiri-wpt` selects fewer packages, so cargo unifies

@@ -155,6 +155,13 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --document-private-items --locked
 
+      - name: Public API lint
+        # Same command as scripts/gate.sh. Builds the rustdoc JSON of the
+        # workspace (only rustdoc is bootstrapped, the dependency build is the
+        # one of the step above) and fails when a public item of a
+        # consumer-facing crate names a Taffy type.
+        run: scripts/public-api-lint.sh
+
       # raikiri-net's `http-ureq` feature (UreqHttpProvider) is off by default;
       # no workspace crate enables it. The workspace test/clippy/doc steps
       # above therefore never compile it. Enable it explicitly in separate
