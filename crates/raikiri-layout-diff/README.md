@@ -74,14 +74,18 @@ and hashes it. The text has two parts, described in `src/dump.rs`:
 
 - the **page API** that a consumer such as fulgur reads, for every page: the
   geometry, the root box, the fragments with their rectangles, the positioned
-  glyph runs (origin, advance, ascent, descent, glyphs, decorations, shadows),
-  the paint order including the place of every list-marker image and image
-  of `content`, the page-margin boxes with the glyphs of their text (the
-  pieces of each line for text in a vertical writing mode), and the links;
+  glyph runs (origin, advance, ascent, descent, glyphs, decorations, shadows)
+  with the inline opacity group that draws each, the paint order and the
+  paint order for those runs (text lines and opacity groups), both including
+  the place of every list-marker image and image of `content`, the
+  page-margin boxes with the glyphs of their text (the pieces of each line for
+  text in a vertical writing mode), and the links;
 - the **layout of every node** of each laid-out document: `order`, `location`,
   `size`, `scrollable_overflow_rect`, `scrollbar_size`, and the `border`,
-  `padding` and `margin` sizes. Pages laid out again after a change of the
-  content width have a document of their own.
+  `padding` and `margin` sizes, and under each paragraph the lines it was
+  broken into, with the pieces of the lines in a vertical writing mode, whose
+  text the page API gives no glyph runs for. Pages laid out again after a
+  change of the content width have a document of their own.
 
 Numbers are written as the shortest decimal text that reads back as the same
 `f32`, so two numbers print the same exactly when their bits are the same.
@@ -175,6 +179,13 @@ The manifest the script builds with (`tool_manifest` in
 - Images are not decoded. Every image of a list marker or of `content` is the
   same 8 by 4 px placeholder, so where a page puts it is compared but not its
   real size or pixels. No other image is loaded either.
+- The glyphs of a paragraph that is not in a vertical writing mode are
+  compared through the glyph runs of the page API. When the page API leaves a
+  horizontal paragraph out of its runs (it says so in the warnings, which are
+  compared), only the metrics of its lines are compared.
+- The pieces of a vertical line are compared by their `Debug` text, without
+  the layer number of their fonts, which depends on how many font layers the
+  cases before have made.
 - Only print layout is compared, on one page size. Screen layout is not.
 - Files that read other files do so under `--html-root`, which the script sets
   to the WPT checkout; a generated case reads none.

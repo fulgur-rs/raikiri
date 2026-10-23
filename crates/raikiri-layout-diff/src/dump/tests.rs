@@ -121,6 +121,7 @@ fn the_page_api_is_written_for_every_page() {
         "    glyph id=",
         "    decoration DecorationLine {",
         "    shadow TextShadow {",
+        "    opacity_group=None",
         "paint_order: ",
         "  box node=",
         "  text node=",
@@ -128,6 +129,8 @@ fn the_page_api_is_written_for_every_page() {
         "  generated_box owner=",
         "  line_box node=",
         "    line=TextLineId {",
+        "paint_order_for_text_runs: ",
+        "  TextLine(TextLineId {",
         "margin_boxes: 1\nMarginBox {",
         "links: 1\nLink {",
     ] {
@@ -273,6 +276,107 @@ fn images_of_content_and_markers_are_written_with_their_placement() {
     }
     // Every image is the same placeholder, so a content image is 8 by 4 px.
     assert!(text.contains(" 8.0 4.0]"), "{text}");
+}
+
+#[test]
+fn inline_opacity_groups_are_written_with_the_runs_they_draw() {
+    let page = |opacity: &str| {
+        text_of(&format!(
+            "<style>body {{ margin: 0; font: 10px/12px Ahem }}</style>\
+             <p>aa <span style='opacity:{opacity}'>bb</span> cc</p>"
+        ))
+    };
+    let text = page(".5");
+    // Of the three runs of the line, the one in the span has a group.
+    assert_eq!(text.matches("    opacity_group=None").count(), 2, "{text}");
+    assert_eq!(
+        text.matches("    opacity_group=Some(NodeId(").count(),
+        1,
+        "{text}"
+    );
+    // The order for these runs draws it as a group of its own.
+    let (_, for_runs) = text
+        .split_once("\npaint_order_for_text_runs: ")
+        .expect("the order for the runs is written");
+    for expected in [
+        "  TextLine(TextLineId {",
+        "  PushOpacity(0.5)",
+        "  GroupTextLine(TextLineId {",
+        "  PopOpacity",
+    ] {
+        assert!(for_runs.contains(expected), "{expected:?}:\n{for_runs}");
+    }
+    assert_eq!(text, page(".5"));
+    assert_ne!(text, page(".25"));
+}
+
+#[test]
+fn text_in_a_vertical_writing_mode_is_written_from_the_lines_of_its_paragraph() {
+    let page = |align: &str| {
+        text_of(&format!(
+            "<style>body {{ margin: 0; font: 10px/12px Ahem }}</style>\
+             <p style='writing-mode:vertical-rl; height:60px; text-align:{align}'>\
+             vertical text goes here</p>"
+        ))
+    };
+    let text = page("start");
+    // The page gives the paragraph no runs, and says so.
+    assert!(text.contains("\ntext_runs: 0\n"), "{text}");
+    assert!(text.contains("TextRunsOmitted"), "{text}");
+    // Its four lines are listed under the paragraph with what they hold.
+    for index in 0..4 {
+        assert!(
+            text.contains(&format!("    line {index} mode=VerticalRl ")),
+            "line {index} is missing:\n{text}"
+        );
+    }
+    assert_eq!(text.matches("\n      GlyphRun(").count(), 4, "{text}");
+    // Moving the glyphs along the lines changes the text, though no box moves.
+    let moved = page("end");
+    assert_ne!(text, moved);
+    let boxes = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|line| line.starts_with('n'))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(boxes(&text), boxes(&moved));
+}
+
+#[test]
+fn the_lines_of_horizontal_paragraphs_are_written_without_their_pieces() {
+    let text = text_of("<p>hello</p>");
+    assert!(text.contains("\n    line 0 mode=HorizontalTb "), "{text}");
+    // Their glyphs are in the runs of the page.
+    assert!(!text.contains("GlyphRun("), "{text}");
+    assert!(text.contains("\n  run line="), "{text}");
+}
+
+#[test]
+fn the_layer_of_a_font_is_not_part_of_the_text() {
+    assert_eq!(
+        without_font_layers("a: FontId { layer: 12, index: 3 }, b: FontId { layer: 7, index: 0 }"),
+        "a: FontId { index: 3 }, b: FontId { index: 0 }"
+    );
+    assert_eq!(without_font_layers("no ids here"), "no ids here");
+    assert_eq!(without_font_layers(""), "");
+    // Text that stops inside the marker is kept as far as it goes.
+    assert_eq!(without_font_layers("FontId { layer: 4"), "FontId { ");
+}
+
+#[test]
+fn pieces_of_vertical_lines_do_not_tell_how_many_font_layers_came_before() {
+    // The inline box in a vertical paragraph is a piece that names its font.
+    let html = "<style>body { margin: 0; font: 10px/12px Ahem }</style>\
+                <p style='writing-mode:vertical-rl; height:60px'>a <span style='border:1px solid'>\
+                inline box</span> b</p>";
+    let first = text_of(html);
+    assert!(first.contains("InlineBox(InlineBoxFragment {"), "{first}");
+    assert!(first.contains("FontId { index: "), "{first}");
+    assert!(!first.contains("layer:"), "{first}");
+    // Another case that registers a layer of fonts in between changes nothing.
+    text_of("<style>@font-face { font-family: Other; src: url(missing.ttf) }</style><p>x</p>");
+    assert_eq!(first, text_of(html));
 }
 
 #[test]

@@ -6,12 +6,15 @@
 //! parts:
 //!
 //! - the page API a consumer such as fulgur reads: the page geometry, the
-//!   root box, the fragments, the positioned glyph runs, the paint order, the
+//!   root box, the fragments, the positioned glyph runs with their opacity
+//!   groups, the paint order and the paint order for those runs, the
 //!   page-margin boxes with the glyphs of their text, and the links of every
 //!   page. The paint events of list-marker images and of images of `content`
 //!   are written with the place the page gave them;
 //! - the laid-out box of every node of each distinct laid-out document, read
-//!   through [`crate::node_layout::NodeBox`].
+//!   through [`crate::node_layout::NodeBox`], and the lines of every
+//!   paragraph, with the pieces of the lines in a vertical writing mode,
+//!   whose text the page API gives no runs for.
 //!
 //! Numbers are written by [`number`], which keeps every `f32` apart from every
 //! other: the shortest decimal text that parses back to the same value, so
@@ -113,9 +116,22 @@ fn page(out: &mut String, page: &Page<'_>) {
     let _ = writeln!(out, "text_runs: {}", runs.len());
     for run in &runs {
         text_run(out, run);
+        // The inline opacity group decides which line event draws the run.
+        let _ = writeln!(
+            out,
+            "    opacity_group={:?}",
+            page.text_run_opacity_group(run)
+        );
     }
     let events = page.paint_order();
     let _ = writeln!(out, "paint_order: {}", events.len());
+    for event in &events {
+        paint_event(out, event, page);
+    }
+    // The order a consumer that paints the runs above follows: text lines and
+    // the opacity groups of inline elements.
+    let events = page.paint_order_for_text_runs(&runs);
+    let _ = writeln!(out, "paint_order_for_text_runs: {}", events.len());
     for event in &events {
         paint_event(out, event, page);
     }
@@ -145,19 +161,59 @@ fn margin_box(out: &mut String, margin_box: &MarginBox) {
     };
     let _ = writeln!(out, "  shaped {:?}", text.shaped());
     for (index, line) in text.shaped().lines().iter().enumerate() {
-        let _ = writeln!(
+        let mode = line.writing_mode();
+        shaped_line(
             out,
-            "    line {index} mode={:?} block_offset={} metrics={:?}",
-            line.writing_mode(),
-            number(line.block_offset()),
+            index,
+            mode,
+            line.block_offset(),
             line.metrics(),
+            mode.is_vertical().then(|| line.fragments()),
         );
-        if line.writing_mode().is_vertical() {
-            for piece in line.fragments() {
-                let _ = writeln!(out, "      {piece:?}");
-            }
-        }
     }
+}
+
+/// Writes a shaped line: its writing mode, its offset and its metrics, then
+/// the `pieces` it holds when the caller passes them. Callers pass the pieces
+/// of lines in a vertical writing mode only: the runs of the page API carry
+/// the placement of horizontal text, and vertical text has none.
+fn shaped_line<P: std::fmt::Debug>(
+    out: &mut String,
+    index: usize,
+    mode: impl std::fmt::Debug,
+    block_offset: f32,
+    metrics: impl std::fmt::Debug,
+    pieces: Option<impl IntoIterator<Item = P>>,
+) {
+    let _ = writeln!(
+        out,
+        "    line {index} mode={mode:?} block_offset={} metrics={metrics:?}",
+        number(block_offset),
+    );
+    for piece in pieces.into_iter().flatten() {
+        let _ = writeln!(out, "      {}", without_font_layers(&format!("{piece:?}")));
+    }
+}
+
+/// `text` without the layer number of the `FontId`s in it.
+///
+/// The text engine numbers the layers of fonts it registers across the whole
+/// process, so the number tells how many layers the cases that ran before
+/// have made, not what the case laid out. The index of the face in its layer
+/// stays.
+fn without_font_layers(text: &str) -> String {
+    const LAYER: &str = "FontId { layer: ";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(LAYER) {
+        out.push_str(&rest[..at]);
+        out.push_str("FontId { ");
+        rest = &rest[at + LAYER.len()..];
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+        rest = rest.strip_prefix(", ").unwrap_or(rest);
+    }
+    out.push_str(rest);
+    out
 }
 
 fn fragment(out: &mut String, label: &str, fragment: &Fragment<'_>) {
@@ -327,6 +383,19 @@ fn nodes(out: &mut String, document: &Document) {
             numbers(&layout.padding),
             numbers(&layout.margin),
         );
+        // The lines of a paragraph. Text in a vertical writing mode has no
+        // runs on the page, so the pieces of its lines are written here.
+        for (line_index, line) in node.ifc_lines().unwrap_or_default().iter().enumerate() {
+            let mode = line.writing_mode();
+            shaped_line(
+                out,
+                line_index,
+                mode,
+                line.block_offset(),
+                line.metrics(),
+                mode.is_vertical().then(|| line.fragments()),
+            );
+        }
     }
 }
 
