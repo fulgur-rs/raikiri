@@ -201,7 +201,7 @@ pub struct ElementData {
     /// the canvas is implicitly transparent because it has not been drawn or
     /// its resource limits prevent materialization. Stored here rather than
     /// as an attribute so `getAttribute` never observes it.
-    pub(crate) canvas_bitmap: Option<CanvasBitmap>,
+    pub(crate) canvas_bitmap: Option<CanvasBitmapStorage>,
 }
 
 impl ElementData {
@@ -226,6 +226,31 @@ impl ElementData {
                 attribute.namespace.as_deref() == Some(namespace) && attribute.local == local
             })
             .map(|attribute| attribute.value.as_str())
+    }
+}
+
+/// Internal ownership of current canvas pixels. Cloning a node keeps the
+/// historical deep-copy behavior; painting shares only explicit snapshots.
+#[derive(Debug)]
+pub(crate) struct CanvasBitmapStorage(pub(crate) std::sync::Arc<CanvasBitmap>);
+
+impl Clone for CanvasBitmapStorage {
+    fn clone(&self) -> Self {
+        Self(std::sync::Arc::new((*self.0).clone()))
+    }
+}
+
+impl From<CanvasBitmap> for CanvasBitmapStorage {
+    fn from(bitmap: CanvasBitmap) -> Self {
+        Self(std::sync::Arc::new(bitmap))
+    }
+}
+
+impl std::ops::Deref for CanvasBitmapStorage {
+    type Target = CanvasBitmap;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

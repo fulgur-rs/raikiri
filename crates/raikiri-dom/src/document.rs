@@ -2197,7 +2197,20 @@ impl Document {
         let NodeData::Element(element) = &node.data else {
             return None;
         };
-        element.canvas_bitmap.as_ref()
+        element.canvas_bitmap.as_deref()
+    }
+
+    /// Share an immutable snapshot of materialized canvas pixels.
+    ///
+    /// Later writes, replacement, and resizing preserve the snapshot. Keeping
+    /// snapshots alive can retain old pixel buffers beyond the current canvas
+    /// storage charged to this document's bitmap budget. Cloning a document
+    /// still copies its pixels independently.
+    pub fn canvas_bitmap_snapshot(&self, id: usize) -> Option<Arc<CanvasBitmap>> {
+        let NodeData::Element(element) = &self.nodes.get(id)?.data else {
+            return None;
+        };
+        Some(Arc::clone(&element.canvas_bitmap.as_ref()?.0))
     }
 
     /// Clone a canvas bitmap, if its pixels have been materialized.
@@ -2283,7 +2296,7 @@ impl Document {
         let NodeData::Element(element) = &mut node.data else {
             return Err(CanvasBitmapError::NotCanvas);
         };
-        element.canvas_bitmap = Some(bitmap);
+        element.canvas_bitmap = Some(bitmap.into());
         self.canvas_bitmap_bytes.0 = Some(total_bytes);
         Ok(())
     }
@@ -2292,7 +2305,7 @@ impl Document {
         let _ = self.take_canvas_bitmap_storage(id);
     }
 
-    fn take_canvas_bitmap_storage(&mut self, id: usize) -> Option<CanvasBitmap> {
+    fn take_canvas_bitmap_storage(&mut self, id: usize) -> Option<Arc<CanvasBitmap>> {
         let bitmap = self.nodes.get_mut(id).and_then(|node| {
             let NodeData::Element(element) = &mut node.data else {
                 return None;
@@ -2305,7 +2318,7 @@ impl Document {
             self.canvas_bitmap_bytes.0 =
                 Some(document_capacity.saturating_sub(bitmap.rgba.capacity()));
         }
-        bitmap
+        bitmap.map(|storage| storage.0)
     }
 
     fn try_create_canvas_bitmap(&mut self, id: usize) -> Result<(), CanvasBitmapError> {
@@ -2371,9 +2384,16 @@ impl Document {
         h: i32,
         rgba: [u8; 4],
     ) -> bool {
-        let Some((bitmap, cols, rows)) = self.canvas_clip_rect_mut(id, x, y, w, h) else {
+        if rgba[3] == 0 {
+            return self.ensure_canvas_bitmap(id).is_some();
+        }
+        let Some((cols, rows)) = self.canvas_clip_rect(id, x, y, w, h) else {
             return false;
         };
+        if cols.is_empty() || rows.is_empty() {
+            return true;
+        }
+        let bitmap = self.canvas_bitmap_for_write(id);
         let (sr, sg, sb, sa) = (
             u16::from(rgba[0]),
             u16::from(rgba[1]),
@@ -2388,9 +2408,6 @@ impl Document {
                     pixel.copy_from_slice(&rgba);
                 }
             }
-            return true;
-        }
-        if sa == 0 {
             return true;
         }
         let inv = 255 - sa;
@@ -2427,9 +2444,13 @@ impl Document {
         h: i32,
         mut source: impl FnMut(u32, u32) -> Option<[u8; 4]>,
     ) -> bool {
-        let Some((bitmap, cols, rows)) = self.canvas_clip_rect_mut(id, x, y, w, h) else {
+        let Some((cols, rows)) = self.canvas_clip_rect(id, x, y, w, h) else {
             return false;
         };
+        if cols.is_empty() || rows.is_empty() {
+            return true;
+        }
+        let bitmap = self.canvas_bitmap_for_write(id);
         for row in rows {
             for col in cols.clone() {
                 let Some(color) = source(col, row) else {
@@ -2452,9 +2473,13 @@ impl Document {
     /// Standard §4.12.5 `clearRect`. Returns `false` for non-canvas nodes or
     /// when resource limits prevent bitmap materialization.
     pub fn canvas_clear_rect(&mut self, id: usize, x: i32, y: i32, w: i32, h: i32) -> bool {
-        let Some((bitmap, cols, rows)) = self.canvas_clip_rect_mut(id, x, y, w, h) else {
+        let Some((cols, rows)) = self.canvas_clip_rect(id, x, y, w, h) else {
             return false;
         };
+        if cols.is_empty() || rows.is_empty() {
+            return true;
+        }
+        let bitmap = self.canvas_bitmap_for_write(id);
         for row in rows {
             let start = ((row * bitmap.width + cols.start) as usize) * 4;
             let end = ((row * bitmap.width + cols.end) as usize) * 4;
@@ -2464,30 +2489,20 @@ impl Document {
     }
 
     /// Materialize the bitmap of canvas `id` and clip `x, y, w, h` (in bitmap
-    /// px) to it, returning the bitmap with the clipped column and row
+    /// px) to it, returning the clipped column and row
     /// ranges. The ranges are empty when nothing of the rectangle remains.
     /// Returns `None` for non-canvas nodes or when resource limits prevent
     /// bitmap materialization.
-    fn canvas_clip_rect_mut(
+    fn canvas_clip_rect(
         &mut self,
         id: usize,
         x: i32,
         y: i32,
         w: i32,
         h: i32,
-    ) -> Option<(
-        &mut CanvasBitmap,
-        std::ops::Range<u32>,
-        std::ops::Range<u32>,
-    )> {
+    ) -> Option<(std::ops::Range<u32>, std::ops::Range<u32>)> {
         self.ensure_canvas_bitmap(id)?;
-        let bitmap = self
-            .nodes
-            .get_mut(id)?
-            .data
-            .as_element_mut()?
-            .canvas_bitmap
-            .as_mut()?;
+        let bitmap = self.canvas_bitmap_ref(id)?;
         let clip = |start: i32, extent: i32, limit: u32| {
             let limit = i64::from(limit);
             let from = i64::from(start).clamp(0, limit) as u32;
@@ -2496,7 +2511,25 @@ impl Document {
         };
         let cols = clip(x, w, bitmap.width);
         let rows = clip(y, h, bitmap.height);
-        Some((bitmap, cols, rows))
+        Some((cols, rows))
+    }
+
+    fn canvas_bitmap_for_write(&mut self, id: usize) -> &mut CanvasBitmap {
+        // Only called after successful materialization and clipping, without
+        // intervening arena mutation.
+        let storage = self.nodes[id]
+            .data
+            .as_element_mut()
+            .and_then(|element| element.canvas_bitmap.as_mut())
+            .expect("materialized canvas storage");
+        let old_capacity = storage.rgba.capacity();
+        let bitmap = Arc::make_mut(&mut storage.0);
+        // Deep cloning can shrink spare capacity. Compare actual capacities
+        // rather than Arc counts, which can race with Weak upgrades.
+        if bitmap.rgba.capacity() != old_capacity {
+            self.canvas_bitmap_bytes.0 = None;
+        }
+        bitmap
     }
 
     /// Arena ids of the HTML `<canvas>` elements under the root, in tree
@@ -2536,7 +2569,8 @@ impl Document {
 
     /// Remove and return materialized canvas bitmaps in tree order.
     ///
-    /// This transfers pixel storage without cloning it. It is intended for
+    /// Unique pixel storage is moved; storage retained by a snapshot is
+    /// copied to preserve that snapshot. This is intended for
     /// consumers that serialize a live document and then discard or replace
     /// it, such as the WPT reftest paint path.
     pub fn take_canvases_in_tree_order(&mut self) -> Vec<crate::node::CanvasBitmap> {
@@ -2545,6 +2579,7 @@ impl Document {
             .map(|index| {
                 let (width, height) = self.canvas_size(index).unwrap_or(DEFAULT_CANVAS_SIZE);
                 self.take_canvas_bitmap_storage(index)
+                    .map(Arc::unwrap_or_clone)
                     .unwrap_or_else(|| CanvasBitmap::transparent(width, height))
             })
             .collect()

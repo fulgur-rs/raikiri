@@ -2368,6 +2368,14 @@ fn paint_image(
     true
 }
 
+struct SharedCanvasPixels(std::sync::Arc<raikiri_dom::CanvasBitmap>);
+
+impl AsRef<[u8]> for SharedCanvasPixels {
+    fn as_ref(&self) -> &[u8] {
+        &self.0.rgba
+    }
+}
+
 /// Draws an HTML `<canvas>` bitmap with `object-fit`/`object-position`.
 ///
 /// Mirrors [`paint_image`]'s sizing and positioning, but reads pixels from
@@ -2381,7 +2389,7 @@ fn paint_image(
 #[allow(clippy::too_many_arguments)]
 fn paint_canvas(
     scene: &mut impl PaintScene,
-    bitmap: &raikiri_dom::CanvasBitmap,
+    bitmap: &std::sync::Arc<raikiri_dom::CanvasBitmap>,
     border_box_width: f32,
     border_box_height: f32,
     abs_x: f32,
@@ -2438,7 +2446,9 @@ fn paint_canvas(
     let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
     let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);
     let image_data = peniko::ImageData {
-        data: peniko::Blob::from(bitmap.rgba.clone()),
+        data: peniko::Blob::new(std::sync::Arc::new(SharedCanvasPixels(
+            std::sync::Arc::clone(bitmap),
+        ))),
         format: peniko::ImageFormat::Rgba8,
         alpha_type: peniko::ImageAlphaType::Alpha,
         width: bitmap.width,
