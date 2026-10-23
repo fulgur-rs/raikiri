@@ -33,8 +33,8 @@ pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<u
             || BlockItemStyle::float(&style).is_floated()
             || BlockItemStyle::clear(&style) != taffy::Clear::None
             || !super::insets_are_a_relative_inline_offset(tree, child)
-            || style.padding() != Rect::zero()
-            || style.border() != Rect::zero()
+            || style.padding() != StyleRect::zero()
+            || style.border() != StyleRect::zero()
             || overflow.x == taffy::Overflow::Scroll
             || overflow.y == taffy::Overflow::Scroll
             || !style.size().height.is_auto()
@@ -48,7 +48,7 @@ pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<u
         {
             return None;
         }
-        constrained |= style.margin() != Rect::zero()
+        constrained |= style.margin() != StyleRect::zero()
             || !node.multicol_auto_width
             || !style.min_size().width.is_auto()
             || !style.max_size().width.is_auto();
@@ -167,7 +167,7 @@ pub(super) fn layout(
         tree.nodes[id].cache.clear();
     }
     let output = tree.compute_child_layout(
-        TaffyNodeId::from(first),
+        NodeId::from(first),
         LayoutInput {
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,
@@ -185,7 +185,7 @@ pub(super) fn layout(
                 width: AvailableSpace::Definite(context.column_width),
                 height: AvailableSpace::MaxContent,
             },
-            vertical_margins_are_collapsible: TaffyLine::FALSE,
+            vertical_margins_are_collapsible: Line::FALSE,
         },
     );
     let mut first_layout = tree.nodes[first].unrounded_layout;
@@ -237,7 +237,7 @@ pub(super) fn layout(
                 .resolve(),
     };
     first_layout.size = output.size;
-    tree.set_unrounded_layout(TaffyNodeId::from(first), &first_layout);
+    tree.set_unrounded_layout(NodeId::from(first), &first_layout);
     let mut positions = Vec::with_capacity(chain.len());
     let mut position = Point::ZERO;
     let mut clip_left = column_x;

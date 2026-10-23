@@ -126,7 +126,7 @@ pub(super) fn layout(
                 .multicol_auto_width
                 .then_some((context.available_width - inline_margin).max(0.0));
             let output = tree.compute_child_layout(
-                TaffyNodeId::from(child),
+                NodeId::from(child),
                 LayoutInput {
                     run_mode: RunMode::PerformLayout,
                     sizing_mode: SizingMode::InherentSize,
@@ -147,7 +147,7 @@ pub(super) fn layout(
                         width: AvailableSpace::Definite(context.available_width),
                         height: AvailableSpace::MaxContent,
                     },
-                    vertical_margins_are_collapsible: TaffyLine::FALSE,
+                    vertical_margins_are_collapsible: Line::FALSE,
                 },
             );
             tree.context.fragmentation_stack = stack;
@@ -162,7 +162,7 @@ pub(super) fn layout(
                 x: content_origin.x + child_layout.margin.left,
                 y: block_offset + adjoining,
             };
-            tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
+            tree.set_unrounded_layout(NodeId::from(child), &child_layout);
             let Some(fragment) = tree
                 .fragment_tree
                 .try_push(crate::fragment::LayoutFragment {

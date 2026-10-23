@@ -1,13 +1,18 @@
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{
+    AvailableSpace, LayoutInput, LayoutOutput, NodeId, OofCandidates, RequestedAxis, RunMode,
+    SizingMode,
+};
+use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_style::property::{
     Border, BorderColor, BorderStyle, CssColor, DisplayValue, Length, Sides,
 };
 use raikiri_style::{ComputedLength, ResolveContext, build_rule_tree, cascade, resolve_border};
 use raikiri_traits::PageBox;
 use taffy::CoreStyle;
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> is style input
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
-use taffy::{AvailableSpace, LayoutInput, Rect, Size};
 
 mod ancestor_walk_tests;
 mod anonymous_table_tests;
@@ -60,7 +65,10 @@ fn margin_left_override(
 
 /// The border widths each of `boxes` has right now, read the way table layout
 /// reads them: through the style view with scoped overrides.
-fn borders_in_document(document: &mut Document, boxes: &[usize]) -> Vec<Rect<LengthPercentage>> {
+fn borders_in_document(
+    document: &mut Document,
+    boxes: &[usize],
+) -> Vec<StyleRect<LengthPercentage>> {
     with_layout_session(document, |session| {
         boxes
             .iter()
@@ -69,15 +77,15 @@ fn borders_in_document(document: &mut Document, boxes: &[usize]) -> Vec<Rect<Len
     })
 }
 
-fn border_in_document(document: &mut Document, idx: usize) -> Rect<LengthPercentage> {
+fn border_in_document(document: &mut Document, idx: usize) -> StyleRect<LengthPercentage> {
     borders_in_document(document, &[idx])[0]
 }
 
 fn compute_table_layout_in_session(
     session: &mut LayoutSession<'_>,
-    table: taffy::NodeId,
+    table: NodeId,
     inputs: LayoutInput,
-) -> taffy::LayoutOutput {
+) -> LayoutOutput {
     super::compute_table_layout(session, table, inputs)
 }
 
@@ -117,7 +125,7 @@ fn place_cells_in_session(
     let collapsed = vec![false; column_widths.len()];
     let (row_heights, row_gaps, collapsed_rows) = row_tracks;
     with_layout_session(document, |session| {
-        let mut oof_candidates = taffy::OofCandidates::new();
+        let mut oof_candidates = OofCandidates::new();
         super::place_cells(
             session,
             grid,
@@ -317,7 +325,7 @@ fn a_proper_table_keeps_its_cell_geometry_through_the_native_callback() {
     let mut inputs = column_probe_input();
     inputs.known_dimensions.width = Some(40.0);
     let (output, error_none) = with_layout_session(&mut doc, |session| {
-        let output = compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs);
+        let output = compute_table_layout_in_session(session, NodeId::from(table), inputs);
         (output, session.context.table_layout_error.is_none())
     });
     assert_eq!(
@@ -339,7 +347,7 @@ fn a_proper_table_keeps_its_cell_geometry_through_the_native_callback() {
         );
         assert_eq!(
             layout.location,
-            taffy::Point {
+            Point {
                 x: column as f32 * 20.0,
                 y: 0.0
             }
@@ -375,7 +383,7 @@ fn anonymous_block_direction_reaches_the_native_callback() {
         let mut inputs = column_probe_input();
         inputs.known_dimensions.width = Some(100.0);
         let output = with_layout_session(&mut doc, |session| {
-            compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+            compute_table_layout_in_session(session, NodeId::from(table), inputs)
         });
         assert_eq!(
             output.size,
@@ -415,16 +423,12 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     let row_layout = doc.nodes[row].unrounded_layout;
     let mut inputs = column_probe_input();
     inputs.known_dimensions.width = Some(100.0);
-    inputs.run_mode = taffy::RunMode::PerformLayout;
+    inputs.run_mode = RunMode::PerformLayout;
     let output = {
         let session_cascade = crate::layout::test_support::cascaded(&doc);
         let mut session =
             crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
-        taffy::LayoutPartialTree::compute_child_layout(
-            &mut session,
-            taffy::NodeId::from(key),
-            inputs,
-        )
+        taffy::LayoutPartialTree::compute_child_layout(&mut session, NodeId::from(key), inputs)
     };
     assert_eq!(
         output.size,
@@ -474,11 +478,8 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
             .all(|cell| !cell.is_ifc_root())
     );
     let (output, error_none) = with_layout_session(&mut doc, |session| {
-        let output = compute_table_layout_in_session(
-            session,
-            taffy::NodeId::from(table),
-            column_probe_input(),
-        );
+        let output =
+            compute_table_layout_in_session(session, NodeId::from(table), column_probe_input());
         (output, session.context.table_layout_error.is_none())
     });
     assert_eq!(
@@ -493,7 +494,7 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
     for (index, child) in children.into_iter().enumerate() {
         assert_eq!(
             doc.nodes[child].unrounded_layout.location,
-            taffy::Point {
+            Point {
                 x: 0.0,
                 y: (index % 2) as f32 * 10.0
             }
@@ -1777,7 +1778,7 @@ fn table_calc_minimum_sizes_resolve_against_the_containing_block() {
             height: Some(80.0),
         };
         let output = with_layout_session(&mut doc, |session| {
-            compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+            compute_table_layout_in_session(session, NodeId::from(table), inputs)
         });
         assert_eq!(output.size, expected);
         assert_eq!(
@@ -1860,7 +1861,7 @@ fn fixed_table_calc_column_geometry(from_column: bool, width: &str) -> (f32, f32
     let mut inputs = column_probe_input();
     inputs.parent_size.width = Some(200.0);
     let output = with_layout_session(&mut doc, |session| {
-        compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+        compute_table_layout_in_session(session, NodeId::from(table), inputs)
     });
     assert_eq!(output.size.width, 200.0);
     (
@@ -2285,8 +2286,8 @@ fn table_oof_candidates_use_the_border_area() {
                 width: 100.0,
                 height: 100.0,
             },
-            taffy::OofCandidates::new(),
-            taffy::RunMode::PerformLayout,
+            OofCandidates::new(),
+            RunMode::PerformLayout,
         )
     });
 
@@ -2298,13 +2299,13 @@ fn table_oof_candidates_use_the_border_area() {
             height: 96.0
         }
     );
-    assert_eq!(area.offset, taffy::Point { x: 2.0, y: 2.0 });
+    assert_eq!(area.offset, Point { x: 2.0, y: 2.0 });
     let candidates = output.oof_candidates.as_slice();
     assert_eq!(candidates.len(), 2);
-    assert_eq!(candidates[0].node, taffy::NodeId::from(fixed));
+    assert_eq!(candidates[0].node, NodeId::from(fixed));
     assert_eq!(candidates[0].position, taffy::Position::Fixed);
     assert_eq!(candidates[0].order, 0);
-    assert_eq!(candidates[1].node, taffy::NodeId::from(absolute));
+    assert_eq!(candidates[1].node, NodeId::from(absolute));
     assert_eq!(candidates[1].position, taffy::Position::Absolute);
     assert_eq!(candidates[1].order, 1);
 }
@@ -2336,7 +2337,7 @@ fn in_flow_caption_bubbles_uncontained_fixed_candidates() {
         width: Some(100.0),
         height: Some(50.0),
     };
-    inputs.known_dimensions_are_definite = taffy::geometry::Size {
+    inputs.known_dimensions_are_definite = Size {
         width: true,
         height: true,
     };
@@ -2349,14 +2350,14 @@ fn in_flow_caption_bubbles_uncontained_fixed_candidates() {
         height: AvailableSpace::Definite(100.0),
     };
     let output = with_layout_session(&mut doc, |session| {
-        compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+        compute_table_layout_in_session(session, NodeId::from(table), inputs)
     });
 
     let candidate = output
         .oof_candidates
         .as_slice()
         .iter()
-        .find(|candidate| candidate.node == taffy::NodeId::from(fixed))
+        .find(|candidate| candidate.node == NodeId::from(fixed))
         .expect("fixed descendant bubbles out of the in-flow caption");
     assert_eq!(candidate.static_position.x.area.start, 17.0);
 }
@@ -2836,7 +2837,7 @@ fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
         ],
         col_widths: vec![],
     };
-    let table_border = Rect {
+    let table_border = Edges {
         left: 1.0,
         right: 1.0,
         top: 1.0,
@@ -2896,7 +2897,7 @@ fn compute_collapsed_lines_colspan_cell_only_absorbs_from_its_own_row() {
         &mut doc,
         &grid,
         &super::CellIndex::new(&grid),
-        &Rect::ZERO,
+        &Edges::ZERO,
         None,
     );
 
@@ -2915,9 +2916,9 @@ fn compute_collapsed_lines_colspan_cell_only_absorbs_from_its_own_row() {
 
 fn column_probe_input() -> LayoutInput {
     LayoutInput {
-        run_mode: taffy::tree::RunMode::PerformLayout,
-        sizing_mode: taffy::tree::SizingMode::InherentSize,
-        axis: taffy::tree::RequestedAxis::Horizontal,
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Horizontal,
         known_dimensions: Size {
             width: None,
             height: None,
@@ -2934,7 +2935,7 @@ fn column_probe_input() -> LayoutInput {
             width: false,
             height: false,
         },
-        vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     }
 }
 
@@ -3753,7 +3754,7 @@ fn with_retained_border_state_in(
 }
 
 /// The border widths boxes have once a resolution has been published.
-type UsedBorders = std::collections::HashMap<usize, Rect<LengthPercentage>>;
+type UsedBorders = std::collections::HashMap<usize, StyleRect<LengthPercentage>>;
 
 /// The border widths the cells and rows of `grid`, and `extra`, have in
 /// `session`.
@@ -3816,7 +3817,7 @@ fn compute_collapsed_lines_in_document(
     doc: &mut Document,
     grid: &super::TableGrid,
     index: &super::CellIndex,
-    border: &Rect<f32>,
+    border: &Edges<f32>,
     basis: Option<f32>,
 ) -> super::CollapsedLines {
     with_layout_session(doc, |session| {
