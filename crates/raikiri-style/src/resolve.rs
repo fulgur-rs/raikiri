@@ -3974,6 +3974,32 @@ pub(crate) fn lift_css_position(computed: ComputedCssPosition) -> CssPosition {
     }
 }
 
+/// Lift a computed `background-size` back to its specified form. An axis
+/// takes only `<length-percentage>` or `auto`, so a sizing keyword, which the
+/// computed axis type holds for other properties, reads back as `auto`.
+pub(crate) fn lift_background_size(computed: ComputedBackgroundSize) -> BackgroundSize {
+    fn axis(computed: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
+        match computed {
+            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+            ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
+            ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
+            ComputedLengthPercentageOrAuto::Auto
+            | ComputedLengthPercentageOrAuto::MinContent
+            | ComputedLengthPercentageOrAuto::MaxContent
+            | ComputedLengthPercentageOrAuto::FitContent
+            | ComputedLengthPercentageOrAuto::FitContentOf(_) => LengthOrAuto::Auto,
+        }
+    }
+    match computed {
+        ComputedBackgroundSize::Explicit { width, height } => BackgroundSize::Explicit {
+            width: axis(width),
+            height: axis(height),
+        },
+        ComputedBackgroundSize::Cover => BackgroundSize::Cover,
+        ComputedBackgroundSize::Contain => BackgroundSize::Contain,
+    }
+}
+
 /// Lift the computed `box-shadow` list back to its specified form.
 pub(crate) fn lift_box_shadow(computed: &[ComputedBoxShadowItem]) -> Arc<Vec<BoxShadowItem>> {
     if computed.is_empty() {

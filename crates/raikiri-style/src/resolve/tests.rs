@@ -2705,3 +2705,50 @@ fn lifting_a_computed_transform_list_keeps_every_function() {
     );
     assert!(lift_transform(&[]).is_empty());
 }
+
+#[test]
+fn lifting_a_computed_background_size_keeps_each_axis() {
+    let calc = CalcLengthPercentage {
+        percent: 10.0,
+        px: 5.0,
+    };
+    assert_eq!(
+        lift_background_size(ComputedBackgroundSize::Explicit {
+            width: ComputedLengthPercentageOrAuto::Px(20.0),
+            height: ComputedLengthPercentageOrAuto::Percent(30.0),
+        }),
+        BackgroundSize::Explicit {
+            width: LengthOrAuto::Length(Length::Px(20.0)),
+            height: LengthOrAuto::Length(Length::Percent(30.0)),
+        }
+    );
+    assert_eq!(
+        lift_background_size(ComputedBackgroundSize::Explicit {
+            width: ComputedLengthPercentageOrAuto::Calc(calc),
+            height: ComputedLengthPercentageOrAuto::Auto,
+        }),
+        BackgroundSize::Explicit {
+            width: LengthOrAuto::Calc(calc),
+            height: LengthOrAuto::Auto,
+        }
+    );
+    // A sizing keyword is no `background-size` axis, so it reads back as `auto`.
+    assert_eq!(
+        lift_background_size(ComputedBackgroundSize::Explicit {
+            width: ComputedLengthPercentageOrAuto::MinContent,
+            height: ComputedLengthPercentageOrAuto::FitContent,
+        }),
+        BackgroundSize::Explicit {
+            width: LengthOrAuto::Auto,
+            height: LengthOrAuto::Auto,
+        }
+    );
+    assert_eq!(
+        lift_background_size(ComputedBackgroundSize::Cover),
+        BackgroundSize::Cover
+    );
+    assert_eq!(
+        lift_background_size(ComputedBackgroundSize::Contain),
+        BackgroundSize::Contain
+    );
+}

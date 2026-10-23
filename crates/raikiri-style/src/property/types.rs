@@ -7918,6 +7918,7 @@ impl PropertyKey {
                 | PropertyKey::Outline
                 | PropertyKey::TextDecoration
                 | PropertyKey::TextEmphasis
+                | PropertyKey::Background
         )
     }
 }

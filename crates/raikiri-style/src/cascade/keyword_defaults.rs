@@ -14,18 +14,18 @@
 //! the initial style, because it depends on another property, adds an
 //! `initial =>` value of its own.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
-use crate::computed::ComputedValues;
+use crate::computed::{ComputedBackgroundLayer, ComputedValues};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue,
     PropertyKey, PropertyValue, TextIndentValue,
 };
 use crate::resolve::{
-    ComputedColumnWidth, lift_border_spacing, lift_box_shadow, lift_css_position, lift_flex_basis,
-    lift_length_percentage_or_normal, lift_letter_spacing, lift_line_height, lift_tab_size,
-    lift_text_decoration_inset, lift_text_decoration_thickness, lift_text_indent,
-    lift_text_underline_offset, lift_transform, lift_word_spacing,
+    ComputedColumnWidth, lift_background_size, lift_border_spacing, lift_box_shadow,
+    lift_css_position, lift_flex_basis, lift_length_percentage_or_normal, lift_letter_spacing,
+    lift_line_height, lift_tab_size, lift_text_decoration_inset, lift_text_decoration_thickness,
+    lift_text_indent, lift_text_underline_offset, lift_transform, lift_word_spacing,
 };
 
 static INITIAL: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
@@ -51,6 +51,15 @@ fn lift_column_width(computed: ComputedColumnWidth) -> ColumnWidthValue {
         ComputedColumnWidth::Auto => ColumnWidthValue::Auto,
         ComputedColumnWidth::Px(px) => ColumnWidthValue::Length(Length::Px(px)),
     }
+}
+
+/// The per-layer list of one background longhand, read from the layers the
+/// computed style holds. The computed style cuts every list to the number of
+/// images, so an item the source listed beyond its last image is not kept; a
+/// property that takes this list and has more images repeats it from its
+/// start, as any list does (CSS Backgrounds and Borders 3 section 2.1).
+fn layers<T>(source: &ComputedValues, item: impl Fn(&ComputedBackgroundLayer) -> T) -> Arc<[T]> {
+    source.background_layers().iter().map(item).collect()
 }
 
 macro_rules! keyword_defaults {
@@ -218,6 +227,21 @@ keyword_defaults! {
             lift_css_position(source.transform_origin),
             Length::Px(source.transform_origin_z.0),
         )
+    };
+    BackgroundImage, false => {
+        PropertyValue::BackgroundImage(layers(source, |layer| layer.image.clone()))
+    };
+    BackgroundRepeat, false => PropertyValue::BackgroundRepeat(layers(source, |layer| layer.repeat));
+    BackgroundAttachment, false => {
+        PropertyValue::BackgroundAttachment(layers(source, |layer| layer.attachment))
+    };
+    BackgroundClip, false => PropertyValue::BackgroundClip(layers(source, |layer| layer.clip));
+    BackgroundOrigin, false => PropertyValue::BackgroundOrigin(layers(source, |layer| layer.origin));
+    BackgroundPosition, false => {
+        PropertyValue::BackgroundPosition(layers(source, |layer| lift_css_position(layer.position)))
+    };
+    BackgroundSize, false => {
+        PropertyValue::BackgroundSize(layers(source, |layer| lift_background_size(layer.size)))
     };
     OutlineWidth, false => PropertyValue::OutlineWidth(Length::Px(source.outline.width().0)),
         initial => PropertyValue::OutlineWidth(Length::Px(BORDER_WIDTH_MEDIUM_PX));
