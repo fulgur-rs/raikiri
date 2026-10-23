@@ -830,8 +830,7 @@ fn grid_item_area_bases(
     node_id: NodeId,
 ) -> std::collections::HashMap<usize, Size<Option<f32>>> {
     let parent = usize::from(node_id);
-    let Some(taffy::DetailedLayoutInfo::Grid(grid)) = tree.context.grid_layout_info.get(&parent)
-    else {
+    let Some(grid) = tree.context.grid_layout_info.get(&parent) else {
         return std::collections::HashMap::new();
     };
     let children = tree
@@ -849,7 +848,7 @@ fn grid_item_area_bases(
         .into_iter()
         .enumerate()
         .filter_map(|(item_index, child)| {
-            let (_, area) = grid.item_grid_area(item_index)?;
+            let area = grid.item_area_size(item_index)?;
             let (width, height) = if vertical {
                 (area.height, area.width)
             } else {

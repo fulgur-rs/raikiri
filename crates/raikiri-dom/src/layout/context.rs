@@ -6,6 +6,7 @@ use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::LayoutWarn;
 use crate::layout::protocol::{self, LayoutInput};
+use crate::layout::taffy_adapter::GridInfo;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::Size;
 
@@ -48,7 +49,7 @@ pub(crate) struct LayoutContext {
     /// Nested candidate wrappers skip their own prepasses while an outer
     /// candidate wrapper is gathering unconstrained positioning inputs.
     pub(crate) oof_content_limit_prepass_depth: usize,
-    pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<smol_str::SmolStr>>,
+    pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) text_group: TextGroupScope,

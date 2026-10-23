@@ -6,6 +6,7 @@
 //! back. The work itself is done by the methods of the session that have the
 //! same names and take the protocol's types.
 
+use super::GridInfo;
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
@@ -169,7 +170,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         LayoutSession::set_detailed_grid_info(
             self,
             NodeId::from_taffy(node_id),
-            detailed_grid_info,
+            GridInfo::new(detailed_grid_info),
         );
     }
 }
@@ -200,7 +201,7 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         &self,
         node: taffy::NodeId,
     ) -> &DetailedLayoutInfo<smol_str::SmolStr> {
-        LayoutSession::detailed_layout_info(self, NodeId::from_taffy(node))
+        LayoutSession::oof_grid_info(self, NodeId::from_taffy(node)).detailed()
     }
 }
 

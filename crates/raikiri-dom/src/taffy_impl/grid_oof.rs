@@ -2,7 +2,7 @@
 //! writing mode.
 //!
 //! Taffy's grid algorithm runs on the layout axes of the container (see
-//! [`super::axis_adapter`]): the tracks it reports in [`DetailedGridInfo`] are
+//! [`super::axis_adapter`]): the tracks it reports in a [`GridInfo`] are
 //! measured from the block-start edge, with the columns along the inline axis
 //! and the rows along the block axis. Taffy resolves the grid area of an
 //! out-of-flow child from that information itself, but only for the physical
@@ -16,15 +16,10 @@
 
 use crate::layout::protocol::{NodeId, OofCandidates, OofLayoutResult, OofPositioningArea};
 use crate::layout::taffy_adapter::OofSpan;
-use crate::layout::taffy_adapter::algorithms::{
-    claims_position, compute_oof_layout_for_area, resolve_absolute_grid_area,
-};
+use crate::layout::taffy_adapter::GridInfo;
+use crate::layout::taffy_adapter::algorithms::{claims_position, compute_oof_layout_for_area};
 use raikiri_layout_geometry::{Edges, Point, Size};
-use smol_str::SmolStr;
-use taffy::{
-    ContainingBlockClaims, DetailedGridInfo, DetailedLayoutInfo, Direction, GridItemStyle,
-    GridPlacement,
-};
+use taffy::{ContainingBlockClaims, Direction, GridItemStyle, GridPlacement};
 
 use super::vertical_block::block_right_to_left;
 use crate::layout::context::LayoutSession;
@@ -100,22 +95,16 @@ impl GridAxes {
 
 /// The grid areas of a container's out-of-flow children, on physical axes.
 pub(super) struct GridAreas<'a> {
-    info: &'a DetailedGridInfo<SmolStr>,
+    info: &'a GridInfo,
     /// `None` for a container laid out on the physical axes of `horizontal-tb`.
     axes: Option<GridAxes>,
 }
 
 impl<'a> GridAreas<'a> {
     /// The grid areas of the container whose layout reported `info`, if it
-    /// reported the tracks of a grid.
-    pub(super) fn of(
-        info: Option<&'a DetailedLayoutInfo<SmolStr>>,
-        axes: Option<GridAxes>,
-    ) -> Option<Self> {
-        match info {
-            Some(DetailedLayoutInfo::Grid(info)) => Some(Self { info, axes }),
-            _ => None,
-        }
+    /// reported anything.
+    pub(super) fn of(info: Option<&'a GridInfo>, axes: Option<GridAxes>) -> Option<Self> {
+        info.map(|info| Self { info, axes })
     }
 
     /// The grid area that the grid placement of `style` resolves to, relative
@@ -128,8 +117,7 @@ impl<'a> GridAreas<'a> {
         padding_box: Edges<f32>,
     ) -> Edges<f32> {
         let resolve = |padding_box| {
-            resolve_absolute_grid_area(
-                self.info,
+            self.info.resolve_absolute_grid_area(
                 GridItemStyle::grid_row(style),
                 GridItemStyle::grid_column(style),
                 direction,

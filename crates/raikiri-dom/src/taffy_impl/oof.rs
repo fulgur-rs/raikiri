@@ -15,9 +15,9 @@ use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::algorithms::{
     claims_position, compute_oof_layout_for_area, compute_root_layout,
 };
-use crate::layout::taffy_adapter::{OofBatch, OofSpan};
+use crate::layout::taffy_adapter::{GridInfo, OofBatch, OofSpan};
 use raikiri_layout_geometry::Size;
-use taffy::{CoreStyle, DetailedLayoutInfo};
+use taffy::CoreStyle;
 
 impl LayoutSession<'_> {
     /// Forget the hoisted children recorded for `node` by an earlier layout.
@@ -74,23 +74,20 @@ impl LayoutSession<'_> {
         }
     }
 
-    /// The tracks and areas a grid container reported, which its out-of-flow
-    /// children are positioned in.
-    pub(crate) fn detailed_layout_info(
-        &self,
-        node: NodeId,
-    ) -> &DetailedLayoutInfo<smol_str::SmolStr> {
+    /// The tracks and areas a grid container reported, which the library
+    /// positions its out-of-flow children in.
+    pub(crate) fn oof_grid_info(&self, node: NodeId) -> &GridInfo {
         let node = usize::from(node);
-        // Taffy resolves a grid area on the physical axes of `horizontal-tb`.
-        // The tracks of a vertical grid are on its layout axes, so `grid_oof`
-        // resolves its grid areas instead.
+        // The library resolves a grid area on the physical axes of
+        // `horizontal-tb`. The tracks of a vertical grid are on its layout
+        // axes, so `grid_oof` resolves its grid areas instead.
         if grid_oof::right_to_left(self, node).is_some() {
-            return &DetailedLayoutInfo::None;
+            return &GridInfo::NONE;
         }
         self.context
             .grid_layout_info
             .get(&node)
-            .unwrap_or(&DetailedLayoutInfo::None)
+            .unwrap_or(&GridInfo::NONE)
     }
 }
 
