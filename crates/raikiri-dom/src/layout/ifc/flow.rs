@@ -5,7 +5,9 @@ use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use crate::taffy_impl::block_flow::context::BlockContext;
+use raikiri_layout_geometry::Edges;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
@@ -32,7 +34,7 @@ pub(crate) struct FlowGeometry {
     /// Physical content-box size.
     pub(crate) content_size: PhysicalSize,
     /// Physical border plus padding on every side.
-    pub(crate) insets: taffy::Rect<f32>,
+    pub(crate) insets: Edges<f32>,
     /// Border plus padding on the physical left and right side.
     pub(crate) edges: (f32, f32),
     /// Border plus padding at the block-start edge of the content box.
@@ -48,7 +50,7 @@ pub(crate) struct FlowGeometry {
 }
 
 impl FlowGeometry {
-    pub(crate) fn new(axes: IfcAxes, content_size: PhysicalSize, insets: taffy::Rect<f32>) -> Self {
+    pub(crate) fn new(axes: IfcAxes, content_size: PhysicalSize, insets: Edges<f32>) -> Self {
         let top_edge = match axes.writing_mode() {
             WritingMode::HorizontalTb => insets.top,
             WritingMode::VerticalRl | WritingMode::SidewaysRl => insets.right,
@@ -67,7 +69,7 @@ impl FlowGeometry {
     }
 
     pub(crate) fn horizontal(width: f32, edges: (f32, f32), top_edge: f32) -> Self {
-        let insets = taffy::Rect {
+        let insets = Edges {
             top: top_edge,
             right: edges.1,
             bottom: 0.0,
@@ -281,9 +283,9 @@ pub(crate) fn place_lines(
         width: first_width.unwrap_or(0.0),
         height: lines.iter().map(|line| line.block_size()).sum(),
         lines: std::sync::Arc::new(lines),
-        oof_candidates: taffy::OofCandidates::new(),
+        oof_candidates: OofCandidates::new(),
         beside_floats: false,
-        escaping_margin: taffy::CollapsibleMarginSet::ZERO,
+        escaping_margin: CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
         block_line_starts: Vec::new(),
         shifts: super::root::LineShifts::default(),

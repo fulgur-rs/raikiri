@@ -8,10 +8,10 @@ fn debug_reports_fragment_box_placement_count() {
     let lines = IfcLines {
         width: 100.0,
         lines: std::sync::Arc::new(Vec::new()),
-        oof_candidates: taffy::OofCandidates::new(),
+        oof_candidates: OofCandidates::new(),
         height: 0.0,
         beside_floats: false,
-        escaping_margin: taffy::CollapsibleMarginSet::ZERO,
+        escaping_margin: CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
         block_line_starts: Vec::new(),
         shifts: Default::default(),

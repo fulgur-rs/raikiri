@@ -252,7 +252,7 @@ fn a_probe_stores_nothing_and_a_performed_layout_does() {
     )
     .expect("layout");
     // Forget what the pass stored, then run the two modes by hand.
-    doc.nodes[float].unrounded_layout = taffy::Layout::new();
+    doc.nodes[float].unrounded_layout = BoxLayout::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     let probed = layout_with_boxes(&mut doc, root, geometry, None, false);
@@ -325,7 +325,7 @@ fn a_probe_does_not_place_an_atomic_and_a_performed_layout_does() {
         crate::layout::test_support::page_box_800x600(),
     )
     .expect("layout");
-    doc.nodes[atomic].unrounded_layout = taffy::Layout::new();
+    doc.nodes[atomic].unrounded_layout = BoxLayout::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     layout_with_boxes(&mut doc, root, geometry, None, false);
@@ -357,7 +357,7 @@ fn a_probe_does_not_record_an_inline_element_and_a_performed_layout_does() {
     )
     .expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
-    doc.nodes[span_id].unrounded_layout = taffy::Layout::new();
+    doc.nodes[span_id].unrounded_layout = BoxLayout::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     layout_with_boxes(&mut doc, root, geometry, None, false);

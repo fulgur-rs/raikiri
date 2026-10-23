@@ -10,6 +10,7 @@
 
 use crate::Document;
 use crate::node::NodeFlags;
+use raikiri_layout_geometry::Point;
 use raikiri_traits::NodeKind;
 
 impl Document {
@@ -39,14 +40,14 @@ impl Document {
     /// The node's local layout offset, including pagination movement of an
     /// automatic static position relative to its containing block.
     #[doc(hidden)]
-    pub fn layout_offset_of(&self, node: usize) -> Option<taffy::Point<f32>> {
+    pub fn layout_offset_of(&self, node: usize) -> Option<Point<f32>> {
         self.layout_offset_of_at_depth(node, 0)
     }
 
     /// The node's border-box origin in the unfragmented layout coordinate
     /// space, following containing-block owners for out-of-flow boxes.
     #[doc(hidden)]
-    pub fn layout_origin_of(&self, node: usize) -> Option<taffy::Point<f32>> {
+    pub fn layout_origin_of(&self, node: usize) -> Option<Point<f32>> {
         self.layout_origin_of_at_depth(node, 0)
     }
 
@@ -67,10 +68,8 @@ impl Document {
             .map(|(&node, coordinate)| (node, coordinate.owner, coordinate.static_owner))
             .collect();
         for (node, owner, static_owner) in pending {
-            let owner_origin = self.layout_origin_of(owner).unwrap_or(taffy::Point::ZERO);
-            let static_origin = self
-                .layout_origin_of(static_owner)
-                .unwrap_or(taffy::Point::ZERO);
+            let owner_origin = self.layout_origin_of(owner).unwrap_or(Point::ZERO);
+            let static_origin = self.layout_origin_of(static_owner).unwrap_or(Point::ZERO);
             if let Some(coordinate) = self.oof_coordinates.get_mut(&node) {
                 coordinate.initial_owner_origin = Some(owner_origin);
                 coordinate.initial_static_origin = Some(static_origin);
@@ -78,7 +77,7 @@ impl Document {
         }
     }
 
-    fn layout_offset_of_at_depth(&self, node: usize, depth: usize) -> Option<taffy::Point<f32>> {
+    fn layout_offset_of_at_depth(&self, node: usize, depth: usize) -> Option<Point<f32>> {
         if depth > self.nodes.len().saturating_add(2) {
             return None;
         }
@@ -107,7 +106,7 @@ impl Document {
         Some(offset)
     }
 
-    fn layout_origin_of_at_depth(&self, node: usize, depth: usize) -> Option<taffy::Point<f32>> {
+    fn layout_origin_of_at_depth(&self, node: usize, depth: usize) -> Option<Point<f32>> {
         if depth > self.nodes.len().saturating_add(2) {
             return None;
         }
@@ -117,8 +116,8 @@ impl Document {
         };
         let parent_origin = self
             .layout_origin_of_at_depth(parent, depth + 1)
-            .unwrap_or(taffy::Point::ZERO);
-        Some(taffy::Point {
+            .unwrap_or(Point::ZERO);
+        Some(Point {
             x: parent_origin.x + offset.x,
             y: parent_origin.y + offset.y,
         })

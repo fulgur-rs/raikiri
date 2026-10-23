@@ -9,6 +9,7 @@
 //! are the box's lines, set in by its inline-side edges.
 
 use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
+use crate::layout::protocol::CollapsibleMarginSet;
 use crate::taffy_impl::block_flow::context::{BlockContext, BoxProbe, BoxSlot};
 use raikiri_style::property::{
     BoxSizing, BreakBetween, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue,
@@ -19,7 +20,7 @@ use raikiri_style::{
     ComputedTextIndent, ComputedValues,
 };
 use shodo::style::LineOptions;
-use taffy::{CollapsibleMarginSet, Direction};
+use taffy::Direction;
 
 /// Marks the end token of a block-level `::before` or `::after`: the id of
 /// its start token with this bit set. The ids of other content of the
