@@ -29,7 +29,7 @@ use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
     AvailableSpace, BlockItemStyle, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, Line, NodeId,
-    Position as TaffyPosition, Size, SizingMode, TraversePartialTree,
+    Position as TaffyPosition, Rect, Size, SizingMode, TraversePartialTree,
 };
 
 use super::block_flow::compute_block_flow;
@@ -82,6 +82,24 @@ impl TransposedBlock {
     /// Whether the block axis of the container runs from right to left.
     pub(super) fn right_to_left(&self) -> bool {
         self.right_to_left
+    }
+
+    /// Whether taffy runs the inline axis of the container from its far end:
+    /// the direction of the container on its layout axes is `rtl`, which a
+    /// reversed inline direction in a vertical writing mode produces too.
+    /// `false` until the frame holds its views.
+    pub(super) fn inline_reversed(&self) -> bool {
+        self.container_view
+            .as_ref()
+            .is_some_and(|input| input.view().direction().is_rtl())
+    }
+
+    /// The borders of the container on its layout axes; zero until the frame
+    /// holds its views.
+    pub(super) fn container_border(&self) -> Rect<f32> {
+        self.container_view.as_ref().map_or(Rect::ZERO, |input| {
+            input.view().border().resolve_or_zero(None, resolve_calc)
+        })
     }
 
     fn has_child(&self, idx: usize) -> bool {
