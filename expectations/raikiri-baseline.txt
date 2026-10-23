@@ -5063,3 +5063,7 @@ css/css-writing-modes/float-vlr-014.html
 css/css-flexbox/auto-margins-003.html
 css/css-flexbox/gap-003-lr.html
 css/css-flexbox/gap-003-rl.html
+
+# --- XHTML reftests parsed as XML (WPT pin 97ea26e2, EXACT, Linux, 2026-10-23) ---
+# An XHTML reftest is parsed as XML, so a self-closing `<div/>` is a sibling of the next element instead of its parent, and the flex items sit as in the reference; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml
