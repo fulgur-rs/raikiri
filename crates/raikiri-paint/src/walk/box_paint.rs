@@ -581,19 +581,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             )
             .paint(scene, warnings)
         } else if document.is_canvas_element(node_id) {
-            let fallback_bitmap;
-            let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
-                bitmap
-            } else {
-                let (w, h) = document
-                    .canvas_size(node_id)
-                    .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
-                fallback_bitmap = raikiri_dom::CanvasBitmap::transparent(w, h);
-                &fallback_bitmap
+            let Some(bitmap) = document.canvas_bitmap_snapshot(node_id) else {
+                // An unmaterialized canvas is transparent and emits no image.
+                return true;
             };
             paint_canvas(
                 scene,
-                bitmap,
+                &bitmap,
                 layout.size.width,
                 layout.size.height,
                 paint_x,

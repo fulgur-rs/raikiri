@@ -441,11 +441,14 @@ fn canvas_sidecar_drops_pixel_storage_above_aggregate_limit() {
     let crate::NodeData::Element(element) = &mut node.data else {
         panic!("canvas arena entry must be an Element");
     };
-    element.canvas_bitmap = Some(crate::CanvasBitmap {
-        width: 300,
-        height: 150,
-        rgba: vec![7; super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES + 1],
-    });
+    element.canvas_bitmap = Some(
+        crate::CanvasBitmap {
+            width: 300,
+            height: 150,
+            rgba: vec![7; super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES + 1],
+        }
+        .into(),
+    );
 
     let sidecar = doc.canvases_in_tree_order();
     assert_eq!(sidecar.len(), 1);
@@ -498,4 +501,130 @@ fn canvas_composite_rect_blends_each_sampled_pixel() {
     );
     let body = doc.root_index();
     assert!(!doc.canvas_composite_rect(body, 0, 0, 1, 1, |_, _| None));
+}
+
+#[test]
+fn canvas_snapshots_survive_writes_reset_take_and_document_drop() {
+    let (mut doc, id) = canvas_in_body();
+    doc.set_element_attribute(id, "width", "2").unwrap();
+    doc.set_element_attribute(id, "height", "2").unwrap();
+    assert!(doc.canvas_fill_rect(id, 0, 0, 2, 2, [1, 2, 3, 255]));
+    let original = doc.canvas_bitmap_snapshot(id).unwrap();
+    let weak = std::sync::Arc::downgrade(&original);
+    assert_eq!(
+        original.rgba.as_ptr(),
+        doc.canvas_bitmap_ref(id).unwrap().rgba.as_ptr()
+    );
+    assert!(doc.canvas_fill_rect(id, 0, 0, 1, 1, [4, 5, 6, 255]));
+    assert_eq!(&original.rgba[..4], &[1, 2, 3, 255]);
+    let filled = doc.canvas_bitmap_snapshot(id).unwrap();
+    assert!(doc.canvas_clear_rect(id, 0, 0, 1, 1));
+    assert_eq!(&filled.rgba[..4], &[4, 5, 6, 255]);
+    let cleared = doc.canvas_bitmap_snapshot(id).unwrap();
+    assert!(doc.canvas_composite_rect(id, 0, 0, 1, 1, |_, _| Some([7, 8, 9, 255])));
+    assert_eq!(&cleared.rgba[..4], &[0, 0, 0, 0]);
+    let composited = doc.canvas_bitmap_snapshot(id).unwrap();
+    assert_eq!(&composited.rgba[..4], &[7, 8, 9, 255]);
+    let taken = doc.take_canvases_in_tree_order();
+    assert_eq!(taken[0], *composited);
+    assert_ne!(taken[0].rgba.as_ptr(), composited.rgba.as_ptr());
+    doc.set_canvases_in_tree_order_owned(taken);
+    let restored = doc.canvas_bitmap_snapshot(id).unwrap();
+    doc.set_element_attribute(id, "width", "2").unwrap();
+    assert_eq!(&restored.rgba[..4], &[7, 8, 9, 255]);
+    assert!(
+        doc.canvas_bitmap_ref(id)
+            .unwrap()
+            .rgba
+            .iter()
+            .all(|&v| v == 0)
+    );
+    doc.set_element_attribute(id, "width", "3").unwrap();
+    drop(doc);
+    assert_eq!(&original.rgba[..4], &[1, 2, 3, 255]);
+    drop(original);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn canvas_noop_writes_preserve_shared_storage_and_success() {
+    let (mut doc, id) = canvas_in_body();
+    doc.ensure_canvas_bitmap(id).unwrap();
+    let snapshot = doc.canvas_bitmap_snapshot(id).unwrap();
+    assert!(doc.canvas_fill_rect(id, 0, 0, 3, 3, [255, 0, 0, 0]));
+    assert!(doc.canvas_fill_rect(id, 0, 0, 0, 3, [255, 0, 0, 255]));
+    assert!(doc.canvas_clear_rect(id, -10, -10, 1, 1));
+    assert!(doc.canvas_composite_rect(id, 999, 999, 2, 2, |_, _| panic!("empty clip")));
+    assert_eq!(
+        snapshot.rgba.as_ptr(),
+        doc.canvas_bitmap_ref(id).unwrap().rgba.as_ptr()
+    );
+    assert!(!doc.canvas_fill_rect(doc.root_index(), 0, 0, 1, 1, [0; 4]));
+}
+
+#[test]
+fn canvas_document_clone_and_extract_keep_independent_pixel_storage() {
+    let (mut doc, id) = canvas_in_body();
+    assert!(doc.canvas_fill_rect(id, 0, 0, 1, 1, [9, 8, 7, 255]));
+    let snapshot = doc.canvas_bitmap_snapshot(id).unwrap();
+    let mut cloned = doc.clone();
+    assert_ne!(
+        snapshot.rgba.as_ptr(),
+        cloned.canvas_bitmap_ref(id).unwrap().rgba.as_ptr()
+    );
+    assert!(cloned.canvas_clear_rect(id, 0, 0, 1, 1));
+    assert_eq!(&snapshot.rgba[..4], &[9, 8, 7, 255]);
+    let extracted = doc.extract_nodes(&doc.preorder(doc.root_index()).collect::<Vec<_>>());
+    let bitmaps = extracted.canvases_in_tree_order();
+    assert_eq!(bitmaps.len(), 1);
+    assert_eq!(&bitmaps[0].rgba[..4], &[9, 8, 7, 255]);
+    let extracted_id = extracted.canvas_ids_in_tree_order()[0];
+    assert_ne!(
+        snapshot.rgba.as_ptr(),
+        extracted
+            .canvas_bitmap_ref(extracted_id)
+            .unwrap()
+            .rgba
+            .as_ptr()
+    );
+}
+
+#[test]
+fn canvas_cow_rebuilds_capacity_accounting_before_replacement_and_take() {
+    let (mut doc, first) = canvas_in_body();
+    let second = doc.create_detached_element("canvas").unwrap();
+    doc.append_child(doc.parent_of(first).unwrap(), second)
+        .unwrap();
+    for id in [first, second] {
+        doc.set_element_attribute(id, "width", "2").unwrap();
+        doc.set_element_attribute(id, "height", "2").unwrap();
+    }
+    let capacity = super::super::MAX_DOCUMENT_CANVAS_BITMAP_BYTES / 2 + 1;
+    let bitmap = || {
+        let mut rgba = Vec::with_capacity(capacity);
+        rgba.resize(16, 0);
+        crate::CanvasBitmap {
+            width: 2,
+            height: 2,
+            rgba,
+        }
+    };
+    doc.try_set_canvas_bitmap(first, bitmap()).unwrap();
+    let old = doc.canvas_bitmap_snapshot(first).unwrap();
+    assert!(doc.canvas_fill_rect(first, 0, 0, 1, 1, [1; 4]));
+    assert_eq!(doc.canvas_bitmap_ref(first).unwrap().rgba.capacity(), 16);
+    doc.try_set_canvas_bitmap(second, bitmap()).unwrap();
+    drop(doc.take_canvases_in_tree_order());
+    doc.try_set_canvas_bitmap(second, bitmap()).unwrap();
+    assert_eq!(old.rgba.capacity(), capacity);
+}
+
+#[test]
+fn canvas_snapshot_requires_materialized_element_storage() {
+    let (mut doc, id) = canvas_in_body();
+    assert!(doc.canvas_bitmap_snapshot(usize::MAX).is_none());
+    assert!(doc.canvas_bitmap_snapshot(doc.root_index()).is_none());
+    assert!(doc.canvas_bitmap_snapshot(id).is_none());
+    doc.ensure_canvas_bitmap(id).unwrap();
+    assert!(doc.canvas_bitmap_snapshot(id).is_some());
 }

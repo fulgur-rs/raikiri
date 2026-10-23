@@ -6,6 +6,7 @@ use raikiri_style::property::ContentComponent;
 use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
 use raikiri_traits::PaintRect;
 
+mod canvas_sharing_tests;
 mod gradient_tests;
 mod image_sharing_tests;
 
