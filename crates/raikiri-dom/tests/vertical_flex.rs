@@ -16,13 +16,15 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/tests/data/text-autospace/Ahem.ttf"
 ));
 
-/// The border boxes `(x, y, width, height)` of the elements of `body` with an
-/// `id`, in the order they were found on the first page.
-fn border_boxes(body: &str) -> Vec<(String, (f32, f32, f32, f32))> {
-    let html = format!(
-        "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
-         body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
-    );
+/// A border box `(x, y, width, height)`.
+type Rect = (f32, f32, f32, f32);
+
+/// The border boxes of the elements with an `id`.
+type Boxes = Vec<(String, Rect)>;
+
+/// The border boxes of the elements of `html` with an `id`, in the order they
+/// were found, one list per page.
+fn pages_of(html: &str) -> Vec<Boxes> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes("Ahem", AHEM.to_vec())
         .build()
@@ -39,21 +41,34 @@ fn border_boxes(body: &str) -> Vec<(String, (f32, f32, f32, f32))> {
     let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete layout");
     };
-    let page = result.page(0).expect("page");
-    let dom = page.dom();
-    page.fragments()
-        .filter_map(|fragment| {
-            let id = dom.attr(fragment.node(), "id")?;
-            let rect = fragment.rect();
-            Some((id.to_owned(), (rect.x, rect.y, rect.width, rect.height)))
+    result
+        .pages()
+        .map(|page| {
+            let dom = page.dom();
+            page.fragments()
+                .filter_map(|fragment| {
+                    let id = dom.attr(fragment.node(), "id")?;
+                    let rect = fragment.rect();
+                    Some((id.to_owned(), (rect.x, rect.y, rect.width, rect.height)))
+                })
+                .collect()
         })
         .collect()
+}
+
+/// The border boxes of the elements of `body` with an `id` on the first page.
+fn border_boxes(body: &str) -> Boxes {
+    let html = format!(
+        "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
+         body {{ margin: 8px; font: 10px/10px Ahem }} div {{ box-sizing: border-box }}</style>{body}"
+    );
+    pages_of(&html).swap_remove(0)
 }
 
 /// Layout units are 1/64px; allow a little more for the 32-bit sums.
 const TOLERANCE: f32 = 0.02;
 
-fn check(body: &str, expected: &[(&str, (f32, f32, f32, f32))]) {
+fn check(body: &str, expected: &[(&str, Rect)]) {
     let actual = border_boxes(body);
     for &(id, (x, y, width, height)) in expected {
         let found = actual
@@ -909,4 +924,112 @@ fn item_keyword_sizes_on_the_cross_axis_do_not_stretch() {
             ("a", (8.0, 8.0, 300.0, 50.0)),
         ],
     );
+}
+
+#[test]
+fn vertical_flex_container_measured_for_its_intrinsic_size_keeps_the_flex_bases() {
+    // A vertical flex container that takes its size from its items, as a float
+    // or as an item of a horizontal container, counts the flex base size of an
+    // item that cannot shrink or grow, and its maximum size still clamps the
+    // result.
+    check(
+        r#"<div id=c style="float:left;display:flex;flex-direction:column;writing-mode:vertical-rl"><div id=a style="flex:0 0 100px;height:20px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 100.0, 20.0)),
+            ("a", (8.0, 8.0, 100.0, 20.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="float:left;display:flex;writing-mode:vertical-rl"><div id=a style="flex:0 0 100px;width:20px"></div><div id=b style="flex:0 0 60px;width:30px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 30.0, 160.0)),
+            ("a", (18.0, 8.0, 20.0, 100.0)),
+            ("b", (8.0, 108.0, 30.0, 60.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="float:left;display:flex;flex-direction:column;writing-mode:vertical-rl"><div id=a>XXXX</div><div id=b>XX</div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 20.0, 40.0)),
+            ("a", (18.0, 8.0, 10.0, 40.0)),
+            ("b", (8.0, 8.0, 10.0, 40.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="float:left;display:flex;writing-mode:vertical-rl"><div id=a>XXXX</div><div id=b>XX</div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 10.0, 60.0)),
+            ("a", (8.0, 8.0, 10.0, 40.0)),
+            ("b", (8.0, 48.0, 10.0, 20.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="float:left;display:flex;writing-mode:vertical-rl;max-height:50px"><div id=a style="flex:0 0 100px;width:20px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 20.0, 50.0)),
+            ("a", (8.0, 8.0, 20.0, 100.0)),
+        ],
+    );
+    check(
+        r#"<div id=c style="float:left;display:flex;flex-direction:column;writing-mode:vertical-rl;max-width:50px"><div id=a style="flex:0 0 100px;height:20px"></div></div>"#,
+        &[
+            ("c", (8.0, 8.0, 50.0, 20.0)),
+            ("a", (-42.0, 8.0, 100.0, 20.0)),
+        ],
+    );
+    check(
+        r#"<div id=o style="display:flex"><div id=c style="display:flex;flex-direction:column;writing-mode:vertical-rl"><div id=a style="flex:0 0 100px;height:20px"></div></div><div id=z style="width:10px;height:10px"></div></div>"#,
+        &[
+            ("o", (8.0, 8.0, 784.0, 20.0)),
+            ("c", (8.0, 8.0, 100.0, 20.0)),
+            ("a", (8.0, 8.0, 100.0, 20.0)),
+            ("z", (108.0, 8.0, 10.0, 10.0)),
+        ],
+    );
+    check(
+        r#"<div id=o style="display:flex"><div id=c style="display:flex;writing-mode:vertical-rl"><div id=a style="flex:0 0 100px;width:20px"></div></div><div id=z style="width:10px;height:10px"></div></div>"#,
+        &[
+            ("o", (8.0, 8.0, 784.0, 100.0)),
+            ("c", (8.0, 8.0, 20.0, 100.0)),
+            ("a", (8.0, 8.0, 20.0, 100.0)),
+            ("z", (28.0, 8.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn vertical_flex_root_paginates_along_its_block_axis() {
+    // The root element sets the page progression, whatever its display: the
+    // pages of a vertical flex root follow one another along the block axis,
+    // and the columns of a page run from the right edge to the left as they
+    // do for a block root.
+    let tiles: String = (0..12)
+        .map(|i| format!(r#"<div id=t{i} style="width:40px;height:100px"></div>"#))
+        .collect();
+    let page = |display: &str| {
+        pages_of(&format!(
+            "<!DOCTYPE html><style>@page {{ size: 200px 120px; margin: 0 }} \
+             body {{ margin: 0 }}</style>\
+             <html style=\"display:{display};writing-mode:vertical-rl\">\
+             <body style=\"flex:none\">{tiles}</body></html>"
+        ))
+    };
+    let tile_boxes = |pages: &[Boxes]| -> Vec<Boxes> {
+        pages
+            .iter()
+            .map(|boxes| {
+                boxes
+                    .iter()
+                    .filter(|(id, _)| id.starts_with('t'))
+                    .cloned()
+                    .collect()
+            })
+            .collect()
+    };
+    let block = tile_boxes(&page("block"));
+    let flex = tile_boxes(&page("flex"));
+    assert_eq!(block.len(), 3);
+    assert_eq!(flex, block);
+    assert_eq!(flex[0][0], ("t0".to_owned(), (160.0, 0.0, 40.0, 100.0)));
+    assert_eq!(flex[2][1], ("t11".to_owned(), (120.0, 0.0, 40.0, 100.0)));
 }
