@@ -50,6 +50,8 @@ pub(crate) struct LayoutContext {
     /// Nested candidate wrappers skip their own prepasses while an outer
     /// candidate wrapper is gathering unconstrained positioning inputs.
     pub(crate) oof_content_limit_prepass_depth: usize,
+    /// What the grid algorithm reported for each grid container laid out so
+    /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,

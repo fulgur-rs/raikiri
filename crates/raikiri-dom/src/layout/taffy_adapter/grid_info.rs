@@ -36,7 +36,7 @@ pub(crate) struct GridRowCounts {
 /// A value that reports no tracks reads as an empty grid: no items, no
 /// columns, no item area, and the padding box as the grid area of any
 /// placement.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct GridInfo(DetailedLayoutInfo<SmolStr>);
 
 impl GridInfo {
