@@ -79,24 +79,27 @@ const USAGE: &str = "usage: raikiri-layout-diff dump [--font FILE] [--seeds STAR
 /// build script recorded it.
 const COMPILER: &str = include_str!(concat!(env!("OUT_DIR"), "/compiler"));
 
-// cov:ignore: process entry point; the logic lives in `run`, which the unit tests drive with an in-memory writer
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // A panic inside a case is reported as the case's output; keep the default
-    // hook from also writing it to stderr. A panic anywhere else is a defect
-    // of the tool and keeps its message and location.
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        if !in_case() {
-            default_hook(info);
-        }
-    }));
+    install_panic_hook();
     let mut out = BufWriter::new(std::io::stdout().lock());
     let status = run(&args, &mut out);
     if out.flush().is_err() {
         return ExitCode::FAILURE;
     }
     status
+}
+
+/// Keeps the default panic message off standard error for a panic inside a
+/// case, which is reported as the case's output. A panic anywhere else is a
+/// defect of the tool and keeps its message and location.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if !in_case() {
+            default_hook(info);
+        }
+    }));
 }
 
 /// Runs one command, writing its output to `out`.

@@ -374,6 +374,20 @@ fn only_a_running_case_counts_as_being_in_a_case() {
 }
 
 #[test]
+fn the_panic_hook_is_silent_only_inside_a_case() {
+    install_panic_hook();
+    // Both kinds of panic are caught, so nothing escapes the test; which of
+    // them the hook lets through to the default hook shows on standard error
+    // only.
+    assert_eq!(
+        guarded(|| panic!("inside a case")),
+        "PANIC: inside a case\n"
+    );
+    let outside = std::thread::spawn(|| panic!("outside a case")).join();
+    assert!(outside.is_err());
+}
+
+#[test]
 fn a_layout_that_did_not_complete_says_so() {
     assert_eq!(
         layout_text(Ok(LayoutStatus::Aborted)),

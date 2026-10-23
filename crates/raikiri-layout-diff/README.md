@@ -53,7 +53,7 @@ Options:
 
 A run of 2,000 generated documents and the WPT baseline (6,740 cases) takes
 about two and a half minutes on four cores once the merge-base build is cached;
-the first run also builds both trees, which takes longer.
+a run that also has to build the merge-base takes about seven minutes.
 
 The merge-base build is cached under `~/.cache/raikiri/layout-diff` (override
 with `RAIKIRI_LAYOUT_DIFF_CACHE`), so the second run against one base does not
