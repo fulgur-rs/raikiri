@@ -250,6 +250,14 @@ fn the_inline_size_of_a_containing_block_needs_a_definite_space() {
 }
 
 #[test]
+fn a_containing_block_with_a_definite_height_needs_no_inline_size() {
+    assert_eq!(
+        inline_size_in("height:120px", AvailableSpace::Definite(200.0)),
+        None
+    );
+}
+
+#[test]
 fn the_inline_size_of_a_containing_block_is_what_its_margins_leave() {
     let space = AvailableSpace::Definite(200.0);
     assert_eq!(inline_size_in("margin:10px 0", space), Some(180.0));
