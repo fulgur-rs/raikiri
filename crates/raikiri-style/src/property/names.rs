@@ -6,10 +6,8 @@
 /// generically rather than through a per-name dispatch arm).
 ///
 /// This is a superset of [`super::property_key_for_name`]'s domain: a few
-/// shorthands (`grid-area` and the
-/// `grid-gap`/`grid-column-gap`/`grid-row-gap` legacy
-/// aliases) fully expand into other properties during declaration parsing
-/// and so need no `PropertyKey` of their own, but they are still names
+/// legacy aliases (`grid-gap`/`grid-column-gap`/`grid-row-gap`)
+/// use other properties' keys instead of having keys of their own, but are names
 /// `parse_value` dispatches on and therefore belong here.
 ///
 /// `names/tests.rs` keeps this list from drifting away from `parse_value`'s

@@ -244,7 +244,7 @@ fn grid_iterators_borrow_names_and_preserve_cursor() {
         assert_eq!(iter.len(), 0);
     }
     let placement = v.grid_column();
-    let taffy::GridPlacement::NamedLine(bound, 1) = placement.start else {
+    let taffy::GridPlacement::NamedLine(bound, 0) = placement.start else {
         panic!("expected named line")
     };
     assert_eq!(bound.as_ptr(), name.as_ptr());
@@ -322,5 +322,31 @@ fn repeat_counts_and_area_coordinates_saturate_like_the_bridge() {
         assert_eq!(area.column_end, u16::MAX);
         assert_eq!(v.grid_template_area_row_count(), u16::MAX);
         assert_eq!(v.grid_template_area_column_count(), u16::MAX);
+    }
+}
+
+#[test]
+fn bare_named_placement_keeps_area_lookup_distinct_from_explicit_one() {
+    let name = SmolStr::new("area");
+    for (value, expected) in [
+        (GridLineValue::Named(name.clone()), 0),
+        (GridLineValue::NamedLine(name.clone(), 1), 1),
+    ] {
+        let mut cv = ComputedValues::initial();
+        cv.grid_row_start = value.clone();
+        cv.grid_row_end = value.clone();
+        cv.grid_column_start = value.clone();
+        cv.grid_column_end = value;
+        let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+        let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+        for placement in [v.grid_row(), v.grid_column()] {
+            for edge in [placement.start, placement.end] {
+                let taffy::GridPlacement::NamedLine(actual, index) = edge else {
+                    panic!("expected named placement")
+                };
+                assert_eq!(actual, name);
+                assert_eq!(index, expected);
+            }
+        }
     }
 }

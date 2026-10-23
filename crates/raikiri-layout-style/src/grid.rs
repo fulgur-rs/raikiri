@@ -323,7 +323,8 @@ fn i16_sat(value: i32) -> i16 {
 fn placement(value: &GridLineValue) -> GridPlacement<SmolStr> {
     match value {
         GridLineValue::Line(n) => taffy::style_helpers::line(i16_sat(*n)),
-        GridLineValue::Named(s) => GridPlacement::NamedLine(s.clone(), 1),
+        // Zero preserves named-area edge lookup before the named-line fallback.
+        GridLineValue::Named(s) => GridPlacement::NamedLine(s.clone(), 0),
         GridLineValue::NamedLine(s, n) => GridPlacement::NamedLine(s.clone(), i16_sat(*n)),
         GridLineValue::Span(n) => GridPlacement::Span(u16_sat(*n)),
         GridLineValue::SpanNamed(s, n) => GridPlacement::NamedSpan(s.clone(), u16_sat(*n)),
