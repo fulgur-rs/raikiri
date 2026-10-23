@@ -7,6 +7,7 @@ cargo-llvm-cov nor a real build, and they keep the cache in a temporary
 directory.
 """
 
+import io
 import os
 import re
 import shutil
@@ -44,6 +45,17 @@ echo "release: ${FAKE_RUSTC_RELEASE:-1.0.0}"
 """
 
 
+# `date -u +%Y%m%dT%H%M%SZ` is how save stamps an entry; FAKE_STAMP pins it so
+# that two saves can start in "the same second".
+FAKE_DATE = """#!/usr/bin/env bash
+if [[ -n "${FAKE_STAMP:-}" && "$*" == "-u +%Y%m%dT%H%M%SZ" ]]; then
+  echo "$FAKE_STAMP"
+  exit 0
+fi
+exec "$FAKE_REAL_DATE" "$@"
+"""
+
+
 def _write_executable(path: Path, text: str) -> None:
     path.write_text(text)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -61,12 +73,14 @@ class GateCacheTest(unittest.TestCase):
         fakebin.mkdir()
         _write_executable(fakebin / "cargo", FAKE_CARGO)
         _write_executable(fakebin / "rustc", FAKE_RUSTC)
+        _write_executable(fakebin / "date", FAKE_DATE)
         self.env = dict(
             os.environ,
             PATH=f"{fakebin}:{os.environ['PATH']}",
             FAKE_TARGET=str(self.target),
             FAKE_CALLS=str(self.calls),
             RAIKIRI_GATE_CACHE_DIR=str(self.cache),
+            FAKE_REAL_DATE=shutil.which("date"),
         )
         self.env.pop("CARGO_TARGET_DIR", None)
 
@@ -91,19 +105,44 @@ class GateCacheTest(unittest.TestCase):
             incremental.mkdir(parents=True)
             (incremental / "state").write_text("incremental")
 
-    def _entries(self, suffix):
+    def _entries(self, suffix=".info"):
         return sorted(p.name for p in self.cache.glob(f"gate-target-*{suffix}"))
 
-    def _save_one_entry(self) -> str:
+    def _parts(self, name):
+        return sorted(self.cache.glob(f"{name}.part.*"))
+
+    def _part_owners(self):
+        """Names of the entries that still have part files on disk."""
+        return {p.name.split(".part.")[0] for p in self.cache.glob("gate-target-*.part.*")}
+
+    def _write_entry(self, name, parts):
+        """Write a synthetic entry: one file per element of `parts`, then the .info."""
+        self.cache.mkdir(exist_ok=True)
+        lines = [f"bytes={sum(len(p) for p in parts)}"]
+        for index, data in enumerate(parts):
+            part = f"{name}.part.a{chr(ord('a') + index)}"
+            (self.cache / part).write_bytes(data)
+            lines.append(f"part={part} {len(data)}")
+        (self.cache / f"{name}.info").write_text("\n".join(lines) + "\n")
+
+    def _remove_entry(self, name):
+        for part in self._parts(name):
+            part.unlink()
+        (self.cache / f"{name}.info").unlink()
+
+    def _save_one_entry(self, **env) -> str:
         self._populate_target()
-        result = self._run("save")
+        result = self._run("save", **env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        (archive,) = self._entries(".tar.gz")
-        return archive[: -len(".tar.gz")]
+        (info,) = self._entries(".info")
+        return info[: -len(".info")]
 
     def _copy_entry(self, name: str, new_name: str) -> None:
-        for suffix in (".tar.gz", ".info"):
-            shutil.copy(self.cache / f"{name}{suffix}", self.cache / f"{new_name}{suffix}")
+        """Copy an entry under another name (parts renamed, .info rewritten)."""
+        for part in self._parts(name):
+            shutil.copy(part, self.cache / part.name.replace(name, new_name))
+        info = (self.cache / f"{name}.info").read_text().replace(name, new_name)
+        (self.cache / f"{new_name}.info").write_text(info)
 
     def test_usage_errors(self):
         for args in ([], ["bogus"], ["save", "extra"]):
@@ -134,7 +173,8 @@ class GateCacheTest(unittest.TestCase):
 
     def test_archive_holds_no_workspace_artifacts(self):
         name = self._save_one_entry()
-        with tarfile.open(self.cache / f"{name}.tar.gz") as archive:
+        data = b"".join(part.read_bytes() for part in self._parts(name))
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
             members = archive.getnames()
         self.assertIn("llvm-cov-target/debug/deps/serde-1.rlib", members)
         self.assertNotIn("llvm-cov-target/debug/deps/ws-a", members)
@@ -185,8 +225,7 @@ class GateCacheTest(unittest.TestCase):
         newer = f"gate-target-20990101T000000Z-tc{toolchain}-lock222222222222"
         self._copy_entry(exact, older)
         self._copy_entry(exact, newer)
-        for suffix in (".tar.gz", ".info"):
-            (self.cache / f"{exact}{suffix}").unlink()
+        self._remove_entry(exact)
         shutil.rmtree(self.target)
         result = self._run("restore")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -197,8 +236,7 @@ class GateCacheTest(unittest.TestCase):
         exact = self._save_one_entry()
         other = "gate-target-20990101T000000Z-tcffffffffffff-lock000000000000"
         self._copy_entry(exact, other)
-        for suffix in (".tar.gz", ".info"):
-            (self.cache / f"{exact}{suffix}").unlink()
+        self._remove_entry(exact)
         shutil.rmtree(self.target)
         result = self._run("restore")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -215,8 +253,8 @@ class GateCacheTest(unittest.TestCase):
     def test_incomplete_entries_are_ignored(self):
         name = self._save_one_entry()
         shutil.rmtree(self.target)
-        archive = self.cache / f"{name}.tar.gz"
-        archive.write_bytes(archive.read_bytes()[:-8])  # size no longer matches .info
+        part = self._parts(name)[-1]
+        part.write_bytes(part.read_bytes()[:-8])  # size no longer matches .info
         result = self._run("restore")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("no usable entry for this toolchain", result.stdout)
@@ -233,9 +271,8 @@ class GateCacheTest(unittest.TestCase):
     def test_a_corrupt_archive_fails_without_leaving_partial_directories(self):
         name = self._save_one_entry()
         shutil.rmtree(self.target)
-        garbage = b"not a gzip archive"
-        (self.cache / f"{name}.tar.gz").write_bytes(garbage)
-        (self.cache / f"{name}.info").write_text(f"bytes={len(garbage)}\n")
+        self._remove_entry(name)
+        self._write_entry(name, [b"not a gzip archive"])
         result = self._run("restore")
         self.assertEqual(result.returncode, 1)
         self.assertIn("failed", result.stderr)
@@ -248,11 +285,9 @@ class GateCacheTest(unittest.TestCase):
         self.assertFalse(self.cache.exists())
 
     def test_save_keeps_only_the_newest_entries(self):
-        self.cache.mkdir()
         for day in range(1, 5):
             stem = f"gate-target-2000010{day}T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb"
-            (self.cache / f"{stem}.tar.gz").write_bytes(b"x")
-            (self.cache / f"{stem}.info").write_text("bytes=1\n")
+            self._write_entry(stem, [b"x", b"y"])
         self._populate_target()
         result = self._run("save")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -260,29 +295,26 @@ class GateCacheTest(unittest.TestCase):
         self.assertEqual(len(remaining), 3)
         self.assertNotIn("gate-target-20000101T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb.info", remaining)
         self.assertNotIn("gate-target-20000102T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb.info", remaining)
-        self.assertEqual(len(self._entries(".tar.gz")), 3)
+        self.assertEqual(len(self._part_owners()), 3)  # no parts of pruned entries left
 
     def test_broken_entries_do_not_push_usable_ones_out(self):
-        self.cache.mkdir()
         for day in (1, 2):
             stem = f"gate-target-2000010{day}T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb"
-            (self.cache / f"{stem}.tar.gz").write_bytes(b"x")
-            (self.cache / f"{stem}.info").write_text("bytes=1\n")
-        for day in (1, 2, 3):  # newer than any real entry, but the archives are missing
+            self._write_entry(stem, [b"x"])
+        for day in (1, 2, 3):  # newer than any real entry, but the parts are missing
             stem = f"gate-target-209001{day:02d}T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb"
-            (self.cache / f"{stem}.info").write_text("bytes=1\n")
+            (self.cache / f"{stem}.info").write_text(f"bytes=1\npart={stem}.part.aa 1\n")
         self._populate_target()
         result = self._run("save")
         self.assertEqual(result.returncode, 0, result.stderr)
-        remaining = self._entries(".tar.gz")
-        self.assertEqual(len(remaining), 3)  # the new entry and both old ones
+        self.assertEqual(len(self._part_owners()), 3)  # the new entry and both old ones
         self.assertEqual(len(self._entries(".info")), 6)  # fresh broken ones stay
 
     def test_broken_entries_are_dropped_after_a_day(self):
         self.cache.mkdir()
         stem = "gate-target-20000101T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb"
         info = self.cache / f"{stem}.info"
-        info.write_text("bytes=1\n")
+        info.write_text(f"bytes=1\npart={stem}.part.aa 1\n")
         two_days_ago = info.stat().st_mtime - 2 * 86400
         os.utime(info, (two_days_ago, two_days_ago))
         self._populate_target()
@@ -306,6 +338,81 @@ class GateCacheTest(unittest.TestCase):
     def test_save_leaves_no_temporary_files_behind(self):
         self._save_one_entry()
         self.assertEqual([p.name for p in self.cache.iterdir() if p.name.startswith(".")], [])
+
+    def test_a_large_archive_is_split_into_parts_that_restore_in_order(self):
+        name = self._save_one_entry(RAIKIRI_GATE_CACHE_PART_BYTES="100")
+        parts = self._parts(name)
+        self.assertGreater(len(parts), 3)
+        self.assertTrue(all(p.stat().st_size <= 100 for p in parts))
+        self.assertEqual(
+            [line.split()[0] for line in (self.cache / f"{name}.info").read_text().splitlines() if line.startswith("part=")],
+            [f"part={p.name}" for p in parts],
+        )
+        shutil.rmtree(self.target)
+        result = self._run("restore")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.target / "llvm-cov-target/debug/deps/serde-1.rlib").exists())
+        self.assertTrue((self.target / "debug/deps/serde-1.rlib").exists())
+
+    def test_an_entry_with_a_missing_part_is_ignored(self):
+        name = self._save_one_entry(RAIKIRI_GATE_CACHE_PART_BYTES="100")
+        shutil.rmtree(self.target)
+        self._parts(name)[1].unlink()
+        result = self._run("restore")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no usable entry for this toolchain", result.stdout)
+        self.assertFalse(self.target.exists())
+        status = self._run("status")
+        self.assertIn("incomplete, ignored", status.stdout)
+
+    def test_an_entry_in_the_old_single_archive_format_is_ignored(self):
+        name = self._save_one_entry()
+        shutil.rmtree(self.target)
+        archive = self.cache / f"{name}.tar.gz"
+        archive.write_bytes(b"".join(p.read_bytes() for p in self._parts(name)))
+        (self.cache / f"{name}.info").write_text(f"bytes={archive.stat().st_size}\n")
+        result = self._run("restore")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no usable entry for this toolchain", result.stdout)
+
+    def test_an_info_file_cannot_point_outside_its_own_parts(self):
+        name = self._save_one_entry()
+        shutil.rmtree(self.target)
+        outside = self.tmp / "outside"
+        outside.write_bytes(b"x")
+        (self.cache / f"{name}.info").write_text(f"bytes=1\npart=../outside 1\n")
+        result = self._run("restore")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no usable entry for this toolchain", result.stdout)
+
+    def test_parts_of_an_entry_that_never_got_its_info_file_are_dropped_after_an_hour(self):
+        self.cache.mkdir()
+        old = self.cache / "gate-target-20000101T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb.part.aa"
+        fresh = self.cache / "gate-target-20260101T000000Z-tcaaaaaaaaaaaa-lockbbbbbbbbbbbb.part.aa"
+        old.write_bytes(b"x")
+        fresh.write_bytes(b"x")
+        two_hours_ago = old.stat().st_mtime - 7200
+        os.utime(old, (two_hours_ago, two_hours_ago))
+        self._populate_target()
+        result = self._run("save")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(old.exists())
+        self.assertTrue(fresh.exists())  # its saver may still be running
+
+    def test_saves_in_the_same_second_do_not_share_part_files(self):
+        stamp = {"FAKE_STAMP": "20990101T000000Z"}
+        self._populate_target()
+        first = self._run("save", RAIKIRI_GATE_CACHE_PART_BYTES="100", **stamp)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        shutil.rmtree(self.target)
+        self._populate_target()
+        second = self._run("save", **stamp)  # fewer, larger parts than the first
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(len(self._entries(".info")), 2)
+        shutil.rmtree(self.target)
+        result = self._run("restore")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.target / "llvm-cov-target/debug/deps/serde-1.rlib").exists())
 
     def test_status_marks_the_entry_restore_would_use(self):
         name = self._save_one_entry()
