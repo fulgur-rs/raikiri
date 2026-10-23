@@ -2738,10 +2738,14 @@ fn text_decoration_shorthand_two_style_components_leaves_leftover_for_caller_exh
 }
 
 #[test]
-fn text_decoration_shorthand_rejects_css_wide_keyword() {
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "text-decoration"), None);
-    }
+fn text_decoration_shorthand_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("text-decoration");
+}
+
+#[test]
+fn text_emphasis_and_outline_shorthands_keep_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("text-emphasis");
+    assert_css_wide_keywords_deferred("outline");
 }
 
 #[test]
