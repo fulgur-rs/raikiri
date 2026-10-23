@@ -1884,7 +1884,7 @@ fn layout_single_page_deterministic_across_10_runs() {
     // future font pinning).
     use raikiri_traits::PageBox;
 
-    fn one_run() -> Vec<taffy::Layout> {
+    fn one_run() -> Vec<BoxLayout> {
         let (mut doc, cr) = hello_world_doc();
         layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
         doc.nodes.iter().map(|n| n.unrounded_layout).collect()
@@ -3790,9 +3790,10 @@ fn lines_survive_a_second_layout_pass() {
 
 #[test]
 fn first_baseline_includes_the_top_padding_and_border() {
-    use taffy::{
-        AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
+    use crate::layout::protocol::{
+        AvailableSpace, LayoutInput, NodeId, RequestedAxis, RunMode, SizingMode,
     };
+    use raikiri_layout_geometry::{Line, Size};
     let (mut doc, cascade, root) = ahem_paragraph(
         "aa",
         "width:100px;padding-top:6px;border-top-width:3px;border-top-style:solid",
@@ -3859,9 +3860,10 @@ fn a_floated_root_with_a_narrow_max_width_breaks_at_that_width() {
 
 #[test]
 fn an_inline_block_baseline_follows_the_last_ifc_line() {
-    use taffy::{
-        AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
+    use crate::layout::protocol::{
+        AvailableSpace, LayoutInput, NodeId, RequestedAxis, RunMode, SizingMode,
     };
+    use raikiri_layout_geometry::{Line, Size};
     let (mut doc, cascade, wrapper, _root) =
         ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;width:50px");
     lay_out(&mut doc, &cascade);
@@ -8871,7 +8873,7 @@ fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
     };
     assert_eq!(
         size(),
-        taffy::Size {
+        Size {
             width: 140.0,
             height: 10.0
         }
@@ -16102,7 +16104,7 @@ fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
     doc.nodes[body].unrounded_layout.size.width = 100.0;
-    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+    doc.nodes[floater].unrounded_layout.size = Size {
         width: 60.0,
         height: 10.0,
     };
@@ -16228,7 +16230,7 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
     }
     doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
     doc.nodes[floater].unrounded_layout.location.y = 30.0;
-    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+    doc.nodes[floater].unrounded_layout.size = Size {
         width: 60.0,
         height: 10.0,
     };
@@ -16464,7 +16466,7 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
     doc.nodes[body].unrounded_layout.size.width = 100.0;
-    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+    doc.nodes[floater].unrounded_layout.size = Size {
         width: 60.0,
         height: 10.0,
     };

@@ -6,10 +6,10 @@ fn old_saved_cache_is_not_restored_into_new_epoch() {
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     let input = layout_input(10.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN)
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN)
     });
     let saved = tree.take_layout_cache(0);
     tree.layout_cache_context.invalidate();
@@ -22,10 +22,10 @@ fn stale_cache_capture_in_current_epoch_stays_stale_after_restore() {
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     let input = layout_input(10.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN)
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN)
     });
     tree.layout_cache_context.invalidate();
     let saved = tree.take_layout_cache(0);
@@ -38,15 +38,15 @@ fn valid_saved_cache_restores_only_its_own_original_entries() {
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     let a = layout_input(10.0);
     let b = layout_input(20.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &a, taffy::LayoutOutput::HIDDEN)
+        tree.cache_store(id, &a, LayoutOutput::HIDDEN)
     });
     let saved = tree.take_layout_cache(0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &b, taffy::LayoutOutput::HIDDEN)
+        tree.cache_store(id, &b, LayoutOutput::HIDDEN)
     });
     tree.restore_layout_cache(0, saved);
     assert!(tree.cache_get(id, &a).is_some());
@@ -58,11 +58,11 @@ fn synthetic_rebuild_invalidates_parent() {
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     let input = layout_input(10.0);
     for kind in 0..3 {
         tree.with_cache_frame(0, ViewContext::default(), |tree| {
-            tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN)
+            tree.cache_store(id, &input, LayoutOutput::HIDDEN)
         });
         assert!(tree.cache_get(id, &input).is_some());
         match kind {
@@ -88,7 +88,7 @@ fn nested_scope_success_error_unwind_restores_values() {
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
     let parent = 0;
-    let id = taffy::NodeId::from(parent);
+    let id = protocol::NodeId::from(parent);
     let input = layout_input(10.0);
     let original = tree.style_view(child).size();
     let override_width = |width| {
@@ -102,7 +102,7 @@ fn nested_scope_success_error_unwind_restores_values() {
         ]
     };
     tree.with_cache_frame(parent, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN)
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN)
     });
     tree.with_style_overrides(child, override_width(20.0), |tree| {
         assert!(tree.cache_get(id, &input).is_none());
@@ -141,7 +141,7 @@ fn cold_warm_uncached_outputs_agree() {
         let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
         let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-        let id = taffy::NodeId::from(child);
+        let id = protocol::NodeId::from(child);
         let input = layout_input(80.0);
         let cold = tree.compute_child_layout_with_block_ctx(id, input, None);
         assert!(tree.cache_get(id, &input).is_some());
@@ -166,7 +166,7 @@ fn legacy_session_size_scope_restores_values_after_unwind() {
         crate::taffy_impl::content_limits::with_width_limits(
             &mut tree,
             child,
-            taffy::Size {
+            Size {
                 width: Some(100.0),
                 height: None,
             },
@@ -211,10 +211,10 @@ fn saved_cache_from_previous_namespace_cannot_be_restored() {
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
-    let id = taffy::NodeId::from(0usize);
+    let id = protocol::NodeId::from(0usize);
     let input = layout_input(10.0);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN)
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN)
     });
     let saved = tree.take_layout_cache(0);
     tree.document.layout_cache_context.epoch.value = u64::MAX;
@@ -253,9 +253,9 @@ fn table_and_multicol_flex_descendants_agree_after_forced_miss() {
         let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
         let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-        let id = taffy::NodeId::from(child);
+        let id = protocol::NodeId::from(child);
         let mut input = layout_input(80.0);
-        input.run_mode = taffy::RunMode::PerformLayout;
+        input.run_mode = RunMode::PerformLayout;
         let cold = tree.compute_child_layout_with_block_ctx(id, input, None);
         let warm = tree.compute_child_layout_with_block_ctx(id, input, None);
         tree.layout_cache_context.invalidate();
@@ -276,7 +276,7 @@ fn dirty_saved_cache_is_discarded_without_publishing_inside_an_override() {
     tree.prepare_style_views();
     let key = tree.nodes.box_key(child).unwrap();
     let input = layout_input(10.0);
-    let id = taffy::NodeId::from(child);
+    let id = protocol::NodeId::from(child);
     tree.with_overrides(
         vec![(
             key,
@@ -284,7 +284,7 @@ fn dirty_saved_cache_is_discarded_without_publishing_inside_an_override() {
         )],
         |tree| {
             tree.with_cache_frame(child, ViewContext::default(), |tree| {
-                tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN)
+                tree.cache_store(id, &input, LayoutOutput::HIDDEN)
             });
             let saved = tree.take_layout_cache(child);
             let publication = tree.layout_cache_context.publication_epoch();

@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::test_support::page_box_800x600;
+use raikiri_layout_geometry::Point;
 use raikiri_style::{build_rule_tree, cascade};
 
 #[test]
@@ -105,7 +106,7 @@ fn vertical_pagination_keeps_an_absolute_box_at_the_page_origin() {
         // box whatever the writing mode of the flow it was found in.
         assert_eq!(
             document.nodes[positioned].unrounded_layout.location,
-            taffy::Point { x: 0.0, y: 0.0 },
+            Point { x: 0.0, y: 0.0 },
             "{mode}"
         );
         let origin = document.layout_origin_of(positioned).unwrap();

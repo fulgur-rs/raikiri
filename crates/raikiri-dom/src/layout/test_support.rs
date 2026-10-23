@@ -2,6 +2,7 @@
 
 use crate::Document;
 use crate::layout::ifc::test_support::{Fixture, block_fixture};
+use raikiri_layout_geometry::Point;
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
@@ -45,7 +46,7 @@ pub(crate) fn ahem_paragraph_with(
 /// The border box of `node` in page coordinates, accumulated from the layout
 /// locations of its ancestors.
 pub(crate) fn absolute_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32) {
-    let origin = doc.layout_origin_of(node).unwrap_or(taffy::Point::ZERO);
+    let origin = doc.layout_origin_of(node).unwrap_or(Point::ZERO);
     let size = doc.nodes[node].unrounded_layout.size;
     (origin.x, origin.y, size.width, size.height)
 }

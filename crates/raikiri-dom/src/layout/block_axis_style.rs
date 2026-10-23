@@ -12,7 +12,8 @@
 //! to be swapped in the document's own styles: the styles of the boxes stay on
 //! physical axes while pagination runs.
 
-use taffy::{Dimension, LengthPercentageAuto, Rect};
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentageAuto> is style input
+use taffy::{Dimension, LengthPercentageAuto};
 
 /// The style of a box along the axis pagination breaks the flow on.
 ///
@@ -23,7 +24,7 @@ pub(crate) struct BlockAxisStyle {
     pub(crate) height: Dimension,
     pub(crate) min_height: LengthPercentageAuto,
     pub(crate) max_height: LengthPercentageAuto,
-    pub(crate) margin: Rect<LengthPercentageAuto>,
+    pub(crate) margin: StyleRect<LengthPercentageAuto>,
     /// Inverted on transposed axes.
     pub(crate) aspect_ratio: Option<f32>,
 }

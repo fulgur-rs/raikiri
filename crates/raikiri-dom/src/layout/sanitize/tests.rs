@@ -375,14 +375,14 @@ fn layout_warn_display_is_human_readable() {
 /// Using exhaustive destructuring instead of `..` is for the same reason as the guard side — to avoid
 /// creating an asymmetry where, if Taffy adds an f32 field, only the guard side (exhaustive literal) would
 /// result in a compile error, while the **predicate side would silently only examine the old fields**.
-fn layout_all_finite(l: &TaffyLayout) -> bool {
+fn layout_all_finite(l: &BoxLayout) -> bool {
     fn size_ok(s: Size<f32>) -> bool {
         s.width.is_finite() && s.height.is_finite()
     }
-    fn rect_ok(r: Rect<f32>) -> bool {
+    fn rect_ok(r: Edges<f32>) -> bool {
         r.left.is_finite() && r.right.is_finite() && r.top.is_finite() && r.bottom.is_finite()
     }
-    let TaffyLayout {
+    let BoxLayout {
         // `order` is u32 — not subject to guard (`sanitize_taffy_layout`'s doc).
         order: _,
         location,
@@ -409,7 +409,7 @@ fn layout_all_finite(l: &TaffyLayout) -> bool {
 ///
 /// The document is not recreated for each depth: the chain for depth `N`
 /// already contains nodes for each depth from 1 to `N`.
-fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
+fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<BoxLayout> {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
@@ -528,7 +528,7 @@ fn nested_percentage_output_stays_finite_far_past_the_sweep() {
 /// here what value it falls to).
 #[test]
 fn sanitize_taffy_layout_clamps_every_f32_field() {
-    let poisoned = TaffyLayout {
+    let poisoned = BoxLayout {
         order: 7,
         location: Point {
             x: f32::INFINITY,
@@ -538,7 +538,7 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
             width: f32::NAN,
             height: 1e30,
         },
-        scrollable_overflow_rect: Rect {
+        scrollable_overflow_rect: Edges {
             left: 3.0,
             top: 4.0,
             right: -1e30,
@@ -548,19 +548,19 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
             width: f32::INFINITY,
             height: 12.0,
         },
-        border: Rect {
+        border: Edges {
             left: f32::NAN,
             right: f32::INFINITY,
             top: f32::NEG_INFINITY,
             bottom: 1.0,
         },
-        padding: Rect {
+        padding: Edges {
             left: 1e30,
             right: -1e30,
             top: f32::NAN,
             bottom: 2.0,
         },
-        margin: Rect {
+        margin: Edges {
             left: f32::NEG_INFINITY,
             right: f32::INFINITY,
             top: -3.0,
@@ -618,14 +618,14 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
     // indicate "zero impact on normal layout" — there is no impact only when it fits within the band; for
     // inputs that go outside (such as `width: 200%` × 14 levels of nesting), the value changes (see
     // `MAX_TAFFY_MAGNITUDE`'s "band where clamp actually takes effect" section).
-    let benign = TaffyLayout {
+    let benign = BoxLayout {
         order: 3,
         location: Point { x: 10.0, y: -20.5 },
         size: Size {
             width: 793.7008,
             height: 1122.52,
         },
-        scrollable_overflow_rect: Rect {
+        scrollable_overflow_rect: Edges {
             left: 0.0,
             top: 0.0,
             right: 100.0,
@@ -635,19 +635,19 @@ fn sanitize_taffy_layout_clamps_every_f32_field() {
             width: 0.0,
             height: 0.0,
         },
-        border: Rect {
+        border: Edges {
             left: 1.0,
             right: 2.0,
             top: 3.0,
             bottom: 4.0,
         },
-        padding: Rect {
+        padding: Edges {
             left: 5.0,
             right: 6.0,
             top: 7.0,
             bottom: 8.0,
         },
-        margin: Rect {
+        margin: Edges {
             left: -9.0,
             right: 10.0,
             top: 11.0,
@@ -687,50 +687,50 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
     // Both are individually within `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]`, so
     // `sanitize_taffy_layout`'s field-level clamp does not stop this—a direct reproduction of something that
     // can actually happen.
-    doc.nodes[parent].unrounded_layout = TaffyLayout {
+    doc.nodes[parent].unrounded_layout = BoxLayout {
         order: 3,
         location: Point::ZERO,
         size: Size {
             width: 10.0,
             height: 10.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect {
+        border: Edges::zero(),
+        padding: Edges {
             left: 20.0,
             right: 20.0,
             top: 0.0,
             bottom: 0.0,
         },
-        margin: Rect::zero(),
+        margin: Edges::zero(),
     };
     // The child itself has no layout problems (if we ignore the broken parent) — this is material to confirm
     // that the entire subtree is zeroed out.
-    doc.nodes[child].unrounded_layout = TaffyLayout {
+    doc.nodes[child].unrounded_layout = BoxLayout {
         order: 1,
         location: Point { x: 1.0, y: 1.0 },
         size: Size {
             width: 2.0,
             height: 2.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
 
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
         doc.nodes[parent].unrounded_layout,
-        TaffyLayout::with_order(3),
+        BoxLayout::with_order(3),
         "content box が負の node は order だけ残してゼロ化されること"
     );
     assert_eq!(
         doc.nodes[child].unrounded_layout,
-        TaffyLayout::with_order(1),
+        BoxLayout::with_order(1),
         "破れた parent の subtree にいる child も (order だけ残して) \
              ゼロ化されること — 壊れた親を基準にした古い座標を残さない"
     );
@@ -765,23 +765,23 @@ fn saturated_child_outside_parent_is_not_reset() {
     let grandchild = doc.append_element(Some(child), "div", None::<&str>);
 
     // Parent is normal (100x100, not saturated).
-    doc.nodes[parent].unrounded_layout = TaffyLayout {
+    doc.nodes[parent].unrounded_layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
             width: 100.0,
             height: 100.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
     // child.location.x is exactly at the saturation boundary (MAX_TAFFY_MAGNITUDE) — it cannot possibly fit
     // within the parent (100x100). After this change, this "clearly not fitting" fact is no longer a reason
     // for reset.
-    doc.nodes[child].unrounded_layout = TaffyLayout {
+    doc.nodes[child].unrounded_layout = BoxLayout {
         order: 2,
         location: Point {
             x: MAX_TAFFY_MAGNITUDE,
@@ -791,26 +791,26 @@ fn saturated_child_outside_parent_is_not_reset() {
             width: 10.0,
             height: 10.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
     // grandchild is a normal value based on child — material to confirm that it has not been reset throughout
     // the subtree (see assert below).
-    doc.nodes[grandchild].unrounded_layout = TaffyLayout {
+    doc.nodes[grandchild].unrounded_layout = BoxLayout {
         order: 5,
         location: Point { x: 1.0, y: 1.0 },
         size: Size {
             width: 1.0,
             height: 1.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -938,23 +938,23 @@ fn saturated_but_contained_layout_is_not_reset() {
 
     // Create a case where the parent's size is also exactly at the saturation boundary — the child's location
     // fits perfectly within it (boundary value, OK by `<=`).
-    doc.nodes[parent].unrounded_layout = TaffyLayout {
+    doc.nodes[parent].unrounded_layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
             width: MAX_TAFFY_MAGNITUDE,
             height: MAX_TAFFY_MAGNITUDE,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
     // child.location itself is exactly at the saturation boundary — trigger the gate
     // (the former containment check axis unit gate). Since it's the same value as parent.size, it's
     // exactly "contained" at the boundary by `<=`.
-    doc.nodes[child].unrounded_layout = TaffyLayout {
+    doc.nodes[child].unrounded_layout = BoxLayout {
         order: 1,
         location: Point {
             x: MAX_TAFFY_MAGNITUDE,
@@ -964,11 +964,11 @@ fn saturated_but_contained_layout_is_not_reset() {
             width: 0.0,
             height: 0.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1022,23 +1022,23 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
     let parent = doc.append_element(Some(0), "div", None::<&str>);
     let child = doc.append_element(Some(parent), "div", None::<&str>);
 
-    doc.nodes[parent].unrounded_layout = TaffyLayout {
+    doc.nodes[parent].unrounded_layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
             width: 100.0,
             height: 100.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
     // y-axis: child.location.y is exactly at the saturation boundary and is actually not contained by the
     // parent (height=100.0). x-axis: legitimate overflow due to normal negative margin (`-30`) — not
     // saturated. After this change, neither axis is a reason for reset.
-    doc.nodes[child].unrounded_layout = TaffyLayout {
+    doc.nodes[child].unrounded_layout = BoxLayout {
         order: 1,
         location: Point {
             x: -30.0,
@@ -1048,11 +1048,11 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
             width: 10.0,
             height: 10.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1114,24 +1114,24 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
     // This is to ensure that parent.size.height is also exactly at the saturation boundary, so that
     // child.location.y (also at the saturation boundary) fits perfectly there (`<=`, exactly at the
     // boundary). The width is a normal value (the x-axis is not saturated, so it's irrelevant).
-    doc.nodes[parent].unrounded_layout = TaffyLayout {
+    doc.nodes[parent].unrounded_layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
             width: 100.0,
             height: MAX_TAFFY_MAGNITUDE,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
     // x-axis: legitimate negative margin (`-30`), not saturated — this axis should be unconditionally treated
     // as OK. y-axis: exactly at the saturation boundary, but since it's equal to parent.size.height, it
     // actually fits (not a true violation) — this also shows that "saturated" alone is not a reason for a
     // reset.
-    doc.nodes[child].unrounded_layout = TaffyLayout {
+    doc.nodes[child].unrounded_layout = BoxLayout {
         order: 1,
         location: Point {
             x: -30.0,
@@ -1141,11 +1141,11 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
             width: 10.0,
             height: 10.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1181,33 +1181,33 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
 
     // parent.size is saturated — assuming an unrelated cause (e.g., percentage compounding that occurred in
     // another subtree), this saturation is unrelated to this child.
-    doc.nodes[parent].unrounded_layout = TaffyLayout {
+    doc.nodes[parent].unrounded_layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
             width: MAX_TAFFY_MAGNITUDE,
             height: MAX_TAFFY_MAGNITUDE,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
     // The child itself is completely normal — neither location nor size is saturated, a legitimate overflow
     // due to a normal negative margin (same form as `legitimate_negative_margin_overflow_is_not_reset`).
-    doc.nodes[child].unrounded_layout = TaffyLayout {
+    doc.nodes[child].unrounded_layout = BoxLayout {
         order: 1,
         location: Point { x: -30.0, y: 0.0 },
         size: Size {
             width: 200.0,
             height: 200.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1269,7 +1269,7 @@ fn nested_percentage_wide_child_chain_is_not_reset() {
     for (i, l) in layouts.iter().enumerate() {
         assert_ne!(
             *l,
-            TaffyLayout::with_order(l.order),
+            BoxLayout::with_order(l.order),
             "nest depth {} was reset to a zero layout — a legitimate \
                  \"child is 2x parent at every depth\" declaration must \
                  survive `enforce_layout_invariants` even past the depth \
@@ -1302,24 +1302,24 @@ fn saturated_negative_location_is_not_reset() {
     let parent = doc.append_element(Some(0), "div", None::<&str>);
     let child = doc.append_element(Some(parent), "div", None::<&str>);
 
-    doc.nodes[parent].unrounded_layout = TaffyLayout {
+    doc.nodes[parent].unrounded_layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
             width: 100.0,
             height: 100.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
     // child.location.x is exactly on the **negative** side of the saturation boundary — parent.size is
     // a normal, unsaturated value (100.0). Since the old implementation (`>= 0.0 && <= parent.size`) was
     // identically false for negative values, this fixture would
     // always be reset in the old implementation (no negative number satisfies `>= 0.0`).
-    doc.nodes[child].unrounded_layout = TaffyLayout {
+    doc.nodes[child].unrounded_layout = BoxLayout {
         order: 1,
         location: Point {
             x: -MAX_TAFFY_MAGNITUDE,
@@ -1329,11 +1329,11 @@ fn saturated_negative_location_is_not_reset() {
             width: 10.0,
             height: 10.0,
         },
-        scrollable_overflow_rect: Rect::ZERO,
+        scrollable_overflow_rect: Edges::ZERO,
         scrollbar_size: Size::zero(),
-        border: Rect::zero(),
-        padding: Rect::zero(),
-        margin: Rect::zero(),
+        border: Edges::zero(),
+        padding: Edges::zero(),
+        margin: Edges::zero(),
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1427,7 +1427,7 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
     // failure, which doesn't happen while this test passes.
     assert_ne!(
         child_layout,
-        TaffyLayout::with_order(child_layout.order),
+        BoxLayout::with_order(child_layout.order),
         "a single extreme-but-spec-valid negative percentage margin (no nesting needed) must not reset the subtree merely because it saturates the location — the parent here is not saturated, so a 'skip when parent is also saturated' rule would not have fixed this: {child_layout:?}"
     );
     // cov:ignore: panic-message literal only executed on assertion
@@ -1463,7 +1463,7 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
 /// pins that the fix actually closes the gap through the real
 /// cascade+taffy pipeline, not just at the unit level
 /// (`saturated_but_contained_layout_is_not_reset` and
-/// `saturated_child_outside_parent_is_not_reset` build `TaffyLayout`
+/// `saturated_child_outside_parent_is_not_reset` build `BoxLayout`
 /// literals directly and don't exercise cascade/taffy at all).
 #[test]
 fn saturated_positive_margin_percentage_child_is_not_reset() {
@@ -1508,7 +1508,7 @@ fn saturated_positive_margin_percentage_child_is_not_reset() {
     // failure, which doesn't happen while this test passes.
     assert_ne!(
         child_layout,
-        TaffyLayout::with_order(child_layout.order),
+        BoxLayout::with_order(child_layout.order),
         "a single extreme-but-spec-valid positive percentage margin (no nesting needed) must not reset the subtree merely because it saturates the location — this fix extends the negative-side unconditional-accept treatment symmetrically to this positive case: {child_layout:?}"
     );
     // cov:ignore: panic-message literal only executed on assertion
@@ -1557,7 +1557,7 @@ fn deep_nested_negative_percentage_margin_saturating_location_is_not_reset() {
         // failure, which doesn't happen while this test passes.
         assert_ne!(
             *l,
-            TaffyLayout::with_order(l.order),
+            BoxLayout::with_order(l.order),
             "nest depth {} was reset to a zero layout — a legitimate \
                  \"child sits exactly one containing-block-width to the \
                  left of its parent at every depth\" declaration must \
@@ -1863,12 +1863,12 @@ fn an_element_of_an_ifc_subtree_is_not_zeroed_for_a_narrow_content_box() {
     let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(Some(html), "body", None::<&str>);
     let inner = doc.append_element(Some(body), "span", None::<&str>);
-    let mut layout = TaffyLayout::with_order(0);
+    let mut layout = BoxLayout::with_order(0);
     layout.size = Size {
         width: 10.0,
         height: 10.0,
     };
-    layout.padding = Rect {
+    layout.padding = Edges {
         left: 30.0,
         right: 30.0,
         top: 0.0,

@@ -2,7 +2,8 @@ use super::*;
 use crate::layout::test_support::bridged_style;
 use crate::taffy_impl::content_limits::ContentLimits;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::{Dimension, LengthPercentageAuto, Size};
+use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
+use taffy::{Dimension, LengthPercentageAuto};
 
 #[test]
 fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
@@ -51,11 +52,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             table,
             ContentLimits {
-                min: Size {
+                min: StyleSize {
                     width: Dimension::min_content(),
                     height: Dimension::fit_content(),
                 },
-                max: Size {
+                max: StyleSize {
                     width: Dimension::max_content(),
                     height: Dimension::min_content(),
                 },
@@ -64,11 +65,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             caption,
             ContentLimits {
-                min: Size {
+                min: StyleSize {
                     width: Dimension::max_content(),
                     height: Dimension::min_content(),
                 },
-                max: Size {
+                max: StyleSize {
                     width: Dimension::min_content(),
                     height: Dimension::max_content(),
                 },
@@ -77,11 +78,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             cell,
             ContentLimits {
-                min: Size {
+                min: StyleSize {
                     width: Dimension::fit_content(),
                     height: Dimension::max_content(),
                 },
-                max: Size {
+                max: StyleSize {
                     width: Dimension::fit_content_px(17.0),
                     height: Dimension::fit_content(),
                 },
@@ -90,11 +91,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             canvas,
             ContentLimits {
-                min: Size {
+                min: StyleSize {
                     width: Dimension::min_content(),
                     height: Dimension::max_content(),
                 },
-                max: Size {
+                max: StyleSize {
                     width: Dimension::fit_content(),
                     height: Dimension::fit_content_px(13.0),
                 },
@@ -107,12 +108,12 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         let style = &bridged_style(&mut doc, &cascade, node);
         assert_eq!(
             style.min_size,
-            Size::<LengthPercentageAuto>::auto(),
+            StyleSize::<LengthPercentageAuto>::auto(),
             "Taffy min_size for node {node}"
         );
         assert_eq!(
             style.max_size,
-            Size::<LengthPercentageAuto>::auto(),
+            StyleSize::<LengthPercentageAuto>::auto(),
             "Taffy max_size for node {node}"
         );
     }

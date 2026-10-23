@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_layout_geometry::Edges;
 
 use raikiri_style::{build_rule_tree, cascade};
 
@@ -515,7 +516,7 @@ fn clip_of(style: &str, border: f32, padding: f32) -> Option<PaintClip> {
     let mut doc = Document::new();
     let node = doc.append_element(Some(doc.root_index()), "div", Some(style));
     doc.mark_in_document_flags();
-    doc.nodes[node].unrounded_layout.padding = taffy::Rect {
+    doc.nodes[node].unrounded_layout.padding = Edges {
         left: padding,
         right: padding,
         top: padding,
@@ -648,7 +649,7 @@ fn a_replaced_element_clips_every_hidden_axis_from_its_content_box() {
     );
     doc.mark_in_document_flags();
     for node in [hidden, outset] {
-        doc.nodes[node].unrounded_layout.padding = taffy::Rect {
+        doc.nodes[node].unrounded_layout.padding = Edges {
             left: 3.0,
             right: 3.0,
             top: 3.0,
@@ -687,7 +688,7 @@ fn a_scroll_container_applies_only_an_inward_clip_margin() {
     );
     doc.mark_in_document_flags();
     for node in [inward, outward, border_box_value] {
-        doc.nodes[node].unrounded_layout.padding = taffy::Rect {
+        doc.nodes[node].unrounded_layout.padding = Edges {
             left: 3.0,
             right: 3.0,
             top: 3.0,

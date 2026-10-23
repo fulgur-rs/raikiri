@@ -6,6 +6,7 @@
 
 use super::page::{page_content_insets, page_margins, used_computed_length_percentage_or_auto};
 use crate::Document;
+use raikiri_layout_geometry::Edges;
 use raikiri_style::property::{BoxSizing, Direction, DisplayValue, WritingMode};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect, PaintTransform};
@@ -97,9 +98,8 @@ pub fn root_box(
             }
         };
         let border_box = PaintRect::new(x, y, layout.size.width, layout.size.height);
-        let insets = |edges: taffy::Rect<f32>| {
-            PaintInsets::new(edges.top, edges.right, edges.bottom, edges.left)
-        };
+        let insets =
+            |edges: Edges<f32>| PaintInsets::new(edges.top, edges.right, edges.bottom, edges.left);
         return Some(RootBox {
             node: NodeId(root as u64),
             border_box,

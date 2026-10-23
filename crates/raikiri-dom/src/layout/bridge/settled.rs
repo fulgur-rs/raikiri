@@ -324,7 +324,7 @@ fn has_only_fixed_rows(
     };
     let implicit = !values.grid_auto_rows.is_empty() && values.grid_auto_rows.iter().all(fixed);
     let mut items = doc
-        .child_ids(taffy::NodeId::from(grid))
+        .child_ids(protocol::NodeId::from(grid))
         .map(usize::from)
         .filter(|&child| {
             doc.nodes[child].taffy_display() != taffy::Display::None

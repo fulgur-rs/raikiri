@@ -1,5 +1,6 @@
 use super::super::bridge::*;
 use super::*;
+use raikiri_layout_geometry::Size;
 use raikiri_layout_style::StyleFlags;
 use raikiri_style::property::DisplayValue;
 use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
@@ -142,10 +143,10 @@ pub(in crate::layout) fn size_containment(
     doc: &Document,
     idx: usize,
     cv: &ComputedValues,
-) -> taffy::Size<bool> {
+) -> Size<bool> {
     use raikiri_style::property::Contain;
 
-    let none = taffy::Size {
+    let none = Size {
         width: false,
         height: false,
     };
@@ -164,7 +165,7 @@ pub(in crate::layout) fn size_containment(
         return none;
     }
     if cv.contain.contains(Contain::SIZE) {
-        return taffy::Size {
+        return Size {
             width: true,
             height: true,
         };
@@ -173,7 +174,7 @@ pub(in crate::layout) fn size_containment(
         return none;
     }
     let vertical = crate::taffy_impl::used_writing_mode(doc, idx).is_vertical();
-    taffy::Size {
+    Size {
         width: !vertical,
         height: vertical,
     }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::context::LayoutSession;
+use crate::layout::protocol;
 use taffy::TraversePartialTree;
 
 #[test]
@@ -22,8 +23,8 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
 
     doc.mark_in_document_flags();
 
-    let body_id = taffy::NodeId::from(body);
-    let tmpl_id = taffy::NodeId::from(tmpl);
+    let body_id = protocol::NodeId::from(body);
+    let tmpl_id = protocol::NodeId::from(tmpl);
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let session = LayoutSession::bridged(&mut doc, &session_cascade);
 
@@ -33,7 +34,7 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
         1,
         "body has template as its one filtered child"
     );
-    let body_children: Vec<taffy::NodeId> =
+    let body_children: Vec<protocol::NodeId> =
         <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, body_id).collect();
     assert_eq!(body_children, vec![tmpl_id]);
 
@@ -43,9 +44,9 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
         1,
         "template real children stay in the taffy layout tree"
     );
-    let tmpl_children: Vec<taffy::NodeId> =
+    let tmpl_children: Vec<protocol::NodeId> =
         <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, tmpl_id).collect();
-    assert_eq!(tmpl_children, vec![taffy::NodeId::from(inner)]);
+    assert_eq!(tmpl_children, vec![protocol::NodeId::from(inner)]);
     drop(session);
 
     // The contents fragment subtree appears in no reachable child list.
@@ -68,7 +69,7 @@ fn a_flex_container_drops_a_white_space_only_child() {
     doc.set_display(parent, raikiri_style::property::DisplayValue::Flex);
     doc.mark_in_document_flags();
 
-    let parent_id = taffy::NodeId::from(parent);
+    let parent_id = protocol::NodeId::from(parent);
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let session = LayoutSession::bridged(&mut doc, &session_cascade);
     assert_eq!(
@@ -120,8 +121,8 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
     }
 
     // (b) The body has only one child (<p>) in the taffy layout tree.
-    let body_taffy = taffy::NodeId::from(body);
-    let p_taffy = taffy::NodeId::from(p);
+    let body_taffy = protocol::NodeId::from(body);
+    let p_taffy = protocol::NodeId::from(p);
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let session = LayoutSession::bridged(&mut doc, &session_cascade);
     assert_eq!(
@@ -129,7 +130,7 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
         1,
         "body's taffy child_count must be 1 (only <p>), Comment/PI filtered"
     );
-    let kids: Vec<taffy::NodeId> =
+    let kids: Vec<protocol::NodeId> =
         <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, body_taffy).collect();
     assert_eq!(kids, vec![p_taffy]);
 
@@ -155,8 +156,8 @@ fn document_child_indexing_matches_filtered_flat_tree_order() {
     let last = doc.append_element(Some(parent), "section", None::<&str>);
     doc.mark_in_document_flags();
 
-    let parent_id = taffy::NodeId::from(parent);
-    let expected = [first, nested_first, nested_second, last].map(taffy::NodeId::from);
+    let parent_id = protocol::NodeId::from(parent);
+    let expected = [first, nested_first, nested_second, last].map(protocol::NodeId::from);
     let children: Vec<_> = <Document as TraversePartialTree>::child_ids(&doc, parent_id).collect();
 
     assert_eq!(children, expected);

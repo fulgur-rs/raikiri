@@ -1,5 +1,9 @@
 use super::*;
+use crate::layout::protocol::{
+    self, AvailableSpace, LayoutInput, LayoutOutput, RequestedAxis, RunMode, SizingMode,
+};
 use crate::node::arena::BoxKey;
+use raikiri_layout_geometry::{Line, Size};
 use std::cell::Cell;
 use taffy::{Dimension, FlexboxItemStyle};
 
@@ -56,25 +60,25 @@ fn scoped_override_production_invalidates_a_b_a_cache_and_late_outer_store() {
     let (mut doc, cascade, child, _) = fixture();
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
-    let id = taffy::NodeId::from(child);
-    let input = taffy::LayoutInput {
-        run_mode: taffy::RunMode::ComputeSize,
-        sizing_mode: taffy::SizingMode::InherentSize,
-        axis: taffy::RequestedAxis::Both,
-        known_dimensions: taffy::Size::NONE,
-        known_dimensions_are_definite: taffy::Size {
+    let id = protocol::NodeId::from(child);
+    let input = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
             width: false,
             height: false,
         },
-        parent_size: taffy::Size::NONE,
-        available_space: taffy::Size {
-            width: taffy::AvailableSpace::MaxContent,
-            height: taffy::AvailableSpace::MaxContent,
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: taffy::Line::FALSE,
+        vertical_margins_are_collapsible: Line::FALSE,
     };
     tree.with_cache_frame(child, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &input).is_some());
         let a = tree.layout_cache_context.epoch();
         let mut b = a;
@@ -83,17 +87,17 @@ fn scoped_override_production_invalidates_a_b_a_cache_and_late_outer_store() {
             assert!(b > a);
             assert!(tree.cache_get(id, &input).is_none());
             tree.with_cache_frame(child, ViewContext::default(), |tree| {
-                tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+                tree.cache_store(id, &input, LayoutOutput::HIDDEN);
                 assert!(tree.cache_get(id, &input).is_some());
             });
         });
         assert!(tree.layout_cache_context.epoch() > b);
         assert!(tree.cache_get(id, &input).is_none());
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &input).is_none());
     });
     tree.with_cache_frame(child, ViewContext::default(), |tree| {
-        tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN);
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &input).is_some());
     });
 }

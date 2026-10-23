@@ -503,25 +503,22 @@ pub(crate) fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 /// caller is [`LayoutSession::store_unrounded_layout`], which passes the
 /// operation's warning buffer because Taffy's `set_unrounded_layout`
 /// signature cannot receive a diagnostic observer.
-pub(crate) fn sanitize_taffy_layout(
-    layout: &TaffyLayout,
-    diag: &mut Vec<LayoutWarn>,
-) -> TaffyLayout {
+pub(crate) fn sanitize_taffy_layout(layout: &BoxLayout, diag: &mut Vec<LayoutWarn>) -> BoxLayout {
     fn size(s: Size<f32>, site: &'static str, diag: &mut Vec<LayoutWarn>) -> Size<f32> {
         Size {
             width: sanitize_taffy(s.width, site, diag),
             height: sanitize_taffy(s.height, site, diag),
         }
     }
-    fn rect(r: Rect<f32>, site: &'static str, diag: &mut Vec<LayoutWarn>) -> Rect<f32> {
-        Rect {
+    fn rect(r: Edges<f32>, site: &'static str, diag: &mut Vec<LayoutWarn>) -> Edges<f32> {
+        Edges {
             left: sanitize_taffy(r.left, site, diag),
             right: sanitize_taffy(r.right, site, diag),
             top: sanitize_taffy(r.top, site, diag),
             bottom: sanitize_taffy(r.bottom, site, diag),
         }
     }
-    TaffyLayout {
+    BoxLayout {
         order: layout.order,
         location: Point {
             x: sanitize_taffy(layout.location.x, "layout.location", diag),
@@ -548,7 +545,7 @@ impl LayoutSession<'_> {
     /// placements store whole layouts through this one path. Later passes
     /// that shift or scale an already stored layout in place (page breaking,
     /// out-of-flow placement, table cell offsets) write the field directly.
-    pub(crate) fn store_unrounded_layout(&mut self, idx: usize, layout: &TaffyLayout) {
+    pub(crate) fn store_unrounded_layout(&mut self, idx: usize, layout: &BoxLayout) {
         let sanitized = sanitize_taffy_layout(layout, &mut self.context.layout_warnings);
         self.nodes[idx].unrounded_layout = sanitized;
         // The rows an anonymous table wraps are DOM children of its parent,
@@ -704,7 +701,7 @@ fn zero_layout_subtree(document: &mut LayoutSession<'_>, root_idx: usize) {
     let mut stack = vec![root_idx];
     while let Some(idx) = stack.pop() {
         let order = document.nodes[idx].unrounded_layout.order;
-        document.nodes[idx].unrounded_layout = TaffyLayout::with_order(order);
+        document.nodes[idx].unrounded_layout = BoxLayout::with_order(order);
         let child_count = document.nodes[idx].children.len();
         for i in 0..child_count {
             let child_idx = document.nodes[idx].children[i];

@@ -7,6 +7,7 @@ use clamp_warnings::{report_non_finite_rest, report_non_finite_sizes};
 use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 use settled::Settled;
+use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> is style input
 
 mod clamp_warnings;
 mod settled;
@@ -430,7 +431,7 @@ fn apply_computed_to_style_in_session_inner(
             // Taffy never lays out a contents element whose children it
             // lifts into their container; zero its layout so it adds
             // nothing to its descendants' positions.
-            doc.nodes[idx].unrounded_layout = taffy::Layout::default();
+            doc.nodes[idx].unrounded_layout = BoxLayout::default();
             doc.nodes[idx].multicol = None;
             doc.nodes[idx].column_span_all = false;
             doc.nodes[idx].multicol_auto_width = true;
@@ -985,8 +986,8 @@ fn lays_out_without_columns(display: DisplayValue) -> bool {
 pub(super) fn taffy_border_widths(
     border: &raikiri_style::property::Sides<raikiri_style::ComputedBorder>,
     diag: &mut Vec<LayoutWarn>,
-) -> Rect<LengthPercentage> {
-    Rect {
+) -> StyleRect<LengthPercentage> {
+    StyleRect {
         top: computed_length_to_taffy_length_percentage(border.top.width(), diag),
         right: computed_length_to_taffy_length_percentage(border.right.width(), diag),
         bottom: computed_length_to_taffy_length_percentage(border.bottom.width(), diag),
