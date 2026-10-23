@@ -20,6 +20,7 @@ fn frame(
         container_view: None,
         child_views: HashMap::default(),
         placed: Vec::new(),
+        own_axes: None,
     }
 }
 

@@ -111,6 +111,22 @@ fn container_laid_out_as<'a>(
         .then(|| &cascade.computed[parent])
 }
 
+/// Whether the cross axis of the flex container `parent`, whose computed
+/// values are `flex`, runs from top to bottom: the main axis of a row is the
+/// inline axis of the container's writing mode and that of a column its block
+/// axis, and a vertical writing mode turns both.
+fn flex_cross_axis_is_vertical(
+    cascade: &CascadeResult,
+    parent: usize,
+    flex: &ComputedValues,
+) -> bool {
+    let row = matches!(
+        flex.flex_direction,
+        FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+    );
+    row != lays_out_vertically(cascade, parent)
+}
+
 /// Whether the width `cv` of an item is a sizing keyword although the
 /// container's alignment would stretch it.
 ///
@@ -124,7 +140,8 @@ fn container_laid_out_as<'a>(
 ///
 /// The width of a replaced box is `auto` to Taffy ([`replaced_keyword_width`]),
 /// so the item is aligned at the start whenever the keyword would be stretched.
-/// This applies to an item of a flex container with a vertical main axis.
+/// This applies to an item of a flex container whose cross axis is the
+/// physical width.
 pub(super) fn is_stretched_by_keyword_width(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -137,22 +154,20 @@ pub(super) fn is_stretched_by_keyword_width(
     if !keyword_width || lays_out_vertically(cascade, idx) {
         return false;
     }
-    let Some(container) = doc
-        .taffy_parent_of(idx)
-        .and_then(|parent| container_laid_out_as(doc, cascade, parent, taffy::Display::Flex))
-    else {
+    let Some((parent, container)) = doc.taffy_parent_of(idx).and_then(|parent| {
+        container_laid_out_as(doc, cascade, parent, taffy::Display::Flex)
+            .map(|container| (parent, container))
+    }) else {
         return false;
     };
-    matches!(
-        container.flex_direction,
-        FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
-    ) && matches!(
-        settled[idx]
-            .align_self
-            .unwrap_or_else(|| container_alignment(container.align_items))
-            .keyword,
-        AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
-    )
+    !flex_cross_axis_is_vertical(cascade, parent, container)
+        && matches!(
+            settled[idx]
+                .align_self
+                .unwrap_or_else(|| container_alignment(container.align_items))
+                .keyword,
+            AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+        )
 }
 
 /// Whether grid item `idx` is a replaced box with a keyword width that its
@@ -180,7 +195,7 @@ pub(super) fn is_stretched_by_replaced_keyword_width_in_grid(
 
 /// The alignment that replaces a stretch of item `idx` when its `height` is
 /// `min-content`, `max-content` or `fit-content` and it sits in a grid or in a
-/// row flex container.
+/// flex container whose cross axis is the physical height.
 ///
 /// Only an `auto` height is stretched (CSS Box Alignment 3 §6.1), but the cascade
 /// computes the keyword to `auto` ([`ComputedValues::height_keyword`] is what is
@@ -212,10 +227,7 @@ pub(super) fn unstretched_keyword_height_alignment(
             (grid, TaffyAlignItems::START)
         } else {
             let flex = container_laid_out_as(doc, cascade, parent, taffy::Display::Flex)?;
-            if !matches!(
-                flex.flex_direction,
-                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
-            ) {
+            if !flex_cross_axis_is_vertical(cascade, parent, flex) {
                 return None;
             }
             (flex, TaffyAlignItems::FLEX_START)

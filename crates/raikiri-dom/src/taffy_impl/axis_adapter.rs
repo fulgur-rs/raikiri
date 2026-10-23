@@ -50,14 +50,20 @@
 //! coordinates.
 
 use taffy::util::ResolveOrZero;
-use taffy::{CoreStyle, Layout, LayoutInput, LayoutOutput, NodeId, Rect, Size};
+use taffy::{
+    CoreStyle, Layout, LayoutInput, LayoutOutput, NodeId, Rect, Size, TraversePartialTree,
+};
 
 use super::resolve_calc;
 use super::transposed_axes::{
     OverflowFrame, padding_box, physical_layout, swap, transpose_child_output_to_vertical,
     transpose_inputs, transpose_output_to_physical,
 };
-use super::vertical_block::TransposedBlock;
+use super::vertical_block::{
+    TransposedBlock, containing_inline_size, prepare_frame_views, resolve_child_padding,
+    with_transposed_frame,
+};
+use super::vertical_oof::used_writing_mode;
 use crate::layout::context::LayoutSession;
 
 /// The conversions for one container whose layout axes are the axes of a
@@ -203,6 +209,47 @@ impl AxisAdapter {
 }
 
 impl LayoutSession<'_> {
+    /// Lay out the flex or grid container `node_id` on the axes of its own
+    /// writing mode, which `algorithm` runs on.
+    ///
+    /// `inputs` and the returned output are on physical axes. `algorithm` is
+    /// given the inputs on the layout axes, with the frame of the container
+    /// on the stack: taffy reads the container's style and its children's
+    /// through the container's writing mode, and every child is dispatched
+    /// through [`Self::compute_adapted_child`]. Out-of-flow children and the
+    /// intrinsic limits of the items are left to the caller, outside the
+    /// frame.
+    pub(super) fn compute_on_own_axes(
+        &mut self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+        algorithm: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+    ) -> LayoutOutput {
+        let idx = usize::from(node_id);
+        let containing_inline_size = containing_inline_size(self, idx, &inputs);
+        let children: Vec<_> = self.child_ids(node_id).map(usize::from).collect();
+        let mut frame =
+            TransposedBlock::on_own_axes(self, idx, children, used_writing_mode(self, idx));
+        // The adapter reads the direction and the borders of the container
+        // from the views of the frame.
+        prepare_frame_views(self, &mut frame);
+        let adapter = AxisAdapter::for_frame(&frame);
+        let inputs = adapter.container_inputs(inputs);
+        frame.resolve_container_padding(containing_inline_size);
+        let (output, frame) = with_transposed_frame(self, frame, |tree| {
+            if let Some(width) = inputs.known_dimensions.width {
+                resolve_child_padding(tree, width);
+            }
+            algorithm(tree, node_id, inputs)
+        });
+        let output = adapter.container_output(output);
+        for child in frame.into_placed() {
+            let layout = &mut self.nodes[child].unrounded_layout;
+            *layout = adapter.placed_layout(layout, output.size.width);
+        }
+        output
+    }
+
     /// Lay out `node_id`, a child of the container whose frame is on top of
     /// the stack, with taffy's inputs and output on the container's layout
     /// axes; `None` when that frame does not hold the child.
@@ -210,20 +257,21 @@ impl LayoutSession<'_> {
     /// The child is dispatched on its physical axes and measures itself on
     /// those of its own writing mode, as the container's frame is set aside
     /// while it runs. The block direction is the frame's.
-    /// `flows_horizontally` tells whether the child lays its content out on
-    /// horizontal axes: such a child is given the inline size of the
-    /// container as the basis for its percentage padding, while one that lays
-    /// out on vertical axes finds it in the parent size it is given.
+    /// `pads_on_physical_axes` tells whether taffy resolves the child's
+    /// percentage padding against the physical width of its parent, as it
+    /// does for a child that lays its content out on horizontal axes: such a
+    /// child is given the inline size of the container as the basis, while one
+    /// that lays out on vertical axes finds it in the parent size it is given.
     pub(super) fn compute_adapted_child(
         &mut self,
         node_id: NodeId,
         inputs: LayoutInput,
-        flows_horizontally: bool,
+        pads_on_physical_axes: bool,
     ) -> Option<LayoutOutput> {
         self.with_frame_set_aside(usize::from(node_id), |tree, frame| {
             let adapter = AxisAdapter::for_frame(frame);
             let child = adapter.child_inputs(inputs);
-            let padding_basis = child.padding_basis.filter(|_| flows_horizontally);
+            let padding_basis = child.padding_basis.filter(|_| pads_on_physical_axes);
             // Borders are lengths, so they resolve without a basis.
             let border = tree
                 .physical_style(usize::from(node_id))

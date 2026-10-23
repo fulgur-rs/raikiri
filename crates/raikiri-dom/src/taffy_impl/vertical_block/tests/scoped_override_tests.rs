@@ -19,6 +19,7 @@ fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> Transp
         container_view: None,
         child_views: HashMap::default(),
         placed: Vec::new(),
+        own_axes: None,
     }
 }
 

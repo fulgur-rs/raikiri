@@ -8735,8 +8735,8 @@ fn ch_constraints_keep_the_empty_font_collection_fallback() {
 #[test]
 fn logical_ch_minimums_follow_the_bridge_axis() {
     // A box on vertical axes takes its logical block minimum as its minimum
-    // width only; a vertical flex container, on horizontal axes, keeps it on
-    // its minimum height as well, unless a physical `min-height` is set.
+    // width only, unless a physical `min-height` is set. A flex container is
+    // such a box in a vertical writing mode.
     for (css, expected_height) in [
         ("writing-mode:vertical-rl;min-block-size:4ch", 0.0),
         (
@@ -8745,7 +8745,7 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
         ),
         (
             "display:flex;writing-mode:vertical-rl;min-block-size:4ch",
-            64.0,
+            0.0,
         ),
     ] {
         let css = format!("font-size:16px;width:16px;height:16px;{css}");

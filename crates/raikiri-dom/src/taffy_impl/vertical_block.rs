@@ -40,6 +40,7 @@ use super::transposed_axes::{
 };
 use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
+use crate::node::FormattingContext;
 use raikiri_style::property::{DisplayValue, WritingMode};
 
 /// A vertical block container being laid out on transposed axes.
@@ -55,6 +56,11 @@ pub(crate) struct TransposedBlock {
     child_views: HashMap<usize, crate::layout::style_views::frozen::FrozenViewInput>,
     /// The children taffy stored a transposed layout for.
     placed: Vec<usize>,
+    /// The writing mode whose axes the views of the frame are read on, when
+    /// the container is a flex or grid container laid out on the axes of its
+    /// own writing mode. A block container reads them with the physical axes
+    /// swapped instead.
+    own_axes: Option<WritingMode>,
 }
 
 impl TransposedBlock {
@@ -76,6 +82,27 @@ impl TransposedBlock {
             container_view: None,
             child_views: HashMap::default(),
             placed: Vec::new(),
+            own_axes: None,
+        }
+    }
+
+    /// A frame for the flex or grid container `container` and its `children`,
+    /// whose views are read on the axes of the writing mode `writing_mode`
+    /// of the container. The block axis runs from right to left in
+    /// `vertical-rl` and `sideways-rl`.
+    pub(super) fn on_own_axes(
+        tree: &mut LayoutSession<'_>,
+        container: usize,
+        children: Vec<usize>,
+        writing_mode: WritingMode,
+    ) -> Self {
+        let right_to_left = matches!(
+            writing_mode,
+            WritingMode::VerticalRl | WritingMode::SidewaysRl
+        );
+        Self {
+            own_axes: Some(writing_mode),
+            ..Self::new(tree, container, children, right_to_left)
         }
     }
 
@@ -100,6 +127,30 @@ impl TransposedBlock {
         self.container_view.as_ref().map_or(Rect::ZERO, |input| {
             input.view().border().resolve_or_zero(None, resolve_calc)
         })
+    }
+
+    /// Whether the container is laid out on the axes of its own writing mode:
+    /// a flex or grid container, as opposed to a block container.
+    pub(super) fn is_on_own_axes(&self) -> bool {
+        self.own_axes.is_some()
+    }
+
+    /// Resolve the percentages of the padding of the container against
+    /// `basis`, the inline size of its containing block. The views of the
+    /// frame must be prepared.
+    pub(super) fn resolve_container_padding(&mut self, basis: Option<f32>) {
+        if let Some(container) = &mut self.container_view {
+            container.resolve_padding(basis);
+        }
+    }
+
+    /// The children taffy stored a layout for on the axes of the frame, each
+    /// once.
+    pub(super) fn into_placed(mut self) -> Vec<usize> {
+        // Taffy may store a child's layout more than once; the last one stands.
+        self.placed.sort_unstable();
+        self.placed.dedup();
+        self.placed
     }
 
     fn has_child(&self, idx: usize) -> bool {
@@ -170,18 +221,25 @@ impl TransposedStyleIndex {
     }
 }
 
-fn prepare_frame_views(tree: &mut LayoutSession<'_>, block: &mut TransposedBlock) {
+pub(super) fn prepare_frame_views(tree: &mut LayoutSession<'_>, block: &mut TransposedBlock) {
     use crate::layout::style_views::frozen::FrozenViewInput;
     use raikiri_layout_style::{BridgeProjection, ClaimsPolicy, ViewContext};
     if block.container_view.is_some() {
         return;
     }
-    let context = ViewContext {
-        bridge_projection: BridgeProjection::BlockTranspose {
-            right_to_left: block.right_to_left,
+    let context = match block.own_axes {
+        Some(layout_wm) => ViewContext {
+            layout_wm,
+            claims_policy: ClaimsPolicy::Positioning,
+            ..ViewContext::default()
         },
-        claims_policy: ClaimsPolicy::Positioning,
-        ..ViewContext::default()
+        None => ViewContext {
+            bridge_projection: BridgeProjection::BlockTranspose {
+                right_to_left: block.right_to_left,
+            },
+            claims_policy: ClaimsPolicy::Positioning,
+            ..ViewContext::default()
+        },
     };
     block.container_view = Some(FrozenViewInput::capture(tree, block.container, context));
     for &child in &block.children {
@@ -426,6 +484,17 @@ impl LayoutSession<'_> {
         block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
     ) -> Option<LayoutOutput> {
         let idx = usize::from(node_id);
+        // An item of a flex or grid container shares no block formatting
+        // context with it, and its sizes are not those of a block child.
+        if self
+            .context
+            .transposed_blocks
+            .last()
+            .is_some_and(|block| block.has_child(idx) && block.is_on_own_axes())
+        {
+            let resolves_padding_on_physical_axes = resolves_padding_on_physical_axes(self, idx);
+            return self.compute_adapted_child(node_id, inputs, resolves_padding_on_physical_axes);
+        }
         self.with_frame_set_aside(idx, |tree, block| {
             let right_to_left = block_right_to_left(tree, block.container).unwrap_or(false);
             let share_context =
@@ -438,7 +507,7 @@ impl LayoutSession<'_> {
             );
             // A vertical child transposes its own inputs and needs no help
             // with its percentage padding.
-            let physical_padding_basis = flows_horizontally(tree, idx)
+            let physical_padding_basis = resolves_padding_on_physical_axes(tree, idx)
                 .then_some(inputs.parent_size.height)
                 .flatten();
             let child_block_ctx = if share_context { block_ctx } else { None };
@@ -471,10 +540,27 @@ pub(crate) fn has_same_vertical_block_parent(tree: &LayoutSession<'_>, idx: usiz
 }
 
 /// Whether the child `idx` of a vertical container lays its own content out
-/// on horizontal axes: a horizontal box, or a flex or grid container, whose
-/// algorithms place items on physical axes.
+/// on horizontal axes: a horizontal box, or a grid container, whose
+/// algorithm places items on physical axes.
 fn flows_horizontally(tree: &Document, idx: usize) -> bool {
-    !is_vertical(tree, idx) || tree.nodes[idx].formatting_context.is_flex_or_grid()
+    !is_vertical(tree, idx) || tree.nodes[idx].formatting_context == FormattingContext::Grid
+}
+
+/// Whether taffy resolves the percentage padding of the child `idx` of a
+/// vertical container against the physical width of its parent: a child that
+/// flows horizontally, or a box without children that is measured as a leaf
+/// whatever its writing mode.
+fn resolves_padding_on_physical_axes(tree: &Document, idx: usize) -> bool {
+    let node = &tree.nodes[idx];
+    flows_horizontally(tree, idx)
+        || (node.children.is_empty()
+            && !matches!(
+                node.formatting_context,
+                FormattingContext::Flex
+                    | FormattingContext::Grid
+                    | FormattingContext::Table
+                    | FormattingContext::None
+            ))
 }
 
 /// `inputs` for the child `idx` of a vertical container, already on
@@ -557,7 +643,7 @@ fn stretched_width(style: &impl CoreStyle, space: f32, inputs: LayoutInput) -> f
 /// and bottom padding against the container's height, which is its
 /// physical width here, while percentages of padding refer to the inline
 /// size of the containing block on every side (CSS Writing Modes 4 §7.1).
-fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
+pub(super) fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
     let block = tree
         .context
         .transposed_blocks
@@ -599,6 +685,28 @@ pub(super) fn with_transposed_frame<R>(
     }
 }
 
+/// The inline size of the containing block of the vertical container `idx`,
+/// which the percentages of its padding refer to (CSS Writing Modes 4 §7.1):
+/// the physical height of a vertical parent, the physical width of a
+/// horizontal one. `inputs` are on physical axes.
+pub(super) fn containing_inline_size(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+) -> Option<f32> {
+    // A flex item is measured without a main-axis parent size; the flex
+    // container's definite size is recorded for its percentage edges.
+    let flex_basis = super::flex_item_percent_basis(tree, idx).unwrap_or(Size::NONE);
+    if tree
+        .taffy_parent_of(idx)
+        .is_some_and(|parent| is_vertical(tree, parent))
+    {
+        inputs.parent_size.height.or(flex_basis.height)
+    } else {
+        inputs.parent_size.width.or(flex_basis.width)
+    }
+}
+
 /// Lay out the vertical block container `node_id`, whose block axis runs
 /// from right to left when `right_to_left` is set, on transposed axes.
 ///
@@ -611,26 +719,13 @@ pub(super) fn compute_vertical_block(
     block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    // Percentages of the container's padding refer to the inline size of
-    // its containing block (CSS Writing Modes 4 §7.1): the physical height
-    // of a vertical parent, the physical width of a horizontal one.
-    let parent = tree.taffy_parent_of(idx);
-    // A flex item is measured without a main-axis parent size; the flex
-    // container's definite size is recorded for its percentage edges.
-    let flex_basis = super::flex_item_percent_basis(tree, idx).unwrap_or(Size::NONE);
-    let containing_inline_size = if parent.is_some_and(|parent| is_vertical(tree, parent)) {
-        inputs.parent_size.height.or(flex_basis.height)
-    } else {
-        inputs.parent_size.width.or(flex_basis.width)
-    };
+    let containing_inline_size = containing_inline_size(tree, idx, &inputs);
     let children: Vec<_> = tree.child_ids(node_id).map(usize::from).collect();
     let shares_parent_context = block_ctx.is_some();
     let mut inputs = transpose_inputs(inputs, shares_parent_context);
     let mut block = TransposedBlock::new(tree, idx, children, right_to_left);
     prepare_frame_views(tree, &mut block);
-    if let Some(container) = &mut block.container_view {
-        container.resolve_padding(containing_inline_size);
-    }
+    block.resolve_container_padding(containing_inline_size);
     block.block_space = inputs.known_dimensions.height.map(|height| {
         let (padding, border) = {
             let view = block
@@ -644,7 +739,7 @@ pub(super) fn compute_vertical_block(
         let border = border.resolve_or_zero(None, resolve_calc);
         (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
     });
-    let (output, mut block) = with_transposed_frame(tree, block, |tree| {
+    let (output, block) = with_transposed_frame(tree, block, |tree| {
         if inputs.known_dimensions.width.is_none() && shrinks_to_fit(tree, idx, &inputs) {
             inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));
         }
@@ -656,10 +751,7 @@ pub(super) fn compute_vertical_block(
     let reverse_extent = output.size.height;
     let output =
         transpose_output_to_physical(output, right_to_left, reverse_extent, shares_parent_context);
-    // Taffy may store a child's layout more than once; the last one stands.
-    block.placed.sort_unstable();
-    block.placed.dedup();
-    for child in block.placed {
+    for child in block.into_placed() {
         let layout = &mut tree.nodes[child].unrounded_layout;
         *layout = physical_layout(layout, output.size.width, right_to_left);
     }

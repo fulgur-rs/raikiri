@@ -2287,16 +2287,15 @@ impl SpecifiedValues {
             || (generates_box
                 && (matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
                     || matches!(column_width, crate::resolve::ComputedColumnWidth::Px(width) if width > 0.0)));
-        // Flex, grid and table boxes and multicol flows place their children
-        // on horizontal axes. A boxless element's children are placed in its
+        // Grid and table boxes and multicol flows place their children on
+        // horizontal axes. A flex container lays them out on the axes of its
+        // own writing mode. A boxless element's children are placed in its
         // parent's box instead.
         let horizontal_children = if generates_box {
             multicol_flow
                 || matches!(
                     display,
-                    DisplayValue::Flex
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::Grid
+                    DisplayValue::Grid
                         | DisplayValue::InlineGrid
                         | DisplayValue::Table
                         | DisplayValue::InlineTable

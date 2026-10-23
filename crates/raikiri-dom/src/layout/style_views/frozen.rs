@@ -98,6 +98,7 @@ impl FrozenViewInput {
             input.context.percent_basis = PercentBasis::Taffy;
         }
         input.context.bridge_projection = context.bridge_projection;
+        input.context.layout_wm = context.layout_wm;
         tree.retain_snapshot_calcs(owners);
         input
     }

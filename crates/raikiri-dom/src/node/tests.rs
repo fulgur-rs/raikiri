@@ -121,10 +121,10 @@ mod ifc_geometry_tests {
     }
 
     #[test]
-    fn vertical_flex_container_keeps_the_horizontal_logical_size_mapping() {
-        // Flex layout places items on physical axes together with the
-        // horizontally mapped logical margins, so `block-size` stays the
-        // physical height of a vertical flex container.
+    fn vertical_flex_container_maps_logical_sizes_onto_its_own_axes() {
+        // A flex container lays out on the axes of its own writing mode, so
+        // `block-size` is the physical width of a vertical flex container and
+        // `inline-size` its physical height.
         let layout = |size_css: &str| {
             let css = format!("display:flex;writing-mode:vertical-lr;{size_css}");
             let (mut doc, cascade, root) = ahem_paragraph("", &css);
@@ -133,9 +133,12 @@ mod ifc_geometry_tests {
             crate::layout::test_support::absolute_rect(&doc, root)
         };
 
-        let logical = layout("block-size:100px");
-        assert_eq!(logical, layout("height:100px"));
-        assert_eq!(logical.3, 100.0);
+        let block = layout("block-size:100px");
+        assert_eq!(block, layout("width:100px"));
+        assert_eq!(block.2, 100.0);
+        let inline = layout("inline-size:100px");
+        assert_eq!(inline, layout("height:100px"));
+        assert_eq!(inline.3, 100.0);
     }
 
     #[test]

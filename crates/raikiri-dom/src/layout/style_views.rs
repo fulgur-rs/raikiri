@@ -440,8 +440,12 @@ impl LayoutSession<'_> {
         }
         self.assert_style_queries_allowed();
         let transposed = match role {
-            ReadRole::BlockContainer => self.transposed_container_view(idx),
-            ReadRole::BlockItem | ReadRole::Oof => self.transposed_child_view(idx),
+            ReadRole::BlockContainer | ReadRole::FlexContainer | ReadRole::GridContainer => {
+                self.transposed_container_view(idx)
+            }
+            ReadRole::BlockItem | ReadRole::FlexItem | ReadRole::GridItem | ReadRole::Oof => {
+                self.transposed_child_view(idx)
+            }
             _ => None,
         };
         if let Some(view) = transposed {
