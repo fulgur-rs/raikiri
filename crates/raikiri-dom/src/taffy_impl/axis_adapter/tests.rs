@@ -266,7 +266,14 @@ fn a_container_output_swaps_the_sizes_for_either_block_direction() {
                 height: 180.0
             }
         );
-        assert_eq!(output.baselines, Baselines::NONE);
+        // The baselines are offsets along the block axis on both sides.
+        assert_eq!(
+            output.baselines,
+            Baselines {
+                first: Some(1.0),
+                last: Some(2.0)
+            }
+        );
     }
 }
 
@@ -599,7 +606,15 @@ fn a_child_output_enters_the_layout_axes_and_leaves_them_unchanged() {
             static_position(20.0, 50.0, AxisStaticEdge::Center),
         ));
 
-        let on_layout_axes = adapter.child_output(physical.clone(), Rect::ZERO);
+        let on_layout_axes = adapter.child_output(physical.clone(), Rect::ZERO, 3.5);
+        // The algorithm aligns the child by the baseline it is given.
+        assert_eq!(
+            on_layout_axes.baselines,
+            Baselines {
+                first: Some(3.5),
+                last: None
+            }
+        );
 
         assert_eq!(
             on_layout_axes.size,
@@ -845,7 +860,7 @@ fn a_child_overflow_goes_to_the_layout_axes_and_back_through_the_placed_layout()
     };
     for (right_to_left, inline_reversed) in [(false, false), (true, false), (true, true)] {
         let adapter = bordered_adapter(right_to_left, inline_reversed);
-        let on_layout_axes = adapter.child_output(physical.clone(), border);
+        let on_layout_axes = adapter.child_output(physical.clone(), border, 0.0);
         // The padding box is 26 wide, along the block axis, and 1 high,
         // along the inline axis.
         let expected = match (right_to_left, inline_reversed) {

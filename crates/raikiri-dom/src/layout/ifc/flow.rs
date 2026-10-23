@@ -325,19 +325,30 @@ pub(crate) fn truncate_lines(
 }
 
 pub(crate) fn first_baseline(lines: &IfcLines) -> Option<f32> {
-    lines
-        .lines
-        .first()
-        .map(|line| line.block_offset() + line.baseline(BaselineKind::Alphabetic))
+    first_baseline_of(lines, BaselineKind::Alphabetic)
 }
 
 pub(crate) fn last_baseline(lines: &IfcLines) -> Option<f32> {
+    last_baseline_of(lines, BaselineKind::Alphabetic)
+}
+
+/// The `kind` baseline of the first line, measured along the block axis from
+/// the block-start edge of the content box.
+pub(crate) fn first_baseline_of(lines: &IfcLines, kind: BaselineKind) -> Option<f32> {
+    lines
+        .lines
+        .first()
+        .map(|line| line.block_offset() + line.baseline(kind))
+}
+
+/// The `kind` baseline of the last line, measured like [`first_baseline_of`].
+pub(crate) fn last_baseline_of(lines: &IfcLines, kind: BaselineKind) -> Option<f32> {
     // `Line::baseline` is relative to the line; the block offset places it in
     // the paragraph.
     lines
         .lines
         .last()
-        .map(|line| line.block_offset() + line.baseline(BaselineKind::Alphabetic))
+        .map(|line| line.block_offset() + line.baseline(kind))
 }
 
 /// Break every ifc root again at a page-specific width: the content width of

@@ -555,6 +555,11 @@ pub struct Node {
     pub(crate) used_writing_mode: WritingMode,
     /// Whether any inclusive ancestor declares a vertical writing mode.
     pub(crate) under_vertical_writing: bool,
+    /// Whether the dominant baseline of this box's lines is the central
+    /// baseline: a typographic vertical writing mode whose text is not set
+    /// sideways (CSS Writing Modes 4 §4.2). Every other box uses the
+    /// alphabetic baseline. Recomputed by the style bridge.
+    pub(crate) central_baseline: bool,
     /// Whether this node has an authored logical `min-block-size` constraint
     /// paired with `break-inside: avoid`. The used value is bridged
     /// to Taffy's physical min-size fields, while fragmentation needs the
@@ -774,6 +779,7 @@ impl Node {
             authored_writing_mode: None,
             used_writing_mode: WritingMode::HorizontalTb,
             under_vertical_writing: false,
+            central_baseline: false,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
             contains_absolute_boxes: false,

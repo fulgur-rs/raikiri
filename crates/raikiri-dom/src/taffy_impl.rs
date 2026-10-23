@@ -1078,14 +1078,31 @@ impl LayoutSession<'_> {
                 compute_cached_layout(tree, node_id, inputs, compute)
             })
         };
+        // The baselines of a box laid out on vertical axes are offsets along
+        // its block axis from its block-start border edge, which is not what
+        // the lookups below read.
+        let vertical = on_vertical_axes(self, idx);
         // An ifc root measured its baseline from the lines of this very call;
         // the stored lines may be those of another width.
-        if !self.nodes[usize::from(node_id)]
-            .flags
-            .contains(NodeFlags::IS_IFC_ROOT)
+        if !vertical
+            && !self.nodes[usize::from(node_id)]
+                .flags
+                .contains(NodeFlags::IS_IFC_ROOT)
             && let Some(baseline) = first_inline_baseline(self, usize::from(node_id))
         {
             output.baselines.first = Some(baseline);
+        }
+        // A vertical ifc root with block children but no line of its own
+        // takes the baseline of the first of them that has one.
+        if vertical
+            && inputs.run_mode == RunMode::PerformLayout
+            && output.baselines.first.is_none()
+            && self.nodes[usize::from(node_id)]
+                .flags
+                .contains(NodeFlags::IS_IFC_ROOT)
+        {
+            output.baselines.first =
+                vertical_first_baseline(self, usize::from(node_id), output.size.width);
         }
         // A scroll container exports baselines clamped to its border box
         // (CSS Box Alignment 3 §9.1), so content scrolled out of view does
@@ -1093,14 +1110,21 @@ impl LayoutSession<'_> {
         // spec: https://www.w3.org/TR/css-align-3/#baseline-export
         let scrolls = is_scroll_container(self.physical_style(idx).overflow());
         if scrolls && inputs.run_mode == RunMode::PerformLayout {
-            clamp_baselines(&mut output.baselines, output.size.height);
+            let block_size = if vertical {
+                output.size.width
+            } else {
+                output.size.height
+            };
+            clamp_baselines(&mut output.baselines, block_size);
         }
         // A flex container keeps the first baseline of its performed layout,
         // which a list item's outside marker aligns with. A grid container's
         // baseline is found from the first-row items its detailed grid
         // information records instead, because Taffy's grid baseline does
-        // not measure an item's own first line.
+        // not measure an item's own first line. A marker sits on the line of
+        // a horizontal container only.
         if inputs.run_mode == RunMode::PerformLayout
+            && !vertical
             && self.nodes[usize::from(node_id)].formatting_context == FormattingContext::Flex
         {
             self.nodes[usize::from(node_id)].flex_first_baseline = output.baselines.first;
@@ -1410,7 +1434,15 @@ fn compute_ifc_root(
         output.size.width = measured_size.width + measure.insets.left + measure.insets.right;
     }
     output.top_margin = leading_margin;
-    output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
+    // The baseline of a horizontal root lies below the top edge of its border
+    // box; that of a vertical root, along the block axis from the edge its
+    // block starts at.
+    let baseline_inset = if on_vertical_axes(tree, idx) {
+        block_start_inset
+    } else {
+        top_inset
+    };
+    output.baselines.first = content_baseline.map(|baseline| baseline + baseline_inset);
     output.oof_candidates.append(&mut nested_oof_candidates);
     if inputs.run_mode == RunMode::PerformLayout {
         crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size, &mut output);
@@ -2048,12 +2080,14 @@ fn measure_ifc_root(
         }
     };
     // An inline-block's baseline is that of its last line box (CSS 2.1
-    // 10.8.1); every other box exposes its first.
+    // 10.8.1); every other box exposes its first. The lines of a vertical
+    // root sit on the central baseline unless its text is set sideways.
+    let kind = dominant_baseline(tree, idx);
     let baseline =
         if tree.nodes[idx].display() == raikiri_style::property::DisplayValue::InlineBlock {
-            flow::last_baseline(&lines)
+            flow::last_baseline_of(&lines, kind)
         } else {
-            flow::first_baseline(&lines)
+            flow::first_baseline_of(&lines, kind)
         };
     let leading_margin = if measure.top_margin_escapes {
         lines
@@ -2137,6 +2171,77 @@ fn clamp_baselines(baselines: &mut taffy::Baselines, height: f32) {
     for baseline in [&mut baselines.first, &mut baselines.last] {
         *baseline = baseline.map(|offset| offset.max(0.0).min(height));
     }
+}
+
+/// Whether the box `idx` is laid out on vertical axes: it has a vertical
+/// writing mode, and is neither a table nor inside a multicol container, which
+/// run vertical writing on horizontal axes.
+fn on_vertical_axes(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].used_writing_mode.is_vertical() && block_right_to_left(tree, idx).is_some()
+}
+
+/// The baseline the lines of the box `idx` are measured against: the central
+/// baseline in a vertical writing mode whose text is not set sideways, and the
+/// alphabetic one otherwise (CSS Writing Modes 4 §4.2). A box laid out on
+/// horizontal axes has the alphabetic baseline whatever its writing mode.
+fn dominant_baseline(tree: &LayoutSession<'_>, idx: usize) -> shodo::geometry::BaselineKind {
+    if tree.nodes[idx].central_baseline && on_vertical_axes(tree, idx) {
+        shodo::geometry::BaselineKind::Central
+    } else {
+        shodo::geometry::BaselineKind::Alphabetic
+    }
+}
+
+/// The first baseline of the vertical box `idx`, whose border box is `width`
+/// wide, found in the layouts stored for its descendants: that of the first
+/// in-flow child with the same block direction that has one. It is an offset
+/// along the block axis from the block-start border edge of `idx`.
+///
+/// A child that is an ifc root has the baseline of its first line, measured
+/// from the block-start edge of its content box; any other child has the one
+/// of its own children.
+fn vertical_first_baseline(doc: &LayoutSession<'_>, idx: usize, width: f32) -> Option<f32> {
+    let right_to_left = block_right_to_left(doc, idx)?;
+    for &child in &doc.nodes[idx].children {
+        let node = &doc.nodes[child];
+        if !node.is_in_document()
+            || node.is_display_none()
+            || node.kind() == raikiri_traits::NodeKind::Text
+            || node.taffy_position() == TaffyPosition::Absolute
+            || taffy::BlockItemStyle::float(&doc.physical_style(child)) != taffy::Float::None
+            || block_right_to_left(doc, child) != Some(right_to_left)
+        {
+            continue;
+        }
+        let layout = &node.unrounded_layout;
+        let line = node
+            .ifc
+            .as_ref()
+            .filter(|_| node.flags.contains(NodeFlags::IS_IFC_ROOT))
+            .and_then(|root| root.lines.as_ref())
+            .and_then(|lines| {
+                crate::layout::ifc::flow::first_baseline_of(lines, dominant_baseline(doc, child))
+            })
+            .map(|baseline| {
+                let (padding, border) = if right_to_left {
+                    (layout.padding.right, layout.border.right)
+                } else {
+                    (layout.padding.left, layout.border.left)
+                };
+                padding + border + baseline
+            });
+        if let Some(baseline) =
+            line.or_else(|| vertical_first_baseline(doc, child, layout.size.width))
+        {
+            let start = if right_to_left {
+                width - (layout.location.x + layout.size.width)
+            } else {
+                layout.location.x
+            };
+            return Some(start + baseline);
+        }
+    }
+    None
 }
 
 /// Return the first baseline of an inline-block from the descendant layout

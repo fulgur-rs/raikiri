@@ -637,6 +637,16 @@ fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
             || node
                 .authored_writing_mode
                 .is_some_and(WritingMode::is_vertical);
+        // Text in a typographic vertical mode sits on the central baseline
+        // unless it is set sideways; the sideways modes are horizontal
+        // typographic modes.
+        node.central_baseline = matches!(
+            node.used_writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        ) && cascade
+            .computed
+            .get(id)
+            .is_some_and(|cv| cv.text_orientation != TextOrientation::Sideways);
         pending.extend(node.children.iter().copied());
     }
 }
