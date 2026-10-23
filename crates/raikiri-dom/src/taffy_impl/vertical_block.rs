@@ -29,9 +29,9 @@ use crate::layout::protocol::{
     AvailableSpace, Baselines, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
     SizingMode,
 };
+use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::{Edges, Line, Size};
-use taffy::util::{MaybeResolve, ResolveOrZero};
-use taffy::{BlockItemStyle, BoxSizing, CoreStyle, Position as TaffyPosition, TraversePartialTree};
+use taffy::{BlockItemStyle, BoxSizing, CoreStyle, Position as TaffyPosition};
 
 use super::block_flow::compute_block_flow;
 use super::resolve_calc;

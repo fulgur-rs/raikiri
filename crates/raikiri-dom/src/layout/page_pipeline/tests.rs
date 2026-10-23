@@ -3802,8 +3802,7 @@ fn first_baseline_includes_the_top_padding_and_border() {
     // Ask the root for its layout output again: the baselines are part of it.
     let output = {
         let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
-        taffy::LayoutPartialTree::compute_child_layout(
-            &mut session,
+        session.compute_child_layout(
             NodeId::from(root),
             LayoutInput {
                 run_mode: RunMode::PerformLayout,
@@ -3869,8 +3868,7 @@ fn an_inline_block_baseline_follows_the_last_ifc_line() {
     lay_out(&mut doc, &cascade);
     let output = {
         let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
-        taffy::LayoutPartialTree::compute_child_layout(
-            &mut session,
+        session.compute_child_layout(
             NodeId::from(wrapper),
             LayoutInput {
                 run_mode: RunMode::PerformLayout,

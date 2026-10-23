@@ -97,6 +97,14 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, usize, usize) {
     (result, COUNT.load(Relaxed), BYTES.load(Relaxed))
 }
 
+// cov:ignore: benchmark-only validation, exercised by the release smoke run.
+fn check(dom: &raikiri::Document, shape: Shape, items: usize) {
+    workloads::check_layout(dom, shape.text_items(items));
+    if matches!(shape, Shape::FlexOof | Shape::GridOof) {
+        workloads::check_oof_layout(dom, items - shape.text_items(items));
+    }
+}
+
 // cov:ignore: benchmark entry point, exercised by the release smoke run.
 fn main() {
     // Each call joins its layout workers before measurement ends. Run this
@@ -106,14 +114,20 @@ fn main() {
     page.width = 640.0;
     page.height = 480.0;
     println!("workload,items,sample,nodes,allocations,allocated_bytes");
-    for shape in [Shape::Flex, Shape::Grid, Shape::Inline] {
+    for shape in [
+        Shape::Flex,
+        Shape::Grid,
+        Shape::Inline,
+        Shape::FlexOof,
+        Shape::GridOof,
+    ] {
         for items in [100, 1000] {
             let html = workloads::document(shape, items);
             // Warm shared caches and verify the requested formatting context.
             let (mut probe, cascade) = workloads::single_page_input(&html, &resources);
             workloads::check_shape(&probe.dom, &cascade, shape);
             raikiri_dom::layout_single_page(&mut probe.dom, &cascade, page).expect("probe layout");
-            workloads::check_layout(&probe.dom, items);
+            check(&probe.dom, shape, items);
             drop((probe, cascade));
             for sample in 1..=5 {
                 let (mut document, cascade) = workloads::single_page_input(&html, &resources);
@@ -125,7 +139,7 @@ fn main() {
                     allocations > 0 && bytes > 0,
                     "allocator instrumentation is active"
                 );
-                workloads::check_layout(&document.dom, items);
+                check(&document.dom, shape, items);
                 println!(
                     "{},{items},{sample},{},{allocations},{bytes}",
                     shape.name(),

@@ -7,10 +7,5 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[dependencies]
-# The names below are re-exports of Taffy types for now, so this crate needs
-# Taffy until they are defined here.
-taffy = { workspace = true }
-
 [lints]
 workspace = true

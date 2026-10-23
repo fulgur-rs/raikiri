@@ -304,7 +304,6 @@ fn has_only_fixed_rows(
     grid: usize,
     values: &ComputedValues,
 ) -> bool {
-    use taffy::TraversePartialTree;
     let fixed = |size: &ComputedGridTrackSize| {
         use ComputedGridTrackBreadth::Px;
         matches!(

@@ -1,12 +1,12 @@
 use super::*;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, Baselines,
-    CollapsibleMarginSet, OofCandidate, OofPositioningArea, RequestedAxis, RunMode, SizingMode,
+    CollapsibleMarginSet, OofCandidate, OofPosition, OofPositioningArea, RequestedAxis, RunMode,
+    SizingMode, StaticAlignSafety,
 };
 use crate::layout::style_views::tests::fixture_with_styles;
 use crate::taffy_impl::vertical_block::{TransposedBlock, with_transposed_frame};
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
-use taffy::{AlignmentSafety, Position};
 
 /// The two block directions: `vertical-lr` and `vertical-rl`.
 const BLOCK_DIRECTIONS: [bool; 2] = [false, true];
@@ -25,7 +25,7 @@ fn static_position(start: f32, end: f32, keyword: AxisStaticEdge) -> AxisStaticP
         area: Line { start, end },
         align: AxisStaticAlign {
             keyword,
-            safety: AlignmentSafety::Default,
+            safety: StaticAlignSafety::Default,
             fallback: AxisStaticEdge::Start,
         },
     }
@@ -35,7 +35,7 @@ fn candidate(x: AxisStaticPosition, y: AxisStaticPosition) -> OofCandidate {
     OofCandidate {
         node: NodeId::from(1usize),
         order: 0,
-        position: Position::Absolute,
+        position: OofPosition::Absolute,
         static_position: Point { x, y },
     }
 }
@@ -377,7 +377,7 @@ fn an_output_for_a_single_axis_request_has_nothing_to_mirror() {
             }
         );
         assert_eq!(output.oof_positioning_area, None);
-        assert!(output.oof_candidates.as_slice().is_empty());
+        assert!(output.oof_candidates.to_vec().is_empty());
     }
 }
 
@@ -427,13 +427,13 @@ fn a_container_output_keeps_no_margins_to_collapse() {
 #[test]
 fn static_positions_follow_their_axes_and_only_the_block_axis_is_mirrored() {
     let left_to_right = AxisAdapter::new(false).container_output(output_on_layout_axes());
-    let placed = left_to_right.oof_candidates.as_slice()[0].static_position;
+    let placed = left_to_right.oof_candidates.to_vec()[0].static_position;
     // The block axis becomes the physical x axis, the inline axis the y axis.
     assert_eq!(placed.x, static_position(10.0, 30.0, AxisStaticEdge::End));
     assert_eq!(placed.y, static_position(2.0, 4.0, AxisStaticEdge::Start));
 
     let right_to_left = AxisAdapter::new(true).container_output(output_on_layout_axes());
-    let placed = right_to_left.oof_candidates.as_slice()[0].static_position;
+    let placed = right_to_left.oof_candidates.to_vec()[0].static_position;
     // 120 - 30 and 120 - 10; the end alignment becomes a start alignment
     // and the start fallback an end fallback.
     assert_eq!(
@@ -445,7 +445,7 @@ fn static_positions_follow_their_axes_and_only_the_block_axis_is_mirrored() {
             },
             align: AxisStaticAlign {
                 keyword: AxisStaticEdge::Start,
-                safety: AlignmentSafety::Default,
+                safety: StaticAlignSafety::Default,
                 fallback: AxisStaticEdge::End,
             },
         }
@@ -456,19 +456,21 @@ fn static_positions_follow_their_axes_and_only_the_block_axis_is_mirrored() {
 #[test]
 fn mirroring_a_static_position_keeps_center_alignment_and_safety() {
     let mut output = output_on_layout_axes();
-    output.oof_candidates.as_mut_slice()[0].static_position.y = AxisStaticPosition {
-        area: Line {
-            start: 10.0,
-            end: 40.0,
-        },
-        align: AxisStaticAlign {
-            keyword: AxisStaticEdge::Center,
-            safety: AlignmentSafety::Safe,
-            fallback: AxisStaticEdge::End,
-        },
-    };
+    output.oof_candidates.for_each_mut(|candidate| {
+        candidate.static_position.y = AxisStaticPosition {
+            area: Line {
+                start: 10.0,
+                end: 40.0,
+            },
+            align: AxisStaticAlign {
+                keyword: AxisStaticEdge::Center,
+                safety: StaticAlignSafety::Safe,
+                fallback: AxisStaticEdge::End,
+            },
+        }
+    });
     let output = AxisAdapter::new(true).container_output(output);
-    let placed = output.oof_candidates.as_slice()[0].static_position.x;
+    let placed = output.oof_candidates.to_vec()[0].static_position.x;
     assert_eq!(
         placed.area,
         Line {
@@ -477,7 +479,7 @@ fn mirroring_a_static_position_keeps_center_alignment_and_safety() {
         }
     );
     assert_eq!(placed.align.keyword, AxisStaticEdge::Center);
-    assert_eq!(placed.align.safety, AlignmentSafety::Safe);
+    assert_eq!(placed.align.safety, StaticAlignSafety::Safe);
     assert_eq!(placed.align.fallback, AxisStaticEdge::Start);
 }
 
@@ -652,8 +654,8 @@ fn a_child_output_enters_the_layout_axes_and_leaves_them_unchanged() {
         );
         assert_eq!(back.oof_positioning_area, physical.oof_positioning_area);
         assert_eq!(
-            back.oof_candidates.as_slice(),
-            physical.oof_candidates.as_slice()
+            back.oof_candidates.to_vec(),
+            physical.oof_candidates.to_vec()
         );
     }
 }
@@ -789,7 +791,7 @@ fn a_child_output_is_mirrored_for_the_direction_of_the_frame() {
                 .expect("the frame holds the child")
         });
         // The child's physical block axis is the layout y axis.
-        output.oof_candidates.as_slice()[0].static_position.y
+        output.oof_candidates.to_vec()[0].static_position.y
     };
 
     let left_to_right = static_block_position(false);

@@ -695,15 +695,15 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
             height: 10.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
         padding: Edges {
             left: 20.0,
             right: 20.0,
             top: 0.0,
             bottom: 0.0,
         },
-        margin: Edges::zero(),
+        margin: Edges::ZERO,
     };
     // The child itself has no layout problems (if we ignore the broken parent) — this is material to confirm
     // that the entire subtree is zeroed out.
@@ -715,10 +715,10 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
             height: 2.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
@@ -773,10 +773,10 @@ fn saturated_child_outside_parent_is_not_reset() {
             height: 100.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
     // child.location.x is exactly at the saturation boundary (MAX_TAFFY_MAGNITUDE) — it cannot possibly fit
     // within the parent (100x100). After this change, this "clearly not fitting" fact is no longer a reason
@@ -792,10 +792,10 @@ fn saturated_child_outside_parent_is_not_reset() {
             height: 10.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
     // grandchild is a normal value based on child — material to confirm that it has not been reset throughout
     // the subtree (see assert below).
@@ -807,10 +807,10 @@ fn saturated_child_outside_parent_is_not_reset() {
             height: 1.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -946,10 +946,10 @@ fn saturated_but_contained_layout_is_not_reset() {
             height: MAX_TAFFY_MAGNITUDE,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
     // child.location itself is exactly at the saturation boundary — trigger the gate
     // (the former containment check axis unit gate). Since it's the same value as parent.size, it's
@@ -965,10 +965,10 @@ fn saturated_but_contained_layout_is_not_reset() {
             height: 0.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1030,10 +1030,10 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
             height: 100.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
     // y-axis: child.location.y is exactly at the saturation boundary and is actually not contained by the
     // parent (height=100.0). x-axis: legitimate overflow due to normal negative margin (`-30`) — not
@@ -1049,10 +1049,10 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
             height: 10.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1122,10 +1122,10 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
             height: MAX_TAFFY_MAGNITUDE,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
     // x-axis: legitimate negative margin (`-30`), not saturated — this axis should be unconditionally treated
     // as OK. y-axis: exactly at the saturation boundary, but since it's equal to parent.size.height, it
@@ -1142,10 +1142,10 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
             height: 10.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1189,10 +1189,10 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
             height: MAX_TAFFY_MAGNITUDE,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
     // The child itself is completely normal — neither location nor size is saturated, a legitimate overflow
     // due to a normal negative margin (same form as `legitimate_negative_margin_overflow_is_not_reset`).
@@ -1204,10 +1204,10 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
             height: 200.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
@@ -1310,10 +1310,10 @@ fn saturated_negative_location_is_not_reset() {
             height: 100.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
     // child.location.x is exactly on the **negative** side of the saturation boundary — parent.size is
     // a normal, unsaturated value (100.0). Since the old implementation (`>= 0.0 && <= parent.size`) was
@@ -1330,10 +1330,10 @@ fn saturated_negative_location_is_not_reset() {
             height: 10.0,
         },
         scrollable_overflow_rect: Edges::ZERO,
-        scrollbar_size: Size::zero(),
-        border: Edges::zero(),
-        padding: Edges::zero(),
-        margin: Edges::zero(),
+        scrollbar_size: Size::ZERO,
+        border: Edges::ZERO,
+        padding: Edges::ZERO,
+        margin: Edges::ZERO,
     };
 
     let child_before = doc.nodes[child].unrounded_layout;

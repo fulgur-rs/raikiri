@@ -183,7 +183,7 @@ fn is_plain_block_with_display(
         || BlockItemStyle::clear(&style) != taffy::Clear::None
         || block_margins(&style).is_none()
         || style.overflow()
-            != (Point {
+            != (StylePoint {
                 x: TaffyOverflow::Visible,
                 y: TaffyOverflow::Visible,
             })

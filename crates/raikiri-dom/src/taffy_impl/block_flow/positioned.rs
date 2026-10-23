@@ -3,10 +3,11 @@
 use super::sizing::Metrics;
 use crate::LayoutStyle as Style;
 use crate::layout::protocol::{
-    AxisStaticPosition, NodeId, OofCandidate, OofCandidates, OofPositioningArea,
+    AxisStaticPosition, NodeId, OofCandidate, OofCandidates, OofPosition, OofPositioningArea,
 };
+use crate::layout::taffy_adapter::algorithms::static_position_from_alignment;
 use raikiri_layout_geometry::{Line, Point, Size};
-use taffy::{AlignItems, Direction, Position};
+use taffy::{AlignItems, Direction};
 
 /// Record the out-of-flow child `node` of a block container for the
 /// containing block that claims it.
@@ -14,7 +15,7 @@ pub(super) fn push_candidate(
     candidates: &mut OofCandidates,
     node: NodeId,
     order: usize,
-    position: Position,
+    position: OofPosition,
     static_position: Point<AxisStaticPosition>,
 ) {
     candidates.push(OofCandidate {
@@ -57,12 +58,8 @@ pub(crate) fn aligned_static_position(
         .unwrap_or(AlignItems::NORMAL)
         .resolve_self_relative(child.direction, direction, false);
     Point {
-        x: AxisStaticPosition::from_alignment(
-            justify_self,
-            inline_area,
-            direction == Direction::Rtl,
-        ),
-        y: AxisStaticPosition::from_alignment(align_self, block_area, false),
+        x: static_position_from_alignment(justify_self, inline_area, direction == Direction::Rtl),
+        y: static_position_from_alignment(align_self, block_area, false),
     }
 }
 

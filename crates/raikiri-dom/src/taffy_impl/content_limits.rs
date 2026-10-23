@@ -17,15 +17,13 @@ use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustm
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
+use crate::layout::taffy_adapter::{LayoutCache, MaybeResolve, ResolveOrZero};
 use crate::node::FormattingContext;
 use crate::taffy_impl::{fit_content_room, resolve_calc};
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
-use taffy::{
-    BoxSizing, Cache, CoreStyle, Dimension, ExpandedDimension, LengthPercentageAuto, MaybeResolve,
-    ResolveOrZero,
-};
+use taffy::{BoxSizing, CoreStyle, Dimension, ExpandedDimension, LengthPercentageAuto};
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
 /// (`min-content`, `max-content`, `fit-content`, `fit-content(<length-percentage>)`),
@@ -468,7 +466,7 @@ pub(crate) fn with_oof_content_limits<R>(
                     tree.nodes[usize::from(node_id)].cache.clear();
                 }
                 for &idx in &targets {
-                    tree.nodes[idx].cache = Cache::new();
+                    tree.nodes[idx].cache = LayoutCache::new();
                     tree.context.content_limit_probes.push(idx);
                 }
                 let output = dispatch(tree);
@@ -678,7 +676,7 @@ pub(super) fn with_grid_item_content_limits(
     parent_size: Size<Option<f32>>,
     mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
-    let children = super::TaffyChildIter::new_for_session(tree, node_id).collect::<Vec<_>>();
+    let children = tree.child_ids(node_id).collect::<Vec<_>>();
     let has_percentage_limit = children.iter().any(|&child| {
         let idx = usize::from(child);
         let limits = tree.nodes[idx].content_limits;
@@ -705,7 +703,7 @@ pub(super) fn with_grid_item_content_limits(
     let _ = dispatch(tree, node_id, inputs);
     let area_bases = grid_item_area_bases(tree, node_id);
     for &(idx, _) in &saved_caches {
-        tree.nodes[idx].cache = Cache::new();
+        tree.nodes[idx].cache = LayoutCache::new();
     }
 
     let output = with_item_content_limits_for_parent_sizes(
@@ -728,14 +726,14 @@ fn with_item_content_limits_for_parent_sizes(
     mut parent_size_for_item: impl FnMut(usize) -> Size<Option<f32>>,
     mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
-    let has_item_limits = super::TaffyChildIter::new_for_session(tree, node_id).any(|child| {
+    let has_item_limits = tree.child_ids(node_id).any(|child| {
         let idx = usize::from(child);
         applies_to_parent_item(tree, idx, &tree.nodes[idx].content_limits)
     });
     if !has_item_limits {
         return dispatch(tree, node_id, inputs);
     }
-    let children = super::TaffyChildIter::new_for_session(tree, node_id).collect::<Vec<_>>();
+    let children = tree.child_ids(node_id).collect::<Vec<_>>();
 
     scoped(tree, |tree| {
         let mut saved_caches = Vec::with_capacity(children.len());
@@ -836,7 +834,8 @@ fn grid_item_area_bases(
     else {
         return std::collections::HashMap::new();
     };
-    let children = super::TaffyChildIter::new_for_session(tree, node_id)
+    let children = tree
+        .child_ids(node_id)
         .filter(|&child| {
             let node = &tree.nodes[usize::from(child)];
             node.taffy_display() != taffy::Display::None

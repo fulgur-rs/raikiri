@@ -1,6 +1,7 @@
 //! Shared block and inline flow state over public float placement.
 
 use crate::layout::protocol::CollapsibleMarginSet;
+use crate::layout::taffy_adapter::algorithms::place_floated_box;
 use raikiri_layout_geometry::{Point, Size};
 use std::sync::Arc;
 use taffy::{BfcSlot, Clear, ContentSlot, Direction, FloatContext, FloatDirection};
@@ -215,7 +216,8 @@ impl BlockContext<'_> {
         if adjoins_unresolved_strut {
             self.state.adjoining[direction as usize] = true;
         }
-        let absolute = Arc::make_mut(&mut self.owner.floats).place_floated_box(
+        let absolute = place_floated_box(
+            Arc::make_mut(&mut self.owner.floats),
             size,
             self.origin + from,
             self.content_insets,

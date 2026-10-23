@@ -11,9 +11,9 @@ use box_properties::BoxProperties;
 pub(crate) use box_properties::BoxPropertiesRef;
 use raikiri_layout_geometry::{BoxLayout, Size};
 use smol_str::SmolStr;
-use taffy::Cache;
 
 use crate::fragment::{MulticolGroup, MulticolStyle};
+use crate::layout::taffy_adapter::LayoutCache;
 
 use raikiri_style::property::{
     BorderCollapseValue, BreakBetween, BreakInside, CaptionSideValue, DisplayValue, PositionValue,
@@ -631,7 +631,7 @@ pub struct Node {
     /// `parent_of(child) == Some(p)` iff `nodes[p].children.contains(&child)`.
     pub(crate) parent: Option<usize>,
     /// Per-node Taffy layout cache.
-    pub(crate) cache: Cache,
+    pub(crate) cache: LayoutCache,
     /// Shodo paragraph state; set only on nodes flagged [`NodeFlags::IS_IFC_ROOT`].
     pub(crate) ifc: Option<Box<crate::layout::ifc::root::IfcRoot>>,
     /// Taffy layout result, populated by compute_root_layout.
@@ -807,7 +807,7 @@ impl Node {
             grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
-            cache: Cache::new(),
+            cache: LayoutCache::new(),
             ifc: None,
             unrounded_layout: BoxLayout::with_order(0),
             percent_basis_height: None,

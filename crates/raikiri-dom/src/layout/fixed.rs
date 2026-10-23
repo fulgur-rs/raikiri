@@ -12,10 +12,10 @@ use super::box_tree::BoxTree;
 use super::oof_containing_block::select_fixed_containing_block_from_ancestors;
 use super::*;
 use crate::layout::context::LayoutSession;
+use crate::layout::taffy_adapter::MaybeResolve;
 use crate::node::BoxPropertiesRef;
 use raikiri_style::property::WillChange;
 use taffy::CoreStyle;
-use taffy::util::MaybeResolve;
 
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.

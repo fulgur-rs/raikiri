@@ -14,12 +14,16 @@
 //! tracks instead would leave the named grid areas, which taffy keeps out of
 //! reach, on the wrong axes.
 
-use crate::layout::protocol::{NodeId, OofCandidate, OofCandidates, OofPositioningArea};
+use crate::layout::protocol::{NodeId, OofCandidates, OofLayoutResult, OofPositioningArea};
+use crate::layout::taffy_adapter::OofSpan;
+use crate::layout::taffy_adapter::algorithms::{
+    claims_position, compute_oof_layout_for_area, resolve_absolute_grid_area,
+};
 use raikiri_layout_geometry::{Edges, Point, Size};
 use smol_str::SmolStr;
 use taffy::{
     ContainingBlockClaims, DetailedGridInfo, DetailedLayoutInfo, Direction, GridItemStyle,
-    GridPlacement, OofLayoutResult,
+    GridPlacement,
 };
 
 use super::vertical_block::block_right_to_left;
@@ -124,7 +128,8 @@ impl<'a> GridAreas<'a> {
         padding_box: Edges<f32>,
     ) -> Edges<f32> {
         let resolve = |padding_box| {
-            self.info.resolve_absolute_grid_area(
+            resolve_absolute_grid_area(
+                self.info,
                 GridItemStyle::grid_row(style),
                 GridItemStyle::grid_column(style),
                 direction,
@@ -196,7 +201,7 @@ fn is_placed(style: &LayoutStyleView<'_>) -> bool {
 pub(super) fn compute_oof_layout(
     tree: &mut LayoutSession<'_>,
     owner: NodeId,
-    candidates: &[OofCandidate],
+    candidates: OofSpan<'_>,
     area: OofPositioningArea,
     direction: Direction,
     claims: ContainingBlockClaims,
@@ -207,19 +212,18 @@ pub(super) fn compute_oof_layout(
         unclaimed: OofCandidates::new(),
         scrollable_overflow_rect: Edges::ZERO,
     };
-    let mut lay_out = |tree: &mut LayoutSession<'_>, candidates: &[OofCandidate], area| {
+    let mut lay_out = |tree: &mut LayoutSession<'_>, candidates: OofSpan<'_>, area| {
         if candidates.is_empty() {
             return;
         }
-        let mut part = taffy::compute::compute_oof_layout_for_area(
-            tree, owner, candidates, area, direction, claims,
-        );
+        let mut part =
+            compute_oof_layout_for_area(tree, owner, candidates, area, direction, claims);
         result.hoisted.append(&mut part.hoisted);
         result.unclaimed.append(&mut part.unclaimed);
     };
     let mut batch_start = 0;
     for (index, candidate) in candidates.iter().enumerate() {
-        if !claims.for_position(candidate.position) {
+        if !claims_position(claims, candidate.position) {
             continue;
         }
         let grid_area = {
@@ -235,10 +239,10 @@ pub(super) fn compute_oof_layout(
                 areas.positioning_area(&style, direction, area)
             })
         };
-        lay_out(tree, &candidates[batch_start..index], area);
-        lay_out(tree, &candidates[index..=index], grid_area);
+        lay_out(tree, candidates.slice(batch_start..index), area);
+        lay_out(tree, candidates.slice(index..index + 1), grid_area);
         batch_start = index + 1;
     }
-    lay_out(tree, &candidates[batch_start..], area);
+    lay_out(tree, candidates.slice(batch_start..candidates.len()), area);
     result
 }

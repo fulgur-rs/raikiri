@@ -39,23 +39,21 @@ use raikiri_style::property::{
 };
 use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> is style input
 use taffy::style::{CompactLength, Dimension};
-use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
-use taffy::{
-    BlockItemStyle, CoreStyle, ExpandedDimension, LayoutPartialTree, LengthPercentage, Position,
-};
+use taffy::{BlockItemStyle, CoreStyle, ExpandedDimension, LengthPercentage, Position};
 
 use crate::document::Document;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId,
-    OofCandidate, OofCandidates, OofPositioningArea, RequestedAxis, RunMode, SizingMode,
+    OofCandidate, OofCandidates, OofPosition, OofPositioningArea, RequestedAxis, RunMode,
+    SizingMode,
 };
 use crate::layout::style_views::ReadRole;
+use crate::layout::taffy_adapter::{IntoEdges, MaybeResolve, ResolveOrZero};
 use crate::taffy_impl::content_limits::ContentLimits;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
-use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
 mod border_scopes;
@@ -1346,9 +1344,9 @@ fn append_direct_table_oof_candidates(
             continue;
         }
         let position = if doc.nodes[child].position() == &PositionValue::Fixed {
-            Position::Fixed
+            OofPosition::Fixed
         } else {
-            Position::Absolute
+            OofPosition::Absolute
         };
         candidates.push(OofCandidate {
             node: NodeId::from(child),
@@ -1391,7 +1389,7 @@ fn table_part_claimants(
     let boundary = doc.table_parts_boundary(table);
     let mut seen = std::collections::HashSet::new();
     let mut claimants: Vec<usize> = Vec::new();
-    for candidate in candidates {
+    for candidate in candidates.iter() {
         for id in doc
             .ancestors(usize::from(candidate.node))
             .take_while(|&id| id != boundary)
@@ -1399,7 +1397,7 @@ fn table_part_claimants(
             if is_source_table_part(doc, id)
                 && seen.insert(id)
                 && doc
-                    .get_core_container_style(NodeId::from(id))
+                    .query_style(id, ReadRole::CoreContainer)
                     .is_containing_block()
                     != taffy::ContainingBlockClaims::NONE
             {
@@ -1437,7 +1435,7 @@ fn dispatch_table_part_oof(
         };
         let mut inside = OofCandidates::new();
         let mut outside = OofCandidates::new();
-        for &candidate in &pending {
+        for candidate in pending.iter() {
             if doc.is_ancestor_or_self(part, usize::from(candidate.node)) {
                 inside.push(candidate);
             } else {
@@ -1463,12 +1461,8 @@ fn dispatch_table_part_oof(
                 y: rect.location.y - frame.y,
             },
         };
-        let mut result = crate::taffy_impl::layout_container_candidates(
-            doc,
-            NodeId::from(part),
-            inside.as_slice(),
-            area,
-        );
+        let mut result =
+            crate::taffy_impl::layout_container_candidates(doc, NodeId::from(part), &inside, area);
         result.unclaimed.translate(frame);
         pending.append(&mut result.unclaimed);
     }
@@ -4321,6 +4315,7 @@ fn compute_collapsed_lines(
                 .cell(c.node_id)
                 .expect("line cell belongs to border state")
                 .widths
+                .into_edges()
                 .map(|width| resolve_length(width, basis))
         })
         .collect();

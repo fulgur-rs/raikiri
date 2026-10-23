@@ -161,7 +161,7 @@ fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::
     let zero = LengthPercentageAuto::length(0.0);
     let style = style_of(tree, id);
     let margin = style.margin();
-    let visible = Point {
+    let visible = StylePoint {
         x: TaffyOverflow::Visible,
         y: TaffyOverflow::Visible,
     };

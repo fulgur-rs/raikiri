@@ -1,5 +1,4 @@
 use super::*;
-use taffy::CacheTree;
 
 #[test]
 fn old_saved_cache_is_not_restored_into_new_epoch() {

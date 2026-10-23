@@ -35,13 +35,13 @@ fn nested_contents_resume_outer_siblings_and_stay_exhausted() {
     let fourth = child(&mut doc, outer, DisplayValue::Block);
     let last = child(&mut doc, parent, DisplayValue::Block);
     doc.mark_in_document_flags();
-    let mut walk = TaffyChildIter::new(&doc, NodeId::from(parent), false);
+    let mut walk = TaffyChildIter::new(&doc, parent, false);
     for expected in [first, second, third, fourth, last] {
-        assert_eq!(walk.next(), Some(NodeId::from(expected)));
+        assert_eq!(walk.next(), Some(expected));
     }
     assert_eq!(walk.next(), None);
     assert_eq!(walk.next(), None);
-    let mut hidden = TaffyChildIter::new(&doc, NodeId::from(parent), true);
+    let mut hidden = TaffyChildIter::new(&doc, parent, true);
     assert_eq!(hidden.next(), None);
     assert_eq!(hidden.next(), None);
 }
@@ -57,8 +57,6 @@ fn contents_with_ifc_or_root_roles_are_not_flattened() {
     doc.mark_in_document_flags();
     doc.nodes[ifc].flags.insert(NodeFlags::IS_IFC_ROOT);
     doc.nodes[root].flags.insert(NodeFlags::IS_ROOT_ELEMENT);
-    let actual: Vec<_> = TaffyChildIter::new(&doc, NodeId::from(parent), false)
-        .map(usize::from)
-        .collect();
+    let actual: Vec<_> = TaffyChildIter::new(&doc, parent, false).collect();
     assert_eq!(actual, [ifc, root]);
 }

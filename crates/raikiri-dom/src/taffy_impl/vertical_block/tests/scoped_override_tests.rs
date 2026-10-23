@@ -1,10 +1,21 @@
 use super::super::*;
 use crate::layout::style_views::tests::fixture_with_styles;
+use crate::layout::taffy_adapter::IntoEdges;
 use raikiri_layout_geometry::Edges;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and its relatives are style input
 use taffy::{CoreStyle, Dimension, LengthPercentage};
+
+/// The same values on the same sides, as the style vocabulary's rectangle.
+fn style_rect<T>(edges: Edges<T>) -> StyleRect<T> {
+    StyleRect {
+        left: edges.left,
+        right: edges.right,
+        top: edges.top,
+        bottom: edges.bottom,
+    }
+}
 
 /// A document whose child has a fixed size and a padding the frames carry.
 fn fixture() -> (crate::Document, raikiri_style::CascadeResult, usize, usize) {
@@ -45,7 +56,7 @@ fn scoped_override_updates_existing_transposed_snapshots_and_preserves_padding()
     push_transposed_frame(&mut tree, inner);
     let paddings = frame_paddings(&tree, child);
     let zero = LengthPercentage::length(0.0);
-    let unpadded = Edges {
+    let unpadded = StyleRect {
         left: zero,
         right: zero,
         top: zero,
@@ -342,7 +353,10 @@ fn border_scope_transposes_opposite_frames() {
                     .unwrap()
                     .view()
                     .border(),
-                crate::taffy_impl::transposed_axes::transpose_rect(physical, false)
+                style_rect(crate::taffy_impl::transposed_axes::transpose_rect(
+                    physical.into_edges(),
+                    false
+                ))
             );
         },
     );

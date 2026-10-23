@@ -53,10 +53,10 @@
 //! coordinates.
 
 use crate::layout::protocol::{Baselines, LayoutInput, LayoutOutput, NodeId};
+use crate::layout::taffy_adapter::ResolveOrZero;
 use raikiri_layout_geometry::{BoxLayout, Edges, Size};
 use raikiri_style::property::WritingMode;
-use taffy::util::ResolveOrZero;
-use taffy::{CoreStyle, TraversePartialTree};
+use taffy::CoreStyle;
 
 use super::resolve_calc;
 use super::transposed_axes::{

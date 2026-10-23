@@ -1,9 +1,10 @@
 //! Own the inputs captured at a block frame's geometry boundary.
 
 use super::*;
+use crate::layout::taffy_adapter::ResolveOrZero;
 use raikiri_layout_style::{LengthProperty, PercentBasis};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::{CoreStyle, ResolveOrZero};
+use taffy::CoreStyle;
 
 #[derive(Clone, Debug)]
 pub(crate) struct FrozenViewInput {
@@ -111,10 +112,13 @@ impl FrozenViewInput {
         )
     }
     pub(crate) fn resolve_padding(&mut self, basis: Option<f32>) {
-        let padding = self
-            .view()
-            .padding()
-            .resolve_or_zero(basis, crate::taffy_impl::resolve_calc);
+        // The padding is stored as the style view reads it, in the library's
+        // `Rect`, so it is resolved with the library's own trait.
+        let padding = taffy::ResolveOrZero::resolve_or_zero(
+            self.view().padding(),
+            basis,
+            crate::taffy_impl::resolve_calc,
+        );
         self.context.resolved_padding = Some(padding);
     }
 }

@@ -15,11 +15,9 @@
 # Do not raise a number to make a regression pass; use the owned names, or mark
 # a real exception on its line with `// taffy-boundary-lint:ignore: <reason>`.
 
-2 crates/raikiri-dom/src/layout/cache_context.rs
 1 crates/raikiri-dom/src/layout/context.rs
-1 crates/raikiri-dom/src/node.rs
 3 crates/raikiri-dom/src/taffy_impl.rs
-2 crates/raikiri-dom/src/taffy_impl/content_limits.rs
-3 crates/raikiri-dom/src/taffy_impl/grid_oof.rs
-2 crates/raikiri-dom/src/taffy_impl/oof.rs
+1 crates/raikiri-dom/src/taffy_impl/content_limits.rs
+2 crates/raikiri-dom/src/taffy_impl/grid_oof.rs
+1 crates/raikiri-dom/src/taffy_impl/oof.rs
 4 crates/raikiri-html/src/tests.rs

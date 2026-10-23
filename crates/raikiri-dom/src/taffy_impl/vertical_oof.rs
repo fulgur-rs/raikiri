@@ -23,8 +23,8 @@
 //! the auto margins of the boxes that the root contains.
 
 use crate::layout::protocol::{AvailableSpace, LayoutInput};
+use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::Size;
-use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{CoreStyle, Position as TaffyPosition};
 
 use super::resolve_calc;

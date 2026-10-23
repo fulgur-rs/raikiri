@@ -1,10 +1,9 @@
 use super::*;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, Baselines, NodeId,
-    OofCandidate, OofPositioningArea, RunMode, SizingMode,
+    OofCandidate, OofPosition, OofPositioningArea, RunMode, SizingMode, StaticAlignSafety,
 };
 use raikiri_layout_geometry::Line;
-use taffy::{AlignmentSafety, Position};
 
 fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Edges<f32> {
     Edges {
@@ -20,7 +19,7 @@ fn static_position(start: f32, end: f32, keyword: AxisStaticEdge) -> AxisStaticP
         area: Line { start, end },
         align: AxisStaticAlign {
             keyword,
-            safety: AlignmentSafety::Default,
+            safety: StaticAlignSafety::Default,
             fallback: AxisStaticEdge::Start,
         },
     }
@@ -30,7 +29,7 @@ fn candidate(x: AxisStaticPosition, y: AxisStaticPosition) -> OofCandidate {
     OofCandidate {
         node: NodeId::from(1usize),
         order: 0,
-        position: Position::Absolute,
+        position: OofPosition::Absolute,
         static_position: Point { x, y },
     }
 }
@@ -44,7 +43,7 @@ fn reversing_a_center_static_position_keeps_its_alignment_centered() {
         },
         align: AxisStaticAlign {
             keyword: AxisStaticEdge::Center,
-            safety: taffy::AlignmentSafety::Safe,
+            safety: StaticAlignSafety::Safe,
             fallback: AxisStaticEdge::End,
         },
     };
@@ -59,7 +58,7 @@ fn reversing_a_center_static_position_keeps_its_alignment_centered() {
         }
     );
     assert_eq!(reversed.align.keyword, AxisStaticEdge::Center);
-    assert_eq!(reversed.align.safety, taffy::AlignmentSafety::Safe);
+    assert_eq!(reversed.align.safety, StaticAlignSafety::Safe);
     assert_eq!(reversed.align.fallback, AxisStaticEdge::Start);
 }
 
@@ -262,7 +261,7 @@ fn a_transposed_output_returns_to_physical_axes_from_the_block_start_edge() {
             offset: Point { x: 7.0, y: 5.0 }
         })
     );
-    let placed = output.oof_candidates.as_slice()[0].static_position;
+    let placed = output.oof_candidates.to_vec()[0].static_position;
     assert_eq!(placed.x, static_position(10.0, 30.0, AxisStaticEdge::End));
     assert_eq!(placed.y, static_position(2.0, 4.0, AxisStaticEdge::Start));
     // A baseline is an offset along the block axis on both sides.
@@ -290,7 +289,7 @@ fn a_right_to_left_output_mirrors_the_block_axis_within_the_extent() {
             offset: Point { x: 13.0, y: 5.0 }
         })
     );
-    let placed = output.oof_candidates.as_slice()[0].static_position;
+    let placed = output.oof_candidates.to_vec()[0].static_position;
     assert_eq!(
         placed.x,
         reverse_static_position(static_position(10.0, 30.0, AxisStaticEdge::End), 120.0)
@@ -353,8 +352,8 @@ fn a_child_output_round_trips_through_the_transposed_axes() {
         );
         assert_eq!(back.oof_positioning_area, physical.oof_positioning_area);
         assert_eq!(
-            back.oof_candidates.as_slice(),
-            physical.oof_candidates.as_slice()
+            back.oof_candidates.to_vec(),
+            physical.oof_candidates.to_vec()
         );
     }
 }

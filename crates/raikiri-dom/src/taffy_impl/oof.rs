@@ -8,25 +8,20 @@ use super::grid_oof;
 use crate::document::OofCoordinate;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
-    AvailableSpace, LayoutOutput, NodeId, OofCandidate, OofPositioningArea,
+    AvailableSpace, LayoutOutput, NodeId, OofCandidate, OofCandidates, OofLayoutResult,
+    OofPosition, OofPositioningArea,
 };
 use crate::layout::style_views::ReadRole;
+use crate::layout::taffy_adapter::algorithms::{
+    claims_position, compute_oof_layout_for_area, compute_root_layout,
+};
+use crate::layout::taffy_adapter::{OofBatch, OofSpan};
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::LayoutStyleView;
-use taffy::CoreStyle;
-use taffy::{DetailedLayoutInfo, LayoutContainingBlock, LayoutPartialTree, OofLayoutResult};
+use taffy::{CoreStyle, DetailedLayoutInfo};
 
-impl LayoutContainingBlock for LayoutSession<'_> {
-    type OofItemStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-
-    fn get_oof_item_style(&self, node: NodeId) -> Self::OofItemStyle<'_> {
-        self.query_style(usize::from(node), ReadRole::Oof)
-    }
-
-    fn clear_hoisted_children(&mut self, node: NodeId) {
+impl LayoutSession<'_> {
+    /// Forget the hoisted children recorded for `node` by an earlier layout.
+    pub(crate) fn clear_hoisted_children(&mut self, node: NodeId) {
         let owner = usize::from(node);
         if let Some(previous) = self.context.taffy_hoisted_children.remove(&owner) {
             for child in previous.into_iter().map(usize::from) {
@@ -41,15 +36,20 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         }
     }
 
-    fn add_hoisted_children(&mut self, node: NodeId, children: &[NodeId]) {
-        if !children.is_empty() {
+    /// Record `children` as hoisted out of `node` to the box that is their
+    /// containing block.
+    pub(crate) fn add_hoisted_children<I>(&mut self, node: NodeId, children: I)
+    where
+        I: Iterator<Item = NodeId> + Clone,
+    {
+        if children.clone().next().is_some() {
             let owner = usize::from(node);
             self.context
                 .taffy_hoisted_children
                 .entry(owner)
                 .or_default()
-                .extend_from_slice(children);
-            for child in children.iter().copied().map(usize::from) {
+                .extend(children.clone());
+            for child in children.clone().map(usize::from) {
                 let static_owner = self.taffy_parent_of(child).unwrap_or(owner);
                 let (follow_static_x, follow_static_y) = {
                     let inset = self.physical_style(child).inset();
@@ -74,7 +74,12 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         }
     }
 
-    fn get_detailed_layout_info(&self, node: NodeId) -> &DetailedLayoutInfo<smol_str::SmolStr> {
+    /// The tracks and areas a grid container reported, which its out-of-flow
+    /// children are positioned in.
+    pub(crate) fn detailed_layout_info(
+        &self,
+        node: NodeId,
+    ) -> &DetailedLayoutInfo<smol_str::SmolStr> {
         let node = usize::from(node);
         // Taffy resolves a grid area on the physical axes of `horizontal-tb`.
         // The tracks of a vertical grid are on its layout axes, so `grid_oof`
@@ -99,7 +104,7 @@ pub(super) fn layout_local_oof(
     };
     let candidates = output.oof_candidates.take();
     let grid = grid_oof::GridAxes::of(tree, usize::from(node), output.size.width);
-    let result = layout_candidates_of(tree, node, candidates.as_slice(), area, grid);
+    let result = layout_candidates_of(tree, node, candidates.iter(), area, grid);
     output.oof_candidates = result.unclaimed;
     output.scrollable_overflow_rect = output
         .scrollable_overflow_rect
@@ -112,10 +117,10 @@ pub(super) fn layout_local_oof(
 pub(crate) fn layout_container_candidates(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
-    candidates: &[OofCandidate],
+    candidates: &OofCandidates,
     area: OofPositioningArea,
 ) -> OofLayoutResult {
-    layout_candidates_of(tree, node, candidates, area, None)
+    layout_candidates_of(tree, node, candidates.iter(), area, None)
 }
 
 /// [`layout_container_candidates`] for `node` that is a grid container laid out
@@ -123,27 +128,23 @@ pub(crate) fn layout_container_candidates(
 fn layout_candidates_of(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
-    candidates: &[OofCandidate],
+    candidates: impl Iterator<Item = OofCandidate>,
     area: OofPositioningArea,
     grid: Option<grid_oof::GridAxes>,
 ) -> OofLayoutResult {
-    let candidates: Vec<_> = candidates
-        .iter()
-        .copied()
-        .map(|mut candidate| {
-            let node = usize::from(candidate.node);
-            let css_is_fixed =
-                tree.nodes[node].position() == &raikiri_style::property::PositionValue::Fixed;
-            if tree.nodes[node].fixed_position || css_is_fixed {
-                candidate.position = taffy::Position::Fixed;
-            }
-            candidate
-        })
-        .collect();
-    let style = tree.get_core_container_style(node);
+    let batch = OofBatch::collect(candidates.map(|mut candidate| {
+        let node = usize::from(candidate.node);
+        let css_is_fixed =
+            tree.nodes[node].position() == &raikiri_style::property::PositionValue::Fixed;
+        if tree.nodes[node].fixed_position || css_is_fixed {
+            candidate.position = OofPosition::Fixed;
+        }
+        candidate
+    }));
+    let style = tree.query_style(usize::from(node), ReadRole::CoreContainer);
     let direction = style.direction();
     let claims = style.is_containing_block();
-    layout_candidates(tree, node, &candidates, area, direction, claims, grid)
+    layout_candidates(tree, node, &batch, area, direction, claims, grid)
 }
 
 /// Compute the root layout while resolving intrinsic constraints on the
@@ -155,14 +156,14 @@ pub(crate) fn compute_root_layout_with_content_limits(
     available_space: Size<AvailableSpace>,
 ) {
     super::content_limits::with_oof_content_limits(tree, None, &[root], |tree| {
-        taffy::compute_root_layout(tree, root, available_space);
+        compute_root_layout(tree, root, available_space);
     });
 }
 
 pub(super) fn layout_candidates(
     tree: &mut LayoutSession<'_>,
     owner: NodeId,
-    candidates: &[OofCandidate],
+    candidates: &OofBatch,
     area: OofPositioningArea,
     direction: taffy::Direction,
     claims: taffy::ContainingBlockClaims,
@@ -170,21 +171,20 @@ pub(super) fn layout_candidates(
 ) -> OofLayoutResult {
     let candidate_ids = candidates
         .iter()
-        .filter(|candidate| claims.for_position(candidate.position))
+        .filter(|candidate| claims_position(claims, candidate.position))
         .map(|candidate| candidate.node)
         .collect::<Vec<_>>();
     let result =
         super::content_limits::with_oof_content_limits(tree, Some(&candidate_ids), &[], |tree| {
+            let span: OofSpan<'_> = candidates.all();
             match grid {
-                Some(axes) => grid_oof::compute_oof_layout(
-                    tree, owner, candidates, area, direction, claims, axes,
-                ),
-                None => taffy::compute::compute_oof_layout_for_area(
-                    tree, owner, candidates, area, direction, claims,
-                ),
+                Some(axes) => {
+                    grid_oof::compute_oof_layout(tree, owner, span, area, direction, claims, axes)
+                }
+                None => compute_oof_layout_for_area(tree, owner, span, area, direction, claims),
             }
         });
     tree.clear_hoisted_children(owner);
-    tree.add_hoisted_children(owner, &result.hoisted);
+    tree.add_hoisted_children(owner, result.hoisted.iter().copied());
     result
 }

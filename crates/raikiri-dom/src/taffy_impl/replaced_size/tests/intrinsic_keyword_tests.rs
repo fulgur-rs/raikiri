@@ -38,7 +38,7 @@ fn natural_size() -> Size<f32> {
 fn ratio_style(width: Dimension, height: Dimension) -> Style {
     Style {
         aspect_ratio: Some(1.0),
-        size: Size { width, height },
+        size: StyleSize { width, height },
         ..Style::default()
     }
 }

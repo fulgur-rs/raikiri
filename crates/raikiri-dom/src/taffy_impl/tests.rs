@@ -184,7 +184,6 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
     let fixed = NodeId::from(fixed.expect("fixed child"));
     let candidate = output
         .oof_candidates
-        .as_slice()
         .iter()
         .find(|candidate| candidate.node == fixed)
         .expect("uncontained fixed descendant bubbles out of the IFC root");
@@ -251,16 +250,15 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
             .ifc
             .as_ref()
             .and_then(|root| root.lines.as_ref())
-            .map(|lines| lines.oof_candidates.as_slice());
+            .map(|lines| lines.oof_candidates.to_vec());
         let candidate = output
             .oof_candidates
-            .as_slice()
             .iter()
             .find(|candidate| candidate.node == fixed)
             .unwrap_or_else(|| {
                 panic!(
                     "uncontained fixed descendant bubbles from {case} child; output candidates: {:?}; stored: {:?}",
-                    output.oof_candidates.as_slice(),
+                    output.oof_candidates.to_vec(),
                     stored_candidates
                 )
             });

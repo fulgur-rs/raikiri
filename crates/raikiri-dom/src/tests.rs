@@ -24,7 +24,11 @@ fn compute_root_layout_with(
     available_space: Size<AvailableSpace>,
 ) {
     let mut session = crate::layout::context::LayoutSession::bridged(doc, cascade);
-    taffy::compute_root_layout(&mut session, root, available_space);
+    crate::layout::taffy_adapter::algorithms::compute_root_layout(
+        &mut session,
+        root,
+        available_space,
+    );
 }
 
 /// The CSS keyword of the layout modes these tests drive.

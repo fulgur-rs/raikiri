@@ -298,7 +298,6 @@ fn layout_input(width: f32) -> LayoutInput {
 
 #[test]
 fn first_store_in_new_epoch_clears_every_old_input() {
-    use taffy::CacheTree;
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
@@ -318,7 +317,6 @@ fn first_store_in_new_epoch_clears_every_old_input() {
 
 #[test]
 fn stale_outer_store_keeps_valid_same_node_inner_cache() {
-    use taffy::CacheTree;
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
@@ -353,7 +351,6 @@ fn cache_frame_leaves_after_hit_error_and_unwind() {
 
 #[test]
 fn pending_document_mutation_rejects_parent_cache_before_child_read() {
-    use taffy::CacheTree;
     let mut doc = Document::new();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);

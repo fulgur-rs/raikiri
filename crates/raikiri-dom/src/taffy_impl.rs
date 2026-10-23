@@ -1,32 +1,34 @@
-//! Taffy layout trait implementations on LayoutSession.
+//! The layout dispatch of [`LayoutSession`].
 //!
-//! Production adaptation of the SpikeTree pattern from the original
-//! `taffy-layout-modes` spike, equivalent in scope to that prototype:
-//! - `TraversePartialTree`: children iterator
-//! - `CacheTree`: per-node cache getter / setter
-//! - `LayoutPartialTree`: dispatch block / flexbox / grid based on display
-//! - `LayoutBlockContainer / LayoutFlexboxContainer / LayoutGridContainer`:
-//!   style getter marker impls
+//! The session lays a box out by dispatching on its display: block, flex, grid,
+//! table, multicolumn and leaf layouts, with a per-node result cache. The layout
+//! library's algorithms call back into the session through the trait
+//! implementations in `layout::taffy_adapter`, which convert their arguments to
+//! the types the methods here take:
+//! - `child_ids` / `child_count` / `get_child_id`: the children of a node
+//! - `cache_get` / `cache_store` / `cache_clear`: the per-node result cache
+//! - `compute_child_layout`: the dispatch on the display of the node
+//! - `set_unrounded_layout` / `set_detailed_grid_info`: where results are stored
 
 use crate::LayoutStyle as Style;
 use crate::layout::protocol::{
     AvailableSpace, Baselines, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId,
     OofCandidates, RequestedAxis, RunMode, SizingMode,
 };
-use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
+use crate::layout::taffy_adapter::algorithms::{
+    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+};
+use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
+use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
 use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
 use taffy::{
-    BoxGenerationMode, CacheTree, CoreStyle, DetailedGridInfo, ExpandedDimension,
-    LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree,
-    MaybeMath, Position as TaffyPosition, TraversePartialTree, TraverseTree, compute_cached_layout,
-    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    BoxGenerationMode, CoreStyle, DetailedGridInfo, ExpandedDimension, Position as TaffyPosition,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
-use crate::layout::style_views::ReadRole;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
 use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
@@ -265,7 +267,6 @@ fn has_percent_padding_or_border(style: &impl CoreStyle) -> bool {
 
 /// Whether a padding or border length depends on its percentage basis.
 fn edge_depends_on_basis(edge: taffy::LengthPercentage) -> bool {
-    use taffy::ResolveOrZero;
     // A `calc()` edge always carries a percentage term (one without folds to
     // a length) and may clamp to zero at small probe bases.
     edge.into_raw().is_plain_calc()
@@ -395,16 +396,14 @@ pub struct TaffyChildIter<'a> {
 }
 
 impl<'a> TaffyChildIter<'a> {
-    fn new_for_session(session: &'a LayoutSession<'_>, parent: NodeId) -> Self {
+    pub(crate) fn new_for_session(session: &'a LayoutSession<'_>, parent: usize) -> Self {
         let doc = &*session.document;
-        let parent_index = usize::from(parent);
         // A size-contained box is measured as if it had no content.
-        let hidden = session.context.size_contained_measure.last() == Some(&parent_index);
+        let hidden = session.context.size_contained_measure.last() == Some(&parent);
         Self::new(doc, parent, hidden)
     }
 
-    fn new(doc: &'a Document, parent: NodeId, hidden: bool) -> Self {
-        let parent = usize::from(parent);
+    pub(crate) fn new(doc: &'a Document, parent: usize, hidden: bool) -> Self {
         let node = &doc.nodes[parent];
         Self {
             doc,
@@ -530,7 +529,8 @@ impl LayoutSession<'_> {
 }
 
 impl Iterator for TaffyChildIter<'_> {
-    type Item = NodeId;
+    /// The arena index of the child.
+    type Item = usize;
     fn next(&mut self) -> Option<Self::Item> {
         let doc = self.doc;
         loop {
@@ -556,9 +556,9 @@ impl Iterator for TaffyChildIter<'_> {
                 if doc.nodes[table].children.first() != Some(&child) {
                     continue;
                 }
-                return Some(NodeId::from(table));
+                return Some(table);
             }
-            return Some(NodeId::from(child));
+            return Some(child);
         }
     }
 }
@@ -568,8 +568,14 @@ impl Iterator for TaffyChildIter<'_> {
 /// the start each time costs less than building the list.
 const WALKED_CHILDREN_MIN: usize = 32;
 
-impl CacheTree for LayoutSession<'_> {
-    fn cache_get(&mut self, node_id: NodeId, inputs: &LayoutInput) -> Option<LayoutOutput> {
+impl LayoutSession<'_> {
+    /// The cached result of the node for `inputs`, if it holds one that is
+    /// valid in the current cache context.
+    pub(crate) fn cache_get(
+        &mut self,
+        node_id: NodeId,
+        inputs: &LayoutInput,
+    ) -> Option<LayoutOutput> {
         self.sync_layout_cache_mutations();
         let idx = usize::from(node_id);
         let key = self.nodes.box_key(idx)?;
@@ -579,7 +585,13 @@ impl CacheTree for LayoutSession<'_> {
             .flatten()
     }
 
-    fn cache_store(&mut self, node_id: NodeId, inputs: &LayoutInput, layout_output: LayoutOutput) {
+    /// Store the result of the node for `inputs` in its cache.
+    pub(crate) fn cache_store(
+        &mut self,
+        node_id: NodeId,
+        inputs: &LayoutInput,
+        layout_output: LayoutOutput,
+    ) {
         self.sync_layout_cache_mutations();
         let idx = usize::from(node_id);
         let key = self.nodes.box_key(idx).expect("cached node has a box key");
@@ -594,23 +606,15 @@ impl CacheTree for LayoutSession<'_> {
         self.layout_cache_context.mark_stored(key);
     }
 
-    fn cache_clear(&mut self, node_id: NodeId) {
+    /// Drop everything the cache of the node holds.
+    pub(crate) fn cache_clear(&mut self, node_id: NodeId) {
         self.nodes[usize::from(node_id)].cache.clear();
     }
 }
 
-impl LayoutPartialTree for LayoutSession<'_> {
-    type CustomIdent = smol_str::SmolStr;
-    type CoreContainerStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-
-    fn get_core_container_style(&self, node_id: NodeId) -> Self::CoreContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::CoreContainer)
-    }
-
-    /// The **only** path by which taffy writes layout into the arena.
+impl LayoutSession<'_> {
+    /// The **only** path by which the layout algorithms write layout into the
+    /// arena.
     ///
     /// Storing through [`LayoutSession::store_unrounded_layout`] here structurally
     /// guarantees that `Node.unrounded_layout` contains no non-finite f32 values.
@@ -620,22 +624,24 @@ impl LayoutPartialTree for LayoutSession<'_> {
     /// `layout::sanitize_taffy_layout` for the reasoning and measurements.
     ///
     /// Record fields actually clamped in `self.context.layout_warnings`.
-    /// The `taffy` crate fixes this trait-method signature, so diagnostic
+    /// The signature the algorithms call this through is fixed, so diagnostic
     /// arguments cannot be added. Instead, write to the owned buffer through
     /// `self` without changing the signature. At pass end, `layout_single_page`
     /// drains the buffer to an observer or eprintln (see the documentation for
     /// the diagnostics buffer below).
     /// The session context drops this buffer when the layout operation ends.
-    fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &BoxLayout) {
+    pub(crate) fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &BoxLayout) {
         self.note_transposed_layout(usize::from(node_id));
         self.store_unrounded_layout(usize::from(node_id), layout);
     }
 
-    fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
-        resolve_calc(val, basis)
-    }
-
-    fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+    /// Lay out the node under `inputs`, from its cache when it holds a result
+    /// for them.
+    pub(crate) fn compute_child_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+    ) -> LayoutOutput {
         self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
         if inputs.run_mode == RunMode::PerformLayout
@@ -651,7 +657,7 @@ impl LayoutSession<'_> {
     /// Unified child dispatch for the native layout traits and project flow.
     ///
     /// Public Taffy flex/grid algorithms enter through
-    /// [`LayoutPartialTree::compute_child_layout`] without a shared context.
+    /// `LayoutPartialTree::compute_child_layout` without a shared context.
     /// Project block and inline flow pass their own [`BlockContext`] here,
     /// keeping ordinary descendants in the same float formatting context.
     /// Such layouts bypass size-only caching because a cached result cannot
@@ -918,10 +924,10 @@ impl LayoutSession<'_> {
                 // as a known dimension; taffy's leaf then hands it to the
                 // measure function as the definite available height.
                 let height_is_authored = style.size.width.is_auto()
-                    && taffy::util::MaybeResolve::maybe_resolve(
+                    && MaybeResolve::maybe_resolve(
                         style.size.height,
                         inputs.parent_size.height,
-                        |val, basis| tree.resolve_calc_value(val, basis),
+                        resolve_calc,
                     )
                     .is_some();
                 let insets = replaced_size::ratio_box_insets(
@@ -929,57 +935,51 @@ impl LayoutSession<'_> {
                     replaced_size::padding_and_border(&resolver_style, inputs.parent_size.width),
                     content_box_ratio,
                 );
-                return compute_leaf_layout(
-                    inputs,
-                    &style,
-                    |val, basis| tree.resolve_calc_value(val, basis),
-                    |known, available| {
-                        // Taffy's known dimensions include padding and border;
-                        // its available space has already removed those insets.
-                        let known = Size {
-                            width: known.width.and(available.width.into_option()),
-                            height: known.height.and(available.height.into_option()),
-                        };
-                        let authored_height = available
-                            .height
-                            .into_option()
-                            .filter(|_| height_is_authored);
-                        let width_for =
-                            |height| replaced_size::width_for_height(height, ratio, insets);
-                        let width = known
-                            .width
-                            .or(known.height.map(width_for))
-                            .or(authored_height.map(width_for))
-                            .unwrap_or(match available.width {
-                                AvailableSpace::Definite(width) => width,
-                                AvailableSpace::MinContent => 0.0,
-                                AvailableSpace::MaxContent => intrinsic.width,
-                            });
-                        let natural = Size {
-                            width,
-                            height: known.height.unwrap_or_else(|| {
-                                replaced_size::height_for_width(width, ratio, insets)
-                            }),
-                        };
-                        let resolver_inputs = LayoutInput {
-                            known_dimensions: known,
-                            available_space: available,
-                            ..inputs
-                        };
-                        let resolved = replaced_size::auto_sides_size(
-                            &resolver_style,
-                            &resolver_inputs,
-                            natural,
-                            limits,
-                            content_box_ratio,
-                        )
-                        .unwrap_or(natural);
-                        Size {
-                            width: resolved.width,
-                            height: resolved.height,
-                        }
-                    },
-                );
+                return compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
+                    // Taffy's known dimensions include padding and border;
+                    // its available space has already removed those insets.
+                    let known = Size {
+                        width: known.width.and(available.width.into_option()),
+                        height: known.height.and(available.height.into_option()),
+                    };
+                    let authored_height = available
+                        .height
+                        .into_option()
+                        .filter(|_| height_is_authored);
+                    let width_for = |height| replaced_size::width_for_height(height, ratio, insets);
+                    let width = known
+                        .width
+                        .or(known.height.map(width_for))
+                        .or(authored_height.map(width_for))
+                        .unwrap_or(match available.width {
+                            AvailableSpace::Definite(width) => width,
+                            AvailableSpace::MinContent => 0.0,
+                            AvailableSpace::MaxContent => intrinsic.width,
+                        });
+                    let natural = Size {
+                        width,
+                        height: known.height.unwrap_or_else(|| {
+                            replaced_size::height_for_width(width, ratio, insets)
+                        }),
+                    };
+                    let resolver_inputs = LayoutInput {
+                        known_dimensions: known,
+                        available_space: available,
+                        ..inputs
+                    };
+                    let resolved = replaced_size::auto_sides_size(
+                        &resolver_style,
+                        &resolver_inputs,
+                        natural,
+                        limits,
+                        content_box_ratio,
+                    )
+                    .unwrap_or(natural);
+                    Size {
+                        width: resolved.width,
+                        height: resolved.height,
+                    }
+                });
             }
             // A paragraph measured as if empty is a block container with no
             // lines.
@@ -1201,11 +1201,7 @@ fn compute_ifc_root(
                 .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb)
     });
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
-    let stated = taffy::util::MaybeResolve::maybe_resolve(
-        layout_style.size,
-        inputs.parent_size,
-        resolve_calc,
-    );
+    let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size, resolve_calc);
     let ratio_height_follows =
         ratio.is_some() && inputs.known_dimensions.height.is_none() && stated.height.is_none();
     let mut inputs = inputs;
@@ -1476,7 +1472,7 @@ fn compute_ifc_root(
     // When `min-height` gives the used height, the last child's bottom margin
     // no longer adjoins the box's bottom edge and does not collapse through
     // it (CSS 2.1 8.3.1), as taffy's block algorithm decides.
-    let min_height = taffy::util::MaybeResolve::maybe_resolve(
+    let min_height = MaybeResolve::maybe_resolve(
         style.min_size.height,
         inputs.parent_size.height,
         resolve_calc,
@@ -1484,11 +1480,7 @@ fn compute_ifc_root(
     let min_block_size = if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
         min_height
     } else {
-        taffy::util::MaybeResolve::maybe_resolve(
-            style.min_size.width,
-            inputs.parent_size.width,
-            resolve_calc,
-        )
+        MaybeResolve::maybe_resolve(style.min_size.width, inputs.parent_size.width, resolve_calc)
     };
     let block_size = if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
         output.size.height
@@ -2742,7 +2734,7 @@ fn center_absolute_children_in_block_axis(
     size: Size<f32>,
     grid: Option<&grid_oof::GridAreas<'_>>,
 ) {
-    use taffy::{MaybeResolve, Overflow, ResolveOrZero};
+    use taffy::Overflow;
 
     if inputs.run_mode != RunMode::PerformLayout {
         return;
@@ -2949,8 +2941,6 @@ fn with_content_height_not_definite(
     idx: usize,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
-    use taffy::MaybeResolve;
-
     if inputs.known_dimensions.height.is_none()
         || !inputs.known_dimensions_are_definite.height
         || tree.nodes[idx].taffy_position() != TaffyPosition::Absolute
@@ -3284,8 +3274,6 @@ fn align_auto_grid_abspos_children(
     percent_basis: Option<f32>,
     size: Size<f32>,
 ) {
-    use taffy::ResolveOrZero;
-
     if run_mode != RunMode::PerformLayout {
         return;
     }
@@ -3323,13 +3311,11 @@ fn align_auto_grid_abspos_children(
 pub(super) fn align_hoisted_grid_abspos_children(
     tree: &mut LayoutSession<'_>,
     owner: NodeId,
-    children: &[NodeId],
+    children: impl Iterator<Item = NodeId>,
 ) {
     let owner = usize::from(owner);
     let owner_origin = tree.document.layout_origin_of(owner).unwrap_or(Point::ZERO);
     let placed: Vec<_> = children
-        .iter()
-        .copied()
         .filter_map(|candidate| {
             let child = usize::from(candidate);
             let grid = tree.taffy_parent_of(child)?;
@@ -3469,7 +3455,7 @@ impl LayoutSession<'_> {
         inputs: &LayoutInput,
     ) -> (Size<Option<f32>>, Size<f32>, Option<f32>) {
         use crate::layout::protocol::SizingMode;
-        use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero};
+        use taffy::{BoxSizing, Overflow};
 
         let style = self.physical_style(idx);
         let parent_size = inputs.parent_size;
@@ -3549,8 +3535,7 @@ impl LayoutSession<'_> {
     /// Whether an in-flow child of block container `idx` has a top or bottom
     /// padding or border that depends on its percentage basis.
     fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
-        TaffyChildIter::new_for_session(self, NodeId::from(idx)).any(|child| {
-            let child = usize::from(child);
+        TaffyChildIter::new_for_session(self, idx).any(|child| {
             if self.nodes[child].taffy_position() == TaffyPosition::Absolute {
                 return false;
             }
@@ -3563,94 +3548,16 @@ impl LayoutSession<'_> {
     }
 }
 
-impl LayoutBlockContainer for LayoutSession<'_> {
-    type BlockContainerStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-    type BlockItemStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-
-    fn get_block_container_style(&self, node_id: NodeId) -> Self::BlockContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::BlockContainer)
-    }
-
-    fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
-        self.query_style(usize::from(child_node_id), ReadRole::BlockItem)
-    }
-}
-
-impl LayoutFlexboxContainer for LayoutSession<'_> {
-    #[cfg(not(test))]
-    type FlexboxContainerStyle<'a>
-        = raikiri_layout_style::LayoutStyleView<'a>
-    where
-        Self: 'a;
-    #[cfg(test)]
-    type FlexboxContainerStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-    #[cfg(not(test))]
-    type FlexboxItemStyle<'a>
-        = raikiri_layout_style::LayoutStyleView<'a>
-    where
-        Self: 'a;
-    #[cfg(test)]
-    type FlexboxItemStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-
-    fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::FlexContainer)
-    }
-
-    fn get_flexbox_child_style(&self, child_node_id: NodeId) -> Self::FlexboxItemStyle<'_> {
-        self.query_style(usize::from(child_node_id), ReadRole::FlexItem)
-    }
-}
-
-impl LayoutGridContainer for LayoutSession<'_> {
-    #[cfg(not(test))]
-    type GridContainerStyle<'a>
-        = raikiri_layout_style::LayoutStyleView<'a>
-    where
-        Self: 'a;
-    #[cfg(test)]
-    type GridContainerStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-    #[cfg(not(test))]
-    type GridItemStyle<'a>
-        = raikiri_layout_style::LayoutStyleView<'a>
-    where
-        Self: 'a;
-    #[cfg(test)]
-    type GridItemStyle<'a>
-        = LayoutStyleView<'a>
-    where
-        Self: 'a;
-
-    fn get_grid_container_style(&self, node_id: NodeId) -> Self::GridContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::GridContainer)
-    }
-
-    fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
-        self.query_style(usize::from(child_node_id), ReadRole::GridItem)
-    }
-
-    fn set_detailed_grid_info(
+impl LayoutSession<'_> {
+    /// Record what the grid algorithm reports about the grid container, for
+    /// pagination and the out-of-flow positioning pass.
+    pub(crate) fn set_detailed_grid_info(
         &mut self,
         node_id: NodeId,
-        detailed_grid_info: DetailedGridInfo<Self::CustomIdent>,
+        detailed_grid_info: DetailedGridInfo<smol_str::SmolStr>,
     ) {
         let parent = usize::from(node_id);
-        let children = TaffyChildIter::new_for_session(self, node_id)
-            .map(usize::from)
+        let children = TaffyChildIter::new_for_session(self, parent)
             .filter(|&child| {
                 self.nodes[child].taffy_display() != taffy::Display::None
                     && self.nodes[child].taffy_position() != TaffyPosition::Absolute
@@ -3706,28 +3613,32 @@ impl LayoutGridContainer for LayoutSession<'_> {
     }
 }
 
-impl TraversePartialTree for LayoutSession<'_> {
-    type ChildIter<'a>
-        = TaffyChildIter<'a>
-    where
-        Self: 'a;
-
-    fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
-        TaffyChildIter::new_for_session(self, node_id)
+impl LayoutSession<'_> {
+    /// The children of the node that take part in layout.
+    pub(crate) fn child_ids(&self, node_id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        TaffyChildIter::new_for_session(self, usize::from(node_id)).map(NodeId::from)
     }
 
-    fn child_count(&self, node_id: NodeId) -> usize {
+    /// The number of children of the node that take part in layout.
+    ///
+    /// A container with many children also records the list, which the
+    /// following calls of [`Self::get_child_id`] for it read from.
+    pub(crate) fn child_count(&self, node_id: NodeId) -> usize {
         let parent = usize::from(node_id);
-        let count = TaffyChildIter::new_for_session(self, node_id).count();
-        let children = (count >= WALKED_CHILDREN_MIN)
-            .then(|| TaffyChildIter::new_for_session(self, node_id).collect());
+        let count = TaffyChildIter::new_for_session(self, parent).count();
+        let children = (count >= WALKED_CHILDREN_MIN).then(|| {
+            TaffyChildIter::new_for_session(self, parent)
+                .map(NodeId::from)
+                .collect()
+        });
         if let Some(mut state) = self.node_state(parent) {
             state.taffy_child_walks = children;
         }
         count
     }
 
-    fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
+    /// The `index`th child of the node that takes part in layout.
+    pub(crate) fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
         let parent = usize::from(node_id);
         if let Some(mut state) = self.node_state(parent)
             && let Some(children) = state.taffy_child_walks.as_ref()
@@ -3738,36 +3649,13 @@ impl TraversePartialTree for LayoutSession<'_> {
             }
             return child;
         }
-        TaffyChildIter::new_for_session(self, node_id)
-            .nth(index)
-            .expect("get_child_id: index out of range")
+        NodeId::from(
+            TaffyChildIter::new_for_session(self, parent)
+                .nth(index)
+                .expect("get_child_id: index out of range"),
+        )
     }
 }
-
-impl TraverseTree for LayoutSession<'_> {}
-
-impl TraversePartialTree for Document {
-    type ChildIter<'a>
-        = TaffyChildIter<'a>
-    where
-        Self: 'a;
-
-    fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
-        TaffyChildIter::new(self, node_id, false)
-    }
-
-    fn child_count(&self, node_id: NodeId) -> usize {
-        TaffyChildIter::new(self, node_id, false).count()
-    }
-
-    fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
-        TaffyChildIter::new(self, node_id, false)
-            .nth(index)
-            .expect("get_child_id: index out of range")
-    }
-}
-
-impl TraverseTree for Document {}
 
 /// The sizing function of every row of the grid laid out with `style`, from
 /// the first implicit row before the explicit grid to the last after it,

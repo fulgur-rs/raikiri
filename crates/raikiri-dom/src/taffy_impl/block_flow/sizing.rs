@@ -2,9 +2,11 @@
 
 use crate::LayoutStyle as Style;
 use crate::layout::protocol::{LayoutInput, SizingMode};
+use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use crate::taffy_impl::resolve_calc;
+use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{Edges, Size};
-use taffy::{BoxSizing, CoreStyle, MaybeMath, MaybeResolve, Overflow, ResolveOrZero};
+use taffy::{BoxSizing, CoreStyle, Overflow};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Metrics {

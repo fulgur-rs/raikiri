@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::layout::context::LayoutSession;
-use taffy::util::MaybeResolve;
+use crate::layout::taffy_adapter::MaybeResolve;
 
 /// Whether `child` is a `column-span: all` block that is not a float, read
 /// through the style views of a layout session.
