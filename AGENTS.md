@@ -235,6 +235,10 @@ build する。同一マシンで複数 worktree が並走すると CPU・メモ
   cargo は Cargo.lock から消えた crate version の成果物を消さないため、restore した target/ から
   save を重ねると entry が膨らむ。作り直すときは `RAIKIRI_GATE_CACHE=0` で cold build した
   target/ から save する。
+  `/mnt/project-files` は大きな file を保持できない (200MB は他の container に届いたが、
+  650MB は届かなかった)。そのため entry は 128MiB ごとの part に分けて保存する。書いた
+  container からは完全に見えても他からは見えないことがあるので、save したら**別の
+  container で `status` を実行**し、`incomplete, ignored` になっていないことを確認する。
 
 ## loopback を使う Rust test は sandbox 外で実行する
 

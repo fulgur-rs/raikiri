@@ -38,9 +38,18 @@
 # Entries live in $RAIKIRI_GATE_CACHE_DIR, which defaults to
 # /mnt/project-files/cache/raikiri-gate/ when /mnt/project-files exists (the
 # directory every cloud thread of the project shares) and to
-# ~/.cache/raikiri-gate-target otherwise. An entry is a tar.gz plus a small
-# .info file that is written last, so a reader never trusts a half-written
-# archive. The newest three entries are kept.
+# ~/.cache/raikiri-gate-target otherwise. An entry is a tar.gz cut into parts
+# of 128 MiB (<name>.part.aa, .ab, ...) plus a small <name>.info that lists
+# every part with its size and is written last, so a reader never trusts a
+# half-written entry. The newest three entries are kept.
+#
+# Why parts: the shared project mount does not persist large files. Files up
+# to 200 MB written to it reached other containers; a 650 MB file never did,
+# yet the container that wrote it kept seeing the full file in its local cache.
+# Keep every part well below that. Another container's `status` shows whether
+# an entry really arrived ("incomplete" means it did not); check it from a
+# second container after the first save. RAIKIRI_GATE_CACHE_PART_BYTES
+# overrides the part size.
 #
 # Exit status: 0 on success and when restore has nothing to do, 1 on a
 # failure, 2 on a usage error.
@@ -52,6 +61,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/repo_root.sh"
 
 KEEP_ENTRIES=3
+PART_BYTES="${RAIKIRI_GATE_CACHE_PART_BYTES:-134217728}"
 # The directories of target/ that hold reusable artifacts.
 PAYLOAD_DIRS=(llvm-cov-target debug)
 
@@ -59,15 +69,20 @@ log() {
   echo "gate-cache: $*"
 }
 
-# Temporary paths of the running command, removed on any exit.
+# Temporary paths of the running command, removed on any exit. Parts that
+# belong to an entry whose .info was never written are removed too.
 CLEANUP_DIR=""
 CLEANUP_FILES=()
+CLEANUP_PARTS_PREFIX=""
 cleanup() {
   if [[ -n "$CLEANUP_DIR" ]]; then
     rm -rf "$CLEANUP_DIR"
   fi
   if [[ ${#CLEANUP_FILES[@]} -gt 0 ]]; then
     rm -f "${CLEANUP_FILES[@]}"
+  fi
+  if [[ -n "$CLEANUP_PARTS_PREFIX" ]]; then
+    rm -f "$CLEANUP_PARTS_PREFIX"*
   fi
 }
 trap cleanup EXIT
@@ -157,13 +172,36 @@ list_entries() {
     sed 's/\.info$//' | LC_ALL=C sort -r
 }
 
-# An entry is usable when its archive exists with the size the .info recorded.
+# The "<part file> <bytes>" lines of an entry's .info, in archive order.
+entry_parts() {
+  sed -n 's/^part=//p' "$CACHE_DIR/$1.info"
+}
+
+# An entry is usable when every part its .info lists exists with the recorded
+# size.
 entry_is_valid() {
-  local name="$1" expected actual
-  expected="$(sed -n 's/^bytes=//p' "$CACHE_DIR/$name.info")"
-  [[ -n "$expected" && -f "$CACHE_DIR/$name.tar.gz" ]] || return 1
-  actual="$(wc -c <"$CACHE_DIR/$name.tar.gz" | tr -d ' ')"
-  [[ "$actual" == "$expected" ]]
+  local name="$1" file bytes actual found=0
+  while read -r file bytes; do
+    [[ -n "$file" ]] || continue
+    case "$file" in
+      */*) return 1 ;;
+      "$name".part.*) ;;
+      *) return 1 ;;
+    esac
+    found=1
+    [[ -f "$CACHE_DIR/$file" ]] || return 1
+    actual="$(wc -c <"$CACHE_DIR/$file" | tr -d ' ')"
+    [[ "$actual" == "$bytes" ]] || return 1
+  done < <(entry_parts "$name")
+  [[ "$found" -eq 1 ]]
+}
+
+entry_bytes() {
+  entry_parts "$1" | awk '{ sum += $2 } END { print sum + 0 }'
+}
+
+remove_entry() {
+  rm -f "$CACHE_DIR/$1".part.* "$CACHE_DIR/$1.tar.gz" "$CACHE_DIR/$1.info"
 }
 
 # Prints the entry to restore: the newest one saved for the same Cargo.lock,
@@ -201,7 +239,7 @@ do_status() {
     found=1
     local note="" size=""
     if entry_is_valid "$name"; then
-      size="$(human_size "$(wc -c <"$CACHE_DIR/$name.tar.gz" | tr -d ' ')")"
+      size="$(human_size "$(entry_bytes "$name")") in $(entry_parts "$name" | wc -l | tr -d ' ') parts"
     else
       note=" (incomplete, ignored)"
     fi
@@ -243,8 +281,11 @@ do_restore() {
   local staging
   staging="$(mktemp -d "$TARGET_DIR/.gate-cache-restore.XXXXXX")"
   CLEANUP_DIR="$staging"
-  local started="$SECONDS"
-  if ! tar -C "$staging" -xzf "$CACHE_DIR/$name.tar.gz"; then
+  local started="$SECONDS" parts=() file bytes
+  while read -r file bytes; do
+    parts+=("$CACHE_DIR/$file")
+  done < <(entry_parts "$name")
+  if ! cat "${parts[@]}" | tar -C "$staging" -xzf -; then
     echo "gate-cache: unpacking $name failed; building from scratch." >&2
     return 1
   fi
@@ -268,15 +309,16 @@ do_save() {
   [[ -d "$CACHE_DIR" ]] || mkdir -p "$CACHE_DIR" ||
     die "cannot create $CACHE_DIR."
 
-  local toolchain lock stamp name tmp_tar members=() dir
+  local toolchain lock stamp name probe tmp_info members=() dir
   toolchain="$(toolchain_id)"
   lock="$(lock_id)"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   name="gate-target-${stamp}-tc${toolchain}-lock${lock}"
-  tmp_tar="$CACHE_DIR/.tmp.$$.$stamp.tar.gz"
-  CLEANUP_FILES=("$tmp_tar" "$tmp_tar.info")
+  probe="$CACHE_DIR/.tmp.$$.$stamp.probe"
+  tmp_info="$CACHE_DIR/.tmp.$$.$stamp.info"
+  CLEANUP_FILES=("$probe" "$tmp_info")
   # Prove the cache is writable before removing anything from the checkout.
-  : >"$tmp_tar" || die "cannot write to $CACHE_DIR; nothing was removed."
+  : >"$probe" || die "cannot write to $CACHE_DIR; nothing was removed."
 
   log "removing the workspace crates' artifacts"
   cargo llvm-cov clean --workspace
@@ -296,21 +338,38 @@ do_save() {
   log "packing ${members[*]} from $TARGET_DIR"
   local started="$SECONDS"
   # Incremental directories only hold workspace-crate state, which was just
-  # removed, and are large.
+  # removed, and are large. The parts are written under their final names (no
+  # rename of a file that is still being uploaded); they only count once the
+  # .info below exists.
+  CLEANUP_PARTS_PREFIX="$CACHE_DIR/$name.part."
   tar -C "$TARGET_DIR" --exclude='debug/incremental' -cf - "${members[@]}" |
-    gzip -1 >"$tmp_tar"
-  local bytes
-  bytes="$(wc -c <"$tmp_tar" | tr -d ' ')"
-  mv "$tmp_tar" "$CACHE_DIR/$name.tar.gz"
+    gzip -1 | split -b "$PART_BYTES" - "$CLEANUP_PARTS_PREFIX"
+  local part part_files=() bytes total=0
+  for part in "$CLEANUP_PARTS_PREFIX"*; do
+    if [[ -f "$part" ]]; then
+      part_files+=("$part")
+    fi
+  done
+  if [[ ${#part_files[@]} -eq 0 ]]; then
+    die "nothing was packed from $TARGET_DIR."
+  fi
+  for part in "${part_files[@]}"; do
+    bytes="$(wc -c <"$part" | tr -d ' ')"
+    total=$((total + bytes))
+  done
   # The .info file marks the entry complete, so it goes last.
   {
-    echo "bytes=$bytes"
+    echo "bytes=$total"
     echo "created=$stamp"
     echo "rustc=$(rustc -vV | sed -n 's/^release: //p')"
     echo "cargo_llvm_cov=$(cargo llvm-cov --version | head -1)"
-  } >"$tmp_tar.info"
-  mv "$tmp_tar.info" "$CACHE_DIR/$name.info"
-  log "saved $name ($(human_size "$bytes")) in $((SECONDS - started))s"
+    for part in "${part_files[@]}"; do
+      echo "part=$(basename "$part") $(wc -c <"$part" | tr -d ' ')"
+    done
+  } >"$tmp_info"
+  mv "$tmp_info" "$CACHE_DIR/$name.info"
+  CLEANUP_PARTS_PREFIX=""
+  log "saved $name ($(human_size "$total") in ${#part_files[@]} parts) in $((SECONDS - started))s"
 
   prune
 }
@@ -331,16 +390,15 @@ prune() {
       continue
     fi
     log "pruning $name"
-    rm -f "$CACHE_DIR/$name.info" "$CACHE_DIR/$name.tar.gz"
+    remove_entry "$name"
   done < <(list_entries)
   find "$CACHE_DIR" -maxdepth 1 -name '.tmp.*' -mmin +180 -exec rm -f {} + 2>/dev/null || true
-  # An archive whose .info never arrived (the saver died between the two
-  # renames) is not an entry.
-  local archive
-  for archive in "$CACHE_DIR"/gate-target-*.tar.gz; do
-    [[ -e "$archive" ]] || continue
-    if [[ ! -e "${archive%.tar.gz}.info" && -n "$(find "$archive" -mmin +60 2>/dev/null)" ]]; then
-      rm -f "$archive"
+  # Parts whose .info never arrived (the saver died first) are not an entry.
+  local part
+  for part in "$CACHE_DIR"/gate-target-*.part.*; do
+    [[ -e "$part" ]] || continue
+    if [[ ! -e "${part%.part.*}.info" && -n "$(find "$part" -mmin +60 2>/dev/null)" ]]; then
+      rm -f "$part"
     fi
   done
 }
