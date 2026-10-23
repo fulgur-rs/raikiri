@@ -1133,13 +1133,6 @@ mod item_width_tests;
 #[cfg(test)]
 mod tests;
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no caller until vertical flex and grid containers lay out through the adapter"
-    )
-)]
 mod axis_adapter;
 pub(crate) mod block_flow;
 pub(crate) mod content_limits;
@@ -2817,7 +2810,13 @@ fn flex_layout_sized(
         inputs,
         basis,
         |tree, node_id, inputs| {
-            if tree.context.flex_intrinsic_probe == Some(idx) {
+            if block_right_to_left(tree, idx).is_some() {
+                // The container runs its algorithm on the axes of its own
+                // writing mode.
+                tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                    compute_flexbox_layout(tree, node_id, inputs)
+                })
+            } else if tree.context.flex_intrinsic_probe == Some(idx) {
                 with_flex_item_basis_bounds(tree, node_id, |tree| {
                     compute_flexbox_layout(tree, node_id, inputs)
                 })

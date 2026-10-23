@@ -891,7 +891,7 @@ pub(crate) fn pick_winners(
 /// that `display` takes its initial value.
 ///
 /// The writing mode is the one block layout places the element's box in:
-/// flex, grid and table boxes and multicol
+/// grid and table boxes and multicol
 /// containers and their contents place their children on horizontal axes in
 /// every writing mode ([`ComputedValues::horizontal_children`], which looks
 /// through `display: contents` parents), so those children map through

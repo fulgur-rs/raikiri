@@ -229,16 +229,23 @@ fn percent_padding_of_a_flex_item_container_counts_in_its_automatic_minimum_size
 
 #[test]
 fn percent_padding_of_a_vertical_flex_item_refers_to_the_container_height() {
-    // A column flex container in a vertical writing mode measures its items
-    // without a physical height, the inline size their percentage edges
-    // refer to: 10% of the 150px container adds 15px to the 40px text.
-    let html = format!(
-        "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
-         .flex {{ display: flex; flex-direction: column; writing-mode: vertical-rl; height: 150px }}</style>\
-         <div class=flex><div id=i style=\"flex-basis: 0; padding-bottom: 10%\">XX</div></div>"
-    );
-    let ((_, _, _, height), _) = boxes(&html, "i");
-    assert_close(height, 55.0, "border-box height", &html);
+    // A column flex container in a vertical writing mode lays its items out
+    // along the block axis, so the 150px height is the inline size their
+    // percentage edges refer to: 10% of it adds 15px to the 40px text. An item
+    // that stretches across the container fills it instead.
+    let html = |align: &str| {
+        format!(
+            "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
+             .flex {{ display: flex; flex-direction: column; writing-mode: vertical-rl; height: 150px; {align} }}</style>\
+             <div class=flex><div id=i style=\"padding-bottom: 10%\">XX</div></div>"
+        )
+    };
+    let html_start = html("align-items: flex-start");
+    let ((_, _, _, height), _) = boxes(&html_start, "i");
+    assert_close(height, 55.0, "border-box height", &html_start);
+    let html_stretch = html("");
+    let ((_, _, _, height), _) = boxes(&html_stretch, "i");
+    assert_close(height, 150.0, "stretched border-box height", &html_stretch);
 }
 
 #[test]

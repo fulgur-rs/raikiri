@@ -61,9 +61,10 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 
 /// Whether `idx` lays out on vertical axes: a box in `vertical-rl` or
 /// `vertical-lr`. A multicol container and its contents run vertical writing
-/// on horizontal axes, and so do flex and grid containers: their algorithms
-/// place items on physical axes, together with the horizontally mapped
-/// logical margins.
+/// on horizontal axes, and so do grid containers: their algorithm places
+/// items on physical axes, together with the horizontally mapped logical
+/// margins. A flex container runs its algorithm on the axes of its own
+/// writing mode.
 pub(crate) fn lays_out_vertically(cascade: &CascadeResult, idx: usize) -> bool {
     let values = &cascade.computed[idx];
     if !matches!(
@@ -72,7 +73,7 @@ pub(crate) fn lays_out_vertically(cascade: &CascadeResult, idx: usize) -> bool {
             | WritingMode::VerticalLr
             | WritingMode::SidewaysRl
             | WritingMode::SidewaysLr
-    ) || values.display.is_flex_or_grid_container()
+    ) || values.display.is_grid_container()
     {
         return false;
     }
@@ -914,7 +915,7 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// - a replaced element takes its natural size, and an `auto` size is what
 ///   transfers its aspect ratio;
 /// - a vertical flex or grid item takes its inline size from the height, which
-///   the container's algorithm sizes along its physical axes;
+///   the container's algorithm sizes along its own axes;
 /// - a flex or grid item with a `min-width` or `max-width` is measured by Taffy
 ///   at the keyword size before that size is clamped, so the lines of its
 ///   content break at a width the box does not keep.

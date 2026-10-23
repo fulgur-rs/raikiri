@@ -633,10 +633,10 @@ fn contents_element_with_columns_keeps_its_children_vertical() {
 }
 
 #[test]
-fn contents_child_of_a_vertical_flex_container_keeps_the_horizontal_mapping() {
+fn contents_child_of_a_vertical_flex_container_follows_the_container_mapping() {
     // The flex container places the child of its `display: contents` child
-    // on horizontal axes, so `margin-block-start` maps to the top margin as
-    // it does for a direct flex item.
+    // on the axes of its writing mode, so `margin-block-start` maps to the
+    // right margin as it does for a direct flex item.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
@@ -655,7 +655,7 @@ fn contents_child_of_a_vertical_flex_container_keeps_the_horizontal_mapping() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(absolute_rect(&doc, child), (8.0, 18.0, 30.0, 20.0));
+    assert_eq!(absolute_rect(&doc, child), (268.0, 8.0, 30.0, 20.0));
 }
 
 #[test]
@@ -692,6 +692,19 @@ fn vertical_child_padding_percentages_follow_the_container_inline_size() {
         &["width:20px;padding-left:10%"],
     );
     assert_eq!(rects[1].2, 60.0);
+}
+
+#[test]
+fn an_empty_vertical_child_resolves_percentage_padding_against_the_container_inline_size() {
+    // A box without children is measured as a leaf, which takes the
+    // percentages of its padding from the width of its parent unless it is
+    // given the inline size of the container: 10% of 400px is 40px on every
+    // side.
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:400px",
+        &["width:20px;height:10px;padding:10%"],
+    );
+    assert_eq!((rects[1].2, rects[1].3), (100.0, 90.0));
 }
 
 #[test]
