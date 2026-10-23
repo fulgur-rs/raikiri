@@ -143,6 +143,9 @@ sudo apt-get update
 sudo apt-get install -y libfontconfig1-dev pkg-config
 ```
 
+See [Versioning before crates.io publication](docs/releasing.md) for the shared
+`0.0.x` version and GitHub Actions release flow.
+
 ### Tests and quality checks
 
 Run the workspace tests:

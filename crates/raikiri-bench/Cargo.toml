@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-bench"
-version = "0.1.0"
+version.workspace = true
 description = "Rendering stage, throughput and memory benchmarks for raikiri"
 edition.workspace = true
 rust-version.workspace = true

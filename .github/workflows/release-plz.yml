@@ -3,6 +3,7 @@ name: Release-plz
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,6 +11,8 @@ permissions:
 jobs:
   release-pr:
     name: Create or update Release PR
+    needs: release
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: stable
@@ -24,21 +27,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update stable Rust for cargo-semver-checks
-        run: rustup update stable
-
-      - name: Install system dependencies
-        # cargo-semver-checks builds raikiri-paint docs; fontique (through
-        # shodo's `system-fonts` feature) links libfontconfig, so the build
-        # needs the fontconfig development files and pkg-config.
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
-
-      - name: Cache cargo registry + target
-        # Without a cache, every run re-downloads the registry and
-        # cargo-semver-checks rebuilds rustdoc JSON for the baseline and
-        # current versions of every released package from scratch (it builds
-        # under target/semver-checks/). This job runs on stable, not the
-        # pinned CI toolchain, so it keeps a cache of its own.
+      - name: Cache Cargo registry
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-plz
@@ -55,13 +44,35 @@ jobs:
           permission-pull-requests: write
 
       - uses: release-plz/action@v0.5
+        id: release-pr
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
           command: release-pr
+          version: "0.4.0"
+
+      - name: Check out Release PR to synchronize the tools workspace
+        if: steps.release-pr.outputs.prs_created == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(steps.release-pr.outputs.pr).head_branch }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Synchronize Wasmtime tools lockfile
+        if: steps.release-pr.outputs.prs_created == 'true'
+        env:
+          RELEASE_BRANCH: ${{ fromJSON(steps.release-pr.outputs.pr).head_branch }}
+        run: |
+          cargo update --workspace --manifest-path tools/raikiri-js-wasmtime/Cargo.toml
+          if ! git diff --quiet -- tools/raikiri-js-wasmtime/Cargo.lock; then
+            git add tools/raikiri-js-wasmtime/Cargo.lock
+            git commit -m "chore: synchronize Wasmtime lockfile with release version"
+            git push origin "HEAD:$RELEASE_BRANCH"
+          fi
 
   release:
     name: Create tags for merged Release PR
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -71,8 +82,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure initial version tags
+        id: release-config
+        shell: bash
+        run: |
+          config=release-plz.toml
+          # With no baseline tag, release-pr has no version change to propose.
+          # Bootstrap 0.0.1 once; subsequent tags require a merged Release PR.
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if [[ "$version" == "0.0.1" && -z "$(git tag --list 'raikiri-v*')" ]]; then
+            config="$RUNNER_TEMP/release-plz-initial.toml"
+            sed 's/^release_always = false$/release_always = true/' release-plz.toml > "$config"
+          fi
+          echo "path=$config" >> "$GITHUB_OUTPUT"
+
       - uses: release-plz/action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           command: release
+          version: "0.4.0"
+          config: ${{ steps.release-config.outputs.path }}

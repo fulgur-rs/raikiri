@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-dom"
-version = "0.1.0"
+version.workspace = true
 description = "DOM data model + taffy block layout and shodo inline layout engine + PageStream/LayoutBuffer + GCPM runtime side (PageContext, TargetRegistry, PageBoxCache) for raikiri"
 edition.workspace = true
 rust-version.workspace = true

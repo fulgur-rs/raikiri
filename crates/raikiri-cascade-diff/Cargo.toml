@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-cascade-diff"
-version = "0.1.0"
+version.workspace = true
 description = "Differential cascade checker: dumps canonicalized cascade results so two builds of raikiri-style can be compared"
 edition.workspace = true
 rust-version.workspace = true

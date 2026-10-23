@@ -3,40 +3,14 @@ git_only = true
 publish = false
 git_release_enable = false
 git_tag_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
 release_always = false
 pr_branch_prefix = "release-plz-"
-release = false
+# Every member inherits workspace.package.version, including private tools.
+release = true
 changelog_update = false
+# The unreleased 0.0.x line advances by patch even for breaking commits.
+semver_check = false
+features_always_increment_minor = false
+dependencies_update = false
 max_analyze_commits = 3000
-
-[[package]]
-name = "raikiri-traits"
-release = true
-
-[[package]]
-name = "raikiri-style"
-release = true
-
-[[package]]
-name = "raikiri-net"
-release = true
-
-[[package]]
-name = "raikiri-dom"
-release = true
-
-[[package]]
-name = "raikiri-html"
-release = true
-
-[[package]]
-name = "raikiri-paint"
-release = true
-
-[[package]]
-name = "raikiri"
-release = true
-
-[[package]]
-name = "raikiri-js"
-release = true
