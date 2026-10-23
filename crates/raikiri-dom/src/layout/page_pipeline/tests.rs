@@ -15,6 +15,7 @@ mod page_name_storage_tests;
 mod paged_spanning_tests;
 mod source_walk_tests;
 mod table_follow_tests;
+mod vertical_grid_tests;
 
 fn element_candidate_context(attributes: candidates::ElementContext) -> candidates::BoxContext {
     candidates::BoxContext::element(candidates::CandidateFlowContext::default(), attributes)

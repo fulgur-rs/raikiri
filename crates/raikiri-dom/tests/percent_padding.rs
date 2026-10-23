@@ -249,6 +249,20 @@ fn percent_padding_of_a_vertical_flex_item_refers_to_the_container_height() {
 }
 
 #[test]
+fn percent_padding_of_a_vertical_grid_item_refers_to_its_grid_area() {
+    // The percentage edges of a grid item refer to the inline size of its grid
+    // area, here the 100px column: 10% adds 10px to the 40px text. The
+    // container is 150px tall, so a percentage of its height would add 15px.
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
+         .grid {{ display: grid; grid-template-columns: 100px; writing-mode: vertical-rl; height: 150px }}</style>\
+         <div class=grid><div id=i style=\"justify-self: start; padding-bottom: 10%\">XX</div></div>"
+    );
+    let ((_, _, _, height), _) = boxes(&html, "i");
+    assert_close(height, 50.0, "border-box height", &html);
+}
+
+#[test]
 fn orthogonal_child_uses_the_vertical_containers_inline_padding_basis() {
     let html = "<!doctype html><style>@page {size:800px 600px;margin:0} body {margin:0}</style>\
         <div style='writing-mode:vertical-rl;width:200px;height:400px'>\

@@ -25,8 +25,10 @@
 //! The line positions of a paragraph are logical block offsets already, so
 //! the paginator splits the lines of a vertical paragraph as it does those
 //! of a horizontal one. A box that lays out its content on horizontal axes
-//! inside such a document (a flex, grid or table box, a multicol container,
-//! or an orthogonal flow) is not broken: pagination treats it as monolithic.
+//! inside such a document (a table box, a multicol container, or an
+//! orthogonal flow) is not broken: pagination treats it as monolithic. A flex
+//! or grid container runs its algorithm on the axes of its own writing mode,
+//! so it is not monolithic on that account.
 
 use super::*;
 use crate::layout::block_axis_style::BlockAxisStyle;

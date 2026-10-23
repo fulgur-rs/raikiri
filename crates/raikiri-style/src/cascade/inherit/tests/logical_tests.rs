@@ -345,12 +345,10 @@ fn nested_margins(ancestors: &[&str]) -> Sides<ComputedLengthPercentageOrAuto> {
 
 #[test]
 fn children_placed_on_horizontal_axes_keep_the_horizontal_mapping() {
-    // Grid, table and multicol containers place their children on
-    // horizontal axes in every writing mode, and so does a block inside a
-    // multicol container.
+    // Table and multicol containers place their children on horizontal axes
+    // in every writing mode, and so does a block inside a multicol container.
     for ancestors in [
-        &["writing-mode: vertical-rl; display: grid"][..],
-        &["writing-mode: vertical-rl; display: table-cell"],
+        &["writing-mode: vertical-rl; display: table-cell"][..],
         &["writing-mode: vertical-rl; column-count: 2"],
         &[
             "writing-mode: vertical-rl; column-width: 10px",
@@ -363,12 +361,14 @@ fn children_placed_on_horizontal_axes_keep_the_horizontal_mapping() {
             "{ancestors:?}"
         );
     }
-    // A flex container lays its items out on the axes of its own writing
-    // mode, as a block container does.
+    // Flex and grid containers lay their items out on the axes of their own
+    // writing mode, as a block container does.
     for ancestors in [
         &["writing-mode: vertical-rl; display: block"][..],
         &["writing-mode: vertical-rl; display: flex"],
         &["writing-mode: vertical-rl; display: flex; flex-direction: column"],
+        &["writing-mode: vertical-rl; display: grid"],
+        &["writing-mode: vertical-rl; display: inline-grid"],
     ] {
         assert_eq!(
             nested_margins(ancestors),
@@ -381,26 +381,32 @@ fn children_placed_on_horizontal_axes_keep_the_horizontal_mapping() {
 #[test]
 fn upright_text_under_a_horizontal_parent_keeps_the_ltr_mapping() {
     // `text-orientation: upright` makes the used direction `ltr` in a
-    // vertical writing mode, also when a grid parent maps the logical sides
-    // onto horizontal axes.
+    // vertical writing mode, also when a table cell parent maps the logical
+    // sides onto horizontal axes.
     assert_eq!(
         nested_margins(&[
-            "writing-mode: vertical-rl; direction: rtl; text-orientation: upright; display: grid"
+            "writing-mode: vertical-rl; direction: rtl; text-orientation: upright; display: table-cell"
         ]),
         sides(2.0, 3.0, 4.0, 1.0)
     );
-    // A flex parent keeps the vertical mapping, where `upright` still gives
-    // `ltr` and `rtl` alone flips the inline sides.
-    assert_eq!(
-        nested_margins(&[
-            "writing-mode: vertical-rl; direction: rtl; text-orientation: upright; display: flex"
-        ]),
-        sides(1.0, 2.0, 3.0, 4.0)
-    );
-    assert_eq!(
-        nested_margins(&["writing-mode: vertical-rl; direction: rtl; display: flex"]),
-        sides(3.0, 2.0, 1.0, 4.0)
-    );
+    // A flex or grid parent keeps the vertical mapping, where `upright` still
+    // gives `ltr` and `rtl` alone flips the inline sides.
+    for display in ["flex", "grid"] {
+        assert_eq!(
+            nested_margins(&[&format!(
+                "writing-mode: vertical-rl; direction: rtl; text-orientation: upright; display: {display}"
+            )]),
+            sides(1.0, 2.0, 3.0, 4.0),
+            "{display}"
+        );
+        assert_eq!(
+            nested_margins(&[&format!(
+                "writing-mode: vertical-rl; direction: rtl; display: {display}"
+            )]),
+            sides(3.0, 2.0, 1.0, 4.0),
+            "{display}"
+        );
+    }
     // In a horizontal writing mode `text-orientation` has no effect.
     assert_eq!(
         nested_margins(&["direction: rtl; text-orientation: upright"]),

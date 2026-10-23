@@ -4,6 +4,7 @@
 //! positioning. Resolve immediate-container candidates here so all existing
 //! consumers keep locations relative to their layout parent.
 
+use super::grid_oof;
 use crate::document::OofCoordinate;
 use crate::layout::context::LayoutSession;
 use crate::layout::style_views::ReadRole;
@@ -73,9 +74,16 @@ impl LayoutContainingBlock for LayoutSession<'_> {
     }
 
     fn get_detailed_layout_info(&self, node: NodeId) -> &DetailedLayoutInfo<smol_str::SmolStr> {
+        let node = usize::from(node);
+        // Taffy resolves a grid area on the physical axes of `horizontal-tb`.
+        // The tracks of a vertical grid are on its layout axes, so `grid_oof`
+        // resolves its grid areas instead.
+        if grid_oof::right_to_left(self, node).is_some() {
+            return &DetailedLayoutInfo::None;
+        }
         self.context
             .grid_layout_info
-            .get(&usize::from(node))
+            .get(&node)
             .unwrap_or(&DetailedLayoutInfo::None)
     }
 }
@@ -89,7 +97,8 @@ pub(super) fn layout_local_oof(
         return;
     };
     let candidates = output.oof_candidates.take();
-    let result = layout_container_candidates(tree, node, candidates.as_slice(), area);
+    let grid = grid_oof::GridAxes::of(tree, usize::from(node), output.size.width);
+    let result = layout_candidates_of(tree, node, candidates.as_slice(), area, grid);
     output.oof_candidates = result.unclaimed;
     output.scrollable_overflow_rect = output
         .scrollable_overflow_rect
@@ -104,6 +113,18 @@ pub(crate) fn layout_container_candidates(
     node: NodeId,
     candidates: &[OofCandidate],
     area: OofPositioningArea,
+) -> OofLayoutResult {
+    layout_candidates_of(tree, node, candidates, area, None)
+}
+
+/// [`layout_container_candidates`] for `node` that is a grid container laid out
+/// on the axes `grid` describes, when it is.
+fn layout_candidates_of(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    candidates: &[OofCandidate],
+    area: OofPositioningArea,
+    grid: Option<grid_oof::GridAxes>,
 ) -> OofLayoutResult {
     let candidates: Vec<_> = candidates
         .iter()
@@ -121,7 +142,7 @@ pub(crate) fn layout_container_candidates(
     let style = tree.get_core_container_style(node);
     let direction = style.direction();
     let claims = style.is_containing_block();
-    layout_candidates(tree, node, &candidates, area, direction, claims)
+    layout_candidates(tree, node, &candidates, area, direction, claims, grid)
 }
 
 /// Compute the root layout while resolving intrinsic constraints on the
@@ -144,6 +165,7 @@ pub(super) fn layout_candidates(
     area: OofPositioningArea,
     direction: taffy::Direction,
     claims: taffy::ContainingBlockClaims,
+    grid: Option<grid_oof::GridAxes>,
 ) -> OofLayoutResult {
     let candidate_ids = candidates
         .iter()
@@ -152,9 +174,14 @@ pub(super) fn layout_candidates(
         .collect::<Vec<_>>();
     let result =
         super::content_limits::with_oof_content_limits(tree, Some(&candidate_ids), &[], |tree| {
-            taffy::compute::compute_oof_layout_for_area(
-                tree, owner, candidates, area, direction, claims,
-            )
+            match grid {
+                Some(axes) => grid_oof::compute_oof_layout(
+                    tree, owner, candidates, area, direction, claims, axes,
+                ),
+                None => taffy::compute::compute_oof_layout_for_area(
+                    tree, owner, candidates, area, direction, claims,
+                ),
+            }
         });
     tree.clear_hoisted_children(owner);
     tree.add_hoisted_children(owner, &result.hoisted);

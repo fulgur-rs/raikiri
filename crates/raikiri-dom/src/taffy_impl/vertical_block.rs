@@ -540,10 +540,9 @@ pub(crate) fn has_same_vertical_block_parent(tree: &LayoutSession<'_>, idx: usiz
 }
 
 /// Whether the child `idx` of a vertical container lays its own content out
-/// on horizontal axes: a horizontal box, or a grid container, whose
-/// algorithm places items on physical axes.
+/// on horizontal axes: a horizontal box.
 fn flows_horizontally(tree: &Document, idx: usize) -> bool {
-    !is_vertical(tree, idx) || tree.nodes[idx].formatting_context == FormattingContext::Grid
+    !is_vertical(tree, idx)
 }
 
 /// Whether taffy resolves the percentage padding of the child `idx` of a
