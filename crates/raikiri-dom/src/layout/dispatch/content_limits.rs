@@ -1073,7 +1073,7 @@ fn replaced_keyword_bounds(
         super::apply_local_sizing(
             &mut style,
             &[OwnedPropertyOverride::aspect_ratio(
-                super::leaf_intrinsic_ratio(&tree.nodes[idx]),
+                tree.nodes[idx].keyword_aspect_ratio,
             )],
         );
     }

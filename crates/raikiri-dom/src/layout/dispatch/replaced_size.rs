@@ -148,26 +148,54 @@ pub(super) fn auto_sides_size(
             (clamp_width(width_for(height)), height)
         }
         (None, None) => {
-            // The natural width stays. The natural height does too when the
-            // ratio is the natural one; a ratio the box states replaces it,
-            // and the height follows the width along it (CSS 2.1 §10.6.2).
-            let natural_height = if content_box_ratio {
-                natural.height
-            } else {
-                height_for(natural.width)
-            };
-            let (width, height) = constrain_with_ratio(
-                (natural.width + insets.width, natural_height + insets.height),
-                (min_width + insets.width, max_width + insets.width),
-                (min_height + insets.height, max_height + insets.height),
+            let size = natural_size_within(
+                natural,
+                ratio,
+                insets,
+                content_box_ratio,
+                Size {
+                    width: min_width,
+                    height: min_height,
+                },
+                Size {
+                    width: max_width,
+                    height: max_height,
+                },
             );
-            (
-                (width - insets.width).max(0.0),
-                (height - insets.height).max(0.0),
-            )
+            (size.width, size.height)
         }
     };
     Some(Size { width, height })
+}
+
+/// The content-box size of a replaced box with a ratio and no side of its own.
+///
+/// The natural width stays. The natural height does too when the ratio is the
+/// natural one; a ratio the box states replaces it, and the height follows the
+/// width along it (CSS 2.1 §10.6.2). The size is then brought within the `min`
+/// and `max` sizes by the constraint table of CSS 2.1 §10.4.
+fn natural_size_within(
+    natural: Size<f32>,
+    ratio: f32,
+    insets: Size<f32>,
+    content_box_ratio: bool,
+    min: Size<f32>,
+    max: Size<f32>,
+) -> Size<f32> {
+    let natural_height = if content_box_ratio {
+        natural.height
+    } else {
+        height_for_width(natural.width, ratio, insets)
+    };
+    let (width, height) = constrain_with_ratio(
+        (natural.width + insets.width, natural_height + insets.height),
+        (min.width + insets.width, max.width + insets.width),
+        (min.height + insets.height, max.height + insets.height),
+    );
+    Size {
+        width: (width - insets.width).max(0.0),
+        height: (height - insets.height).max(0.0),
+    }
 }
 
 /// The content-box size of a replaced leaf whose border-box height the caller
@@ -182,11 +210,8 @@ pub(super) fn auto_sides_size(
 /// natural one of the content. A width the caller fixed as well is kept; the
 /// size is then returned only to switch the floor off.
 ///
-/// A box with a `min-width` or `max-width` stays with Taffy: the block
-/// container has already carried that bound across the ratio onto the height it
-/// hands over, so the height is not the authored one any more and the floor is
-/// what keeps a padded box in shape. `content_box_ratio` is as for
-/// [`auto_sides_size`].
+/// The `min-*` and `max-*` sizes are left to Taffy, which clamps the box by them
+/// after measuring. `content_box_ratio` is as for [`auto_sides_size`].
 pub(super) fn fixed_height_size(
     style: &Style,
     inputs: &LayoutInput,
@@ -194,8 +219,7 @@ pub(super) fn fixed_height_size(
 ) -> Option<Size<f32>> {
     let ratio = style
         .aspect_ratio
-        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
-        .filter(|_| style.min_size.width.is_auto() && style.max_size.width.is_auto())?;
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)?;
     let fixed = inputs
         .known_dimensions
         .height
@@ -286,13 +310,28 @@ pub(super) fn keyword_bounds(
     );
 
     // A size transferred across the ratio is not limited by the numeric bounds
-    // of the side it lands on.
-    let contribution_width = match (ratio, authored.height) {
-        (Some(ratio), Some(_)) => width_for_height(preferred_height, ratio, insets),
+    // of the side it lands on. A side with nothing authored across it is the
+    // one the natural size takes within the numeric bounds, whose ratio is the
+    // one the box states.
+    let within = ratio.map(|ratio| {
+        let min = Size {
+            width: min_content.width.unwrap_or(0.0),
+            height: min_content.height.unwrap_or(0.0),
+        };
+        let max = Size {
+            width: max_content.width.unwrap_or(f32::INFINITY).max(min.width),
+            height: max_content.height.unwrap_or(f32::INFINITY).max(min.height),
+        };
+        natural_size_within(natural, ratio, insets, content_box_ratio, min, max)
+    });
+    let contribution_width = match (ratio, within, authored.height) {
+        (Some(ratio), _, Some(_)) => width_for_height(preferred_height, ratio, insets),
+        (_, Some(within), None) => within.width,
         _ => clamp(natural.width, min_content.width, max_content.width),
     };
-    let contribution_height = match (ratio, authored.width) {
-        (Some(ratio), Some(_)) => height_for_width(preferred_width, ratio, insets),
+    let contribution_height = match (ratio, within, authored.width) {
+        (Some(ratio), _, Some(_)) => height_for_width(preferred_width, ratio, insets),
+        (_, Some(within), None) => within.height,
         _ => clamp(natural.height, min_content.height, max_content.height),
     };
 

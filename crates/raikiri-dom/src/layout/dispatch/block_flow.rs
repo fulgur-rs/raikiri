@@ -204,9 +204,9 @@ pub(crate) fn compute_block_flow(
     context: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let style = style_input::container(tree, usize::from(node));
-    let replaced = crate::paint_rules::is_replaced_element(tree, usize::from(node));
     let content_box_ratio = tree.nodes[usize::from(node)].ratio_in_content_box;
-    let metrics = Metrics::resolve(&style, replaced, content_box_ratio, inputs);
+    let width_stands_in = tree.nodes[usize::from(node)].svg_width_follows_available;
+    let metrics = Metrics::resolve(&style, width_stands_in, content_box_ratio, inputs);
     let width = if let Some(width) = metrics.preferred.width {
         if metrics.ratio_width {
             let minimum = min_content_width(tree, node, metrics.percent_height)
@@ -268,7 +268,7 @@ pub(crate) fn compute_block_flow(
     {
         let mut sized = inputs;
         sized.known_dimensions.width = Some(width);
-        Metrics::resolve(&style, replaced, content_box_ratio, sized)
+        Metrics::resolve(&style, width_stands_in, content_box_ratio, sized)
     } else {
         metrics
     };

@@ -226,10 +226,10 @@ fn keyword_bounds_transfer_across_the_border_box_ratio() {
 
 #[test]
 fn keyword_bounds_carry_a_height_bound_to_the_width_across_the_border_box_ratio() {
-    // The `min-height: min-content` of the 50px high image is a border box
-    // 60px high with 10px of padding at the bottom. In a 2:1 border box that
-    // is 120px wide, and the 40px of padding at the right leaves a content
-    // box of 80px. A content box ratio would double the 50px high content box
+    // The 20px wide image fills a 2:1 border box 60px wide with the 40px of
+    // padding at the right, so the box is 30px high with 10px of padding at
+    // the bottom, and that `min-height: min-content` is 60px wide across the
+    // ratio again. A content box ratio would double the 50px high content box
     // instead.
     let style = Style {
         padding: Edges {
@@ -250,8 +250,8 @@ fn keyword_bounds_carry_a_height_bound_to_the_width_across_the_border_box_ratio(
     let border_box = keyword_bounds(&style, &inputs(None), natural(), limits, false).unwrap();
     let content_box = keyword_bounds(&style, &inputs(None), natural(), limits, true).unwrap();
 
-    assert_eq!(border_box.height.min, Some(60.0));
-    assert_eq!(border_box.width.min, Some(120.0));
+    assert_eq!(border_box.height.min, Some(30.0));
+    assert_eq!(border_box.width.min, Some(60.0));
     assert_eq!(content_box.width.min, Some(140.0));
 }
 

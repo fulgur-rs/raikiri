@@ -542,6 +542,12 @@ pub struct Node {
     /// and the height are definite. Recomputed by the style bridge before
     /// every layout pass.
     pub(crate) preferred_aspect_ratio: Option<f32>,
+    /// The ratio the intrinsic keyword sizes of replaced content transfer
+    /// along: the one the computed `aspect-ratio` and the natural ratio select,
+    /// kept where `preferred_aspect_ratio` is `None` because both sizes are
+    /// definite and sizing itself leaves the ratio out. `None` without a
+    /// natural ratio. Recomputed by the style bridge before every layout pass.
+    pub(crate) keyword_aspect_ratio: Option<f32>,
     /// Whether the preferred aspect ratio relates the content box sizes
     /// whatever the `box-sizing` is (CSS Box Sizing 4 §5.1): the ratio is the
     /// natural ratio of replaced content, including where a degenerate
@@ -757,6 +763,7 @@ impl Node {
             svg_width_follows_available: false,
             has_before_or_after_content: false,
             preferred_aspect_ratio: None,
+            keyword_aspect_ratio: None,
             ratio_in_content_box: false,
             paints_whole_box_effects: false,
             paints_background_color: false,
