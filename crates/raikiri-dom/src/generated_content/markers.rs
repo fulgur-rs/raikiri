@@ -1,13 +1,11 @@
 //! Shared marker content resolution for inline layout and outside painting.
 
 use super::{
-    CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, fallback_quote,
-    format_counter, format_counter_component, format_counters_component,
+    CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, QuoteDepth, format_counter,
+    format_counter_component, format_counters_component,
 };
 use crate::{CounterSnapshot, Document};
-use raikiri_style::property::{
-    ContentComponent, CounterStyle, DisplayValue, ListStyleType, QuoteKeyword,
-};
+use raikiri_style::property::{ContentComponent, CounterStyle, DisplayValue, ListStyleType};
 use raikiri_style::{CascadeResult, CounterStyleRegistry, resolve_custom_counter};
 
 impl Document {
@@ -204,7 +202,7 @@ fn marker_content_text<T: AsRef<str>>(
         return Some(String::new());
     }
     let mut text = String::new();
-    let mut depth = 0_usize;
+    let mut depth = QuoteDepth::default();
     for component in components {
         match component {
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
@@ -253,28 +251,9 @@ fn marker_content_text<T: AsRef<str>>(
                     registry,
                 ));
             }
-            ContentComponent::Quote(keyword) => match keyword {
-                QuoteKeyword::OpenQuote => {
-                    if let Some((open, _)) = quotes.get(depth) {
-                        text.push_str(open.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(fallback_quote(depth, true));
-                    } // cov:ignore: branch-closing line has no executable mapping
-                    depth = depth.saturating_add(1);
-                }
-                QuoteKeyword::CloseQuote => {
-                    depth = depth.saturating_sub(1);
-                    if let Some((_, close)) = quotes.get(depth) {
-                        text.push_str(close.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(fallback_quote(depth, false));
-                    } // cov:ignore: branch-closing line has no executable mapping
-                }
-                QuoteKeyword::NoOpenQuote => depth = depth.saturating_add(1),
-                QuoteKeyword::NoCloseQuote => depth = depth.saturating_sub(1),
-                // cov:ignore: non-exhaustive keyword fallback is not constructible here
-                _ => {}
-            },
+            ContentComponent::Quote(keyword) => {
+                text.push_str(depth.apply(*keyword, quotes, quotes_auto));
+            }
             _ => {}
         }
     }

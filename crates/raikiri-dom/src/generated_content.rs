@@ -690,8 +690,7 @@ pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
 
 /// The `quotes: auto` fallback glyph for one nesting depth: open quotes
 /// use outer marks at depth zero and inner marks below, and likewise for
-/// close quotes. Shared by normal content and list markers so the two stay
-/// in agreement.
+/// close quotes.
 fn fallback_quote(depth: usize, open: bool) -> &'static str {
     if open {
         if depth == 0 { "“" } else { "‘" }
@@ -699,6 +698,53 @@ fn fallback_quote(depth: usize, open: bool) -> &'static str {
         "”"
     } else {
         "’"
+    }
+}
+
+/// The quote nesting depth of one `content` value, shared by normal content,
+/// list markers and page-margin boxes so the three resolve quotes alike.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct QuoteDepth(usize);
+
+impl QuoteDepth {
+    /// The text `keyword` inserts at the current depth, moving the depth as
+    /// the keyword says (CSS Content 3 §2.4.2). `open-quote` and
+    /// `no-open-quote` deepen the nesting; `close-quote` and `no-close-quote`
+    /// first make it shallower, never below zero. The `no-` forms insert
+    /// nothing. The depth counts within one `content` value, so a lone
+    /// `close-quote`, as in `::after`, uses the outermost pair.
+    ///
+    /// A depth past the last pair of an explicit `quotes` list repeats that
+    /// pair. An empty list is `auto` when `quotes_auto` is set and `none`
+    /// otherwise.
+    pub(crate) fn apply<'q, T: AsRef<str>>(
+        &mut self,
+        keyword: QuoteKeyword,
+        quotes: &'q [(T, T)],
+        quotes_auto: bool,
+    ) -> &'q str {
+        let opens = matches!(keyword, QuoteKeyword::OpenQuote | QuoteKeyword::NoOpenQuote);
+        let closes = matches!(
+            keyword,
+            QuoteKeyword::CloseQuote | QuoteKeyword::NoCloseQuote
+        );
+        let inserts = matches!(keyword, QuoteKeyword::OpenQuote | QuoteKeyword::CloseQuote);
+        if closes {
+            self.0 = self.0.saturating_sub(1);
+        }
+        let depth = self.0;
+        if opens {
+            self.0 = depth.saturating_add(1);
+        }
+        if !inserts {
+            return "";
+        }
+        match quotes.get(depth).or_else(|| quotes.last()) {
+            Some((open, _)) if opens => open.as_ref(),
+            Some((_, close)) => close.as_ref(),
+            None if quotes_auto => fallback_quote(depth, opens),
+            None => "",
+        }
     }
 }
 
@@ -745,7 +791,7 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
         return None;
     }
     let mut text = String::new();
-    let mut depth = 0_usize;
+    let mut depth = QuoteDepth::default();
     let mut images = 0_usize;
     for component in components {
         match component {
@@ -789,27 +835,9 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
                     registry,
                 ));
             }
-            ContentComponent::Quote(keyword) => match keyword {
-                QuoteKeyword::OpenQuote => {
-                    if let Some((open, _)) = quotes.get(depth) {
-                        text.push_str(open.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(fallback_quote(depth, true));
-                    }
-                    depth = depth.saturating_add(1);
-                }
-                QuoteKeyword::CloseQuote => {
-                    depth = depth.saturating_sub(1);
-                    if let Some((_, close)) = quotes.get(depth) {
-                        text.push_str(close.as_ref());
-                    } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(fallback_quote(depth, false));
-                    }
-                }
-                QuoteKeyword::NoOpenQuote => depth = depth.saturating_add(1),
-                QuoteKeyword::NoCloseQuote => depth = depth.saturating_sub(1),
-                _ => {}
-            },
+            ContentComponent::Quote(keyword) => {
+                text.push_str(depth.apply(*keyword, quotes, quotes_auto));
+            }
             _ => {}
         }
     }

@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::property::QuoteKeyword;
 use raikiri_style::{build_rule_tree, cascade};
 
 fn list_fixture(
@@ -370,6 +371,39 @@ fn marker_content_text_resolves_literals_counters_and_quotes() {
         ),
         Some("“‘’”".to_string())
     );
+}
+
+#[test]
+fn marker_quotes_repeat_the_last_explicit_pair_and_nest_the_auto_marks() {
+    let registry = CounterStyleRegistry::new();
+    let text = |quotes: &[(&str, &str)], quotes_auto: bool| {
+        let components: Vec<_> = [
+            QuoteKeyword::OpenQuote,
+            QuoteKeyword::OpenQuote,
+            QuoteKeyword::OpenQuote,
+            QuoteKeyword::CloseQuote,
+            QuoteKeyword::CloseQuote,
+            QuoteKeyword::CloseQuote,
+        ]
+        .into_iter()
+        .map(ContentComponent::Quote)
+        .collect();
+        marker_content_text(
+            &components,
+            quotes,
+            quotes_auto,
+            1,
+            &CounterSnapshot::default(),
+            &registry,
+        )
+    };
+    assert_eq!(text(&[("<", ">")], false), Some("<<<>>>".to_string()));
+    assert_eq!(
+        text(&[("<", ">"), ("[", "]")], false),
+        Some("<[[]]>".to_string())
+    );
+    assert_eq!(text(&[], true), Some("“‘‘’’”".to_string()));
+    assert_eq!(text(&[], false), Some(String::new()));
 }
 
 #[test]

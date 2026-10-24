@@ -213,3 +213,140 @@ fn nested_auto_quotes_use_inner_fallback_glyphs() {
         Some("\u{201c}\u{2018}\u{2019}\u{201d}".to_string())
     );
 }
+
+/// The text `keywords` produce as the content of one box with `quotes`.
+fn quote_text(keywords: &[QuoteKeyword], quotes: &[(&str, &str)], quotes_auto: bool) -> String {
+    let document = Document::new();
+    let components: Vec<_> = keywords
+        .iter()
+        .map(|keyword| ContentComponent::Quote(*keyword))
+        .collect();
+    content_components_to_text_with_quotes(
+        &document,
+        document.root_index(),
+        &components,
+        quotes,
+        quotes_auto,
+        &CounterSnapshot::default(),
+        &CounterStyleRegistry::new(),
+    )
+    .expect("a non-empty content value")
+}
+
+#[test]
+fn a_depth_past_the_last_explicit_pair_repeats_that_pair() {
+    use QuoteKeyword::{CloseQuote as Close, OpenQuote as Open};
+    let three_deep = [Open, Open, Open, Close, Close, Close];
+    assert_eq!(quote_text(&three_deep, &[("<", ">")], false), "<<<>>>");
+    assert_eq!(
+        quote_text(&three_deep, &[("<", ">"), ("[", "]")], false),
+        "<[[]]>"
+    );
+    // A list that is long enough is read pair by pair, not repeated.
+    assert_eq!(
+        quote_text(&three_deep, &[("<", ">"), ("[", "]"), ("{", "}")], false),
+        "<[{}]>"
+    );
+}
+
+#[test]
+fn a_hidden_quote_deepens_the_nesting_past_the_last_pair() {
+    use QuoteKeyword::{CloseQuote as Close, NoCloseQuote, NoOpenQuote, OpenQuote as Open};
+    assert_eq!(
+        quote_text(
+            &[NoOpenQuote, NoOpenQuote, Open, Close, NoCloseQuote, Close],
+            &[("<", ">"), ("[", "]")],
+            false
+        ),
+        "[]>"
+    );
+}
+
+#[test]
+fn auto_quotes_use_the_inner_marks_at_every_depth_below_the_outermost() {
+    use QuoteKeyword::{CloseQuote as Close, OpenQuote as Open};
+    assert_eq!(
+        quote_text(
+            &[Open, Open, Open, Close, Close, Close],
+            &[] as &[(&str, &str)],
+            true
+        ),
+        "“‘‘’’”"
+    );
+}
+
+#[test]
+fn a_lone_closing_quote_uses_the_outermost_pair() {
+    use QuoteKeyword::{CloseQuote as Close, NoCloseQuote};
+    let pairs: &[(&str, &str)] = &[("<", ">"), ("[", "]")];
+    assert_eq!(quote_text(&[Close], pairs, false), ">");
+    assert_eq!(quote_text(&[NoCloseQuote, Close], pairs, false), ">");
+    assert_eq!(quote_text(&[Close], &[] as &[(&str, &str)], true), "”");
+}
+
+#[test]
+fn quotes_none_inserts_nothing_at_any_depth() {
+    use QuoteKeyword::{CloseQuote as Close, OpenQuote as Open};
+    assert_eq!(
+        quote_text(&[Open, Open, Close, Close], &[] as &[(&str, &str)], false),
+        ""
+    );
+}
+
+#[test]
+fn pseudo_element_quotes_repeat_the_last_pair_and_nest_the_auto_marks() {
+    let text = |quotes: &str| {
+        let mut document = Document::new();
+        let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
+        document.append_text(
+            style,
+            format!(
+                "div::before {{ content: open-quote open-quote open-quote 'x' close-quote close-quote close-quote; {quotes} }}"
+            ),
+        );
+        let element = document.append_element(Some(document.root_index()), "div", None::<&str>);
+        document.mark_in_document_flags();
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade succeeds");
+        generated_text(
+            &document,
+            &cascade,
+            element,
+            PseudoElem::Before,
+            &CounterSnapshots::default(),
+        )
+        .expect("before text")
+        .1
+    };
+    assert_eq!(text("quotes: '<' '>'"), "<<<x>>>");
+    assert_eq!(text("quotes: '<' '>' '[' ']'"), "<[[x]]>");
+    assert_eq!(text("quotes: auto"), "“‘‘x’’”");
+    assert_eq!(text("quotes: none"), "x");
+}
+
+#[test]
+fn an_opening_before_and_a_closing_after_both_use_the_outermost_pair() {
+    let mut document = Document::new();
+    let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
+    document.append_text(
+        style,
+        "div::before { content: open-quote } div::after { content: close-quote }",
+    );
+    let element = document.append_element(Some(document.root_index()), "div", None::<&str>);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade succeeds");
+    let text = |pseudo| {
+        generated_text(
+            &document,
+            &cascade,
+            element,
+            pseudo,
+            &CounterSnapshots::default(),
+        )
+        .expect("generated text")
+        .1
+    };
+    assert_eq!(text(PseudoElem::Before), "“");
+    assert_eq!(text(PseudoElem::After), "”");
+}
