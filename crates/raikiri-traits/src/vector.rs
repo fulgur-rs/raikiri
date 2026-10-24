@@ -22,6 +22,9 @@
 //! Paths are already flattened to lines, quadratic and cubic curves: arcs,
 //! basic shapes and instanced content are resolved by the producer.
 //!
+//! Gradients and clip paths are resolved to the user space of the path or
+//! group that uses them, so a consumer needs no bounding box of its own.
+//!
 //! Every public enum and struct is `#[non_exhaustive]`. Producers build the
 //! structs with their `new` constructors and set the public fields.
 
@@ -72,8 +75,9 @@ pub enum Node {
 /// A set of nodes drawn together.
 ///
 /// The children are drawn in order, after `transform` has been applied to
-/// their coordinates. When `opacity` is below one, the children are first
-/// composited with each other and the result is drawn with that opacity.
+/// their coordinates. The children are first composited with each other,
+/// then clipped by `clip`, and the result is drawn with `opacity`. A group
+/// with neither a clip nor an opacity below one only moves its children.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Group {
@@ -81,40 +85,91 @@ pub struct Group {
     pub transform: PaintTransform,
     /// Opacity of the composited children, in `0.0..=1.0`.
     pub opacity: f32,
+    /// Limits where the children draw, in the same space as the children
+    /// (after `transform`).
+    pub clip: Option<Box<ClipPath>>,
     /// The children, back to front.
     pub children: Vec<Node>,
 }
 
 impl Group {
-    /// An opaque group with no children.
+    /// An opaque, unclipped group with no children.
     pub fn new(transform: PaintTransform) -> Self {
         Self {
             transform,
             opacity: 1.0,
+            clip: None,
             children: Vec::new(),
         }
     }
 
     fn descendant_count(&self) -> usize {
-        self.children
+        let clip = self.clip.as_ref().map_or(0, |clip| clip.node_count());
+        clip + self
+            .children
             .iter()
             .map(|child| match child {
                 Node::Group(group) => 1 + group.descendant_count(),
                 Node::Path(_) => 1,
             })
-            .sum()
+            .sum::<usize>()
     }
 
     fn heap_bytes(&self) -> usize {
         let own = self.children.capacity() * std::mem::size_of::<Node>();
-        own + self
-            .children
-            .iter()
-            .map(|child| match child {
-                Node::Group(group) => group.heap_bytes(),
-                Node::Path(path) => path.heap_bytes(),
-            })
-            .sum::<usize>()
+        let clip = self.clip.as_ref().map_or(0, |clip| clip.heap_bytes());
+        own + clip
+            + self
+                .children
+                .iter()
+                .map(|child| match child {
+                    Node::Group(group) => group.heap_bytes(),
+                    Node::Path(path) => path.heap_bytes(),
+                })
+                .sum::<usize>()
+    }
+}
+
+/// An area that limits where a group draws.
+///
+/// The area is the union of what the paths of `root` cover, each filled by
+/// its own fill rule; their paints, opacities and strokes do not count. A
+/// group inside `root` moves, and may clip, the paths below it like any
+/// group, but its opacity does not count either. When `clip` is set, the area
+/// is the part of it that `clip` covers as well.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ClipPath {
+    /// Maps the coordinates of `root` to the space of the clipped group's
+    /// children.
+    pub transform: PaintTransform,
+    /// The shapes that make up the area.
+    pub root: Group,
+    /// A second clip that the area is intersected with. Its transform maps
+    /// to the same space as this clip's.
+    pub clip: Option<Box<ClipPath>>,
+}
+
+impl ClipPath {
+    /// A clip of no shapes, which clips everything away.
+    pub fn new(transform: PaintTransform) -> Self {
+        Self {
+            transform,
+            root: Group::new(PaintTransform::IDENTITY),
+            clip: None,
+        }
+    }
+
+    /// The number of nodes in the clip: its root, what is below it, and the
+    /// clips chained to it.
+    pub fn node_count(&self) -> usize {
+        1 + self.root.descendant_count() + self.clip.as_ref().map_or(0, |clip| clip.node_count())
+    }
+
+    fn heap_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.root.heap_bytes()
+            + self.clip.as_ref().map_or(0, |clip| clip.heap_bytes())
     }
 }
 
@@ -152,6 +207,7 @@ impl Path {
 
     fn heap_bytes(&self) -> usize {
         self.segments.capacity() * std::mem::size_of::<PathSegment>()
+            + self.fill.as_ref().map_or(0, |fill| fill.paint.heap_bytes())
             + self.stroke.as_ref().map_or(0, Stroke::heap_bytes)
     }
 }
@@ -242,9 +298,11 @@ impl Stroke {
     }
 
     fn heap_bytes(&self) -> usize {
-        self.dash
-            .as_ref()
-            .map_or(0, |dash| dash.array.capacity() * std::mem::size_of::<f32>())
+        self.paint.heap_bytes()
+            + self
+                .dash
+                .as_ref()
+                .map_or(0, |dash| dash.array.capacity() * std::mem::size_of::<f32>())
     }
 }
 
@@ -267,12 +325,146 @@ impl Dash {
 }
 
 /// What a fill or a stroke is painted with.
+///
+/// The alpha of a color, including the alpha of the stops of a gradient, is
+/// part of the paint, on top of the opacity of the fill or stroke that holds
+/// it.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Paint {
-    /// A single color. Its alpha is part of the color, on top of the opacity
-    /// of the fill or stroke that holds it.
+    /// A single color.
     Color(PaintColor),
+    /// Colors that change along a line.
+    LinearGradient(Box<LinearGradient>),
+    /// Colors that change outwards from a circle.
+    RadialGradient(Box<RadialGradient>),
+}
+
+impl Paint {
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Color(_) => 0,
+            Self::LinearGradient(gradient) => {
+                std::mem::size_of::<LinearGradient>() + gradient.stops_heap_bytes()
+            }
+            Self::RadialGradient(gradient) => {
+                std::mem::size_of::<RadialGradient>() + gradient.stops_heap_bytes()
+            }
+        }
+    }
+}
+
+/// One color of a gradient.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct GradientStop {
+    /// Where along the gradient the color is reached, in `0.0..=1.0`.
+    pub offset: f32,
+    /// The color, with the opacity of the stop as its alpha.
+    pub color: PaintColor,
+}
+
+impl GradientStop {
+    /// A stop of `color` at `offset`.
+    pub fn new(offset: f32, color: PaintColor) -> Self {
+        Self { offset, color }
+    }
+}
+
+/// What a gradient does outside the range of its stops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SpreadMethod {
+    /// The first and last colors extend.
+    Pad,
+    /// The gradient repeats, alternately forwards and backwards.
+    Reflect,
+    /// The gradient repeats from its start.
+    Repeat,
+}
+
+/// A gradient along the line from `start` to `end`.
+///
+/// The stops have at least two entries with non-decreasing offsets, and
+/// `start` differs from `end`; a producer turns anything else into a solid
+/// color or leaves the paint out.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct LinearGradient {
+    /// Where the gradient begins, in the gradient's own space.
+    pub start: (f32, f32),
+    /// Where the gradient ends, in the gradient's own space.
+    pub end: (f32, f32),
+    /// Maps the gradient's own space to the space of the path it paints.
+    /// It can be inverted.
+    pub transform: PaintTransform,
+    /// What happens outside the range of the stops.
+    pub spread: SpreadMethod,
+    /// The colors, in the order of their offsets.
+    pub stops: Vec<GradientStop>,
+}
+
+impl LinearGradient {
+    /// A padded gradient from `start` to `end` in the space of the path.
+    pub fn new(start: (f32, f32), end: (f32, f32), stops: Vec<GradientStop>) -> Self {
+        Self {
+            start,
+            end,
+            transform: PaintTransform::IDENTITY,
+            spread: SpreadMethod::Pad,
+            stops,
+        }
+    }
+
+    fn stops_heap_bytes(&self) -> usize {
+        self.stops.capacity() * std::mem::size_of::<GradientStop>()
+    }
+}
+
+/// A gradient between a focal circle and an outer circle.
+///
+/// The color at offset zero lies on the circle of `focal_radius` around
+/// `focal`, and the color at offset one on the circle of `radius` around
+/// `center`. The stops are as for [`LinearGradient`], and `radius` is
+/// positive.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct RadialGradient {
+    /// Center of the outer circle, in the gradient's own space.
+    pub center: (f32, f32),
+    /// Radius of the outer circle.
+    pub radius: f32,
+    /// Center of the focal circle.
+    pub focal: (f32, f32),
+    /// Radius of the focal circle.
+    pub focal_radius: f32,
+    /// Maps the gradient's own space to the space of the path it paints.
+    /// It can be inverted.
+    pub transform: PaintTransform,
+    /// What happens outside the range of the stops.
+    pub spread: SpreadMethod,
+    /// The colors, in the order of their offsets.
+    pub stops: Vec<GradientStop>,
+}
+
+impl RadialGradient {
+    /// A padded gradient around `center` whose focal circle is the point at
+    /// `center`.
+    pub fn new(center: (f32, f32), radius: f32, stops: Vec<GradientStop>) -> Self {
+        Self {
+            center,
+            radius,
+            focal: center,
+            focal_radius: 0.0,
+            transform: PaintTransform::IDENTITY,
+            spread: SpreadMethod::Pad,
+            stops,
+        }
+    }
+
+    fn stops_heap_bytes(&self) -> usize {
+        self.stops.capacity() * std::mem::size_of::<GradientStop>()
+    }
 }
 
 /// Which points of a path are inside it.

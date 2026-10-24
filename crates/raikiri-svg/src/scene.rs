@@ -3,8 +3,8 @@
 //! The scene is the drawing the raster path would produce, kept as geometry:
 //! paths in the coordinates of nested groups, with the document's `viewBox`,
 //! `preserveAspectRatio` and `transform` attributes folded into group
-//! transforms. This step covers shapes and paths with solid fills and strokes,
-//! group opacity and visibility. Gradients, patterns, clip paths, masks, blend
+//! transforms. It covers shapes and paths with solid and gradient fills and
+//! strokes, clip paths, group opacity and visibility. Patterns, masks, blend
 //! modes and images are reported as [`SvgSceneError::Unsupported`], so the
 //! caller draws the raster of the whole image instead.
 
@@ -13,8 +13,8 @@ use crate::{
     resolved_source_style, within_four_ulps_of_one,
 };
 use raikiri_traits::vector::{
-    Dash, Fill, FillRule, Group, LineCap, LineJoin, Node, Paint, PaintOrder, Path, PathSegment,
-    Stroke, VectorImage,
+    ClipPath, Dash, Fill, FillRule, GradientStop, Group, LineCap, LineJoin, LinearGradient, Node,
+    Paint, PaintOrder, Path, PathSegment, RadialGradient, SpreadMethod, Stroke, VectorImage,
 };
 use raikiri_traits::{PaintColor, PaintTransform};
 use usvg::tiny_skia_path;
@@ -28,6 +28,16 @@ const MAX_SCENE_SEGMENTS: usize = 4_000_000;
 /// The XML depth limit is 128; `use` elements can double the depth of the
 /// tree that results.
 const MAX_SCENE_GROUP_DEPTH: usize = 256;
+/// Deepest nesting of clip paths in one scene: a clip inside a clip, or
+/// chained to one.
+const MAX_SCENE_CLIP_DEPTH: usize = 64;
+/// Most stops in one gradient.
+const MAX_GRADIENT_STOPS: usize = 1_024;
+/// Most gradient stops in one scene, over all its gradients.
+const MAX_SCENE_GRADIENT_STOPS: usize = 1_000_000;
+/// The length below which the two points of a gradient count as one, as the
+/// raster path counts them.
+const DEGENERATE_GRADIENT_LENGTH: f32 = 1.0 / 32_768.0;
 /// The deepest chain of single-child wrappers searched for the group of the
 /// root `<svg>` element: the view box transform and the element itself.
 const ROOT_GROUP_SEARCH_DEPTH: usize = 3;
@@ -43,12 +53,8 @@ fn unsupported<T>(feature: SvgSceneFeature) -> Result<T, SvgSceneError> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SvgSceneFeature {
-    /// A linear or radial gradient paint.
-    Gradient,
     /// A pattern paint.
     Pattern,
-    /// A clip path.
-    ClipPath,
     /// A mask.
     Mask,
     /// A blend mode other than normal.
@@ -63,9 +69,7 @@ pub enum SvgSceneFeature {
 impl SvgSceneFeature {
     fn name(self) -> &'static str {
         match self {
-            Self::Gradient => "gradients",
             Self::Pattern => "patterns",
-            Self::ClipPath => "clip paths",
             Self::Mask => "masks",
             Self::BlendMode => "blend modes",
             Self::Image => "images and text",
@@ -84,6 +88,12 @@ pub enum SvgSceneLimit {
     PathSegments,
     /// Nesting depth of groups.
     GroupDepth,
+    /// Nesting depth of clip paths.
+    ClipDepth,
+    /// Stops in one gradient.
+    GradientStops,
+    /// Stops in all the gradients of the scene together.
+    SceneGradientStops,
 }
 
 impl SvgSceneLimit {
@@ -92,6 +102,9 @@ impl SvgSceneLimit {
             Self::Nodes => "nodes",
             Self::PathSegments => "path segments",
             Self::GroupDepth => "group nesting levels",
+            Self::ClipDepth => "clip path nesting levels",
+            Self::GradientStops => "stops in one gradient",
+            Self::SceneGradientStops => "gradient stops",
         }
     }
 }
@@ -158,6 +171,9 @@ pub(crate) struct SceneLimits {
     pub(crate) nodes: usize,
     pub(crate) segments: usize,
     pub(crate) group_depth: usize,
+    pub(crate) clip_depth: usize,
+    pub(crate) gradient_stops: usize,
+    pub(crate) scene_gradient_stops: usize,
 }
 
 impl Default for SceneLimits {
@@ -166,6 +182,9 @@ impl Default for SceneLimits {
             nodes: MAX_SCENE_NODES,
             segments: MAX_SCENE_SEGMENTS,
             group_depth: MAX_SCENE_GROUP_DEPTH,
+            clip_depth: MAX_SCENE_CLIP_DEPTH,
+            gradient_stops: MAX_GRADIENT_STOPS,
+            scene_gradient_stops: MAX_SCENE_GRADIENT_STOPS,
         }
     }
 }
@@ -329,6 +348,8 @@ struct Builder {
     limits: SceneLimits,
     nodes: usize,
     segments: usize,
+    stops: usize,
+    clip_depth: usize,
 }
 
 impl Builder {
@@ -337,6 +358,8 @@ impl Builder {
             limits,
             nodes: 0,
             segments: 0,
+            stops: 0,
+            clip_depth: 0,
         }
     }
 
@@ -405,9 +428,6 @@ impl Builder {
                 max: self.limits.group_depth,
             });
         }
-        if group.clip_path().is_some() {
-            return unsupported(SvgSceneFeature::ClipPath);
-        }
         if group.mask().is_some() {
             return unsupported(SvgSceneFeature::Mask);
         }
@@ -433,21 +453,59 @@ impl Builder {
             self.nodes -= 1;
             return Ok(Vec::new());
         }
-        if node.opacity == 1.0 && node.transform == PaintTransform::IDENTITY {
+        node.clip = group
+            .clip_path()
+            .map(|clip| self.clip(clip, depth).map(Box::new))
+            .transpose()?;
+        if node.opacity == 1.0 && node.transform == PaintTransform::IDENTITY && node.clip.is_none()
+        {
             self.nodes -= 1;
             return Ok(node.children);
         }
         Ok(vec![Node::Group(node)])
     }
 
+    /// The clip for a group at `depth`. What is drawn inside the clip nests
+    /// below that depth, so clips share the budget of the groups.
+    fn clip(&mut self, clip: &usvg::ClipPath, depth: usize) -> Result<ClipPath, SvgSceneError> {
+        if self.clip_depth >= self.limits.clip_depth {
+            return Err(SvgSceneError::LimitExceeded {
+                limit: SvgSceneLimit::ClipDepth,
+                max: self.limits.clip_depth,
+            });
+        }
+        self.clip_depth += 1;
+        self.charge_node()?;
+        let mut node = ClipPath::new(transform(clip.transform()));
+        node.root.children = self.children(clip.root(), depth, None)?;
+        // The chained clip is converted after the shapes, not inside them, so
+        // only the clips that really nest add to the depth.
+        node.clip = clip
+            .clip_path()
+            .map(|chained| self.clip(chained, depth).map(Box::new))
+            .transpose()?;
+        self.clip_depth -= 1;
+        Ok(node)
+    }
+
     fn path(&mut self, path: &usvg::Path) -> Result<Option<Path>, SvgSceneError> {
         if !path.is_visible() {
             return Ok(None);
         }
-        // The parser marks a path with neither a fill nor a stroke as not
-        // visible, so a visible one has at least one of them.
-        let fill = path.fill().map(fill).transpose()?;
-        let stroke = path.stroke().map(stroke).transpose()?;
+        let fill = path
+            .fill()
+            .map(|fill| self.fill(fill))
+            .transpose()?
+            .flatten();
+        let stroke = path
+            .stroke()
+            .map(|stroke| self.stroke(stroke))
+            .transpose()?
+            .flatten();
+        // A paint that cannot be drawn leaves nothing to paint.
+        if fill.is_none() && stroke.is_none() {
+            return Ok(None);
+        }
         self.charge_node()?;
         self.charge_segments(path.data().len())?;
         let mut node = Path::new(segments(path.data()));
@@ -460,6 +518,141 @@ impl Builder {
         };
         Ok(Some(node))
     }
+
+    /// The paint for `paint`, or `None` when it paints nothing.
+    fn paint(&mut self, paint: &usvg::Paint) -> Result<Option<Paint>, SvgSceneError> {
+        match paint {
+            usvg::Paint::Color(color) => Ok(Some(Paint::Color(paint_color(*color, 1.0)))),
+            usvg::Paint::LinearGradient(gradient) => self.linear_gradient(gradient),
+            usvg::Paint::RadialGradient(gradient) => self.radial_gradient(gradient),
+            usvg::Paint::Pattern(_) => unsupported(SvgSceneFeature::Pattern),
+        }
+    }
+
+    fn linear_gradient(
+        &mut self,
+        gradient: &usvg::LinearGradient,
+    ) -> Result<Option<Paint>, SvgSceneError> {
+        let Some((stops, spread, transform)) = self.gradient_base(gradient)? else {
+            return Ok(None);
+        };
+        let start = (gradient.x1(), gradient.y1());
+        let end = (gradient.x2(), gradient.y2());
+        // A gradient without a length paints the color of its last stop.
+        if (end.0 - start.0).hypot(end.1 - start.1) <= DEGENERATE_GRADIENT_LENGTH {
+            return Ok(Some(Paint::Color(stops[stops.len() - 1].color)));
+        }
+        let mut node = LinearGradient::new(start, end, stops);
+        node.transform = transform;
+        node.spread = spread;
+        Ok(Some(Paint::LinearGradient(Box::new(node))))
+    }
+
+    fn radial_gradient(
+        &mut self,
+        gradient: &usvg::RadialGradient,
+    ) -> Result<Option<Paint>, SvgSceneError> {
+        let Some((stops, spread, transform)) = self.gradient_base(gradient)? else {
+            return Ok(None);
+        };
+        let mut node =
+            RadialGradient::new((gradient.cx(), gradient.cy()), gradient.r().get(), stops);
+        node.focal = (gradient.fx(), gradient.fy());
+        node.focal_radius = gradient.fr().get();
+        node.transform = transform;
+        node.spread = spread;
+        Ok(Some(Paint::RadialGradient(Box::new(node))))
+    }
+
+    /// The stops, spread and transform that gradients share. `None` when the
+    /// gradient cannot be drawn, which paints nothing like the raster.
+    fn gradient_base(
+        &mut self,
+        gradient: &usvg::BaseGradient,
+    ) -> Result<Option<(Vec<GradientStop>, SpreadMethod, PaintTransform)>, SvgSceneError> {
+        let count = gradient.stops().len();
+        if count > self.limits.gradient_stops {
+            return Err(SvgSceneError::LimitExceeded {
+                limit: SvgSceneLimit::GradientStops,
+                max: self.limits.gradient_stops,
+            });
+        }
+        self.stops = self.stops.saturating_add(count);
+        if self.stops > self.limits.scene_gradient_stops {
+            return Err(SvgSceneError::LimitExceeded {
+                limit: SvgSceneLimit::SceneGradientStops,
+                max: self.limits.scene_gradient_stops,
+            });
+        }
+        if gradient.transform().invert().is_none() {
+            return Ok(None);
+        }
+        let stops = gradient
+            .stops()
+            .iter()
+            .map(|stop| {
+                GradientStop::new(
+                    stop.offset().get(),
+                    paint_color(stop.color(), stop.opacity().get()),
+                )
+            })
+            .collect();
+        let spread = match gradient.spread_method() {
+            usvg::SpreadMethod::Pad => SpreadMethod::Pad,
+            usvg::SpreadMethod::Reflect => SpreadMethod::Reflect,
+            usvg::SpreadMethod::Repeat => SpreadMethod::Repeat,
+        };
+        Ok(Some((stops, spread, transform(gradient.transform()))))
+    }
+
+    fn fill(&mut self, fill: &usvg::Fill) -> Result<Option<Fill>, SvgSceneError> {
+        let Some(paint) = self.paint(fill.paint())? else {
+            return Ok(None);
+        };
+        let mut node = Fill::new(paint);
+        node.opacity = fill.opacity().get();
+        node.rule = match fill.rule() {
+            usvg::FillRule::NonZero => FillRule::NonZero,
+            usvg::FillRule::EvenOdd => FillRule::EvenOdd,
+        };
+        Ok(Some(node))
+    }
+
+    fn stroke(&mut self, stroke: &usvg::Stroke) -> Result<Option<Stroke>, SvgSceneError> {
+        let Some(paint) = self.paint(stroke.paint())? else {
+            return Ok(None);
+        };
+        let mut node = Stroke::new(paint, stroke.width().get());
+        node.opacity = stroke.opacity().get();
+        node.cap = match stroke.linecap() {
+            usvg::LineCap::Butt => LineCap::Butt,
+            usvg::LineCap::Round => LineCap::Round,
+            usvg::LineCap::Square => LineCap::Square,
+        };
+        node.join = match stroke.linejoin() {
+            usvg::LineJoin::Miter => LineJoin::Miter,
+            usvg::LineJoin::MiterClip => LineJoin::MiterClip,
+            usvg::LineJoin::Round => LineJoin::Round,
+            usvg::LineJoin::Bevel => LineJoin::Bevel,
+        };
+        node.miter_limit = stroke.miterlimit().get();
+        // A pattern the stroker cannot use draws a solid line, like the raster.
+        let offset = stroke.dashoffset();
+        node.dash = stroke
+            .dasharray()
+            .filter(|array| tiny_skia_path::StrokeDash::new(array.to_vec(), offset).is_some())
+            .map(|array| Dash::new(array.to_vec(), offset));
+        Ok(Some(node))
+    }
+}
+
+fn paint_color(color: usvg::Color, alpha: f32) -> PaintColor {
+    PaintColor::new(
+        f32::from(color.red) / 255.0,
+        f32::from(color.green) / 255.0,
+        f32::from(color.blue) / 255.0,
+        alpha,
+    )
 }
 
 fn transform(transform: usvg::tiny_skia_path::Transform) -> PaintTransform {
@@ -491,55 +684,6 @@ fn segments(path: &tiny_skia_path::Path) -> Vec<PathSegment> {
             tiny_skia_path::PathSegment::Close => PathSegment::Close,
         })
         .collect()
-}
-
-fn paint(paint: &usvg::Paint) -> Result<Paint, SvgSceneError> {
-    match paint {
-        usvg::Paint::Color(color) => Ok(Paint::Color(PaintColor::new(
-            f32::from(color.red) / 255.0,
-            f32::from(color.green) / 255.0,
-            f32::from(color.blue) / 255.0,
-            1.0,
-        ))),
-        usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) => {
-            unsupported(SvgSceneFeature::Gradient)
-        }
-        usvg::Paint::Pattern(_) => unsupported(SvgSceneFeature::Pattern),
-    }
-}
-
-fn fill(fill: &usvg::Fill) -> Result<Fill, SvgSceneError> {
-    let mut node = Fill::new(paint(fill.paint())?);
-    node.opacity = fill.opacity().get();
-    node.rule = match fill.rule() {
-        usvg::FillRule::NonZero => FillRule::NonZero,
-        usvg::FillRule::EvenOdd => FillRule::EvenOdd,
-    };
-    Ok(node)
-}
-
-fn stroke(stroke: &usvg::Stroke) -> Result<Stroke, SvgSceneError> {
-    let mut node = Stroke::new(paint(stroke.paint())?, stroke.width().get());
-    node.opacity = stroke.opacity().get();
-    node.cap = match stroke.linecap() {
-        usvg::LineCap::Butt => LineCap::Butt,
-        usvg::LineCap::Round => LineCap::Round,
-        usvg::LineCap::Square => LineCap::Square,
-    };
-    node.join = match stroke.linejoin() {
-        usvg::LineJoin::Miter => LineJoin::Miter,
-        usvg::LineJoin::MiterClip => LineJoin::MiterClip,
-        usvg::LineJoin::Round => LineJoin::Round,
-        usvg::LineJoin::Bevel => LineJoin::Bevel,
-    };
-    node.miter_limit = stroke.miterlimit().get();
-    // A pattern the stroker cannot use draws a solid line, like the raster.
-    let offset = stroke.dashoffset();
-    node.dash = stroke
-        .dasharray()
-        .filter(|array| tiny_skia_path::StrokeDash::new(array.to_vec(), offset).is_some())
-        .map(|array| Dash::new(array.to_vec(), offset));
-    Ok(node)
 }
 
 #[cfg(test)]

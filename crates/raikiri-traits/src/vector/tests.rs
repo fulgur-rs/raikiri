@@ -87,3 +87,73 @@ fn constructors_pick_the_css_defaults() {
     assert!(path.anti_alias);
     assert!(path.fill.is_none() && path.stroke.is_none());
 }
+
+fn stops() -> Vec<GradientStop> {
+    vec![
+        GradientStop::new(0.0, PaintColor::new(1.0, 0.0, 0.0, 1.0)),
+        GradientStop::new(1.0, PaintColor::new(0.0, 0.0, 1.0, 0.5)),
+    ]
+}
+
+#[test]
+fn gradient_constructors_pick_padded_unit_defaults() {
+    let linear = LinearGradient::new((0.0, 0.0), (10.0, 0.0), stops());
+    assert_eq!(linear.transform, PaintTransform::IDENTITY);
+    assert_eq!(linear.spread, SpreadMethod::Pad);
+    let radial = RadialGradient::new((5.0, 5.0), 4.0, stops());
+    assert_eq!((radial.focal, radial.focal_radius), ((5.0, 5.0), 0.0));
+    assert_eq!(radial.transform, PaintTransform::IDENTITY);
+    assert_eq!(radial.spread, SpreadMethod::Pad);
+}
+
+#[test]
+fn gradients_and_clips_are_charged_to_the_scene() {
+    let mut plain = VectorImage::new((10.0, 10.0));
+    plain.root.children.push(Node::Path(square()));
+    let mut painted = square();
+    let mut fill = Fill::new(Paint::LinearGradient(Box::new(LinearGradient::new(
+        (0.0, 0.0),
+        (10.0, 0.0),
+        stops(),
+    ))));
+    fill.opacity = 0.5;
+    painted.fill = Some(fill);
+    let mut stroked = square();
+    stroked.stroke = Some(Stroke::new(
+        Paint::RadialGradient(Box::new(RadialGradient::new((5.0, 5.0), 4.0, stops()))),
+        1.0,
+    ));
+    let stop_bytes = 2 * std::mem::size_of::<GradientStop>();
+    let mut image = VectorImage::new((10.0, 10.0));
+    image.root.children.push(Node::Path(painted));
+    image.root.children.push(Node::Path(stroked));
+    // Each gradient counts its own record and its stops.
+    assert!(
+        image.estimated_heap_bytes()
+            >= plain.estimated_heap_bytes()
+                + 2 * (std::mem::size_of::<LinearGradient>() + stop_bytes)
+    );
+
+    // A group with a clip that holds a group, a path and a chained clip.
+    let mut clip = ClipPath::new(PaintTransform::translate(1.0, 1.0));
+    clip.root.children.push(Node::Path(square()));
+    let mut inner = Group::new(PaintTransform::IDENTITY);
+    inner.children.push(Node::Path(square()));
+    clip.root.children.push(Node::Group(inner));
+    clip.clip = Some(Box::new(ClipPath::new(PaintTransform::IDENTITY)));
+    // The clip, a path, a group with a path, and the chained clip.
+    assert_eq!(clip.node_count(), 1 + 1 + 2 + 1);
+    let mut clipped = Group::new(PaintTransform::IDENTITY);
+    clipped.children.push(Node::Path(square()));
+    clipped.clip = Some(Box::new(clip));
+    let mut with_clip = VectorImage::new((10.0, 10.0));
+    with_clip.root.children.push(Node::Group(clipped));
+    // The root, the group, its path, and the clip.
+    assert_eq!(with_clip.node_count(), 1 + 1 + 1 + 5);
+    let mut without_clip = with_clip.clone();
+    let Node::Group(group) = &mut without_clip.root.children[0] else {
+        panic!("a group");
+    };
+    group.clip = None;
+    assert!(with_clip.estimated_heap_bytes() > without_clip.estimated_heap_bytes());
+}
