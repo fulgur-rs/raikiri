@@ -401,8 +401,16 @@ fn declarations_carry_the_key_and_rollback_of_their_value() {
     assert_eq!(color.rollback, Rollback::None);
     assert!(color.important);
     assert_eq!(
-        Declaration::new(PropertyValue::AllRevertLayer, false).rollback,
+        Declaration::new(PropertyValue::All(CssWideKeyword::RevertLayer), false).rollback,
         Rollback::Layer
+    );
+    assert_eq!(
+        Declaration::new(PropertyValue::All(CssWideKeyword::Revert), false).rollback,
+        Rollback::Origin
+    );
+    assert_eq!(
+        Declaration::new(PropertyValue::All(CssWideKeyword::Initial), false).rollback,
+        Rollback::None
     );
     let reverted = Declaration::new(
         PropertyValue::BorderTopColorCssWide(CssWideKeyword::Revert),
