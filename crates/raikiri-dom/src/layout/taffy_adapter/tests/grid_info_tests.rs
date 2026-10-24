@@ -62,11 +62,12 @@ fn reported_grid() -> GridInfo {
         .expect("the grid algorithm reports the grid")
 }
 
-fn lines(row_start: u16, row_end: u16, column_start: u16) -> GridItemLines {
+fn lines(row_start: u16, row_end: u16, column_start: u16, column_end: u16) -> GridItemLines {
     GridItemLines {
         row_start,
         row_end,
         column_start,
+        column_end,
     }
 }
 
@@ -108,7 +109,7 @@ fn a_reported_grid_lists_its_items_columns_and_rows() {
     assert_eq!(items.len(), 3);
     assert_eq!(
         items.collect::<Vec<_>>(),
-        [lines(1, 2, 1), lines(1, 2, 2), lines(2, 3, 1)]
+        [lines(1, 2, 1, 2), lines(1, 2, 2, 3), lines(2, 3, 1, 2)]
     );
 }
 
@@ -124,6 +125,18 @@ fn the_area_of_an_item_is_the_extent_of_the_tracks_it_spans() {
     assert_eq!(area(1), Some((70.0, 20.0)));
     assert_eq!(area(2), Some((50.0, 10.0)));
     assert_eq!(area(3), None);
+}
+
+#[test]
+fn the_inline_range_of_an_item_runs_over_the_columns_it_spans() {
+    let info = reported_grid();
+
+    // The columns start after the 6px of padding.
+    assert_eq!(info.item_inline_range(0), Some((6.0, 56.0)));
+    assert_eq!(info.item_inline_range(1), Some((56.0, 126.0)));
+    assert_eq!(info.item_inline_range(2), Some((6.0, 56.0)));
+    assert_eq!(info.item_inline_range(3), None);
+    assert_eq!(GridInfo::NONE.item_inline_range(0), None);
 }
 
 #[test]

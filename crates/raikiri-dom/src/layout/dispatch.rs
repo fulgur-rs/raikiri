@@ -1120,8 +1120,13 @@ impl LayoutSession<'_> {
         // The baselines of a box in a writing mode orthogonal to its parent's
         // run across the parent's line, so they say nothing about where the
         // box sits along it: it exposes none and is synthesized from its
-        // border box instead.
+        // border box instead. A container that aligns the box by a baseline
+        // along its own inline axis finds the one of its first line in the
+        // node, where the line runs along that axis.
         if self.is_orthogonal_to_parent(usize::from(node_id)) {
+            if inputs.run_mode == RunMode::PerformLayout {
+                self.nodes[usize::from(node_id)].orthogonal_first_baseline = output.baselines.first;
+            }
             output.baselines = Baselines::NONE;
         }
         output
@@ -1149,6 +1154,7 @@ mod axis_adapter;
 pub(crate) mod block_flow;
 pub(crate) mod content_limits;
 mod grid_oof;
+mod inline_baseline;
 mod intrinsic_scopes;
 use intrinsic_scopes::{with_flex_intrinsic_probe, with_flex_item_basis_bounds};
 mod oof;
@@ -2862,6 +2868,26 @@ fn flex_layout_sized(
     }
     tree.context.flex_item_percent_bases.pop();
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
+    // Taffy aligns the items of a column container by their baselines as if
+    // they were at `start`; its cross axis is the inline axis of the container.
+    let vertical = block_right_to_left(tree, idx).is_some();
+    let in_flow_overflow = if inputs.run_mode == RunMode::PerformLayout
+        && let Some(reach) = inline_baseline::align_column_flex(
+            tree,
+            idx,
+            output.size,
+            vertical,
+            if vertical {
+                vertical_block::containing_inline_size(tree, idx, &inputs)
+            } else {
+                inputs.parent_size.width
+            },
+        ) {
+        output.scrollable_overflow_rect = output.scrollable_overflow_rect.union(reach);
+        in_flow_overflow.union(reach)
+    } else {
+        in_flow_overflow
+    };
     // Taffy aligns the boxes by the physical axes of `horizontal-tb`; a flex
     // container on the axes of a vertical writing mode aligns them by its own.
     if inputs.run_mode == RunMode::PerformLayout
@@ -3043,6 +3069,17 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     // Taffy reports the tracks only from a layout it performs.
     let grid = tree.context.grid_layout_info.remove(&idx);
     let axes = grid_oof::GridAxes::new(right_to_left, output.size.width);
+    // Taffy aligns a grid item by its baseline along the columns as if it were
+    // at `start`.
+    let in_flow_overflow = if inputs.run_mode == RunMode::PerformLayout
+        && let Some(grid) = &grid
+        && let Some(reach) = inline_baseline::align_grid(tree, idx, grid, right_to_left.is_some())
+    {
+        output.scrollable_overflow_rect = output.scrollable_overflow_rect.union(reach);
+        in_flow_overflow.union(reach)
+    } else {
+        in_flow_overflow
+    };
     let areas = grid_oof::GridAreas::of(grid.as_ref(), axes);
     if let Some(areas) = &areas {
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(areas));

@@ -117,7 +117,8 @@ fn all_flex_and_alignment_keywords_have_explicit_results() {
         let mut cv = ComputedValues::initial();
         cv.flex_wrap = input;
         query(&cv, StyleFlags::default(), |v| {
-            assert_eq!(v.flex_wrap(), expected)
+            assert_eq!(v.flex_wrap(), expected);
+            assert_eq!(v.flex_wraps(), expected != taffy::FlexWrap::NoWrap);
         });
     }
     for (input, expected) in [

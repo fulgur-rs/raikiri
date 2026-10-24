@@ -5140,3 +5140,11 @@ css/css-grid/alignment/self-baseline/grid-self-baseline-vertical-rl-003.html
 # aspect-ratio specified values serialize as `[auto] <w> / <h>` with a lone number written as `<number> / 1`, so the valid page reads back the expected text, and the invalid page keeps rejecting the grammar's near misses. aspect-ratio-computed.html passes too, but the report skips pages that call only test_computed_value, so it stays out.
 css/css-sizing/aspect-ratio/parsing/aspect-ratio-invalid.html
 css/css-sizing/aspect-ratio/parsing/aspect-ratio-valid.html
+
+# --- inline-axis baseline alignment (WPT pin 97ea26e2, Linux, 2026-10-24) ---
+# Grid items with `justify-self: baseline` and the items of a column flex container with `align-self: baseline` share a baseline along the inline axis, in horizontal and vertical writing modes. Each page renders as Chromium renders it, and stops matching its reference once its test-only declarations are removed.
+css/css-flexbox/flexbox-align-self-vert-rtl-001.xhtml
+css/css-flexbox/flexbox-align-self-vert-rtl-003.xhtml
+css/css-grid/alignment/grid-justify-baseline-001.html
+css/css-grid/alignment/self-baseline/grid-self-baseline-002-b.html
+css/css-grid/alignment/self-baseline/grid-self-baseline-006.html

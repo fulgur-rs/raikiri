@@ -130,3 +130,60 @@ fn sticky_position_and_source_vertical_minimum_preserve_bridge_policy() {
         assert_eq!(view.min_size().height, expected);
     }
 }
+
+#[test]
+fn self_baseline_set_reads_the_own_value_and_falls_back_on_the_container() {
+    use crate::values::BaselineSet;
+    let auto = AlignSelfValue::Auto;
+    let normal = SelfAlignmentValue::Normal;
+    let values = |justify_self, align_self, justify_items, align_items| {
+        let mut cv = ComputedValues::initial();
+        cv.justify_self = justify_self;
+        cv.align_self = align_self;
+        cv.justify_items = justify_items;
+        cv.align_items = align_items;
+        cv
+    };
+    let view = |cv: &ComputedValues, f: &dyn Fn(LayoutStyleView<'_>)| {
+        let prepared = PreparedStyle::prepare(cv, StyleMetadata::default());
+        f(LayoutStyleView::new(
+            &prepared,
+            ViewContext::default(),
+            &[],
+            &[],
+        ));
+    };
+    let container = values(
+        auto,
+        auto,
+        SelfAlignmentValue::Baseline,
+        SelfAlignmentValue::LastBaseline,
+    );
+    view(&container, &|container| {
+        // Without a value of its own an item takes the one of the container.
+        view(&values(auto, auto, normal, normal), &|item| {
+            assert_eq!(
+                item.self_baseline_set(&container, true),
+                Some(BaselineSet::First)
+            );
+            assert_eq!(
+                item.self_baseline_set(&container, false),
+                Some(BaselineSet::Last)
+            );
+        });
+        // A value of the item wins over the container, `normal` included.
+        let own = values(
+            AlignSelfValue::Value(SelfAlignmentValue::LastBaseline),
+            AlignSelfValue::Value(normal),
+            normal,
+            normal,
+        );
+        view(&own, &|item| {
+            assert_eq!(
+                item.self_baseline_set(&container, true),
+                Some(BaselineSet::Last)
+            );
+            assert_eq!(item.self_baseline_set(&container, false), None);
+        });
+    });
+}
