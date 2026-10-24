@@ -44,19 +44,55 @@ fn tiny_transform(transform: PaintTransform) -> tiny_skia::Transform {
     )
 }
 
+fn tiny_color(color: PaintColor, opacity: f32) -> tiny_skia::Color {
+    tiny_skia::Color::from_rgba(color.red, color.green, color.blue, color.alpha * opacity).unwrap()
+}
+
+fn tiny_stops(stops: &[GradientStop], opacity: f32) -> Vec<tiny_skia::GradientStop> {
+    stops
+        .iter()
+        .map(|stop| tiny_skia::GradientStop::new(stop.offset, tiny_color(stop.color, opacity)))
+        .collect()
+}
+
+fn tiny_spread(spread: SpreadMethod) -> tiny_skia::SpreadMode {
+    match spread {
+        SpreadMethod::Pad => tiny_skia::SpreadMode::Pad,
+        SpreadMethod::Reflect => tiny_skia::SpreadMode::Reflect,
+        SpreadMethod::Repeat => tiny_skia::SpreadMode::Repeat,
+        _ => unreachable!(),
+    }
+}
+
 fn solid(paint: &Paint, opacity: f32) -> tiny_skia::Paint<'static> {
-    let Paint::Color(color) = paint else {
-        panic!("only solid paints are drawn here");
-    };
-    let channel = |value: f32| (value * 255.0).round() as u8;
-    let mut paint = tiny_skia::Paint::default();
-    paint.set_color_rgba8(
-        channel(color.red),
-        channel(color.green),
-        channel(color.blue),
-        channel(color.alpha * opacity),
-    );
-    paint
+    let mut out = tiny_skia::Paint::default();
+    match paint {
+        Paint::Color(color) => out.set_color(tiny_color(*color, opacity)),
+        Paint::LinearGradient(gradient) => {
+            out.shader = tiny_skia::LinearGradient::new(
+                gradient.start.into(),
+                gradient.end.into(),
+                tiny_stops(&gradient.stops, opacity),
+                tiny_spread(gradient.spread),
+                tiny_transform(gradient.transform),
+            )
+            .expect("a drawable gradient");
+        }
+        Paint::RadialGradient(gradient) => {
+            out.shader = tiny_skia::RadialGradient::new(
+                gradient.focal.into(),
+                gradient.focal_radius,
+                gradient.center.into(),
+                gradient.radius,
+                tiny_stops(&gradient.stops, opacity),
+                tiny_spread(gradient.spread),
+                tiny_transform(gradient.transform),
+            )
+            .expect("a drawable gradient");
+        }
+        _ => unreachable!(),
+    }
+    out
 }
 
 fn outline(segments: &[PathSegment]) -> tiny_skia::Path {
@@ -84,15 +120,10 @@ fn draw_path(pixmap: &mut tiny_skia::Pixmap, path: &Path, transform: tiny_skia::
     let outline = outline(&path.segments);
     let draw_fill = |pixmap: &mut tiny_skia::Pixmap| {
         if let Some(fill) = &path.fill {
-            let rule = match fill.rule {
-                FillRule::NonZero => tiny_skia::FillRule::Winding,
-                FillRule::EvenOdd => tiny_skia::FillRule::EvenOdd,
-                _ => unreachable!(),
-            };
             pixmap.fill_path(
                 &outline,
                 &solid(&fill.paint, fill.opacity),
-                rule,
+                fill_rule(fill.rule),
                 transform,
                 None,
             );
@@ -139,9 +170,96 @@ fn draw_path(pixmap: &mut tiny_skia::Pixmap, path: &Path, transform: tiny_skia::
     }
 }
 
+fn fill_rule(rule: FillRule) -> tiny_skia::FillRule {
+    match rule {
+        FillRule::NonZero => tiny_skia::FillRule::Winding,
+        FillRule::EvenOdd => tiny_skia::FillRule::EvenOdd,
+        _ => unreachable!(),
+    }
+}
+
+/// Draws the shapes of a clip in black with `mode`, the way the raster does.
+fn draw_clip_shapes(
+    pixmap: &mut tiny_skia::Pixmap,
+    group: &Group,
+    mode: tiny_skia::BlendMode,
+    transform: tiny_skia::Transform,
+) {
+    for child in &group.children {
+        match child {
+            Node::Path(path) => {
+                let mut paint = tiny_skia::Paint::default();
+                paint.set_color_rgba8(0, 0, 0, 255);
+                paint.blend_mode = mode;
+                let rule = path
+                    .fill
+                    .as_ref()
+                    .map_or(FillRule::NonZero, |fill| fill.rule);
+                pixmap.fill_path(
+                    &outline(&path.segments),
+                    &paint,
+                    fill_rule(rule),
+                    transform,
+                    None,
+                );
+            }
+            Node::Group(inner) => {
+                let transform = transform.pre_concat(tiny_transform(inner.transform));
+                match &inner.clip {
+                    // A shape that is clipped itself is drawn on a canvas of
+                    // its own, clipped, and only then added to the clip.
+                    Some(clip) => {
+                        let mut layer =
+                            tiny_skia::Pixmap::new(pixmap.width(), pixmap.height()).unwrap();
+                        draw_clip_shapes(
+                            &mut layer,
+                            inner,
+                            tiny_skia::BlendMode::SourceOver,
+                            transform,
+                        );
+                        apply_clip(&mut layer, clip, transform);
+                        pixmap.draw_pixmap(
+                            0,
+                            0,
+                            layer.as_ref(),
+                            &tiny_skia::PixmapPaint {
+                                blend_mode: tiny_skia::BlendMode::Xor,
+                                ..tiny_skia::PixmapPaint::default()
+                            },
+                            tiny_skia::Transform::identity(),
+                            None,
+                        );
+                    }
+                    None => draw_clip_shapes(pixmap, inner, mode, transform),
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Keeps what `clip` covers of `pixmap`; `transform` is the space of the
+/// clipped group's children.
+fn apply_clip(pixmap: &mut tiny_skia::Pixmap, clip: &ClipPath, transform: tiny_skia::Transform) {
+    let mut area = tiny_skia::Pixmap::new(pixmap.width(), pixmap.height()).unwrap();
+    area.fill(tiny_skia::Color::BLACK);
+    draw_clip_shapes(
+        &mut area,
+        &clip.root,
+        tiny_skia::BlendMode::Clear,
+        transform.pre_concat(tiny_transform(clip.transform)),
+    );
+    if let Some(chained) = &clip.clip {
+        apply_clip(pixmap, chained, transform);
+    }
+    let mut mask = tiny_skia::Mask::from_pixmap(area.as_ref(), tiny_skia::MaskType::Alpha);
+    mask.invert();
+    pixmap.apply_mask(&mask);
+}
+
 fn draw_group(pixmap: &mut tiny_skia::Pixmap, group: &Group, parent: tiny_skia::Transform) {
     let transform = parent.pre_concat(tiny_transform(group.transform));
-    let mut layer = (group.opacity < 1.0)
+    let mut layer = (group.opacity < 1.0 || group.clip.is_some())
         .then(|| tiny_skia::Pixmap::new(pixmap.width(), pixmap.height()).unwrap());
     for child in &group.children {
         let target = layer.as_mut().unwrap_or(pixmap);
@@ -151,7 +269,10 @@ fn draw_group(pixmap: &mut tiny_skia::Pixmap, group: &Group, parent: tiny_skia::
             _ => unreachable!(),
         }
     }
-    if let Some(layer) = layer {
+    if let Some(mut layer) = layer {
+        if let Some(clip) = &group.clip {
+            apply_clip(&mut layer, clip, transform);
+        }
         pixmap.draw_pixmap(
             0,
             0,
@@ -174,19 +295,37 @@ fn render(scene: &VectorImage) -> Vec<u8> {
     pixmap.take_demultiplied()
 }
 
+/// Compares the pictures with premultiplied colors: an edge pixel of low
+/// alpha has a straight color that moves by several levels for one level of
+/// rounding.
 fn assert_close(scene: &[u8], raster: &[u8], tolerance: u8) {
     assert_eq!(scene.len(), raster.len());
     assert!(
         raster.chunks_exact(4).any(|pixel| pixel[3] != 0),
         "the raster is blank, so the comparison proves nothing"
     );
-    for (index, (scene, raster)) in scene.iter().zip(raster).enumerate() {
-        assert!(
-            scene.abs_diff(*raster) <= tolerance,
-            "pixel {} channel {}: scene {scene}, raster {raster}",
-            index / 4,
-            index % 4
-        );
+    let premultiplied = |pixel: &[u8]| {
+        let alpha = u16::from(pixel[3]);
+        let channel = |value: u8| ((u16::from(value) * alpha + 127) / 255) as u8;
+        [
+            channel(pixel[0]),
+            channel(pixel[1]),
+            channel(pixel[2]),
+            pixel[3],
+        ]
+    };
+    for (index, (scene, raster)) in scene
+        .chunks_exact(4)
+        .zip(raster.chunks_exact(4))
+        .enumerate()
+    {
+        let (scene, raster) = (premultiplied(scene), premultiplied(raster));
+        for channel in 0..4 {
+            assert!(
+                scene[channel].abs_diff(raster[channel]) <= tolerance,
+                "pixel {index} channel {channel}: scene {scene:?}, raster {raster:?}"
+            );
+        }
     }
 }
 
@@ -380,6 +519,242 @@ fn opacities_draw_like_the_raster() {
         .map(|group| group.opacity)
         .collect();
     assert!(opacities.contains(&0.5) && opacities.contains(&0.25));
+}
+
+// ── Gradients ───────────────────────────────────────────────
+
+const STOPS: &str = r##"<stop offset="0" stop-color="#e11"/>
+    <stop offset="0.5" stop-color="#1c4" stop-opacity="0.5"/>
+    <stop offset="1" stop-color="#14c"/>"##;
+
+fn gradient_paint(scene: &VectorImage) -> &Paint {
+    let [path] = paths(&scene.root)[..] else {
+        panic!("one path");
+    };
+    &path.fill.as_ref().expect("a fill").paint
+}
+
+#[test]
+fn linear_gradients_draw_like_the_raster() {
+    for spread in ["pad", "reflect", "repeat"] {
+        let document = document(&format!(
+            r##"<defs><linearGradient id="g" x1="5" y1="2" x2="15" y2="6" gradientUnits="userSpaceOnUse"
+                    spreadMethod="{spread}">{STOPS}</linearGradient></defs>
+                <rect width="40" height="20" fill="url(#g)"/>"##
+        ));
+        assert_scene_matches_raster(&document, style(1.0), 2);
+    }
+    // Bounding box units, a gradient transform and the fill opacity.
+    let document = document(&format!(
+        r##"<defs><linearGradient id="g" gradientTransform="rotate(30 .5 .5)">{STOPS}</linearGradient></defs>
+            <rect x="4" y="2" width="30" height="16" fill="url(#g)" fill-opacity="0.7"/>"##
+    ));
+    assert_scene_matches_raster(&document, style(1.0), 2);
+}
+
+#[test]
+fn the_linear_gradient_is_resolved_to_the_space_of_its_path() {
+    let document = document(&format!(
+        r##"<defs><linearGradient id="g" gradientTransform="translate(1 2)" spreadMethod="reflect">{STOPS}</linearGradient></defs>
+            <rect x="10" y="4" width="20" height="10" fill="url(#g)"/>"##
+    ));
+    let scene = document.scene(VIEWPORT, style(1.0)).unwrap();
+    let Paint::LinearGradient(gradient) = gradient_paint(&scene) else {
+        panic!("a linear gradient");
+    };
+    // The bounding box of the rect is folded into the transform.
+    assert_eq!((gradient.start, gradient.end), ((0.0, 0.0), (1.0, 0.0)));
+    assert_eq!(
+        gradient.transform,
+        PaintTransform::new(20.0, 0.0, 0.0, 10.0, 10.0, 4.0) * PaintTransform::translate(1.0, 2.0)
+    );
+    assert_eq!(gradient.spread, SpreadMethod::Reflect);
+    let alphas: Vec<f32> = gradient.stops.iter().map(|stop| stop.color.alpha).collect();
+    let offsets: Vec<f32> = gradient.stops.iter().map(|stop| stop.offset).collect();
+    assert_eq!(
+        (offsets, alphas),
+        (vec![0.0, 0.5, 1.0], vec![1.0, 0.5, 1.0])
+    );
+    assert_eq!(
+        gradient.stops[2].color,
+        PaintColor::new(17.0 / 255.0, 68.0 / 255.0, 204.0 / 255.0, 1.0)
+    );
+}
+
+#[test]
+fn radial_gradients_draw_like_the_raster() {
+    for spread in ["pad", "reflect", "repeat"] {
+        let document = document(&format!(
+            r##"<defs><radialGradient id="g" cx="20" cy="10" r="8" fx="16" fy="8" fr="1"
+                    gradientUnits="userSpaceOnUse" spreadMethod="{spread}">{STOPS}</radialGradient></defs>
+                <rect width="40" height="20" fill="url(#g)"/>"##
+        ));
+        assert_scene_matches_raster(&document, style(1.0), 2);
+    }
+    let document = document(&format!(
+        r##"<defs><radialGradient id="g" gradientTransform="scale(1 0.5)">{STOPS}</radialGradient></defs>
+            <ellipse cx="20" cy="10" rx="18" ry="9" fill="url(#g)"/>"##
+    ));
+    assert_scene_matches_raster(&document, style(1.0), 2);
+}
+
+#[test]
+fn the_radial_gradient_keeps_its_focal_circle() {
+    let document = document(&format!(
+        r##"<defs><radialGradient id="g" cx="20" cy="10" r="8" fx="16" fy="8" fr="1"
+                gradientUnits="userSpaceOnUse">{STOPS}</radialGradient></defs>
+            <rect width="40" height="20" fill="url(#g)"/>"##
+    ));
+    let scene = document.scene(VIEWPORT, style(1.0)).unwrap();
+    let Paint::RadialGradient(gradient) = gradient_paint(&scene) else {
+        panic!("a radial gradient");
+    };
+    assert_eq!(
+        (
+            gradient.center,
+            gradient.radius,
+            gradient.focal,
+            gradient.focal_radius
+        ),
+        ((20.0, 10.0), 8.0, (16.0, 8.0), 1.0)
+    );
+    assert_eq!(gradient.transform, PaintTransform::IDENTITY);
+    assert_eq!(gradient.spread, SpreadMethod::Pad);
+}
+
+#[test]
+fn strokes_take_gradients_too() {
+    let document = document(&format!(
+        r##"<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" x2="40">{STOPS}</linearGradient>
+              <radialGradient id="r" gradientUnits="userSpaceOnUse" cx="30" cy="10" r="12">{STOPS}</radialGradient></defs>
+            <rect x="3" y="3" width="20" height="14" fill="none" stroke="url(#g)" stroke-width="4"/>
+            <circle cx="30" cy="10" r="6" fill="none" stroke="url(#r)" stroke-width="4"
+                    stroke-opacity="0.6" stroke-dasharray="3 2"/>"##
+    ));
+    // The raster rounds the alpha of the stops to eight bits.
+    assert_scene_matches_raster(&document, style(1.0), 3);
+    let scene = document.scene(VIEWPORT, style(1.0)).unwrap();
+    let found = paths(&scene.root);
+    assert!(matches!(
+        found[0].stroke.as_ref().unwrap().paint,
+        Paint::LinearGradient(_)
+    ));
+    assert!(matches!(
+        found[1].stroke.as_ref().unwrap().paint,
+        Paint::RadialGradient(_)
+    ));
+}
+
+#[test]
+fn a_gradient_without_length_paints_its_last_stop() {
+    let document = document(&format!(
+        r##"<defs><linearGradient id="g" x1="3" y1="3" x2="3" y2="3" gradientUnits="userSpaceOnUse">{STOPS}</linearGradient></defs>
+            <rect width="40" height="20" fill="url(#g)"/>"##
+    ));
+    let scene = document.scene(VIEWPORT, style(1.0)).unwrap();
+    assert_eq!(
+        *gradient_paint(&scene),
+        Paint::Color(PaintColor::new(
+            17.0 / 255.0,
+            68.0 / 255.0,
+            204.0 / 255.0,
+            1.0
+        ))
+    );
+    assert_scene_matches_raster(&document, style(1.0), 2);
+}
+
+#[test]
+fn a_gradient_that_cannot_be_inverted_paints_nothing() {
+    let tree = raw_tree(&format!(
+        r##"<defs><linearGradient id="g" gradientTransform="matrix(1 2 2 4 0 0)">{STOPS}</linearGradient>
+              <radialGradient id="r" gradientTransform="matrix(1 2 2 4 0 0)">{STOPS}</radialGradient></defs>
+            <rect width="9" height="9" fill="url(#g)"/>
+            <rect x="10" width="9" height="9" fill="url(#r)"/>
+            <rect x="20" width="9" height="9" fill="none" stroke="url(#g)"/>
+            <rect x="30" width="9" height="9" fill="none" stroke="url(#r)"/>
+            <rect y="10" width="9" height="9" fill="url(#g)" stroke="#000"/>"##
+    ));
+    let scene = scene_of(&tree, 1.0).unwrap();
+    // The first four have nothing left to paint, and the last one keeps its
+    // stroke, like in the raster.
+    let found = paths(&scene.root);
+    assert_eq!(found.len(), 1);
+    assert!(found[0].fill.is_none() && found[0].stroke.is_some());
+}
+
+// ── Clip paths ──────────────────────────────────────────────
+
+#[test]
+fn clip_paths_draw_like_the_raster() {
+    let bodies = [
+        // A plain clip, and the fill rule of its shapes.
+        r##"<defs><clipPath id="c"><rect x="4" y="2" width="14" height="10"/></clipPath></defs>
+            <rect width="40" height="20" fill="#e11" clip-path="url(#c)"/>"##,
+        r##"<defs><clipPath id="c" clip-rule="evenodd"><path clip-rule="evenodd"
+              d="M4 2 H30 V16 H4 Z M10 6 H24 V12 H10 Z"/></clipPath></defs>
+            <rect width="40" height="20" fill="#14c" clip-path="url(#c)"/>"##,
+        // Bounding box units, a clip transform and several shapes.
+        r##"<defs><clipPath id="c" clipPathUnits="objectBoundingBox" transform="rotate(10)">
+              <circle cx="0.3" cy="0.5" r="0.3"/><rect x="0.5" y="0.2" width="0.4" height="0.5"/>
+            </clipPath></defs>
+            <rect x="2" y="2" width="36" height="16" fill="#1c4" clip-path="url(#c)"/>"##,
+        // A clip on a group with its own transform, and a clip that is clipped.
+        r##"<defs><clipPath id="inner"><rect x="0" y="0" width="12" height="20"/></clipPath>
+              <clipPath id="c" clip-path="url(#inner)"><circle cx="10" cy="10" r="9"/></clipPath></defs>
+            <g transform="translate(6 0) scale(1.5 1)" clip-path="url(#c)">
+              <rect width="30" height="20" fill="#e11"/>
+              <rect x="10" width="30" height="20" fill="#14c" fill-opacity="0.5"/>
+            </g>"##,
+        // A shape inside a clip that carries a clip of its own.
+        r##"<defs><clipPath id="inner"><rect x="12" y="0" width="10" height="20"/></clipPath>
+              <clipPath id="c"><rect x="2" y="2" width="30" height="14" clip-path="url(#inner)"/>
+                <circle cx="30" cy="10" r="6"/></clipPath></defs>
+            <rect width="40" height="20" fill="#e11" clip-path="url(#c)"/>"##,
+        // A clip together with the opacity of the group.
+        r##"<defs><clipPath id="c"><rect x="4" y="2" width="20" height="14"/></clipPath></defs>
+            <g opacity="0.5" clip-path="url(#c)"><rect width="20" height="20" fill="#e11"/>
+              <rect x="10" width="20" height="20" fill="#14c"/></g>"##,
+    ];
+    for body in bodies {
+        assert_scene_matches_raster(&document(body), style(1.0), 3);
+    }
+}
+
+#[test]
+fn a_clip_is_part_of_its_group() {
+    let document = document(
+        r##"<defs><clipPath id="inner"><rect width="12" height="20"/></clipPath>
+              <clipPath id="c" clip-path="url(#inner)"><circle cx="10" cy="10" r="9"/></clipPath></defs>
+            <g clip-path="url(#c)" transform="translate(3 0)"><rect width="30" height="20" fill="#e11"/></g>"##,
+    );
+    let scene = document.scene(VIEWPORT, style(1.0)).unwrap();
+    let [Node::Group(group)] = &scene.root.children[..] else {
+        panic!("one group");
+    };
+    assert_eq!(group.transform, PaintTransform::translate(3.0, 0.0));
+    assert_eq!(group.opacity, 1.0);
+    let clip = group.clip.as_ref().expect("a clip");
+    let [Node::Path(circle)] = &clip.root.children[..] else {
+        panic!("one shape");
+    };
+    assert_eq!(circle.fill.as_ref().unwrap().rule, FillRule::NonZero);
+    let chained = clip.clip.as_ref().expect("a chained clip");
+    assert!(chained.clip.is_none());
+    assert_eq!(chained.root.children.len(), 1);
+    // Both clips and their shapes are nodes of the scene.
+    assert_eq!(scene.node_count(), 1 + 1 + 1 + 2 + 2);
+}
+
+#[test]
+fn a_clip_with_nothing_to_clip_leaves_no_group() {
+    let document = document(
+        r##"<defs><clipPath id="c"><rect width="5" height="5"/></clipPath></defs>
+            <g clip-path="url(#c)"><rect width="5" height="5" display="none"/></g>"##,
+    );
+    let scene = document.scene(VIEWPORT, style(1.0)).unwrap();
+    assert!(scene.root.children.is_empty());
+    assert_eq!(scene.node_count(), 1);
 }
 
 // ── The host's inputs ───────────────────────────────────────
@@ -682,24 +1057,14 @@ fn scenes_are_deterministic_and_report_their_cost() {
 fn content_outside_the_subset_asks_for_the_raster() {
     let cases = [
         (
-            r##"<defs><linearGradient id="g"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
-                <rect width="10" height="10" fill="url(#g)"/>"##,
-            SvgSceneFeature::Gradient,
-        ),
-        (
-            r##"<defs><radialGradient id="g"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#fff"/></radialGradient></defs>
-                <rect width="10" height="10" fill="none" stroke="url(#g)" stroke-width="2"/>"##,
-            SvgSceneFeature::Gradient,
-        ),
-        (
             r##"<defs><pattern id="p" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="2" height="2"/></pattern></defs>
                 <rect width="10" height="10" fill="url(#p)"/>"##,
             SvgSceneFeature::Pattern,
         ),
         (
-            r##"<defs><clipPath id="c"><rect width="5" height="5"/></clipPath></defs>
-                <rect width="10" height="10" clip-path="url(#c)"/>"##,
-            SvgSceneFeature::ClipPath,
+            r##"<defs><pattern id="p" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="2" height="2"/></pattern></defs>
+                <rect width="10" height="10" fill="none" stroke="url(#p)" stroke-width="2"/>"##,
+            SvgSceneFeature::Pattern,
         ),
         (
             r##"<defs><mask id="m"><rect width="5" height="5" fill="#fff"/></mask></defs>
@@ -922,6 +1287,98 @@ fn budgets_are_errors_and_not_fallbacks() {
 }
 
 #[test]
+fn gradient_and_clip_budgets_are_errors_and_not_fallbacks() {
+    let two_gradients = document(&format!(
+        r##"<defs><linearGradient id="g">{STOPS}</linearGradient></defs>
+            <rect width="5" height="5" fill="url(#g)"/><rect x="6" width="5" height="5" fill="url(#g)"/>"##
+    ));
+    let chained = document(
+        r##"<defs><clipPath id="inner"><rect width="9" height="9"/></clipPath>
+              <clipPath id="c" clip-path="url(#inner)"><rect width="9" height="9"/></clipPath></defs>
+            <rect width="10" height="10" clip-path="url(#c)"/>"##,
+    );
+    let nested = document(
+        r##"<defs><clipPath id="inner"><rect width="9" height="9"/></clipPath>
+              <clipPath id="c"><rect width="9" height="9" clip-path="url(#inner)"/></clipPath></defs>
+            <rect width="10" height="10" clip-path="url(#c)"/>"##,
+    );
+    let exceeded = |document: &SvgDocument,
+                    limits: SceneLimits,
+                    expected: (SvgSceneLimit, usize)| {
+        let error = limited(document, limits).unwrap_err();
+        assert!(
+            matches!(error, SvgSceneError::LimitExceeded { limit, max } if (limit, max) == expected),
+            "{expected:?}: {error}"
+        );
+        assert!(!error.falls_back_to_raster());
+    };
+    let limits = SceneLimits::default();
+    // Three stops in a gradient, six in the scene.
+    exceeded(
+        &two_gradients,
+        SceneLimits {
+            gradient_stops: 2,
+            ..limits
+        },
+        (SvgSceneLimit::GradientStops, 2),
+    );
+    exceeded(
+        &two_gradients,
+        SceneLimits {
+            scene_gradient_stops: 5,
+            ..limits
+        },
+        (SvgSceneLimit::SceneGradientStops, 5),
+    );
+    // Two clips on top of each other, and a clip inside a clip.
+    for document in [&chained, &nested] {
+        exceeded(
+            document,
+            SceneLimits {
+                clip_depth: 1,
+                ..limits
+            },
+            (SvgSceneLimit::ClipDepth, 1),
+        );
+        assert!(
+            limited(
+                document,
+                SceneLimits {
+                    clip_depth: 2,
+                    ..limits
+                }
+            )
+            .is_ok()
+        );
+    }
+    // The same documents fit their budgets exactly.
+    assert!(
+        limited(
+            &two_gradients,
+            SceneLimits {
+                gradient_stops: 3,
+                scene_gradient_stops: 6,
+                ..limits
+            }
+        )
+        .is_ok()
+    );
+    // The nodes of a clip are charged to the budget of the scene.
+    for document in [&chained, &nested] {
+        let nodes = document.scene(VIEWPORT, style(1.0)).unwrap().node_count();
+        assert!(limited(document, SceneLimits { nodes, ..limits }).is_ok());
+        exceeded(
+            document,
+            SceneLimits {
+                nodes: nodes - 1,
+                ..limits
+            },
+            (SvgSceneLimit::Nodes, nodes - 1),
+        );
+    }
+}
+
+#[test]
 fn invalid_requests_are_svg_errors() {
     let document = document(r##"<rect width="1" height="1"/>"##);
     for (width, height) in [
@@ -968,16 +1425,20 @@ fn errors_describe_themselves() {
         "SVG scene exceeds the limit of 7 path segments"
     );
     for feature in [
-        SvgSceneFeature::Gradient,
         SvgSceneFeature::Pattern,
-        SvgSceneFeature::ClipPath,
         SvgSceneFeature::BlendMode,
         SvgSceneFeature::Image,
         SvgSceneFeature::RootOpacity,
     ] {
         assert!(!feature.name().is_empty());
     }
-    for limit in [SvgSceneLimit::Nodes, SvgSceneLimit::GroupDepth] {
+    for limit in [
+        SvgSceneLimit::Nodes,
+        SvgSceneLimit::GroupDepth,
+        SvgSceneLimit::ClipDepth,
+        SvgSceneLimit::GradientStops,
+        SvgSceneLimit::SceneGradientStops,
+    ] {
         assert!(!limit.name().is_empty());
     }
 }
@@ -986,7 +1447,14 @@ fn errors_describe_themselves() {
 fn the_default_budgets_are_the_documented_ones() {
     let limits = SceneLimits::default();
     assert_eq!(
-        (limits.nodes, limits.segments, limits.group_depth),
-        (1_000_000, 4_000_000, 256)
+        (
+            limits.nodes,
+            limits.segments,
+            limits.group_depth,
+            limits.clip_depth,
+            limits.gradient_stops,
+            limits.scene_gradient_stops
+        ),
+        (1_000_000, 4_000_000, 256, 64, 1_024, 1_000_000)
     );
 }

@@ -98,6 +98,13 @@ clips), `opacity`, `fill-opacity`, `stroke-opacity`, the stroke properties
 `transform`, `visibility`, `display`, `currentColor`, markers (flattened),
 `text` (see D9) and `image` with a raster source (see D10).
 
+Paint servers and clips reach the scene already resolved to the user space of
+the path or group that uses them (bounding box units are folded into the
+gradient transform), so a consumer needs no bounding box. A gradient without
+a length paints the color of its last stop, one whose transform cannot be
+inverted paints nothing, and a clip path is the union of its shapes filled by
+their own rules, intersected with the clip it is chained to.
+
 Not in the initial subset: `filter` (still rejected as an error, as today),
 `mask`, `pattern`, `foreignObject`, animation (SMIL and CSS animations are
 ignored), scripting and `a` navigation (an inline `<svg>` link is handled by the
@@ -232,6 +239,7 @@ tuned when the builder exists:
 | Clip nesting depth | 64 |
 | Glyphs in one scene | 1,000,000 |
 | Stops in one gradient | 1,024 |
+| Gradient stops in one scene | 1,000,000 |
 | Raster pixels carried in one scene | within the existing per-image output limit |
 
 Exceeding a limit is an error for that image (it does not fall back, because
