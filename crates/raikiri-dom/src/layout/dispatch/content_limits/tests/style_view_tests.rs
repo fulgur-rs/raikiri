@@ -66,7 +66,7 @@ fn content_limit_resolved_scope_keeps_large_finite_used_values() {
     })
     .overrides(true, 0.0)
     {
-        let _previous = entry.apply_legacy_sizing(&mut legacy).unwrap();
+        entry.apply_physical_sizing(&mut legacy).unwrap();
     }
     assert_eq!(
         legacy.min_size.width,

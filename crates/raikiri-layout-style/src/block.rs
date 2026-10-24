@@ -20,9 +20,6 @@ impl LayoutStyleView<'_> {
 }
 
 impl taffy::BlockContainerStyle for LayoutStyleView<'_> {
-    fn text_align(&self) -> taffy::TextAlign {
-        self.prepared.metadata.legacy_text_align
-    }
     fn align_content(&self) -> taffy::AlignContent {
         self.bridge_align_content()
     }

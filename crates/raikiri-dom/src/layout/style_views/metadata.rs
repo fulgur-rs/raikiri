@@ -69,8 +69,6 @@ pub(in crate::layout) fn node_metadata(
         flags
     };
     StyleMetadata {
-        scrollbar_width: 0.0,
-        legacy_text_align: taffy::TextAlign::Auto,
         flags,
         used_writing_mode: node.used_writing_mode,
         claims: Some(taffy::ContainingBlockClaims {

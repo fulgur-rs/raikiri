@@ -433,7 +433,7 @@ pub(crate) struct OofCandidate {
 }
 
 /// The area of a container the insets of its out-of-flow boxes resolve
-/// against: the border box less the borders and the scrollbar gutters.
+/// against: the border box less the borders.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct OofPositioningArea {
     /// The size of the area.

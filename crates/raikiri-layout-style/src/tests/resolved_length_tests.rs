@@ -54,10 +54,9 @@ fn resolved_owned_and_borrowed_values_keep_physical_axes_until_projection() {
         .unwrap(),
     ];
     let mut legacy = taffy::Style::<raikiri_style::SmolStr>::default();
-    let _undo: Vec<_> = owned
-        .iter()
-        .map(|entry| entry.apply_legacy_sizing(&mut legacy).unwrap())
-        .collect();
+    for entry in &owned {
+        entry.apply_physical_sizing(&mut legacy).unwrap();
+    }
     assert_eq!(legacy.size.width, Dimension::length(20_000_000.0));
     assert_eq!(legacy.size.height, Dimension::length(30_000_000.0));
     assert_eq!(legacy.min_size.width, Lpa::length(40_000_000.0));
