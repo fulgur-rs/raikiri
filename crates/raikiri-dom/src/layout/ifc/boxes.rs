@@ -15,9 +15,9 @@ use crate::layout::dispatch::block_flow::context::{
 };
 use crate::layout::dispatch::{fit_content_room, measure_against_parent_height, resolve_calc};
 use crate::layout::protocol::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, LayoutInput,
-    LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPosition, OofPositioningArea,
-    RequestedAxis, RunMode, SizingMode,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, FloatDirection,
+    LayoutInput, LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPosition,
+    OofPositioningArea, RequestedAxis, RunMode, SizingMode,
 };
 use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::{IntoEdges, ResolveOrZero};
@@ -30,7 +30,7 @@ use shodo::{
     FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
 };
 use std::collections::{HashMap, HashSet};
-use taffy::{Clear, FloatDirection};
+use taffy::Clear;
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
 /// laid out as a box of its own and painted by the walk.
@@ -634,10 +634,7 @@ fn seed_carried_floats(
                 height: visible_bottom - visible_top,
             },
             geometry.top_edge + visible_top - column_origin,
-            style
-                .float()
-                .float_direction()
-                .unwrap_or(FloatDirection::Left),
+            FloatDirection::from_float(style.float()).unwrap_or(FloatDirection::Left),
             style.clear(),
             false,
         );
@@ -1663,10 +1660,7 @@ fn measure_float(
     TentativeFloat {
         node,
         // The projection accepts only left and right floats.
-        direction: style
-            .float()
-            .float_direction()
-            .unwrap_or(FloatDirection::Left),
+        direction: FloatDirection::from_float(style.float()).unwrap_or(FloatDirection::Left),
         clear: style.clear(),
         margin_box: Size {
             width: geometry.axes.inline_extent(output_size) + inline_margin,
@@ -3621,7 +3615,7 @@ pub(crate) fn intrinsics_of_boxes(
                     margin.left + margin.right,
                 );
                 let style = tree.physical_style(b.node);
-                let side = match style.float().float_direction() {
+                let side = match FloatDirection::from_float(style.float()) {
                     Some(FloatDirection::Right) => FloatSide::Right,
                     _ => FloatSide::Left,
                 };

@@ -4,14 +4,14 @@ use crate::layout::dispatch::block_flow::context::BlockFormattingContext;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::layout::layout_single_page;
-use crate::layout::protocol::CollapsibleMarginSet;
+use crate::layout::protocol::{CollapsibleMarginSet, FloatDirection};
 use crate::layout::test_support::{
     absolute_rect, ahem_paragraph_with, ahem_paragraph_with_atomic, ifc_ahem_fonts,
     page_box_800x600, with_ahem,
 };
 use raikiri_layout_geometry::{Edges, Size};
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
-use taffy::{Clear, FloatDirection};
+use taffy::Clear;
 
 type BoxRect = (f32, f32, f32, f32);
 

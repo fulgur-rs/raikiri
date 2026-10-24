@@ -7,7 +7,8 @@ use crate::layout::protocol::{
     AvailableSpace, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId, OofLayoutResult,
     OofPosition, OofPositioningArea,
 };
-use raikiri_layout_geometry::{Edges, Line, Point, Size};
+use raikiri_layout_geometry::{Edges, Line, Size};
+use raikiri_layout_style::values::AlignContent;
 
 /// Lay out a flex container.
 #[inline]
@@ -112,36 +113,18 @@ pub(crate) fn claims_position(claims: taffy::ContainingBlockClaims, position: Oo
     claims.for_position(position.into_taffy())
 }
 
-/// A calculator of the intrinsic width that floats contribute to a block, for a
-/// block laid out in `available_width`.
-#[inline]
-pub(crate) fn float_intrinsic_width_calculator(
-    available_width: AvailableSpace,
-) -> taffy::FloatIntrinsicWidthCalculator {
-    taffy::FloatIntrinsicWidthCalculator::new(available_width.into_taffy())
-}
-
-/// Place a floated box of the border-box size `floated_box` no higher than
-/// `min_y` among the `floats`, and return its position.
+/// The offset along the block axis that `align-content` gives the in-flow
+/// content of a block container, from the `free_space` between the content
+/// box and the content. A negative offset moves the content up.
 ///
-/// `containing_block_insets` are how far the containing block is inset from
-/// the left and the right edge of the formatting context.
+/// `align_content` must not be `normal`: the container's own default has to
+/// be resolved before the offset is asked for.
 #[inline]
-pub(crate) fn place_floated_box(
-    floats: &mut taffy::FloatContext,
-    floated_box: Size<f32>,
-    min_y: f32,
-    containing_block_insets: [f32; 2],
-    direction: taffy::FloatDirection,
-    clear: taffy::Clear,
-) -> Point<f32> {
-    Point::from_taffy(floats.place_floated_box(
-        floated_box.into_taffy(),
-        min_y,
-        containing_block_insets,
-        direction,
-        clear,
-    ))
+pub(crate) fn compute_block_align_content_offset(
+    align_content: AlignContent,
+    free_space: f32,
+) -> f32 {
+    taffy::compute_block_align_content_offset(align_content, free_space)
 }
 
 /// The static position in one axis of an out-of-flow box whose alignment is

@@ -7,8 +7,8 @@
 
 use crate::layout::protocol::{
     AbsoluteAxis, AvailableSpace, AxisStaticAlign, AxisStaticEdge, AxisStaticPosition, Baselines,
-    LayoutInput, LayoutOutput, NodeId, OofCandidate, OofPosition, OofPositioningArea,
-    RequestedAxis, RunMode, SizingMode, StaticAlignSafety,
+    BfcSlot, FloatDirection, LayoutInput, LayoutOutput, NodeId, OofCandidate, OofPosition,
+    OofPositioningArea, RequestedAxis, RunMode, SizingMode, StaticAlignSafety,
 };
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 
@@ -611,6 +611,40 @@ impl FromTaffy for OofPosition {
             | taffy::Position::Static
             | taffy::Position::Relative
             | taffy::Position::Sticky => OofPosition::Absolute,
+        }
+    }
+}
+
+impl IntoTaffy for FloatDirection {
+    type Taffy = taffy::FloatDirection;
+
+    #[inline]
+    fn into_taffy(self) -> taffy::FloatDirection {
+        match self {
+            FloatDirection::Left => taffy::FloatDirection::Left,
+            FloatDirection::Right => taffy::FloatDirection::Right,
+        }
+    }
+}
+
+impl FromTaffy for BfcSlot {
+    type Taffy = taffy::BfcSlot;
+
+    #[inline]
+    fn from_taffy(value: taffy::BfcSlot) -> Self {
+        let taffy::BfcSlot {
+            segment_id,
+            x,
+            y,
+            border_width,
+            stretch_width,
+        } = value;
+        BfcSlot {
+            segment_id,
+            x,
+            y,
+            border_width,
+            stretch_width,
         }
     }
 }
