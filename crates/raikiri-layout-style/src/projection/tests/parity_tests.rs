@@ -7,9 +7,9 @@
 use crate::values::{
     AlignContent, AlignContentKeyword, AlignItems, AlignItemsKeyword, AlignmentSafety,
     BoxGenerationMode, BoxSizing, Clear, Contain, ContainingBlockClaims, Dimension, Direction,
-    Display, Float, LengthPercentage, LengthPercentageAuto, Overflow, Position, ToTaffy,
+    Display, Float, LengthPercentage, LengthPercentageAuto, Overflow, Position,
 };
-use crate::{BoxStyle, LeafStyle};
+use crate::{BoxStyle, LeafStyle, ToTaffy};
 use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_style::SmolStr;
 use taffy::CoreStyle;

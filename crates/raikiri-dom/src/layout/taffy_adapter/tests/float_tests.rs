@@ -5,8 +5,9 @@ use super::*;
 use crate::layout::protocol::{BfcSlot, FloatDirection};
 use crate::layout::taffy_adapter::algorithms::compute_block_align_content_offset;
 use crate::layout::taffy_adapter::{FloatContext, FloatIntrinsicWidthCalculator};
+use raikiri_layout_style::ToTaffy;
 use raikiri_layout_style::values::{
-    AlignContent, AlignContentKeyword, AlignmentSafety, Clear, Direction, Float, ToTaffy,
+    AlignContent, AlignContentKeyword, AlignmentSafety, Clear, Direction, Float,
 };
 
 const CLEARS: [Clear; 4] = [Clear::None, Clear::Left, Clear::Right, Clear::Both];

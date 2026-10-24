@@ -15,11 +15,10 @@ use std::{
     hint::black_box,
     sync::Arc,
 };
-use taffy::{
-    BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle, FlexboxContainerStyle as FC,
-    FlexboxItemStyle as FI, GenericRepetition, GridContainerStyle as GC, GridItemStyle as GI,
-    OofItemStyle as OI,
-};
+use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle, OofItemStyle as OI}; // taffy-boundary-lint:ignore: the test measures the library-typed getters of the projection
+use taffy::{FlexboxContainerStyle as FC, FlexboxItemStyle as FI}; // taffy-boundary-lint:ignore: the test measures the library-typed getters of the projection
+use taffy::{GenericGridTemplateComponent as Component, GenericRepetition}; // taffy-boundary-lint:ignore: the test measures the library-typed getters of the projection
+use taffy::{GridContainerStyle as GC, GridItemStyle as GI}; // taffy-boundary-lint:ignore: the test measures the library-typed getters of the projection
 
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
@@ -83,10 +82,10 @@ fn allocations(f: impl FnOnce()) -> usize {
 fn consume_template(tracks: TemplateTracks<'_>) {
     for component in tracks.clone().chain(tracks) {
         match component {
-            taffy::GenericGridTemplateComponent::Single(track) => {
+            Component::Single(track) => {
                 black_box(track);
             }
-            taffy::GenericGridTemplateComponent::Repeat(repeat) => {
+            Component::Repeat(repeat) => {
                 black_box(repeat.count());
                 black_box(repeat.track_count());
                 let tracks = repeat.tracks();

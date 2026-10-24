@@ -1,7 +1,8 @@
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::protocol::{AvailableSpace, BfcSlot, FloatDirection};
 use raikiri_layout_geometry::{Point, Size};
-use raikiri_layout_style::values::{Clear, Direction, ToTaffy};
+use raikiri_layout_style::ToTaffy;
+use raikiri_layout_style::values::{Clear, Direction};
 
 /// Where the floats of one block formatting context are.
 ///

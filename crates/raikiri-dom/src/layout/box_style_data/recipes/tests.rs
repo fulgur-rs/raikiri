@@ -11,10 +11,8 @@ use raikiri_style::{
     ComputedBorderSpacing, ComputedLengthPercentageOrAuto as L,
     property::{BorderCollapseValue, CaptionSideValue, WritingMode},
 };
-use taffy::{
-    CoreStyle, FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
-    GridItemStyle as GI,
-};
+use taffy::{CoreStyle, FlexboxContainerStyle as FC, FlexboxItemStyle as FI}; // taffy-boundary-lint:ignore: the test reads the library-typed getters of the projection
+use taffy::{GridContainerStyle as GC, GridItemStyle as GI}; // taffy-boundary-lint:ignore: the test reads the library-typed getters of the projection
 
 fn facts(direction: LayoutDirection, block: bool) -> BoxFacts {
     BoxFacts {

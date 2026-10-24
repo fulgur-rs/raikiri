@@ -1,7 +1,7 @@
 use super::convert::{FromTaffy, IntoTaffy};
 use raikiri_layout_geometry::{Edges, Size};
-use raikiri_layout_style::values::{Direction, ToTaffy};
-use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
+use raikiri_layout_style::values::Direction;
+use raikiri_layout_style::{LayoutStyleView, TaffyStyle, ToTaffy};
 use smol_str::SmolStr;
 use taffy::{DetailedGridInfo, DetailedLayoutInfo, GridItemStyle};
 

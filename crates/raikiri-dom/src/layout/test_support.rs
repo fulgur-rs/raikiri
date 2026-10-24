@@ -4,7 +4,8 @@ use crate::Document;
 use crate::layout::ifc::test_support::{Fixture, block_fixture};
 use raikiri_layout_geometry::Point;
 use raikiri_layout_style::BoxStyle;
-use raikiri_layout_style::values::{Display, ToTaffy};
+use raikiri_layout_style::ToTaffy;
+use raikiri_layout_style::values::Display;
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 use taffy::Style as LegacyStyle; // taffy-boundary-lint:ignore: the Taffy style is the reference the style views are compared with

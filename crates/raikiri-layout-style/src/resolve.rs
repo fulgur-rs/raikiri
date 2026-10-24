@@ -1,17 +1,12 @@
 //! Resolving style lengths against a percentage basis.
 //!
-//! A length that holds a `calc()` resolves through the [`CalcRef`] it carries,
-//! so the callers of these traits pass no function to dereference a handle.
-//! The traits also resolve the sizes and edges of lengths.
+//! A length that holds a `calc()` resolves through the
+//! [`CalcRef`](crate::values::CalcRef) it carries, so the callers of these
+//! traits pass no function to dereference a handle. The traits also resolve the
+//! sizes and edges of lengths.
 
-use crate::values::{CalcRef, Dimension, LengthPercentage, LengthPercentageAuto};
+use crate::values::{Dimension, LengthPercentage, LengthPercentageAuto};
 use raikiri_layout_geometry::{Edges, Size};
-
-/// Resolve the handle of a `calc()` that the layout library read back from one
-/// of the lengths here.
-fn resolve_handle(handle: *const (), basis: f32) -> f32 {
-    CalcRef::from_handle(handle).resolve(basis)
-}
 
 /// Resolving a length that may depend on its containing block, where a length
 /// that cannot be resolved gives `None`.
@@ -33,21 +28,21 @@ macro_rules! resolve_style_length {
         impl MaybeResolve<Option<f32>, Option<f32>> for $length {
             #[inline]
             fn maybe_resolve(self, context: Option<f32>) -> Option<f32> {
-                taffy::MaybeResolve::maybe_resolve(self.0, context, resolve_handle)
+                self.resolve(context)
             }
         }
 
         impl MaybeResolve<f32, Option<f32>> for $length {
             #[inline]
             fn maybe_resolve(self, context: f32) -> Option<f32> {
-                taffy::MaybeResolve::maybe_resolve(self.0, Some(context), resolve_handle)
+                self.resolve(Some(context))
             }
         }
 
         impl ResolveOrZero<Option<f32>, f32> for $length {
             #[inline]
             fn resolve_or_zero(self, context: Option<f32>) -> f32 {
-                taffy::ResolveOrZero::resolve_or_zero(self.0, context, resolve_handle)
+                self.resolve(context).unwrap_or(0.0)
             }
         }
     )*};

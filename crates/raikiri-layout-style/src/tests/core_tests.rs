@@ -92,33 +92,14 @@ fn the_main_axis_of_a_flex_container_runs_along_rows_for_row_directions() {
 #[test]
 fn all_flex_and_alignment_keywords_have_explicit_results() {
     for (input, expected) in [
-        (FlexDirectionValue::Row, taffy::FlexDirection::Row),
-        (
-            FlexDirectionValue::RowReverse,
-            taffy::FlexDirection::RowReverse,
-        ),
-        (FlexDirectionValue::Column, taffy::FlexDirection::Column),
-        (
-            FlexDirectionValue::ColumnReverse,
-            taffy::FlexDirection::ColumnReverse,
-        ),
-    ] {
-        let mut cv = ComputedValues::initial();
-        cv.flex_direction = input;
-        query(&cv, StyleFlags::default(), |v| {
-            assert_eq!(v.flex_direction(), expected)
-        });
-    }
-    for (input, expected) in [
-        (FlexWrapValue::NoWrap, taffy::FlexWrap::NoWrap),
-        (FlexWrapValue::Wrap, taffy::FlexWrap::Wrap),
-        (FlexWrapValue::WrapReverse, taffy::FlexWrap::WrapReverse),
+        (FlexWrapValue::NoWrap, false),
+        (FlexWrapValue::Wrap, true),
+        (FlexWrapValue::WrapReverse, true),
     ] {
         let mut cv = ComputedValues::initial();
         cv.flex_wrap = input;
         query(&cv, StyleFlags::default(), |v| {
-            assert_eq!(v.flex_wrap(), expected);
-            assert_eq!(v.flex_wraps(), expected != taffy::FlexWrap::NoWrap);
+            assert_eq!(v.flex_wraps(), expected);
         });
     }
     for (input, expected) in [

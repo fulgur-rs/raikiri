@@ -1,6 +1,6 @@
-use super::*;
+use crate::document::Document;
 use crate::layout::context::LayoutSession;
-use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the session's tree traits take Taffy's id
+use taffy::NodeId as TaffyNodeId;
 use taffy::TraversePartialTree;
 
 #[test]

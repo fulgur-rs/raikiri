@@ -8,8 +8,9 @@ use crate::layout::protocol::{
     OofPosition, OofPositioningArea,
 };
 use raikiri_layout_geometry::{Edges, Line, Size};
+use raikiri_layout_style::ToTaffy;
 use raikiri_layout_style::values::{
-    AlignContent, AlignSelf, ContainingBlockClaims, Direction, Position, ToTaffy,
+    AlignContent, AlignSelf, ContainingBlockClaims, Direction, Position,
 };
 
 /// Lay out a flex container.

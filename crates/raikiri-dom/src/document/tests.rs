@@ -18,5 +18,4 @@ mod replace_children_from_tests;
 mod send_soundness_tests;
 mod serialize_inner_html_tests;
 mod stylesheets_tests;
-mod taffy_filter_tests;
 mod template_in_document_tests;

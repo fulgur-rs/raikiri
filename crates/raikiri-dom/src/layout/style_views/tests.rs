@@ -13,14 +13,13 @@ use raikiri_layout_style::BoxStyle;
 use raikiri_layout_style::{AlignedCalc, LengthProperty, OwnedPropertyOverride};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, build_rule_tree, cascade};
 
-use raikiri_layout_style::TaffyStyle;
 use raikiri_layout_style::values::{
     AlignItems, BoxGenerationMode, CalcRef, ContainingBlockClaims, Dimension,
     Direction as LayoutDirection, Display, LengthIdentity, LengthPercentage, Overflow, Position,
-    ToTaffy,
 };
+use raikiri_layout_style::{TaffyStyle, ToTaffy};
 use std::sync::Arc;
-use taffy::CoreStyle;
+use taffy::CoreStyle; // taffy-boundary-lint:ignore: the test reads the library-typed getters of the projection
 use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the Taffy tree traits of the session take Taffy's id
 
 /// The identity a calc length has when it points at `owner`.
@@ -198,10 +197,8 @@ fn prepared_grid_alignment_preserves_the_semantic_bridge_overrides() {
 
 fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, expected: &BoxStyle) {
     let expected = &crate::layout::test_support::taffy_style(expected);
-    use taffy::{
-        FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
-        GridItemStyle as GI,
-    };
+    use taffy::{FlexboxContainerStyle as FC, FlexboxItemStyle as FI}; // taffy-boundary-lint:ignore: the test reads the library-typed getters of the projection
+    use taffy::{GridContainerStyle as GC, GridItemStyle as GI}; // taffy-boundary-lint:ignore: the test reads the library-typed getters of the projection
     let view = &TaffyStyle::new(view);
     macro_rules! same {
         ($trait:ident: $($getter:ident),+ $(,)?) => { $(assert_eq!($trait::$getter(view), $trait::$getter(expected), "{}", stringify!($getter));)+ };
@@ -626,7 +623,7 @@ fn non_element_has_no_css_sizing_keyword_policy() {
 
 #[test]
 fn flex_grid_queries_preserve_legacy_claims_and_prepared_facts() {
-    use taffy::{LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree};
+    use taffy::{LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree}; // taffy-boundary-lint:ignore: the test calls the library's tree traits on the session
     for display in ["flex", "grid"] {
         for policy in ["transform:translateX(0)", "contain:layout size"] {
             for position in ["static", "relative"] {

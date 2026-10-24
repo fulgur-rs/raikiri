@@ -5,10 +5,11 @@
 //! value that is mapped to something else. [`Contain`] is a set of the two
 //! kinds it holds, and each is converted by name.
 
-use super::{
+use super::{Dimension, LengthPercentage, LengthPercentageAuto};
+use crate::values::{
     AlignContent, AlignContentKeyword, AlignItems, AlignItemsKeyword, AlignmentSafety,
-    BoxGenerationMode, BoxSizing, Clear, Contain, ContainingBlockClaims, Dimension, Direction,
-    Display, Float, LengthPercentage, LengthPercentageAuto, Overflow, Position,
+    BoxGenerationMode, BoxSizing, Clear, Contain, ContainingBlockClaims, Direction, Display, Float,
+    Overflow, Position,
 };
 use raikiri_layout_geometry::{Edges, Point, Size};
 
