@@ -904,3 +904,58 @@ fn the_initial_containing_block_takes_the_alignment_axes_of_the_root_element() {
         assert_eq!(rect.2, 800.0, "{position}");
     }
 }
+
+#[test]
+fn flex_and_grid_containers_hand_their_vertical_axes_to_their_positioned_boxes() {
+    for display in ["display:flex", "display:grid", "display:inline-flex"] {
+        let container_css = format!("{display};writing-mode:vertical-rl");
+        let rect = sized_rect(&container_css, "left:0;right:0;align-self:start");
+        assert_eq!(rect.2, 0.0, "{container_css}");
+        let rect = sized_rect(&container_css, "left:0;right:0;justify-self:start");
+        assert_eq!(rect.2, 100.0, "{container_css}");
+        let rect = sized_rect(&container_css, "top:0;bottom:0;justify-self:start");
+        assert_eq!(rect.3, 0.0, "{container_css}");
+        let rect = sized_rect(&container_css, "top:0;bottom:0;align-self:start");
+        assert_eq!(rect.3, 100.0, "{container_css}");
+    }
+}
+
+#[test]
+fn the_sideways_root_element_gives_the_initial_containing_block_vertical_axes() {
+    for writing_mode in ["sideways-rl", "sideways-lr", "vertical-lr"] {
+        let root_css = format!("writing-mode:{writing_mode}");
+        let rect = root_rect(&root_css, "absolute", "left:0;right:0;align-self:start");
+        assert_eq!(rect.2, 0.0, "{writing_mode}");
+        let rect = root_rect(&root_css, "absolute", "top:0;bottom:0;justify-self:start");
+        assert_eq!(rect.3, 0.0, "{writing_mode}");
+    }
+}
+
+#[test]
+fn a_vertical_box_in_a_horizontal_root_leaves_the_boxes_around_it_on_their_own_axes() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let vertical = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;position:relative;width:100px;height:100px;writing-mode:vertical-rl"),
+    );
+    let inside = doc.append_element(
+        Some(vertical),
+        "div",
+        Some("display:block;position:absolute;left:0;right:0;width:auto;align-self:start"),
+    );
+    // Positioned by the initial containing block, on the horizontal axes of the
+    // root, after the vertical box has been positioned.
+    let outside = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;position:absolute;left:0;right:0;top:0;width:auto;justify-self:start"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, inside).2, 0.0);
+    assert_eq!(absolute_rect(&doc, outside).2, 0.0);
+}

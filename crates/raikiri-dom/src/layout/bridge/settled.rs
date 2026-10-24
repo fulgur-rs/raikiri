@@ -70,10 +70,16 @@ fn container_alignment(value: SelfAlignmentValue) -> AlignItems {
 /// `last baseline` does ([`own_alignment`]); taffy alone would inherit the
 /// container's plain baseline. With an inset specified, `auto` behaves as
 /// `normal` and the box stays at the start.
+///
+/// `align-self` aligns the block axis of the container and `justify-self` its
+/// inline axis, which are the physical vertical and horizontal ones of a
+/// container on horizontal axes (`parent_vertical` false) and the other way
+/// round on vertical axes.
 // spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-auto
 pub(super) fn inherited_last_baseline(
     cv: &ComputedValues,
     parent: &ComputedValues,
+    parent_vertical: bool,
 ) -> (Option<AlignItems>, Option<AlignItems>) {
     let mut overrides = (None, None);
     if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
@@ -82,17 +88,24 @@ pub(super) fn inherited_last_baseline(
     let auto = |value: ComputedLengthPercentageOrAuto| {
         matches!(value, ComputedLengthPercentageOrAuto::Auto)
     };
+    let (vertical_insets_auto, horizontal_insets_auto) = (
+        auto(cv.top) && auto(cv.bottom),
+        auto(cv.left) && auto(cv.right),
+    );
+    let (block_insets_auto, inline_insets_auto) = if parent_vertical {
+        (horizontal_insets_auto, vertical_insets_auto)
+    } else {
+        (vertical_insets_auto, horizontal_insets_auto)
+    };
     if matches!(cv.align_self, AlignSelfValue::Auto)
         && parent.align_items == SelfAlignmentValue::LastBaseline
-        && auto(cv.top)
-        && auto(cv.bottom)
+        && block_insets_auto
     {
         overrides.0 = Some(AlignItems::SAFE_SELF_END);
     }
     if matches!(cv.justify_self, AlignSelfValue::Auto)
         && parent.justify_items == SelfAlignmentValue::LastBaseline
-        && auto(cv.left)
-        && auto(cv.right)
+        && inline_insets_auto
     {
         overrides.1 = Some(AlignItems::SAFE_SELF_END);
     }

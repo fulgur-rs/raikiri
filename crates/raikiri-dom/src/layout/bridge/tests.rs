@@ -1060,10 +1060,20 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
 }
 
 /// The alignments the bridge settles for a box with the computed values `cv`
-/// in a container with the computed values `parent`.
+/// in a container on horizontal axes with the computed values `parent`.
 fn settled_alignments(cv: &ComputedValues, parent: &ComputedValues) -> Settled {
+    settled_alignments_on_axes(cv, parent, false)
+}
+
+/// [`settled_alignments`] for a container on vertical axes when
+/// `parent_vertical`.
+fn settled_alignments_on_axes(
+    cv: &ComputedValues,
+    parent: &ComputedValues,
+    parent_vertical: bool,
+) -> Settled {
     let mut settled = Settled::of(cv);
-    let (align_self, justify_self) = settled::inherited_last_baseline(cv, parent);
+    let (align_self, justify_self) = settled::inherited_last_baseline(cv, parent, parent_vertical);
     settled.align_self = align_self.or(settled.align_self);
     settled.justify_self = justify_self.or(settled.justify_self);
     settled
@@ -1196,6 +1206,29 @@ fn abspos_auto_alignment_takes_the_containers_last_baseline_only_for_the_static_
     let style = settled_alignments(&cv, &parent);
     assert_eq!(style.align_self, None);
     assert_eq!(style.justify_self, Some(AlignItems::SAFE_SELF_END));
+}
+
+#[test]
+fn abspos_auto_alignment_follows_the_axes_of_a_vertical_container() {
+    // `align-self` is the block axis, the physical horizontal one on vertical
+    // axes, and `justify-self` the inline axis, the physical vertical one.
+    let mut parent = ComputedValues::initial();
+    parent.align_items = SelfAlignmentValue::LastBaseline;
+    parent.justify_items = SelfAlignmentValue::LastBaseline;
+    let mut cv = ComputedValues::initial();
+    cv.position = PositionValue::Absolute;
+    cv.left = ComputedLengthPercentageOrAuto::Px(0.0);
+    cv.bottom = ComputedLengthPercentageOrAuto::Px(0.0);
+    let style = settled_alignments_on_axes(&cv, &parent, true);
+    assert_eq!(style.align_self, None);
+    assert_eq!(style.justify_self, None);
+
+    cv.left = ComputedLengthPercentageOrAuto::Auto;
+    cv.bottom = ComputedLengthPercentageOrAuto::Auto;
+    cv.top = ComputedLengthPercentageOrAuto::Px(0.0);
+    let style = settled_alignments_on_axes(&cv, &parent, true);
+    assert_eq!(style.align_self, Some(AlignItems::SAFE_SELF_END));
+    assert_eq!(style.justify_self, None);
 }
 
 #[test]
