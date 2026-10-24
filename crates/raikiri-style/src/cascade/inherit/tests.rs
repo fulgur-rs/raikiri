@@ -10843,6 +10843,116 @@ fn border_all_sides_inherit_parent_computed() {
     );
 }
 
+/// A parent with a different width, style and color on every side.
+const DISTINCT_BORDER: &str = "border-top-width: 1px; border-top-style: solid; border-top-color: red; \
+     border-right-width: 2px; border-right-style: dashed; border-right-color: blue; \
+     border-bottom-width: 3px; border-bottom-style: dotted; border-bottom-color: green; \
+     border-left-width: 4px; border-left-style: double; border-left-color: black";
+
+/// The computed borders of a child that declares `child` under a parent with
+/// [`DISTINCT_BORDER`], of that parent, and of an undeclared sibling.
+fn border_of_child(
+    child: &str,
+) -> (
+    crate::property::Sides<ComputedBorder>,
+    crate::property::Sides<ComputedBorder>,
+    crate::property::Sides<ComputedBorder>,
+) {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some(DISTINCT_BORDER));
+    let declared = doc.push_element(parent, "div", Some(child));
+    let plain = doc.push_element(parent, "div", None);
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    (
+        r.computed[declared].border,
+        r.computed[parent].border,
+        r.computed[plain].border,
+    )
+}
+
+/// The four sides of `border`, top first.
+fn border_sides(border: &crate::property::Sides<ComputedBorder>) -> [ComputedBorder; 4] {
+    [border.top, border.right, border.bottom, border.left]
+}
+
+#[test]
+fn border_color_style_and_width_shorthands_take_a_css_wide_keyword() {
+    let (_, parent, plain) = border_of_child("");
+    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+        // Only `inherit` takes the parent's value; the others give the initial one.
+        let expected = border_sides(if keyword == "inherit" {
+            &parent
+        } else {
+            &plain
+        });
+        let initial = border_sides(&plain);
+        let (color, ..) = border_of_child(&format!("border-color: {keyword}"));
+        let (style, ..) = border_of_child(&format!("border-style: {keyword}"));
+        let (width, ..) = border_of_child(&format!("border-width: {keyword}"));
+        for side in 0..4 {
+            let message = format!("{keyword}, side {side}");
+            let (color, style, width) = (
+                border_sides(&color)[side],
+                border_sides(&style)[side],
+                border_sides(&width)[side],
+            );
+            assert_eq!(color.color, expected[side].color, "border-color: {message}");
+            assert_eq!(style.style, expected[side].style, "border-style: {message}");
+            // A border without a style has no width, so `border-width` alone
+            // changes the width the sibling would also have.
+            assert_eq!(width.width, initial[side].width, "border-width: {message}");
+            // The other two sub-properties stay at their initial values.
+            assert_eq!(color.style, initial[side].style, "{message}");
+            assert_eq!(style.color, initial[side].color, "{message}");
+        }
+    }
+}
+
+#[test]
+fn a_border_width_keyword_takes_the_width_the_parent_computed() {
+    // The width shows only under a style, so the child sets one itself.
+    let (inherited, parent, _) = border_of_child("border-style: solid; border-width: inherit");
+    assert_eq!(
+        border_sides(&inherited).map(|side| side.width),
+        border_sides(&parent).map(|side| side.width)
+    );
+    let (initial, ..) = border_of_child("border-style: solid; border-width: initial");
+    assert!(
+        border_sides(&initial)
+            .iter()
+            .all(|side| side.width == ComputedLength(3.0))
+    );
+}
+
+#[test]
+fn a_border_side_shorthand_keyword_competes_with_the_longhands_in_order() {
+    // The later declaration of each side wins, the shorthand's keyword among
+    // them, and `!important` carries to the four sides.
+    let (later_longhand, parent, plain) =
+        border_of_child("border-color: inherit; border-top-color: transparent");
+    assert_ne!(later_longhand.top.color, parent.top.color);
+    assert_eq!(later_longhand.right.color, parent.right.color);
+    let (later_keyword, ..) =
+        border_of_child("border-top-color: transparent; border-color: inherit");
+    assert_eq!(later_keyword.top.color, parent.top.color);
+    let (important, ..) =
+        border_of_child("border-color: initial !important; border-top-color: transparent");
+    assert_eq!(important.top.color, plain.top.color);
+    assert_eq!(important.left.color, plain.left.color);
+}
+
+#[test]
+fn a_border_side_shorthand_keyword_written_with_var_resolves() {
+    let (color, parent, _) = border_of_child("--k: inherit; border-color: var(--k)");
+    assert_eq!(color.bottom.color, parent.bottom.color);
+    let (style, parent, _) = border_of_child("--k: inherit; border-style: var(--k)");
+    assert_eq!(style.left.style, parent.left.style);
+    let (width, parent, _) =
+        border_of_child("--k: inherit; border-style: solid; border-width: var(--k)");
+    assert_eq!(width.right.width, parent.right.width);
+}
+
 #[test]
 fn border_var_with_css_wide_resolves() {
     // `var()` substituting to a CSS-wide keyword resolves one level

@@ -556,6 +556,17 @@ pub(crate) fn project_deferred_value(
         marker.property = property.into();
         return Some(PropertyValue::Deferred(marker));
     }
+    // A CSS-wide keyword written for `border-color`, `border-style` or
+    // `border-width` sets the per-side longhand to the variant that carries it.
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.key != key
+        && let Some(keyword) = marker.css_wide_keyword()
+        && let crate::rule::KeyClass::Shorthand { longhands } = crate::rule::classify(marker.key)
+        && longhands.contains(&key)
+        && let Some(side) = crate::rule::border_side_css_wide(key, keyword)
+    {
+        return Some(side);
+    }
     // A CSS-wide keyword written for a margin, padding, inset or other
     // shorthand listed in `keyword_longhand_name` sets each of its longhands
     // to that keyword.
