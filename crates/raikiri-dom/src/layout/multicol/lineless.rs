@@ -177,10 +177,10 @@ fn is_plain_block_with_display(
         || !is_horizontal(node)
         // So is a box with size containment (CSS Contain 2, 3.1).
         || node.size_containment.height
-        || node.taffy_position() != TaffyPosition::Relative
-            && node.taffy_position() != TaffyPosition::Static
+        || node.layout_position() != Position::Relative
+            && node.layout_position() != Position::Static
         || style.float().is_floated()
-        || style.clear() != taffy::Clear::None
+        || style.clear() != Clear::None
         || block_margins(&style).is_none()
         || style.overflow()
             != (StylePoint {
@@ -306,7 +306,7 @@ fn wrapped_block_tree(
         }
         || style.max_size().height != LengthPercentageAuto::auto()
         || style.aspect_ratio().is_some()
-        || style.contain() != taffy::Contain::NONE
+        || style.contain() != Contain::NONE
     {
         return None;
     }
@@ -505,7 +505,7 @@ fn has_rendered_content(tree: &LayoutSession<'_>, id: usize, skip_absolute: bool
 /// viewport, not its parent, as its containing block.
 fn is_absolute_box(node: &crate::Node) -> bool {
     matches!(node.data, NodeData::Element(_))
-        && node.taffy_position() == TaffyPosition::Absolute
+        && node.layout_position() == Position::Absolute
         && !node.fixed_position
 }
 

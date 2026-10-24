@@ -13,8 +13,6 @@
 //! - [`FloatContext`] and [`FloatIntrinsicWidthCalculator`] wrap the library's
 //!   float placement state and its sum of float widths, which the layout
 //!   extends and reads through methods that take the protocol's types.
-//! - [`MaybeResolve`] and [`ResolveOrZero`] resolve the library's style lengths
-//!   against the layout's geometry.
 //! - [`RowSizing`] and [`rows_size_to_content`] read how the rows of a grid are
 //!   sized from the library's track sizing functions, and [`GridInfo`] reads the
 //!   grid placement of a box from the same projection, so the rest of the
@@ -33,7 +31,6 @@ mod grid_info;
 mod grid_rows;
 mod margin_set;
 mod oof_candidates;
-mod resolve;
 #[cfg(test)]
 pub(crate) mod track_calcs;
 mod tree;
@@ -44,7 +41,6 @@ pub(crate) use grid_info::{GridInfo, GridRowCounts};
 pub(crate) use grid_rows::{RowSizing, rows_size_to_content};
 pub(crate) use margin_set::CollapsibleMarginSet;
 pub(crate) use oof_candidates::{OofBatch, OofCandidates, OofSpan};
-pub(crate) use resolve::{IntoEdges, MaybeResolve, ResolveOrZero};
 
 #[cfg(test)]
 mod tests;

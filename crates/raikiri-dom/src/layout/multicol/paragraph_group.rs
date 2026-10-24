@@ -115,7 +115,7 @@ fn collect(
                 .is_none_or(|mode| !mode.is_vertical())
             && {
                 let overflow = style_of(tree, child).overflow();
-                overflow.x == taffy::Overflow::Visible && overflow.y == taffy::Overflow::Visible
+                overflow.x == Overflow::Visible && overflow.y == Overflow::Visible
             };
         if !can_balance_paragraph_box(tree, child)
             || (!empty

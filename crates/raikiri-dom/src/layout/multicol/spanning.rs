@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::layout::context::LayoutSession;
-use crate::layout::taffy_adapter::MaybeResolve;
+use raikiri_layout_style::values::MaybeResolve;
 
 /// Whether `child` is a `column-span: all` block that is not a float, read
 /// through the style views of a layout session.
@@ -24,7 +24,7 @@ fn spans_all_columns(node: &crate::node::Node) -> bool {
         && node.is_in_document()
         && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
         && !node.is_display_none()
-        && node.taffy_position() != TaffyPosition::Absolute
+        && node.layout_position() != Position::Absolute
 }
 
 pub(super) fn retire_preliminary_fragments(tree: &mut LayoutSession<'_>, children: &[usize]) {
@@ -113,12 +113,7 @@ pub(super) fn layout(
             let margin = style_of(tree, child).margin();
             let inline_margin = [margin.left, margin.right]
                 .into_iter()
-                .filter_map(|value| {
-                    value.maybe_resolve(
-                        Some(context.available_width),
-                        crate::layout::dispatch::resolve_calc,
-                    )
-                })
+                .filter_map(|value| value.maybe_resolve(Some(context.available_width)))
                 .sum::<f32>();
             let width = tree.nodes[child]
                 .multicol_auto_width

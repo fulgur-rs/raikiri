@@ -123,8 +123,7 @@ the kind of name ("no owned name yet (length)"). A change that needs a value of
 that kind should read it through the existing style view or helper rather than
 name the Taffy type in a new place. The resolution helper traits are the
 exception: `MaybeMath` is owned by the geometry crate, and `MaybeResolve` and
-`ResolveOrZero` are raikiri-dom's own traits (implemented for Taffy's lengths in
-the adapter).
+`ResolveOrZero` are the view crate's traits, read through its `values` module.
 
 ## The ratchet
 
@@ -356,11 +355,11 @@ INPUT_NAMES: dict[str, str] = {name: kind for kind, names in INPUT_CLASSES.items
 
 # The input-side names that already have an owned replacement: helper traits that
 # resolve a length against a basis. The owned `MaybeResolve` and `ResolveOrZero`
-# are raikiri-dom's crate-private traits in the adapter.
+# are the view crate's traits.
 OWNED_INPUT_NAMES: dict[str, str] = {
     "MaybeMath": "raikiri_layout_geometry::MaybeMath",
-    "MaybeResolve": "crate::layout::taffy_adapter::MaybeResolve",
-    "ResolveOrZero": "crate::layout::taffy_adapter::ResolveOrZero",
+    "MaybeResolve": "raikiri_layout_style::values::MaybeResolve",
+    "ResolveOrZero": "raikiri_layout_style::values::ResolveOrZero",
 }
 
 # A failing file lists at most this many occurrences; -v lists all of them.

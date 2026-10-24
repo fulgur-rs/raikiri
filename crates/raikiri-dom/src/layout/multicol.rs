@@ -14,13 +14,14 @@ use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
 use crate::layout::style_views::ReadRole;
-use crate::layout::taffy_adapter::MaybeResolve;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{BoxLayout, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
-use raikiri_layout_style::values::StylePoint;
-
-use raikiri_layout_style::values::{StyleRect, StyleSize};
+use raikiri_layout_style::values::{
+    AlignItems, BoxSizing, CalcHandle, Clear, Contain, Dimension, Direction, Display,
+    ExpandedDimension, ExpandedLengthPercentage, Float, LengthPercentage, LengthPercentageAuto,
+    MaybeResolve, Overflow, Position, StylePoint, StyleRect, StyleSize,
+};
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
@@ -47,13 +48,11 @@ fn is_floated(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// alike, but its offset is not one that a painter applies again, so it has
 /// none here. This is the left-to-right offset that block flow gives a child.
 fn relative_inline_offset(style: &LayoutStyleView<'_>, width: f32) -> f32 {
-    if style.position() != TaffyPosition::Relative {
+    if style.position() != Position::Relative {
         return 0.0;
     }
     let inset = style.inset();
-    let resolve = |value: LengthPercentageAuto| {
-        value.maybe_resolve(Some(width), crate::layout::dispatch::resolve_calc)
-    };
+    let resolve = |value: LengthPercentageAuto| value.maybe_resolve(Some(width));
     resolve(inset.left)
         .or(resolve(inset.right).map(|right| -right))
         .unwrap_or(0.0)
@@ -69,7 +68,7 @@ fn with_keyword_width(
     node_id: NodeId,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
-    use taffy::ExpandedDimension as Keyword;
+    use raikiri_layout_style::values::ExpandedDimension as Keyword;
     if inputs.known_dimensions.width.is_some() {
         return inputs;
     }
@@ -332,7 +331,7 @@ pub(crate) fn compute_multicol_layout(
         // both block insets fills its containing block; the columns then
         // take that height. Other known heights come from the item's own
         // content and are rebalanced here.
-        let positioned = tree.nodes[index].taffy_position() == TaffyPosition::Absolute;
+        let positioned = tree.nodes[index].layout_position() == Position::Absolute;
         let inset = css.inset();
         let inset_height = positioned && !inset.top.is_auto() && !inset.bottom.is_auto();
         // The layout mode of the container that places this box in flow.
@@ -340,7 +339,7 @@ pub(crate) fn compute_multicol_layout(
             let container = style_of(tree, parent);
             let stretched = matches!(
                 css.align_self().or(Some(container.align_items())),
-                None | Some(taffy::AlignItems::STRETCH | taffy::AlignItems::NORMAL)
+                None | Some(AlignItems::STRETCH | AlignItems::NORMAL)
             );
             match tree.nodes[parent].formatting_context {
                 FormattingContext::Flex if container.flex_direction_is_row() => {
@@ -526,7 +525,7 @@ fn multicol_max_fragmentainer_height(
         + multicol_resolve_inset(tree, padding.bottom, basis)
         + multicol_resolve_inset(tree, border.top, basis)
         + multicol_resolve_inset(tree, border.bottom, basis);
-    let max_content_height = if style.box_sizing() == taffy::BoxSizing::BorderBox {
+    let max_content_height = if style.box_sizing() == BoxSizing::BorderBox {
         (max_height - insets).max(0.0)
     } else {
         max_height
@@ -575,9 +574,7 @@ fn column_definite_margins(
     column_width: f32,
 ) -> (Option<f32>, Option<f32>) {
     let margin = style.margin();
-    let resolve = |value: LengthPercentageAuto| {
-        value.maybe_resolve(Some(column_width), crate::layout::dispatch::resolve_calc)
-    };
+    let resolve = |value: LengthPercentageAuto| value.maybe_resolve(Some(column_width));
     (resolve(margin.left), resolve(margin.right))
 }
 
@@ -650,7 +647,7 @@ pub(crate) fn multicol_definite_dimension(
     let resolved = match value.expand() {
         ExpandedDimension::Length(px) => px,
         ExpandedDimension::Percent(percent) => basis * percent,
-        ExpandedDimension::Calc(pointer) => crate::layout::dispatch::resolve_calc(pointer, basis),
+        ExpandedDimension::Calc(pointer) => pointer.resolve(basis),
         ExpandedDimension::Auto
         | ExpandedDimension::MinContent
         | ExpandedDimension::MaxContent
@@ -669,9 +666,7 @@ fn multicol_resolve_inset(_tree: &Document, value: LengthPercentage, basis: f32)
     let resolved = match value.expand() {
         ExpandedLengthPercentage::Length(px) => px,
         ExpandedLengthPercentage::Percent(percent) => basis * percent,
-        ExpandedLengthPercentage::Calc(pointer) => {
-            crate::layout::dispatch::resolve_calc(pointer, basis)
-        }
+        ExpandedLengthPercentage::Calc(pointer) => pointer.resolve(basis),
     };
     if resolved.is_finite() {
         resolved.max(0.0)
@@ -776,7 +771,7 @@ fn multicol_ends_with_its_only_float(tree: &LayoutSession<'_>, node_id: usize) -
 fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {
     let mut pending = tree.nodes[node_id].children.clone();
     while let Some(child) = pending.pop() {
-        if tree.nodes[child].taffy_position() == TaffyPosition::Absolute {
+        if tree.nodes[child].layout_position() == Position::Absolute {
             return true;
         }
         pending.extend(tree.nodes[child].children.iter().copied());
@@ -832,7 +827,7 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
                 && [margin.top, margin.bottom]
                     .into_iter()
                     .all(|edge| edge == zero_margin)
-                && node.taffy_position() != TaffyPosition::Absolute
+                && node.layout_position() != Position::Absolute
                 && insets_are_a_relative_inline_offset(tree, child)
                 && !style.float().is_floated()
                 && style.size().height.is_auto()
@@ -852,7 +847,7 @@ fn insets_are_a_relative_inline_offset(tree: &LayoutSession<'_>, child: usize) -
     inset.top.is_auto()
         && inset.bottom.is_auto()
         && (inset.left.is_auto() && inset.right.is_auto()
-            || tree.nodes[child].taffy_position() == TaffyPosition::Relative)
+            || tree.nodes[child].layout_position() == Position::Relative)
 }
 
 // A logical non-auto child minimum paired with break avoidance participates
@@ -968,7 +963,7 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
         let overflow = style.overflow();
         let margin = style.margin();
         let clips = node.ifc.is_none()
-            && (overflow.x != taffy::Overflow::Visible || overflow.y != taffy::Overflow::Visible);
+            && (overflow.x != Overflow::Visible || overflow.y != Overflow::Visible);
         // A slice of a wrapper cannot reproduce an effect sized from its
         // whole box.
         let painted = node.ifc.is_none() && node.paints_whole_box_effects;
@@ -1391,9 +1386,9 @@ fn layout_column_group(
             // to its left. A float sits at the edge of its own side in either
             // direction.
             let flush_right = match float {
-                taffy::Float::Left => false,
-                taffy::Float::Right => true,
-                taffy::Float::None => context.rtl,
+                Float::Left => false,
+                Float::Right => true,
+                Float::None => context.rtl,
             };
             let x = if flush_right {
                 content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
@@ -2273,12 +2268,12 @@ fn record_nested_ifc_box_fragments(
             path.reverse();
             let plain_block_path = !subtree_has_float
                 && !nested_logical_minimum_scope
-                && tree.nodes[subtree_root].taffy_display() == Display::Block
+                && tree.nodes[subtree_root].layout_display() == Display::Block
                 && tree.nodes[node_id].ifc_writing_mode()
                     == Some(shodo::geometry::WritingMode::HorizontalTb)
                 && path
                     .iter()
-                    .all(|&ancestor| tree.nodes[ancestor].taffy_display() == Display::Block);
+                    .all(|&ancestor| tree.nodes[ancestor].layout_display() == Display::Block);
             let node_offset_y = path
                 .iter()
                 .map(|&ancestor| tree.nodes[ancestor].layout.location.y)

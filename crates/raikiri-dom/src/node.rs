@@ -683,16 +683,6 @@ impl Node {
         self.box_properties.taffy_position()
     }
 
-    /// The backend display derived from this box's CSS identity.
-    pub(crate) fn taffy_display(&self) -> Display {
-        self.layout_display()
-    }
-
-    /// The backend position derived from this box's CSS identity.
-    pub(crate) fn taffy_position(&self) -> Position {
-        self.layout_position()
-    }
-
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
         self.box_properties = BoxProperties::new(display, position);
