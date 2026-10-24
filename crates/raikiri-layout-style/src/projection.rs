@@ -193,11 +193,11 @@ impl BlockItemStyle for TaffyStyle<'_> {
 impl OofItemStyle for TaffyStyle<'_> {
     #[inline]
     fn align_self(&self) -> Option<taffy::AlignSelf> {
-        self.0.bridge_align_self().to_taffy()
+        self.0.oof_align_self().to_taffy()
     }
     #[inline]
     fn justify_self(&self) -> Option<taffy::AlignSelf> {
-        self.0.bridge_justify_self().to_taffy()
+        self.0.oof_justify_self().to_taffy()
     }
     #[inline]
     fn is_table(&self) -> bool {

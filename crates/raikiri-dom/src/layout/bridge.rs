@@ -412,8 +412,15 @@ fn apply_computed_to_style_in_session_inner(
             .ancestors(idx)
             .find(|&ancestor| boxes.display(ancestor) != Some(DisplayValue::Contents));
         if let Some(container) = container {
-            let (align_self, justify_self) =
-                settled::inherited_last_baseline(cv, &cascade.computed[container]);
+            let (align_self, justify_self) = settled::inherited_last_baseline(
+                cv,
+                &cascade.computed[container],
+                uses_vertical_axes(cascade, container),
+                || {
+                    let fixed = cv.position == PositionValue::Fixed;
+                    uses_vertical_axes(cascade, settled::positioning_container(doc, idx, fixed))
+                },
+            );
             if let Some(value) = align_self {
                 settled.align_self = Some(value);
                 doc.record_pass_override(

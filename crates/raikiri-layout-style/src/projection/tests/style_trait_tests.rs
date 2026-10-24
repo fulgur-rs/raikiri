@@ -66,6 +66,24 @@ fn explicit_normal_alignment_is_projected_as_normal() {
 }
 
 #[test]
+fn the_out_of_flow_alignments_swap_for_a_containing_block_on_vertical_axes() {
+    let mut cv = ComputedValues::initial();
+    cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
+    cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::End);
+    query(&cv, |v| {
+        let plain = TaffyStyle::new(v);
+        assert_eq!(OI::align_self(&plain), Some(taffy::AlignSelf::CENTER));
+        assert_eq!(OI::justify_self(&plain), Some(taffy::AlignSelf::END));
+        let swapped = TaffyStyle::new(v.with_swapped_oof_alignment());
+        assert_eq!(OI::align_self(&swapped), Some(taffy::AlignSelf::END));
+        assert_eq!(OI::justify_self(&swapped), Some(taffy::AlignSelf::CENTER));
+        // The other roles keep reading their own property.
+        assert_eq!(GI::align_self(&swapped), Some(taffy::AlignSelf::CENTER));
+        assert_eq!(GI::justify_self(&swapped), Some(taffy::AlignSelf::END));
+    });
+}
+
+#[test]
 fn core_claims_and_block_defaults_are_projected_apart() {
     let mut cv = ComputedValues::initial();
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);

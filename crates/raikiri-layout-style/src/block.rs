@@ -38,6 +38,18 @@ impl LayoutStyleView<'_> {
     pub fn bridge_justify_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(true)
     }
+    /// The alignment of an out-of-flow box along the physical vertical axis
+    /// (see [`Self::with_swapped_oof_alignment`]).
+    #[inline]
+    pub(crate) fn oof_align_self(&self) -> Option<values::AlignSelf> {
+        self.self_alignment(self.swapped_oof_alignment)
+    }
+    /// The alignment of an out-of-flow box along the physical horizontal axis
+    /// (see [`Self::with_swapped_oof_alignment`]).
+    #[inline]
+    pub(crate) fn oof_justify_self(&self) -> Option<values::AlignSelf> {
+        self.self_alignment(!self.swapped_oof_alignment)
+    }
     /// Content alignment read by project block primitives.
     #[inline]
     pub fn bridge_align_content(&self) -> values::AlignContent {
