@@ -170,6 +170,46 @@ pub(super) fn auto_sides_size(
     Some(Size { width, height })
 }
 
+/// The content-box size of a replaced leaf whose border-box height the caller
+/// has fixed, as a block container does with the authored height of a child,
+/// or `None` when Taffy's own leaf sizing applies.
+///
+/// An `auto` width follows from the content height that is left after the
+/// padding and border, along the ratio (CSS 2.1 §10.3.2). Taffy's leaf sizing
+/// would instead floor the height at the border-box width divided by the ratio,
+/// so a padding on the left or right made the box taller, and it relates the
+/// ratio of a `border-box` box to the whole box even where the ratio is the
+/// natural one of the content. A width the caller fixed as well is kept; the
+/// size is then returned only to switch the floor off.
+///
+/// A box with a `min-width` or `max-width` stays with Taffy: the block
+/// container has already carried that bound across the ratio onto the height it
+/// hands over, so the height is not the authored one any more and the floor is
+/// what keeps a padded box in shape. `content_box_ratio` is as for
+/// [`auto_sides_size`].
+pub(super) fn fixed_height_size(
+    style: &Style,
+    inputs: &LayoutInput,
+    content_box_ratio: bool,
+) -> Option<Size<f32>> {
+    let ratio = style
+        .aspect_ratio
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+        .filter(|_| style.min_size.width.is_auto() && style.max_size.width.is_auto())?;
+    let fixed = inputs
+        .known_dimensions
+        .height
+        .filter(|_| inputs.sizing_mode == SizingMode::InherentSize)?;
+    let edges = padding_and_border(style, inputs.parent_size.width);
+    let insets = ratio_box_insets(style, edges, content_box_ratio);
+    let height = (fixed - edges.height).max(0.0);
+    let width = inputs.known_dimensions.width.map_or_else(
+        || width_for_height(height, ratio, insets),
+        |fixed| (fixed - edges.width).max(0.0),
+    );
+    Some(Size { width, height })
+}
+
 /// Border-box bounds of the intrinsic sizing keywords on a replaced element.
 ///
 /// Replaced content has the same natural min-content and max-content size. A

@@ -1870,3 +1870,131 @@ fn a_border_box_aspect_ratio_relates_the_border_boxes_of_a_ratio_only_svg() {
         );
     }
 }
+
+#[test]
+fn a_block_level_image_with_an_authored_height_takes_its_width_from_the_content_box_height() {
+    // Sizes a browser gives for a 20x50 image. The height is authored and the
+    // width is `auto`, so the width follows from the content height through
+    // the natural ratio whatever side the padding is on.
+    for (css, expected) in [
+        ("height:100px", (40.0, 100.0)),
+        ("height:100px;padding-right:80px", (120.0, 100.0)),
+        ("height:100px;padding-left:80px", (120.0, 100.0)),
+        (
+            "height:100px;padding-right:80px;box-sizing:border-box",
+            (120.0, 100.0),
+        ),
+        (
+            "height:100px;padding-left:80px;box-sizing:border-box",
+            (120.0, 100.0),
+        ),
+        (
+            "height:100px;padding-right:80px;padding-bottom:50px;box-sizing:border-box",
+            (100.0, 100.0),
+        ),
+        ("height:100px;padding-bottom:50px", (40.0, 150.0)),
+        (
+            "height:100px;padding-bottom:50px;box-sizing:border-box",
+            (20.0, 100.0),
+        ),
+        ("height:100px;padding-top:30px", (40.0, 130.0)),
+        (
+            "height:100px;padding-top:30px;box-sizing:border-box",
+            (28.0, 100.0),
+        ),
+        ("height:100px;padding:10px", (60.0, 120.0)),
+        (
+            "height:100px;padding:10px;box-sizing:border-box",
+            (52.0, 100.0),
+        ),
+        ("height:100px;border:10px solid red", (60.0, 120.0)),
+        (
+            "height:100px;border:10px solid red;box-sizing:border-box",
+            (52.0, 100.0),
+        ),
+        (
+            "height:100px;padding:0 30px;box-sizing:border-box",
+            (100.0, 100.0),
+        ),
+        // A height bound moves the content height, and the width follows it.
+        ("height:100px;max-height:60px", (24.0, 60.0)),
+        (
+            "height:100px;max-height:60px;padding-right:80px",
+            (104.0, 60.0),
+        ),
+        (
+            "height:30px;min-height:60px;padding-right:80px",
+            (104.0, 60.0),
+        ),
+        (
+            "height:100px;max-height:60px;padding:5px;box-sizing:border-box",
+            (30.0, 60.0),
+        ),
+        // A width bound is left to the leaf sizing.
+        ("height:100px;max-width:30px;padding:0 5px", (40.0, 100.0)),
+    ] {
+        let css = format!("display:block;{css}");
+        let (doc, image) = natural_20x50_image(&css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn an_image_with_an_authored_height_takes_the_same_width_in_any_parent() {
+    // Sizes a browser gives for a 20x50 image: a flex or grid item, an inline
+    // image, a float and a percentage height all take the width from the
+    // content height, whatever the padding.
+    for (parent, css, expected) in [
+        (None, "height:100px;padding-right:80px", (120.0, 100.0)),
+        (
+            None,
+            "height:100px;padding:10px;box-sizing:border-box",
+            (52.0, 100.0),
+        ),
+        (
+            None,
+            "float:left;height:100px;padding-right:80px",
+            (120.0, 100.0),
+        ),
+        (
+            Some("display:flex;width:200px"),
+            "height:100px;padding:10px",
+            (60.0, 120.0),
+        ),
+        (
+            Some("display:flex;width:200px;height:100px"),
+            "",
+            (40.0, 100.0),
+        ),
+        (
+            Some("display:flex;width:200px;height:100px;align-items:flex-start"),
+            "",
+            (20.0, 50.0),
+        ),
+        (
+            Some("display:grid;grid-template-columns:200px;justify-items:start"),
+            "height:100px;padding:10px",
+            (60.0, 120.0),
+        ),
+        (
+            Some("display:grid;grid-template-columns:200px;grid-template-rows:100px"),
+            "",
+            (20.0, 50.0),
+        ),
+        (
+            Some("height:200px"),
+            "display:block;height:50%;padding-right:80px",
+            (120.0, 100.0),
+        ),
+    ] {
+        let mut image = 0;
+        let doc = laid_out_with_natural_size((20.0, 50.0), |doc, body| {
+            let parent = match parent {
+                Some(parent_css) => doc.append_element(Some(body), "div", Some(parent_css)),
+                None => body,
+            };
+            image = doc.append_element(Some(parent), "img", Some(css));
+        });
+        assert_eq!(size(&doc, image), expected, "{parent:?} {css}");
+    }
+}
