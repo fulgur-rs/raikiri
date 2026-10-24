@@ -652,7 +652,9 @@ impl<'a> RenderResources<'a> {
     }
 
     /// Preload the page-context and page-margin-box background images of one
-    /// page, and its border image.
+    /// page, and its border image, then the images the margin boxes show with
+    /// `content`. Returns the authored URLs of the latter, which the document
+    /// needs to size them (see `Document::prepare_margin_box_image_urls`).
     pub(crate) fn preload_page_context_background_images(
         &self,
         page: &PageCascadeResult,
@@ -661,7 +663,7 @@ impl<'a> RenderResources<'a> {
         seen: &mut std::collections::HashSet<Url>,
         attempts: &mut usize,
         signal: Option<&AbortSignal>,
-    ) {
+    ) -> Vec<String> {
         // The cascaded rule of each margin box slot, with `var()` substituted.
         let mut margin_box_rules: Vec<raikiri_style::PageMarginBoxCascadeResult> = Vec::new();
         for rule in page.margin_boxes() {
@@ -704,7 +706,20 @@ impl<'a> RenderResources<'a> {
                 );
             }
         }
-        self.preload_background_urls(raw_urls, base_url, warnings, seen, attempts, signal);
+        // Content images follow the backgrounds, so they do not change which
+        // backgrounds the request limit lets through.
+        let content_urls = raikiri_dom::margin_box_content_image_urls(&margin_box_rules);
+        self.preload_background_urls(
+            raw_urls
+                .into_iter()
+                .chain(content_urls.iter().map(String::as_str)),
+            base_url,
+            warnings,
+            seen,
+            attempts,
+            signal,
+        );
+        content_urls
     }
 
     /// Fetch and decode CSS background images ahead of paint.

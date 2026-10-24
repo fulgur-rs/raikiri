@@ -34,7 +34,7 @@ impl Run<'_, '_> {
             cascade_options: &cascade_options,
         };
         let LaidOut {
-            document,
+            mut document,
             slices,
             geometries,
             page_styles,
@@ -44,7 +44,13 @@ impl Run<'_, '_> {
         // Fetch CSS background sources only after the final page schedule is known.
         // Paint remains read-only and consumes the cache through ImagePixelSource.
         if inputs.preload_background_images {
-            self.preload_page_background_images(&page_cascader, &slices, &mut preloads);
+            let margin_box_images =
+                self.preload_page_background_images(&page_cascader, &slices, &mut preloads);
+            // Margin boxes are laid out later, a page at a time, and need the
+            // sizes of the images their content shows.
+            if let Some(source) = self.resources.image_pixel_source_ref() {
+                document.prepare_margin_box_image_urls(&margin_box_images, source, self.base_url);
+            }
             // A fetch above may have observed cancellation; do not hand out
             // pages whose backgrounds were left unloaded.
             self.check_aborted()?;
@@ -78,13 +84,15 @@ impl Run<'_, '_> {
     }
 
     /// Fetch the CSS background images of the elements of the document and of
-    /// the page contexts of `slices`.
+    /// the page contexts of `slices`, and the images the margin boxes of those
+    /// pages show with `content`. Returns the authored URLs of the latter, each
+    /// once.
     fn preload_page_background_images(
         &self,
         cascader: &PageCascader<'_>,
         slices: &[PageSlice],
         preloads: &mut ImagePreloads,
-    ) {
+    ) -> Vec<String> {
         // Element backgrounds are page-independent: scan them once, before the
         // page-context backgrounds of the first page. A per-slice rescan would
         // only revisit URLs already recorded in `seen`, or ones skipped before
@@ -99,9 +107,11 @@ impl Run<'_, '_> {
                 self.signal,
             );
         });
+        let mut content_images = Vec::new();
+        let mut listed = std::collections::HashSet::new();
         for slice in slices {
             let page = cascader.page(&page_query_for_slice(slice));
-            self.resources.preload_page_context_background_images(
+            let urls = self.resources.preload_page_context_background_images(
                 &page,
                 self.base_url,
                 self.warnings,
@@ -109,7 +119,9 @@ impl Run<'_, '_> {
                 &mut preloads.attempts,
                 self.signal,
             );
+            content_images.extend(urls.into_iter().filter(|url| listed.insert(url.clone())));
         }
+        content_images
     }
 
     /// Every warning of the run: those found parsing the document, then those

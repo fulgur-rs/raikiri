@@ -625,3 +625,246 @@ fn a_fitted_run_matches_one_shaped_inside_its_measured_width() {
         }
     }
 }
+
+fn image(offset: usize, width: f32, height: f32) -> StandaloneImage {
+    StandaloneImage {
+        offset,
+        width,
+        height,
+    }
+}
+
+fn shape_with_images(
+    doc: &Document,
+    text: &str,
+    images: &[StandaloneImage],
+    width: Option<f32>,
+) -> StandaloneText {
+    doc.shape_standalone_text_with_images(text, images, &ahem(10.0), width, StandaloneAlign::Start)
+        .expect("shaped")
+}
+
+#[test]
+fn an_image_sits_on_the_baseline_after_the_text_before_it() {
+    let doc = enabled();
+    let text = shape_with_images(&doc, "ab", &[image(2, 30.0, 20.0)], None);
+    // The image is 20px over the baseline, the strut descends 2px under it.
+    assert_eq!((text.width(), text.height()), (50.0, 22.0));
+    let placed = text.images();
+    assert_eq!(placed.len(), 1);
+    assert_eq!(placed[0].0, 0);
+    let rect = placed[0].1;
+    assert_eq!(
+        (rect.x, rect.y, rect.width, rect.height),
+        (20.0, 0.0, 30.0, 20.0)
+    );
+}
+
+#[test]
+fn images_are_placed_in_the_order_of_the_list_between_the_pieces_of_text() {
+    let doc = enabled();
+    let text = shape_with_images(
+        &doc,
+        "xy",
+        &[
+            image(0, 10.0, 10.0),
+            image(1, 20.0, 30.0),
+            image(2, 5.0, 5.0),
+        ],
+        None,
+    );
+    let placed: Vec<_> = text
+        .images()
+        .into_iter()
+        .map(|(index, rect)| (index, rect.x, rect.width))
+        .collect();
+    assert_eq!(placed, [(0, 0.0, 10.0), (1, 20.0, 20.0), (2, 50.0, 5.0)]);
+}
+
+#[test]
+fn a_run_of_images_alone_has_no_text_to_decline() {
+    let doc = enabled();
+    let text = shape_with_images(&doc, "", &[image(0, 30.0, 20.0)], None);
+    assert_eq!((text.width(), text.height()), (30.0, 22.0));
+    // Without an image, empty text is still declined.
+    assert!(
+        doc.shape_standalone_text_with_images("", &[], &ahem(10.0), None, StandaloneAlign::Start)
+            .is_none()
+    );
+    // And so is a size that cannot be shaped.
+    assert!(
+        doc.shape_standalone_text_with_images(
+            "",
+            &[image(0, 30.0, 20.0)],
+            &ahem(0.0),
+            None,
+            StandaloneAlign::Start,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn an_image_that_does_not_fit_beside_the_text_takes_the_next_line() {
+    let doc = enabled();
+    let text = shape_with_images(&doc, "ab", &[image(2, 30.0, 20.0)], Some(40.0));
+    assert_eq!(text.lines().len(), 2);
+    let rect = text.images()[0].1;
+    assert_eq!((rect.x, rect.y), (0.0, 10.0));
+    assert_eq!(text.height(), 32.0);
+}
+
+#[test]
+fn an_offset_inside_a_character_or_past_the_text_is_moved_to_a_place_in_it() {
+    let doc = enabled();
+    // 'é' is two bytes; an image in the middle of it goes before it, and an
+    // offset after the end goes at the end.
+    let text = shape_with_images(
+        &doc,
+        "éa",
+        &[image(1, 10.0, 10.0), image(99, 10.0, 10.0)],
+        None,
+    );
+    let xs: Vec<_> = text.images().into_iter().map(|(_, rect)| rect.x).collect();
+    assert_eq!(xs, [0.0, 30.0]);
+}
+
+#[test]
+fn alignment_moves_an_image_with_its_line() {
+    let doc = enabled();
+    let text = doc
+        .shape_standalone_text_with_images(
+            "ab",
+            &[image(2, 30.0, 20.0)],
+            &ahem(10.0),
+            Some(100.0),
+            StandaloneAlign::Right,
+        )
+        .expect("shaped");
+    let rect = text.images()[0].1;
+    assert_eq!(rect.x, 70.0);
+}
+
+#[test]
+fn images_stand_across_the_lines_of_vertical_text() {
+    let doc = enabled();
+    let mut style = ahem(10.0);
+    style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
+    let text = doc
+        .shape_standalone_text_with_images(
+            "ab",
+            &[image(2, 30.0, 20.0)],
+            &style,
+            None,
+            StandaloneAlign::Start,
+        )
+        .expect("shaped");
+    let rect = text.images()[0].1;
+    // The image keeps its physical size, and follows the text down the line.
+    assert_eq!((rect.width, rect.height), (30.0, 20.0));
+    assert_eq!(rect.y, 20.0);
+}
+
+#[test]
+fn a_run_with_images_is_not_remembered() {
+    let doc = enabled();
+    let style = ahem(10.0);
+    let images = [image(2, 30.0, 20.0)];
+    let first = doc
+        .shape_standalone_text_shared_with_images(
+            "ab",
+            &images,
+            &style,
+            None,
+            StandaloneAlign::Start,
+        )
+        .expect("shaped");
+    let second = doc
+        .shape_standalone_text_shared_with_images(
+            "ab",
+            &images,
+            &style,
+            None,
+            StandaloneAlign::Start,
+        )
+        .expect("shaped");
+    assert!(!std::sync::Arc::ptr_eq(&first, &second));
+    // The same text without images is a different run.
+    let plain = doc
+        .shape_standalone_text_shared("ab", &style, None, StandaloneAlign::Start)
+        .expect("shaped");
+    assert_eq!(plain.images(), []);
+    assert_eq!(plain.width(), 20.0);
+}
+
+#[test]
+fn an_image_size_that_is_not_a_length_counts_as_zero() {
+    let doc = enabled();
+    let text = shape_with_images(
+        &doc,
+        "ab",
+        &[image(1, f32::NAN, f32::INFINITY), image(2, -5.0, 3.0)],
+        None,
+    );
+    assert_eq!(text.width(), 20.0);
+    assert_eq!(text.height(), 10.0);
+}
+
+#[test]
+fn blanks_after_the_last_image_of_a_line_do_not_count_in_the_width() {
+    let doc = enabled();
+    // "ab", the image and a blank: the blank ends the line.
+    let text = shape_with_images(&doc, "ab ", &[image(2, 30.0, 20.0)], None);
+    assert_eq!(text.width(), 50.0);
+    assert_eq!(text.advance(), 60.0);
+    // A blank in front of the image is inside the line.
+    let text = shape_with_images(&doc, "a ", &[image(2, 30.0, 20.0)], None);
+    assert_eq!(text.width(), 50.0);
+    // And so is the blank between two images.
+    let text = shape_with_images(
+        &doc,
+        " ",
+        &[image(0, 10.0, 10.0), image(1, 10.0, 10.0)],
+        None,
+    );
+    assert_eq!(text.width(), 30.0);
+}
+
+#[test]
+fn trailing_blanks_hang_outside_a_right_aligned_line_with_an_image() {
+    let doc = enabled();
+    let text = doc
+        .shape_standalone_text_with_images(
+            "ab ",
+            &[image(2, 30.0, 20.0)],
+            &ahem(10.0),
+            Some(100.0),
+            StandaloneAlign::Right,
+        )
+        .expect("shaped");
+    // The image ends at the right edge, and the blank hangs beyond it.
+    let rect = text.images()[0].1;
+    assert_eq!(rect.x + rect.width, 100.0);
+}
+
+#[test]
+fn each_line_of_a_run_with_images_keeps_its_images_where_they_were_inserted() {
+    let doc = enabled();
+    // "a" [30] " " newline "b" [20] " ": the blanks end both lines.
+    let text = doc
+        .shape_standalone_text_with_images(
+            "a \nb ",
+            &[image(1, 30.0, 20.0), image(4, 20.0, 20.0)],
+            &ahem(10.0),
+            Some(100.0),
+            StandaloneAlign::Right,
+        )
+        .expect("shaped");
+    assert_eq!(text.width(), 40.0);
+    let placed: Vec<_> = text
+        .images()
+        .into_iter()
+        .map(|(index, rect)| (index, rect.x + rect.width))
+        .collect();
+    assert_eq!(placed, [(0, 100.0), (1, 100.0)]);
+}

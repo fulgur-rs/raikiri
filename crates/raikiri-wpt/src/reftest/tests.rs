@@ -3048,6 +3048,53 @@ fn root_relative_element_and_page_backgrounds_load_from_the_checkout() {
     assert_eq!(pixel(&page, 80, 80), [0, 128, 0, 255]);
 }
 
+/// The positions of the green pixels of `page` of `document`.
+fn green_pixels(document: &RenderedDocument, page: usize) -> Vec<(u32, u32)> {
+    let image = &document.pages[page];
+    (0..image.height)
+        .flat_map(|y| (0..image.width).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let offset = ((y * image.width + x) * 4) as usize;
+            image.rgba[offset..offset + 4] == [0, 128, 0, 255]
+        })
+        .collect()
+}
+
+#[test]
+fn a_root_relative_margin_box_content_image_loads_from_the_checkout() {
+    let root = checkout_with_green_png();
+    let document = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:20px;\
+         @top-left{content:url(/images/green.png);vertical-align:top}}\
+         html,body{margin:0}</style>",
+    );
+    // The 2x2 image is drawn at its own size, on the baseline of the first
+    // line of the top-left box, which starts at x = 20 inside the 20px margin.
+    let green = green_pixels(&document, 0);
+    assert_eq!(green.len(), 4, "{green:?}");
+    let (x, y) = green[0];
+    assert_eq!(x, 20);
+    assert!(y < 20, "{green:?}");
+    assert_eq!(green, [(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)]);
+}
+
+#[test]
+fn a_margin_box_content_image_of_a_later_page_survives_geometry_reparse() {
+    let root = checkout_with_green_png();
+    let document = render_in_checkout(
+        root.path(),
+        "<style>@page :first{size:100px 100px;margin:20px;@top-left{content:'x'}}\
+         @page{size:120px 120px;margin:20px;\
+         @top-left{content:url(/images/green.png);vertical-align:top}}\
+         html,body{margin:0}</style>\
+         <div style=\"height:60px\"></div><div style=\"height:200px\"></div>",
+    );
+    assert!(document.pages.len() >= 2);
+    assert!(green_pixels(&document, 0).is_empty());
+    assert_eq!(green_pixels(&document, 1).len(), 4);
+}
+
 #[test]
 fn an_image_that_fails_to_load_does_not_fail_the_render() {
     let root = checkout_with_green_png();

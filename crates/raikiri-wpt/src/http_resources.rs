@@ -187,6 +187,16 @@ pub(crate) fn prepare_page_images(
     resolver: &dyn raikiri_traits::ReplacedResolver,
 ) {
     page.for_each_background_image_mut(|image| prepare_background_image(image, base_url, resolver));
+    // The images that margin boxes show with `content` stay as authored: the
+    // document resolves them against the same base URL when it sizes them.
+    for source in raikiri_dom::page_margin_box_content_image_urls(page) {
+        if let Some(absolute) = Url::parse(&source)
+            .ok()
+            .or_else(|| base_url.join(&source).ok())
+        {
+            let _ = resolver.resolve(ResolverRequest::new(&absolute));
+        }
+    }
 }
 
 /// [`CascadeImagePreparer`] that absolutizes image URLs against `base_url` and

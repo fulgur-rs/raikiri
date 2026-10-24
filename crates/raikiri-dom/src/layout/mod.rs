@@ -117,7 +117,7 @@ pub use ifc::positioned_runs::{
 pub use ifc::root::IfcBuildMode;
 /// Text outside paragraphs shaped by the inline engine.
 #[doc(hidden)]
-pub use ifc::standalone::{StandaloneAlign, StandaloneStyle, StandaloneText};
+pub use ifc::standalone::{StandaloneAlign, StandaloneImage, StandaloneStyle, StandaloneText};
 #[doc(hidden)]
 pub use ifc::style::relative_offset;
 /// Lines of the text nodes of a paragraph laid out by the inline engine.

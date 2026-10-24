@@ -171,7 +171,8 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         background_layers: Vec::new(),
         background_layer_count: 1,
         background_image_lime: false,
-        content_image_lime: false,
+        image_urls: Vec::new(),
+        images: Vec::new(),
         border: [None; 4],
         margin_auto: [false; 4],
         margin: [0.0; 4],
@@ -1162,5 +1163,220 @@ fn reused_margin_box_text_is_placed_as_if_shaped_afresh() {
         );
         assert_eq!(reused_text.origin(), fresh_text.origin());
         assert_eq!(glyph_positions(reused_text), glyph_positions(fresh_text));
+    }
+}
+
+/// An image source that knows the natural size of a few images and holds no
+/// pixels.
+struct Sizes;
+
+impl ImagePixelSource for Sizes {
+    fn get_decoded(&self, _url: &url::Url) -> Option<Arc<raikiri_traits::DecodedImage>> {
+        None
+    }
+
+    fn intrinsic_size(&self, url: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        let (width, height) = match url.path() {
+            "/dir/a.png" | "/dir/rel/b.png" => (Some(40.0), Some(30.0)),
+            "/dir/sizeless.svg" => (None, None),
+            "/dir/empty.png" => (Some(0.0), Some(0.0)),
+            _ => return None,
+        };
+        Some(raikiri_traits::ImageIntrinsicSize {
+            width,
+            height,
+            aspect_ratio: None,
+        })
+    }
+}
+
+fn size_of(width: f32, height: f32) -> Option<raikiri_traits::ImageRasterSize> {
+    Some(raikiri_traits::ImageRasterSize { width, height })
+}
+
+#[test]
+fn margin_box_images_are_sized_by_their_authored_urls() {
+    let (mut doc, cascade) = page_cascade_fixture(
+        "@page { @top-left { content: url(a.png) url(rel/b.png#part) url(missing.png) \
+           url(sizeless.svg) url(empty.png) url(#fragment) url('') } }",
+    );
+    let base = url::Url::parse("https://example.com/dir/page.html").unwrap();
+    doc.prepare_margin_box_images(&cascade.page, &Sizes, Some(&base));
+    assert_eq!(doc.margin_box_image_size("a.png"), size_of(40.0, 30.0));
+    // The fragment names a part of the image and is not fetched.
+    assert_eq!(
+        doc.margin_box_image_size("rel/b.png#part"),
+        size_of(40.0, 30.0)
+    );
+    // An image the source does not know represents nothing. One with no usable
+    // natural size takes the default object size, as other content images do.
+    assert_eq!(doc.margin_box_image_size("missing.png"), None);
+    assert_eq!(
+        doc.margin_box_image_size("empty.png"),
+        size_of(300.0, 150.0)
+    );
+    assert_eq!(
+        doc.margin_box_image_size("sizeless.svg"),
+        size_of(300.0, 150.0)
+    );
+    assert_eq!(doc.margin_box_image_size("#fragment"), None);
+    assert_eq!(doc.margin_box_image_size(""), None);
+}
+
+#[test]
+fn an_image_with_a_relative_url_needs_a_base_to_be_sized() {
+    let (mut doc, cascade) = page_cascade_fixture("@page { @top-left { content: url(a.png) } }");
+    doc.prepare_margin_box_images(&cascade.page, &Sizes, None);
+    assert_eq!(doc.margin_box_image_size("a.png"), None);
+}
+
+#[test]
+fn preparing_margin_box_images_adds_to_what_was_prepared() {
+    let (mut doc, first) = page_cascade_fixture("@page { @top-left { content: url(a.png) } }");
+    let (_, second) = page_cascade_fixture("@page { @top-left { content: url(rel/b.png) } }");
+    let base = url::Url::parse("https://example.com/dir/page.html").unwrap();
+    doc.prepare_margin_box_images(&first.page, &Sizes, Some(&base));
+    doc.prepare_margin_box_images(&second.page, &Sizes, Some(&base));
+    assert_eq!(doc.margin_box_image_size("a.png"), size_of(40.0, 30.0));
+    assert_eq!(doc.margin_box_image_size("rel/b.png"), size_of(40.0, 30.0));
+    // The table is kept when the markers are prepared again, and the images of
+    // the first page's margin boxes are prepared along with them.
+    doc.prepare_list_marker_images(&second, &Sizes, Some(&base));
+    assert_eq!(doc.margin_box_image_size("a.png"), size_of(40.0, 30.0));
+    assert_eq!(doc.margin_box_image_size("rel/b.png"), size_of(40.0, 30.0));
+    let (mut fresh, cascade) = page_cascade_fixture("@page { @top-left { content: url(a.png) } }");
+    fresh.prepare_list_marker_images(&cascade, &Sizes, Some(&base));
+    assert_eq!(fresh.margin_box_image_size("a.png"), size_of(40.0, 30.0));
+}
+
+/// An image source whose images are all `width` by `height`, or that holds
+/// none.
+struct Uniform(Option<(f32, f32)>);
+
+impl ImagePixelSource for Uniform {
+    fn get_decoded(&self, _url: &url::Url) -> Option<Arc<raikiri_traits::DecodedImage>> {
+        None
+    }
+
+    fn intrinsic_size(&self, _url: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        self.0
+            .map(|(width, height)| raikiri_traits::ImageIntrinsicSize {
+                width: Some(width),
+                height: Some(height),
+                aspect_ratio: None,
+            })
+    }
+}
+
+#[test]
+fn preparing_an_image_again_takes_the_size_it_has_now() {
+    let (mut doc, cascade) = page_cascade_fixture("@page { @top-left { content: url(a.png) } }");
+    let base = url::Url::parse("https://example.com/dir/page.html").unwrap();
+    let base = Some(&base);
+    doc.prepare_margin_box_images(&cascade.page, &Uniform(Some((40.0, 30.0))), base);
+    assert_eq!(doc.margin_box_image_size("a.png"), size_of(40.0, 30.0));
+    doc.prepare_margin_box_images(&cascade.page, &Uniform(Some((16.0, 8.0))), base);
+    assert_eq!(doc.margin_box_image_size("a.png"), size_of(16.0, 8.0));
+    // An image that cannot be loaded any more represents nothing, but one that
+    // the call does not name keeps its size.
+    doc.prepare_margin_box_image_urls(&["other.png".to_owned()], &Uniform(None), base);
+    assert_eq!(doc.margin_box_image_size("a.png"), size_of(16.0, 8.0));
+    doc.prepare_margin_box_images(&cascade.page, &Uniform(None), base);
+    assert_eq!(doc.margin_box_image_size("a.png"), None);
+}
+
+#[test]
+fn margin_box_images_are_listed_from_the_winning_content() {
+    let (_, cascade) = page_cascade_fixture(
+        "@page { @top-left { content: url(a.png) 'x' url(b.png) } \
+                 @top-left { content: url(c.png) } \
+                 @bottom-left { content: 'text' } \
+                 @bottom-right { content: url(d.png) url(e.png) } }",
+    );
+    assert_eq!(
+        page_margin_box_content_image_urls(&cascade.page),
+        ["c.png", "d.png", "e.png"]
+    );
+}
+
+#[test]
+fn a_margin_box_lists_no_more_images_than_it_places() {
+    let urls = (0..crate::generated_content::MAX_GENERATED_IMAGES + 3)
+        .map(|index| format!("url(i{index}.png)"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (_, cascade) =
+        page_cascade_fixture(&format!("@page {{ @top-left {{ content: {urls} }} }}"));
+    assert_eq!(
+        page_margin_box_content_image_urls(&cascade.page).len(),
+        crate::generated_content::MAX_GENERATED_IMAGES
+    );
+}
+
+#[test]
+fn a_deferred_placeholder_after_an_image_keeps_its_range() {
+    let (mut doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: 'p' url(green.png) counter(pages) url(green.png) 'x'; \
+                       font-family: Ahem; font-size: 10px } }",
+    );
+    doc.margin_box_images.insert(
+        "green.png".to_owned(),
+        raikiri_traits::ImageRasterSize {
+            width: 20.0,
+            height: 10.0,
+        },
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "p999x");
+    assert_eq!(head.content_images.len(), 2);
+    let glyphs = head.deferred_glyphs();
+    assert_eq!(glyphs.len(), 3);
+    let runs = head.text_runs();
+    for glyph in &glyphs {
+        let run = &runs[glyph.run];
+        let shown = &run.text[run.glyphs[glyph.glyph].text_range.clone()];
+        assert_eq!(&head.content[glyph.text_range.clone()], shown);
+        assert_eq!(shown, "9");
+    }
+}
+
+#[test]
+fn an_object_replacement_character_in_the_content_keeps_the_range_without_an_image() {
+    // The character stands for an image in the engine's text, but here it is
+    // text the author wrote, so it counts in the offsets like any other.
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: '\\FFFC x' counter(pages); \
+                       font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "\u{FFFC}x999");
+    let glyphs = head.deferred_glyphs();
+    assert_eq!(glyphs.len(), 3);
+    let runs = head.text_runs();
+    for glyph in &glyphs {
+        let run = &runs[glyph.run];
+        let shown = &run.text[run.glyphs[glyph.glyph].text_range.clone()];
+        assert_eq!(&head.content[glyph.text_range.clone()], shown);
+        assert_eq!(shown, "9");
     }
 }
