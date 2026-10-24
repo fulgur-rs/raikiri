@@ -111,6 +111,15 @@ impl GridInfo {
         Some((start.x, start.x + size.width))
     }
 
+    /// The extent of the grid area of the item `index` along the block axis of
+    /// the container, from its block start to its block end, measured from the
+    /// block-start edge of the border box of the container: the rows the item
+    /// spans without the gaps around them.
+    pub(crate) fn item_block_range(&self, index: usize) -> Option<(f32, f32)> {
+        let (start, size) = self.grid()?.item_grid_area(index)?;
+        Some((start.y, start.y + size.height))
+    }
+
     /// The grid area that the grid placement of the out-of-flow box `style`
     /// resolves to, relative to the border box of the container.
     ///

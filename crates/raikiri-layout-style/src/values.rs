@@ -11,7 +11,7 @@ mod keyword;
 mod length;
 mod to_taffy;
 
-pub use crate::block::BaselineSet;
+pub use crate::block::{BaselineSet, baseline_set_of};
 pub use crate::resolve::{MaybeResolve, ResolveOrZero};
 pub use align::{AlignContent, AlignContentKeyword, AlignItems, AlignItemsKeyword};
 pub use align::{AlignSelf, AlignmentSafety};

@@ -1138,7 +1138,7 @@ impl LayoutSession<'_> {
         // node, where the line runs along that axis.
         if self.is_orthogonal_to_parent(usize::from(node_id)) {
             if inputs.run_mode == RunMode::PerformLayout {
-                self.nodes[usize::from(node_id)].orthogonal_first_baseline = output.baselines.first;
+                self.nodes[usize::from(node_id)].own_first_baseline = output.baselines.first;
             }
             output.baselines = Baselines::NONE;
         }
@@ -2890,9 +2890,11 @@ fn flex_layout_sized(
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     // Taffy aligns the items of a column container by their baselines as if
     // they were at `start`; its cross axis is the inline axis of the container.
+    // It also keeps the items of a vertical row that run against the block
+    // direction of the container at `start`, for the container to align.
     let vertical = block_right_to_left(tree, idx).is_some();
     let in_flow_overflow = if inputs.run_mode == RunMode::PerformLayout
-        && let Some(reach) = inline_baseline::align_column_flex(
+        && let Some(reach) = inline_baseline::align_flex(
             tree,
             idx,
             output.size,
@@ -3091,16 +3093,14 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     let grid = tree.context.grid_layout_info.remove(&idx);
     let axes = grid_oof::GridAxes::new(right_to_left, output.size.width);
     // Taffy aligns a grid item by its baseline along the columns as if it were
-    // at `start`.
+    // at `start`, and keeps the items that run against the block direction of
+    // a vertical container at `start` along the rows, for the container to
+    // align.
     let in_flow_overflow = if inputs.run_mode == RunMode::PerformLayout
         && let Some(grid) = &grid
-        && let Some(reach) = inline_baseline::align_grid(
-            tree,
-            idx,
-            grid,
-            right_to_left.is_some(),
-            &mut output.oof_candidates,
-        ) {
+        && let Some(reach) =
+            inline_baseline::align_grid(tree, idx, grid, axes, &mut output.oof_candidates)
+    {
         output.scrollable_overflow_rect = output.scrollable_overflow_rect.union(reach);
         in_flow_overflow.union(reach)
     } else {

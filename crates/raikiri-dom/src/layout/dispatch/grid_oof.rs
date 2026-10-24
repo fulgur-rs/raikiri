@@ -77,6 +77,16 @@ impl GridAxes {
         }
     }
 
+    /// The extent `range` along the block axis of the container, measured on
+    /// layout axes from the block-start edge, on the physical x axis.
+    pub(super) fn block_range_to_physical(self, (start, end): (f32, f32)) -> (f32, f32) {
+        if self.right_to_left {
+            (self.width - end, self.width - start)
+        } else {
+            (start, end)
+        }
+    }
+
     /// `rect`, in layout coordinates, on physical axes.
     fn to_physical(self, rect: Edges<f32>) -> Edges<f32> {
         let (left, right) = if self.right_to_left {

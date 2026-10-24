@@ -8,7 +8,7 @@
 
 use super::*;
 use raikiri_layout_style::values::{
-    AlignItems, AlignItemsKeyword, AlignmentSafety, Display, Position,
+    AlignItems, AlignItemsKeyword, AlignmentSafety, Display, Position, baseline_set_of,
 };
 
 /// The facts of a box that a correction replaces before another reads them.
@@ -239,6 +239,62 @@ pub(super) fn unstretched_keyword_height_alignment(
             .keyword,
         AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
     )
+    .then_some(fallback)
+}
+
+/// The alignment taffy gets for in-flow item `idx` of a vertical flex row or
+/// grid that aligns by a baseline against the block direction of its
+/// container: `start` in a grid and `flex-start` in a flex container.
+///
+/// Items share a baseline only when their block flow runs in the same
+/// direction (CSS Box Alignment 3 §9.3), and taffy keeps one group. The
+/// container's own group stays with taffy, so an item that runs against the
+/// block direction is placed at the start of the block axis, where its size is
+/// all it adds to the line or the row, and the container moves it to its group
+/// of its own afterwards. A flex container that wraps is left out: it has a
+/// group for each line, which the container cannot find after the fact. So is
+/// a box with an auto margin in the block axis, which the margin takes the free
+/// space for instead of aligning the box.
+// spec: https://www.w3.org/TR/css-align-3/#baseline-sharing-group
+pub(super) fn opposed_baseline_alignment(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> Option<AlignItems> {
+    let values = &cascade.computed[idx];
+    // Most boxes are horizontal, so that is the first thing to rule out.
+    if !uses_vertical_axes(cascade, idx)
+        || matches!(values.display, DisplayValue::Contents | DisplayValue::None)
+        || doc.nodes[idx].layout_position() == Position::Absolute
+        || matches!(values.margin.left, ComputedLengthPercentageOrAuto::Auto)
+        || matches!(values.margin.right, ComputedLengthPercentageOrAuto::Auto)
+    {
+        return None;
+    }
+    let parent = doc.taffy_parent_of(idx)?;
+    let (container, fallback) =
+        if let Some(grid) = container_laid_out_as(doc, cascade, parent, Display::Grid) {
+            (grid, AlignItems::START)
+        } else {
+            let flex = container_laid_out_as(doc, cascade, parent, Display::Flex)?;
+            if !matches!(
+                flex.flex_direction,
+                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+            ) || flex.flex_wrap != FlexWrapValue::NoWrap
+            {
+                return None;
+            }
+            (flex, AlignItems::FLEX_START)
+        };
+    let right_to_left = |values: &ComputedValues| {
+        matches!(
+            values.cssom_writing_mode,
+            WritingMode::VerticalRl | WritingMode::SidewaysRl
+        )
+    };
+    (baseline_set_of(values.align_self, container.align_items).is_some()
+        && uses_vertical_axes(cascade, parent)
+        && right_to_left(values) != right_to_left(container))
     .then_some(fallback)
 }
 
