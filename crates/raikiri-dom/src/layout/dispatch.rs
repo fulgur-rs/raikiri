@@ -2537,12 +2537,9 @@ fn compute_inline_block_shrink_wrap(
     } else {
         measure(tree)
     };
-    let (lo, hi) = if min_w <= max_w {
-        (min_w, max_w)
-    } else {
-        // cov:ignore: min-content never exceeds max-content; this only keeps `clamp` from seeing inverted bounds
-        (max_w, min_w)
-    };
+    // `clamp` panics on inverted bounds, so order them whatever the two probes
+    // returned.
+    let (lo, hi) = (min_w.min(max_w), min_w.max(max_w));
     let fit = match inputs.available_space.width {
         AvailableSpace::Definite(avail) => avail.clamp(lo, hi),
         AvailableSpace::MinContent => lo,

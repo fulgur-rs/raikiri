@@ -2076,6 +2076,27 @@ fn a_keyword_limit_with_a_calc_is_left_for_taffy_to_resolve() {
 }
 
 #[test]
+fn a_calc_size_is_handed_to_taffy_as_a_calc_length() {
+    use raikiri_style::property::CalcLengthPercentage;
+
+    let mut calc_values = Vec::new();
+    let mut diag = Vec::new();
+    let size = computed_length_percentage_or_auto_to_taffy_dimension(
+        &mut calc_values,
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 10.0,
+        }),
+        "width",
+        &mut diag,
+    );
+
+    assert!(size.into_raw().is_plain_calc());
+    assert_eq!(calc_values.len(), 1);
+    assert!(diag.is_empty());
+}
+
+#[test]
 fn a_size_that_is_no_keyword_is_no_content_limit() {
     use crate::layout::dispatch::content_limits::ContentLimits;
 

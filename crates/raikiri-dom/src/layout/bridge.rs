@@ -1211,7 +1211,6 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
                 Dimension::fit_content_calc(pointer)
             }
         },
-        // cov:ignore: only a sizing keyword reaches this conversion, and a calc() length is none
         ComputedLengthPercentageOrAuto::Calc(value) => {
             let pointer = crate::layout::dispatch::push_calc(calc_values, value, true);
             Dimension::calc(pointer)
