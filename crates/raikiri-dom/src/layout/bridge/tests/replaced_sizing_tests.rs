@@ -2168,3 +2168,143 @@ fn an_image_with_an_authored_height_takes_the_same_width_in_any_parent() {
         assert_eq!(size(&doc, image), expected, "{parent:?} {css}");
     }
 }
+
+#[test]
+fn a_flex_item_image_takes_the_other_side_from_the_size_its_container_gives() {
+    // Sizes a browser gives for a 20x50 image in a flex container 200px wide
+    // and 100px high. A main size the container grows the item to, or a cross
+    // size it stretches the item to, gives the other side through the ratio,
+    // and the item cannot shrink below the main size a stretched cross size
+    // gives it.
+    let column = "display:flex;flex-direction:column;width:200px;height:100px";
+    let column_start = format!("{column};align-items:flex-start");
+    let row_start = "display:flex;width:200px;height:100px;align-items:flex-start";
+    for (parent, css, expected) in [
+        (column, "", (200.0, 500.0)),
+        (column, "flex-grow:1", (200.0, 500.0)),
+        (column, "align-self:stretch", (200.0, 500.0)),
+        (column, "min-height:0", (200.0, 100.0)),
+        (column, "min-height:300px", (200.0, 300.0)),
+        (column, "max-height:60px", (200.0, 60.0)),
+        (column, "flex-basis:content;max-height:60px", (200.0, 60.0)),
+        (column, "width:50px", (50.0, 125.0)),
+        (column, "aspect-ratio:1", (200.0, 200.0)),
+        (column, "padding:0 10px", (200.0, 450.0)),
+        (column, "padding:0 10%", (200.0, 400.0)),
+        (
+            column,
+            "aspect-ratio:1;padding:0 10px;box-sizing:border-box",
+            (200.0, 200.0),
+        ),
+        (column_start.as_str(), "", (20.0, 50.0)),
+        (column_start.as_str(), "flex-grow:1", (40.0, 100.0)),
+        (column_start.as_str(), "flex-basis:80px", (32.0, 80.0)),
+        (
+            column_start.as_str(),
+            "flex-basis:60px;flex-grow:1",
+            (40.0, 100.0),
+        ),
+        (
+            column_start.as_str(),
+            "aspect-ratio:1;flex-grow:1",
+            (100.0, 100.0),
+        ),
+        (
+            column_start.as_str(),
+            "flex-grow:1;max-height:60px",
+            (24.0, 60.0),
+        ),
+        (
+            column_start.as_str(),
+            "flex-grow:1;padding:0 10px",
+            (60.0, 100.0),
+        ),
+        (
+            column_start.as_str(),
+            "flex-grow:1;padding:0 10%",
+            (80.0, 100.0),
+        ),
+        (
+            column_start.as_str(),
+            "flex-grow:1;padding:0 10px;box-sizing:border-box",
+            (60.0, 100.0),
+        ),
+        (
+            column_start.as_str(),
+            "aspect-ratio:1;flex-grow:1;padding:0 10px;box-sizing:border-box",
+            (100.0, 100.0),
+        ),
+        (
+            column_start.as_str(),
+            "flex-grow:1;min-width:max-content",
+            (40.0, 100.0),
+        ),
+        (
+            column_start.as_str(),
+            "flex-grow:1;max-width:30px",
+            (30.0, 100.0),
+        ),
+        (row_start, "flex-grow:1", (200.0, 500.0)),
+        (row_start, "", (20.0, 50.0)),
+    ] {
+        let mut image = 0;
+        let doc = laid_out_with_natural_size((20.0, 50.0), |doc, body| {
+            let parent = doc.append_element(Some(body), "div", Some(parent));
+            image = doc.append_element(Some(parent), "img", Some(css));
+        });
+        assert_eq!(size(&doc, image), expected, "{parent} / {css}");
+    }
+}
+
+#[test]
+fn a_stretched_image_in_a_wrapping_flex_container_keeps_its_content_size_on_the_main_axis() {
+    // Sizes a browser gives for a 20x50 image in a flex container 200px wide
+    // and 100px high. A container that wraps its items does not take the cross
+    // size it stretches an item to as definite while it sizes the item along
+    // the main axis, so the item keeps its content size there; a cross size the
+    // item states itself, or a main size the container grows it to, still give
+    // the other side through the ratio.
+    let column_wrap = "display:flex;flex-direction:column;flex-wrap:wrap;width:200px;height:100px";
+    let row_wrap = "display:flex;flex-wrap:wrap;width:200px;height:100px";
+    let column_wrap_reverse =
+        "display:flex;flex-direction:column;flex-wrap:wrap-reverse;width:200px;height:100px";
+    let column_wrap_start = format!("{column_wrap};align-items:flex-start");
+    for (parent, css, expected) in [
+        (column_wrap, "", (200.0, 50.0)),
+        (column_wrap_reverse, "", (200.0, 50.0)),
+        (column_wrap_start.as_str(), "", (20.0, 50.0)),
+        (column_wrap_start.as_str(), "flex-grow:1", (40.0, 100.0)),
+        (column_wrap, "width:50px", (50.0, 125.0)),
+        (column_wrap, "height:60px", (200.0, 60.0)),
+        (column_wrap, "flex-grow:1", (200.0, 100.0)),
+        (row_wrap, "", (20.0, 100.0)),
+        (row_wrap, "flex-grow:1", (200.0, 500.0)),
+    ] {
+        let mut image = 0;
+        let doc = laid_out_with_natural_size((20.0, 50.0), |doc, body| {
+            let parent = doc.append_element(Some(body), "div", Some(parent));
+            image = doc.append_element(Some(parent), "img", Some(css));
+        });
+        assert_eq!(size(&doc, image), expected, "{parent} / {css}");
+    }
+}
+
+#[test]
+fn a_grid_item_image_stretched_along_one_axis_takes_the_other_side_through_the_ratio() {
+    // Sizes a browser gives for a 20x50 image in a 200px wide grid cell that is
+    // 100px high.
+    let grid = "display:grid;grid-template-columns:200px;grid-template-rows:100px";
+    for (css, expected) in [
+        ("align-self:stretch", (40.0, 100.0)),
+        ("justify-self:stretch", (200.0, 500.0)),
+        ("align-self:stretch;justify-self:stretch", (200.0, 100.0)),
+        ("align-self:end;justify-self:end", (20.0, 50.0)),
+    ] {
+        let mut image = 0;
+        let doc = laid_out_with_natural_size((20.0, 50.0), |doc, body| {
+            let parent = doc.append_element(Some(body), "div", Some(grid));
+            image = doc.append_element(Some(parent), "img", Some(css));
+        });
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
