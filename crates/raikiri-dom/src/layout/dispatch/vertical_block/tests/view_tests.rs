@@ -399,7 +399,7 @@ fn materialized_calc_survives_frame_and_bridge_retirement() {
         );
         let block = frame(&mut tree, parent, child, true);
         let (materialized, block) = with_transposed_frame(&mut tree, block, |tree| {
-            crate::taffy_impl::block_flow::style_input::child(tree, child)
+            crate::layout::dispatch::block_flow::style_input::child(tree, child)
         });
         drop(block);
         tree.record_pass_override(
@@ -428,14 +428,14 @@ fn materialized_calc_survives_frame_and_bridge_retirement() {
             materialized
                 .size
                 .height
-                .maybe_resolve(Some(100.0), crate::taffy_impl::resolve_calc),
+                .maybe_resolve(Some(100.0), crate::layout::dispatch::resolve_calc),
             Some(11.0)
         );
         assert_eq!(
             materialized
                 .size
                 .height
-                .maybe_resolve(Some(200.0), crate::taffy_impl::resolve_calc),
+                .maybe_resolve(Some(200.0), crate::layout::dispatch::resolve_calc),
             Some(21.0)
         );
     }
@@ -487,7 +487,7 @@ fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
         let block = frame(&mut tree, parent, child, true);
         let (materialized, block) = with_transposed_frame(&mut tree, block, |tree| {
             tree.with_overrides(vec![(key, entry)], |tree| {
-                crate::taffy_impl::block_flow::style_input::child(tree, child)
+                crate::layout::dispatch::block_flow::style_input::child(tree, child)
             })
         });
         drop(block);
@@ -507,7 +507,7 @@ fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
                 materialized
                     .size
                     .height
-                    .maybe_resolve(Some(basis), crate::taffy_impl::resolve_calc),
+                    .maybe_resolve(Some(basis), crate::layout::dispatch::resolve_calc),
                 Some(expected)
             );
         }

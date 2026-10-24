@@ -196,7 +196,7 @@ pub(super) fn layout(
     first_layout.margin = margin_style.into_edges().map(|margin| {
         margin
             .resolve_to_option(context.column_width, |pointer, basis| {
-                crate::taffy_impl::resolve_calc(pointer, basis)
+                crate::layout::dispatch::resolve_calc(pointer, basis)
             })
             .unwrap_or(0.0)
     });

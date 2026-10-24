@@ -3,9 +3,9 @@
 use super::{calc_has_percentage, resolve_calc};
 use crate::LayoutStyle as Style;
 use crate::image_geometry::constrain_with_ratio;
+use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::protocol::{AvailableSpace, LayoutInput, SizingMode};
 use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
-use crate::taffy_impl::content_limits::ContentLimits;
 use raikiri_layout_geometry::Size;
 use taffy::{
     BoxSizing, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto, LengthPercentageAuto,

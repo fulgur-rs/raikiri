@@ -9,8 +9,8 @@
 //! are the box's lines, set in by its inline-side edges.
 
 use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
+use crate::layout::dispatch::block_flow::context::{BlockContext, BoxProbe, BoxSlot};
 use crate::layout::protocol::CollapsibleMarginSet;
-use crate::taffy_impl::block_flow::context::{BlockContext, BoxProbe, BoxSlot};
 use raikiri_style::property::{
     BoxSizing, BreakBetween, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue,
     Sides,

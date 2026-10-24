@@ -310,7 +310,11 @@ inline test は分離する、新規ファイルは最初から `tests.rs` で�
 
 layout の結果・幾何・layout 呼び出しの型 (`taffy::Layout`、`Size`、`Point`、`Line`、`Rect`、
 `LayoutInput`、`LayoutOutput`、`AvailableSpace`、`NodeId` など) は、Taffy ではなく raikiri
-が所有する名前で書く。今はどちらも同じ型の別名なので、import を替えるだけで挙動は変わらない。
+が所有する名前で書く。これらの出力側の型名を Taffy の名前で書いてよいのは adapter
+(`crates/raikiri-dom/src/layout/taffy_adapter/`) と view crate (`crates/raikiri-layout-style/`) だけで、所有型と
+Taffy の型の変換は adapter が全フィールドを明示して行う。Taffy のアルゴリズムが返す grid の報告 (トラックや item の
+grid line) も adapter の `GridInfo` に包んで持ち、adapter の外はその accessor で読む。入力側の style 語彙
+(`Dimension`、`CoreStyle` 系、`Clear`、`Direction` など) はこの規則の対象外で、lint も数えない。
 
 - 幾何と box の layout 結果: `raikiri-layout-geometry` crate の `Size` / `Point` / `Line` /
   `Edges` (Taffy の `Rect`。x / y / width / height の矩形ではなく 4 辺の値) / `BoxLayout`
@@ -326,4 +330,4 @@ layout の結果・幾何・layout 呼び出しの型 (`taffy::Layout`、`Size`�
 1 つでもあれば拒否する。ファイルを移した場合は baseline の path を手で書き換える)。数える範囲、入力側の `Size<Dimension>` などを除外する同一行の
 `// taffy-boundary-lint:ignore: <理由>` marker、例外にする path の一覧
 (`scripts/lib/taffy_boundary_exempt.txt`) は `scripts/lib/taffy_boundary_lint.py` の
-docstring を参照。baseline を上げて回帰を通さないこと。
+docstring を参照。baseline を上げて回帰を通さないこと。baseline は現在空 (0 件) で、出力側の Taffy 名を新しく書くと即座に失敗する。

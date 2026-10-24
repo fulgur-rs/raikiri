@@ -12,9 +12,9 @@ use crate::layout::context::LayoutSession;
 
 #[test]
 fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
+    use crate::layout::dispatch::block_flow::context::BlockFormattingContext;
     use crate::layout::ifc::test_support::block_fixture_with_ahem;
     use crate::layout::protocol::AvailableSpace;
-    use crate::taffy_impl::block_flow::context::BlockFormattingContext;
     use taffy::Clear;
 
     fn fixture() -> (crate::Document, usize) {
@@ -79,7 +79,9 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
     let (mut doc, wrapper) = fixture();
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
-    assert!(crate::taffy_impl::vertical_block::has_same_vertical_block_parent(&session, wrapper));
+    assert!(
+        crate::layout::dispatch::vertical_block::has_same_vertical_block_parent(&session, wrapper)
+    );
     let mut owner = BlockFormattingContext::new();
     let mut context = owner.root_block_context();
     context.set_width(100.0);
@@ -449,6 +451,40 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
             .into_raw()
             .tag()
             == taffy::CompactLength::AUTO_TAG
+    );
+}
+
+#[test]
+fn a_non_finite_ifc_content_bound_is_the_initial_value() {
+    let style = Style {
+        min_size: StyleSize {
+            width: taffy::LengthPercentageAuto::auto(),
+            height: taffy::LengthPercentageAuto::length(f32::INFINITY),
+        },
+        max_size: StyleSize {
+            width: taffy::LengthPercentageAuto::auto(),
+            height: taffy::LengthPercentageAuto::length(f32::NAN),
+        },
+        ..Style::default()
+    };
+    assert_eq!(
+        ifc_content_height_bounds(&style, Some(80.0), None),
+        (0.0, f32::INFINITY)
+    );
+}
+
+#[test]
+fn implicit_rows_are_auto_without_grid_auto_rows() {
+    use taffy::prelude::TaffyAuto;
+
+    let rows = GridRowCounts {
+        negative_implicit: 1,
+        explicit: 0,
+        positive_implicit: 2,
+    };
+    assert_eq!(
+        row_sizing_functions(&Style::default(), rows),
+        vec![taffy::TrackSizingFunction::AUTO; 3]
     );
 }
 

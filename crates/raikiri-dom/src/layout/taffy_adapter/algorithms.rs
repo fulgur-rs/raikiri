@@ -8,7 +8,6 @@ use crate::layout::protocol::{
     OofPosition, OofPositioningArea,
 };
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
-use smol_str::SmolStr;
 
 /// Lay out a flex container.
 #[inline]
@@ -162,28 +161,6 @@ pub(crate) fn static_position_from_alignment(
         alignment,
         area.into_taffy(),
         axis_is_rtl,
-    ))
-}
-
-/// The grid area that the placement `row` and `column` of an out-of-flow box
-/// resolves to in the grid whose tracks `info` describes, relative to the
-/// border box of the container.
-///
-/// `padding_box` is the padding box of the container and `direction` its
-/// inline direction.
-#[inline]
-pub(crate) fn resolve_absolute_grid_area(
-    info: &taffy::DetailedGridInfo<SmolStr>,
-    row: taffy::Line<taffy::GridPlacement<SmolStr>>,
-    column: taffy::Line<taffy::GridPlacement<SmolStr>>,
-    direction: taffy::Direction,
-    padding_box: Edges<f32>,
-) -> Edges<f32> {
-    Edges::from_taffy(info.resolve_absolute_grid_area(
-        row,
-        column,
-        direction,
-        padding_box.into_taffy(),
     ))
 }
 

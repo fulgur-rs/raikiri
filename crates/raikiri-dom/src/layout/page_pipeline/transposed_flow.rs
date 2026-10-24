@@ -50,7 +50,7 @@ impl FlowAxes {
         if !crate::layout::bridge::lays_out_vertically(cascade, root) {
             return None;
         }
-        crate::taffy_impl::block_right_to_left(document, root)
+        crate::layout::dispatch::block_right_to_left(document, root)
             .map(|right_to_left| Self { right_to_left })
     }
 

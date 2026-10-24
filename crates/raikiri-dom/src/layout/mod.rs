@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::document::Document;
 use crate::fragment::{FragmentationContext, MulticolStyle};
+use crate::layout::dispatch::block_flow::context::BlockContext;
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
-use crate::taffy_impl::block_flow::context::BlockContext;
 use protocol::AvailableSpace;
 use raikiri_layout_geometry::{BoxLayout, Edges, Point, Size};
 use raikiri_style::property::{
@@ -42,6 +42,7 @@ use taffy::{
 pub(crate) mod block_axis_style;
 pub(crate) mod box_style_data;
 pub(crate) mod context;
+pub(crate) mod dispatch;
 pub(crate) mod protocol;
 pub(crate) mod style_views;
 pub(crate) mod table;

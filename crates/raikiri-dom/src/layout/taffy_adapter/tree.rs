@@ -6,11 +6,12 @@
 //! back. The work itself is done by the methods of the session that have the
 //! same names and take the protocol's types.
 
+use super::GridInfo;
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::TaffyChildIter;
 use crate::layout::protocol::{LayoutInput, NodeId};
 use crate::layout::style_views::ReadRole;
-use crate::taffy_impl::TaffyChildIter;
 use raikiri_layout_geometry::BoxLayout;
 use raikiri_layout_style::LayoutStyleView;
 use taffy::{
@@ -84,7 +85,7 @@ impl LayoutPartialTree for LayoutSession<'_> {
     }
 
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
-        crate::taffy_impl::resolve_calc(val, basis)
+        crate::layout::dispatch::resolve_calc(val, basis)
     }
 
     fn compute_child_layout(
@@ -168,7 +169,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         LayoutSession::set_detailed_grid_info(
             self,
             NodeId::from_taffy(node_id),
-            detailed_grid_info,
+            GridInfo::new(detailed_grid_info),
         );
     }
 }
@@ -199,7 +200,7 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         &self,
         node: taffy::NodeId,
     ) -> &DetailedLayoutInfo<smol_str::SmolStr> {
-        LayoutSession::detailed_layout_info(self, NodeId::from_taffy(node))
+        LayoutSession::oof_grid_info(self, NodeId::from_taffy(node)).detailed()
     }
 }
 

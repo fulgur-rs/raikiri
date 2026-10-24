@@ -1,5 +1,6 @@
 use crate::Document;
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::block_flow::context::BlockFormattingContext;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::layout::layout_single_page;
@@ -8,7 +9,6 @@ use crate::layout::test_support::{
     absolute_rect, ahem_paragraph_with, ahem_paragraph_with_atomic, ifc_ahem_fonts,
     page_box_800x600, with_ahem,
 };
-use crate::taffy_impl::block_flow::context::BlockFormattingContext;
 use raikiri_layout_geometry::{Edges, Size};
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
 use taffy::{Clear, FloatDirection};

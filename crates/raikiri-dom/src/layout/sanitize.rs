@@ -638,7 +638,7 @@ impl LayoutSession<'_> {
 /// # Only look at nodes actually visited by Taffy
 ///
 /// Instead of traversing `document.nodes[idx].children` directly, apply the same `is_in_document()` filter
-/// as Taffy's `TraversePartialTree` implementation (`taffy_impl.rs`) to the child traversal. While there
+/// as Taffy's `TraversePartialTree` implementation (`layout/taffy_adapter/tree.rs`) to the child traversal. While there
 /// is no practical harm in including nodes that Taffy did not lay out at all, such as `<template>`
 /// descendants, since `layout` remains at its construction-time default
 /// (`Layout::with_order(0)`) (meaning old values from other subtrees are not mixed in), aligning with

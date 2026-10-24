@@ -80,13 +80,13 @@ fn calc_handles_stay_alive_across_clone_and_relayout() {
 
     crate::layout::layout_single_page(&mut doc, &cr, page).expect("original relayout Ok");
     assert_eq!(
-        crate::taffy_impl::resolve_calc(clone_calc, 100.0),
+        crate::layout::dispatch::resolve_calc(clone_calc, 100.0),
         60.0,
         "clone retains its old calc payload after the original relayout"
     );
     drop(doc);
     assert_eq!(
-        crate::taffy_impl::resolve_calc(clone_calc, 100.0),
+        crate::layout::dispatch::resolve_calc(clone_calc, 100.0),
         60.0,
         "clone owns the calc payload after the original document is dropped"
     );
@@ -97,7 +97,7 @@ fn calc_handles_stay_alive_across_clone_and_relayout() {
     let width = style.size.width.into_raw();
     assert!(width.has_calc());
     assert_eq!(
-        crate::taffy_impl::resolve_calc(width.calc_value(), 100.0),
+        crate::layout::dispatch::resolve_calc(width.calc_value(), 100.0),
         60.0
     );
     assert!(clone.nodes[child].layout.size.width.is_finite());
@@ -1041,7 +1041,7 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
     // Check by **geometry** that the display bridge delivers Display::Flex
     // to taffy::compute_flexbox_layout. Merely asserting style.display
     // shows that the bridge connects, not that compute_child_layout
-    // in taffy_impl.rs actually invokes flex layout. Under the initial
+    // in dispatch.rs actually invokes flex layout. Under the initial
     // CSS Flexbox Level 1 values
     // (`flex-direction: row`, `flex-wrap: nowrap`), two children with
     // explicit widths sit side by side on the main (x) axis and align on the cross (y) axis.
@@ -1440,7 +1440,7 @@ fn flex_grow_absorbs_free_space() {
 #[test]
 fn floated_box_with_explicit_width_is_positioned_at_the_containing_block_edge() {
     // Real float layout (taffy's `float_layout` feature, wired via
-    // the float bridge + `taffy_impl`'s `LayoutBlockContainer` impl) —
+    // the float bridge + the `LayoutBlockContainer` impl of the session) —
     // a `float:left` box with an explicit width must be sized to
     // that width (not stretch to the container's full width like a
     // normal block child would) and must be positioned flush against
@@ -1934,7 +1934,7 @@ fn bridged_widths(cases: &[(&str, &str, &str)]) -> Vec<Dimension> {
 fn bridged_content_limits(
     cases: &[(&str, &str, &str)],
 ) -> Vec<(
-    crate::taffy_impl::content_limits::ContentLimits,
+    crate::layout::dispatch::content_limits::ContentLimits,
     StyleSize<LengthPercentageAuto>,
     StyleSize<LengthPercentageAuto>,
 )> {
@@ -1967,7 +1967,7 @@ fn bridged_content_limits(
 
 #[test]
 fn a_block_in_normal_flow_records_its_keyword_min_and_max_sizes() {
-    use crate::taffy_impl::content_limits::ContentLimits;
+    use crate::layout::dispatch::content_limits::ContentLimits;
 
     let css = "display:block;min-width:min-content;max-width:fit-content;\
                min-height:max-content;max-height:fit-content(10px)";
@@ -2003,7 +2003,7 @@ fn a_block_in_normal_flow_records_its_keyword_min_and_max_sizes() {
 
 #[test]
 fn a_flex_or_grid_container_records_its_keyword_min_and_max_sizes() {
-    use crate::taffy_impl::content_limits::ContentLimits;
+    use crate::layout::dispatch::content_limits::ContentLimits;
 
     let css = "min-width:min-content;max-width:fit-content;\
                min-height:max-content;max-height:fit-content(10px)";
@@ -2035,7 +2035,7 @@ fn a_flex_or_grid_container_records_its_keyword_min_and_max_sizes() {
 
 #[test]
 fn a_flex_or_grid_item_records_its_keyword_min_and_max_sizes() {
-    use crate::taffy_impl::content_limits::ContentLimits;
+    use crate::layout::dispatch::content_limits::ContentLimits;
 
     let css = "display:block;min-width:min-content;max-width:fit-content;\
                min-height:max-content;max-height:fit-content(10px)";
@@ -2063,8 +2063,42 @@ fn a_flex_or_grid_item_records_its_keyword_min_and_max_sizes() {
 }
 
 #[test]
+fn a_keyword_limit_with_a_calc_is_left_for_taffy_to_resolve() {
+    let [(limits, ..)] = bridged_content_limits(&[(
+        "display:block",
+        "div",
+        "display:block;min-width:fit-content(calc(50% - 10px));max-height:fit-content(25%)",
+    )])[..] else {
+        panic!("one case");
+    };
+    assert!(limits.min.width.is_fit_content_calc());
+    assert_eq!(limits.max.height, Dimension::fit_content_percent(0.25));
+}
+
+#[test]
+fn a_calc_size_is_handed_to_taffy_as_a_calc_length() {
+    use raikiri_style::property::CalcLengthPercentage;
+
+    let mut calc_values = Vec::new();
+    let mut diag = Vec::new();
+    let size = computed_length_percentage_or_auto_to_taffy_dimension(
+        &mut calc_values,
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 10.0,
+        }),
+        "width",
+        &mut diag,
+    );
+
+    assert!(size.into_raw().is_plain_calc());
+    assert_eq!(calc_values.len(), 1);
+    assert!(diag.is_empty());
+}
+
+#[test]
 fn a_size_that_is_no_keyword_is_no_content_limit() {
-    use crate::taffy_impl::content_limits::ContentLimits;
+    use crate::layout::dispatch::content_limits::ContentLimits;
 
     let [(limits, min, max)] = bridged_content_limits(&[(
         "display:block",
@@ -2080,7 +2114,7 @@ fn a_size_that_is_no_keyword_is_no_content_limit() {
 
 #[test]
 fn unsupported_generic_box_content_limits_record_none() {
-    use crate::taffy_impl::content_limits::ContentLimits;
+    use crate::layout::dispatch::content_limits::ContentLimits;
 
     let keyword = "min-width:min-content;max-height:max-content";
     let block = format!("display:block;{keyword}");

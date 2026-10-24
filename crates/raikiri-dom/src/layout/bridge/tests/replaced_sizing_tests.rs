@@ -591,7 +591,7 @@ fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured
                 },
                 vertical_margins_are_collapsible: Line::FALSE,
             };
-            crate::taffy_impl::block_layout(
+            crate::layout::dispatch::block_layout(
                 &mut session,
                 protocol::NodeId::from(parent),
                 inputs,

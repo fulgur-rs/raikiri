@@ -628,7 +628,7 @@ M0 blocker では無いが M1 kickoff 直後〜M2 前半で対応が必要な項
   contained arena invariant で正当化。Sync は追加しない (raikiri は stylo
   非依存で parallel style traversal 不在、並列 layout 経路も owned snapshot
   又は read-only borrow のみ)。実装記録は
-  `crates/raikiri-dom/src/taffy_impl.rs` の SAFETY block、設計 doc §4
+  `crates/raikiri-dom/src/layout/dispatch.rs` の SAFETY block、設計 doc §4
   `raikiri-dom crate` に反映。M4 sandboxed CSS calc() 実装時に calc arena
   を raikiri-dom 側に配置、M2〜M3 で `raikiri-lints::no_calc_construction`
   guard を追加予定。Blitz precedent (異なる owner モデル):

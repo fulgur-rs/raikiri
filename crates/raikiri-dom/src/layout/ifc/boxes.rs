@@ -10,6 +10,10 @@ use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
+use crate::layout::dispatch::block_flow::context::{
+    BlockContext, BlockFormattingContext, BoxProbe,
+};
+use crate::layout::dispatch::{fit_content_room, measure_against_parent_height, resolve_calc};
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, LayoutInput,
     LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPosition, OofPositioningArea,
@@ -17,8 +21,6 @@ use crate::layout::protocol::{
 };
 use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::{IntoEdges, ResolveOrZero};
-use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext, BoxProbe};
-use crate::taffy_impl::{fit_content_room, measure_against_parent_height, resolve_calc};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
@@ -1866,7 +1868,7 @@ fn layout_block_child(
     let stretch = (geometry.width - margin.left - margin.right).max(0.0);
     // The child shares this root's context, which is prepared for the width
     // its keyword `min-width` and `max-width` leave it.
-    let width = crate::taffy_impl::content_limits::with_width_limits(
+    let width = crate::layout::dispatch::content_limits::with_width_limits(
         tree,
         node,
         parent_size_of(&geometry),
@@ -2083,7 +2085,7 @@ fn layout_vertical_block_child(
     let shares_context = in_the_roots_formatting_context(tree, node)
         && BlockContainerStyle::align_content(&tree.physical_style(node)).keyword
             == taffy::AlignContentKeyword::Normal
-        && crate::taffy_impl::block_right_to_left(tree, node).is_some_and(|node_direction| {
+        && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
             node_direction
                 == matches!(
                     geometry.axes.writing_mode(),
@@ -2382,7 +2384,9 @@ fn layout_vertical_block_child(
         tree.nodes[node].vertical_first_baseline = output
             .baselines
             .first
-            .filter(|_| crate::taffy_impl::block_right_to_left(tree, node) == Some(vertical_rl))
+            .filter(|_| {
+                crate::layout::dispatch::block_right_to_left(tree, node) == Some(vertical_rl)
+            })
             .map(|baseline| block_start + baseline);
     }
     let collapses_through = !has_clearance && margins_can_collapse_through;
@@ -2412,7 +2416,7 @@ fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> boo
     let style = tree.query_style(node, ReadRole::BlockContainer);
     let overflow = style.overflow();
     tree.nodes[node].taffy_display() == taffy::Display::Block
-        && !crate::taffy_impl::is_table_box(tree.nodes[node].display())
+        && !crate::layout::dispatch::is_table_box(tree.nodes[node].display())
         && !overflow.x.is_scroll_container()
         && !overflow.y.is_scroll_container()
         && !style.contain().establishes_independent_formatting_context()
@@ -3356,11 +3360,11 @@ pub(crate) fn place_out_of_flow(
                     y: AxisStaticPosition::from_edge(static_y, AxisStaticEdge::Start),
                 }
             } else {
-                crate::taffy_impl::block_flow::aligned_static_position(
+                crate::layout::dispatch::block_flow::aligned_static_position(
                     container_style.get_or_insert_with(|| {
-                        crate::taffy_impl::block_flow::style_input::physical(tree, idx)
+                        crate::layout::dispatch::block_flow::style_input::physical(tree, idx)
                     }),
-                    &crate::taffy_impl::block_flow::style_input::physical(tree, node),
+                    &crate::layout::dispatch::block_flow::style_input::physical(tree, node),
                     if rtl {
                         taffy::Direction::Rtl
                     } else {
@@ -3439,7 +3443,7 @@ pub(crate) fn place_out_of_flow(
             },
             vertical_margins_are_collapsible: Line::FALSE,
         };
-        let output = crate::taffy_impl::content_limits::with_oof_child_content_limits(
+        let output = crate::layout::dispatch::content_limits::with_oof_child_content_limits(
             tree,
             node_id,
             inputs,

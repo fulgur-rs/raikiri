@@ -25,7 +25,7 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
     ] {
         for non_negative in [true, false] {
             let mut owners: Vec<Arc<AlignedCalc>> = Vec::new();
-            let legacy = crate::taffy_impl::push_calc(&mut owners, expression, non_negative);
+            let legacy = crate::layout::dispatch::push_calc(&mut owners, expression, non_negative);
             assert_eq!(owners[0].expression().px.to_bits(), expression.px.to_bits());
             assert_eq!(owners[0].non_negative(), non_negative);
             let mut values = ComputedValues::initial();
@@ -43,8 +43,14 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
             };
             for basis in [0.0, 1.0, 37.0, 100.0, f32::INFINITY, f32::NAN] {
                 let expected = owners[0].resolve(basis);
-                assert_eq!(crate::taffy_impl::resolve_calc(legacy, basis), expected);
-                assert_eq!(crate::taffy_impl::resolve_calc(handle, basis), expected);
+                assert_eq!(
+                    crate::layout::dispatch::resolve_calc(legacy, basis),
+                    expected
+                );
+                assert_eq!(
+                    crate::layout::dispatch::resolve_calc(handle, basis),
+                    expected
+                );
                 // SAFETY: The prepared view retains this payload throughout resolution.
                 assert_eq!(
                     unsafe { raikiri_layout_style::resolve_calc(handle, basis) },
@@ -79,7 +85,7 @@ fn session_drop_preserves_retained_handle_owner() {
         (handle, owner)
     };
     let retained = owner.upgrade().expect("the document outlives its session");
-    assert_eq!(crate::taffy_impl::resolve_calc(handle, 100.0), 60.0);
+    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 60.0);
     drop(retained);
     drop(doc);
     assert!(owner.upgrade().is_none());
@@ -122,7 +128,7 @@ fn rebridge_failure_keeps_old_handle_alive() {
     let retained = owner
         .upgrade()
         .expect("a failed bridge retains the old owner prefix");
-    assert_eq!(crate::taffy_impl::resolve_calc(handle, 100.0), 60.0);
+    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 60.0);
     drop(retained);
     session
         .document
@@ -175,7 +181,7 @@ fn popped_override_handle_outlives_the_session() {
     let retained = owner
         .upgrade()
         .expect("popping the scope does not invalidate an escaped handle");
-    assert_eq!(crate::taffy_impl::resolve_calc(handle, 100.0), 22.0);
+    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 22.0);
     drop(retained);
     drop(doc);
     assert!(owner.upgrade().is_none());
@@ -209,7 +215,7 @@ fn rebridge_unwind_keeps_old_handle_alive() {
     let retained = owner
         .upgrade()
         .expect("unwinding leaves the old prefix retained");
-    assert_eq!(crate::taffy_impl::resolve_calc(handle, 100.0), 60.0);
+    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 60.0);
     drop(retained);
     session.nodes[child].children.pop();
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
@@ -256,7 +262,7 @@ fn pass_and_recorded_scope_calcs_get_document_owners() {
             (handle, owner)
         };
         let retained = owner.upgrade().unwrap();
-        assert_eq!(crate::taffy_impl::resolve_calc(handle, 100.0), 22.0);
+        assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 22.0);
         drop(retained);
         drop(doc);
         assert!(owner.upgrade().is_none());

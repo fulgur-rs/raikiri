@@ -6,6 +6,7 @@ use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::LayoutWarn;
 use crate::layout::protocol::{self, LayoutInput};
+use crate::layout::taffy_adapter::GridInfo;
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::Size;
 
@@ -19,27 +20,28 @@ pub(crate) struct LayoutContext {
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     pub(crate) orthogonal_block_in_layout: Option<usize>,
-    pub(crate) transposed_style_index: crate::taffy_impl::TransposedStyleIndex,
+    pub(crate) transposed_style_index: crate::layout::dispatch::TransposedStyleIndex,
     pub(crate) transposed_frame_serial: u64,
-    pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
+    pub(crate) transposed_blocks: Vec<crate::layout::dispatch::TransposedBlock>,
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     pub(crate) flex_item_percent_bases: Vec<(usize, Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
-    /// sizes (see `taffy_impl::content_limits`).
+    /// sizes (see `dispatch::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,
     /// The flex container whose intrinsic widths are being measured, whose
     /// items are bounded by their flex base sizes meanwhile (see
-    /// `with_flex_intrinsic_probe` in [`crate::taffy_impl`]).
+    /// `with_flex_intrinsic_probe` in [`crate::layout::dispatch`]).
     pub(crate) flex_intrinsic_probe: Option<usize>,
     /// Definite block sizes retained as percentage bases for the direct
     /// children of boxes being measured for intrinsic height limits.
     pub(crate) content_limit_percentage_height_bases: Vec<(usize, f32)>,
     /// The width or height each box measured for its keyword sizes, while the
     /// outermost box laying out with them runs, and how many such layouts are
-    /// running (see `taffy_impl::content_limits`).
-    pub(crate) content_limit_measures: HashMap<crate::taffy_impl::content_limits::MeasureKey, f32>,
+    /// running (see `dispatch::content_limits`).
+    pub(crate) content_limit_measures:
+        HashMap<crate::layout::dispatch::content_limits::MeasureKey, f32>,
     pub(crate) content_limit_depth: usize,
     /// The final layout inputs observed for out-of-flow candidates during a
     /// preliminary positioning pass, before their intrinsic limits are
@@ -48,7 +50,9 @@ pub(crate) struct LayoutContext {
     /// Nested candidate wrappers skip their own prepasses while an outer
     /// candidate wrapper is gathering unconstrained positioning inputs.
     pub(crate) oof_content_limit_prepass_depth: usize,
-    pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<smol_str::SmolStr>>,
+    /// What the grid algorithm reported for each grid container laid out so
+    /// far. Only reports of grid layouts are stored.
+    pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) text_group: TextGroupScope,

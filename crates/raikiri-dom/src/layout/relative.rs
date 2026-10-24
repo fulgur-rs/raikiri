@@ -78,7 +78,7 @@ fn relative_insets_with_box_tree(
     } else {
         block.map(|block| block.source)
     };
-    let used_mode = crate::taffy_impl::used_writing_mode(document, source.unwrap_or(node_id));
+    let used_mode = crate::layout::dispatch::used_writing_mode(document, source.unwrap_or(node_id));
     // The bridge flips the direction of a `sideways-lr` box laid out on
     // vertical axes, whose inline axis runs from bottom to top; the writing
     // mode below already says so.

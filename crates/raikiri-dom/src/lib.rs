@@ -13,8 +13,6 @@
 //!
 //! - [`document`] — `Document` arena + `append_element` / `append_text`
 //! - `node`     — `Node` struct (crate-private, no rustdoc entry)
-//! - `taffy_impl` — the layout dispatch and its algorithms + `unsafe impl Send for Document`
-//!   (crate-private, no rustdoc entry)
 //! - [`dom_impl`] — `raikiri_traits::{Dom, Node, Element}` +
 //!   `raikiri_style::{StyleDom, StyleNode, StyleElement}` impls + `NodeRef` /
 //!   `ElementRef` types (both trait families over one arena, see file header)
@@ -84,7 +82,6 @@ pub mod paint_rules;
 #[doc(hidden)]
 pub mod text_decoration;
 pub use text_decoration::{DecorationKind, DecorationLine, DecorationStyle};
-mod taffy_impl;
 
 pub use document::{Document, DomMutationError};
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};

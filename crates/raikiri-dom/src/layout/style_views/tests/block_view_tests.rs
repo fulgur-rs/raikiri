@@ -182,7 +182,7 @@ fn block_view_oof_table_identity_is_independent() {
 
 #[test]
 fn block_view_materialized_input_reads_real_getters_and_bridge_alignment() {
-    use crate::taffy_impl::block_flow::style_input;
+    use crate::layout::dispatch::block_flow::style_input;
     let (mut doc, cascade, child, _) = fixture_with_styles(
         "display:block;width:100px",
         "display:block;width:31px;height:7px;align-self:center;justify-self:end;align-content:space-between;float:left;clear:both",

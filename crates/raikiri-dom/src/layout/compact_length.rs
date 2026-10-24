@@ -9,7 +9,7 @@ use taffy::{CompactLength, Dimension, LengthPercentage, LengthPercentageAuto};
 fn resolve_compact(raw: CompactLength, basis: Option<f32>) -> Option<f32> {
     // Calc pointers carry address bits in the tag, so inspect them first.
     if raw.is_plain_calc() {
-        return basis.map(|basis| crate::taffy_impl::resolve_calc(raw.calc_value(), basis));
+        return basis.map(|basis| crate::layout::dispatch::resolve_calc(raw.calc_value(), basis));
     }
     match raw.tag() {
         CompactLength::LENGTH_TAG => Some(raw.value()),

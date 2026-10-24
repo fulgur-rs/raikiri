@@ -412,7 +412,7 @@ fn used_style_length_helpers_cover_used_value_forms() {
         Some(25.0)
     );
     let mut arena = Vec::new();
-    let calc_ptr = crate::taffy_impl::push_calc(
+    let calc_ptr = crate::layout::dispatch::push_calc(
         &mut arena,
         CalcLengthPercentage {
             percent: 10.0,
@@ -421,7 +421,7 @@ fn used_style_length_helpers_cover_used_value_forms() {
         false,
     );
     // A non-negative sum that resolves below zero clamps.
-    let clamped_ptr = crate::taffy_impl::push_calc(
+    let clamped_ptr = crate::layout::dispatch::push_calc(
         &mut arena,
         CalcLengthPercentage {
             percent: 10.0,

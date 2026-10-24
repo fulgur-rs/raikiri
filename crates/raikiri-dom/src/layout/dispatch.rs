@@ -3,8 +3,9 @@
 //! The session lays a box out by dispatching on its display: block, flex, grid,
 //! table, multicolumn and leaf layouts, with a per-node result cache. The layout
 //! library's algorithms call back into the session through the trait
-//! implementations in [`crate::layout::taffy_adapter`], which convert their arguments to
-//! the types the methods here take:
+//! implementations in [`crate::layout::taffy_adapter`], which convert their
+//! arguments to the types the methods here take:
+//!
 //! - `child_ids` / `child_count` / `get_child_id`: the children of a node
 //! - `cache_get` / `cache_store` / `cache_clear`: the per-node result cache
 //! - `compute_child_layout`: the dispatch on the display of the node
@@ -18,12 +19,10 @@ use crate::layout::protocol::{
 use crate::layout::taffy_adapter::algorithms::{
     compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
-use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
+use crate::layout::taffy_adapter::{GridInfo, GridRowCounts, MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
 use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
-use taffy::{
-    BoxGenerationMode, CoreStyle, DetailedGridInfo, ExpandedDimension, Position as TaffyPosition,
-};
+use taffy::{BoxGenerationMode, CoreStyle, ExpandedDimension, Position as TaffyPosition};
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
 use crate::document::Document;
@@ -1194,7 +1193,7 @@ fn compute_ifc_root(
         .ifc
         .as_ref()
         .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb)
-        && !crate::taffy_impl::vertical_block::has_same_vertical_block_parent(tree, idx)
+        && !crate::layout::dispatch::vertical_block::has_same_vertical_block_parent(tree, idx)
     {
         block_ctx = None;
     }
@@ -2538,11 +2537,9 @@ fn compute_inline_block_shrink_wrap(
     } else {
         measure(tree)
     };
-    let (lo, hi) = if min_w <= max_w {
-        (min_w, max_w)
-    } else {
-        (max_w, min_w)
-    };
+    // `clamp` panics on inverted bounds, so order them whatever the two probes
+    // returned.
+    let (lo, hi) = (min_w.min(max_w), min_w.max(max_w));
     let fit = match inputs.available_space.width {
         AvailableSpace::Definite(avail) => avail.clamp(lo, hi),
         AvailableSpace::MinContent => lo,
@@ -3561,11 +3558,7 @@ impl LayoutSession<'_> {
 impl LayoutSession<'_> {
     /// Record what the grid algorithm reports about the grid container, for
     /// pagination and the out-of-flow positioning pass.
-    pub(crate) fn set_detailed_grid_info(
-        &mut self,
-        node_id: NodeId,
-        detailed_grid_info: DetailedGridInfo<smol_str::SmolStr>,
-    ) {
+    pub(crate) fn set_detailed_grid_info(&mut self, node_id: NodeId, info: GridInfo) {
         let parent = usize::from(node_id);
         let children = TaffyChildIter::new_for_session(self, parent)
             .filter(|&child| {
@@ -3574,25 +3567,24 @@ impl LayoutSession<'_> {
             })
             .collect::<Vec<_>>();
 
-        // Taffy builds `DetailedGridInfo.items` from its in-flow children in
-        // source order. Pair those resolved rows with the same child projection
-        // that Taffy received, so pagination can order by actual placement rather
-        // than trying to reconstruct auto-placement or relative offsets.
-        let grid_column_count = detailed_grid_info.columns.positions.len();
-        debug_assert_eq!(children.len(), detailed_grid_info.items.len());
+        // The grid algorithm lists the items in flow in source order. Pair
+        // those resolved rows with the same child projection that it received,
+        // so pagination can order by actual placement rather than trying to
+        // reconstruct auto-placement or relative offsets.
+        debug_assert_eq!(children.len(), info.items().len());
         self.nodes[parent].grid_item_row_starts = children
             .iter()
-            .zip(detailed_grid_info.items.iter())
+            .zip(info.items())
             .map(|(&child, item)| (child, item.row_start))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let rows = row_sizing_functions(&self.physical_style(parent), &detailed_grid_info.rows);
+        let rows = row_sizing_functions(&self.physical_style(parent), info.row_counts());
         // The rows run along the block axis: the physical height, or the
         // physical width in a vertical writing mode.
         let vertical = grid_oof::right_to_left(self, parent).is_some();
         self.nodes[parent].grid_items_without_baseline = children
             .iter()
-            .zip(detailed_grid_info.items.iter())
+            .zip(info.items())
             .filter(|&(&child, item)| {
                 let spanned = usize::from(item.row_start.saturating_sub(1))
                     ..usize::from(item.row_end.saturating_sub(1));
@@ -3611,15 +3603,12 @@ impl LayoutSession<'_> {
             .into_boxed_slice();
         self.nodes[parent].grid_item_column_starts = children
             .into_iter()
-            .zip(detailed_grid_info.items.iter())
+            .zip(info.items())
             .map(|(child, item)| (child, item.column_start))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        self.nodes[parent].grid_column_count = grid_column_count;
-        self.context.grid_layout_info.insert(
-            parent,
-            taffy::DetailedLayoutInfo::Grid(Box::new(detailed_grid_info)),
-        );
+        self.nodes[parent].grid_column_count = info.column_count();
+        self.context.grid_layout_info.insert(parent, info);
     }
 }
 
@@ -3669,20 +3658,20 @@ impl LayoutSession<'_> {
 
 /// The sizing function of every row of the grid laid out with `style`, from
 /// the first implicit row before the explicit grid to the last after it,
-/// as taffy's grid algorithm expands them for the track counts in `rows`
+/// as taffy's grid algorithm expands them for the row counts `rows`
 /// (CSS Grid 1 §7.2 explicit tracks, §7.6 implicit tracks).
 fn row_sizing_functions(
     style: &impl taffy::GridContainerStyle,
-    rows: &taffy::DetailedGridTracksInfo<smol_str::SmolStr>,
+    rows: GridRowCounts,
 ) -> Vec<taffy::TrackSizingFunction> {
     use taffy::prelude::TaffyAuto;
     use taffy::{
         GenericGridTemplateComponent, GenericRepetition, RepetitionCount, TrackSizingFunction,
     };
 
-    let negative = usize::from(rows.negative_implicit_tracks);
-    let explicit = usize::from(rows.explicit_tracks);
-    let positive = usize::from(rows.positive_implicit_tracks);
+    let negative = usize::from(rows.negative_implicit);
+    let explicit = usize::from(rows.explicit);
+    let positive = usize::from(rows.positive_implicit);
     let auto_rows = style.grid_auto_rows().collect::<Vec<_>>();
     // Without `grid-auto-rows`, implicit rows are `auto`.
     let implicit = |index: usize| {

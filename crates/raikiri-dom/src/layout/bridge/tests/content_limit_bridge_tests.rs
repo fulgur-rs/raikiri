@@ -1,6 +1,6 @@
 use super::*;
+use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::test_support::bridged_style;
-use crate::taffy_impl::content_limits::ContentLimits;
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
 use taffy::{Dimension, LengthPercentageAuto};

@@ -671,20 +671,22 @@ pub(super) fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
         .transposed_blocks
         .last_mut()
         .expect("the container's block is pushed");
-    if let Some(container) = &block.container_view {
-        let padding = container
-            .view()
-            .padding()
-            .resolve_or_zero(None, resolve_calc);
-        let border = container
-            .view()
-            .border()
-            .resolve_or_zero(None, resolve_calc);
-        let candidate_inline_size =
-            (width - padding.left - padding.right - border.left - border.right).max(0.0);
-        for input in block.child_views.values_mut() {
-            input.resolve_padding(Some(candidate_inline_size));
-        }
+    let container = block
+        .container_view
+        .as_ref()
+        .expect("a frame holds view input");
+    let padding = container
+        .view()
+        .padding()
+        .resolve_or_zero(None, resolve_calc);
+    let border = container
+        .view()
+        .border()
+        .resolve_or_zero(None, resolve_calc);
+    let candidate_inline_size =
+        (width - padding.left - padding.right - border.left - border.right).max(0.0);
+    for input in block.child_views.values_mut() {
+        input.resolve_padding(Some(candidate_inline_size));
     }
 }
 

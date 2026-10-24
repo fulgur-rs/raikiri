@@ -1191,7 +1191,7 @@ fn layout_single_page_with_table_projection(
             document.begin_oof_layout();
             Ok::<_, LayoutError>((icb, available_space, content_width, content_height, body_id))
         })?;
-    crate::taffy_impl::compute_root_layout_with_content_limits(
+    crate::layout::dispatch::compute_root_layout_with_content_limits(
         document,
         protocol::NodeId::from(icb),
         available_space,

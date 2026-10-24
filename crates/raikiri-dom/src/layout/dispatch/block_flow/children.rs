@@ -4,13 +4,13 @@ use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::resolve_calc;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
     LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RunMode,
 };
 use crate::layout::taffy_adapter::{IntoEdges, MaybeResolve};
 use crate::node::FormattingContext;
-use crate::taffy_impl::resolve_calc;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
 use taffy::{
@@ -74,7 +74,7 @@ fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> 
     let node = &tree.nodes[index];
     node.ifc.is_none()
         && node.multicol.is_none()
-        && !crate::taffy_impl::used_writing_mode(tree, index).is_vertical()
+        && !crate::layout::dispatch::used_writing_mode(tree, index).is_vertical()
         && node.formatting_context == FormattingContext::Block
         && matches!(
             node.display(),
@@ -369,7 +369,9 @@ pub(super) fn layout(
         let mut room = child_input;
         room.available_space.width =
             AvailableSpace::Definite((content_width - margin.horizontal_axis_sum()).max(0.0));
-        crate::taffy_impl::content_limits::resolve_width_in_style(tree, child, &mut style, &room);
+        crate::layout::dispatch::content_limits::resolve_width_in_style(
+            tree, child, &mut style, &room,
+        );
         let child_metrics = Metrics::resolve(
             &style,
             crate::paint_rules::is_replaced_element(tree, usize::from(child)),

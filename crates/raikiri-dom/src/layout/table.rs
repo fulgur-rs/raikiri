@@ -44,6 +44,7 @@ use taffy::{BlockItemStyle, CoreStyle, ExpandedDimension, LengthPercentage, Posi
 use crate::document::Document;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId,
     OofCandidate, OofCandidates, OofPosition, OofPositioningArea, RequestedAxis, RunMode,
@@ -51,7 +52,6 @@ use crate::layout::protocol::{
 };
 use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::{IntoEdges, MaybeResolve, ResolveOrZero};
-use crate::taffy_impl::content_limits::ContentLimits;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 
@@ -146,7 +146,7 @@ struct RowPassLayout {
 }
 
 // ---------------------------------------------------------------------------
-// Public entry — called from `taffy_impl.rs` when `Node::display == Table`.
+// Public entry — called from `dispatch.rs` when `Node::display == Table`.
 // ---------------------------------------------------------------------------
 
 impl LayoutSession<'_> {
@@ -375,8 +375,8 @@ fn layout_table_caption(
         size: output.size,
         scrollable_overflow_rect: output.scrollable_overflow_rect,
         scrollbar_size: Size::ZERO,
-        padding: padding.resolve_or_zero(Some(parent_width), crate::taffy_impl::resolve_calc),
-        border: border.resolve_or_zero(Some(parent_width), crate::taffy_impl::resolve_calc),
+        padding: padding.resolve_or_zero(Some(parent_width), crate::layout::dispatch::resolve_calc),
+        border: border.resolve_or_zero(Some(parent_width), crate::layout::dispatch::resolve_calc),
         margin: Edges {
             left: margin_left,
             right: margin_right,
@@ -1296,7 +1296,7 @@ fn table_layout_output(
     let style = doc.table_style(table);
     let border = style
         .border()
-        .resolve_or_zero(Some(size.width), crate::taffy_impl::resolve_calc);
+        .resolve_or_zero(Some(size.width), crate::layout::dispatch::resolve_calc);
     let overflow = style.overflow();
     let gutter_x = if overflow.y.is_scroll_container() {
         style.scrollbar_width()
@@ -1461,8 +1461,12 @@ fn dispatch_table_part_oof(
                 y: rect.location.y - frame.y,
             },
         };
-        let mut result =
-            crate::taffy_impl::layout_container_candidates(doc, NodeId::from(part), &inside, area);
+        let mut result = crate::layout::dispatch::layout_container_candidates(
+            doc,
+            NodeId::from(part),
+            &inside,
+            area,
+        );
         result.unclaimed.translate(frame);
         pending.append(&mut result.unclaimed);
     }
@@ -2213,7 +2217,7 @@ fn resolve_intrinsic_limit(
             } else {
                 context.inputs.parent_size.height
             };
-            let fit_room = crate::taffy_impl::fit_content_room(
+            let fit_room = crate::layout::dispatch::fit_content_room(
                 doc,
                 node_id,
                 expanded,
@@ -2333,14 +2337,14 @@ fn resolve_table_columns(
         if let Some(minimum) = style
             .min_size()
             .width
-            .maybe_resolve(Some(avail), crate::taffy_impl::resolve_calc)
+            .maybe_resolve(Some(avail), crate::layout::dispatch::resolve_calc)
         {
             let padding = style
                 .padding()
-                .resolve_or_zero(Some(avail), crate::taffy_impl::resolve_calc);
+                .resolve_or_zero(Some(avail), crate::layout::dispatch::resolve_calc);
             let border = style
                 .border()
-                .resolve_or_zero(Some(avail), crate::taffy_impl::resolve_calc);
+                .resolve_or_zero(Some(avail), crate::layout::dispatch::resolve_calc);
             let cell_insets = padding.left + padding.right + border.left + border.right;
             let outer = if style.box_sizing() == taffy::BoxSizing::ContentBox {
                 minimum + cell_insets
@@ -3045,10 +3049,10 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
     let style = doc.table_style(cell.node_id);
     let padding = style
         .padding()
-        .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+        .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
     let border = style
         .border()
-        .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+        .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
     let authored_height = resolve_dimension(style.size().height, None).map_or(0.0, |height| {
         if style.box_sizing() == taffy::BoxSizing::ContentBox {
             height + padding.top + padding.bottom + border.top + border.bottom
@@ -3259,10 +3263,10 @@ fn place_cells(
             (
                 style
                     .padding()
-                    .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
+                    .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc),
                 style
                     .border()
-                    .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
+                    .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc),
             )
         };
         let vertical_cell = vertical_writing && table_writing_mode(doc, cell.node_id).is_vertical();
@@ -3426,10 +3430,10 @@ fn reposition_cells_for_vertical_writing(
         let style = doc.table_style(cell.node_id);
         let mut padding = style
             .padding()
-            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+            .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
         let border = style
             .border()
-            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+            .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
         let scrollbar_width = if style.overflow().y == taffy::Overflow::Scroll {
             style.scrollbar_width()
         } else {
@@ -3462,12 +3466,14 @@ fn reposition_cells_for_vertical_writing(
                             - border.right
                             - scrollbar_width;
                         let inset = child_style.inset();
-                        let left = inset
-                            .left
-                            .maybe_resolve(Some(inner_width), crate::taffy_impl::resolve_calc);
-                        let right = inset
-                            .right
-                            .maybe_resolve(Some(inner_width), crate::taffy_impl::resolve_calc);
+                        let left = inset.left.maybe_resolve(
+                            Some(inner_width),
+                            crate::layout::dispatch::resolve_calc,
+                        );
+                        let right = inset.right.maybe_resolve(
+                            Some(inner_width),
+                            crate::layout::dispatch::resolve_calc,
+                        );
                         if direction == taffy::Direction::Rtl {
                             right.map(|right| -right).or(left).unwrap_or(0.0)
                         } else {

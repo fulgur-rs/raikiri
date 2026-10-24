@@ -22,7 +22,7 @@ pub(crate) struct ScopedOverrides {
 
 struct ScopeUndo {
     token: OverrideToken,
-    transposed: Vec<crate::taffy_impl::TransposedSizingUndo>,
+    transposed: Vec<crate::layout::dispatch::TransposedSizingUndo>,
 }
 
 impl ScopedOverrides {
@@ -106,7 +106,7 @@ impl LayoutSession<'_> {
         #[cfg(test)]
         let mut applied = 0;
         for (key, index, entry) in indexed {
-            let transposed = crate::taffy_impl::TransposedSizingUndo::prepare(
+            let transposed = crate::layout::dispatch::TransposedSizingUndo::prepare(
                 &self.context.transposed_blocks,
                 &self.context.transposed_style_index,
                 index,

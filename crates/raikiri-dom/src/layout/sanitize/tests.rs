@@ -20,7 +20,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 #[test]
 fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
     let mut doc = Document::new();
-    let pointer = crate::taffy_impl::push_calc(
+    let pointer = crate::layout::dispatch::push_calc(
         &mut doc.box_style_data.calc_values,
         CalcLengthPercentage {
             percent: 50.0,

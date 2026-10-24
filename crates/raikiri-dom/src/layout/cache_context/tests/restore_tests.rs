@@ -162,7 +162,7 @@ fn legacy_session_size_scope_restores_values_after_unwind() {
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let old = tree.style_view(child).min_size();
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::taffy_impl::content_limits::with_width_limits(
+        crate::layout::dispatch::content_limits::with_width_limits(
             &mut tree,
             child,
             Size {

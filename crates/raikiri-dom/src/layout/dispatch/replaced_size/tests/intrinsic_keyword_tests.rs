@@ -1,7 +1,7 @@
 use super::*;
+use crate::layout::dispatch::content_limits::ContentLimits;
+use crate::layout::dispatch::replaced_size::keyword_bounds;
 use crate::layout::protocol::RequestedAxis;
-use crate::taffy_impl::content_limits::ContentLimits;
-use crate::taffy_impl::replaced_size::keyword_bounds;
 use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and its relatives are style input
 use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
 
@@ -313,7 +313,7 @@ fn conflicting_numeric_bounds_raise_max_to_min() {
 #[test]
 fn cyclic_percentage_still_uses_zero_basis_with_intrinsic_limits() {
     let mut arena = Vec::new();
-    let height = Dimension::calc(crate::taffy_impl::push_calc(
+    let height = Dimension::calc(crate::layout::dispatch::push_calc(
         &mut arena,
         raikiri_style::property::CalcLengthPercentage {
             percent: 50.0,

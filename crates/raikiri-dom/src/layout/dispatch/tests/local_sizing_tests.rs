@@ -70,7 +70,7 @@ fn local_sizing_overrides_do_not_publish_session_or_sibling_changes() {
     let epoch = tree.layout_cache_context.epoch();
     let original = tree.style_view(child).size();
     let sibling_size = tree.style_view(sibling).size();
-    let mut local = crate::taffy_impl::block_flow::style_input::physical(&tree, child);
+    let mut local = crate::layout::dispatch::block_flow::style_input::physical(&tree, child);
     apply_local_sizing(
         &mut local,
         &[
