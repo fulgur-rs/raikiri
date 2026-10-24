@@ -14,7 +14,13 @@ publish = false
 [dependencies]
 raikiri-dom = { workspace = true }
 raikiri-html = { workspace = true }
+raikiri-layout-style = { workspace = true }
+raikiri-style = { workspace = true }
 raikiri-traits = { workspace = true }
+# `src/style_view.rs` calls the getters of the style view through Taffy's style
+# traits. The generated manifest asks for any release from this one on, so a
+# tree that moves to a later Taffy still builds.
+taffy = { workspace = true }
 url = { workspace = true }
 
 [lints]

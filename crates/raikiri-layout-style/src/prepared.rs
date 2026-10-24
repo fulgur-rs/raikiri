@@ -398,6 +398,21 @@ impl<'a> PreparedStyle<'a> {
                 .expect("validated immutable shared calc bindings"),
         }
     }
+    /// The payload these bindings hold at `pointer`, if any.
+    pub(crate) fn payload_at(&self, pointer: *const ()) -> Option<&AlignedCalc> {
+        let at = |payload: &AlignedCalc| payload.pointer() == pointer;
+        match &self.calcs {
+            CalcBindings::Borrowed(bindings) => bindings
+                .iter()
+                .map(|binding| binding.payload)
+                .find(|payload| at(payload)),
+            CalcBindings::Owned(bindings) => bindings
+                .iter()
+                .map(|(_, payload)| &**payload)
+                .find(|payload| at(payload)),
+            CalcBindings::Shared(data) => data.owners().map(|payload| &**payload).find(|p| at(p)),
+        }
+    }
     pub(crate) fn scalar(&self, property: LengthProperty) -> L {
         Self::scalar_value(&self.values, property)
     }

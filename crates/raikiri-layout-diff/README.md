@@ -70,7 +70,8 @@ which lays out every document through the HTML parser, would misread.
 Every case is laid out on one 800 by 600 CSS px page, with print media and the
 rules of `@page` the document brings, and the fonts the script passes, so the
 result does not depend on the machine. The tool writes a text from the result
-and hashes it. The text has two parts, described in `src/dump.rs`:
+and hashes it. The text has three parts, described in `src/dump.rs` and
+`src/style_view.rs`:
 
 - the **page API** that a consumer such as fulgur reads, for every page: the
   geometry, the root box, the fragments with their rectangles, the positioned
@@ -85,7 +86,26 @@ and hashes it. The text has two parts, described in `src/dump.rs`:
   `padding` and `margin` sizes, and under each paragraph the lines it was
   broken into, with the pieces of the lines in a vertical writing mode, whose
   text the page API gives no glyph runs for. Pages laid out again after a
-  change of the content width have a document of their own.
+  change of the content width have a document of their own;
+- the **style getters of every box**, written under the line of its node: what
+  every getter of the style view returns, for the box as its last layout read
+  it. Layout reads a box through a role (core container, block container and
+  item, flex container and item, grid container and item, out-of-flow item),
+  and a getter whose result depends on the context it is read in is written
+  once for each context that can change it: five writing modes in each of
+  three projections (`geometry` lines), the bases percentage edges resolve
+  against, the basis of a block item and padding a frame has already
+  resolved (`edges` lines), the containing-block policy (`claims`) and the
+  axis a flex item aligns along (`flex_item`). A length is written by what it
+  is (`px`, `percent`, `auto`, `min-content`, `fit-content-px`, `fr`, ...). A
+  calc is written as the three values it resolves to against the bases 0, 100
+  and 250.5, never as the address of its payload. The scoped overrides and
+  the frozen frame inputs of a vertical block belong to a running layout and
+  are not part of the text.
+
+The first two parts say where the boxes went, the third says how the style
+that put them there was read. A change of how a getter maps a value shows up
+here even when no document of the run has a box that moves because of it.
 
 Numbers are written as the shortest decimal text that reads back as the same
 `f32`, so two numbers print the same exactly when their bits are the same.
@@ -155,6 +175,14 @@ report a difference when there is one. To check it:
    `<body>` fragment as `rect=[0.0 0.0 800.0 124.0]` in the base and
    `rect=[0.0 0.0 800.001 124.0]` in the head, and the same width in the node
    listing. The run ends with `FAIL` and exit status 1. Remove the line again.
+3. **A getter that reads differently.** Make a getter of the style view
+   return another value than it did, one that no box of the run depends on,
+   for example by changing `justify_items` of `BlockContainerStyle` in
+   `crates/raikiri-layout-style/src/block.rs` to return
+   `taffy::AlignItems::CENTER`, and run the script again. The cases differ
+   and the field diff shows `block_container ... justify_items=` lines
+   changing from `Normal` to `Center` and no line of a box: nothing moved, and
+   the getters still tell. Remove the change again.
 
 ## When the layout API changes
 
@@ -169,6 +197,19 @@ the tool is built against (`src/node.rs`) and sets a cfg that says which way
 that tree reads a node's box; `node_layout.rs` has one definition per cfg.
 Adapt both together, and drop the definition of the old way once the
 merge-base has the new one.
+
+The style getters are the other place, in `src/style_view.rs`, and every call
+of a getter is there and nowhere else. The style view and the way to reach it
+are internal to `raikiri-dom` and `raikiri-layout-style`, so a pull request that
+changes how a box's style is read (a new view type, another call style for
+the getters) adapts that one file, and it must still build against the
+merge-base's. `build.rs` looks at the sources of `raikiri-dom`
+(`src/layout/style_views/finished.rs`) and sets the cfg `style_view_reader`
+when the tree has the hook the file reads through. A tree without it writes a
+`styles: unavailable` line for every node, so the comparison against such a
+base reports every case as differing, down to that line, and the field diff
+shows nothing but the style lines. Once the merge-base has the hook, the
+definition for a tree without it can go.
 
 The manifest the script builds with (`tool_manifest` in
 `scripts/layout-diff.sh`) lists the same dependencies as this crate's
@@ -192,6 +233,13 @@ The manifest the script builds with (`tool_manifest` in
   the layer number of their fonts, which depends on how many font layers the
   cases before have made.
 - Only print layout is compared, on one page size. Screen layout is not.
+- The style getters are read from the box as its layout finished, with no role
+  context, and then with the contexts listed above. A getter that depends on
+  state only a running layout has (scoped overrides, the frozen inputs of a
+  frame) is not covered; the layout it feeds is, through the boxes.
+- The text grows by about 6.6 KB for each box. A calc is compared by what it
+  resolves to against three bases, so two calcs that agree on those and
+  differ elsewhere are not told apart.
 - Files that read other files do so under `--html-root`, which the script sets
   to the WPT checkout; a generated case reads none.
 - The fonts of a case are the one font `--font` names and what the document

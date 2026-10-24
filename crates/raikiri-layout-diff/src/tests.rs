@@ -404,3 +404,15 @@ fn documents_are_laid_out_on_an_800_by_600_page_unless_they_say_otherwise() {
     let text = text_of("<style>@page { size: 300px 200px }</style><p>hello</p>");
     assert!(text.contains("width: 300.0, height: 200.0"), "{text}");
 }
+
+#[test]
+fn the_tree_the_tool_is_tested_in_has_a_style_reader() {
+    // `build.rs` finds the reader by reading the sources of `raikiri-dom`. A
+    // tree that loses it writes no style getters, and so would a tree that the
+    // search no longer finds it in: the comparison would pass with nothing
+    // compared. This tree has the reader, so the cfg must be set.
+    assert!(
+        cfg!(style_view_reader),
+        "build.rs no longer finds the style reader of raikiri-dom"
+    );
+}

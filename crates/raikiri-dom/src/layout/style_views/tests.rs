@@ -1,4 +1,5 @@
 mod calc_owner_tests;
+mod finished_tests;
 mod foundation_tests;
 mod physical_memo_tests;
 mod preparation_tests;
