@@ -977,6 +977,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::HyphenateLimitChars(_)
         | PropertyValue::FontVariantCaps(_)
         | PropertyValue::Quotes(_)
+        | PropertyValue::QuotesAuto
         | PropertyValue::TextShadow(_)
         | PropertyValue::BorderRadiusTopLeft(_)
         | PropertyValue::BorderRadiusTopRight(_)

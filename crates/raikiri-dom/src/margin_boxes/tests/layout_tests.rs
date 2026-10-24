@@ -1157,6 +1157,26 @@ fn margin_box_quotes_come_from_the_box_the_page_or_the_root() {
 }
 
 #[test]
+fn margin_box_quotes_follow_auto_and_the_css_wide_keywords() {
+    let content = "content: open-quote 'q' close-quote no-open-quote no-close-quote";
+    let page = |root: &str, page: &str, margin_box: &str| {
+        single_content(&format!(
+            "html {{ {root} }} @page {{ margin: 40px; {page} @top-left {{ {content}; {margin_box} }} }}"
+        ))
+    };
+    // `auto` is the initial value, so it ends what an ancestor or the page set.
+    assert_eq!(page("quotes: '[' ']'", "quotes: auto;", ""), "“q”");
+    assert_eq!(page("", "quotes: none;", "quotes: auto"), "“q”");
+    // `inherit` takes the page's value, `none` included, and `initial` and
+    // `unset` on a box whose page set a list start over or inherit from it.
+    assert_eq!(page("quotes: '[' ']'", "", "quotes: inherit"), "[q]");
+    assert_eq!(page("quotes: none", "", "quotes: inherit"), "q");
+    assert_eq!(page("quotes: '[' ']'", "", "quotes: initial"), "“q”");
+    assert_eq!(page("quotes: '[' ']'", "", "quotes: unset"), "[q]");
+    assert_eq!(page("", "quotes: '<' '>';", "quotes: inherit"), "<q>");
+}
+
+#[test]
 fn named_strings_and_running_elements_resolve_to_document_text() {
     let mut doc = engine_document();
     let html = doc.append_element(Some(0), "html", Some("display:block"));

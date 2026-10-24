@@ -565,6 +565,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::AlignSelf(_)
         | PropertyValue::PlaceContent(_)
         | PropertyValue::Quotes(_)
+        | PropertyValue::QuotesAuto
         | PropertyValue::GridTemplateAreas(_)
         | PropertyValue::GridAutoFlow(_)
         | PropertyValue::GridRowStart(_)

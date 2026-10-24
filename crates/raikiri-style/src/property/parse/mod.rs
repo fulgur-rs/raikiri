@@ -1143,17 +1143,23 @@ pub(crate) fn parse_property_grammar(
         // (`FontVariantCaps` doc's "Scope carving" section — it would need
         // to reset longhands this crate does not have).
         "font-variant-caps" => parse_font_variant_caps(input).map(PropertyValue::FontVariantCaps),
-        // CSS Content Module Level 3 §2.4.1 (legacy CSS2 §12.3.1 grammar
-        // subset: `none | [ <string> <string> ]+`, `auto` / `match-parent`
-        // not implemented — see `PropertyValue::Quotes` doc). Arc wrap +
-        // shared-empty-slot follows the counter-* DoS mitigation pattern.
-        "quotes" => parse_quotes_property(input).map(|v| {
-            if v.is_empty() {
-                PropertyValue::Quotes(empty_quotes_entries())
+        // CSS Content Module Level 3 §2.4.1: `auto | none | [ <string>
+        // <string> ]+` (`match-parent` not implemented — see
+        // `PropertyValue::Quotes` doc). Arc wrap + shared-empty-slot follows
+        // the counter-* DoS mitigation pattern.
+        "quotes" => {
+            if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+                Some(PropertyValue::QuotesAuto)
             } else {
-                PropertyValue::Quotes(Arc::new(v))
+                parse_quotes_property(input).map(|v| {
+                    if v.is_empty() {
+                        PropertyValue::Quotes(empty_quotes_entries())
+                    } else {
+                        PropertyValue::Quotes(Arc::new(v))
+                    }
+                })
             }
-        }),
+        }
         // CSS Text Decoration Module Level 3 §4 text-shadow.
         // Arc wrapping reduces cascade memory for DoS resistance, following the
         // Content/StringSet/counter-* fixes. Empty lists (`none`) use the shared

@@ -65,6 +65,17 @@ const CASES: &[(&str, bool, &[&str])] = &[
         &["item 5 other 0", "note 3", "section -2"],
     ),
     (
+        "quotes",
+        true,
+        &[
+            r#""«" "»" "‹" "›""#,
+            r#""“" "”""#,
+            "none",
+            "auto",
+            r#""'" "'""#,
+        ],
+    ),
+    (
         "justify-content",
         false,
         &["center", "flex-end", "space-between"],
@@ -769,6 +780,61 @@ fn a_keyword_substituted_from_var_resolves_like_a_literal() {
     assert_eq!(values.box_sizing, BoxSizing::BorderBox);
     assert_eq!(values.text_transform, TextTransform::Uppercase);
     assert_eq!(values.word_break, WordBreak::Normal);
+}
+
+#[test]
+fn quotes_inherit_keeps_the_auto_of_a_parent_that_never_set_it() {
+    // `auto` is the initial value, held as an empty list with a flag. A
+    // keyword that copied only the list would turn it into `none`, which
+    // shows no quote marks at all.
+    let plain = child("", &[], "");
+    assert!(plain.quotes_auto);
+    let inherited = child("", &[], r#"#target { quotes: "a" "b"; quotes: inherit }"#);
+    assert!(same(&inherited, &plain));
+    let unset = child("", &[], r#"#target { quotes: "a" "b"; quotes: unset }"#);
+    assert!(same(&unset, &plain));
+}
+
+#[test]
+fn quotes_none_and_auto_stay_apart_through_the_keywords() {
+    let none = child("quotes: none", &[], "");
+    assert!(none.quotes.is_empty() && !none.quotes_auto);
+    let inherited = child(
+        "quotes: none",
+        &[],
+        "#target { quotes: auto; quotes: inherit }",
+    );
+    assert!(inherited.quotes.is_empty() && !inherited.quotes_auto);
+    let initial = child(
+        "quotes: none",
+        &[],
+        "#target { quotes: none; quotes: initial }",
+    );
+    assert!(initial.quotes.is_empty() && initial.quotes_auto);
+    let auto = child(r#"quotes: "a" "b""#, &[], "#target { quotes: auto }");
+    assert!(auto.quotes.is_empty() && auto.quotes_auto);
+}
+
+#[test]
+fn a_quotes_keyword_substituted_from_var_resolves_like_a_literal() {
+    let parent = r#"quotes: "«" "»""#;
+    let initial = child(parent, &[], "#target { --kw: initial; quotes: var(--kw) }");
+    assert!(initial.quotes.is_empty() && initial.quotes_auto);
+    let inherited = child(parent, &[], "#target { --kw: inherit; quotes: var(--kw) }");
+    assert_eq!(inherited.quotes.len(), 1);
+    assert!(!inherited.quotes_auto);
+}
+
+#[test]
+fn quotes_auto_does_not_combine_with_a_list() {
+    // The declaration is invalid, so the earlier one stays in force.
+    let values = child(
+        "",
+        &[],
+        r#"#target { quotes: "a" "b"; quotes: auto "c" "d" }"#,
+    );
+    assert_eq!(values.quotes.len(), 1);
+    assert!(!values.quotes_auto);
 }
 
 #[test]

@@ -1654,8 +1654,8 @@ pub struct ComputedValues {
     /// keyword and the (independent-implementation) unspecified-initial case as an
     /// empty list — no other implementation's UA default is imported (see
     /// [`crate::property::PropertyValue::Quotes`] doc for the full
-    /// rationale, including the `auto`/`match-parent` keywords this crate
-    /// does not implement).
+    /// rationale, including the `match-parent` keyword this crate does not
+    /// implement; `auto` is [`crate::property::PropertyValue::QuotesAuto`]).
     ///
     /// Resolving nesting depth to an actual quote-mark string (consulted
     /// when [`Self::content`] carries a [`ContentComponent::Quote`]) is
