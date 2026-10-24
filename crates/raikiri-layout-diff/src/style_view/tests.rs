@@ -139,7 +139,7 @@ fn sizes_edges_and_axes_follow_the_writing_mode_and_projection_they_are_read_in(
             .unwrap_or_else(|| panic!("{prefix}\n{text}"))
     };
     // The item's `width: calc(25% + 4px)` and its margins `1px 2px 3px 4px`,
-    // as [left right top bottom].
+    // as `left right top bottom`.
     let item = geometry("HorizontalTb", "Identity");
     assert!(item.contains("size=[calc[4.0 29.0 66.625] auto]"), "{item}");
     assert!(
