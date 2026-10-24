@@ -29,6 +29,7 @@ from taffy_boundary_lint import (
     OWNED_INPUT_NAMES,
     TAFFY_MODULES,
     TokenizeError,
+    load_exempt,
     main,
     scan_source,
     strip_comments_and_strings,
@@ -634,6 +635,31 @@ class NameTableTests(unittest.TestCase):
     def test_rect_and_layout_move_to_the_edges_and_box_layout_names(self) -> None:
         self.assertTrue(OUTPUT_NAMES["Rect"].endswith("::Edges"))
         self.assertTrue(OUTPUT_NAMES["Layout"].endswith("::BoxLayout"))
+
+
+class RepositoryEndStateTests(unittest.TestCase):
+    """The real tree has finished the migration: nothing is pinned, two places are exempt."""
+
+    def test_the_baseline_has_no_entries(self) -> None:
+        text = (REPO_ROOT / "scripts/lib/taffy_boundary_baseline.txt").read_text(encoding="utf-8")
+        entries = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        self.assertEqual(entries, [], "a pin is a regression: use an owned name or the style view instead")
+
+    def test_only_the_projection_and_the_adapter_are_exempt(self) -> None:
+        exempt = load_exempt(REPO_ROOT / "scripts/lib/taffy_boundary_exempt.txt")
+        self.assertEqual(
+            sorted(exempt),
+            [
+                "crates/raikiri-dom/src/layout/taffy_adapter.rs",
+                "crates/raikiri-dom/src/layout/taffy_adapter/",
+                "crates/raikiri-layout-style/src/projection.rs",
+                "crates/raikiri-layout-style/src/projection/",
+            ],
+        )
+
+    def test_every_exempt_path_exists(self) -> None:
+        for prefix in load_exempt(REPO_ROOT / "scripts/lib/taffy_boundary_exempt.txt"):
+            self.assertTrue((REPO_ROOT / prefix).exists(), prefix)
 
 
 if __name__ == "__main__":

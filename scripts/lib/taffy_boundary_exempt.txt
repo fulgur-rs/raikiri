@@ -3,11 +3,13 @@
 # One path per line; `#` starts a comment. A trailing `/` exempts a directory.
 # Used by scripts/lib/taffy_boundary_lint.py, which documents what is counted.
 #
-# Only the places that are allowed to know Taffy belong here: the view crate
-# that implements Taffy's style traits and the adapter module, which converts
-# between the owned layout names and Taffy's. Do not add a file to make a
-# regression pass; mark a real exception on its line instead.
+# Only the two places that are allowed to know Taffy belong here: the
+# projection of the view crate, which implements Taffy's style traits over
+# computed values, and the adapter module, which converts between the owned
+# layout names and Taffy's. Do not add a file to make a regression pass; mark a
+# real exception on its line instead.
 
-crates/raikiri-layout-style/       # view crate: implements Taffy's style traits over computed values
+crates/raikiri-layout-style/src/projection.rs    # projection: the module root
+crates/raikiri-layout-style/src/projection/      # projection: conversions, track lists, compact lengths, tests
 crates/raikiri-dom/src/layout/taffy_adapter.rs   # adapter: the module root
 crates/raikiri-dom/src/layout/taffy_adapter/     # adapter: conversions, tree trait impls, algorithm calls

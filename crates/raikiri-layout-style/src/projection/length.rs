@@ -1,78 +1,29 @@
 //! Style lengths.
 //!
 //! A length keeps the layout library's compact form, which is eight bytes
-//! wide, so that handing it to the library costs nothing. The form is private:
-//! a length is made with the constructors here, read with `expand`, and
-//! resolved with the methods here.
+//! wide, so that handing it to the library costs nothing. The form is private
+//! to the projection: a length is made with the constructors here, read with
+//! `expand`, and resolved with the methods here. The rest of the crate and its
+//! users see only that surface.
 
-use super::calc_ref::CalcRef;
+use crate::values::{
+    CalcRef, ExpandedDimension, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,
+    LengthIdentity,
+};
 use taffy::CompactLength;
 
 /// A size: a length, a percentage, a `calc()`, `auto` or an intrinsic sizing
 /// keyword.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Dimension(pub(crate) taffy::Dimension);
+pub struct Dimension(pub(super) taffy::Dimension);
 
 /// A length, a percentage or a `calc()`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LengthPercentage(pub(crate) taffy::LengthPercentage);
+pub struct LengthPercentage(pub(super) taffy::LengthPercentage);
 
 /// A length, a percentage, a `calc()` or `auto`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LengthPercentageAuto(pub(crate) taffy::LengthPercentageAuto);
-
-/// A [`Dimension`] as a value to match on.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ExpandedDimension {
-    /// An absolute length.
-    Length(f32),
-    /// A percentage, as a fraction of one.
-    Percent(f32),
-    /// `auto`.
-    Auto,
-    /// `min-content`.
-    MinContent,
-    /// `max-content`.
-    MaxContent,
-    /// `fit-content(<length>)`.
-    FitContentPx(f32),
-    /// `fit-content(<percentage>)`, as a fraction of one.
-    FitContentPercent(f32),
-    /// `fit-content(<calc()>)`.
-    FitContentCalc(CalcRef),
-    /// `fit-content`.
-    FitContent,
-    /// `stretch`.
-    Stretch,
-    /// `content`.
-    Content,
-    /// A `calc()`.
-    Calc(CalcRef),
-}
-
-/// A [`LengthPercentage`] as a value to match on.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ExpandedLengthPercentage {
-    /// An absolute length.
-    Length(f32),
-    /// A percentage, as a fraction of one.
-    Percent(f32),
-    /// A `calc()`.
-    Calc(CalcRef),
-}
-
-/// A [`LengthPercentageAuto`] as a value to match on.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ExpandedLengthPercentageAuto {
-    /// An absolute length.
-    Length(f32),
-    /// A percentage, as a fraction of one.
-    Percent(f32),
-    /// `auto`.
-    Auto,
-    /// A `calc()`.
-    Calc(CalcRef),
-}
+pub struct LengthPercentageAuto(pub(super) taffy::LengthPercentageAuto);
 
 impl Dimension {
     /// An absolute length.
@@ -274,36 +225,21 @@ impl From<LengthPercentageAuto> for Dimension {
     }
 }
 
-/// What distinguishes one style length from another, for a cache key.
-///
-/// Two lengths have the same identity when they are the same kind with the
-/// same value; a calc is identified by its payload, not by its value. A zero
-/// value has one identity whatever its sign, and every NaN has one identity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct LengthIdentity {
-    tag: usize,
-    value: usize,
-}
-
-impl LengthIdentity {
-    fn of(raw: CompactLength) -> Self {
-        let value = if raw.has_calc() {
-            CalcRef::from_handle(raw.calc_value()).addr()
+/// The identity of a length: its kind and value, or the payload of a `calc()`.
+fn identity_of(raw: CompactLength) -> LengthIdentity {
+    let value = if raw.has_calc() {
+        CalcRef::from_handle(raw.calc_value()).addr()
+    } else {
+        let value = raw.value();
+        if value.is_nan() {
+            f32::NAN.to_bits() as usize
+        } else if value == 0.0 {
+            0
         } else {
-            let value = raw.value();
-            if value.is_nan() {
-                f32::NAN.to_bits() as usize
-            } else if value == 0.0 {
-                0
-            } else {
-                value.to_bits() as usize
-            }
-        };
-        Self {
-            tag: raw.tag(),
-            value,
+            value.to_bits() as usize
         }
-    }
+    };
+    LengthIdentity::new(raw.tag(), value)
 }
 
 macro_rules! resolve_length {
@@ -344,7 +280,7 @@ macro_rules! resolve_length {
             /// The kind and value of the length, for use in a cache key.
             #[inline]
             pub fn identity(self) -> LengthIdentity {
-                LengthIdentity::of(self.0.into_raw())
+                identity_of(self.0.into_raw())
             }
         }
     )+};

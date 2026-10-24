@@ -5,9 +5,24 @@
 //! [`TaffyStyle`] implements those traits for a view by forwarding each getter
 //! to the view's and converting the value to the library's. The used values
 //! themselves are computed once, in the view.
+//!
+//! This module and its children are the only code of the crate that names the
+//! layout library's types: the conversions, the grid track lists that Taffy
+//! reads through its own traits, the flex and grid getters that answer in
+//! Taffy's vocabulary, and the compact form that style lengths are stored in.
 
-use crate::values::ToTaffy;
-use crate::{Areas, BoxStyle, GridRepetition, LayoutStyleView, LineNames, TemplateTracks, Tracks};
+mod convert;
+mod flex;
+mod grid;
+mod length;
+#[cfg(test)]
+mod tests;
+
+pub use convert::ToTaffy;
+pub use grid::{Areas, GridRepetition, LineNames, TemplateTracks, Tracks};
+pub use length::{Dimension, LengthPercentage, LengthPercentageAuto};
+
+use crate::{BoxStyle, LayoutStyleView};
 use raikiri_style::SmolStr;
 use taffy::{
     BlockContainerStyle, BlockItemStyle, CoreStyle, FlexboxContainerStyle, FlexboxItemStyle,

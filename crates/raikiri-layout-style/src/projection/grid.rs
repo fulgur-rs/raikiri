@@ -275,17 +275,6 @@ impl LayoutStyleView<'_> {
         }
     }
 }
-impl LayoutStyleView<'_> {
-    /// Whether the box names a grid line or span in any of `grid-row-start`,
-    /// `grid-row-end`, `grid-column-start` and `grid-column-end`, rather than
-    /// leaving all four to auto-placement.
-    pub fn has_grid_placement(&self) -> bool {
-        let (row, column) = (self.grid_row(), self.grid_column());
-        [row.start, row.end, column.start, column.end]
-            .iter()
-            .any(|placement| !matches!(placement, GridPlacement::Auto))
-    }
-}
 fn u16_sat(value: u32) -> u16 {
     value.min(u16::MAX as u32) as u16
 }

@@ -76,23 +76,13 @@ impl LayoutStyleView<'_> {
             height: self.length(LengthProperty::RowGap).lp(PercentBasis::Taffy),
         }
     }
-    /// The main-axis direction of a flex container.
-    #[inline]
-    pub fn flex_direction(&self) -> taffy::FlexDirection {
-        match self.prepared.values.flex_direction {
-            D::RowReverse => taffy::FlexDirection::RowReverse,
-            D::Column => taffy::FlexDirection::Column,
-            D::ColumnReverse => taffy::FlexDirection::ColumnReverse,
-            _ => taffy::FlexDirection::Row,
-        }
-    }
     /// Whether the main axis of a flex container runs along its rows, as
     /// `row` and `row-reverse` do, rather than along its columns.
     #[inline]
     pub fn flex_direction_is_row(&self) -> bool {
-        matches!(
-            self.flex_direction(),
-            taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+        !matches!(
+            self.prepared.values.flex_direction,
+            D::Column | D::ColumnReverse
         )
     }
     /// Whether a flex container wraps its items onto more lines when they do
@@ -100,15 +90,6 @@ impl LayoutStyleView<'_> {
     #[inline]
     pub fn flex_wraps(&self) -> bool {
         self.prepared.values.flex_wrap != W::NoWrap
-    }
-    /// Whether and how a flex container wraps its lines.
-    #[inline]
-    pub fn flex_wrap(&self) -> taffy::FlexWrap {
-        match self.prepared.values.flex_wrap {
-            W::Wrap => taffy::FlexWrap::Wrap,
-            W::WrapReverse => taffy::FlexWrap::WrapReverse,
-            _ => taffy::FlexWrap::NoWrap,
-        }
     }
     /// How a container distributes free space along its main axis.
     #[inline]

@@ -63,8 +63,8 @@ impl BoxProperties {
         }
     }
 
-    /// Lower CSS display to the box types supported by Taffy.
-    pub(crate) fn taffy_display(&self, multicol: bool, kind: NodeKind, root: bool) -> Display {
+    /// Lower CSS display to the box types layout supports.
+    pub(crate) fn layout_display(&self, multicol: bool, kind: NodeKind, root: bool) -> Display {
         // Non-elements have no CSS display property. Preserve the native
         // default used by programmatic document layout instead of lowering
         // their inline text identity as an element's block box.
@@ -85,7 +85,7 @@ impl BoxProperties {
         }
     }
 
-    pub(crate) fn taffy_position(&self) -> Position {
+    pub(crate) fn layout_position(&self) -> Position {
         if self.display == DisplayValue::Contents {
             return Position::Static;
         }

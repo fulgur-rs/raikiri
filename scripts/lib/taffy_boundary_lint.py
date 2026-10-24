@@ -9,12 +9,14 @@ and multicol all named `taffy::Layout`, `taffy::Size`, `taffy::LayoutInput`,
 `taffy::Dimension`, `taffy::Style` and so on directly. The layout results, the
 layout call types and the node handle are now types owned by this repository: a
 dependency-free geometry crate (`raikiri-layout-geometry`) and a call-protocol
-module inside raikiri-dom (`layout::protocol`). The only code that may name
-Taffy's types is the adapter module (`layout::taffy_adapter`), which converts
-between the two, and the view crate, which implements Taffy's style traits over
-computed values. This lint keeps the boundary from eroding: it pins how many
-uses of Taffy's vocabulary remain outside those places and fails when the number
-goes up, so the remaining uses can only be removed, never added to.
+module inside raikiri-dom (`layout::protocol`). The style input, the lengths,
+keywords and the style snapshot, is owned too (`raikiri-layout-style`). The only
+code that may name Taffy's types is the adapter module (`layout::taffy_adapter`),
+which converts between the owned names and Taffy's, and the projection module of
+the view crate (`raikiri_layout_style::projection`), which implements Taffy's
+style traits over computed values and keeps the compact form of style lengths.
+This lint keeps the boundary from eroding: it counts the uses of Taffy's
+vocabulary outside those places and fails on every one, so none can be added.
 
 ## Two tables of names
 
@@ -28,12 +30,13 @@ public vocabulary that raikiri-dom could name, which raikiri builds or reads
 before a layout call. That is the style traits, the length types, the keyword
 enums and small value types, `Style`, the float and block formatting state, the
 grid vocabulary, the tree traits, and the functions that run Taffy's algorithms
-or build style values. They are pinned like the output names, so the vocabulary
-can only shrink while the replacements are introduced. The lengths, the keywords
-and small value types, `Style` and the resolution helpers have an owned
-replacement, listed in `OWNED_INPUT_NAMES`, and the failure output names it. The
-others have none yet, and the failure output says "no owned name yet" (with the
-kind of name) instead of naming a type to move to.
+or build style values. The lengths, the keywords and small value types, `Style`
+and the resolution helpers have an owned replacement, listed in
+`OWNED_INPUT_NAMES`, and the failure output names it. The others (the style
+traits, the flex and grid vocabulary, the float state, the tree traits and the
+algorithm entry points) are the library's own interface and have none: the
+projection and the adapter hold them, and the failure output says "no owned name
+yet" (with the kind of name) instead of naming a type to move to.
 
 The tables say which kind a name is and what it moves to; they do not decide
 whether a use is counted. Any name a path reaches from the `taffy` crate is
@@ -98,37 +101,46 @@ reports such a marker.
 ## Where it is not counted
 
 `taffy_boundary_exempt.txt` lists path prefixes (a trailing `/` means a
-directory) that may name Taffy types freely: the view crate, which implements
-Taffy's style traits over computed values, and the adapter module, which
-converts between the owned names and Taffy's and holds the tree-trait
-implementations and the calls into Taffy's algorithms. Everything else is held
-to the ratchet.
+directory) that may name Taffy types freely: the projection module of the view
+crate, which implements Taffy's style traits over computed values, converts the
+owned values to Taffy's, lists the grid tracks for Taffy and stores the lengths
+in Taffy's compact form, and the adapter module, which converts between the
+owned names and Taffy's and holds the tree-trait implementations and the calls
+into Taffy's algorithms. The tests of those two modules live inside them.
+Everything else is held to the ratchet, and the ratchet is at zero.
+
+Test code outside the two modules that has to read the library-typed getters of
+the projection, or call the library's tree traits on a session, marks its
+imports with the ignore marker and says so in the reason. The marked
+occurrences are summarised on every run, so the exceptions stay visible.
 
 The owned names shown in the failure output come from two places. Geometry and
 the box layout result live in the `raikiri-layout-geometry` crate and can be
 used from any crate. The layout call protocol lives in raikiri-dom's
 crate-private `layout::protocol` module (nothing outside raikiri-dom reads a
 layout input or output), so a use of those names in another crate has no owned
-name to move to and stays pinned until the raikiri-dom API that replaces it
-exists.
+name to move to and fails until the raikiri-dom API that replaces it exists.
 
 Some output names have no owned replacement because they are handed straight
 back to Taffy and belong in the adapter: `Cache`, `ClearState`,
 `DetailedGridInfo`, `DetailedGridTracksInfo`, `DetailedGridItemsInfo` and
 `DetailedLayoutInfo` (shown as "(adapter only)" in the failure output). A use
-outside the adapter is pinned in the baseline; it is not a reason to add an
-ignore marker.
+outside the adapter fails; it is not a reason to add an ignore marker.
 
-Most input-side names have no owned replacement yet. The failure output shows
-the kind of name ("no owned name yet (length)"). A change that needs a value of
-that kind should read it through the existing style view or helper rather than
-name the Taffy type in a new place. The resolution helper traits are the
-exception: `MaybeMath` is owned by the geometry crate, and `MaybeResolve` and
-`ResolveOrZero` are the view crate's traits, read through its `values` module.
+Most input-side names that remain have no owned replacement: they are the
+library's interface. The failure output shows the kind of name ("no owned name
+yet (grid vocabulary)"). A change that needs a value of that kind should read it
+through the style view or a purpose-specific accessor rather than name the Taffy
+type outside the projection and the adapter. The resolution helper traits are
+the exception: `MaybeMath` is owned by the geometry crate, and `MaybeResolve`
+and `ResolveOrZero` are the view crate's traits, read through its `values`
+module.
 
 ## The ratchet
 
-`taffy_boundary_baseline.txt` pins the current count per file. A run fails when
+`taffy_boundary_baseline.txt` pins the count per file. It is empty now, and a
+unit test keeps it empty; the mechanism stays so that a migration of a new
+vocabulary can be done the same way. A run fails when
 
   - a file has more occurrences than its baseline (or any, if it has no entry):
     new uses of a counted Taffy name;
@@ -968,7 +980,7 @@ def main(argv: list[str]) -> int:
         if found > MAX_LISTED_PER_FILE:
             print(f"    ... {found - MAX_LISTED_PER_FILE} more (-v lists every occurrence)")
     if verdict.more:
-        print("  A Taffy name must not be added outside the adapter and the view crate.")
+        print("  A Taffy name must not be written outside the adapter and the projection of the view crate.")
         print("  Use the owned name shown after `->`. Where it says there is no owned name yet, read the")
         print("  value through the style view or an existing helper instead of naming the Taffy type in a")
         print("  new place. A real exception is marked on the same line with")

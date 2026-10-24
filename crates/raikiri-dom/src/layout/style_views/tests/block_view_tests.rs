@@ -19,14 +19,13 @@ fn block_view_prepares_normal_source_and_text_keys() {
 }
 
 use crate::layout::style_views::ReadRole;
-use raikiri_layout_style::values::ToTaffy;
-use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
-use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, OofItemStyle as OI};
+use raikiri_layout_style::{LayoutStyleView, TaffyStyle, ToTaffy};
+use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle, OofItemStyle as OI}; // taffy-boundary-lint:ignore: the test reads the library-typed getters of the projection
 
 fn read_core(query: &LayoutStyleView<'_>) {
     let query = &TaffyStyle::new(*query);
     macro_rules! read {
-        ($($method:ident),+ $(,)?) => { $(let _ = taffy::CoreStyle::$method(query);)+ };
+        ($($method:ident),+ $(,)?) => { $(let _ = CoreStyle::$method(query);)+ };
     }
     read!(
         box_generation_mode,

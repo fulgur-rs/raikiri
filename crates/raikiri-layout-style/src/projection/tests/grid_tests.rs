@@ -374,3 +374,88 @@ fn a_box_has_grid_placement_when_any_of_its_four_lines_is_not_auto() {
         assert!(view.has_grid_placement());
     }
 }
+
+#[test]
+fn has_grid_placement_agrees_with_the_projected_placements() {
+    let lines = [
+        GridLineValue::Auto,
+        GridLineValue::Line(0),
+        GridLineValue::Line(2),
+        GridLineValue::Line(-1),
+        GridLineValue::Named(SmolStr::new("area")),
+        GridLineValue::NamedLine(SmolStr::new("area"), 2),
+        GridLineValue::Span(0),
+        GridLineValue::Span(2),
+        GridLineValue::SpanNamed(SmolStr::new("area"), 2),
+    ];
+    let setters: [fn(&mut ComputedValues, GridLineValue); 4] = [
+        |cv, line| cv.grid_row_start = line,
+        |cv, line| cv.grid_row_end = line,
+        |cv, line| cv.grid_column_start = line,
+        |cv, line| cv.grid_column_end = line,
+    ];
+    for line in lines {
+        for set in setters {
+            let mut cv = ComputedValues::initial();
+            set(&mut cv, line.clone());
+            let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+            let view = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+            let (row, column) = (view.grid_row(), view.grid_column());
+            let projected = [row.start, row.end, column.start, column.end]
+                .iter()
+                .any(|placement| !matches!(placement, taffy::GridPlacement::Auto));
+            assert_eq!(view.has_grid_placement(), projected, "{line:?}");
+        }
+    }
+}
+
+#[test]
+fn shared_values_and_grid_payloads_survive_external_owner_drop() {
+    use raikiri_style::{
+        ComputedGridTemplateTracks, ComputedGridTrackBreadth as B, ComputedGridTrackList,
+        ComputedGridTrackListComponent as C, ComputedGridTrackRepeat, ComputedGridTrackSize as S,
+        property::GridRepeatCount,
+    };
+    let mut cv = ComputedValues::initial();
+    cv.grid_template_columns = ComputedGridTemplateTracks::List(Arc::new(ComputedGridTrackList {
+        line_names: vec![vec![], vec![]],
+        components: vec![C::Repeat(ComputedGridTrackRepeat {
+            count: GridRepeatCount::Count(2),
+            line_names: vec![vec![], vec![]],
+            tracks: vec![S::MinMax(
+                B::Calc(CalcLengthPercentage {
+                    px: -5.0,
+                    percent: 20.0,
+                }),
+                B::Calc(CalcLengthPercentage {
+                    px: 7.0,
+                    percent: 40.0,
+                }),
+            )],
+        })],
+    }));
+    let owner = Arc::new(cv);
+    let weak = Arc::downgrade(&owner);
+    let prepared = PreparedStyle::prepare_shared(owner.clone(), StyleMetadata::default());
+    drop(owner);
+    assert!(weak.upgrade().is_some());
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    let component = view.grid_template_columns().unwrap().next().unwrap();
+    let taffy::GenericGridTemplateComponent::Repeat(repeat) = component else {
+        panic!("repeat");
+    };
+    assert_eq!(repeat.count(), taffy::RepetitionCount::Count(2));
+    assert_eq!(repeat.tracks().count(), 1);
+    let slot = |part| CalcSlot::Grid {
+        axis: Axis::X,
+        list: GridList::Template,
+        component: 0,
+        repeat_track: Some(0),
+        part,
+    };
+    assert_eq!(prepared.payload(slot(TrackPart::Min)).resolve(0.0), 0.0);
+    assert_eq!(prepared.payload(slot(TrackPart::Min)).resolve(100.0), 15.0);
+    assert_eq!(prepared.payload(slot(TrackPart::Max)).resolve(100.0), 47.0);
+    drop(prepared);
+    assert!(weak.upgrade().is_none());
+}

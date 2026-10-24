@@ -1,9 +1,7 @@
 use super::*;
-use crate::values::ToTaffy;
 use raikiri_style::property::{
     AlignSelfValue, ContentAlignmentValue, FloatValue, SelfAlignmentValue,
 };
-use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, OofItemStyle as OI};
 
 #[test]
 fn core_claims_and_block_defaults_stay_distinct() {
@@ -28,32 +26,11 @@ fn core_claims_and_block_defaults_stay_distinct() {
     });
     assert!(!block.is_containing_block().absolute);
     assert!(!block.is_containing_block().fixed);
-    let projected = TaffyStyle::new(block);
-    assert_eq!(BI::align_self(&projected), None);
-    assert_eq!(BI::justify_self(&projected), None);
-    assert_eq!(BI::align_content(&projected), taffy::AlignContent::NORMAL);
     assert_eq!(block.bridge_align_self(), Some(values::AlignSelf::CENTER));
     assert_eq!(block.bridge_justify_self(), Some(values::AlignSelf::END));
     assert_eq!(
         block.bridge_align_content(),
         values::AlignContent::SPACE_BETWEEN
-    );
-    assert_eq!(
-        BC::align_content(&projected),
-        taffy::AlignContent::SPACE_BETWEEN
-    );
-    assert_eq!(BC::text_align(&projected), taffy::TextAlign::Auto);
-    assert_eq!(BC::justify_items(&projected), taffy::AlignItems::NORMAL);
-    assert_eq!(BI::float(&projected), taffy::Float::Left);
-    assert_eq!(OI::align_self(&projected), Some(taffy::AlignSelf::CENTER));
-    assert_eq!(OI::justify_self(&projected), Some(taffy::AlignSelf::END));
-    assert_eq!(
-        OI::grid_row(&projected),
-        taffy::GridItemStyle::grid_row(&projected)
-    );
-    assert_eq!(
-        OI::grid_column(&projected),
-        taffy::GridItemStyle::grid_column(&projected)
     );
 }
 
@@ -74,8 +51,7 @@ fn block_and_oof_table_facts_are_separate_from_formatting_context() {
         );
         let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
         assert_eq!(view.is_table(), block);
-        assert_eq!(BI::is_table(&TaffyStyle::new(view)), block);
-        assert_eq!(OI::is_table(&TaffyStyle::new(view)), oof);
+        assert_eq!(view.is_oof_table(), oof);
     }
 }
 
@@ -96,8 +72,6 @@ fn block_float_and_clear_keep_authored_and_override_values() {
             LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
         assert_eq!(view.float(), expected);
         assert_eq!(view.clear(), values::Clear::Both);
-        assert_eq!(BI::float(&TaffyStyle::new(view)), expected.to_taffy());
-        assert_eq!(BI::clear(&TaffyStyle::new(view)), taffy::Clear::Both);
     }
 }
 

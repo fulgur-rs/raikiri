@@ -573,7 +573,7 @@ fn apply_computed_to_style_in_session_inner(
         for node in doc.nodes.layout_nodes_mut() {
             if node.kind() == NodeKind::Element {
                 node.formatting_context =
-                    FormattingContext::from_taffy_display(node.layout_display());
+                    FormattingContext::from_layout_display(node.layout_display());
             }
         }
         return Err(error);
@@ -621,7 +621,7 @@ fn classify_formatting_context(node: &Node) -> FormattingContext {
             FormattingContext::Table
         }
         _ if node.multicol.is_some() => FormattingContext::Multicol,
-        display => FormattingContext::from_taffy_display(display),
+        display => FormattingContext::from_layout_display(display),
     }
 }
 

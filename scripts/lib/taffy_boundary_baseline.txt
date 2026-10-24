@@ -1,25 +1,13 @@
 # scripts/lib/taffy_boundary_baseline.txt — pinned per-file counts for
 # scripts/taffy-boundary-lint.sh.
 #
-# Each line is `<count> <path>`: how many times that file still names Taffy's
-# vocabulary through a `taffy::` path. That covers the output side (geometry,
-# layout results, the layout call protocol, the node handle, the cache) and the
-# input side (style traits, lengths, keyword enums, `Style`, float and grid
-# state, tree traits, algorithm entry points). See
-# scripts/lib/taffy_boundary_lint.py for exactly what is counted and why.
+# Each line would be `<count> <path>`: how many times that file still names
+# Taffy's vocabulary through a `taffy::` path outside the projection and the
+# adapter. There are none, so this file has no lines, and a unit test keeps it
+# that way. See scripts/lib/taffy_boundary_lint.py for exactly what is counted
+# and why.
 #
-# The numbers only go down. A run fails when a file has more occurrences than
-# pinned, and also when it has fewer, so a change that removes occurrences
-# lowers its lines in the same commit. Lower them with:
-#   scripts/taffy-boundary-lint.sh --update-baseline
-# which refuses to run if any file has more uses than pinned. A file that
-# reaches zero loses its line; rename the line by hand when a file moves.
-# Do not raise a number to make a regression pass; use an owned name where one
-# exists, or mark a real exception on its line with
+# A run fails when a file has any counted occurrence. Do not add a line to make
+# a regression pass; use an owned name where one exists, read the value through
+# the style view, or mark a real exception on its line with
 # `// taffy-boundary-lint:ignore: <reason>`.
-
-1 crates/raikiri-dom/src/document/tests/taffy_filter_tests.rs
-5 crates/raikiri-dom/src/layout/box_style_data/recipes/tests.rs
-5 crates/raikiri-dom/src/layout/page_pipeline/transposed_flow/tests.rs
-8 crates/raikiri-dom/src/layout/style_views/tests.rs
-4 crates/raikiri-dom/src/layout/style_views/tests/block_view_tests.rs

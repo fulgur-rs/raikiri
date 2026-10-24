@@ -1,7 +1,6 @@
 use super::*;
 use crate::values::BoxGenerationMode;
 use std::sync::Arc;
-use taffy::GenericRepetition;
 
 #[test]
 fn owned_and_borrowed_getters_agree() {
@@ -52,46 +51,28 @@ fn owned_and_borrowed_getters_agree() {
     assert_eq!(a.flex_grow(), b.flex_grow());
     assert_eq!(a.overflow(), b.overflow());
     macro_rules! same {
-        ($trait:ident, $($getter:ident),+ $(,)?) => { $(
-            assert_eq!(
-                $trait::$getter(&TaffyStyle::new(a)),
-                $trait::$getter(&TaffyStyle::new(b))
-            );
-        )+ };
+        ($($getter:ident),+ $(,)?) => { $( assert_eq!(a.$getter(), b.$getter(), stringify!($getter)); )+ };
     }
     same!(
-        CoreStyle,
         box_generation_mode,
         is_block,
         is_compressible_replaced,
         is_replaced,
-        box_sizing,
         direction,
-        overflow,
-        scrollbar_width,
         position,
         inset,
         is_containing_block,
-        min_size,
         max_size,
         aspect_ratio,
         padding,
         border,
-        contain
-    );
-    same!(
-        FlexboxContainerStyle,
+        contain,
         flex_direction,
         flex_wrap,
         gap,
         align_content,
         align_items,
-        justify_content
-    );
-    same!(
-        FlexboxItemStyle,
-        flex_basis,
-        flex_grow,
+        justify_content,
         flex_shrink,
         align_self
     );
@@ -105,57 +86,6 @@ fn owned_and_borrowed_getters_agree() {
             b.margin().left.calc_ref().resolve(basis)
         );
     }
-}
-
-#[test]
-fn shared_values_and_grid_payloads_survive_external_owner_drop() {
-    use raikiri_style::{
-        ComputedGridTemplateTracks, ComputedGridTrackBreadth as B, ComputedGridTrackList,
-        ComputedGridTrackListComponent as C, ComputedGridTrackRepeat, ComputedGridTrackSize as S,
-        property::GridRepeatCount,
-    };
-    let mut cv = ComputedValues::initial();
-    cv.grid_template_columns = ComputedGridTemplateTracks::List(Arc::new(ComputedGridTrackList {
-        line_names: vec![vec![], vec![]],
-        components: vec![C::Repeat(ComputedGridTrackRepeat {
-            count: GridRepeatCount::Count(2),
-            line_names: vec![vec![], vec![]],
-            tracks: vec![S::MinMax(
-                B::Calc(CalcLengthPercentage {
-                    px: -5.0,
-                    percent: 20.0,
-                }),
-                B::Calc(CalcLengthPercentage {
-                    px: 7.0,
-                    percent: 40.0,
-                }),
-            )],
-        })],
-    }));
-    let owner = Arc::new(cv);
-    let weak = Arc::downgrade(&owner);
-    let prepared = PreparedStyle::prepare_shared(owner.clone(), StyleMetadata::default());
-    drop(owner);
-    assert!(weak.upgrade().is_some());
-    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    let component = view.grid_template_columns().unwrap().next().unwrap();
-    let taffy::GenericGridTemplateComponent::Repeat(repeat) = component else {
-        panic!("repeat");
-    };
-    assert_eq!(repeat.count(), taffy::RepetitionCount::Count(2));
-    assert_eq!(repeat.tracks().count(), 1);
-    let slot = |part| CalcSlot::Grid {
-        axis: Axis::X,
-        list: GridList::Template,
-        component: 0,
-        repeat_track: Some(0),
-        part,
-    };
-    assert_eq!(prepared.payload(slot(TrackPart::Min)).resolve(0.0), 0.0);
-    assert_eq!(prepared.payload(slot(TrackPart::Min)).resolve(100.0), 15.0);
-    assert_eq!(prepared.payload(slot(TrackPart::Max)).resolve(100.0), 47.0);
-    drop(prepared);
-    assert!(weak.upgrade().is_none());
 }
 
 #[test]

@@ -1,6 +1,5 @@
 use super::*;
 use raikiri_style::property::*;
-use taffy::GridItemStyle as GI;
 
 #[test]
 fn explicit_normal_alignment_does_not_inherit_like_auto() {
@@ -10,16 +9,6 @@ fn explicit_normal_alignment_does_not_inherit_like_auto() {
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
     assert_eq!(v.align_self(), Some(values::AlignItems::NORMAL));
-    let projected = TaffyStyle::new(v);
-    assert_eq!(
-        FlexboxItemStyle::align_self(&projected),
-        Some(taffy::AlignItems::NORMAL)
-    );
-    assert_eq!(GI::align_self(&projected), Some(taffy::AlignItems::NORMAL));
-    assert_eq!(
-        GI::justify_self(&projected),
-        Some(taffy::AlignItems::NORMAL)
-    );
 }
 
 fn side_border(cv: &mut ComputedValues) {

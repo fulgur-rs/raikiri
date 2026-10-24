@@ -532,10 +532,8 @@ fn pagination_axis_changes_discard_cached_table_preparation() {
 fn pagination_queries_and_updates_are_rejected() {
     use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
     use raikiri_style::ComputedLengthPercentageOrAuto as Length;
-    use taffy::{
-        LayoutBlockContainer, LayoutContainingBlock, LayoutFlexboxContainer, LayoutGridContainer,
-        LayoutPartialTree,
-    };
+    use taffy::{LayoutBlockContainer, LayoutContainingBlock}; // taffy-boundary-lint:ignore: the test calls the library's tree traits on the session
+    use taffy::{LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree}; // taffy-boundary-lint:ignore: the test calls the library's tree traits on the session
     let mut doc = Document::new();
     let root = doc.append_element(
         Some(0),
