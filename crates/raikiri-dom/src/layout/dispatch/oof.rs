@@ -152,9 +152,13 @@ pub(crate) fn compute_root_layout_with_content_limits(
     root: NodeId,
     available_space: Size<AvailableSpace>,
 ) {
+    // The initial containing block takes the writing mode of the root element.
+    let vertical = super::block_right_to_left(tree, usize::from(root)).is_some();
+    let outer_axes = std::mem::replace(&mut tree.context.oof_axes_vertical, vertical);
     super::content_limits::with_oof_content_limits(tree, None, &[root], |tree| {
         compute_root_layout(tree, root, available_space);
     });
+    tree.context.oof_axes_vertical = outer_axes;
 }
 
 pub(super) fn layout_candidates(
@@ -171,6 +175,12 @@ pub(super) fn layout_candidates(
         .filter(|candidate| claims_position(claims, candidate.position))
         .map(|candidate| candidate.node)
         .collect::<Vec<_>>();
+    // The library aligns a box by `justify-self` along the physical horizontal
+    // axis and by `align-self` along the vertical one. On the axes of a
+    // vertical writing mode it is the other way round (CSS Position 3 §5.2).
+    // Boxes laid out inside this one are positioned by a call of their own.
+    let vertical = super::block_right_to_left(tree, usize::from(owner)).is_some();
+    let outer_axes = std::mem::replace(&mut tree.context.oof_axes_vertical, vertical);
     let result =
         super::content_limits::with_oof_content_limits(tree, Some(&candidate_ids), &[], |tree| {
             let span: OofSpan<'_> = candidates.all();
@@ -181,6 +191,7 @@ pub(super) fn layout_candidates(
                 None => compute_oof_layout_for_area(tree, owner, span, area, direction, claims),
             }
         });
+    tree.context.oof_axes_vertical = outer_axes;
     tree.clear_hoisted_children(owner);
     tree.add_hoisted_children(owner, result.hoisted.iter().copied());
     result

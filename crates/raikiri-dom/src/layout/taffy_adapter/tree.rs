@@ -181,7 +181,12 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         Self: 'a;
 
     fn get_oof_item_style(&self, node: taffy::NodeId) -> Self::OofItemStyle<'_> {
-        TaffyStyle::new(self.query_style(usize::from(node), ReadRole::Oof))
+        let view = self.query_style(usize::from(node), ReadRole::Oof);
+        TaffyStyle::new(if self.context.oof_axes_vertical {
+            view.with_swapped_oof_alignment()
+        } else {
+            view
+        })
     }
 
     fn clear_hoisted_children(&mut self, node: taffy::NodeId) {

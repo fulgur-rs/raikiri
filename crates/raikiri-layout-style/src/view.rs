@@ -18,6 +18,9 @@ pub struct LayoutStyleView<'a> {
     /// Whether either layer holds an entry: most queries find none and skip
     /// the scan.
     has_overrides: bool,
+    /// Whether an out-of-flow box takes its physical vertical alignment from
+    /// `justify-self` and its physical horizontal one from `align-self`.
+    pub(crate) swapped_oof_alignment: bool,
 }
 #[derive(Clone, Copy)]
 enum OverrideLayer<'a> {
@@ -54,6 +57,7 @@ impl<'a> LayoutStyleView<'a> {
             pass: OverrideLayer::Borrowed(pass),
             scoped: OverrideLayer::Borrowed(scoped),
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
+            swapped_oof_alignment: false,
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
@@ -71,6 +75,7 @@ impl<'a> LayoutStyleView<'a> {
             pass: OverrideLayer::Owned(pass),
             scoped: OverrideLayer::Owned(scoped),
             has_overrides: !pass.is_empty() || !scoped.is_empty(),
+            swapped_oof_alignment: false,
         }
     }
     /// Preserve positioning-only containing-block claims for Flex/Grid queries.
@@ -80,6 +85,19 @@ impl<'a> LayoutStyleView<'a> {
     #[inline]
     pub const fn for_flex_grid(mut self) -> Self {
         self.use_prepared_claims = false;
+        self
+    }
+
+    /// Read the alignment of an out-of-flow box on the axes of a containing
+    /// block with vertical axes.
+    ///
+    /// On the physical axes a vertical block axis is horizontal, so
+    /// `align-self` aligns the box along the physical horizontal axis and
+    /// `justify-self` along the physical vertical one (CSS Position 3 §5.2).
+    /// The out-of-flow projection takes them the other way round otherwise.
+    #[inline]
+    pub const fn with_swapped_oof_alignment(mut self) -> Self {
+        self.swapped_oof_alignment = true;
         self
     }
 

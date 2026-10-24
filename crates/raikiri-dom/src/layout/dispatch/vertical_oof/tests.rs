@@ -708,3 +708,199 @@ fn the_lines_of_a_vertical_container_do_not_change_how_its_boxes_are_aligned() {
         assert_eq!((rect.0, rect.1), expected, "{mode}");
     }
 }
+
+/// The page rect of the child of [`aligned_document`] sized by its content and
+/// insets: no `width` or `height`, and nothing inside to give it any.
+fn sized_rect(container_css: &str, child_css: &str) -> (f32, f32, f32, f32) {
+    aligned_rect(
+        container_css,
+        &format!("width:auto;height:auto;{child_css}"),
+    )
+}
+
+#[test]
+fn align_self_decides_whether_the_width_between_both_insets_is_stretched() {
+    // The physical horizontal axis of a vertical container is its block axis,
+    // so `align-self` decides there: only `normal` and `stretch` fill the area
+    // between the insets, and the others fit the (empty) content.
+    for container_css in ["writing-mode:vertical-rl", "writing-mode:vertical-lr"] {
+        for (alignment, width) in [
+            ("normal", 100.0),
+            ("stretch", 100.0),
+            ("start", 0.0),
+            ("end", 0.0),
+            ("center", 0.0),
+            ("flex-end", 0.0),
+        ] {
+            let rect = sized_rect(
+                container_css,
+                &format!("left:0;right:0;align-self:{alignment}"),
+            );
+            assert_eq!(rect.2, width, "{container_css};align-self:{alignment}");
+        }
+        // `justify-self` belongs to the other axis.
+        for alignment in ["start", "end", "center"] {
+            let rect = sized_rect(
+                container_css,
+                &format!("left:0;right:0;justify-self:{alignment}"),
+            );
+            assert_eq!(rect.2, 100.0, "{container_css};justify-self:{alignment}");
+        }
+    }
+}
+
+#[test]
+fn justify_self_decides_whether_the_height_between_both_insets_is_stretched() {
+    for container_css in [
+        "writing-mode:vertical-rl",
+        "writing-mode:vertical-rl;direction:rtl",
+        "writing-mode:sideways-lr",
+    ] {
+        for (alignment, height) in [
+            ("normal", 100.0),
+            ("stretch", 100.0),
+            ("start", 0.0),
+            ("end", 0.0),
+            ("center", 0.0),
+            ("flex-end", 0.0),
+        ] {
+            let rect = sized_rect(
+                container_css,
+                &format!("top:0;bottom:0;justify-self:{alignment}"),
+            );
+            assert_eq!(rect.3, height, "{container_css};justify-self:{alignment}");
+        }
+        for alignment in ["start", "end", "center"] {
+            let rect = sized_rect(
+                container_css,
+                &format!("top:0;bottom:0;align-self:{alignment}"),
+            );
+            assert_eq!(rect.3, 100.0, "{container_css};align-self:{alignment}");
+        }
+    }
+}
+
+#[test]
+fn a_fitted_box_is_placed_by_its_alignment_in_the_vertical_container() {
+    // The inline axis runs from top to bottom in `vertical-rl`, and from
+    // bottom to top under `direction: rtl`.
+    for (container_css, alignment, y) in [
+        ("writing-mode:vertical-rl", "start", 0.0),
+        ("writing-mode:vertical-rl", "center", 50.0),
+        ("writing-mode:vertical-rl", "end", 100.0),
+        ("writing-mode:vertical-rl;direction:rtl", "start", 100.0),
+        ("writing-mode:vertical-rl;direction:rtl", "center", 50.0),
+        ("writing-mode:vertical-rl;direction:rtl", "end", 0.0),
+    ] {
+        let rect = sized_rect(
+            container_css,
+            &format!("top:0;bottom:0;justify-self:{alignment}"),
+        );
+        assert_eq!((rect.1, rect.3), (y, 0.0), "{container_css};{alignment}");
+    }
+    // The block axis runs from right to left in `vertical-rl`.
+    for (alignment, x) in [("start", 100.0), ("center", 50.0), ("end", 0.0)] {
+        let rect = sized_rect(
+            "writing-mode:vertical-rl",
+            &format!("left:0;right:0;align-self:{alignment}"),
+        );
+        assert_eq!((rect.0, rect.2), (x, 0.0), "align-self:{alignment}");
+    }
+}
+
+#[test]
+fn a_horizontal_container_keeps_its_alignment_axes() {
+    // `justify-self` decides the width and `align-self` the height there.
+    let rect = sized_rect("", "left:0;right:0;align-self:start");
+    assert_eq!(rect.2, 100.0);
+    let rect = sized_rect("", "left:0;right:0;justify-self:start");
+    assert_eq!(rect.2, 0.0);
+    let rect = sized_rect("", "top:0;bottom:0;justify-self:start");
+    assert_eq!(rect.3, 100.0);
+    let rect = sized_rect("", "top:0;bottom:0;align-self:start");
+    assert_eq!(rect.3, 0.0);
+}
+
+#[test]
+fn a_horizontal_box_in_a_vertical_container_is_the_container_of_its_own_children() {
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;position:relative;width:100px;height:100px;writing-mode:vertical-rl"),
+    );
+    // A horizontal box between the insets of the vertical container, whose own
+    // child is aligned along the axes of its writing mode.
+    let horizontal = doc.append_element(
+        Some(container),
+        "div",
+        Some(
+            "display:block;position:absolute;left:0;top:0;width:80px;height:80px;\
+             writing-mode:horizontal-tb",
+        ),
+    );
+    let inner = doc.append_element(
+        Some(horizontal),
+        "div",
+        Some("display:block;position:absolute;left:0;right:0;top:0;width:auto;justify-self:start"),
+    );
+    // The next child of the vertical container is still aligned by its axes.
+    let sibling = doc.append_element(
+        Some(container),
+        "div",
+        Some(
+            "display:block;position:absolute;left:0;right:0;top:0;width:auto;height:10px;\
+             align-self:start",
+        ),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    // `justify-self: start` fits the width in the horizontal box, `align-self:
+    // start` in the vertical container.
+    assert_eq!(absolute_rect(&doc, inner).2, 0.0);
+    assert_eq!(absolute_rect(&doc, sibling).2, 0.0);
+}
+
+/// The page rect of an absolutely or fixed positioned child styled
+/// `child_css` of a body without a positioned ancestor, under a root styled
+/// `root_css`: the initial containing block holds it.
+fn root_rect(root_css: &str, position: &str, child_css: &str) -> (f32, f32, f32, f32) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some(format!("display:block;{root_css}")));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!(
+            "display:block;position:{position};width:auto;height:auto;{child_css}"
+        )),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    absolute_rect(&doc, child)
+}
+
+#[test]
+fn the_initial_containing_block_takes_the_alignment_axes_of_the_root_element() {
+    for position in ["absolute", "fixed"] {
+        let vertical = "writing-mode:vertical-rl";
+        // The page area is 800x600. `align-self` decides the width on the
+        // vertical axes of the root, `justify-self` the height.
+        let rect = root_rect(vertical, position, "left:0;right:0;align-self:start");
+        assert_eq!(rect.2, 0.0, "{position}");
+        let rect = root_rect(vertical, position, "left:0;right:0;justify-self:start");
+        assert_eq!(rect.2, 800.0, "{position}");
+        let rect = root_rect(vertical, position, "top:0;bottom:0;justify-self:start");
+        assert_eq!(rect.3, 0.0, "{position}");
+        let rect = root_rect(vertical, position, "top:0;bottom:0;align-self:start");
+        assert_eq!(rect.3, 600.0, "{position}");
+        // The other way round on the axes of a horizontal root.
+        let rect = root_rect("", position, "left:0;right:0;justify-self:start");
+        assert_eq!(rect.2, 0.0, "{position}");
+        let rect = root_rect("", position, "left:0;right:0;align-self:start");
+        assert_eq!(rect.2, 800.0, "{position}");
+    }
+}

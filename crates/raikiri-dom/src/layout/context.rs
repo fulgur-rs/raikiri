@@ -19,6 +19,10 @@ pub(crate) struct LayoutContext {
     pub(crate) ifc_width_probe: bool,
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
+    /// Whether the out-of-flow boxes being positioned have a containing block
+    /// on vertical axes, whose alignment properties name the other physical
+    /// axes than the library assumes (see `dispatch::oof`).
+    pub(crate) oof_axes_vertical: bool,
     pub(crate) orthogonal_block_in_layout: Option<usize>,
     pub(crate) transposed_style_index: crate::layout::dispatch::TransposedStyleIndex,
     pub(crate) transposed_frame_serial: u64,
