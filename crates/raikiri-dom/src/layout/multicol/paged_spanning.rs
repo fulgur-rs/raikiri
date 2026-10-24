@@ -249,6 +249,10 @@ pub(in crate::layout) fn paginate_spanning_columns(
 /// height when a page rule or a named page sizes them, so a spanner that fits
 /// the page it starts on may cross more than one page end. Each one visited
 /// is charged to `work`, which bounds their number and checks for an abort.
+///
+/// The walk stops at the page limit: past the last page there is nothing to
+/// cut. A control that truncates there ends it with the spanner cut as far as
+/// the pages go, and any other control reports the limit as exceeded.
 fn breaks_at_every_page_end(
     tree: &LayoutSession<'_>,
     id: usize,
@@ -266,7 +270,10 @@ fn breaks_at_every_page_end(
             return Ok(false);
         }
         work.charge(1)?;
-        let (_, origin, height) = page_for(page_end + EPSILON);
+        let (page_index, origin, height) = page_for(page_end + EPSILON);
+        if !work.page_available(page_index)? {
+            break;
+        }
         page_end = origin + height;
     }
     Ok(true)
