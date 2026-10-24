@@ -123,7 +123,8 @@ All consumers of SVG go through one resolved-image abstraction that answers
 with either pixels or a scene, chosen by D6.
 
 - `ImagePixelSource` keeps `get_decoded_at_size` and gains a default method
-  that returns the scene for a URL and a size. Sources without vector support
+  that returns the scene for a URL, a size and the host style inputs of D8
+  (the inherited `color` and the root font). Sources without vector support
   keep the default (`None`), so existing implementations do not break.
 - `<img>`, `background-image` (including pseudo-elements and margin boxes),
   `list-style-image` and `content: url()` use that method for SVG sources.
@@ -164,8 +165,13 @@ be added the same way later if a use appears.
   it. `background-size`, `object-fit` and tiling are the consumer's business:
   it places one scene per tile with a transform, and may reuse a scene when
   the tile size repeats.
-- Scenes are cached per source and size, in the same LRU and byte budget that
-  hold rasters today (the cost of a scene is its estimated heap size).
+- Scenes are cached per source, size and host style inputs, in the same LRU and
+  byte budget that hold rasters today (the cost of a scene is its estimated
+  heap size). Two elements that show the same URL at the same size with
+  different `color` or font get different entries, because `currentColor` and
+  inherited text properties change the scene. A scene records whether it read
+  any host input; one that did not (no `currentColor`, no inherited text) is
+  keyed by source and size alone, so the common case keeps one entry.
 
 ### D8. Style inputs
 
