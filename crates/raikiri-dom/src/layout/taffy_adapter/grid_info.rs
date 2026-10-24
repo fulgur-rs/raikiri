@@ -1,7 +1,8 @@
 use super::convert::{FromTaffy, IntoTaffy};
 use raikiri_layout_geometry::{Edges, Size};
+use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
 use smol_str::SmolStr;
-use taffy::{DetailedGridInfo, DetailedLayoutInfo, Direction, GridPlacement, Line};
+use taffy::{DetailedGridInfo, DetailedLayoutInfo, Direction, GridItemStyle};
 
 /// The grid lines an item of a grid occupies, as 1-based line numbers: the
 /// item spans the rows from `row_start` up to, not including, `row_end`, and
@@ -98,22 +99,22 @@ impl GridInfo {
         Some(Size::from_taffy(size))
     }
 
-    /// The grid area that the grid placement `row` and `column` of an
-    /// out-of-flow box resolves to, relative to the border box of the container.
+    /// The grid area that the grid placement of the out-of-flow box `style`
+    /// resolves to, relative to the border box of the container.
     ///
     /// `padding_box` is the padding box of the container and `direction` its
     /// inline direction.
     pub(crate) fn resolve_absolute_grid_area(
         &self,
-        row: Line<GridPlacement<SmolStr>>,
-        column: Line<GridPlacement<SmolStr>>,
+        style: &LayoutStyleView<'_>,
         direction: Direction,
         padding_box: Edges<f32>,
     ) -> Edges<f32> {
         self.grid().map_or(padding_box, |grid| {
+            let style = TaffyStyle::new(*style);
             Edges::from_taffy(grid.resolve_absolute_grid_area(
-                row,
-                column,
+                style.grid_row(),
+                style.grid_column(),
                 direction,
                 padding_box.into_taffy(),
             ))

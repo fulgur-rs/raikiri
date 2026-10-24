@@ -343,15 +343,11 @@ pub(crate) fn compute_multicol_layout(
                 None | Some(taffy::AlignItems::STRETCH | taffy::AlignItems::NORMAL)
             );
             match tree.nodes[parent].formatting_context {
-                FormattingContext::Flex => match container.flex_direction() {
-                    taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse => {
-                        FlowPlacement::Stretched(stretched)
-                    }
-                    taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse => {
-                        FlowPlacement::ColumnFlex {
-                            flexed: css.flex_grow() > 0.0 || css.flex_basis() != Dimension::auto(),
-                        }
-                    }
+                FormattingContext::Flex if container.flex_direction_is_row() => {
+                    FlowPlacement::Stretched(stretched)
+                }
+                FormattingContext::Flex => FlowPlacement::ColumnFlex {
+                    flexed: css.flex_grow() > 0.0 || css.flex_basis() != Dimension::auto(),
                 },
                 FormattingContext::Grid => FlowPlacement::Stretched(stretched),
                 _ => FlowPlacement::Stretched(false),
@@ -2693,10 +2689,7 @@ impl FlexFloatChain {
             return self;
         };
         let row_flex = node.formatting_context == FormattingContext::Flex
-            && matches!(
-                style_of(tree, node_id).flex_direction(),
-                taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-            );
+            && style_of(tree, node_id).flex_direction_is_row();
         Self::Multicol {
             horizontal,
             row_flex: above_row_flex || row_flex,

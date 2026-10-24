@@ -23,6 +23,7 @@ use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 
 mod cache_keys_tests;
 mod grid_info_tests;
+mod grid_rows_tests;
 mod resolve_tests;
 mod round_trip_tests;
 mod tree_tests;

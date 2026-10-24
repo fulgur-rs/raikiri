@@ -346,3 +346,31 @@ fn bare_named_placement_keeps_area_lookup_distinct_from_explicit_one() {
         }
     }
 }
+
+#[test]
+fn a_box_has_grid_placement_when_any_of_its_four_lines_is_not_auto() {
+    let placed = |set: fn(&mut ComputedValues, GridLineValue)| {
+        let mut cv = ComputedValues::initial();
+        set(&mut cv, GridLineValue::Line(2));
+        let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+        LayoutStyleView::new(&p, ViewContext::default(), &[], &[]).has_grid_placement()
+    };
+    let initial = ComputedValues::initial();
+    let p = PreparedStyle::new(&initial, StyleMetadata::default(), &[]).unwrap();
+    let view = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+    assert!(!view.has_grid_placement());
+    assert!(placed(|cv, line| cv.grid_row_start = line));
+    assert!(placed(|cv, line| cv.grid_row_end = line));
+    assert!(placed(|cv, line| cv.grid_column_start = line));
+    assert!(placed(|cv, line| cv.grid_column_end = line));
+    for line in [
+        GridLineValue::Span(2),
+        GridLineValue::Named(SmolStr::new("area")),
+    ] {
+        let mut cv = ComputedValues::initial();
+        cv.grid_column_end = line;
+        let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+        let view = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+        assert!(view.has_grid_placement());
+    }
+}

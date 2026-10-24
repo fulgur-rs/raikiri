@@ -19,7 +19,7 @@ use crate::layout::taffy_adapter::GridInfo;
 use crate::layout::taffy_adapter::OofSpan;
 use crate::layout::taffy_adapter::algorithms::{claims_position, compute_oof_layout_for_area};
 use raikiri_layout_geometry::{Edges, Point, Size};
-use taffy::{ContainingBlockClaims, Direction, GridPlacement};
+use taffy::{ContainingBlockClaims, Direction};
 
 use super::vertical_block::block_right_to_left;
 use crate::layout::context::LayoutSession;
@@ -117,12 +117,8 @@ impl<'a> GridAreas<'a> {
         padding_box: Edges<f32>,
     ) -> Edges<f32> {
         let resolve = |padding_box| {
-            self.info.resolve_absolute_grid_area(
-                style.grid_row(),
-                style.grid_column(),
-                direction,
-                padding_box,
-            )
+            self.info
+                .resolve_absolute_grid_area(style, direction, padding_box)
         };
         match self.axes {
             None => resolve(padding_box),
@@ -159,15 +155,6 @@ impl<'a> GridAreas<'a> {
             },
         }
     }
-}
-
-/// Whether `style` places its box in the grid with a grid-placement property,
-/// rather than leaving it to the padding box.
-fn is_placed(style: &LayoutStyleView<'_>) -> bool {
-    let (row, column) = (style.grid_row(), style.grid_column());
-    [row.start, row.end, column.start, column.end]
-        .iter()
-        .any(|placement| !matches!(placement, GridPlacement::Auto))
 }
 
 /// Lay out the out-of-flow `candidates` of the vertical grid container `owner`
@@ -213,7 +200,7 @@ pub(super) fn compute_oof_layout(
         }
         let grid_area = {
             let style = tree.query_style(usize::from(candidate.node), ReadRole::Oof);
-            if !is_placed(&style) {
+            if !style.has_grid_placement() {
                 continue;
             }
             // Without the tracks, which taffy reports only from a layout it

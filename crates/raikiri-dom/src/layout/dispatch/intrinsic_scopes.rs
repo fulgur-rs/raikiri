@@ -85,10 +85,9 @@ pub(super) fn with_flex_item_basis_bounds<R>(
     layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
     tree.sync_layout_cache_mutations();
-    let is_row = matches!(
-        (tree.physical_style(usize::from(node_id))).flex_direction(),
-        taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-    );
+    let is_row = tree
+        .physical_style(usize::from(node_id))
+        .flex_direction_is_row();
     let children: Vec<NodeId> = if is_row {
         tree.child_ids(node_id).collect()
     } else {

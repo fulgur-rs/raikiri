@@ -74,6 +74,22 @@ fn sizing_keywords_and_non_finite_numbers_follow_bridge_policy() {
 }
 
 #[test]
+fn the_main_axis_of_a_flex_container_runs_along_rows_for_row_directions() {
+    for (input, expected) in [
+        (FlexDirectionValue::Row, true),
+        (FlexDirectionValue::RowReverse, true),
+        (FlexDirectionValue::Column, false),
+        (FlexDirectionValue::ColumnReverse, false),
+    ] {
+        let mut cv = ComputedValues::initial();
+        cv.flex_direction = input;
+        query(&cv, StyleFlags::default(), |v| {
+            assert_eq!(v.flex_direction_is_row(), expected)
+        });
+    }
+}
+
+#[test]
 fn all_flex_and_alignment_keywords_have_explicit_results() {
     for (input, expected) in [
         (FlexDirectionValue::Row, taffy::FlexDirection::Row),
