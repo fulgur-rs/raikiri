@@ -4,7 +4,10 @@
 use super::*;
 use crate::cascade::keyword_defaults::KEYS;
 use crate::computed::ComputedBackgroundLayer;
-use crate::property::{BoxSizing, FloatValue, TextTransform, WordBreak, property_key_for_name};
+use crate::property::{
+    BoxSizing, FloatValue, TextAutospace, TextSpacingTrim, TextTransform, TextWrapMode,
+    TextWrapStyle, WhiteSpaceCollapse, WordBreak, property_key_for_name,
+};
 use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal};
 
 /// A property, whether it is inherited, and values that compute apart: the
@@ -310,6 +313,12 @@ const CASES: &[(&str, bool, &[&str])] = &[
     ("outline-offset", false, &["3px", "5px", "-2px"]),
     ("text-decoration-color", false, &["red", "blue", "green"]),
     ("text-emphasis-color", true, &["red", "blue", "green"]),
+    (
+        "white-space-collapse",
+        true,
+        &["preserve", "preserve-breaks", "break-spaces"],
+    ),
+    ("text-wrap-mode", true, &["nowrap", "wrap", "nowrap"]),
 ];
 
 /// The shorthands over properties of the table, with the same three kinds of
@@ -387,6 +396,20 @@ const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         true,
         &["dot red", "circle blue", "sesame green"],
     ),
+    (
+        "text-wrap",
+        true,
+        &["nowrap balance", "wrap pretty", "stable"],
+    ),
+    (
+        "text-spacing",
+        true,
+        &[
+            "space-all no-autospace",
+            "trim-start",
+            "trim-all ideograph-alpha",
+        ],
+    ),
 ];
 
 /// The computed values of a parent styled `parent` and of its child `p`
@@ -409,7 +432,11 @@ fn same(left: &ComputedValues, right: &ComputedValues) -> bool {
 
 /// Rows with a test of their own: the computed value depends on another
 /// property, so a case that sets only this one cannot tell the keywords apart.
-const SEPARATE_TESTS: &[&str] = &["outline-width"];
+const SEPARATE_TESTS: &[&str] = &["outline-width", "white-space"];
+
+/// Properties that drop `revert` and `revert-layer`: the user agent sets
+/// `white-space` whole, so these have no cascade slot to roll back to.
+const NO_ROLLBACK: &[&str] = &["white-space-collapse", "text-wrap-mode", "text-wrap"];
 
 #[test]
 fn every_table_row_has_a_case() {
@@ -461,13 +488,15 @@ fn keyword_failures(name: &str, inherited: bool, values: &[&str]) -> Vec<String>
             child(&parent, sheets, &format!("{start}{keyword} }}"))
         };
         let unset = if inherited { &from_parent } else { &initial };
-        let checks = [
+        let mut checks = vec![
             ("inherit", run(&[], "inherit"), &from_parent),
             ("initial", run(&[], "initial"), &initial),
             ("unset", run(&[], "unset"), unset),
-            ("revert", run(&user_agent, "revert"), &ua),
-            ("revert-layer", run(&user_agent, "revert-layer"), &ua),
         ];
+        if !NO_ROLLBACK.contains(&name) {
+            checks.push(("revert", run(&user_agent, "revert"), &ua));
+            checks.push(("revert-layer", run(&user_agent, "revert-layer"), &ua));
+        }
         for (keyword, actual, expected) in checks {
             if !same(&actual, expected) {
                 failures.push(format!("{name}: {keyword} after `{before}`"));
@@ -507,14 +536,30 @@ fn every_longhand_of_a_shorthand_case_resolves_the_keyword() {
     assert_eq!(keyword_longhand_name(PropertyKey::Color), None);
     for &(name, ..) in SHORTHAND_CASES {
         let key = property_key_for_name(name).unwrap_or_else(|| panic!("{name} has no key"));
-        let KeyClass::Shorthand { longhands } = classify(key) else {
-            panic!("{name} is not expanded into longhands");
+        let longhands: Vec<(PropertyKey, &str)> = match classify(key) {
+            KeyClass::Shorthand { longhands } => longhands
+                .iter()
+                .map(|&longhand| {
+                    // The projection of a shorthand's keyword onto a longhand
+                    // renames the marker, so the longhand needs a name that
+                    // maps back to it.
+                    let longhand_name = keyword_longhand_name(longhand)
+                        .unwrap_or_else(|| panic!("{name}: {longhand:?} has no name"));
+                    (longhand, longhand_name)
+                })
+                .collect(),
+            // A shorthand the cascade keeps whole expands a keyword into
+            // longhands named by the expansion itself.
+            KeyClass::Retained => crate::rule::retained_keyword_longhands(&DeferredValue {
+                property: name.into(),
+                value: "inherit".into(),
+                key,
+            })
+            .unwrap_or_else(|| panic!("{name} has no longhands for a keyword"))
+            .to_vec(),
+            KeyClass::Longhand => panic!("{name} is not a shorthand"),
         };
-        for &longhand in longhands {
-            // The projection of a shorthand's keyword onto a longhand renames
-            // the marker, so the longhand needs a name that maps back to it.
-            let longhand_name = keyword_longhand_name(longhand)
-                .unwrap_or_else(|| panic!("{name}: {longhand:?} has no name"));
+        for (longhand, longhand_name) in longhands {
             assert_eq!(property_key_for_name(longhand_name), Some(longhand));
             let marker = PropertyValue::Deferred(DeferredValue {
                 property: longhand_name.into(),
@@ -746,4 +791,215 @@ fn inherit_keeps_the_keyword_values_of_the_text_decoration_lengths() {
         values.text_decoration_inset,
         ComputedTextDecorationInset::Auto
     );
+}
+
+/// The effective `white-space-collapse` and `text-wrap-mode` of the child `p`
+/// of a `div` styled `parent`, under `css` as an author sheet. `white-space`
+/// and its longhands settle them by cascade order.
+fn white_space_pair(
+    parent: &str,
+    sheets: &[(&str, Origin)],
+    css: &str,
+) -> (WhiteSpaceCollapse, TextWrapMode) {
+    let values = child(parent, sheets, &format!("#target {{ {css} }}"));
+    (
+        values.effective_white_space_collapse,
+        values.effective_text_wrap_mode,
+    )
+}
+
+#[test]
+fn white_space_keywords_take_both_halves_of_the_parent() {
+    use TextWrapMode::{Nowrap, Wrap};
+    use WhiteSpaceCollapse::{Collapse, Preserve};
+    // `pre` is `preserve` and `nowrap`, so both halves differ from initial.
+    let pair = |css: &str| white_space_pair("white-space: pre", &[], css);
+    assert_eq!(
+        pair("white-space: nowrap; white-space: inherit"),
+        (Preserve, Nowrap)
+    );
+    assert_eq!(
+        pair("white-space: pre-wrap; white-space: initial"),
+        (Collapse, Wrap)
+    );
+    // `white-space` is inherited, so `unset` is `inherit`.
+    assert_eq!(
+        pair("white-space: normal; white-space: unset"),
+        (Preserve, Nowrap)
+    );
+    // A keyword on the parent's own `white-space` longhands reads the same.
+    assert_eq!(
+        white_space_pair(
+            "white-space-collapse: preserve-breaks; text-wrap-mode: nowrap",
+            &[],
+            "white-space: normal; white-space: inherit"
+        ),
+        (WhiteSpaceCollapse::PreserveBreaks, Nowrap)
+    );
+}
+
+#[test]
+fn a_white_space_keyword_competes_with_the_longhands_in_cascade_order() {
+    use TextWrapMode::{Nowrap, Wrap};
+    use WhiteSpaceCollapse::{Collapse, Preserve};
+    // `pre-wrap` is `preserve` and `wrap`.
+    let pair = |css: &str| white_space_pair("white-space: pre-wrap", &[], css);
+    // The later declaration decides each half, whichever of the legacy
+    // keyword, the longhands and the CSS-wide keywords it is.
+    assert_eq!(
+        pair("white-space: inherit; white-space: nowrap"),
+        (Collapse, Nowrap)
+    );
+    assert_eq!(
+        pair("white-space: nowrap; white-space-collapse: inherit"),
+        (Preserve, Nowrap)
+    );
+    assert_eq!(
+        pair("white-space: nowrap; text-wrap-mode: inherit"),
+        (Collapse, Wrap)
+    );
+    assert_eq!(
+        pair("white-space-collapse: inherit; white-space: normal"),
+        (Collapse, Wrap)
+    );
+    assert_eq!(
+        pair("text-wrap-mode: initial; white-space-collapse: initial; white-space: inherit"),
+        (Preserve, Wrap)
+    );
+    // An important keyword beats a later normal `white-space`.
+    assert_eq!(
+        pair("white-space: inherit !important; white-space: nowrap"),
+        (Preserve, Wrap)
+    );
+    // A keyword of the longhands alone leaves the other half to the legacy
+    // keyword declared before it.
+    assert_eq!(
+        pair("white-space: pre; white-space-collapse: initial"),
+        (Collapse, Nowrap)
+    );
+}
+
+#[test]
+fn a_white_space_rollback_returns_to_the_user_agent_keyword() {
+    use TextWrapMode::Nowrap;
+    use WhiteSpaceCollapse::Preserve;
+    // The user agent sets `white-space` whole, so the rollback keeps the
+    // shorthand in its own cascade slot instead of expanding it.
+    let user_agent = [("p { white-space: pre }", Origin::UserAgent)];
+    for keyword in ["revert", "revert-layer"] {
+        assert_eq!(
+            white_space_pair(
+                "",
+                &user_agent,
+                &format!("white-space: normal; white-space: {keyword}")
+            ),
+            (Preserve, Nowrap),
+            "{keyword}"
+        );
+    }
+}
+
+#[test]
+fn text_wrap_keywords_take_the_mode_and_the_style_of_the_parent() {
+    let parent = "text-wrap: nowrap balance";
+    let values = |css: &str| child(parent, &[], &format!("#target {{ {css} }}"));
+    let inherited = values("text-wrap: wrap pretty; text-wrap: inherit");
+    assert_eq!(inherited.effective_text_wrap_mode, TextWrapMode::Nowrap);
+    assert_eq!(inherited.text_wrap_style, TextWrapStyle::Balance);
+    let initial = values("text-wrap: nowrap pretty; text-wrap: initial");
+    assert_eq!(initial.effective_text_wrap_mode, TextWrapMode::Wrap);
+    assert_eq!(initial.text_wrap_style, TextWrapStyle::Auto);
+    // The style longhand and the shorthand compete in cascade order.
+    let style_last = values("text-wrap: inherit; text-wrap-style: pretty");
+    assert_eq!(style_last.effective_text_wrap_mode, TextWrapMode::Nowrap);
+    assert_eq!(style_last.text_wrap_style, TextWrapStyle::Pretty);
+    let keyword_last = values("text-wrap-style: pretty; text-wrap: inherit");
+    assert_eq!(keyword_last.text_wrap_style, TextWrapStyle::Balance);
+    // `text-wrap-mode` is only the mode.
+    let mode_only = values("text-wrap-style: pretty; text-wrap-mode: inherit");
+    assert_eq!(mode_only.effective_text_wrap_mode, TextWrapMode::Nowrap);
+    assert_eq!(mode_only.text_wrap_style, TextWrapStyle::Pretty);
+}
+
+#[test]
+fn text_spacing_keywords_take_the_trim_and_the_autospace_of_the_parent() {
+    let parent = "text-spacing: space-all no-autospace";
+    let values = |css: &str| child(parent, &[], &format!("#target {{ {css} }}"));
+    let inherited = values("text-spacing: trim-start; text-spacing: inherit");
+    assert_eq!(inherited.text_spacing_trim, TextSpacingTrim::SpaceAll);
+    assert_eq!(inherited.text_autospace, TextAutospace::NoAutospace);
+    let initial = values("text-spacing: trim-start no-autospace; text-spacing: initial");
+    assert_eq!(initial.text_spacing_trim, TextSpacingTrim::Normal);
+    assert_eq!(initial.text_autospace, TextAutospace::Normal);
+    // A later longhand keeps its own value next to the shorthand keyword.
+    let longhand_last = values("text-spacing: initial; text-spacing-trim: trim-all");
+    assert_eq!(longhand_last.text_spacing_trim, TextSpacingTrim::TrimAll);
+    assert_eq!(longhand_last.text_autospace, TextAutospace::Normal);
+}
+
+#[test]
+fn a_keyword_substituted_from_var_resolves_white_space_through_its_legacy_keyword() {
+    use TextWrapMode::{Nowrap, Wrap};
+    use WhiteSpaceCollapse::{Collapse, Preserve};
+    // A `white-space` value written with `var()` stays one declaration, so a
+    // keyword it substitutes is the legacy keyword that stands for the
+    // effective halves of the source.
+    let pair = |keyword: &str| {
+        white_space_pair(
+            "white-space: pre",
+            &[],
+            &format!("--kw: {keyword}; white-space: nowrap; white-space: var(--kw)"),
+        )
+    };
+    assert_eq!(pair("inherit"), (Preserve, Nowrap));
+    assert_eq!(pair("initial"), (Collapse, Wrap));
+    assert_eq!(pair("unset"), (Preserve, Nowrap));
+}
+
+#[test]
+fn a_white_space_keyword_keeps_the_legacy_keyword_in_step() {
+    use crate::property::WhiteSpace;
+    let legacy =
+        |parent: &str, css: &str| child(parent, &[], &format!("#target {{ {css} }}")).white_space;
+    assert_eq!(
+        legacy("white-space: pre", "white-space: inherit"),
+        WhiteSpace::Pre
+    );
+    assert_eq!(
+        legacy("white-space: pre", "white-space: initial"),
+        WhiteSpace::Normal
+    );
+    // The longhands can combine in a way no keyword names; the keyword then
+    // stays as the parent authored it.
+    assert_eq!(
+        legacy(
+            "white-space: pre-wrap; white-space-collapse: discard",
+            "white-space: inherit"
+        ),
+        WhiteSpace::PreWrap
+    );
+}
+
+#[test]
+fn a_keyword_substituted_from_var_names_both_longhands_of_text_wrap_and_text_spacing() {
+    // Both shorthands stay one declaration when written with `var()`, so the
+    // keyword they substitute has to reset the longhands the literal one does.
+    let parent = "text-wrap: nowrap balance; text-spacing: space-all no-autospace";
+    for keyword in ["inherit", "initial", "unset"] {
+        let through_var = child(
+            parent,
+            &[],
+            &format!(
+                "#target {{ --kw: {keyword}; text-wrap: var(--kw); text-spacing: var(--kw) }}"
+            ),
+        );
+        let literal = child(
+            parent,
+            &[],
+            &format!(
+                "#target {{ --kw: {keyword}; text-wrap: {keyword}; text-spacing: {keyword} }}"
+            ),
+        );
+        assert!(same(&through_var, &literal), "{keyword}");
+    }
 }

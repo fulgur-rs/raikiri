@@ -14,15 +14,15 @@ use crate::cascade::rollback::{Rollback, rollback_kind};
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::logical::LogicalSide;
 use crate::property::{
-    BackgroundShorthand, Border, BorderColor, BorderImageShorthand, BorderStyle, CustomProperty,
-    DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride,
-    FontOpticalSizing, FontShorthand, FontShorthandSize, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GapShorthand, GridAreaShorthand, GridAutoFlowValue, GridLineShorthand, GridShorthand, Length,
-    LengthOrAuto, LengthPercentageOrCalc, Outline, OverflowXY, PlaceContentShorthand,
-    PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd,
-    TextDecorationShorthand, TextEmphasisShorthand, consume_deferred_value,
-    initial_grid_auto_track_list, parse_consumer_text_value, parse_value,
+    BackgroundShorthand, Border, BorderColor, BorderImageShorthand, BorderStyle, CssWideKeyword,
+    CustomProperty, DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontShorthand, FontShorthandSize,
+    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
+    FontVariantPosition, FontVariationSettings, GapShorthand, GridAreaShorthand, GridAutoFlowValue,
+    GridLineShorthand, GridShorthand, Length, LengthOrAuto, LengthPercentageOrCalc, Outline,
+    OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey,
+    PropertyValue, Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand,
+    consume_deferred_value, initial_grid_auto_track_list, parse_consumer_text_value, parse_value,
 };
 
 /// One property declaration = value + `!important` flag.
@@ -211,11 +211,13 @@ pub(crate) enum KeyClass {
     /// order, so it never becomes a cascade slot itself.
     Shorthand { longhands: &'static [PropertyKey] },
     /// A key that is its own cascade slot although it names a shorthand. A
-    /// `white-space` value always stays whole; a
+    /// `white-space` value stays whole; a
     /// `text-wrap` or `text-spacing` value stays whole only as a `var()` value,
     /// expanded after substitution (a literal one expands into its longhands,
     /// and `text-wrap`'s slot is also the `text-wrap-mode` longhand's); `all`
-    /// carries the `all: revert-layer` marker.
+    /// carries the `all: revert-layer` marker. A CSS-wide keyword on
+    /// `white-space`, `text-wrap` or `text-spacing` expands into the longhands
+    /// like a keyword on any shorthand.
     Retained,
 }
 
@@ -1128,11 +1130,56 @@ fn expand_none(d: &ParsedDeclaration, mut push: impl FnMut(Declaration)) {
     ));
 }
 
+/// The longhands, with their property names, that a CSS-wide keyword on a
+/// [`KeyClass::Retained`] shorthand stands for, or `None` for a value that
+/// stays whole: a `var()` value, `all`, `text-wrap-mode`, which has the key
+/// of `text-wrap`, and a rollback keyword on `white-space`. The user agent
+/// sets `white-space` as one declaration, so only the slot of `white-space`
+/// itself finds the declaration that a rollback returns to.
+pub(crate) fn retained_keyword_longhands(
+    deferred: &DeferredValue,
+) -> Option<&'static [(PropertyKey, &'static str)]> {
+    if !matches!(
+        deferred.key,
+        PropertyKey::WhiteSpace | PropertyKey::TextWrap | PropertyKey::TextSpacing
+    ) {
+        return None;
+    }
+    let keyword = deferred.css_wide_keyword()?;
+    Some(match (deferred.key, deferred.property.as_str()) {
+        (PropertyKey::WhiteSpace, _)
+            if !matches!(
+                keyword,
+                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+            ) =>
+        {
+            // The legacy slot comes first so that the longhands, which settle
+            // each half, are the later declarations; it keeps the computed
+            // `white-space` in step.
+            &[
+                (PropertyKey::WhiteSpace, "white-space"),
+                (PropertyKey::WhiteSpaceCollapse, "white-space-collapse"),
+                (PropertyKey::TextWrap, "text-wrap-mode"),
+            ]
+        }
+        (PropertyKey::TextWrap, property) if property != "text-wrap-mode" => &[
+            (PropertyKey::TextWrap, "text-wrap-mode"),
+            (PropertyKey::TextWrapStyle, "text-wrap-style"),
+        ],
+        (PropertyKey::TextSpacing, _) => &[
+            (PropertyKey::TextSpacingTrim, "text-spacing-trim"),
+            (PropertyKey::TextAutospace, "text-autospace"),
+        ],
+        _ => return None,
+    })
+}
+
 /// A deferred shorthand still expands before per-key cascade winner selection.
 /// The raw value is cloned once per longhand and re-parsed only after the
 /// winning longhand has been selected, preserving shorthand/longhand order.
-/// A deferred longhand, and a shorthand the cascade keeps in shorthand form
-/// ([`KeyClass::Retained`]), stays one declaration.
+/// A deferred longhand, and a `var()` value of a shorthand the cascade keeps
+/// in shorthand form ([`KeyClass::Retained`]), stays one declaration; a
+/// CSS-wide keyword on such a shorthand expands like any other.
 #[inline(never)]
 fn expand_deferred(
     d: &ParsedDeclaration,
@@ -1140,6 +1187,19 @@ fn expand_deferred(
     important: bool,
     mut push: impl FnMut(Declaration),
 ) {
+    if let Some(longhands) = retained_keyword_longhands(deferred) {
+        for &(key, property) in longhands {
+            let mut value = deferred.clone();
+            value.key = key;
+            value.property = property.into();
+            push(Declaration::with_side(
+                PropertyValue::Deferred(value),
+                important,
+                None,
+            ));
+        }
+        return;
+    }
     let KeyClass::Shorthand { longhands } = classify(deferred.key) else {
         return expand_none(d, push);
     };

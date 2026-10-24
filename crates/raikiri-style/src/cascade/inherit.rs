@@ -2737,6 +2737,28 @@ fn border_image_defaulting_value(
     }
 }
 
+/// The value of a CSS-wide `keyword` on `text-wrap` or `text-spacing` written
+/// with `var()`: such a declaration stays one cascade slot, so the keyword it
+/// substitutes names both longhands. A literal keyword expands into the
+/// longhands before the cascade ([`crate::rule::retained_keyword_longhands`]).
+fn retained_shorthand_keyword(
+    marker: &crate::property::DeferredValue,
+    keyword: CssWideKeyword,
+    inherited: &ComputedValues,
+) -> Option<PropertyValue> {
+    use super::keyword_defaults::{text_spacing_shorthand, text_wrap_shorthand};
+    use crate::property::PropertyKey as K;
+    match (marker.key, marker.property.as_str()) {
+        (K::TextWrap, property) if property != "text-wrap-mode" => Some(
+            PropertyValue::TextWrapShorthand(text_wrap_shorthand(keyword, inherited)),
+        ),
+        (K::TextSpacing, _) => Some(PropertyValue::TextSpacingShorthand(text_spacing_shorthand(
+            keyword, inherited,
+        ))),
+        _ => None,
+    }
+}
+
 /// Resolve defaulting markers shared by the element and page inheritance paths.
 pub(crate) fn resolve_defaulting_value(
     value: PropertyValue,
@@ -2745,6 +2767,9 @@ pub(crate) fn resolve_defaulting_value(
     if let PropertyValue::Deferred(marker) = &value
         && let Some(keyword) = marker.css_wide_keyword()
     {
+        if let Some(resolved) = retained_shorthand_keyword(marker, keyword, inherited) {
+            return resolved;
+        }
         if let Some(resolved) =
             super::keyword_defaults::defaulting_value(marker.key, keyword, inherited)
         {

@@ -7919,6 +7919,7 @@ impl PropertyKey {
                 | PropertyKey::TextDecoration
                 | PropertyKey::TextEmphasis
                 | PropertyKey::Background
+                | PropertyKey::TextSpacing
         )
     }
 }
