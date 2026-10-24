@@ -1020,6 +1020,9 @@ impl LayoutSession<'_> {
                         limits,
                         content_box_ratio,
                     )
+                    .or_else(|| {
+                        replaced_size::fixed_height_size(&style, &inputs, content_box_ratio)
+                    })
                 });
                 if constrained.is_some() {
                     apply_local_sizing(&mut style, &[OwnedPropertyOverride::aspect_ratio(None)]);
