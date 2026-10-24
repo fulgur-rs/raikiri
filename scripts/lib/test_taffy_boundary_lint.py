@@ -426,15 +426,15 @@ class RatchetTests(unittest.TestCase):
         _write(self.root, "crates/raikiri-dom/src/c.rs", "use taffy::{MaybeResolve, ResolveOrZero, MaybeMath};\n")
         code, out = _run(self.root)
         self.assertEqual(code, 1, out)
-        self.assertIn("-> crate::layout::taffy_adapter::MaybeResolve", out)
-        self.assertIn("-> crate::layout::taffy_adapter::ResolveOrZero", out)
+        self.assertIn("-> raikiri_layout_style::values::MaybeResolve", out)
+        self.assertIn("-> raikiri_layout_style::values::ResolveOrZero", out)
         self.assertIn("-> raikiri_layout_geometry::MaybeMath", out)
 
     def test_crate_private_helper_traits_are_not_named_outside_raikiri_dom(self) -> None:
-        _write(self.root, "crates/other/src/lib.rs", "use taffy::{MaybeResolve, MaybeMath};\n")
+        _write(self.root, "crates/other/src/lib.rs", "use taffy::{AvailableSpace, MaybeMath};\n")
         code, out = _run(self.root)
         self.assertEqual(code, 1, out)
-        self.assertIn("1: use taffy::MaybeResolve  -> no owned name outside raikiri-dom yet", out)
+        self.assertIn("1: use taffy::AvailableSpace  -> no owned name outside raikiri-dom yet", out)
         self.assertIn("1: use taffy::MaybeMath  -> raikiri_layout_geometry::MaybeMath", out)
 
     def test_failure_lists_at_most_a_dozen_occurrences_per_file(self) -> None:
@@ -562,16 +562,13 @@ class NameTableTests(unittest.TestCase):
     def test_owned_input_names_exist_where_the_hints_point(self) -> None:
         self.assertLessEqual(set(OWNED_INPUT_NAMES), set(INPUT_NAMES))
         geometry = self._reexported(self._source("crates/raikiri-layout-geometry/src/lib.rs"), "pub")
-        adapter = self._source("crates/raikiri-dom/src/layout/taffy_adapter.rs")
-        resolve = self._source("crates/raikiri-dom/src/layout/taffy_adapter/resolve.rs")
-        reexported = self._reexported(adapter, r"pub\(crate\)")
+        values = self._reexported(self._source("crates/raikiri-layout-style/src/values.rs"), "pub")
         for name, hint in OWNED_INPUT_NAMES.items():
             if hint.startswith("raikiri_layout_geometry::"):
                 self.assertIn(hint.removeprefix("raikiri_layout_geometry::"), geometry, name)
             else:
-                self.assertEqual(hint, f"crate::layout::taffy_adapter::{name}")
-                self.assertIn(name, reexported, f"{name} is not re-exported by the adapter module")
-                self.assertRegex(resolve, rf"(?m)^pub\(crate\) trait {name}\b", name)
+                self.assertEqual(hint, f"raikiri_layout_style::values::{name}")
+                self.assertIn(name, values, f"{name} is not re-exported by the view crate's values module")
 
     def test_every_counted_name_has_a_replacement_hint(self) -> None:
         for name, hint in OUTPUT_NAMES.items():
