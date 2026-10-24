@@ -7919,6 +7919,9 @@ impl PropertyKey {
                 | PropertyKey::TextDecoration
                 | PropertyKey::TextEmphasis
                 | PropertyKey::Background
+                | PropertyKey::BorderColor
+                | PropertyKey::BorderStyle
+                | PropertyKey::BorderWidth
                 | PropertyKey::TextSpacing
         )
     }

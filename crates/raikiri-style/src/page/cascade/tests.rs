@@ -2781,6 +2781,49 @@ fn page_explicit_inherit_keeps_the_root_computed_border_width() {
     );
 }
 
+#[test]
+fn border_color_style_and_width_keywords_resolve_on_the_page_and_its_margin_boxes() {
+    let mut root = ComputedValues::initial();
+    root.border.top.width = crate::resolve::ComputedLength(6.0);
+    root.border.top.style = BorderStyle::Solid;
+    root.border.left.width = crate::resolve::ComputedLength(2.0);
+    root.border.left.style = BorderStyle::Dashed;
+    let page = page(
+        "@page { border-width: inherit; border-style: inherit; \
+         @top-left { content: 'x'; border-style: inherit; border-width: initial } \
+         @top-right { content: 'x'; border-style: solid; border-width: inherit } \
+         @bottom-left { content: 'x'; border-color: initial } }",
+        &root,
+    );
+    let declarations = page.declarations();
+    assert_eq!(
+        declarations.get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(6.0))),
+    );
+    assert_eq!(
+        declarations.get(&PropertyKey::BorderLeftStyle),
+        Some(&PropertyValue::BorderLeftStyle(BorderStyle::Dashed)),
+    );
+    let border = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        page.margin_box_style(&rule, None).border
+    };
+    // The style comes from the page; the initial width is `medium`.
+    let top_left = border(PageMarginBoxSlot::TopLeft);
+    assert_eq!(top_left.top.style, BorderStyle::Solid);
+    assert_eq!(top_left.left.style, BorderStyle::Dashed);
+    assert_eq!(top_left.top.width.px(), 3.0);
+    // The width comes from the page.
+    let top_right = border(PageMarginBoxSlot::TopRight);
+    assert_eq!(top_right.top.width.px(), 6.0);
+    assert_eq!(top_right.left.width.px(), 2.0);
+    // A color keyword leaves the other sub-properties alone.
+    assert_eq!(
+        border(PageMarginBoxSlot::BottomLeft).top.style,
+        BorderStyle::None
+    );
+}
+
 /// `hidden` gates identically to `none` (same §3.3 clause).
 #[test]
 fn cascade_page_border_css_wide_inherit_takes_root() {

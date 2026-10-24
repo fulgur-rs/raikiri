@@ -1003,3 +1003,19 @@ fn a_keyword_substituted_from_var_names_both_longhands_of_text_wrap_and_text_spa
         assert!(same(&through_var, &literal), "{keyword}");
     }
 }
+
+#[test]
+fn only_the_border_side_longhands_have_a_keyword_variant() {
+    use crate::property::{CssWideKeyword, PropertyKey, PropertyValue};
+    use crate::rule::border_side_css_wide;
+    assert_eq!(
+        border_side_css_wide(PropertyKey::BorderLeftWidth, CssWideKeyword::Initial),
+        Some(PropertyValue::BorderLeftWidthCssWide(
+            CssWideKeyword::Initial
+        ))
+    );
+    assert_eq!(
+        border_side_css_wide(PropertyKey::Width, CssWideKeyword::Inherit),
+        None
+    );
+}

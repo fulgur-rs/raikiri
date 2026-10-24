@@ -1203,6 +1203,21 @@ fn expand_deferred(
     let KeyClass::Shorthand { longhands } = classify(deferred.key) else {
         return expand_none(d, push);
     };
+    if let Some(keyword) = deferred.css_wide_keyword()
+        && matches!(
+            deferred.key,
+            PropertyKey::BorderColor | PropertyKey::BorderStyle | PropertyKey::BorderWidth
+        )
+    {
+        // The four sides carry the keyword in variants of their own.
+        for value in longhands
+            .iter()
+            .filter_map(|&longhand| border_side_css_wide(longhand, keyword))
+        {
+            push(Declaration::with_side(value, important, None));
+        }
+        return;
+    }
     let sides = match deferred.key {
         PropertyKey::MarginInline | PropertyKey::PaddingInline | PropertyKey::InsetInline => {
             [Some(LogicalSide::InlineStart), Some(LogicalSide::InlineEnd)]
@@ -1222,6 +1237,33 @@ fn expand_deferred(
             side,
         ));
     }
+}
+
+/// The variant that carries a CSS-wide `keyword` for `longhand`, one of the
+/// per-side longhands of `border-color`, `border-style` and `border-width`,
+/// which keep the keyword in variants of their own rather than as cascade
+/// markers; `None` for any other key.
+pub(crate) fn border_side_css_wide(
+    longhand: PropertyKey,
+    keyword: CssWideKeyword,
+) -> Option<PropertyValue> {
+    use PropertyKey as K;
+    use PropertyValue as V;
+    Some(match longhand {
+        K::BorderTopColor => V::BorderTopColorCssWide(keyword),
+        K::BorderRightColor => V::BorderRightColorCssWide(keyword),
+        K::BorderBottomColor => V::BorderBottomColorCssWide(keyword),
+        K::BorderLeftColor => V::BorderLeftColorCssWide(keyword),
+        K::BorderTopStyle => V::BorderTopStyleCssWide(keyword),
+        K::BorderRightStyle => V::BorderRightStyleCssWide(keyword),
+        K::BorderBottomStyle => V::BorderBottomStyleCssWide(keyword),
+        K::BorderLeftStyle => V::BorderLeftStyleCssWide(keyword),
+        K::BorderTopWidth => V::BorderTopWidthCssWide(keyword),
+        K::BorderRightWidth => V::BorderRightWidthCssWide(keyword),
+        K::BorderBottomWidth => V::BorderBottomWidthCssWide(keyword),
+        K::BorderLeftWidth => V::BorderLeftWidthCssWide(keyword),
+        _ => return None,
+    })
 }
 
 /// Cold helper that expands the `margin` shorthand into four longhands.
