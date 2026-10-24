@@ -149,16 +149,18 @@ fn counter_reset_is_case_insensitive_on_none() {
 }
 
 #[test]
-fn counter_reset_accepts_inherit_marker_and_rejects_other_reserved_names() {
-    // `counter-reset: inherit` is retained as a page-context marker;
-    // the other CSS-wide keywords are not valid counter names.
-    assert_eq!(
-        parse("inherit", "counter-reset"),
-        Some(PropertyValue::CounterResetInherit)
-    );
-    assert_eq!(parse("initial", "counter-reset"), None);
-    assert_eq!(parse("unset", "counter-reset"), None);
-    assert_eq!(parse("revert", "counter-reset"), None);
+fn counter_reset_keeps_a_css_wide_keyword_and_rejects_other_reserved_names() {
+    // A CSS-wide keyword is kept for the cascade to resolve; `default` is
+    // reserved too, so it is no counter name.
+    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+        assert!(
+            matches!(
+                parse(keyword, "counter-reset"),
+                Some(PropertyValue::Deferred(_))
+            ),
+            "{keyword} is kept as a marker"
+        );
+    }
     assert_eq!(parse("default", "counter-reset"), None);
 }
 

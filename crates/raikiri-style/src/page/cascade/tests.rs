@@ -4527,7 +4527,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 192;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 191;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -5368,7 +5368,6 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::FontSizeCalc(
             crate::property::RelativeCalcLengthPercentage::from_unit(50.0, "%").unwrap(),
         ),
-        PropertyValue::CounterResetInherit,
         PropertyValue::MarginTopInherit,
         PropertyValue::MarginRightInherit,
         PropertyValue::MarginBottomInherit,
@@ -5482,14 +5481,13 @@ fn page_corpus() -> Vec<PropertyValue> {
 macro_rules! property_value_variant_registry {
         ($($variant:ident),+ $(,)?) => {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
-                "AllRevertLayer", "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
+                "AllRevertLayer", "MarginTopInherit", "MarginRightInherit",
                 "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
                 "BorderRadiusInherit", "GridArea", "Grid", "TransformOrigin"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
                     PropertyValue::AllRevertLayer => "AllRevertLayer",
-                    PropertyValue::CounterResetInherit => "CounterResetInherit",
                     PropertyValue::MarginTopInherit => "MarginTopInherit",
                     PropertyValue::MarginRightInherit => "MarginRightInherit",
                     PropertyValue::MarginBottomInherit => "MarginBottomInherit",
@@ -6326,7 +6324,6 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
         | PropertyValue::ListStyleImage(_)
             | PropertyValue::ListStylePosition(_)
             | PropertyValue::CounterReset(_)
-            | PropertyValue::CounterResetInherit
             | PropertyValue::CounterIncrement(_)
             | PropertyValue::CounterSet(_)
             | PropertyValue::Content(_)

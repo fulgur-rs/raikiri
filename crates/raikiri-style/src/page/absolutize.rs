@@ -450,7 +450,6 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::ListStyleImage(_)
         | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
-        | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)
         | PropertyValue::CounterSet(_)
         | PropertyValue::Content(_)

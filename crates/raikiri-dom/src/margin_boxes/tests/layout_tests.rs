@@ -1015,6 +1015,14 @@ fn page_counters_follow_page_resets_and_increments() {
         "6|3|6"
     );
     assert_eq!(content("counter-reset: none", "", third), "2|0|6");
+    // The keywords that compute to `none` count the same way as `none`.
+    for keyword in ["initial", "unset"] {
+        assert_eq!(
+            content(&format!("counter-reset: {keyword}"), "", third),
+            "2|0|6",
+            "{keyword}"
+        );
+    }
     assert_eq!(content("counter-increment: page 3", "", third), "6|0|6");
     assert_eq!(
         content(
@@ -1036,6 +1044,21 @@ fn page_counters_follow_page_resets_and_increments() {
         content("", "counter-reset: inherit; counter-increment: page", third),
         "4|0|6"
     );
+    // The other CSS-wide keywords reset to `none` too, and a later one
+    // supersedes an earlier `counter-reset` of the box.
+    for keyword in ["initial", "unset", "revert"] {
+        assert_eq!(
+            content(
+                "",
+                &format!(
+                    "counter-reset: chapter 4; counter-reset: {keyword}; counter-increment: chapter"
+                ),
+                third
+            ),
+            "3|1|6",
+            "{keyword}"
+        );
+    }
 }
 
 #[test]
