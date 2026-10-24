@@ -494,7 +494,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             let root_layout = document
                                 .ifc_layout_node(owned.root)
                                 .expect("owned text lines require an IFC layout view")
-                                .unrounded_layout;
+                                .layout;
                             let root_y = if document.is_anonymous_cell(owned.root) {
                                 root_layout.location.y
                             } else {
@@ -518,8 +518,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             )
                         }
                         _ => (
-                            parent_abs_y + node.unrounded_layout.location.y,
-                            node.unrounded_layout.size.height.max(0.0),
+                            parent_abs_y + node.layout.location.y,
+                            node.layout.size.height.max(0.0),
                             None,
                         ),
                     };
@@ -565,7 +565,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let raw_y = if document.oof_coordinates.contains_key(&node_id) {
                     super::current_abs_y(document, node_id)
                 } else {
-                    parent_abs_y + node.unrounded_layout.location.y
+                    parent_abs_y + node.layout.location.y
                 };
                 let computed = &cascade.computed[node_id];
                 // A floated box does not establish a page transition merely
@@ -661,7 +661,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 );
                 let is_tall_direct_absolute = direct_body_child
                     && matches!(document.nodes[node_id].position(), PositionValue::Absolute)
-                    && node.unrounded_layout.size.height > page_step;
+                    && node.layout.size.height > page_step;
                 let table_row_candidate = inside_table
                     && matches!(document.nodes[node_id].display(), DisplayValue::TableRow)
                     && !inside_float
@@ -681,17 +681,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         let Some(child) = document.get_node(child_id) else {
                             continue; // cov:ignore: document-owned child links are valid by construction.
                         };
-                        let child_top = child.unrounded_layout.location.y;
+                        let child_top = child.layout.location.y;
                         row_top = row_top.min(child_top);
-                        row_bottom = row_bottom.max(child_top + child.unrounded_layout.size.height);
+                        row_bottom = row_bottom.max(child_top + child.layout.size.height);
                     }
                     if row_top.is_finite() && row_bottom.is_finite() && row_bottom > row_top {
                         (raw_y + row_top, row_bottom - row_top)
                     } else {
-                        (raw_y, node.unrounded_layout.size.height.max(0.0))
+                        (raw_y, node.layout.size.height.max(0.0))
                     }
                 } else {
-                    (raw_y, node.unrounded_layout.size.height.max(0.0))
+                    (raw_y, node.layout.size.height.max(0.0))
                 };
                 // Non-text content can establish the anonymous page before
                 // a later named descendant, even within the first flex item.
@@ -718,7 +718,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 !text.text_content.trim().is_empty()
                             }
                             crate::node::NodeData::Element(_) => {
-                                child_node.unrounded_layout.size.height > 0.0
+                                child_node.layout.size.height > 0.0
                             }
                             _ => false,
                         }
@@ -828,7 +828,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             parent_abs_y: child_parent_y,
                             direct_body_child: candidate_parent(document, child_id)
                                 == Some(roots.contents_box),
-                            parent_height: node.unrounded_layout.size.height.max(0.0),
+                            parent_height: node.layout.size.height.max(0.0),
                             inherited_page_name: child_page_name,
                             inside_table: inside_table
                                 || matches!(

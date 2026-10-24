@@ -7,9 +7,27 @@
 //! internal to the DOM crate and may be renamed or retyped by a change under
 //! test, so the access lives here and nowhere else: when the accessor changes,
 //! this file is the only one to adapt, and it must then still compile against
-//! the merge-base accessor.
+//! the merge-base accessor. `build.rs` looks at the DOM crate's sources to say
+//! which of the two this build has, as the `node_layout_accessor` cfg.
 
 use raikiri_dom::Node;
+
+/// The box layout stored on `$node`, by the accessor of a tree that has one.
+#[cfg(node_layout_accessor)]
+macro_rules! stored_layout {
+    ($node:expr) => {
+        $node.layout()
+    };
+}
+
+/// The box layout stored on `$node`, by the public field of the trees before
+/// the accessor.
+#[cfg(not(node_layout_accessor))]
+macro_rules! stored_layout {
+    ($node:expr) => {
+        &$node.unrounded_layout
+    };
+}
 
 /// A node's laid-out box, as plain numbers.
 ///
@@ -38,7 +56,7 @@ pub(crate) struct NodeBox {
 impl NodeBox {
     /// The box layout stored on `node`.
     pub(crate) fn of(node: &Node) -> Self {
-        let layout = &node.unrounded_layout;
+        let layout = stored_layout!(node);
         Self {
             order: layout.order,
             location: [layout.location.x, layout.location.y],

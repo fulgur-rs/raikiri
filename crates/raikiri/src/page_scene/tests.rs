@@ -78,7 +78,7 @@ fn table_scene_geometry_excludes_caption_wrapper_space() {
         assert_eq!((rect.x, rect.y, rect.width, rect.height), caption);
         let rect = scene.fragments[&id("d")].first().unwrap();
         assert_eq!((rect.x, rect.y, rect.width, rect.height), grid);
-        let wrapper = dom.get_node(table.0 as usize).unwrap().unrounded_layout;
+        let wrapper = dom.get_node(table.0 as usize).unwrap().layout();
         let wrapper_size = if mode == "horizontal-tb" {
             (40.0, 30.0)
         } else {
@@ -308,7 +308,7 @@ fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
         .expect("body must have a BlockEntry");
     assert!(
         body_entry.layout_size.is_some(),
-        "BlockEntry.layout_size must be populated from post-layout Node.unrounded_layout"
+        "BlockEntry.layout_size must be populated from post-layout Node.layout()"
     );
     // Gap fields hold the documented CSS-initial-value placeholders
     // (entries.rs module doc: opacity/visibility properties don't exist

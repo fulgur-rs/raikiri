@@ -465,7 +465,7 @@ fn the_text_of_a_table_is_a_paragraph_of_the_anonymous_cell_that_holds_it() {
     let walked = walked(&mut doc, &cascade);
     let (cell, cell_node) = doc.anonymous_table_cells(table).next().expect("a cell");
     let (x, y, ..) = absolute_rect(&doc, table);
-    let location = cell_node.unrounded_layout.location;
+    let location = cell_node.layout.location;
     let [root] = walked
         .text_roots
         .iter()

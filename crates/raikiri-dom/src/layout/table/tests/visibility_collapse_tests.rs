@@ -48,7 +48,7 @@ fn fixture(table_css: &str, group_css: &str, rows: &[&str], span: Option<u32>) -
 }
 
 fn cell_box(doc: &Document, cell: usize) -> (f32, f32) {
-    let layout = doc.nodes[cell].unrounded_layout;
+    let layout = doc.nodes[cell].layout;
     (layout.location.y, layout.size.height)
 }
 
@@ -107,7 +107,7 @@ fn a_cell_spanning_only_collapsed_rows_has_no_block_extent() {
     let fixture = fixture(SEPARATE, GROUP, &[COLLAPSED, COLLAPSED, ROW], Some(2));
     let doc = &fixture.doc;
     let span = fixture.cells[1];
-    let layout = doc.nodes[span].unrounded_layout;
+    let layout = doc.nodes[span].layout;
     assert_eq!(layout.size.height, 0.0);
     assert_eq!(layout.padding.top + layout.padding.bottom, 0.0);
     assert!(doc.nodes[span].clips_collapsed_table_span);
@@ -189,8 +189,8 @@ fn collapsed_rows_at_the_end_leave_the_last_remaining_row_whole() {
     // The table is as tall as one holding only the first row.
     let (single, single_table, _) = collapsing_table(&[(ROW, BORDERED)]);
     assert_eq!(
-        doc.nodes[table].unrounded_layout.size.height,
-        single.nodes[single_table].unrounded_layout.size.height
+        doc.nodes[table].layout.size.height,
+        single.nodes[single_table].layout.size.height
     );
 }
 
@@ -217,7 +217,7 @@ fn an_anonymous_row_collapses_with_its_row_group() {
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     assert_eq!(cell_box(&doc, cells[0]).1, 0.0);
     // Only the second group's row and its two spacings remain.
-    assert_eq!(doc.nodes[table].unrounded_layout.size.height, 40.0);
+    assert_eq!(doc.nodes[table].layout.size.height, 40.0);
 }
 
 #[test]
@@ -247,20 +247,20 @@ fn the_first_remaining_row_carries_the_table_baseline() {
 #[test]
 fn collapsed_end_rows_leave_the_outer_edge_to_the_rows_that_remain() {
     let (single, single_table, _) = collapsing_table(&[(ROW, "")]);
-    let single_height = single.nodes[single_table].unrounded_layout.size.height;
+    let single_height = single.nodes[single_table].layout.size.height;
     for rows in [
         [(COLLAPSED, "border-top:10px solid black"), (ROW, "")],
         [(ROW, ""), (COLLAPSED, "border-bottom:10px solid black")],
     ] {
         let (doc, table, _) = collapsing_table(&rows);
         assert_eq!(
-            doc.nodes[table].unrounded_layout.size.height, single_height,
+            doc.nodes[table].layout.size.height, single_height,
             "{rows:?}"
         );
     }
     // With no row left, only the table's own borders remain.
     let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
-    assert_eq!(doc.nodes[table].unrounded_layout.size.height, 0.0);
+    assert_eq!(doc.nodes[table].layout.size.height, 0.0);
 }
 
 #[test]
@@ -268,7 +268,7 @@ fn a_table_whose_rows_all_collapse_keeps_no_spacing() {
     let fixture = fixture(SEPARATE, GROUP, &[COLLAPSED, COLLAPSED], None);
     let group = fixture.doc.nodes[fixture.rows[0]].parent.unwrap();
     let table = fixture.doc.nodes[group].parent.unwrap();
-    assert_eq!(fixture.doc.nodes[table].unrounded_layout.size.height, 0.0);
+    assert_eq!(fixture.doc.nodes[table].layout.size.height, 0.0);
     // Without a first row there is no first baseline to expose.
     assert_eq!(fixture.doc.nodes[table].table_first_baseline, None);
 }
@@ -334,7 +334,7 @@ fn a_spanning_cell_moved_past_a_collapsed_row_aligns_with_its_new_row() {
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     // The moved 40px cell's baseline sits 32px down and now sets the second
     // row's baseline, so the 20px cell there (16px down) shifts by 16px.
-    assert_eq!(doc.nodes[cells[1]].unrounded_layout.padding.top, 16.0);
+    assert_eq!(doc.nodes[cells[1]].layout.padding.top, 16.0);
 }
 
 #[test]
@@ -369,6 +369,6 @@ fn a_row_inside_a_contents_wrapper_collapses_with_its_row_group() {
 fn a_table_whose_rows_all_collapse_shows_only_its_own_border() {
     // No cell shows, so no cell border meets the table's on any side.
     let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
-    let layout = doc.nodes[table].unrounded_layout;
+    let layout = doc.nodes[table].layout;
     assert_eq!((layout.size.width, layout.size.height), (20.0, 0.0));
 }

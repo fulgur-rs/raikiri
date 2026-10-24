@@ -404,7 +404,7 @@ fn layout_all_finite(l: &BoxLayout) -> bool {
 }
 
 /// Pass a document with `<div>`, which has `decl` under `<html><body>`, nested `depth` levels deep, to
-/// [`layout_single_page`], and return the `unrounded_layout` for **each level** in order from shallowest
+/// [`layout_single_page`], and return the `layout` for **each level** in order from shallowest
 /// to deepest.
 ///
 /// The document is not recreated for each depth: the chain for depth `N`
@@ -423,12 +423,10 @@ fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<BoxLayout> {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
-    ids.into_iter()
-        .map(|i| doc.nodes[i].unrounded_layout)
-        .collect()
+    ids.into_iter().map(|i| doc.nodes[i].layout).collect()
 }
 
-/// Before the fix, `unrounded_layout` returned to non-finite at the depth below. In the actual measurement
+/// Before the fix, `layout` returned to non-finite at the depth below. In the actual measurement
 /// of the depth range of the probe material RAWDATA.txt, **base (before guard) / head (after input-side
 /// guard) matched perfectly** = evidence that this is a hole not closed by the input-side guard:
 ///
@@ -486,7 +484,7 @@ fn nested_percentage_output_is_finite_through_probe_sweep_depth() {
             .find(|(_, l)| !layout_all_finite(l))
         {
             panic!(
-                "decl {decl:?}: nest depth {} の unrounded_layout に非有限 f32 が残っている: {bad:?}",
+                "decl {decl:?}: nest depth {} の layout に非有限 f32 が残っている: {bad:?}",
                 i + 1
             );
         }
@@ -687,7 +685,7 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
     // Both are individually within `[-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE]`, so
     // `sanitize_taffy_layout`'s field-level clamp does not stop this—a direct reproduction of something that
     // can actually happen.
-    doc.nodes[parent].unrounded_layout = BoxLayout {
+    doc.nodes[parent].layout = BoxLayout {
         order: 3,
         location: Point::ZERO,
         size: Size {
@@ -707,7 +705,7 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
     };
     // The child itself has no layout problems (if we ignore the broken parent) — this is material to confirm
     // that the entire subtree is zeroed out.
-    doc.nodes[child].unrounded_layout = BoxLayout {
+    doc.nodes[child].layout = BoxLayout {
         order: 1,
         location: Point { x: 1.0, y: 1.0 },
         size: Size {
@@ -724,12 +722,12 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
-        doc.nodes[parent].unrounded_layout,
+        doc.nodes[parent].layout,
         BoxLayout::with_order(3),
         "content box が負の node は order だけ残してゼロ化されること"
     );
     assert_eq!(
-        doc.nodes[child].unrounded_layout,
+        doc.nodes[child].layout,
         BoxLayout::with_order(1),
         "破れた parent の subtree にいる child も (order だけ残して) \
              ゼロ化されること — 壊れた親を基準にした古い座標を残さない"
@@ -765,7 +763,7 @@ fn saturated_child_outside_parent_is_not_reset() {
     let grandchild = doc.append_element(Some(child), "div", None::<&str>);
 
     // Parent is normal (100x100, not saturated).
-    doc.nodes[parent].unrounded_layout = BoxLayout {
+    doc.nodes[parent].layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
@@ -781,7 +779,7 @@ fn saturated_child_outside_parent_is_not_reset() {
     // child.location.x is exactly at the saturation boundary (MAX_TAFFY_MAGNITUDE) — it cannot possibly fit
     // within the parent (100x100). After this change, this "clearly not fitting" fact is no longer a reason
     // for reset.
-    doc.nodes[child].unrounded_layout = BoxLayout {
+    doc.nodes[child].layout = BoxLayout {
         order: 2,
         location: Point {
             x: MAX_TAFFY_MAGNITUDE,
@@ -799,7 +797,7 @@ fn saturated_child_outside_parent_is_not_reset() {
     };
     // grandchild is a normal value based on child — material to confirm that it has not been reset throughout
     // the subtree (see assert below).
-    doc.nodes[grandchild].unrounded_layout = BoxLayout {
+    doc.nodes[grandchild].layout = BoxLayout {
         order: 5,
         location: Point { x: 1.0, y: 1.0 },
         size: Size {
@@ -813,14 +811,14 @@ fn saturated_child_outside_parent_is_not_reset() {
         margin: Edges::ZERO,
     };
 
-    let child_before = doc.nodes[child].unrounded_layout;
-    let grandchild_before = doc.nodes[grandchild].unrounded_layout;
+    let child_before = doc.nodes[child].layout;
+    let grandchild_before = doc.nodes[grandchild].layout;
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.nodes[parent].unrounded_layout.size,
+        doc.nodes[parent].layout.size,
         Size {
             width: 100.0,
             height: 100.0
@@ -830,13 +828,13 @@ fn saturated_child_outside_parent_is_not_reset() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.nodes[child].unrounded_layout, child_before,
+        doc.nodes[child].layout, child_before,
         "child.location.x が飽和境界にちょうど達し、かつ実際に parent border box の外にあっても、現在の実装では符号を問わず無条件 accept なので reset されないこと"
     );
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.nodes[grandchild].unrounded_layout, grandchild_before,
+        doc.nodes[grandchild].layout, grandchild_before,
         "child が reset されていない以上、その下の grandchild も一切変更されないこと"
     );
     // cov:ignore: panic-message literal only executed on assertion
@@ -879,8 +877,8 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let warnings = enforce_layout_invariants_for_test(&mut doc, body);
 
-    let parent_layout = doc.nodes[parent].unrounded_layout;
-    let child_layout = doc.nodes[child].unrounded_layout;
+    let parent_layout = doc.nodes[parent].layout;
+    let child_layout = doc.nodes[child].layout;
     assert_eq!(
         parent_layout.size,
         Size {
@@ -938,7 +936,7 @@ fn saturated_but_contained_layout_is_not_reset() {
 
     // Create a case where the parent's size is also exactly at the saturation boundary — the child's location
     // fits perfectly within it (boundary value, OK by `<=`).
-    doc.nodes[parent].unrounded_layout = BoxLayout {
+    doc.nodes[parent].layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
@@ -954,7 +952,7 @@ fn saturated_but_contained_layout_is_not_reset() {
     // child.location itself is exactly at the saturation boundary — trigger the gate
     // (the former containment check axis unit gate). Since it's the same value as parent.size, it's
     // exactly "contained" at the boundary by `<=`.
-    doc.nodes[child].unrounded_layout = BoxLayout {
+    doc.nodes[child].layout = BoxLayout {
         order: 1,
         location: Point {
             x: MAX_TAFFY_MAGNITUDE,
@@ -971,11 +969,11 @@ fn saturated_but_contained_layout_is_not_reset() {
         margin: Edges::ZERO,
     };
 
-    let child_before = doc.nodes[child].unrounded_layout;
+    let child_before = doc.nodes[child].layout;
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
-        doc.nodes[parent].unrounded_layout.size,
+        doc.nodes[parent].layout.size,
         Size {
             width: MAX_TAFFY_MAGNITUDE,
             height: MAX_TAFFY_MAGNITUDE
@@ -984,7 +982,7 @@ fn saturated_but_contained_layout_is_not_reset() {
              手を付けないこと"
     );
     assert_eq!(
-        doc.nodes[child].unrounded_layout, child_before,
+        doc.nodes[child].layout, child_before,
         "gate (child.location 自身の飽和) が真の child はゼロ化されないこと \
              — 現在の実装では、この fixture がたまたま境界ちょうど \
              で収まっているかどうかは無関係 (containment はもう見ていない)"
@@ -1022,7 +1020,7 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
     let parent = doc.append_element(Some(0), "div", None::<&str>);
     let child = doc.append_element(Some(parent), "div", None::<&str>);
 
-    doc.nodes[parent].unrounded_layout = BoxLayout {
+    doc.nodes[parent].layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
@@ -1038,7 +1036,7 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
     // y-axis: child.location.y is exactly at the saturation boundary and is actually not contained by the
     // parent (height=100.0). x-axis: legitimate overflow due to normal negative margin (`-30`) — not
     // saturated. After this change, neither axis is a reason for reset.
-    doc.nodes[child].unrounded_layout = BoxLayout {
+    doc.nodes[child].layout = BoxLayout {
         order: 1,
         location: Point {
             x: -30.0,
@@ -1055,13 +1053,13 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
         margin: Edges::ZERO,
     };
 
-    let child_before = doc.nodes[child].unrounded_layout;
+    let child_before = doc.nodes[child].layout;
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.nodes[child].unrounded_layout, child_before,
+        doc.nodes[child].layout, child_before,
         "y 軸 (飽和かつ実際には parent に収まっていない) も x 軸 (legitimate な負 margin、飽和していない) もどちらも現在の実装では reset の理由にならないので、child は一切変更されないこと"
     );
     // cov:ignore: panic-message literal only executed on assertion
@@ -1114,7 +1112,7 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
     // This is to ensure that parent.size.height is also exactly at the saturation boundary, so that
     // child.location.y (also at the saturation boundary) fits perfectly there (`<=`, exactly at the
     // boundary). The width is a normal value (the x-axis is not saturated, so it's irrelevant).
-    doc.nodes[parent].unrounded_layout = BoxLayout {
+    doc.nodes[parent].layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
@@ -1131,7 +1129,7 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
     // as OK. y-axis: exactly at the saturation boundary, but since it's equal to parent.size.height, it
     // actually fits (not a true violation) — this also shows that "saturated" alone is not a reason for a
     // reset.
-    doc.nodes[child].unrounded_layout = BoxLayout {
+    doc.nodes[child].layout = BoxLayout {
         order: 1,
         location: Point {
             x: -30.0,
@@ -1148,11 +1146,11 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
         margin: Edges::ZERO,
     };
 
-    let child_before = doc.nodes[child].unrounded_layout;
+    let child_before = doc.nodes[child].layout;
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
-        doc.nodes[child].unrounded_layout, child_before,
+        doc.nodes[child].layout, child_before,
         "x 軸 (legitimate な負 margin、飽和していない) も y 軸 (飽和\
              しているが実際には parent に収まっている) もどちらも reset の \
              理由にならないので、child は一切変更されないこと — これが \
@@ -1181,7 +1179,7 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
 
     // parent.size is saturated — assuming an unrelated cause (e.g., percentage compounding that occurred in
     // another subtree), this saturation is unrelated to this child.
-    doc.nodes[parent].unrounded_layout = BoxLayout {
+    doc.nodes[parent].layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
@@ -1196,7 +1194,7 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
     };
     // The child itself is completely normal — neither location nor size is saturated, a legitimate overflow
     // due to a normal negative margin (same form as `legitimate_negative_margin_overflow_is_not_reset`).
-    doc.nodes[child].unrounded_layout = BoxLayout {
+    doc.nodes[child].layout = BoxLayout {
         order: 1,
         location: Point { x: -30.0, y: 0.0 },
         size: Size {
@@ -1210,11 +1208,11 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
         margin: Edges::ZERO,
     };
 
-    let child_before = doc.nodes[child].unrounded_layout;
+    let child_before = doc.nodes[child].layout;
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
-        doc.nodes[child].unrounded_layout, child_before,
+        doc.nodes[child].layout, child_before,
         "child 自身は何も飽和していないので、無関係な parent.size の飽和を \
              理由に legitimate な負 margin を reset してはならない — これが \
              以前指摘された finding そのもの"
@@ -1302,7 +1300,7 @@ fn saturated_negative_location_is_not_reset() {
     let parent = doc.append_element(Some(0), "div", None::<&str>);
     let child = doc.append_element(Some(parent), "div", None::<&str>);
 
-    doc.nodes[parent].unrounded_layout = BoxLayout {
+    doc.nodes[parent].layout = BoxLayout {
         order: 0,
         location: Point::ZERO,
         size: Size {
@@ -1319,7 +1317,7 @@ fn saturated_negative_location_is_not_reset() {
     // a normal, unsaturated value (100.0). Since the old implementation (`>= 0.0 && <= parent.size`) was
     // identically false for negative values, this fixture would
     // always be reset in the old implementation (no negative number satisfies `>= 0.0`).
-    doc.nodes[child].unrounded_layout = BoxLayout {
+    doc.nodes[child].layout = BoxLayout {
         order: 1,
         location: Point {
             x: -MAX_TAFFY_MAGNITUDE,
@@ -1336,7 +1334,7 @@ fn saturated_negative_location_is_not_reset() {
         margin: Edges::ZERO,
     };
 
-    let child_before = doc.nodes[child].unrounded_layout;
+    let child_before = doc.nodes[child].layout;
     let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     // The assert messages from this point onward are intentionally written on a single physical line (not
@@ -1349,7 +1347,7 @@ fn saturated_negative_location_is_not_reset() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.nodes[child].unrounded_layout, child_before,
+        doc.nodes[child].layout, child_before,
         "child.location.x が飽和境界にちょうど達していても、負である限り MAX_TAFFY_MAGNITUDE の doc が言う implementation-specific limit に達しただけで破綻の証拠にはならない — reset されないこと"
     );
     // cov:ignore: panic-message literal only executed on assertion
@@ -1405,8 +1403,8 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let warnings = enforce_layout_invariants_for_test(&mut doc, body);
 
-    let parent_layout = doc.nodes[parent].unrounded_layout;
-    let child_layout = doc.nodes[child].unrounded_layout;
+    let parent_layout = doc.nodes[parent].layout;
+    let child_layout = doc.nodes[child].layout;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
@@ -1486,8 +1484,8 @@ fn saturated_positive_margin_percentage_child_is_not_reset() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let warnings = enforce_layout_invariants_for_test(&mut doc, body);
 
-    let parent_layout = doc.nodes[parent].unrounded_layout;
-    let child_layout = doc.nodes[child].unrounded_layout;
+    let parent_layout = doc.nodes[parent].layout;
+    let child_layout = doc.nodes[child].layout;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
@@ -1612,7 +1610,7 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
     )
     .unwrap();
 
-    let layout = doc.nodes[img].unrounded_layout;
+    let layout = doc.nodes[img].layout;
     assert_eq!((layout.size.width, layout.size.height), (64.0, 32.0));
 
     // Reuse the same cascade generation while the image resolver reports
@@ -1625,7 +1623,7 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
         &FixedSizeResolver(48.0, 24.0),
     )
     .unwrap();
-    let updated = doc.nodes[img].unrounded_layout;
+    let updated = doc.nodes[img].layout;
     assert_eq!((updated.size.width, updated.size.height), (48.0, 24.0));
 }
 
@@ -1665,7 +1663,7 @@ fn img_presentational_dimensions_override_its_intrinsic_aspect_ratio() {
     layout_single_page_with_resolver(&mut doc, &cascade, PageBox::A4, &SquareImageResolver)
         .expect("layout Ok");
 
-    let layout = doc.nodes[img].unrounded_layout;
+    let layout = doc.nodes[img].layout;
     assert_eq!((layout.size.width, layout.size.height), (420.0, 20.0));
 }
 
@@ -1821,8 +1819,8 @@ fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
         page.height = 50.0;
         let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
-        let paragraph_y = doc.nodes[paragraph].unrounded_layout.location.y;
-        let following_y = doc.nodes[following].unrounded_layout.location.y;
+        let paragraph_y = doc.nodes[paragraph].layout.location.y;
+        let following_y = doc.nodes[following].layout.location.y;
         let line_count = doc.ifc_text_lines(text).expect("text lines").lines.len();
         (slices.len(), paragraph_y, following_y, line_count)
     }
@@ -1879,10 +1877,10 @@ fn an_element_of_an_ifc_subtree_is_not_zeroed_for_a_narrow_content_box() {
         // subtree is described to it only once it has run.
         session.context.layout_warnings.clear();
         session.nodes[inner].flags.insert(NodeFlags::IN_IFC_SUBTREE);
-        session.nodes[inner].unrounded_layout = layout;
+        session.nodes[inner].layout = layout;
         super::enforce_layout_invariants(session, body);
         std::mem::take(&mut session.context.layout_warnings)
     });
-    assert_eq!(doc.nodes[inner].unrounded_layout.size.width, 10.0);
+    assert_eq!(doc.nodes[inner].layout.size.width, 10.0);
     assert!(warnings.is_empty());
 }

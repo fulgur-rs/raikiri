@@ -648,7 +648,7 @@ fn scroll_content_extents_match_a_brute_force_walk() {
             let padding = host
                 .document()
                 .get_node(node)
-                .map(|n| n.unrounded_layout.padding)
+                .map(|n| n.layout().padding)
                 .unwrap_or_default();
             let right = geometry
                 .padding_box

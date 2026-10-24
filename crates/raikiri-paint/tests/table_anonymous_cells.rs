@@ -62,10 +62,7 @@ fn review_owner_pseudos_form_cells_around_a_proper_cell() {
         assert!(doc.anonymous_table_pseudo_is_projected(owner, raikiri_style::PseudoElem::Before));
         assert!(doc.anonymous_table_pseudo_is_projected(owner, raikiri_style::PseudoElem::After));
         assert!(!doc.anonymous_table_pseudo_is_projected(owner, raikiri_style::PseudoElem::Marker));
-        assert_eq!(
-            doc.get_node(cell).unwrap().unrounded_layout.location.x,
-            10.0
-        );
+        assert_eq!(doc.get_node(cell).unwrap().layout().location.x, 10.0);
         let (mut reference, body) = document();
         for (x, color) in [(0, "red"), (10, "blue"), (20, "green")] {
             element(
@@ -237,14 +234,8 @@ fn review_inline_only_table_uses_spaced_anonymous_cell() {
             }
             let computed = layout(&mut doc);
             assert_eq!(doc.anonymous_table_cells(table).count(), 1);
-            assert_eq!(
-                doc.get_node(table).unwrap().unrounded_layout.size.width,
-                30.0
-            );
-            assert_eq!(
-                doc.get_node(table).unwrap().unrounded_layout.size.height,
-                30.0
-            );
+            assert_eq!(doc.get_node(table).unwrap().layout().size.width, 30.0);
+            assert_eq!(doc.get_node(table).unwrap().layout().size.height, 30.0);
             let (mut reference, body) = document();
             element(
                 &mut reference,
@@ -286,7 +277,7 @@ fn review_inline_table_flex_item_keeps_its_flexed_width_and_contents_boundary() 
         // item either way.
         let expected_width = 100.0;
         assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.width,
+            doc.get_node(table).unwrap().layout().size.width,
             expected_width,
             "contents={contents}"
         );
@@ -405,10 +396,7 @@ fn anonymous_block_cells_inherit_direction_and_rebuild() {
             );
             let left = if direction == "rtl" { 80.0 } else { 0.0 };
             let computed = layout(&mut doc);
-            assert_eq!(
-                doc.get_node(block).unwrap().unrounded_layout.location.x,
-                left
-            );
+            assert_eq!(doc.get_node(block).unwrap().layout().location.x, left);
             let (mut reference, body) = document();
             element(
                 &mut reference,
@@ -423,10 +411,7 @@ fn anonymous_block_cells_inherit_direction_and_rebuild() {
                 raster(scene(&reference, &expected)),
             );
             let again = layout(&mut doc);
-            assert_eq!(
-                doc.get_node(block).unwrap().unrounded_layout.location.x,
-                left
-            );
+            assert_eq!(doc.get_node(block).unwrap().layout().location.x, left);
             assert_exact_pixels(
                 raster(scene(&doc, &again)),
                 raster(scene(&reference, &expected)),
@@ -436,7 +421,7 @@ fn anonymous_block_cells_inherit_direction_and_rebuild() {
             let changed = layout(&mut doc);
             let changed_left = if reversed == "rtl" { 80.0 } else { 0.0 };
             assert_eq!(
-                doc.get_node(block).unwrap().unrounded_layout.location.x,
+                doc.get_node(block).unwrap().layout().location.x,
                 changed_left
             );
             reference.set_element_inline_style(reference.get_node(body).unwrap().children[0], Some(format!("position:absolute;left:{changed_left}px;top:0;width:20px;height:10px;background:green").into()));
@@ -465,10 +450,7 @@ fn explicit_cell_block_direction_control() {
         "display:block;width:20px;height:10px;background:green",
     );
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(block).unwrap().unrounded_layout.location.x,
-        80.0
-    );
+    assert_eq!(doc.get_node(block).unwrap().layout().location.x, 80.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -507,7 +489,7 @@ fn ifc_block_direction_matches_used_margin_constraints() {
             assert!(doc.get_node(root).unwrap().is_ifc_root());
             let left = if direction == "rtl" { rtl_x } else { ltr_x };
             assert_eq!(
-                doc.get_node(block).unwrap().unrounded_layout.location,
+                doc.get_node(block).unwrap().layout().location,
                 raikiri_layout_geometry::Point { x: left, y: 10.0 }
             );
             let (mut reference, body) = document();
@@ -719,12 +701,12 @@ fn anonymous_vertical_cells_match_explicit_cells_through_contents_ancestors() {
         let (mut reference, _, _) = build(false);
         let expected = layout(&mut reference);
         assert_eq!(
-            actual.get_node(table).unwrap().unrounded_layout.size,
-            reference.get_node(table).unwrap().unrounded_layout.size
+            actual.get_node(table).unwrap().layout().size,
+            reference.get_node(table).unwrap().layout().size
         );
         assert_eq!(
-            actual.get_node(group).unwrap().unrounded_layout.size.width,
-            actual.get_node(table).unwrap().unrounded_layout.size.width
+            actual.get_node(group).unwrap().layout().size.width,
+            actual.get_node(table).unwrap().layout().size.width
         );
         assert_exact_pixels(
             raster(scene(&actual, &computed)),
@@ -750,7 +732,7 @@ fn anonymous_inline_atomic_child_retains_its_measured_box_and_ink() {
         "display:inline-block;width:10px;height:10px;background:blue;vertical-align:top",
     );
     let computed = layout(&mut doc);
-    let rect = doc.get_node(atomic).unwrap().unrounded_layout;
+    let rect = doc.get_node(atomic).unwrap().layout();
     assert_eq!(
         (
             rect.location.x,
@@ -801,7 +783,7 @@ fn anonymous_rows_share_a_rowspan_background_through_contents_groups() {
     doc.append_text(second, "B");
     let computed = layout(&mut doc);
     assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size,
+        doc.get_node(table).unwrap().layout().size,
         raikiri_layout_geometry::Size {
             width: 20.0,
             height: 20.0
@@ -857,7 +839,7 @@ fn anonymous_block_cells_preserve_placement_with_installed_font_bootstrap() {
     }
     let computed = layout(&mut doc);
     assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size,
+        doc.get_node(table).unwrap().layout().size,
         raikiri_layout_geometry::Size {
             width: 30.0,
             height: 40.0
@@ -866,10 +848,7 @@ fn anonymous_block_cells_preserve_placement_with_installed_font_bootstrap() {
     for (index, child) in children.into_iter().enumerate() {
         let child = doc.get_node(child).unwrap();
         assert_eq!(
-            (
-                child.unrounded_layout.location.x,
-                child.unrounded_layout.location.y
-            ),
+            (child.layout().location.x, child.layout().location.y),
             (0.0, (index % 2) as f32 * 10.0)
         );
     }
@@ -980,8 +959,8 @@ fn html_col_width_reaches_fixed_and_auto_layout_and_exact_paint() {
         let computed = layout(&mut doc);
         assert_eq!(
             [
-                doc.get_node(first).unwrap().unrounded_layout.size.width,
-                doc.get_node(second).unwrap().unrounded_layout.size.width
+                doc.get_node(first).unwrap().layout().size.width,
+                doc.get_node(second).unwrap().layout().size.width
             ],
             expected
         );
@@ -1038,16 +1017,9 @@ fn anonymous_cells_group_consecutive_block_boxes_under_explicit_and_anonymous_ro
         let original_children = doc.get_node(row).unwrap().children.clone();
         let original_count = doc.node_count();
         let computed = layout(&mut doc);
+        assert_eq!(doc.get_node(table).unwrap().layout().size.width, 30.0);
         assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.width,
-            30.0
-        );
-        assert_eq!(
-            doc.get_node(authored_cell)
-                .unwrap()
-                .unrounded_layout
-                .location
-                .x,
+            doc.get_node(authored_cell).unwrap().layout().location.x,
             20.0
         );
         assert_eq!(doc.get_node(row).unwrap().children, original_children);
@@ -1088,10 +1060,7 @@ fn anonymous_cell_keeps_inline_text_and_span_in_one_paragraph() {
         "display:table-cell;width:10px;height:20px;background:red;vertical-align:top",
     );
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.width,
-        30.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.width, 30.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1131,10 +1100,7 @@ fn anonymous_groups_keep_distinct_columns_and_public_text_source_ids() {
     let source_children = doc.get_node(row).unwrap().children.clone();
     let source_count = doc.node_count();
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.width,
-        40.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.width, 40.0);
     let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
     doc.project_pages(&computed, page(), &slices, &[]).unwrap();
     let runs = doc.page_text_runs(&computed, 0);
@@ -1220,11 +1186,8 @@ fn anonymous_cells_preserve_authored_margin_padding_and_border() {
         "display:table-cell;width:10px;height:22px;background:red;vertical-align:top",
     );
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.width,
-        44.0
-    );
-    let box_rect = doc.get_node(block).unwrap().unrounded_layout;
+    assert_eq!(doc.get_node(table).unwrap().layout().size.width, 44.0);
+    let box_rect = doc.get_node(block).unwrap().layout();
     assert_eq!(
         (
             box_rect.location.x,
@@ -1234,10 +1197,7 @@ fn anonymous_cells_preserve_authored_margin_padding_and_border() {
         ),
         (4.0, 3.0, 26.0, 16.0)
     );
-    assert_eq!(
-        doc.get_node(cell).unwrap().unrounded_layout.location.x,
-        34.0
-    );
+    assert_eq!(doc.get_node(cell).unwrap().layout().location.x, 34.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1277,10 +1237,7 @@ fn inter_cell_whitespace_and_hidden_content_do_not_make_cells() {
     );
     doc.append_text(row, " \n");
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.width,
-        30.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.width, 30.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1323,7 +1280,7 @@ fn anonymous_content_keeps_row_group_backgrounds_and_source_box_geometry() {
     let computed = layout(&mut doc);
     assert_eq!(doc.node_count(), source_count);
     for (index, &row) in rows.iter().enumerate() {
-        let box_layout = doc.get_node(row).unwrap().unrounded_layout;
+        let box_layout = doc.get_node(row).unwrap().layout();
         assert_eq!(
             (box_layout.location.x, box_layout.location.y),
             (0.0, index as f32 * 20.0)
@@ -1333,7 +1290,7 @@ fn anonymous_content_keeps_row_group_backgrounds_and_source_box_geometry() {
             (40.0, 20.0)
         );
     }
-    let group_box = doc.get_node(group).unwrap().unrounded_layout;
+    let group_box = doc.get_node(group).unwrap().layout();
     assert_eq!((group_box.size.width, group_box.size.height), (40.0, 40.0));
     let (mut reference, body) = document();
     for (text, color) in [("A", "red"), ("B", "cyan")] {
@@ -1670,16 +1627,13 @@ fn removing_anonymous_content_restores_fresh_explicit_row_geometry() {
         let expected = layout(&mut reference);
         for (actual_row, reference_row) in rows.into_iter().zip(reference_rows) {
             assert_eq!(
-                actual.get_node(actual_row).unwrap().unrounded_layout,
-                reference.get_node(reference_row).unwrap().unrounded_layout
+                actual.get_node(actual_row).unwrap().layout(),
+                reference.get_node(reference_row).unwrap().layout()
             );
         }
         assert_eq!(
-            actual.get_node(group).unwrap().unrounded_layout,
-            reference
-                .get_node(reference_group)
-                .unwrap()
-                .unrounded_layout
+            actual.get_node(group).unwrap().layout(),
+            reference.get_node(reference_group).unwrap().layout()
         );
         assert_exact_pixels(
             raster(scene(&actual, &computed)),
@@ -1792,30 +1746,22 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
         let (mut actual, computed, table, row, following_row) = build(true);
         let (reference, reference_computed, _, _, _) = build(false);
         assert_eq!(
-            actual.get_node(table).unwrap().unrounded_layout.size.height,
+            actual.get_node(table).unwrap().layout().size.height,
             expected_table_height
         );
         assert_eq!(
-            actual.get_node(row).unwrap().unrounded_layout.size.height,
+            actual.get_node(row).unwrap().layout().size.height,
             expected_row_height
         );
         let virtual_cell = actual.anonymous_table_cells(row).next().unwrap().1;
-        assert_eq!(
-            virtual_cell.unrounded_layout.size.height,
-            expected_row_height
-        );
+        assert_eq!(virtual_cell.layout().size.height, expected_row_height);
         let expected_following_y = if policy.contains("collapse") {
             20.0
         } else {
             5.0 + expected_row_height + if expected_row_height > 0.0 { 5.0 } else { 0.0 }
         };
         assert_eq!(
-            actual
-                .get_node(following_row)
-                .unwrap()
-                .unrounded_layout
-                .location
-                .y,
+            actual.get_node(following_row).unwrap().layout().location.y,
             expected_following_y
         );
         assert_exact_pixels(
@@ -1860,7 +1806,7 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
         );
         let computed_again = layout(&mut actual);
         assert_eq!(
-            actual.get_node(table).unwrap().unrounded_layout.size.height,
+            actual.get_node(table).unwrap().layout().size.height,
             expected_table_height
         );
         assert_exact_pixels(
@@ -1908,7 +1854,7 @@ fn anonymous_empty_cell_flags_rebuild_across_policy_and_content_changes() {
         let computed = layout(&mut actual);
         assert_eq!(actual.node_count(), count);
         assert_eq!(
-            actual.get_node(table).unwrap().unrounded_layout.size.height,
+            actual.get_node(table).unwrap().layout().size.height,
             expected
         );
         assert_eq!(actual.anonymous_table_cells(row).count(), 1);
@@ -1926,25 +1872,16 @@ fn anonymous_empty_cell_flags_rebuild_across_policy_and_content_changes() {
         "display:table-cell;height:20px;empty-cells:show",
     );
     let computed = layout(&mut actual);
-    assert_eq!(
-        actual.get_node(table).unwrap().unrounded_layout.size.height,
-        30.0
-    );
-    assert_eq!(
-        actual.get_node(cell).unwrap().unrounded_layout.size.height,
-        20.0
-    );
-    assert_eq!(
-        actual.get_node(row).unwrap().unrounded_layout.size.height,
-        20.0
-    );
+    assert_eq!(actual.get_node(table).unwrap().layout().size.height, 30.0);
+    assert_eq!(actual.get_node(cell).unwrap().layout().size.height, 20.0);
+    assert_eq!(actual.get_node(row).unwrap().layout().size.height, 20.0);
     assert_eq!(
         actual
             .anonymous_table_cells(row)
             .next()
             .unwrap()
             .1
-            .unrounded_layout
+            .layout()
             .size
             .height,
         20.0
@@ -2277,7 +2214,7 @@ fn review_contents_pseudos_remain_outside_a_structural_row() {
         assert_eq!(doc.get_node(span).unwrap().children, source_children);
         assert_eq!(doc.parent_of(row), Some(span));
         assert_eq!(doc.anonymous_table_cells(table).count(), 2);
-        assert_eq!(doc.get_node(row).unwrap().unrounded_layout.location.y, 10.0);
+        assert_eq!(doc.get_node(row).unwrap().layout().location.y, 10.0);
         let (mut reference, body) = document();
         for (index, color) in ["red", "green", "blue"].iter().enumerate() {
             element(

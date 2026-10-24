@@ -330,4 +330,4 @@ grid line) も adapter の `GridInfo` に包んで持ち、adapter の外はそ�
 1 つでもあれば拒否する。ファイルを移した場合は baseline の path を手で書き換える)。数える範囲、入力側の `Size<Dimension>` などを除外する同一行の
 `// taffy-boundary-lint:ignore: <理由>` marker、例外にする path の一覧
 (`scripts/lib/taffy_boundary_exempt.txt`) は `scripts/lib/taffy_boundary_lint.py` の
-docstring を参照。baseline を上げて回帰を通さないこと。
+docstring を参照。baseline を上げて回帰を通さないこと。baseline は現在空 (0 件) で、出力側の Taffy 名を新しく書くと即座に失敗する。

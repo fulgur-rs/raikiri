@@ -49,7 +49,7 @@ fn ratio_box_size_with(box_css: &str, child_css: Option<&str>) -> (f32, f32) {
         }
         vec![outer]
     });
-    let size = doc.nodes[nodes[0]].unrounded_layout.size;
+    let size = doc.nodes[nodes[0]].layout.size;
     (size.width, size.height)
 }
 
@@ -306,7 +306,7 @@ fn a_column_flex_item_with_a_ratio_gets_its_flex_base_from_the_max_content_width
     page.height = 400.0;
     crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).unwrap();
     let size = |node: usize| {
-        let size = doc.nodes[node].unrounded_layout.size;
+        let size = doc.nodes[node].layout.size;
         (size.width, size.height)
     };
     assert_eq!((size(flex), size(item)), ((100.0, 100.0), (100.0, 100.0)));
@@ -387,7 +387,7 @@ fn ratio_only_svg_size(css: &str) -> (f32, f32) {
     page.width = 200.0;
     page.height = 400.0;
     crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).unwrap();
-    let size = doc.nodes[svg].unrounded_layout.size;
+    let size = doc.nodes[svg].layout.size;
     (size.width, size.height)
 }
 
@@ -440,7 +440,7 @@ fn ratio_paragraph_size(css: &str, text: &str) -> (f32, f32) {
     )
     .expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
-    let size = doc.nodes[root].unrounded_layout.size;
+    let size = doc.nodes[root].layout.size;
     (size.width, size.height)
 }
 
@@ -684,7 +684,7 @@ fn margin_stack(before: &str, middle: &str, inner_css: &str, after: &str) -> [(f
         vec![before, middle, after]
     });
     [nodes[0], nodes[1], nodes[2]].map(|node| {
-        let layout = doc.nodes[node].unrounded_layout;
+        let layout = doc.nodes[node].layout;
         (layout.location.y, layout.size.height)
     })
 }

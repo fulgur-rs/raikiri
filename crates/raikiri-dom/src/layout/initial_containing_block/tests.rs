@@ -33,7 +33,7 @@ fn paginating_a_vertical_root_preserves_percentage_width_limits() {
                     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
                 }
                 assert_eq!(
-                    doc.nodes[body].unrounded_layout.size.width, expected_width,
+                    doc.nodes[body].layout.size.width, expected_width,
                     "{writing_mode}, {limits}, paginated={paginated}"
                 );
             }
@@ -63,13 +63,13 @@ fn authored_html_and_body_sizes_are_laid_out_inside_the_page_area() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    let root = &doc.nodes[html].unrounded_layout;
+    let root = &doc.nodes[html].layout;
     assert_eq!((root.location.x, root.location.y), (10.0, 10.0));
     assert_eq!((root.size.width, root.size.height), (254.0, 194.0));
-    let body_box = &doc.nodes[body].unrounded_layout;
+    let body_box = &doc.nodes[body].layout;
     assert_eq!((body_box.location.x, body_box.location.y), (27.0, 27.0));
     assert_eq!((body_box.size.width, body_box.size.height), (108.0, 58.0));
-    let child_box = &doc.nodes[child].unrounded_layout;
+    let child_box = &doc.nodes[child].layout;
     assert_eq!((child_box.location.x, child_box.location.y), (4.0, 4.0));
     assert_eq!((child_box.size.width, child_box.size.height), (50.0, 25.0));
     assert_eq!(doc.node_count(), count);
@@ -90,11 +90,11 @@ fn root_margins_add_to_the_margins_collapsing_through_body() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(doc.nodes[html].unrounded_layout.location.y, 10.0);
-    assert_eq!(doc.nodes[body].unrounded_layout.location.y, 40.0);
-    assert_eq!(doc.nodes[child].unrounded_layout.location.y, 0.0);
-    assert_eq!(doc.nodes[html].unrounded_layout.size.height, 90.0);
-    assert_eq!(doc.nodes[body].unrounded_layout.size.height, 30.0);
+    assert_eq!(doc.nodes[html].layout.location.y, 10.0);
+    assert_eq!(doc.nodes[body].layout.location.y, 40.0);
+    assert_eq!(doc.nodes[child].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[html].layout.size.height, 90.0);
+    assert_eq!(doc.nodes[body].layout.size.height, 30.0);
 }
 
 #[test]
@@ -151,8 +151,8 @@ fn the_icb_uses_the_principal_direction_for_a_definite_root_width() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 500.0);
-    assert_eq!(doc.nodes[body].unrounded_layout.location.x, 100.0);
+    assert_eq!(doc.nodes[html].layout.location.x, 500.0);
+    assert_eq!(doc.nodes[body].layout.location.x, 100.0);
 
     // An HTML body's direction overrides the root's (CSS Writing Modes 3 §8).
     let mut doc = Document::new();
@@ -168,7 +168,7 @@ fn the_icb_uses_the_principal_direction_for_a_definite_root_width() {
     );
     let cascade = raikiri_style::cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 500.0);
+    assert_eq!(doc.nodes[html].layout.location.x, 500.0);
 }
 
 #[test]
@@ -319,8 +319,8 @@ fn truncating_a_sibling_margin_shrinks_auto_height_body_and_root_boxes() {
     let mut page = page_box_800x600();
     page.height = 100.0;
     let pages = crate::layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
-    assert_eq!(doc.nodes[body].unrounded_layout.size.height, 110.0);
-    assert_eq!(doc.nodes[html].unrounded_layout.size.height, 110.0);
+    assert_eq!(doc.nodes[body].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[html].layout.size.height, 110.0);
     assert_eq!(pages.len(), 2);
 }
 
@@ -340,7 +340,7 @@ fn a_contents_root_keeps_its_blockified_box_properties_and_percentage_basis() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    let root = &doc.nodes[html].unrounded_layout;
+    let root = &doc.nodes[html].layout;
     assert_eq!(
         (
             root.location.x,
@@ -350,7 +350,7 @@ fn a_contents_root_keeps_its_blockified_box_properties_and_percentage_basis() {
         ),
         (10.0, 10.0, 254.0, 194.0)
     );
-    assert_eq!(doc.nodes[body].unrounded_layout.size.width, 120.0);
+    assert_eq!(doc.nodes[body].layout.size.width, 120.0);
     assert_eq!(
         crate::used_relative_offset(&doc, &cascade, &cascade.computed[body], body),
         (0.0, 0.0)
@@ -374,14 +374,14 @@ fn vertical_root_percentage_padding_uses_the_icb_inline_size() {
         page.width = 200.0;
         page.height = 100.0;
         layout_single_page(with_ahem(&mut doc), &cascade, page).expect("layout");
-        let padding = doc.nodes[html].unrounded_layout.padding;
+        let padding = doc.nodes[html].layout.padding;
         assert_eq!(
             (padding.top, padding.right, padding.bottom, padding.left),
             (10.0, 10.0, 10.0, 10.0),
             "body {display}"
         );
         assert_eq!(
-            doc.nodes[html].unrounded_layout.size,
+            doc.nodes[html].layout.size,
             Size {
                 width: 100.0,
                 height: 80.0
@@ -490,11 +490,11 @@ fn moving_a_direct_body_child_grows_the_actual_auto_height_boxes() {
                 "{body_height}"
             );
             assert_eq!(
-                doc.nodes[body].unrounded_layout.size.height, expected_height,
+                doc.nodes[body].layout.size.height, expected_height,
                 "body {body_height}"
             );
             assert_eq!(
-                doc.nodes[html].unrounded_layout.size.height, expected_height,
+                doc.nodes[html].layout.size.height, expected_height,
                 "html {body_height}"
             );
         }
@@ -601,9 +601,9 @@ fn percentage_heights_follow_the_authored_definite_root_and_body_chain() {
         let child = doc.append_element(Some(body), "div", Some("display:block;height:50%"));
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-        assert_eq!(doc.nodes[html].unrounded_layout.size.height, html_height);
-        assert_eq!(doc.nodes[body].unrounded_layout.size.height, body_height);
-        assert_eq!(doc.nodes[child].unrounded_layout.size.height, child_height);
+        assert_eq!(doc.nodes[html].layout.size.height, html_height);
+        assert_eq!(doc.nodes[body].layout.size.height, body_height);
+        assert_eq!(doc.nodes[child].layout.size.height, child_height);
     }
 }
 
@@ -748,7 +748,7 @@ fn paginated_flex_stretch_keeps_the_items_used_height_despite_visible_overflow()
     );
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("pages");
-    assert_eq!(doc.nodes[item].unrounded_layout.size.height, 50.0);
+    assert_eq!(doc.nodes[item].layout.size.height, 50.0);
 }
 
 #[test]
@@ -785,10 +785,7 @@ fn paginated_flex_auto_height_encloses_a_forced_break_in_its_item() {
         let mut page = page_box_800x600();
         page.height = 100.0;
         crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
-        assert_eq!(
-            doc.nodes[flex].unrounded_layout.size.height, 130.0,
-            "{display}"
-        );
+        assert_eq!(doc.nodes[flex].layout.size.height, 130.0, "{display}");
     }
 }
 
@@ -840,7 +837,7 @@ fn the_icb_takes_the_writing_mode_of_the_html_body() {
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
         assert_eq!(
-            doc.nodes[html].unrounded_layout.location.x, expected_x,
+            doc.nodes[html].layout.location.x, expected_x,
             "html {root_css}, body {body_css}"
         );
     }
@@ -857,7 +854,7 @@ fn the_icb_takes_the_writing_mode_of_the_html_body() {
     }
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 700.0);
+    assert_eq!(doc.nodes[html].layout.location.x, 700.0);
 }
 
 #[test]
@@ -881,7 +878,7 @@ fn a_foreign_body_lookalike_is_not_the_principal_element() {
     );
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 0.0);
+    assert_eq!(doc.nodes[html].layout.location.x, 0.0);
 }
 
 #[test]
@@ -948,7 +945,7 @@ fn paginated_heights_keep_a_flex_items_overflow_outside_its_used_height() {
             page.height = page_height;
             crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
             assert_eq!(
-                doc.nodes[item].unrounded_layout.size.height, expected_height,
+                doc.nodes[item].layout.size.height, expected_height,
                 "{container}, forced break {forced_break}"
             );
         }

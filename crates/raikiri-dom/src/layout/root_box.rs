@@ -79,7 +79,7 @@ pub fn root_box(
         && !document.layout_dirty
         && document.nodes.initial_containing_block_key().is_some()
     {
-        let layout = document.nodes[root].unrounded_layout;
+        let layout = document.nodes[root].layout;
         let (x, y) = match pages_along_x {
             None => (
                 area_x + layout.location.x,

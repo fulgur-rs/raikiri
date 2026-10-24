@@ -315,7 +315,7 @@ pub(crate) fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWa
 pub(crate) enum LayoutWarn {
     /// A non-finite (NaN / +-Inf) or out-of-range `f32` was clamped to a
     /// finite in-range value before being handed to one of this module's
-    /// sink boundaries: `taffy::Style` or the `Node.unrounded_layout` arena
+    /// sink boundaries: `taffy::Style` or the `Node.layout` arena
     /// field (sites 1-5, `sanitize_finite` / `sanitize_taffy` /
     /// `sanitize_taffy_layout`). Only
     /// emitted when clamping actually changed the
@@ -459,7 +459,7 @@ pub(crate) fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 /// `<LayoutSession as taffy::LayoutPartialTree>::set_unrounded_layout`
 /// (`layout/taffy_adapter/tree.rs`) — the **only** path through which Taffy writes layout back to the arena (all block /
 /// flexbox / grid / leaf algorithms in `taffy-0.12.1` pass through this single method). Therefore,
-/// "`Node.unrounded_layout` never contains non-finite values" is a structural invariant and cannot be
+/// "`Node.layout` never contains non-finite values" is a structural invariant and cannot be
 /// broken by a forgotten call, unlike an afterthought, batch range check.
 ///
 /// The other half of the invariant is the **initial value**: `Node::new*` places `Layout::with_order(0)`
@@ -500,7 +500,7 @@ pub(crate) fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 /// fields actually get clamped (site labels: `"layout.location"`,
 /// `"layout.size"`, `"layout.scrollable_overflow_rect"`, `"layout.scrollbar_size"`,
 /// `"layout.border"`, `"layout.padding"`, `"layout.margin"`). Its only
-/// caller is [`LayoutSession::store_unrounded_layout`], which passes the
+/// caller is [`LayoutSession::store_layout`], which passes the
 /// operation's warning buffer because Taffy's `set_unrounded_layout`
 /// signature cannot receive a diagnostic observer.
 pub(crate) fn sanitize_taffy_layout(layout: &BoxLayout, diag: &mut Vec<LayoutWarn>) -> BoxLayout {
@@ -538,23 +538,23 @@ pub(crate) fn sanitize_taffy_layout(layout: &BoxLayout, diag: &mut Vec<LayoutWar
 }
 
 impl LayoutSession<'_> {
-    /// Write `layout` to the node's `unrounded_layout` after clamping every
+    /// Write `layout` to the node's `layout` after clamping every
     /// field to a finite value with [`sanitize_taffy_layout`].
     ///
     /// Taffy's `set_unrounded_layout` and the table algorithm's own
     /// placements store whole layouts through this one path. Later passes
     /// that shift or scale an already stored layout in place (page breaking,
     /// out-of-flow placement, table cell offsets) write the field directly.
-    pub(crate) fn store_unrounded_layout(&mut self, idx: usize, layout: &BoxLayout) {
+    pub(crate) fn store_layout(&mut self, idx: usize, layout: &BoxLayout) {
         let sanitized = sanitize_taffy_layout(layout, &mut self.context.layout_warnings);
-        self.nodes[idx].unrounded_layout = sanitized;
+        self.nodes[idx].layout = sanitized;
         // The rows an anonymous table wraps are DOM children of its parent,
         // so they move with the table.
         self.offset_anonymous_table_parts(idx);
     }
 
     /// Store a table's grid rectangle, clamped to finite values like
-    /// [`Self::store_unrounded_layout`].
+    /// [`Self::store_layout`].
     pub(crate) fn store_table_grid_box(
         &mut self,
         table_idx: usize,
@@ -640,14 +640,14 @@ impl LayoutSession<'_> {
 /// Instead of traversing `document.nodes[idx].children` directly, apply the same `is_in_document()` filter
 /// as Taffy's `TraversePartialTree` implementation (`layout/taffy_adapter/tree.rs`) to the child traversal. While there
 /// is no practical harm in including nodes that Taffy did not lay out at all, such as `<template>`
-/// descendants, since `unrounded_layout` remains at its construction-time default
+/// descendants, since `layout` remains at its construction-time default
 /// (`Layout::with_order(0)`) (meaning old values from other subtrees are not mixed in), aligning with
 /// Taffy's traversal contract will be less surprising to the reader.
 ///
 /// # Caller
 ///
 /// Runs exactly once, immediately after Step 5 (`compute_root_layout`) of [`layout_single_page`] and
-/// before Step 6 (warning replay) — right after all `unrounded_layout` that taffy actually wrote under the
+/// before Step 6 (warning replay) — right after all `layout` that taffy actually wrote under the
 /// root (`<body>`) are available. Paths that directly call `compute_root_layout` (each unit test of
 /// `lib.rs`) do not go through this pass — those tests are for the characterization of
 /// `sanitize_taffy_layout` (finiteness only), and semantic invariants are not covered (see
@@ -667,7 +667,7 @@ pub(crate) fn enforce_layout_invariants(document: &mut LayoutSession<'_>, root_i
         {
             continue;
         }
-        let layout = document.nodes[idx].unrounded_layout;
+        let layout = document.nodes[idx].layout;
         if layout.content_box_width() < 0.0 || layout.content_box_height() < 0.0 {
             zero_layout_subtree(document, idx);
             content_box_violations += 1;
@@ -692,7 +692,7 @@ pub(crate) fn enforce_layout_invariants(document: &mut LayoutSession<'_>, root_i
     }
 }
 
-/// The fallback body of [`enforce_layout_invariants`] — overwrites the `unrounded_layout` of the subtree
+/// The fallback body of [`enforce_layout_invariants`] — overwrites the `layout` of the subtree
 /// rooted at `root_idx` (only nodes actually visited by taffy, `is_in_document()` filter) with
 /// [`BoxLayout::with_order`] (which only keeps `order` and sets all others to zero). Iterative (`Vec`
 /// stack) — recursion is not used, precisely because the target is a deep DOM (see the "traversal is not
@@ -700,8 +700,8 @@ pub(crate) fn enforce_layout_invariants(document: &mut LayoutSession<'_>, root_i
 fn zero_layout_subtree(document: &mut LayoutSession<'_>, root_idx: usize) {
     let mut stack = vec![root_idx];
     while let Some(idx) = stack.pop() {
-        let order = document.nodes[idx].unrounded_layout.order;
-        document.nodes[idx].unrounded_layout = BoxLayout::with_order(order);
+        let order = document.nodes[idx].layout.order;
+        document.nodes[idx].layout = BoxLayout::with_order(order);
         let child_count = document.nodes[idx].children.len();
         for i in 0..child_count {
             let child_idx = document.nodes[idx].children[i];

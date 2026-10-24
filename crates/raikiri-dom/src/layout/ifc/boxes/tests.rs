@@ -86,8 +86,8 @@ fn many_atomics_keep_placement_and_visibility_work_linear() {
     .expect("layout");
 
     for pair in atomics.windows(2) {
-        let left = doc.nodes[pair[0]].unrounded_layout;
-        let right = doc.nodes[pair[1]].unrounded_layout;
+        let left = doc.nodes[pair[0]].layout;
+        let right = doc.nodes[pair[1]].layout;
         assert_eq!(left.size.width, 1.0);
         assert_eq!(right.location.x - left.location.x, 1.0);
     }
@@ -252,19 +252,19 @@ fn a_probe_stores_nothing_and_a_performed_layout_does() {
     )
     .expect("layout");
     // Forget what the pass stored, then run the two modes by hand.
-    doc.nodes[float].unrounded_layout = BoxLayout::new();
+    doc.nodes[float].layout = BoxLayout::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     let probed = layout_with_boxes(&mut doc, root, geometry, None, false);
     assert_eq!(
-        doc.nodes[float].unrounded_layout.size.width, 0.0,
+        doc.nodes[float].layout.size.width, 0.0,
         "a probe must not store the float's layout"
     );
     // The float still shortens the first line: the probe sees it.
     assert_eq!(line_start_x(&probed.lines[0]), Some(30.0));
 
     layout_with_boxes(&mut doc, root, geometry, None, true);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (30.0, 20.0));
 }
@@ -325,17 +325,17 @@ fn a_probe_does_not_place_an_atomic_and_a_performed_layout_does() {
         crate::layout::test_support::page_box_800x600(),
     )
     .expect("layout");
-    doc.nodes[atomic].unrounded_layout = BoxLayout::new();
+    doc.nodes[atomic].layout = BoxLayout::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     layout_with_boxes(&mut doc, root, geometry, None, false);
     assert_eq!(
-        doc.nodes[atomic].unrounded_layout.size.width, 0.0,
+        doc.nodes[atomic].layout.size.width, 0.0,
         "a probe must not store the atomic's layout"
     );
 
     layout_with_boxes(&mut doc, root, geometry, None, true);
-    let layout = doc.nodes[atomic].unrounded_layout;
+    let layout = doc.nodes[atomic].layout;
     assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (30.0, 10.0));
 }
@@ -357,17 +357,17 @@ fn a_probe_does_not_record_an_inline_element_and_a_performed_layout_does() {
     )
     .expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
-    doc.nodes[span_id].unrounded_layout = BoxLayout::new();
+    doc.nodes[span_id].layout = BoxLayout::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
 
     layout_with_boxes(&mut doc, root, geometry, None, false);
     assert_eq!(
-        doc.nodes[span_id].unrounded_layout.size.width, 0.0,
+        doc.nodes[span_id].layout.size.width, 0.0,
         "a probe must not record the element's box"
     );
 
     layout_with_boxes(&mut doc, root, geometry, None, true);
-    let layout = doc.nodes[span_id].unrounded_layout;
+    let layout = doc.nodes[span_id].layout;
     assert_eq!((layout.location.x, layout.location.y), (20.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (26.0, 10.0));
 }

@@ -226,8 +226,8 @@ fn wrapper_max_width_min_content_bounds_columns_before_distribution() {
 
     finish_ahem_layout(&mut doc);
 
-    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 40.0);
-    assert_eq!(doc.nodes[table].unrounded_layout.size.width, 40.0);
+    assert_eq!(doc.nodes[cell].layout.size.width, 40.0);
+    assert_eq!(doc.nodes[table].layout.size.width, 40.0);
 }
 
 #[test]
@@ -255,8 +255,8 @@ fn wrapper_min_width_max_content_wins_over_max_min_content() {
 
     finish_ahem_layout(&mut doc);
 
-    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 90.0);
-    assert_eq!(doc.nodes[table].unrounded_layout.size.width, 90.0);
+    assert_eq!(doc.nodes[cell].layout.size.width, 90.0);
+    assert_eq!(doc.nodes[table].layout.size.width, 90.0);
 }
 
 #[test]
@@ -286,9 +286,9 @@ fn caption_min_width_max_content_contributes_to_table_minimum() {
     finish_ahem_layout(&mut doc);
 
     assert!(
-        doc.nodes[table].unrounded_layout.size.width >= 90.0,
+        doc.nodes[table].layout.size.width >= 90.0,
         "caption min-width:max-content should raise table CAPMIN to 90px, got {}",
-        doc.nodes[table].unrounded_layout.size.width
+        doc.nodes[table].layout.size.width
     );
 }
 
@@ -373,9 +373,9 @@ fn vertical_caption_min_height_max_content_contributes_to_table_inline_size() {
     finish_ahem_layout(&mut doc);
 
     assert!(
-        doc.nodes[table].unrounded_layout.size.height >= 97.0,
+        doc.nodes[table].layout.size.height >= 97.0,
         "vertical caption min-height:max-content and its margins should contribute at least 97px, got {}",
-        doc.nodes[table].unrounded_layout.size.height
+        doc.nodes[table].layout.size.height
     );
 }
 

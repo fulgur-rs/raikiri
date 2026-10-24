@@ -47,7 +47,7 @@ type ProjectedSlices = (
 fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, raw_y: f32) -> f32 {
     let mut child_parent_y = raw_y;
     for id in document.ancestors(child).take_while(|&id| id != parent) {
-        child_parent_y += document.nodes[id].unrounded_layout.location.y;
+        child_parent_y += document.nodes[id].layout.location.y;
     }
     child_parent_y
 }
@@ -164,7 +164,7 @@ fn content_overflow_end(
         let y = if document.oof_coordinates.contains_key(&node_id) {
             current_abs_y(document, node_id) + paint_offset
         } else {
-            parent_y + node.unrounded_layout.location.y + paint_offset
+            parent_y + node.layout.location.y + paint_offset
         };
         let bottom = if node_id == body_id {
             block_border_box_end(
@@ -175,8 +175,8 @@ fn content_overflow_end(
                 page_area_height,
                 false,
             )
-        } else if in_columns.is_none() && node.unrounded_layout.size.height > 0.0 {
-            y + node.unrounded_layout.size.height
+        } else if in_columns.is_none() && node.layout.size.height > 0.0 {
+            y + node.layout.size.height
         } else {
             f32::NEG_INFINITY
         };
@@ -196,11 +196,8 @@ fn content_overflow_end(
             && node.multicol.is_none()
             && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
         {
-            end = end.max(
-                y + node.unrounded_layout.border.top
-                    + node.unrounded_layout.padding.top
-                    + lines.shifted_height(),
-            );
+            end = end
+                .max(y + node.layout.border.top + node.layout.padding.top + lines.shifted_height());
         }
         if in_columns.is_none() {
             let roots = fragment_roots.get(&node_id).map_or(&[][..], Vec::as_slice);
@@ -406,7 +403,7 @@ fn block_border_box_end(
                 if document.context.pagination_on_transposed_axes {
                     // Physical width percentages use the containing block's
                     // content width, now the transposed layout's height.
-                    Some(parent.unrounded_layout.content_box_height())
+                    Some(parent.layout.content_box_height())
                 } else {
                     parent.percent_basis_height
                 }
@@ -424,7 +421,7 @@ fn block_border_box_end(
         .map(|value| value.max(0.0))
     };
     let root = &document.nodes[flow_root];
-    let layout = &root.unrounded_layout;
+    let layout = &root.layout;
     let edges_top = layout.padding.top + layout.border.top;
     let edges_bottom = layout.padding.bottom + layout.border.bottom;
     let top = root_flow_offset + current_abs_y(document, flow_root);
@@ -511,7 +508,7 @@ fn block_border_box_end(
         if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
             continue;
         }
-        let layout = &node.unrounded_layout;
+        let layout = &node.layout;
         let in_ifc = document
             .parent_of(child)
             .is_some_and(|parent| in_inline_context(document, parent));
@@ -655,9 +652,8 @@ fn unpaginated_content_overflow(
         })
         .filter_map(|node_id| {
             let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
-            let overflow = end
-                - current_abs_y(document, node_id)
-                - document.nodes[node_id].unrounded_layout.size.height;
+            let overflow =
+                end - current_abs_y(document, node_id) - document.nodes[node_id].layout.size.height;
             (overflow.is_finite() && overflow > 0.0).then_some((node_id, overflow))
         })
         .collect()
@@ -703,7 +699,7 @@ fn scale_percent_widths(
             };
             let scale = target_width / base_width;
             if scale.is_finite() && (scale - 1.0).abs() > 0.0001 {
-                document.nodes[node_id].unrounded_layout.size.width *= scale;
+                document.nodes[node_id].layout.size.width *= scale;
             }
         }
     }
@@ -723,7 +719,7 @@ fn follow_moved_table_rows(
     let moved_table_rows: HashMap<usize, f32> = row_origins
         .into_iter()
         .filter_map(|(row, origin)| {
-            let delta = document.nodes[row].unrounded_layout.location.y - origin;
+            let delta = document.nodes[row].layout.location.y - origin;
             (delta > 0.001).then_some((row, delta))
         })
         .collect();
@@ -755,8 +751,8 @@ fn update_paginated_block_heights(
         let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
         let height =
             end - current_abs_y(document, node_id) - overflow.get(&node_id).copied().unwrap_or(0.0);
-        if height.is_finite() && height > document.nodes[node_id].unrounded_layout.size.height {
-            document.nodes[node_id].unrounded_layout.size.height = height;
+        if height.is_finite() && height > document.nodes[node_id].layout.size.height {
+            document.nodes[node_id].layout.size.height = height;
         }
     }
 }
@@ -1029,7 +1025,7 @@ pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult,
 ///   reads, and assign the paragraphs of the inline engine
 /// - Create a definite layout-only page-area ICB and lay out the document
 ///   element and its ordinary descendants through Taffy
-/// - Store each box's used geometry in Node.unrounded_layout
+/// - Store each box's used geometry in Node.layout
 ///
 /// # Errors
 /// - `LayoutError::Internal` — no `<body>` element found (fragment parses
@@ -2015,7 +2011,7 @@ fn shift_ifc_lines_from(document: &mut Document, root: usize, line: usize, shift
     let node = document.table_layout_node_mut(root);
     if let Some(lines) = node.ifc.as_mut().and_then(|ifc| ifc.lines.as_mut()) {
         lines.shifts.push(line, shift);
-        node.unrounded_layout.size.height += shift;
+        node.layout.size.height += shift;
     }
 }
 
@@ -2087,11 +2083,7 @@ fn shift_text_candidate(
     delta: f32,
 ) {
     let moved = moved_root.unwrap_or(node_id);
-    document
-        .table_layout_node_mut(moved)
-        .unrounded_layout
-        .location
-        .y += delta;
+    document.table_layout_node_mut(moved).layout.location.y += delta;
     if moved_root.is_none()
         && let Some(root) = text_ifc_root
     {
@@ -2112,7 +2104,7 @@ fn text_first_line_offset(document: &Document, root: usize, owned: &IfcTextLines
     let layout = document
         .ifc_layout_node(root)
         .expect("valid paragraph root")
-        .unrounded_layout;
+        .layout;
     let positioned = positioned_owned_text_line_bounds(document, owned);
     layout.border.top + layout.padding.top + first_owned_text_line_top(owned, positioned.as_deref())
 }
@@ -3299,7 +3291,7 @@ fn reset_inline_x_for_page_transition(
         && is_direct_body_element
         && document.nodes[node_id].display().is_inline_flow()
     {
-        document.nodes[node_id].unrounded_layout.location.x = 0.0;
+        document.nodes[node_id].layout.location.x = 0.0;
     }
 }
 
@@ -3343,7 +3335,7 @@ fn grow_spanning_column_ancestors(
         if !document.block_axis(parent).height().is_auto() {
             break;
         }
-        document.nodes[parent].unrounded_layout.size.height += delta;
+        document.nodes[parent].layout.size.height += delta;
         fragment_edits.grow(parent, delta);
         if parent == body_id {
             break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
@@ -3586,7 +3578,7 @@ fn table_row_origins(document: &Document, candidates: &[PageCandidate]) -> Vec<(
         .filter(|candidate| candidate.context.is_table_row())
         .map(|candidate| {
             let row = candidate.node_id;
-            (row, document.nodes[row].unrounded_layout.location.y)
+            (row, document.nodes[row].layout.location.y)
         })
         .collect()
 }
@@ -4026,7 +4018,7 @@ fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
         document
             .ifc_layout_node(node_id)
             .expect("valid anonymous root")
-            .unrounded_layout
+            .layout
             .location
             .y
     } else {
@@ -4035,7 +4027,7 @@ fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
     let mut guard = 0_usize;
     let mut walk = AncestorCursor::new(Some(id), ParentRelation::Layout);
     while guard <= document.nodes.len() {
-        y += document.nodes[id].unrounded_layout.location.y;
+        y += document.nodes[id].layout.location.y;
         // A box of an inline engine paragraph is located from the root,
         // not from the inline elements around it.
         let Some(parent_id) = document.parent_of(id).and_then(|_| {
@@ -4112,14 +4104,14 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
             unusual_coordinates = true;
             current_abs_y(document, parent)
         } else {
-            child_top - document.nodes[child].unrounded_layout.location.y
+            child_top - document.nodes[child].layout.location.y
         };
         child = parent;
         child_top = parent_top;
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }
-        let layout = &document.nodes[parent].unrounded_layout;
+        let layout = &document.nodes[parent].layout;
         if layout.border.top != 0.0
             || layout.padding.top != 0.0
             || (parent_top - block_top).abs() > 0.01
@@ -4178,11 +4170,7 @@ fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) -> Ifc
     let actual_y = current_abs_y(document, node_id);
     let delta = desired_y - actual_y;
     if delta.is_finite() {
-        document
-            .table_layout_node_mut(node_id)
-            .unrounded_layout
-            .location
-            .y += delta;
+        document.table_layout_node_mut(node_id).layout.location.y += delta;
         if document.is_source_node(node_id) {
             return follow_moved_ifc_block(document, node_id, delta);
         }
@@ -4219,7 +4207,7 @@ fn follow_moved_ifc_text(
     lines.shifts.push(first.line, delta);
     let boxes: Vec<usize> = ifc.boxes.iter().map(|b| b.node).collect();
     for b in boxes {
-        let location = &mut document.nodes[b].unrounded_layout.location;
+        let location = &mut document.nodes[b].layout.location;
         if location.y >= old_top - 0.01 {
             location.y += delta;
         }
@@ -4240,7 +4228,7 @@ fn follow_moved_ifc_block(document: &mut Document, node_id: usize, delta: f32) -
     let Some(root) = document.layout_parent_of(node_id) else {
         return IfcBoxShifts::default(); // cov:ignore: a block child of an inline-engine paragraph has a layout parent.
     };
-    let layout = document.nodes[node_id].unrounded_layout;
+    let layout = document.nodes[node_id].layout;
     let old_top = layout.location.y - delta;
     let old_bottom = old_top + layout.size.height;
     follow_ifc_block(document, root, node_id, old_top, old_bottom, delta)
@@ -4299,7 +4287,7 @@ fn follow_ifc_block(
     let mut shifts = IfcBoxShifts::default();
     for (b, kind, later) in boxes {
         shifts.boxes.push(b);
-        let location = &mut document.nodes[b].unrounded_layout.location;
+        let location = &mut document.nodes[b].layout.location;
         let follows = if kind == IfcBoxKind::OutOfFlow {
             location.y >= old_bottom - 0.01
         } else {
@@ -4389,7 +4377,7 @@ fn has_in_flow_content(
     // generated boxes keep their physical styles.
     let vertical = document.context.pagination_on_transposed_axes;
     let has_paragraph_content = document.ifc_layout_node(id).is_some_and(|node| {
-        let width = node.unrounded_layout.size.width;
+        let width = node.layout.size.width;
         node.ifc.as_ref().is_some_and(|ifc| {
             ifc.generated_blocks
                 .iter()
@@ -4416,7 +4404,7 @@ fn has_in_flow_content(
             false
         } else {
             !margins_may_collapse_through(document, cascade, child)
-                || node.unrounded_layout.size.height > 0.0
+                || node.layout.size.height > 0.0
                 || has_in_flow_content(document, cascade, child)
         }
     })
@@ -4446,7 +4434,7 @@ fn forced_margin_reaches(
                     document,
                     cascade,
                     parent,
-                    document.nodes[parent].unrounded_layout.size.height,
+                    document.nodes[parent].layout.size.height,
                 ) =>
             {
                 id = parent;
@@ -4476,7 +4464,7 @@ fn generated_box_separates(
             .parent(element, BoxParentScope::Document)
             .and_then(|parent| document.ifc_layout_node(parent))
             .is_some_and(|node| {
-                let width = node.unrounded_layout.size.width;
+                let width = node.layout.size.width;
                 // A block box the line loop placed holds lines or clearance,
                 // and inline content puts text on a line; either keeps the
                 // margins apart, like the content that `has_in_flow_content`
@@ -4571,7 +4559,7 @@ fn collapsed_margin_start(
 /// margin of `id` and the margins of its first or last in-flow child that
 /// adjoin it, which all collapse into one (CSS 2 §8.3.1).
 fn adjoining_margin(document: &Document, cascade: &CascadeResult, id: usize, start: bool) -> f32 {
-    let layout = &document.nodes[id].unrounded_layout;
+    let layout = &document.nodes[id].layout;
     let own = if start {
         layout.margin.top
     } else {
@@ -4594,7 +4582,7 @@ fn adjoining_margin(document: &Document, cascade: &CascadeResult, id: usize, sta
     let Some(&child) = child else {
         return own;
     };
-    let child_layout = &document.nodes[child].unrounded_layout;
+    let child_layout = &document.nodes[child].layout;
     // The child's margin adjoins only when its border box touches this box's
     // content edge, which a used height or a line before it would prevent.
     let touches = if start {
@@ -4694,7 +4682,7 @@ fn grown_auto_height(
     // as `auto` (CSS 2.1 §10.5).
     let can_grow =
         block_axis.height().is_auto() || definite_content_height(document, parent).is_none();
-    let layout = &node.unrounded_layout;
+    let layout = &node.layout;
     let vertical_edges =
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
     let box_sizing_edges = if style.box_sizing() == taffy::BoxSizing::ContentBox {
@@ -4789,7 +4777,7 @@ fn grown_auto_height(
             // has no float of its own.
             float_shifted = true;
         }
-        let child_layout = &child_node.unrounded_layout;
+        let child_layout = &child_node.layout;
         let top = pagination_child_parent_y(document, parent, child, child_layout.location.y);
         if is_floating_box_for_pagination(document, cascade, child) {
             if matches!(
@@ -4977,7 +4965,7 @@ fn visit_same_bfc_floats_in_subtree(
         - if document.contributes_layout_offset(branch) {
             0.0
         } else {
-            document.nodes[branch].unrounded_layout.location.y
+            document.nodes[branch].layout.location.y
         };
     let mut pending: Vec<(usize, f32)> = document.nodes[branch]
         .children
@@ -4990,7 +4978,7 @@ fn visit_same_bfc_floats_in_subtree(
         if node.kind() != NodeKind::Element || !node.is_in_document() {
             continue;
         }
-        let layout = &node.unrounded_layout;
+        let layout = &node.layout;
         if node.display() == DisplayValue::None {
             continue;
         }
@@ -5066,7 +5054,7 @@ fn definite_content_height(
     } else {
         raw.tag() == taffy::CompactLength::LENGTH_TAG
     };
-    definite.then(|| node.unrounded_layout.content_box_height())
+    definite.then(|| node.layout.content_box_height())
 }
 
 /// Whether only margins separate `previous` from `node_id`: `previous` is
@@ -5110,7 +5098,7 @@ fn adjoins_previous_sibling(
 /// margins lie between the boxes on either side of it.
 fn takes_no_block_space(document: &Document, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
-    let layout = &node.unrounded_layout;
+    let layout = &node.layout;
     node.kind() == NodeKind::Element
         && matches!(
             document.nodes[node_id].display(),
@@ -6425,7 +6413,7 @@ fn move_box_for_transition(
         page_overflow,
         forced_transition,
     } = *moved;
-    document.nodes[node_id].unrounded_layout.location.y += node_delta;
+    document.nodes[node_id].layout.location.y += node_delta;
     let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, node_delta);
     // A nested avoiding block that moves to the next page lengthens the
     // ancestors whose content box holds it, so their continuation (and any
@@ -6485,13 +6473,13 @@ fn grow_float_context_to_moved_float(
         let context_top = current_abs_y(document, context);
         let float_bottom = current_abs_y(document, node_id)
             + height
-            + document.nodes[node_id].unrounded_layout.margin.bottom;
-        let layout = &document.nodes[context].unrounded_layout;
+            + document.nodes[node_id].layout.margin.bottom;
+        let layout = &document.nodes[context].layout;
         let grown = (float_bottom - context_top + layout.padding.bottom + layout.border.bottom)
             .min(max_border_box_height(document, cascade, context).unwrap_or(f32::INFINITY));
         let growth = grown - layout.size.height;
         if growth > 0.001 {
-            document.nodes[context].unrounded_layout.size.height += growth;
+            document.nodes[context].layout.size.height += growth;
             grow_ancestors_for_shift(
                 document,
                 cascade,
@@ -6546,7 +6534,7 @@ fn grow_ancestors_for_shift(
             continue;
         }
         shift_later_block_siblings(document, parent, child, flow_delta);
-        let height = document.nodes[parent].unrounded_layout.size.height;
+        let height = document.nodes[parent].layout.size.height;
         let grown = grown_auto_height(
             document,
             cascade,
@@ -6596,7 +6584,7 @@ fn grow_ancestors_for_shift(
             break;
         }
         let height = height + size_absorbed;
-        document.nodes[parent].unrounded_layout.size.height = height;
+        document.nodes[parent].layout.size.height = height;
         flow_delta = flow_absorbed;
         size_delta = size_absorbed;
         child = parent;
@@ -6617,7 +6605,7 @@ fn move_box_by_truncated_margin(
     delta: f32,
     flow_root: usize,
 ) {
-    document.nodes[node_id].unrounded_layout.location.y += delta;
+    document.nodes[node_id].layout.location.y += delta;
     let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, delta);
     shrink_ancestors_after_margin_truncation(
         document,
@@ -6659,7 +6647,7 @@ fn shrink_ancestors_after_margin_truncation(
             continue;
         }
         shift_later_block_siblings(document, parent, child, flow_delta);
-        let old_height = document.nodes[parent].unrounded_layout.size.height;
+        let old_height = document.nodes[parent].layout.size.height;
         let Some(adjusted) = grown_auto_height(
             document,
             cascade,
@@ -6674,7 +6662,7 @@ fn shrink_ancestors_after_margin_truncation(
         ) else {
             break;
         };
-        document.nodes[parent].unrounded_layout.size.height = adjusted.height;
+        document.nodes[parent].layout.size.height = adjusted.height;
         let (old_flow, new_flow) = adjusted.flow_heights;
         let owns_floats = holds_floats(document, cascade, parent);
         float_delta = if owns_floats {
@@ -6788,9 +6776,9 @@ fn flex_container_of_item_alone_on_its_line(
     // An item that takes the whole main size leaves no room for another on
     // its line; vertical separation alone can come from cross-axis margins
     // or alignment of items that do share it.
-    let layout = document.nodes[item].unrounded_layout;
+    let layout = document.nodes[item].layout;
     let outer_width = layout.size.width + layout.margin.left + layout.margin.right;
-    let line = document.nodes[container].unrounded_layout;
+    let line = document.nodes[container].layout;
     let line_width = line.size.width
         - line.padding.left
         - line.padding.right
@@ -6826,7 +6814,7 @@ fn flex_container_of_item_alone_on_its_line(
                 }
         })
         .all(|&child| {
-            let other = document.nodes[child].unrounded_layout;
+            let other = document.nodes[child].layout;
             let other_width = other.size.width + other.margin.left + other.margin.right;
             // A `display: contents` child lifts its children onto the lines
             // in its place, so its own box says nothing about them.
@@ -6843,7 +6831,7 @@ fn flex_container_of_item_alone_on_its_line(
 /// its line that grew by `shift` at its block-end edge, down by `shift`: in
 /// a row flex container they follow the line that grew.
 fn shift_later_flex_lines(document: &mut Document, container: usize, item: usize, shift: f32) {
-    let layout = document.nodes[item].unrounded_layout;
+    let layout = document.nodes[item].layout;
     // The item has already grown, so its old bottom is `shift` higher.
     let old_bottom = layout.location.y + layout.size.height - shift;
     let later: Vec<usize> = document.nodes[container]
@@ -6857,11 +6845,11 @@ fn shift_later_flex_lines(document: &mut Document, container: usize, item: usize
                     document.nodes[child].position(),
                     PositionValue::Absolute | PositionValue::Fixed
                 )
-                && document.nodes[child].unrounded_layout.location.y >= old_bottom - 0.001
+                && document.nodes[child].layout.location.y >= old_bottom - 0.001
         })
         .collect();
     for child in later {
-        document.nodes[child].unrounded_layout.location.y += shift;
+        document.nodes[child].layout.location.y += shift;
     }
 }
 
@@ -6931,11 +6919,7 @@ fn shift_later_block_siblings(document: &mut Document, parent: usize, child: usi
         {
             continue;
         }
-        document
-            .table_layout_node_mut(sibling)
-            .unrounded_layout
-            .location
-            .y += delta;
+        document.table_layout_node_mut(sibling).layout.location.y += delta;
     }
 }
 
@@ -6992,7 +6976,7 @@ fn float_margin_edge(
     height: f32,
     margin_top: f32,
 ) -> FloatEdge {
-    let layout = &document.nodes[node_id].unrounded_layout;
+    let layout = &document.nodes[node_id].layout;
     FloatEdge {
         node: node_id,
         side,
@@ -7030,12 +7014,10 @@ fn float_floor(
     if !floating {
         return cleared;
     }
-    let layout = &document.nodes[node_id].unrounded_layout;
+    let layout = &document.nodes[node_id].layout;
     let outer_width = layout.size.width + layout.margin.left + layout.margin.right;
     let outer_height = layout.size.height + layout.margin.top + layout.margin.bottom;
-    let context_width = document.nodes[float_context]
-        .unrounded_layout
-        .content_box_width();
+    let context_width = document.nodes[float_context].layout.content_box_width();
     let top = float_top_beside(edges, outer_width, outer_height, context_width);
     Some(top.max(cleared.unwrap_or(f32::NEG_INFINITY)))
 }
@@ -7196,7 +7178,7 @@ impl FloatShifts {
             float_floor(document, cascade, node_id, context, edges, floating)
         };
         let margin_top = if floating {
-            document.nodes[node_id].unrounded_layout.margin.top
+            document.nodes[node_id].layout.margin.top
         } else {
             0.0
         };
@@ -7227,7 +7209,7 @@ impl FloatShifts {
     ) {
         self.pending = Some((node_id, clearance.shift, flow_page));
         if let Some(side) = float_side_index(cascade.computed[node_id].float) {
-            let layout = &document.nodes[node_id].unrounded_layout;
+            let layout = &document.nodes[node_id].layout;
             let edge = float_margin_edge(
                 document,
                 node_id,
@@ -7568,7 +7550,7 @@ fn max_border_box_height(
         ComputedLengthPercentageOrAuto::Px(max) => Some(max),
         value => basis.and_then(|basis| used_computed_length_percentage_or_auto(value, basis)),
     }?;
-    let layout = &document.nodes[node_id].unrounded_layout;
+    let layout = &document.nodes[node_id].layout;
     let edges = if document.pagination_style(node_id).box_sizing() == taffy::BoxSizing::ContentBox {
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
     } else {
@@ -7584,7 +7566,7 @@ fn max_height_is_reached(
     node_id: usize,
 ) -> bool {
     max_border_box_height(document, cascade, node_id)
-        .is_some_and(|max| document.nodes[node_id].unrounded_layout.size.height >= max - 0.01)
+        .is_some_and(|max| document.nodes[node_id].layout.size.height >= max - 0.01)
 }
 
 /// Whether the items of `grid` stack in block order like blocks, none
@@ -7607,7 +7589,7 @@ fn grid_stacks_items(document: &super::context::LayoutSession<'_>, grid: usize) 
         .grid_item_row_starts
         .iter()
         .map(|&(item, row)| {
-            let layout = &document.nodes[item].unrounded_layout;
+            let layout = &document.nodes[item].layout;
             (
                 row,
                 layout.location.y,
@@ -7760,7 +7742,7 @@ fn shift_block_flow_after(
         }
         // The moved box itself already took the lines after it along.
         if paragraph && child != node_id {
-            let layout = document.nodes[child].unrounded_layout;
+            let layout = document.nodes[child].layout;
             let top = layout.location.y;
             let _ = follow_ifc_block(
                 document,

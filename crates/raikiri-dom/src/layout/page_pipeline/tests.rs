@@ -622,7 +622,7 @@ fn percent_width_scaling_skips_an_unusable_base_width_and_stops_on_abort() {
         document
             .nodes
             .iter()
-            .map(|node| node.unrounded_layout.size.width)
+            .map(|node| node.layout.size.width)
             .collect()
     };
     let before = widths(&document);
@@ -1353,11 +1353,11 @@ fn relayout_nested_multicol_children_packs_block_children_into_columns() {
 
     // width 200 / 2 columns with a 20px gap: (200 - 20) / 2 = 90; column
     // 1 starts at 90 + 20 = 110.
-    assert!((doc.nodes[a].unrounded_layout.location.x - 0.0).abs() < 0.01);
-    assert!((doc.nodes[c].unrounded_layout.location.x - 110.0).abs() < 0.01);
-    assert!((doc.nodes[a].unrounded_layout.location.y - 0.0).abs() < 0.01);
-    assert!((doc.nodes[b].unrounded_layout.location.y - 30.0).abs() < 0.01);
-    assert!((doc.nodes[container].unrounded_layout.size.height - 60.0).abs() < 0.01);
+    assert!((doc.nodes[a].layout.location.x - 0.0).abs() < 0.01);
+    assert!((doc.nodes[c].layout.location.x - 110.0).abs() < 0.01);
+    assert!((doc.nodes[a].layout.location.y - 0.0).abs() < 0.01);
+    assert!((doc.nodes[b].layout.location.y - 30.0).abs() < 0.01);
+    assert!((doc.nodes[container].layout.size.height - 60.0).abs() < 0.01);
 }
 
 #[test]
@@ -1417,11 +1417,11 @@ fn layout_pages_reuses_one_context_across_nested_multicol_placements() {
             .collect::<Vec<_>>(),
         [Some(0), Some(0), Some(1), Some(1)]
     );
-    assert_eq!(doc.nodes[lead].unrounded_layout.location.y, 0.0);
-    assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 20.0);
-    assert_eq!(doc.nodes[tail].unrounded_layout.location.y, 80.0);
-    assert!((doc.nodes[children[0]].unrounded_layout.location.x - 0.0).abs() < 0.01);
-    assert!((doc.nodes[children[2]].unrounded_layout.location.x - 110.0).abs() < 0.01);
+    assert_eq!(doc.nodes[lead].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[multicol].layout.location.y, 20.0);
+    assert_eq!(doc.nodes[tail].layout.location.y, 80.0);
+    assert!((doc.nodes[children[0]].layout.location.x - 0.0).abs() < 0.01);
+    assert!((doc.nodes[children[2]].layout.location.x - 110.0).abs() < 0.01);
 }
 
 #[test]
@@ -1466,11 +1466,11 @@ fn auto_fill_keeps_auto_height_block_children_in_source_order() {
     assert_eq!(
         children
             .iter()
-            .map(|&child| doc.nodes[child].unrounded_layout.location.y)
+            .map(|&child| doc.nodes[child].layout.location.y)
             .collect::<Vec<_>>(),
         [0.0, 30.0, 60.0, 90.0]
     );
-    assert!((doc.nodes[container].unrounded_layout.size.height - 120.0).abs() < 0.01);
+    assert!((doc.nodes[container].layout.size.height - 120.0).abs() < 0.01);
 }
 
 #[test]
@@ -1524,8 +1524,8 @@ fn relayout_nested_multicol_children_honors_break_before_avoid() {
     assert_eq!(fragmentainer_of(b), Some(0));
     assert_eq!(fragmentainer_of(c), Some(0));
     assert_eq!(fragmentainer_of(d), Some(1));
-    assert!((doc.nodes[c].unrounded_layout.location.y - 60.0).abs() < 0.01);
-    assert!((doc.nodes[container].unrounded_layout.size.height - 90.0).abs() < 0.01);
+    assert!((doc.nodes[c].layout.location.y - 60.0).abs() < 0.01);
+    assert!((doc.nodes[container].layout.size.height - 90.0).abs() < 0.01);
 }
 
 #[test]
@@ -1550,8 +1550,8 @@ fn text_indent_offsets_empty_inline_block_by_content_box_percentage() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
 
-    assert!((doc.nodes[block].unrounded_layout.content_box_width() - 110.0).abs() < 0.01);
-    assert!((doc.nodes[inline_block].unrounded_layout.location.x - 55.0).abs() < 0.01);
+    assert!((doc.nodes[block].layout.content_box_width() - 110.0).abs() < 0.01);
+    assert!((doc.nodes[inline_block].layout.location.x - 55.0).abs() < 0.01);
 }
 
 #[test]
@@ -1596,8 +1596,8 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
 
-    let parent_layout = doc.nodes[parent].unrounded_layout;
-    let child_layout = doc.nodes[child].unrounded_layout;
+    let parent_layout = doc.nodes[parent].layout;
+    let child_layout = doc.nodes[child].layout;
     assert!((parent_layout.size.width - 64.0).abs() < 0.01);
     assert!((parent_layout.size.height - 64.0).abs() < 0.01);
     let used_style = &bridged_style(&mut doc, &cascade, parent);
@@ -1684,7 +1684,7 @@ fn inline_block_width_auto_shrink_wraps_to_content() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let auto_size = doc.nodes[ib].unrounded_layout.size;
+    let auto_size = doc.nodes[ib].layout.size;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1692,7 +1692,7 @@ fn inline_block_width_auto_shrink_wraps_to_content() {
         "width:auto inline-block must shrink-wrap its 100px child, got width={}",
         auto_size.width
     );
-    let fixed_size = doc.nodes[ib_fixed].unrounded_layout.size;
+    let fixed_size = doc.nodes[ib_fixed].layout.size;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1735,7 +1735,7 @@ fn flex_items_follow_order_modified_source_order() {
         doc.nodes[flex].order_modified_children.as_ref(),
         &[b, absolute, d, a, c]
     );
-    let x = |id: usize| doc.nodes[id].unrounded_layout.location.x;
+    let x = |id: usize| doc.nodes[id].layout.location.x;
     assert!((x(d) - x(b) - 40.0).abs() < 0.5);
     assert!((x(a) - x(d) - 40.0).abs() < 0.5);
     assert!((x(c) - x(a) - 40.0).abs() < 0.5);
@@ -1764,10 +1764,7 @@ fn relayout_invalidates_cache_when_order_modified_view_returns_to_dom_order() {
         doc.nodes[flex].order_modified_children.as_ref(),
         &[second, first]
     );
-    assert!(
-        doc.nodes[second].unrounded_layout.location.x
-            < doc.nodes[first].unrounded_layout.location.x
-    );
+    assert!(doc.nodes[second].layout.location.x < doc.nodes[first].layout.location.x);
 
     // Keep the same Document and page size, but remove the nonzero order.
     // The derived child view becomes empty, which must invalidate cached
@@ -1779,10 +1776,7 @@ fn relayout_invalidates_cache_when_order_modified_view_returns_to_dom_order() {
     layout_single_page(&mut doc, &updated_cascade, PageBox::A4).expect("updated layout Ok");
 
     assert!(doc.nodes[flex].order_modified_children.is_empty());
-    assert!(
-        doc.nodes[first].unrounded_layout.location.x
-            < doc.nodes[second].unrounded_layout.location.x
-    );
+    assert!(doc.nodes[first].layout.location.x < doc.nodes[second].layout.location.x);
 }
 
 #[test]
@@ -1805,7 +1799,7 @@ fn order_is_ignored_for_non_flex_grid_children() {
     assert!(doc.nodes[block].order_modified_children.is_empty());
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
-        doc.nodes[b].unrounded_layout.location.y > doc.nodes[a].unrounded_layout.location.y,
+        doc.nodes[b].layout.location.y > doc.nodes[a].layout.location.y,
         "ordinary block children must retain source order despite CSS order"
     );
 }
@@ -1859,10 +1853,10 @@ fn nested_normal_flow_descendant_clears_ancestor_level_float() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let float_loc = doc.nodes[float_sibling].unrounded_layout.location;
-    let float_size = doc.nodes[float_sibling].unrounded_layout.size;
-    let wrapper_loc = doc.nodes[wrapper].unrounded_layout.location;
-    let probe_loc = doc.nodes[probe].unrounded_layout.location;
+    let float_loc = doc.nodes[float_sibling].layout.location;
+    let float_size = doc.nodes[float_sibling].layout.size;
+    let wrapper_loc = doc.nodes[wrapper].layout.location;
+    let probe_loc = doc.nodes[probe].layout.location;
 
     // `location` is parent-relative in taffy, so translate `probe`'s y
     // into `container`'s coordinate space by walking up one level.
@@ -1887,7 +1881,7 @@ fn layout_single_page_deterministic_across_10_runs() {
     fn one_run() -> Vec<BoxLayout> {
         let (mut doc, cr) = hello_world_doc();
         layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
-        doc.nodes.iter().map(|n| n.unrounded_layout).collect()
+        doc.nodes.iter().map(|n| n.layout).collect()
     }
 
     let baseline = one_run();
@@ -1942,7 +1936,7 @@ fn grid_auto_placement_uses_order_modified_source_order() {
         doc.nodes[grid].order_modified_children.as_ref(),
         &[b, d, a, c]
     );
-    let loc = |id: usize| doc.nodes[id].unrounded_layout.location;
+    let loc = |id: usize| doc.nodes[id].layout.location;
     assert!((loc(d).x - loc(b).x - 100.0).abs() < 0.5);
     assert!((loc(a).y - loc(b).y - 20.0).abs() < 0.5);
     assert!((loc(c).x - loc(a).x - 100.0).abs() < 0.5);
@@ -1991,8 +1985,8 @@ fn grid_template_columns_named_line_after_repeat_resolves_to_the_correct_taffy_g
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let first_loc = doc.nodes[cell_first].unrounded_layout.location;
-    let z_loc = doc.nodes[cell_z].unrounded_layout.location;
+    let first_loc = doc.nodes[cell_first].layout.location;
+    let z_loc = doc.nodes[cell_z].layout.location;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -2026,7 +2020,7 @@ fn grid_auto_abspos_static_position_uses_all_parent_padding_sides() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!((layout.location.x - 10.0).abs() < 0.01);
     assert!((layout.location.y - 10.0).abs() < 0.01);
 }
@@ -2055,7 +2049,7 @@ fn grid_auto_abspos_last_baseline_falls_back_to_the_end_edge() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!((layout.location.x - 90.0).abs() < 0.01);
     assert!((layout.location.y - 90.0).abs() < 0.01);
 }
@@ -2084,7 +2078,7 @@ fn grid_auto_abspos_last_baseline_keeps_an_oversized_box_at_the_start_edge() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!(
         (layout.location.x - 10.0).abs() < 0.01,
         "x: {}",
@@ -2117,7 +2111,7 @@ fn placed_grid_abspos_takes_last_baseline_from_the_container() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!((layout.location.x - 80.0).abs() < 0.01);
     assert!((layout.location.y - 80.0).abs() < 0.01);
 }
@@ -2146,7 +2140,7 @@ fn placed_grid_abspos_last_baseline_falls_back_to_self_end() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     // The end of a right-to-left box is its left edge.
     assert!(layout.location.x.abs() < 0.01, "x: {}", layout.location.x);
 }
@@ -2172,7 +2166,7 @@ fn grid_auto_abspos_last_baseline_in_an_rtl_box_falls_back_to_its_left_edge() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     // The end of a right-to-left box is its left edge.
     assert!(
         (layout.location.x - 10.0).abs() < 0.01,
@@ -2202,7 +2196,7 @@ fn grid_auto_abspos_last_baseline_overflowing_an_rtl_container_keeps_its_right_e
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     // An oversized box stays at the inline start (right) edge and spills left.
     assert!(
         (layout.location.x - -10.0).abs() < 0.01,
@@ -2237,7 +2231,7 @@ fn abspos_with_both_insets_keeps_the_start_edge_under_a_last_baseline_container(
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!(layout.location.x.abs() < 0.01);
     assert!(layout.location.y.abs() < 0.01);
 }
@@ -2266,7 +2260,7 @@ fn grid_auto_abspos_takes_last_baseline_from_the_container() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!((layout.location.x - 90.0).abs() < 0.01);
     assert!((layout.location.y - 90.0).abs() < 0.01);
 }
@@ -2300,7 +2294,7 @@ fn abspos_under_display_contents_takes_last_baseline_from_the_grid() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!((layout.location.x - 90.0).abs() < 0.01);
     assert!((layout.location.y - 90.0).abs() < 0.01);
 }
@@ -2333,7 +2327,7 @@ fn abspos_under_display_contents_ignores_the_alignment_of_the_wrapper() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
-    let layout = doc.nodes[child].unrounded_layout;
+    let layout = doc.nodes[child].layout;
     assert!((layout.location.x - 10.0).abs() < 0.01);
     assert!((layout.location.y - 10.0).abs() < 0.01);
 }
@@ -2468,9 +2462,9 @@ fn page_fragment_projection_handles_empty_missing_body_and_invalid_slice_inputs(
     assert_eq!(pages.len(), 1);
     assert!(pages[0].is_empty());
 
-    document.nodes[body].unrounded_layout.location.x = f32::NAN;
-    document.nodes[body].unrounded_layout.size.width = f32::NAN;
-    document.nodes[body].unrounded_layout.size.height = f32::NAN;
+    document.nodes[body].layout.location.x = f32::NAN;
+    document.nodes[body].layout.size.width = f32::NAN;
+    document.nodes[body].layout.size.height = f32::NAN;
     let pages = page_fragments_from_slices(
         &document,
         &cascade,
@@ -2484,7 +2478,7 @@ fn page_fragment_projection_handles_empty_missing_body_and_invalid_slice_inputs(
             .iter()
             .all(|item| item.node_id.0 == html as u64)
     );
-    document.nodes[html].unrounded_layout.location.x = f32::NAN;
+    document.nodes[html].layout.location.x = f32::NAN;
     let pages = page_fragments_from_slices(
         &document,
         &cascade,
@@ -2621,11 +2615,8 @@ fn layout_pages_uses_order_modified_flex_sequence_for_forced_breaks() {
     let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
-    let first_y = doc.nodes[first_in_visual_order].unrounded_layout.location.y;
-    let later_y = doc.nodes[break_later_in_visual_order]
-        .unrounded_layout
-        .location
-        .y;
+    let first_y = doc.nodes[first_in_visual_order].layout.location.y;
+    let later_y = doc.nodes[break_later_in_visual_order].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         first_y.abs() < 0.01,
@@ -2665,8 +2656,8 @@ fn layout_pages_uses_order_modified_flex_last_item_for_overflow() {
     page.height = 100.0;
     let _slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
-    let first_y = doc.nodes[visual_first].unrounded_layout.location.y;
-    let last_y = doc.nodes[visual_last].unrounded_layout.location.y;
+    let first_y = doc.nodes[visual_first].layout.location.y;
+    let last_y = doc.nodes[visual_last].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         first_y.abs() < 0.01,
@@ -2715,11 +2706,8 @@ fn layout_pages_uses_column_reverse_visual_order_for_forced_breaks() {
         doc.nodes[flex].layout_children(),
         &[visual_bottom_forced_break, visual_top]
     );
-    let top_y = doc.nodes[visual_top].unrounded_layout.location.y;
-    let bottom_y = doc.nodes[visual_bottom_forced_break]
-        .unrounded_layout
-        .location
-        .y;
+    let top_y = doc.nodes[visual_top].layout.location.y;
+    let bottom_y = doc.nodes[visual_bottom_forced_break].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         top_y.abs() < 0.01,
@@ -2759,8 +2747,8 @@ fn layout_pages_keeps_column_reverse_visual_last_item_at_page_edge() {
         doc.nodes[flex].layout_children(),
         &[visual_bottom, visual_top]
     );
-    let top_y = doc.nodes[visual_top].unrounded_layout.location.y;
-    let bottom_y = doc.nodes[visual_bottom].unrounded_layout.location.y;
+    let top_y = doc.nodes[visual_top].layout.location.y;
+    let bottom_y = doc.nodes[visual_bottom].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         top_y.abs() < 0.01,
@@ -2810,8 +2798,8 @@ fn layout_pages_orders_grid_rows_by_resolved_placement_before_forced_break() {
         doc.nodes[grid].layout_children(),
         &[row_two, _comment, row_one]
     );
-    let row_one_y = doc.nodes[row_one].unrounded_layout.location.y;
-    let row_two_y = doc.nodes[row_two].unrounded_layout.location.y;
+    let row_one_y = doc.nodes[row_one].layout.location.y;
+    let row_two_y = doc.nodes[row_two].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         row_one_y.abs() < 0.01,
@@ -2861,8 +2849,8 @@ fn layout_pages_processes_single_column_grid_in_placed_row_order() {
         "the second grid row should continue to page 1+"
     );
     assert_eq!(doc.nodes[grid].layout_children(), &[second_row, first_row]);
-    let first_y = doc.nodes[first_row].unrounded_layout.location.y;
-    let second_y = doc.nodes[second_row].unrounded_layout.location.y;
+    let first_y = doc.nodes[first_row].layout.location.y;
+    let second_y = doc.nodes[second_row].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         first_y.abs() < 0.01,
@@ -2934,7 +2922,7 @@ fn layout_pages_joins_a_non_empty_named_box_to_a_preceding_zero_height_named_box
         .map(|slice| slice.page_name.as_deref())
         .collect();
     assert_eq!(names, [Some("a"), Some("c"), Some("d")]);
-    let c_y = doc.nodes[boxes[2]].unrounded_layout.location.y;
+    let c_y = doc.nodes[boxes[2]].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!((c_y - 100.0).abs() < 0.01, "c starts page 1: y={c_y}");
 }
@@ -2971,7 +2959,7 @@ fn layout_pages_keeps_an_empty_box_at_a_full_page_end_on_that_page() {
         .map(|slice| slice.page_name.as_deref())
         .collect();
     assert_eq!(names, [None, Some("b")]);
-    let named_y = doc.nodes[boxes[2]].unrounded_layout.location.y;
+    let named_y = doc.nodes[boxes[2]].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         (named_y - 100.0).abs() < 0.01,
@@ -3320,8 +3308,8 @@ fn layout_pages_processes_mixed_auto_and_explicit_grid_rows_by_resolved_placemen
         doc.nodes[grid].layout_children(),
         &[explicit_row_two, auto_row_one]
     );
-    let row_one_y = doc.nodes[auto_row_one].unrounded_layout.location.y;
-    let row_two_y = doc.nodes[explicit_row_two].unrounded_layout.location.y;
+    let row_one_y = doc.nodes[auto_row_one].layout.location.y;
+    let row_two_y = doc.nodes[explicit_row_two].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         row_one_y.abs() < 0.01,
@@ -3366,11 +3354,8 @@ fn layout_pages_orders_direct_grid_text_before_later_forced_break() {
         doc.nodes[grid].layout_children(),
         &[later_row_forced_break, first_row_text]
     );
-    let text_y = doc.nodes[first_row_text].unrounded_layout.location.y;
-    let later_y = doc.nodes[later_row_forced_break]
-        .unrounded_layout
-        .location
-        .y;
+    let text_y = doc.nodes[first_row_text].layout.location.y;
+    let later_y = doc.nodes[later_row_forced_break].layout.location.y;
     assert!(text_y.abs() < 0.01, "row 1 text stays on page 0: {text_y}");
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
@@ -3416,8 +3401,8 @@ fn layout_pages_orders_negative_explicit_grid_rows_by_placement() {
         "the second grid row should continue to page 1+"
     );
     assert_eq!(doc.nodes[grid].layout_children(), &[second_row, first_row]);
-    let first_y = doc.nodes[first_row].unrounded_layout.location.y;
-    let second_y = doc.nodes[second_row].unrounded_layout.location.y;
+    let first_y = doc.nodes[first_row].layout.location.y;
+    let second_y = doc.nodes[second_row].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         first_y.abs() < 0.01,
@@ -3466,11 +3451,8 @@ fn layout_pages_uses_resolved_rows_for_reversed_grid_lines_and_order() {
         doc.nodes[grid].layout_children(),
         &[later_row_forced_break, reversed_row_lines]
     );
-    let first_row_y = doc.nodes[reversed_row_lines].unrounded_layout.location.y;
-    let second_row_y = doc.nodes[later_row_forced_break]
-        .unrounded_layout
-        .location
-        .y;
+    let first_row_y = doc.nodes[reversed_row_lines].layout.location.y;
+    let second_row_y = doc.nodes[later_row_forced_break].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         first_row_y.abs() < 0.01,
@@ -3516,12 +3498,9 @@ fn layout_pages_orders_relative_grid_items_by_resolved_placement() {
     let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert!(slices.len() >= 2, "the forced break must create page 1+");
-    let first_row_y = doc.nodes[relative_first_row].unrounded_layout.location.y;
-    let second_row_y = doc.nodes[page_break_after_second_row]
-        .unrounded_layout
-        .location
-        .y;
-    let following_y = doc.nodes[following].unrounded_layout.location.y;
+    let first_row_y = doc.nodes[relative_first_row].layout.location.y;
+    let second_row_y = doc.nodes[page_break_after_second_row].layout.location.y;
+    let following_y = doc.nodes[following].layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         (first_row_y - 60.0).abs() < 0.01,
@@ -3561,14 +3540,14 @@ fn layout_pages_places_footnote_at_page_bottom_without_flow_footprint() {
     let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
 
     assert_eq!(slices.len(), 1);
-    let note_y = doc.nodes[note].unrounded_layout.location.y;
-    let following_y = doc.nodes[following].unrounded_layout.location.y;
+    let note_y = doc.nodes[note].layout.location.y;
+    let following_y = doc.nodes[following].layout.location.y;
     assert!((note_y - 40.0).abs() < 0.01, "note y={note_y}");
     assert!(
         following_y < note_y,
         "following flow content should not be pushed below the footnote: following y={following_y}, note y={note_y}"
     );
-    assert!(doc.nodes[lead].unrounded_layout.size.height > 0.0);
+    assert!(doc.nodes[lead].layout.size.height > 0.0);
 }
 
 #[test]
@@ -3603,7 +3582,7 @@ fn direct_absolute_auto_width_shrink_to_fit_empty_with_margin() {
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
     // Empty content shrink-wraps to zero; the border box holds only borders.
-    let layout = doc.nodes[abs].unrounded_layout;
+    let layout = doc.nodes[abs].layout;
     assert!((layout.size.width - 20.0).abs() < 0.001);
 }
 
@@ -3630,7 +3609,7 @@ fn direct_absolute_auto_width_shrink_to_fit_block_child() {
     page.height = 600.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
-    let layout = doc.nodes[abs_pos].unrounded_layout;
+    let layout = doc.nodes[abs_pos].layout;
     assert!(
         (layout.size.width - 100.0).abs() < 0.5,
         "width:auto absolute must shrink-wrap its 100px child, got width={}",
@@ -3659,7 +3638,7 @@ fn nested_absolute_auto_width_matches_direct_body_shrink() {
     page.height = 600.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
-    let layout = doc.nodes[abs_pos].unrounded_layout;
+    let layout = doc.nodes[abs_pos].layout;
     assert!(
         (layout.size.width - 100.0).abs() < 0.5,
         "nested width:auto absolute must shrink-wrap its 100px child, got width={}",
@@ -3694,7 +3673,7 @@ fn stored_lines(doc: &Document, root: usize) -> &crate::layout::ifc::root::IfcLi
 fn ifc_root_height_is_lines_times_line_height() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:50px");
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[root].unrounded_layout;
+    let layout = doc.nodes[root].layout;
     assert_eq!(layout.size.width, 50.0);
     // Three 10px lines.
     assert_eq!(layout.size.height, 30.0);
@@ -3712,7 +3691,7 @@ fn a_definite_physical_height_sets_the_vertical_inline_extent() {
 
         assert_eq!(stored_lines(&doc, root).width, 30.0, "{mode}");
         assert_eq!(stored_lines(&doc, root).lines.len(), 3, "{mode}");
-        let layout = doc.nodes[root].unrounded_layout;
+        let layout = doc.nodes[root].layout;
         assert_eq!(
             (layout.size.width, layout.size.height),
             (100.0, 30.0),
@@ -3741,7 +3720,7 @@ fn an_explicit_width_root_breaks_at_the_box_width() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "width:200px");
     lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).width, 200.0);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 200.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 200.0);
 }
 
 #[test]
@@ -3750,7 +3729,7 @@ fn a_floated_root_shrinks_to_its_max_content() {
     // available width: the shrink-to-fit branch.
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb", "float:left");
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 90.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 90.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
 }
 
@@ -3761,8 +3740,8 @@ fn an_inline_block_shrinks_to_the_max_content_of_its_ifc_root() {
     let (mut doc, cascade, wrapper, root) =
         ahem_paragraph_in_block_wrapper("aaaa bbbb", "display:inline-block");
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.width, 90.0);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 90.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.width, 90.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 90.0);
 }
 
 #[test]
@@ -3774,7 +3753,7 @@ fn the_last_performed_layout_decides_the_stored_lines() {
     lay_out(&mut doc, &cascade);
     assert_eq!(
         stored_lines(&doc, root).width,
-        doc.nodes[root].unrounded_layout.size.width
+        doc.nodes[root].layout.size.width
     );
 }
 
@@ -3840,7 +3819,7 @@ fn calc_min_width_is_resolved_on_an_ifc_root() {
         ahem_paragraph("aaaa bbbb", "float:left;min-width:calc(20% + 10px)");
     lay_out(&mut doc, &cascade);
     // 20% of the 800px page plus 10px.
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 170.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 170.0);
     // The stored lines must be broken at the final content width too.
     assert_eq!(stored_lines(&doc, root).width, 170.0);
 }
@@ -3852,9 +3831,9 @@ fn a_floated_root_with_a_narrow_max_width_breaks_at_that_width() {
     // (60px) would give.
     let (mut doc, cascade, root) = ahem_paragraph("aaaaaa bb cc", "float:left;max-width:40px");
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 40.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 40.0);
     assert_eq!(stored_lines(&doc, root).width, 40.0);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 30.0);
 }
 
 #[test]
@@ -3903,13 +3882,13 @@ fn relayout_keeps_an_authored_width_root_at_its_width() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "width:200px");
     lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
-    let height_before = doc.nodes[root].unrounded_layout.size.height;
+    let height_before = doc.nodes[root].layout.size.height;
     // The authored 200px is kept whatever the page width is.
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, height_before);
+    assert_eq!(doc.nodes[root].layout.size.height, height_before);
 }
 
 #[test]
@@ -3918,7 +3897,7 @@ fn relayout_follows_the_page_width_for_an_auto_width_root() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", "");
     lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
-    let height_before = doc.nodes[root].unrounded_layout.size.height;
+    let height_before = doc.nodes[root].layout.size.height;
     // No authored width anywhere above: the lines break again at `max_advance`,
     // narrower or wider than the width laid out at.
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 50.0);
@@ -3926,7 +3905,7 @@ fn relayout_follows_the_page_width_for_an_auto_width_root() {
     relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
     // Only the lines change; the taffy box is left as it was.
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, height_before);
+    assert_eq!(doc.nodes[root].layout.size.height, height_before);
 }
 
 #[test]
@@ -3967,7 +3946,7 @@ fn a_paragraph_beside_a_left_float_starts_after_it() {
         lines.iter().map(line_start_x).collect::<Vec<_>>(),
         [Some(30.0), Some(30.0), Some(0.0)]
     );
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 30.0);
     assert!(stored_lines(&doc, root).beside_floats);
 }
 
@@ -4265,7 +4244,7 @@ fn a_float_inside_the_paragraph_shortens_the_line_it_is_anchored_in() {
         [Some(30.0), Some(30.0), Some(0.0)]
     );
     // The float sits at the top left of the content box.
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (30.0, 20.0));
 }
@@ -4279,7 +4258,7 @@ fn a_right_float_inside_the_paragraph_sits_at_the_right_edge() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!((layout.location.x, layout.location.y), (70.0, 0.0));
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(
@@ -4304,7 +4283,7 @@ fn a_float_that_would_shorten_its_own_line_moves_to_the_next_line() {
     assert_eq!(line_text(&lines[0]), "aaaa bbbb");
     assert_eq!(line_start_x(&lines[0]), Some(0.0));
     // The float is placed at the top of the second line.
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
     assert_eq!(line_text(&lines[1]), "cccc");
     assert_eq!(line_start_x(&lines[1]), Some(60.0));
@@ -4323,11 +4302,11 @@ fn an_intrinsic_width_includes_the_float() {
         "float:left;width:auto",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(line_start_x(&lines[0]), Some(30.0));
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 100.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 100.0);
 }
 
 #[test]
@@ -4341,7 +4320,7 @@ fn a_float_inside_a_padded_paragraph_is_placed_inside_its_content_box() {
         "padding:0 10px;box-sizing:border-box",
     );
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[float].unrounded_layout.location.x, 10.0);
+    assert_eq!(doc.nodes[float].layout.location.x, 10.0);
 }
 
 #[test]
@@ -4399,7 +4378,7 @@ fn a_float_wider_than_the_rest_of_its_line_waits_for_the_next_line() {
         [Some(60.0), Some(60.0)]
     );
     let at = |id: usize| {
-        let layout = doc.nodes[id].unrounded_layout;
+        let layout = doc.nodes[id].layout;
         (layout.location.x, layout.location.y)
     };
     assert_eq!(at(first), (0.0, 0.0));
@@ -4423,7 +4402,7 @@ fn a_paragraph_inside_a_float_of_a_root_is_measured() {
     assert!(doc.nodes[root].is_ifc_root());
     assert!(doc.nodes[inner].is_ifc_root());
     assert_eq!(stored_lines(&doc, inner).lines.len(), 2);
-    assert_eq!(doc.nodes[float].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[float].layout.size.height, 20.0);
 }
 
 #[test]
@@ -4481,7 +4460,7 @@ fn a_paragraph_that_is_a_formatting_context_contains_its_floats() {
     );
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 50.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 50.0);
 }
 
 #[test]
@@ -4495,7 +4474,7 @@ fn an_in_flow_paragraph_does_not_grow_for_its_floats() {
     assert_eq!(stored_lines(&doc, root).height, 10.0);
     // The float hangs below the paragraph; only its own formatting context
     // includes the float in its used height.
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 10.0);
 }
 
 #[test]
@@ -4507,7 +4486,7 @@ fn a_committed_float_layout_carries_its_box_model() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     // The border box starts after the 5px margin and is 22px tall.
     assert_eq!((layout.location.x, layout.location.y), (5.0, 0.0));
     assert_eq!(layout.size.height, 22.0);
@@ -4525,7 +4504,7 @@ fn a_percentage_margin_resolves_against_the_paragraph_width() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!(layout.margin.left, 10.0);
     assert_eq!(layout.location.x, 10.0);
 }
@@ -4540,7 +4519,7 @@ fn a_mixed_calc_margin_resolves_against_the_paragraph_width() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!(layout.margin.left, 13.0);
     assert_eq!(layout.location.x, 13.0);
 }
@@ -4555,7 +4534,7 @@ fn a_mixed_calc_padding_resolves_against_the_paragraph_width() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!(layout.padding.left, 12.0);
     assert_eq!(layout.size.width, 42.0);
 }
@@ -4571,7 +4550,7 @@ fn a_mixed_calc_padding_below_zero_clamps_at_layout() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!(layout.padding.left, 0.0);
     assert_eq!(layout.size.width, 30.0);
 }
@@ -4588,7 +4567,7 @@ fn a_padded_formatting_context_does_not_count_its_top_edge_twice() {
         "float:left;width:100px;padding-top:15px",
     );
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 65.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 65.0);
 }
 
 // ── float placement rules the shadow record has to follow ────
@@ -4617,7 +4596,7 @@ fn ahem_paragraph_with_floats(
 }
 
 fn origin(doc: &Document, id: usize) -> (f32, f32) {
-    let layout = doc.nodes[id].unrounded_layout;
+    let layout = doc.nodes[id].layout;
     (layout.location.x, layout.location.y)
 }
 
@@ -4744,7 +4723,7 @@ fn an_inline_block_is_measured_before_the_lines_are_broken() {
     assert!(doc.nodes[root].is_ifc_root());
     let lines = &stored_lines(&doc, root).lines;
     assert_eq!(lines.len(), 1);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 32.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 32.0);
 }
 
 #[test]
@@ -4767,7 +4746,7 @@ fn atomics_whose_margin_boxes_add_up_to_the_line_share_it() {
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap_or(cascade);
     lay_out(&mut doc, &cascade);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
-    assert!(doc.nodes[second].unrounded_layout.location.x > 50.0);
+    assert!(doc.nodes[second].layout.location.x > 50.0);
 }
 
 #[test]
@@ -4796,7 +4775,7 @@ fn a_shrink_to_fit_paragraph_with_an_inline_block_is_as_wide_as_its_content() {
     );
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 80.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 80.0);
 }
 
 #[test]
@@ -4883,7 +4862,7 @@ fn an_inline_block_is_placed_at_its_fragment() {
     let (mut doc, cascade, atomic, _root) =
         ahem_paragraph_with_atomic("aa ", "width:30px;height:30px", " bb", "");
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[atomic].unrounded_layout;
+    let layout = doc.nodes[atomic].layout;
     assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (30.0, 30.0));
 }
@@ -4902,9 +4881,9 @@ fn an_inline_block_with_text_sits_on_its_last_baseline() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    let layout = doc.nodes[atomic].unrounded_layout;
+    let layout = doc.nodes[atomic].layout;
     assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 10.0);
 }
 
 #[test]
@@ -4916,7 +4895,7 @@ fn an_atomic_margin_moves_its_border_box_inside_the_margin_box() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[atomic].unrounded_layout;
+    let layout = doc.nodes[atomic].layout;
     // The margin box starts after "aa " (30px); the border box is 5px in.
     assert_eq!(layout.location.x, 35.0);
     assert_eq!(layout.margin.left, 5.0);
@@ -4932,7 +4911,7 @@ fn atomics_on_later_lines_are_placed_on_their_own_line() {
         ahem_paragraph_with_atomic("aaaaaaaa ", "width:30px;height:10px", "", "");
     lay_out(&mut doc, &cascade);
     // "aaaaaaaa " is 90px; the atomic (30px) starts the second line.
-    let layout = doc.nodes[atomic].unrounded_layout;
+    let layout = doc.nodes[atomic].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
     assert_eq!(stored_lines(&doc, root).lines.len(), 2);
 }
@@ -4946,7 +4925,7 @@ fn an_atomic_is_offset_by_the_content_box_of_its_paragraph() {
         "padding:4px 6px;box-sizing:border-box",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[atomic].unrounded_layout;
+    let layout = doc.nodes[atomic].layout;
     assert_eq!((layout.location.x, layout.location.y), (36.0, 4.0));
 }
 
@@ -4966,7 +4945,7 @@ fn an_atomic_beside_a_float_starts_after_it() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    let layout = doc.nodes[atomic].unrounded_layout;
+    let layout = doc.nodes[atomic].layout;
     assert_eq!(layout.location.x, 60.0);
 }
 
@@ -4986,10 +4965,10 @@ fn an_image_is_placed_like_an_inline_block() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    let layout = doc.nodes[image].unrounded_layout;
+    let layout = doc.nodes[image].layout;
     assert_eq!((layout.location.x, layout.location.y), (30.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (10.0, 10.0));
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 12.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 12.0);
 }
 
 // ── block children of ifc roots ──────────────────────────────
@@ -5028,10 +5007,10 @@ fn a_block_child_splits_the_lines_around_it() {
         lines.iter().map(|l| l.block_offset()).collect::<Vec<_>>(),
         [0.0, 30.0]
     );
-    let layout = doc.nodes[block].unrounded_layout;
+    let layout = doc.nodes[block].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
     assert_eq!((layout.size.width, layout.size.height), (100.0, 20.0));
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 40.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 40.0);
 }
 
 #[test]
@@ -5039,8 +5018,8 @@ fn a_leading_block_child_starts_the_paragraph() {
     let (mut doc, cascade, block, root) = paragraph_with_block("", "height:20px", "bb", "");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[block].unrounded_layout.location.y, 0.0);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
+    assert_eq!(doc.nodes[block].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 30.0);
 }
 
 #[test]
@@ -5052,7 +5031,7 @@ fn a_block_child_is_as_wide_as_the_content_box_less_its_margins() {
         "",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[block].unrounded_layout;
+    let layout = doc.nodes[block].layout;
     assert_eq!((layout.location.x, layout.size.width), (10.0, 70.0));
 }
 
@@ -5066,7 +5045,7 @@ fn a_block_child_is_offset_by_the_content_box_of_its_paragraph() {
     );
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    let layout = doc.nodes[block].unrounded_layout;
+    let layout = doc.nodes[block].layout;
     // The content box starts at (6, 4); the block follows the first line.
     // The root's 100px border box has a 12px horizontal inset, so its content
     // box and this auto-width child are 88px wide.
@@ -5085,7 +5064,7 @@ fn vertical_block_children_follow_the_logical_block_direction() {
         );
         lay_out(&mut doc, &cascade);
 
-        let child = doc.nodes[block].unrounded_layout;
+        let child = doc.nodes[block].layout;
         assert_eq!(
             (child.location.x, child.location.y),
             (expected_x, 0.0),
@@ -5106,7 +5085,7 @@ fn sideways_rl_block_children_take_their_right_margin_as_block_start() {
             &format!("height:50px;writing-mode:{mode}"),
         );
         lay_out(&mut doc, &cascade);
-        let child = doc.nodes[block].unrounded_layout;
+        let child = doc.nodes[block].layout;
         (child.location.x, child.location.y)
     };
     assert_eq!(location("sideways-rl"), location("vertical-rl"));
@@ -5124,7 +5103,7 @@ fn vertical_rtl_block_child_uses_the_logical_inline_start_once() {
         lay_out(&mut doc, &cascade);
 
         assert!(doc.nodes[root].is_ifc_root(), "{mode}");
-        let child = doc.nodes[block].unrounded_layout;
+        let child = doc.nodes[block].layout;
         assert_eq!(
             (child.location.x, child.location.y),
             (expected_x, 73.0),
@@ -5157,14 +5136,8 @@ fn dimensioned_empty_vertical_block_children_follow_the_block_axis() {
         lay_out(&mut doc, &cascade);
 
         assert!(doc.nodes[root].is_ifc_root(), "{mode}");
-        assert_eq!(
-            doc.nodes[first].unrounded_layout.location.x, expected_x[0],
-            "{mode}"
-        );
-        assert_eq!(
-            doc.nodes[second].unrounded_layout.location.x, expected_x[1],
-            "{mode}"
-        );
+        assert_eq!(doc.nodes[first].layout.location.x, expected_x[0], "{mode}");
+        assert_eq!(doc.nodes[second].layout.location.x, expected_x[1], "{mode}");
     }
 }
 
@@ -5189,8 +5162,8 @@ fn vertical_rl_keeps_multiple_block_children_in_logical_source_order() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
 
-    assert_eq!(doc.nodes[first].unrounded_layout.location.x, 78.0);
-    assert_eq!(doc.nodes[second].unrounded_layout.location.x, 54.0);
+    assert_eq!(doc.nodes[first].layout.location.x, 78.0);
+    assert_eq!(doc.nodes[second].layout.location.x, 54.0);
 }
 
 #[test]
@@ -5263,8 +5236,8 @@ fn vertical_block_children_collapse_adjoining_block_axis_margins() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
 
-        let first_layout = doc.nodes[first].unrounded_layout;
-        let second_layout = doc.nodes[second].unrounded_layout;
+        let first_layout = doc.nodes[first].layout;
+        let second_layout = doc.nodes[second].layout;
         let gap = if gap_direction < 0.0 {
             first_layout.location.x - (second_layout.location.x + second_layout.size.width)
         } else {
@@ -5299,10 +5272,7 @@ fn vertical_block_child_margin_percentages_resolve_against_inline_size() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
 
-        assert_eq!(
-            doc.nodes[block].unrounded_layout.location.x, expected_x,
-            "{mode}"
-        );
+        assert_eq!(doc.nodes[block].layout.location.x, expected_x, "{mode}");
     }
 }
 
@@ -5328,7 +5298,7 @@ fn vertical_block_child_percentage_edges_use_parent_inline_size() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
 
-        let layout = doc.nodes[block].unrounded_layout;
+        let layout = doc.nodes[block].layout;
         assert_eq!(stored_lines(&doc, block).width, 49.0, "{mode}");
         assert_eq!(
             (layout.size.width, layout.size.height),
@@ -5366,7 +5336,7 @@ fn vertical_block_children_distribute_auto_inline_margins() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
 
-        assert_eq!(doc.nodes[block].unrounded_layout.location.y, 40.0, "{mode}");
+        assert_eq!(doc.nodes[block].layout.location.y, 40.0, "{mode}");
     }
 }
 
@@ -5387,7 +5357,7 @@ fn vertical_block_child_auto_inline_margin_is_zero_when_the_child_overflows() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
 
-        assert_eq!(doc.nodes[block].unrounded_layout.location.y, 0.0, "{mode}");
+        assert_eq!(doc.nodes[block].layout.location.y, 0.0, "{mode}");
     }
 }
 
@@ -5426,11 +5396,11 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
         blocks
             .into_iter()
             .map(|block| {
-                let layout = doc.nodes[block].unrounded_layout;
+                let layout = doc.nodes[block].layout;
                 let (absolute_x, absolute_y) =
                     doc.inclusive_ancestors(block)
                         .fold((0.0, 0.0), |(x, y), node| {
-                            let location = doc.nodes[node].unrounded_layout.location;
+                            let location = doc.nodes[node].layout.location;
                             (x + location.x, y + location.y)
                         });
                 (
@@ -5454,7 +5424,7 @@ fn vertical_rl_block_child_placement_accounts_for_root_padding_and_border() {
     lay_out(&mut doc, &cascade);
 
     assert_eq!(stored_lines(&doc, root).width, 30.0);
-    let child = doc.nodes[block].unrounded_layout;
+    let child = doc.nodes[block].layout;
     assert_eq!((child.location.x, child.location.y), (73.0, 6.0));
 }
 
@@ -5470,7 +5440,7 @@ fn text_inside_a_block_child_is_laid_out_inside_the_block() {
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert!(doc.nodes[block].is_ifc_root());
-    let layout = doc.nodes[block].unrounded_layout;
+    let layout = doc.nodes[block].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
     assert_eq!(layout.size.height, 10.0);
     let lines = &stored_lines(&doc, root).lines;
@@ -5482,7 +5452,7 @@ fn text_inside_a_block_child_is_laid_out_inside_the_block() {
         lines.iter().map(|l| l.block_offset()).collect::<Vec<_>>(),
         [0.0, 20.0]
     );
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 30.0);
 }
 
 #[test]
@@ -5502,10 +5472,10 @@ fn a_float_anchored_right_before_a_block_child_is_placed_above_it() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    let layout = doc.nodes[float].unrounded_layout;
+    let layout = doc.nodes[float].layout;
     assert_eq!((layout.location.x, layout.location.y), (0.0, 0.0));
     assert_eq!((layout.size.width, layout.size.height), (30.0, 10.0));
-    assert_eq!(doc.nodes[block].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[block].layout.location.y, 0.0);
 }
 
 #[test]
@@ -5519,7 +5489,7 @@ fn a_shrink_to_fit_paragraph_is_as_wide_as_its_widest_block_child() {
     );
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 60.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 60.0);
 }
 
 #[test]
@@ -5630,7 +5600,7 @@ fn a_block_child_keeps_its_own_width() {
         let (mut doc, cascade, block, root) = paragraph_with_block("aa", css, "bb", "");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
-        let layout = doc.nodes[block].unrounded_layout;
+        let layout = doc.nodes[block].layout;
         assert_eq!(
             (layout.location.x, layout.size.width),
             (0.0, width),
@@ -5654,7 +5624,7 @@ fn a_right_float_inside_a_narrow_block_child_sits_at_the_block_edge() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
-        assert_eq!(doc.nodes[float].unrounded_layout.location.x, 30.0, "{css}");
+        assert_eq!(doc.nodes[float].layout.location.x, 30.0, "{css}");
     }
 }
 
@@ -5673,9 +5643,9 @@ fn a_float_root_with_its_own_width_breaks_a_long_word_at_that_width() {
         let (mut doc, cascade, root) = ahem_paragraph("FillerFillerFillerFiller", css);
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
-        assert_eq!(doc.nodes[root].unrounded_layout.size.width, 100.0, "{css}");
+        assert_eq!(doc.nodes[root].layout.size.width, 100.0, "{css}");
         assert_eq!(stored_lines(&doc, root).lines.len(), 3, "{css}");
-        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 30.0, "{css}");
+        assert_eq!(doc.nodes[root].layout.size.height, 30.0, "{css}");
     }
 }
 
@@ -5684,7 +5654,7 @@ fn a_float_root_without_a_width_still_shrinks_to_fit() {
     let (mut doc, cascade, root) = ahem_paragraph("aaaa bb", "float:left");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 70.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 70.0);
     assert_eq!(stored_lines(&doc, root).lines.len(), 1);
 }
 
@@ -5836,7 +5806,7 @@ fn an_inline_element_without_a_piece_gets_an_empty_layout() {
         });
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    let layout = doc.nodes[span_id].unrounded_layout;
+    let layout = doc.nodes[span_id].layout;
     assert_eq!(
         (
             layout.location.x,
@@ -5859,14 +5829,14 @@ fn a_second_layout_does_not_keep_the_stale_box_of_a_removed_element() {
         span_id = inner;
     });
     lay_out(&mut doc, &cascade);
-    assert!(doc.nodes[span_id].unrounded_layout.size.width > 0.0);
+    assert!(doc.nodes[span_id].layout.size.width > 0.0);
     // Hide the element and lay out again: it has no piece any more.
     doc.set_element_inline_style(span_id, Some("display:none".into()));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[span_id].unrounded_layout.size.width, 0.0);
+    assert_eq!(doc.nodes[span_id].layout.size.width, 0.0);
 }
 
 #[test]
@@ -6067,7 +6037,7 @@ use crate::layout::test_support::{
 fn laid_out_sizes(parent_css: &str, css: &str, text: &str) -> (f32, f32) {
     let (mut doc, cascade, root) = ahem_paragraph_in(parent_css, css, text);
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[root].unrounded_layout;
+    let layout = doc.nodes[root].layout;
     (layout.size.width, layout.size.height)
 }
 
@@ -6080,7 +6050,7 @@ fn inline_block_baseline(text: &str, width: f32) -> f32 {
     let line = &stored_lines(&doc, root).lines[0];
     let line_baseline =
         line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic);
-    line_baseline - doc.nodes[inline_block].unrounded_layout.location.y
+    line_baseline - doc.nodes[inline_block].layout.location.y
 }
 
 #[test]
@@ -6096,7 +6066,7 @@ fn an_inline_flex_item_becomes_an_ifc_root() {
     let (mut doc, cascade, span) = flex_container_with_inline_item("aaaa");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[span].is_ifc_root());
-    assert_eq!(doc.nodes[span].unrounded_layout.size.width, 40.0); // 4 em of Ahem 10px
+    assert_eq!(doc.nodes[span].layout.size.width, 40.0); // 4 em of Ahem 10px
 }
 
 #[test]
@@ -6145,7 +6115,7 @@ fn a_paragraph_of_only_br_elements_becomes_a_root() {
     let (mut doc, cascade, root) = paragraph_with_only_br(2);
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 20.0); // two 10px lines
+    assert_eq!(doc.nodes[root].layout.size.height, 20.0); // two 10px lines
 }
 
 #[test]
@@ -6173,7 +6143,7 @@ fn a_paragraph_of_only_an_atomic_has_the_strut_descent_below_it() {
     let css = "display:inline-block;width:20px;height:10px";
     let (mut doc, cascade, root) = paragraph_with_only_atomic(css);
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 12.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 12.0);
 }
 
 #[test]
@@ -6182,7 +6152,7 @@ fn a_paragraph_of_only_an_empty_inline_with_edges_is_one_line_tall() {
         let (mut doc, cascade, root) =
             paragraph_with_only_an_empty_span("padding:4px;border:1px solid");
         lay_out(&mut doc, &cascade);
-        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+        assert_eq!(doc.nodes[root].layout.size.height, 10.0);
     }
 }
 
@@ -6246,8 +6216,8 @@ fn flex_baseline_item_ys() -> (f32, f32) {
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[small].is_ifc_root() && doc.nodes[large].is_ifc_root());
     (
-        doc.nodes[small].unrounded_layout.location.y,
-        doc.nodes[large].unrounded_layout.location.y,
+        doc.nodes[small].layout.location.y,
+        doc.nodes[large].layout.location.y,
     )
 }
 
@@ -6277,8 +6247,8 @@ fn an_empty_inline_block_keeps_its_margin_box_baseline() {
         let _ = cascade;
         lay_out(&mut doc, &cascade_again);
         assert!(!doc.nodes[inline_block].is_ifc_root());
-        assert_eq!(doc.nodes[inline_block].unrounded_layout.location.y, 0.0);
-        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 22.0);
+        assert_eq!(doc.nodes[inline_block].layout.location.y, 0.0);
+        assert_eq!(doc.nodes[root].layout.size.height, 22.0);
     }
 }
 
@@ -6304,8 +6274,8 @@ fn bare_text_next_to_an_element_item_gets_its_own_root() {
     // The bare text is an anonymous item and the root of its own paragraph.
     assert!(doc.nodes[bare].is_ifc_root());
     // Hand-computed: the item follows the 20px anonymous item.
-    assert_eq!(doc.nodes[item].unrounded_layout.location.x, 20.0);
-    assert_eq!(doc.nodes[item].unrounded_layout.size.width, 40.0);
+    assert_eq!(doc.nodes[item].layout.location.x, 20.0);
+    assert_eq!(doc.nodes[item].layout.size.width, 40.0);
 }
 
 // ── text node roots ─────────────────────────────────────────
@@ -6317,7 +6287,7 @@ fn bare_text_size(parent_css: &str) -> (f32, f32) {
     let (mut doc, cascade, parent) = ahem_paragraph_in_text_only(parent_css, "aaaa bbbb");
     lay_out(&mut doc, &cascade);
     let text = doc.nodes[parent].children[0];
-    let layout = doc.nodes[text].unrounded_layout;
+    let layout = doc.nodes[text].layout;
     (layout.size.width, layout.size.height)
 }
 
@@ -6375,8 +6345,8 @@ fn bare_text_baseline_item_ys() -> (f32, f32) {
     let text = doc.nodes[flex].children[0];
     assert!(doc.nodes[text].is_ifc_root() && doc.nodes[large].is_ifc_root());
     (
-        doc.nodes[text].unrounded_layout.location.y,
-        doc.nodes[large].unrounded_layout.location.y,
+        doc.nodes[text].layout.location.y,
+        doc.nodes[large].layout.location.y,
     )
 }
 
@@ -6413,7 +6383,7 @@ fn a_flex_row_places_bare_text_after_its_sibling_item() {
     let _ = cascade;
     lay_out(&mut doc, &cascade_again);
     assert!(doc.nodes[text].is_ifc_root());
-    let layout = doc.nodes[text].unrounded_layout;
+    let layout = doc.nodes[text].layout;
     // Hand-computed: the 30px item first, then the 40px anonymous item.
     assert_eq!((layout.location.x, layout.size.width), (30.0, 40.0));
 }
@@ -6446,7 +6416,7 @@ fn a_lone_empty_inline_block_is_indented_once() {
     let _ = cascade;
     lay_out(&mut doc, &cascade_again);
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[span].unrounded_layout.location.x, 20.0);
+    assert_eq!(doc.nodes[span].layout.location.x, 20.0);
 }
 
 #[test]
@@ -6469,7 +6439,7 @@ fn an_inline_block_root_with_side_margins_shrinks_to_its_content() {
         let _ = cascade;
         lay_out(&mut doc, &cascade_again);
         assert!(doc.nodes[inline_block].is_ifc_root());
-        let size = doc.nodes[inline_block].unrounded_layout.size;
+        let size = doc.nodes[inline_block].layout.size;
         assert_eq!((size.width, size.height), (140.0, 10.0));
     }
 }
@@ -6487,7 +6457,7 @@ fn an_inline_block_root_under_an_authored_width_shrinks_to_its_content() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[inline_block].is_ifc_root());
-    let layout = doc.nodes[inline_block].unrounded_layout;
+    let layout = doc.nodes[inline_block].layout;
     assert_eq!(
         (
             layout.location.x,
@@ -6516,7 +6486,7 @@ fn table_sizes(table_css: &str, cell_css: &str, text: &str) -> TableSizes {
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[cell].is_ifc_root(), "{cell_css}");
     let size = |id: usize| {
-        let s = doc.nodes[id].unrounded_layout.size;
+        let s = doc.nodes[id].layout.size;
         (s.width, s.height)
     };
     // The table algorithm lays out cells, not rows: a row keeps no layout of
@@ -6584,7 +6554,7 @@ fn an_all_inline_table_box_shapes_its_anonymous_cell() {
     let cells: Vec<_> = doc.anonymous_table_cells(table).collect();
     assert_eq!(cells.len(), 1);
     assert!(cells[0].1.is_ifc_root());
-    let size = doc.nodes[table].unrounded_layout.size;
+    let size = doc.nodes[table].layout.size;
     // Hand-computed: the table shrinks to "aaaa bbbb", one 10px line.
     assert_eq!((size.width, size.height), (90.0, 10.0));
 }
@@ -6625,7 +6595,7 @@ fn a_table_cell_with_mixed_block_and_inline_content_is_laid_out() {
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[cell].is_ifc_root());
         let size = |id: usize| {
-            let s = doc.nodes[id].unrounded_layout.size;
+            let s = doc.nodes[id].layout.size;
             (s.width, s.height)
         };
         (size(table), size(cell))
@@ -6652,7 +6622,7 @@ fn bare_text_directly_in_a_table_is_laid_out() {
             let cells: Vec<_> = doc.anonymous_table_cells(table).collect();
             assert_eq!(cells.len(), 1);
             assert!(cells[0].1.is_ifc_root());
-            doc.nodes[table].unrounded_layout.size.height
+            doc.nodes[table].layout.size.height
         };
         assert_eq!(height(), 10.0 * lines, "{text:?}");
         assert_eq!(
@@ -6690,8 +6660,8 @@ fn block_child_gap(a_css: &str, b_css: &str) -> f32 {
     let (mut doc, cascade, root, [a, b]) = paragraph_with_block_children(a_css, b_css);
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{a_css} / {b_css}");
-    let a = doc.nodes[a].unrounded_layout;
-    let b = doc.nodes[b].unrounded_layout;
+    let a = doc.nodes[a].layout;
+    let b = doc.nodes[b].layout;
     b.location.y - (a.location.y + a.size.height)
 }
 
@@ -6742,8 +6712,8 @@ fn a_block_childs_inner_margin_collapses_through_it() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        let a = doc.nodes[a].unrounded_layout;
-        let b = doc.nodes[b].unrounded_layout;
+        let a = doc.nodes[a].layout;
+        let b = doc.nodes[b].layout;
         (a.size.height, b.location.y - (a.location.y + a.size.height))
     };
     assert_eq!(gap(), (10.0, 30.0));
@@ -6761,7 +6731,7 @@ fn gap_between_line_and_block(css: &str) -> f32 {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{css}");
-    doc.nodes[block].unrounded_layout.location.y - 10.0
+    doc.nodes[block].layout.location.y - 10.0
 }
 
 #[test]
@@ -6799,7 +6769,7 @@ fn three_blocks(
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{a_css} / {e_css} / {b_css}");
     let geometry = |id: usize| {
-        let l = doc.nodes[id].unrounded_layout;
+        let l = doc.nodes[id].layout;
         (l.location.y, l.size.height)
     };
     (geometry(root), blocks.map(geometry))
@@ -6888,7 +6858,7 @@ fn the_last_block_childs_bottom_margin_collapses_through_the_root() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        doc.nodes[root].unrounded_layout.size.height
+        doc.nodes[root].layout.size.height
     };
     assert_eq!(height(), 20.0);
     assert_eq!(height(), 20.0);
@@ -6907,7 +6877,7 @@ fn a_formatting_context_root_contains_its_last_block_childs_bottom_margin() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        doc.nodes[root].unrounded_layout.size.height
+        doc.nodes[root].layout.size.height
     };
     assert_eq!(height(), 32.0);
     assert_eq!(height(), 32.0);
@@ -7018,7 +6988,7 @@ fn degraded_size(css: &str, text: &str, on_root: bool) -> (f32, f32) {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{css}");
-    let size = doc.nodes[root].unrounded_layout.size;
+    let size = doc.nodes[root].layout.size;
     (size.width, size.height)
 }
 
@@ -7036,7 +7006,7 @@ fn vertical_writing_mode_uses_the_max_content_inline_extent_when_height_is_auto(
             .iter()
             .all(|line| line.writing_mode() == shodo::geometry::WritingMode::VerticalRl)
     );
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 90.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 90.0);
 }
 
 #[test]
@@ -7057,7 +7027,7 @@ fn vertical_auto_inline_extent_includes_block_child_physical_height() {
         lay_out(&mut doc, &cascade);
 
         assert!(doc.nodes[root].is_ifc_root(), "{mode}");
-        assert_eq!(doc.nodes[root].unrounded_layout.size.height, 90.0, "{mode}");
+        assert_eq!(doc.nodes[root].layout.size.height, 90.0, "{mode}");
     }
 }
 
@@ -7090,8 +7060,8 @@ fn paragraph_with_input(css: &str) -> (f32, f32) {
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{css}");
     (
-        doc.nodes[input].unrounded_layout.location.x,
-        doc.nodes[root].unrounded_layout.size.height,
+        doc.nodes[input].layout.location.x,
+        doc.nodes[root].layout.size.height,
     )
 }
 
@@ -7134,7 +7104,7 @@ fn a_block_child_with_auto_side_margins_is_centred() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
-        doc.nodes[block].unrounded_layout.location.x
+        doc.nodes[block].layout.location.x
     };
     assert_eq!(x("margin:0 auto"), 50.0);
     assert_eq!(x("margin-left:auto"), 100.0);
@@ -7168,7 +7138,7 @@ fn an_inline_table_sits_on_the_line_like_an_inline_block() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        let l = doc.nodes[table].unrounded_layout;
+        let l = doc.nodes[table].layout;
         (l.location.x, l.size.width, l.size.height)
     };
     assert_eq!(place(), (20.0, 20.0, 10.0));
@@ -7194,7 +7164,7 @@ fn a_relatively_positioned_inline_block_is_offset_from_its_place_on_the_line() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root(), "{css}");
-        let l = doc.nodes[block].unrounded_layout.location;
+        let l = doc.nodes[block].layout.location;
         (l.x, l.y)
     };
     let still = place("");
@@ -7225,7 +7195,7 @@ fn a_relatively_positioned_float_is_placed_like_a_float() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        let l = doc.nodes[float].unrounded_layout.location;
+        let l = doc.nodes[float].layout.location;
         (l.x, l.y)
     };
     // CSS 2.1 9.5.1 lets the float share the line of "aa" when it fits.
@@ -7250,7 +7220,7 @@ fn an_atomic_in_a_right_to_left_paragraph_is_placed_from_the_right_edge() {
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        doc.nodes[block].unrounded_layout.location.x
+        doc.nodes[block].layout.location.x
     };
     assert_eq!(place(), 170.0);
     assert_eq!(place(), 170.0);
@@ -7275,8 +7245,8 @@ fn root_then_sibling(root_css: &str) -> (f32, f32) {
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{root_css}");
     (
-        doc.nodes[root].unrounded_layout.size.height,
-        doc.nodes[sibling].unrounded_layout.location.y,
+        doc.nodes[root].layout.size.height,
+        doc.nodes[sibling].layout.location.y,
     )
 }
 
@@ -7337,7 +7307,7 @@ fn generated_lines(sheet: &str, root_css: &str) -> (Vec<String>, f32) {
         .iter()
         .map(line_text)
         .collect();
-    (lines, doc.nodes[root].unrounded_layout.size.height)
+    (lines, doc.nodes[root].layout.size.height)
 }
 
 #[test]
@@ -7428,7 +7398,7 @@ fn an_element_with_only_generated_text_is_a_one_line_root() {
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert!(doc.nodes[root].is_ifc_root());
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 10.0);
 }
 
 #[test]
@@ -7497,7 +7467,7 @@ fn multicol_text_geometry_of(parent_css: &str, text: &str, own: bool) -> Multico
     );
     let lines = engine_multicol_lines(&doc, root);
     MulticolTextGeometry {
-        container_height: doc.nodes[container].unrounded_layout.size.height,
+        container_height: doc.nodes[container].layout.size.height,
         lines,
     }
 }
@@ -7528,7 +7498,7 @@ fn balanced_multicol_text_fills_each_column_to_the_minimum_height() {
         ranges,
         vec![(0, 8), (8, 16), (16, 24), (24, 32), (32, 40), (40, 44)]
     );
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 160.0);
+    assert_eq!(doc.nodes[root].layout.size.height, 160.0);
 }
 
 #[test]
@@ -7758,7 +7728,7 @@ fn block_child_geometry(inner: &str) -> ((f32, f32, f32, f32), f32) {
     let (mut doc, cascade, root, block) = paragraph_with_block_child(inner);
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{inner}");
-    let layout = doc.nodes[block].unrounded_layout;
+    let layout = doc.nodes[block].layout;
     (
         (
             layout.location.x,
@@ -7766,7 +7736,7 @@ fn block_child_geometry(inner: &str) -> ((f32, f32, f32, f32), f32) {
             layout.size.width,
             layout.size.height,
         ),
-        doc.nodes[root].unrounded_layout.size.height,
+        doc.nodes[root].layout.size.height,
     )
 }
 
@@ -7833,7 +7803,7 @@ fn block_after_float(float_css: &str, css: &str) -> (f32, f32, f32, f32) {
     });
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{css}");
-    let layout = doc.nodes[block].unrounded_layout;
+    let layout = doc.nodes[block].layout;
     (
         layout.location.x,
         layout.location.y,
@@ -7862,7 +7832,7 @@ fn block_among_floats(floats: &[&str], css: &str) -> (f32, f32, f32, f32) {
     });
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{css}");
-    let layout = doc.nodes[block].unrounded_layout;
+    let layout = doc.nodes[block].layout;
     (
         layout.location.x,
         layout.location.y,
@@ -7978,11 +7948,11 @@ fn a_table_block_child_is_laid_out() {
         });
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        let layout = doc.nodes[table].unrounded_layout;
+        let layout = doc.nodes[table].layout;
         (
             layout.location.y,
             layout.size.height,
-            doc.nodes[root].unrounded_layout.size.height,
+            doc.nodes[root].layout.size.height,
         )
     };
     assert_eq!(geometry(), (10.0, 10.0, 30.0));
@@ -8018,7 +7988,7 @@ fn a_cleared_line_break_moves_the_next_line_below_the_float() {
         });
         lay_out(&mut doc, &cascade);
         assert!(doc.nodes[root].is_ifc_root());
-        doc.nodes[root].unrounded_layout.size.height
+        doc.nodes[root].layout.size.height
     };
     // Hand-computed: "aa" beside the 30px float, then "bb" below it.
     assert_eq!(lines(), 40.0);
@@ -8080,11 +8050,11 @@ fn logical_float_sides_and_clears_are_placed() {
             });
             lay_out(&mut doc, &cascade);
             assert!(doc.nodes[root].is_ifc_root(), "{css}");
-            let layout = doc.nodes[float].unrounded_layout;
+            let layout = doc.nodes[float].layout;
             (
                 layout.location.x,
                 layout.location.y,
-                doc.nodes[root].unrounded_layout.size.height,
+                doc.nodes[root].layout.size.height,
             )
         };
         assert_eq!(
@@ -8116,7 +8086,7 @@ fn paragraph_with_span_child(css: &str) -> (Document, CascadeResult, usize) {
 fn layout_position(doc: &Document, node: usize) -> (f32, f32) {
     let (mut x, mut y) = (0.0, 0.0);
     for id in doc.inclusive_layout_ancestors(node) {
-        let layout = doc.nodes[id].unrounded_layout;
+        let layout = doc.nodes[id].layout;
         x += layout.location.x;
         y += layout.location.y;
     }
@@ -8214,8 +8184,8 @@ fn a_block_inside_a_span_splits_the_paragraph() {
         (
             x - root_x,
             y - root_y,
-            doc.nodes[block].unrounded_layout.size.height,
-            doc.nodes[root].unrounded_layout.size.height,
+            doc.nodes[block].layout.size.height,
+            doc.nodes[root].layout.size.height,
         )
     };
     let (on, off) = (geometry(), (0.0, 10.0, 10.0, 30.0));
@@ -8256,7 +8226,7 @@ fn positioned_box_location(css: &str) -> (f32, f32) {
     let (mut doc, cascade, root, span) = paragraph_with_absolute_child(css);
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{css}");
-    let layout = doc.nodes[span].unrounded_layout;
+    let layout = doc.nodes[span].layout;
     (layout.location.x, layout.location.y)
 }
 
@@ -8326,7 +8296,7 @@ fn child_of_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
         });
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root(), "{outer_css} {child_css}");
-    let location = doc.nodes[child].unrounded_layout.location;
+    let location = doc.nodes[child].layout.location;
     (location.x, location.y)
 }
 
@@ -8425,7 +8395,7 @@ fn the_nearest_positioned_inline_is_the_containing_block() {
         });
     lay_out(&mut doc, &cascade);
     // "cccc" is x 70 to 110, so 50% of it is 20.
-    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 90.0);
+    assert_eq!(doc.nodes[child].layout.location.x, 90.0);
     let mut child = 0;
     let (mut doc, cascade, _root) =
         ahem_paragraph_with("width:200px;position:relative", |doc, root| {
@@ -8444,7 +8414,7 @@ fn the_nearest_positioned_inline_is_the_containing_block() {
     lay_out(&mut doc, &cascade);
     // "bbcccc" is x 50 to 110, so the static inline gives way to the outer
     // one and 50% is 30.
-    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 80.0);
+    assert_eq!(doc.nodes[child].layout.location.x, 80.0);
 }
 
 #[test]
@@ -8465,7 +8435,7 @@ fn a_relative_inline_split_over_lines_contains_its_fragments() {
     lay_out(&mut doc, &cascade);
     // Hand-computed: "aaaa bbbb" fills the first line to x 90 and "cccc" is
     // x 0 to 40 on the second, so the fragments span x 0 to 90 and y 0 to 20.
-    let location = doc.nodes[child].unrounded_layout.location;
+    let location = doc.nodes[child].layout.location;
     assert_eq!((location.x, location.y), (45.0, 10.0));
 }
 
@@ -8494,7 +8464,7 @@ fn a_relative_inline_in_a_vertical_paragraph_contains_the_box_physically() {
     let piece = pieces.iter().find(|piece| piece.node == outer).unwrap();
     let rect = piece.border_box;
     assert_eq!((rect.width, rect.height, rect.y), (10.0, 20.0, 50.0));
-    let location = doc.nodes[child].unrounded_layout.location;
+    let location = doc.nodes[child].layout.location;
     assert_eq!(
         (location.x, location.y),
         (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
@@ -8518,7 +8488,7 @@ fn a_fixed_box_in_a_relative_inline_keeps_the_page_area() {
         });
     lay_out(&mut doc, &cascade);
     // The page area is 800px wide, and the paragraph starts at its left edge.
-    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 400.0);
+    assert_eq!(doc.nodes[child].layout.location.x, 400.0);
 }
 
 #[test]
@@ -8602,7 +8572,7 @@ fn ch_is_resolved_in_the_cascade_from_the_document_font_metrics() {
 fn ch_box_size(css: &str) -> (f32, f32, f32, f32) {
     let (mut doc, cascade, root) = ch_ahem_paragraph("aa", css);
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[root].unrounded_layout;
+    let layout = doc.nodes[root].layout;
     (
         layout.size.width,
         layout.size.height,
@@ -8669,7 +8639,7 @@ fn ch_box_values_reach_every_padding_and_margin_side() {
         "padding:1ch calc(2ch + 1px) 3ch 4ch;margin:1ch calc(2ch - 1px) 3ch 4ch",
     );
     lay_out(&mut doc, &cascade);
-    let layout = doc.nodes[root].unrounded_layout;
+    let layout = doc.nodes[root].layout;
     let padding = layout.padding;
     let margin = layout.margin;
     assert_eq!(
@@ -8730,7 +8700,7 @@ fn ch_constraints_keep_the_empty_font_collection_fallback() {
     let root = fixture.root;
     let cascade = fixture.cascade;
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 32.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 32.0);
 }
 
 #[test]
@@ -8786,7 +8756,7 @@ fn max_width_ch_uses_the_inherited_font_before_laying_out_children() {
     });
     lay_out(&mut doc, &cascade);
     assert_eq!(cascade.computed[child].font_size.0, 16.0);
-    assert_eq!(doc.nodes[child].unrounded_layout.size.width, 64.0);
+    assert_eq!(doc.nodes[child].layout.size.width, 64.0);
 }
 
 #[test]
@@ -8833,7 +8803,7 @@ fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engi
         doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
         assert!(doc.nodes[root].is_ifc_root(), "{parent_css} / {css}");
-        let size = doc.nodes[root].unrounded_layout.size;
+        let size = doc.nodes[root].layout.size;
         assert_eq!(
             (size.width, size.height),
             (140.0, 10.0),
@@ -8867,7 +8837,7 @@ fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
             doc.append_text(fixed, "aaaa bbbb cccc");
         });
         lay_out(&mut doc, &cascade);
-        doc.nodes[fixed].unrounded_layout.size
+        doc.nodes[fixed].layout.size
     };
     assert_eq!(
         size(),
@@ -8897,7 +8867,7 @@ fn the_text_of_an_absolutely_positioned_inline_is_its_own_paragraph() {
     lay_out(&mut doc, &cascade);
     assert!(doc.nodes[root].is_ifc_root());
     assert!(doc.nodes[span].is_ifc_root());
-    let layout = doc.nodes[span].unrounded_layout;
+    let layout = doc.nodes[span].layout;
     assert_eq!(
         (layout.location.y, layout.size.width, layout.size.height),
         (20.0, 60.0, 10.0)
@@ -8978,7 +8948,7 @@ fn page_sibling_positions(
     (
         boxes
             .into_iter()
-            .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+            .map(|id| doc.get_node(id).unwrap().layout.location.y)
             .collect(),
         pages.len(),
     )
@@ -9022,9 +8992,9 @@ fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize
     page.width = 100.0;
     page.height = 100.0;
     let pages = layout_pages(&mut doc, &cascade, page).unwrap();
-    let wrapper_layout = doc.get_node(wrapper).unwrap().unrounded_layout;
+    let wrapper_layout = doc.get_node(wrapper).unwrap().layout;
     (
-        wrapper_layout.location.y + doc.get_node(avoiding).unwrap().unrounded_layout.location.y,
+        wrapper_layout.location.y + doc.get_node(avoiding).unwrap().layout.location.y,
         wrapper_layout.size.height,
         pages.len(),
     )
@@ -9119,7 +9089,7 @@ fn avoiding_block_in_wrapper(
     (
         page_flow_y(&doc, avoiding),
         page_flow_y(&doc, after),
-        doc.nodes[wrapper].unrounded_layout.size.height,
+        doc.nodes[wrapper].layout.size.height,
     )
 }
 
@@ -9139,7 +9109,7 @@ fn a_moved_box_after_a_wrappers_text_still_lengthens_it() {
     let (wrapper_y, avoiding_y) = (page_flow_y(&doc, wrapper), page_flow_y(&doc, avoiding));
     assert_eq!(avoiding_y, 100.0);
     assert_eq!(
-        doc.nodes[wrapper].unrounded_layout.size.height,
+        doc.nodes[wrapper].layout.size.height,
         avoiding_y + 60.0 - wrapper_y
     );
 }
@@ -9158,7 +9128,7 @@ fn a_moved_box_inside_a_contents_element_lengthens_the_box_around_it() {
         );
     });
     assert_eq!(page_flow_y(&doc, avoiding), 100.0);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 110.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0);
 }
 
 #[test]
@@ -9233,7 +9203,7 @@ fn wrapper_with_avoiding_children(wrapper_css: &str) -> (f32, f32, f32) {
     (
         page_flow_y(&doc, avoiding),
         page_flow_y(&doc, last),
-        doc.nodes[wrapper].unrounded_layout.size.height,
+        doc.nodes[wrapper].layout.size.height,
     )
 }
 
@@ -9412,7 +9382,7 @@ fn a_parallel_float_preserves_the_connected_normal_flow_run() {
     let pages = layout_pages(&mut doc, &cascade, page).unwrap();
     let positions: Vec<_> = normal
         .into_iter()
-        .map(|id| doc.nodes[id].unrounded_layout.location.y)
+        .map(|id| doc.nodes[id].layout.location.y)
         .collect();
     assert_eq!(positions, vec![0.0, 100.0, 130.0]);
     assert_eq!(pages.len(), 2);
@@ -9539,7 +9509,7 @@ fn review_avoided_sibling_runs_use_the_destination_page_height() {
         .unwrap();
         let actual: Vec<_> = ids
             .into_iter()
-            .map(|id| doc.nodes[id].unrounded_layout.location.y)
+            .map(|id| doc.nodes[id].layout.location.y)
             .collect();
         assert_eq!(actual, expected, "{steps:?}");
     }
@@ -9649,7 +9619,7 @@ fn review_a_changed_explicit_page_name_still_breaks_the_avoided_run() {
     let pages = layout_pages(&mut doc, &cascade, page).unwrap();
     let actual: Vec<_> = ids
         .into_iter()
-        .map(|id| doc.nodes[id].unrounded_layout.location.y)
+        .map(|id| doc.nodes[id].layout.location.y)
         .collect();
     assert_eq!(actual, vec![0.0, 60.0, 100.0]);
     assert_eq!(pages.len(), 2);
@@ -10580,7 +10550,7 @@ fn page_box_positions(styles: &[&str]) -> (Vec<f32>, usize) {
     (
         boxes
             .into_iter()
-            .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+            .map(|id| doc.get_node(id).unwrap().layout.location.y)
             .collect(),
         pages.len(),
     )
@@ -10785,10 +10755,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_content_is_truncated() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The text keeps the margins of the forced-break box from collapsing
     // through it, so the last box's margin does not follow the break.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -10823,10 +10790,7 @@ fn a_margin_after_an_empty_forced_break_flow_root_is_truncated() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // A flow root establishes a formatting context, so its margins do not
     // collapse through it even when it is empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -10861,10 +10825,7 @@ fn a_margin_after_an_empty_forced_break_contained_box_is_truncated() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // Layout containment establishes a formatting context, so the margins
     // do not collapse through the box even when it is empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -10899,10 +10860,7 @@ fn a_margin_after_an_empty_forced_break_list_item_is_kept() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // An empty list item without a marker lets its margins collapse through
     // it, so the margin after it still follows the forced break.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 #[test]
 fn a_margin_after_a_forced_break_box_with_an_empty_overflow_hidden_child_is_truncated() {
@@ -10937,10 +10895,7 @@ fn a_margin_after_a_forced_break_box_with_an_empty_overflow_hidden_child_is_trun
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty child with hidden overflow keeps margins from collapsing through it,
     // so the forced-break box is not empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -10975,10 +10930,7 @@ fn a_forced_break_box_with_only_an_empty_inline_child_keeps_the_margin_after_it(
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
     // An empty inline makes no line, so the forced-break box stays empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -11018,10 +10970,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_inline_block_is_truncat
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The inline-block makes a line, which keeps the margins of the
     // forced-break box from collapsing through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -11056,10 +11005,7 @@ fn a_margin_after_a_zero_height_forced_break_list_item_with_an_inside_marker_is_
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The inside marker makes a line, which keeps the margins of the
     // forced-break box from collapsing through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -11096,10 +11042,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_before_content_is_truncate
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The generated `::before` text makes a line, which keeps the margins
     // of the forced-break box from collapsing through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -11139,10 +11082,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_block_before_box_is_trun
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The block-level `::before` box keeps the margins of the forced-break
     // box from collapsing through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -11182,10 +11122,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_flow_root_before_box_is_
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty flow-root `::before` box establishes a formatting context, so
     // the margins of the forced-break box do not collapse through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -11222,10 +11159,7 @@ fn a_forced_break_box_with_an_empty_block_before_box_keeps_the_margin_after_it()
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty block-level `::before` box lets margins collapse through it,
     // so the forced-break box stays empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -11261,10 +11195,7 @@ fn a_forced_break_box_with_only_an_empty_block_child_keeps_the_margin_after_it()
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty child lets its margins collapse through it, so the
     // forced-break box stays empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -11303,10 +11234,7 @@ fn a_margin_after_a_forced_break_box_with_a_bordered_empty_child_is_truncated() 
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The child's border keeps margins from collapsing through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -11342,10 +11270,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_preserved_white_space_is_t
     layout_pages(&mut doc, &cascade, page).unwrap();
     // Preserved white space still makes a line, which keeps the margins of
     // the forced-break box from collapsing through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -11380,10 +11305,7 @@ fn a_forced_break_box_with_only_collapsible_white_space_keeps_the_margin_after_i
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
     // Collapsible white space makes no line, so the box stays empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -11417,10 +11339,7 @@ fn a_forced_break_box_with_only_a_hidden_child_keeps_the_margin_after_it() {
     page.width = 100.0;
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -11458,10 +11377,7 @@ fn a_forced_break_box_with_only_an_absolutely_positioned_child_keeps_the_margin_
     page.width = 100.0;
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -11499,10 +11415,7 @@ fn a_forced_break_box_with_only_a_floated_child_keeps_the_margin_after_it() {
     page.width = 100.0;
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -11608,8 +11521,8 @@ fn a_body_margin_crossing_a_later_break_is_truncated() {
     // Both margins cross a break, so the content starts at the top of the
     // fourth page.
     assert_eq!(pages.len(), 4);
-    let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
-    let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
+    let body_y = doc.get_node(body).unwrap().layout.location.y;
+    let child_y = doc.get_node(child).unwrap().layout.location.y;
     assert_eq!(
         crate::layout::test_support::absolute_rect(&doc, child).1,
         300.0,
@@ -11664,7 +11577,7 @@ fn paginated_ys(
     )
     .unwrap();
     ids.into_iter()
-        .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+        .map(|id| doc.get_node(id).unwrap().layout.location.y)
         .collect()
 }
 
@@ -11752,8 +11665,8 @@ fn a_root_margin_within_a_taller_first_page_is_kept() {
         },
     )
     .unwrap();
-    let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
-    let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
+    let body_y = doc.get_node(body).unwrap().layout.location.y;
+    let child_y = doc.get_node(child).unwrap().layout.location.y;
     assert_eq!(
         crate::layout::test_support::absolute_rect(&doc, child).1,
         150.0,
@@ -12346,7 +12259,7 @@ fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
     });
     // The block moves 40px, and the line after it now ends 110px into the
     // wrapper, past its `min-height`.
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 110.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0);
     assert_eq!(page_flow_y(&doc, after), 170.0);
 }
 
@@ -12365,7 +12278,7 @@ fn a_percentage_bound_resolves_against_a_percentage_height() {
         );
     });
     // The wrapper grows only up to 70% of its 100px containing block.
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 70.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 70.0);
 }
 
 #[test]
@@ -12433,7 +12346,7 @@ fn bounded_box_with_lines(outer_css: &str, text_before: bool, text_after: bool) 
             doc.append_text(outer, "x");
         }
     });
-    doc.nodes[outer].unrounded_layout.size.height
+    doc.nodes[outer].layout.size.height
 }
 
 #[test]
@@ -12538,7 +12451,7 @@ fn a_percentage_bound_under_a_contents_element_resolves_against_its_box() {
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 50.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 50.0);
 }
 
 /// `body > [div 60px, floats…]` on 100px pages; returns each float's
@@ -12601,7 +12514,7 @@ fn bounded_wrapper_height(lead_px: f32, wrapper_css: &str, children: &[&str]) ->
             doc.append_element(Some(wrapper), "div", Some(&format!("display:block;{css}")));
         }
     });
-    doc.nodes[wrapper].unrounded_layout.size.height
+    doc.nodes[wrapper].layout.size.height
 }
 
 #[test]
@@ -12706,7 +12619,7 @@ fn a_calc_bound_resolves_against_a_definite_containing_block() {
     });
     // The box crosses the page end at 100 and moves 30px; the wrapper's
     // content would end at 90, but its bound is 30% of 200 plus 10.
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 70.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 70.0);
 }
 
 #[test]
@@ -12828,7 +12741,7 @@ fn a_nested_clearing_block_follows_a_moved_float_and_grows_its_parent() {
     // The clearing block stays below the moved float's new bottom, and the
     // wrapper grows from 60 to 180 to hold it.
     assert_eq!(ys, vec![100.0, 60.0, 160.0, 180.0]);
-    assert_eq!(doc.nodes[ids[1]].unrounded_layout.size.height, 120.0);
+    assert_eq!(doc.nodes[ids[1]].layout.size.height, 120.0);
 }
 
 #[test]
@@ -12876,10 +12789,7 @@ fn a_sticky_offset_does_not_grow_the_ancestor_of_a_moved_box() {
         // The box's flow position 50..110 crosses the page end, so it moves
         // 50px and ends 110px into the wrapper. The 30px inset moves the box
         // but not the flow it ends.
-        assert_eq!(
-            doc.nodes[wrapper].unrounded_layout.size.height, 110.0,
-            "{position}"
-        );
+        assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0, "{position}");
     }
 }
 
@@ -12985,7 +12895,7 @@ fn a_relative_offset_does_not_move_a_box_that_fits_in_flow() {
     });
     // Its normal-flow range is 20..80; only the painted box crosses 100.
     assert_eq!(page_flow_y(&doc, child), 50.0);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 60.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 60.0);
 }
 
 #[test]
@@ -13113,7 +13023,7 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
         bridged_style(&mut doc, &cascade, second).clear,
         taffy::Clear::None
     );
-    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[second].layout.location.y, 0.0);
 }
 
 #[test]
@@ -13296,7 +13206,7 @@ fn an_ancestors_relative_offset_does_not_move_a_box_that_fits_in_flow() {
     // The child's normal-flow range is 20..80; only the offset wrapper
     // draws it across 100.
     assert_eq!(page_flow_y(&doc, child), 50.0);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 60.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 60.0);
 }
 
 #[test]
@@ -13609,7 +13519,7 @@ fn a_clipping_ancestor_below_its_max_height_grows_with_a_moved_box() {
             Some("display:block;height:60px;break-inside:avoid"),
         ));
     });
-    let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let wrapper_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((page_flow_y(&doc, ids[1]), wrapper_height), (100.0, 160.0));
 }
 
@@ -13662,7 +13572,7 @@ fn a_formatting_context_grows_around_a_moved_float_up_to_its_max_height() {
         );
         ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
-    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let root_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((root_height, page_flow_y(&doc, ids[1])), (80.0, 140.0));
 }
 
@@ -13681,7 +13591,7 @@ fn an_ancestor_grows_only_past_its_min_height_when_later_boxes_follow_a_moved_bo
         doc.append_element(Some(wrapper), "div", Some("display:block;height:20px"));
         ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
-    let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    let wrapper_height = doc.nodes[ids[0]].layout.size.height;
     assert_eq!((wrapper_height, page_flow_y(&doc, ids[1])), (120.0, 180.0));
 }
 
@@ -14113,7 +14023,7 @@ fn relative_child_positions(parent: &str, children: &[&str]) -> Vec<f32> {
     layout_pages(&mut doc, &cascade, page).unwrap();
     children
         .into_iter()
-        .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+        .map(|id| doc.get_node(id).unwrap().layout.location.y)
         .collect()
 }
 
@@ -14168,7 +14078,7 @@ fn vertical_atomic_location(atomic: &str) -> (f32, f32) {
     page.width = 300.0;
     page.height = 500.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
-    let location = doc.get_node(atomic).unwrap().unrounded_layout.location;
+    let location = doc.get_node(atomic).unwrap().layout.location;
     (location.x, location.y)
 }
 
@@ -14202,8 +14112,8 @@ fn a_relative_block_in_a_mixed_root_resolves_a_top_percentage_against_its_height
             Some("display:block;height:10px;position:relative;top:50%"),
         );
     });
-    let still_y = doc.nodes[still].unrounded_layout.location.y;
-    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    let still_y = doc.nodes[still].layout.location.y;
+    let moved_y = doc.nodes[moved].layout.location.y;
     assert_eq!(moved_y - still_y, 10.0 + 100.0);
 }
 
@@ -14231,8 +14141,8 @@ fn a_relative_block_in_an_rtl_mixed_root_prefers_right() {
             Some("display:block;width:50px;height:10px;position:relative;left:5px;right:10%"),
         );
     });
-    let still_x = doc.nodes[still].unrounded_layout.location.x;
-    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    let still_x = doc.nodes[still].layout.location.x;
+    let moved_x = doc.nodes[moved].layout.location.x;
     assert_eq!(moved_x - still_x, -20.0);
 }
 
@@ -14261,8 +14171,8 @@ fn a_relative_block_in_a_vertical_rl_mixed_root_prefers_right() {
             Some("display:block;width:10px;height:50px;position:relative;left:5px;right:10%"),
         );
     });
-    let still_x = doc.nodes[still].unrounded_layout.location.x;
-    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    let still_x = doc.nodes[still].layout.location.x;
+    let moved_x = doc.nodes[moved].layout.location.x;
     // The moved block sits 10px left of the other before its offset.
     assert_eq!(moved_x - still_x, -10.0 - 20.0);
 }
@@ -14291,8 +14201,8 @@ fn a_relative_block_in_an_rtl_vertical_mixed_root_prefers_bottom() {
             Some("display:block;width:10px;height:50px;position:relative;top:3px;bottom:4px"),
         );
     });
-    let still_y = doc.nodes[still].unrounded_layout.location.y;
-    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    let still_y = doc.nodes[still].layout.location.y;
+    let moved_y = doc.nodes[moved].layout.location.y;
     assert_eq!(moved_y - still_y, -4.0);
 }
 
@@ -14376,9 +14286,9 @@ fn a_mixed_calc_grid_track_resolves_against_the_container() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     lay_out(&mut doc, &cascade);
-    assert_eq!(doc.nodes[first].unrounded_layout.size.width, 90.0);
-    assert_eq!(doc.nodes[second].unrounded_layout.location.x, 90.0);
-    assert_eq!(doc.nodes[second].unrounded_layout.size.width, 110.0);
+    assert_eq!(doc.nodes[first].layout.size.width, 90.0);
+    assert_eq!(doc.nodes[second].layout.location.x, 90.0);
+    assert_eq!(doc.nodes[second].layout.size.width, 110.0);
 }
 
 #[test]
@@ -14529,10 +14439,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_i
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty `::before` box in an orthogonal writing mode establishes a
     // formatting context, so the margins do not collapse through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -14567,10 +14474,7 @@ fn a_margin_after_an_empty_forced_break_orthogonal_box_is_truncated() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // An orthogonal flow establishes a formatting context, so the margins
     // do not collapse through the box even when it is empty.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -14610,10 +14514,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_multicol_before_box_is_t
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty multi-column `::before` box establishes a formatting
     // context, so the margins do not collapse through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -14654,10 +14555,7 @@ fn a_margin_after_a_forced_break_box_with_a_cleared_empty_child_is_truncated() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The cleared child's clearance keeps margins from collapsing through
     // the forced-break box (CSS 2 §8.3.1).
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -14693,10 +14591,7 @@ fn a_margin_after_an_empty_wrapper_of_a_forced_break_box_is_kept() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The forced-break box's margins collapse through its empty wrapper, so
     // the margin after the wrapper still follows the forced break.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -14741,10 +14636,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_cleared_after_box_is_tru
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty `::after` box gets clearance past the float, which keeps the
     // margins from collapsing through it (CSS 2 §8.3.1).
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -14791,10 +14683,7 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_o
     // The `::before` box of a `display: contents` element is orthogonal to
     // its box parent, the section, so it establishes a formatting context and
     // the margins do not collapse through it.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 #[test]
@@ -14829,10 +14718,7 @@ fn a_margin_after_an_empty_box_after_a_forced_break_after_is_kept() {
     layout_pages(&mut doc, &cascade, page).unwrap();
     // The empty box after the forced break lets its margins collapse through
     // it, so the margin after it still follows the forced break.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        130.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 130.0);
 }
 
 #[test]
@@ -14873,10 +14759,7 @@ fn a_margin_after_a_bordered_wrapper_of_a_forced_break_box_follows_the_border() 
     // The wrapper's bottom border separates the forced-break box's margins
     // from the margin after the wrapper, which therefore starts below the
     // border instead of at the forced break.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        131.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 131.0);
 }
 
 #[test]
@@ -14915,10 +14798,7 @@ fn a_margin_after_a_contents_sibling_with_a_flow_root_before_box_is_truncated() 
     // The `::before` box of the `display: contents` sibling establishes a
     // formatting context between the forced-break box and the last box, so
     // the margin after it no longer follows the forced break.
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.location.y,
-        100.0
-    );
+    assert_eq!(doc.get_node(last).unwrap().layout.location.y, 100.0);
 }
 
 /// Lays out a 20px box, then an empty forced-break section and a 30px
@@ -14975,7 +14855,7 @@ fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_cs
     page.width = 100.0;
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
-    doc.get_node(last).unwrap().unrounded_layout.location.y
+    doc.get_node(last).unwrap().layout.location.y
 }
 
 #[test]
@@ -15122,7 +15002,7 @@ fn nested_margin_layout(first: &str, second: &str, children: [Option<&str>; 2]) 
     page.height = 100.0;
     let pages = layout_pages(&mut doc, &cascade, page).unwrap();
     (
-        doc.get_node(boxes[1]).unwrap().unrounded_layout.location.y,
+        doc.get_node(boxes[1]).unwrap().layout.location.y,
         pages.len(),
     )
 }
@@ -15229,7 +15109,7 @@ fn dropping_the_last_float_edges_resets_the_later_shift() {
 fn moved_float_edge_keeps_the_block_start_margin_only_after_a_forced_break() {
     let mut document = Document::new();
     let float = document.append_element(Some(0), "div", None::<&str>);
-    let layout = &mut document.nodes[float].unrounded_layout;
+    let layout = &mut document.nodes[float].layout;
     layout.size.width = 40.0;
     layout.margin.left = 3.0;
     layout.margin.right = 5.0;
@@ -15610,9 +15490,9 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     );
     drop(session);
     assert!(!bounded);
-    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
-    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 50.0);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[first].layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].layout.location.y, 50.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 20.0);
 
     // A box that moves because it would cross a page edge it avoids
     // lengthens the ancestor that holds it, and the boxes after it follow
@@ -15631,9 +15511,9 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     );
     drop(session);
     assert!(!bounded);
-    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
-    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 40.0);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 50.0);
+    assert_eq!(doc.nodes[first].layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].layout.location.y, 40.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 50.0);
 
     // Any other break moves the box alone.
     let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
@@ -15649,9 +15529,9 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         0,
     );
     drop(session);
-    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
-    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 10.0);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[first].layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].layout.location.y, 10.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 20.0);
 
     // An ancestor with a fixed height cannot hold the moved box.
     let (mut doc, cascade, body, wrapper, first, _) = build("display:block;height:20px");
@@ -15668,7 +15548,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     );
     drop(session);
     assert!(bounded);
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 20.0);
 }
 
 #[test]
@@ -16009,8 +15889,8 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let mut cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    doc.nodes[second].unrounded_layout.margin.top = 30.0;
-    doc.nodes[third].unrounded_layout.margin.top = 30.0;
+    doc.nodes[second].layout.margin.top = 30.0;
+    doc.nodes[third].layout.margin.top = 30.0;
     let origins = PageOrigins::new(&[], 100.0);
     let truncation = |doc: &mut Document,
                       margins: &SiblingMargins,
@@ -16101,12 +15981,12 @@ fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
-    doc.nodes[body].unrounded_layout.size.width = 100.0;
-    doc.nodes[floater].unrounded_layout.size = Size {
+    doc.nodes[body].layout.size.width = 100.0;
+    doc.nodes[floater].layout.size = Size {
         width: 60.0,
         height: 10.0,
     };
-    doc.nodes[floater].unrounded_layout.margin.top = 4.0;
+    doc.nodes[floater].layout.margin.top = 4.0;
     let doc = paginating(&mut doc, &cascade);
     let mut shifts = FloatShifts {
         later: 20.0,
@@ -16224,11 +16104,11 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
     for id in [html, body, wrapper] {
-        doc.nodes[id].unrounded_layout.location.y = 0.0;
+        doc.nodes[id].layout.location.y = 0.0;
     }
-    doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
-    doc.nodes[floater].unrounded_layout.location.y = 30.0;
-    doc.nodes[floater].unrounded_layout.size = Size {
+    doc.nodes[wrapper].layout.size.height = 20.0;
+    doc.nodes[floater].layout.location.y = 30.0;
+    doc.nodes[floater].layout.size = Size {
         width: 60.0,
         height: 10.0,
     };
@@ -16277,7 +16157,7 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
     // Floors are in normal-flow coordinates, without the relative offset.
     assert_eq!((edge.top, edge.bottom), (130.0, 140.0));
     assert_eq!(subtree.growth, vec![(wrapper, 20.0)]);
-    assert_eq!(session.nodes[wrapper].unrounded_layout.size.height, 40.0);
+    assert_eq!(session.nodes[wrapper].layout.size.height, 40.0);
 
     // Two floats of the body: one that ends above 130 and one that reaches
     // below it.
@@ -16463,13 +16343,13 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
-    doc.nodes[body].unrounded_layout.size.width = 100.0;
-    doc.nodes[floater].unrounded_layout.size = Size {
+    doc.nodes[body].layout.size.width = 100.0;
+    doc.nodes[floater].layout.size = Size {
         width: 60.0,
         height: 10.0,
     };
-    doc.nodes[floater].unrounded_layout.margin.top = 4.0;
-    doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
+    doc.nodes[floater].layout.margin.top = 4.0;
+    doc.nodes[wrapper].layout.size.height = 20.0;
     let pages = PageOrigins::new(&[], 100.0);
     let control = PageLayoutControl::new(None);
     let lines = TextLineIndex::default();
@@ -16560,14 +16440,14 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
     settle(&mut doc, &mut state, &candidate(clearing, 130.0, true));
     assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
     // No ancestor holds a box directly below the body.
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 20.0);
 
     // The ancestors of a nested box grow to hold its shift.
     let mut state = new_state();
     state.float_shifts = moved_floats();
     settle(&mut doc, &mut state, &candidate(nested, 130.0, false));
     assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
-    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 30.0);
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 30.0);
 
     // A float that does not fit beside the moved one moves below it and then
     // is the float that the floats after it keep below.
@@ -16951,7 +16831,7 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
 
     // A box that follows its containing box through positioned insets starts
     // where that box put it, whatever the shift of the flow.
-    doc.nodes[body].unrounded_layout.location.y = 123.0;
+    doc.nodes[body].layout.location.y = 123.0;
     let positioned_y = current_abs_y(&doc, body);
     let (_, position) = meet(
         &mut doc,
@@ -17699,7 +17579,7 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
     pushed.unwrap();
     assert_eq!((state.flow_shift, text_after.effective_y), (5.0, 100.0));
     assert_eq!(text_after.height, 10.0);
-    assert_eq!(doc.nodes[root].unrounded_layout.location.y, 100.0);
+    assert_eq!(doc.nodes[root].layout.location.y, 100.0);
     assert!(state.checked_paragraphs.block_text.contains(&root));
 
     // The block is checked from its first text only: the next text of it
@@ -17794,7 +17674,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     moved.unwrap();
     assert_eq!((state.flow_shift, text.effective_y), (15.0, 40.0));
     assert_eq!(text.height, 30.0);
-    assert_eq!(doc.nodes[root].unrounded_layout.location.y, 40.0);
+    assert_eq!(doc.nodes[root].layout.location.y, 40.0);
     assert!(state.checked_paragraphs.orphans_widows.contains(&root));
 
     // The last line alone on the next page is fewer than the two widows: the

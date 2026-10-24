@@ -100,7 +100,7 @@ fn calc_handles_stay_alive_across_clone_and_relayout() {
         crate::layout::dispatch::resolve_calc(width.calc_value(), 100.0),
         60.0
     );
-    assert!(clone.nodes[child].unrounded_layout.size.width.is_finite());
+    assert!(clone.nodes[child].layout.size.width.is_finite());
 }
 
 #[test]
@@ -1006,7 +1006,7 @@ fn page_layout_preserves_authored_body_width_from_bridge() {
         bridged_style(&mut doc, &cr, body).size.width,
         Dimension::length(100.0)
     );
-    assert_eq!(doc.nodes[body].unrounded_layout.size.width, 100.0);
+    assert_eq!(doc.nodes[body].layout.size.width, 100.0);
 }
 
 #[test]
@@ -1033,7 +1033,7 @@ fn layout_single_page_bridges_display_flow_root() {
         // cov:ignore: panic-message literal only executes on assertion failure.
         "bridge_display must map DisplayValue::FlowRoot to taffy::Display::FlowRoot"
     );
-    assert!(doc.nodes[child].unrounded_layout.size.height > 0.0);
+    assert!(doc.nodes[child].layout.size.height > 0.0);
 }
 
 #[test]
@@ -1067,8 +1067,8 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
         Display::Flex,
         "bridge_display must map DisplayValue::Flex to taffy::Display::Flex"
     );
-    let a_loc = doc.nodes[child_a].unrounded_layout.location;
-    let b_loc = doc.nodes[child_b].unrounded_layout.location;
+    let a_loc = doc.nodes[child_a].layout.location;
+    let b_loc = doc.nodes[child_b].layout.location;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1322,7 +1322,7 @@ fn align_self_normal_stretches_even_when_parent_align_items_is_center() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let child_height = doc.nodes[normal_child].unrounded_layout.size.height;
+    let child_height = doc.nodes[normal_child].layout.size.height;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1372,8 +1372,8 @@ fn flex_direction_column_stacks_children_vertically() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let a_loc = doc.nodes[child_a].unrounded_layout.location;
-    let b_loc = doc.nodes[child_b].unrounded_layout.location;
+    let a_loc = doc.nodes[child_a].layout.location;
+    let b_loc = doc.nodes[child_b].layout.location;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1418,8 +1418,8 @@ fn flex_grow_absorbs_free_space() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let grower_width = doc.nodes[grower].unrounded_layout.size.width;
-    let fixed_width = doc.nodes[fixed].unrounded_layout.size.width;
+    let grower_width = doc.nodes[grower].layout.size.width;
+    let fixed_width = doc.nodes[fixed].layout.size.width;
     // Container is 500px, fixed sibling stays 100px, so the grower must
     // absorb the remaining 400px free space (500 - 100 = 400).
     //
@@ -1473,8 +1473,8 @@ fn floated_box_with_explicit_width_is_positioned_at_the_containing_block_edge() 
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let loc = doc.nodes[float_child].unrounded_layout.location;
-    let size = doc.nodes[float_child].unrounded_layout.size;
+    let loc = doc.nodes[float_child].layout.location;
+    let size = doc.nodes[float_child].layout.size;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1528,8 +1528,8 @@ fn gap_adds_space_between_flex_items() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let a_loc = doc.nodes[child_a].unrounded_layout.location;
-    let b_loc = doc.nodes[child_b].unrounded_layout.location;
+    let a_loc = doc.nodes[child_a].layout.location;
+    let b_loc = doc.nodes[child_b].layout.location;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1566,8 +1566,8 @@ fn justify_content_flex_end_pushes_children_to_container_end() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let a_loc = doc.nodes[child_a].unrounded_layout.location;
-    let b_loc = doc.nodes[child_b].unrounded_layout.location;
+    let a_loc = doc.nodes[child_a].layout.location;
+    let b_loc = doc.nodes[child_b].layout.location;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1617,7 +1617,7 @@ fn layout_single_page_bridges_display_grid_to_taffy_grid() {
         "bridge_display must map DisplayValue::Grid to taffy::Display::Grid"
     );
     for id in [child_a, child_b] {
-        let size = doc.nodes[id].unrounded_layout.size;
+        let size = doc.nodes[id].layout.size;
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert!(
@@ -1684,8 +1684,8 @@ fn grid_template_columns_actually_sizes_columns_through_taffy_grid_algorithm() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let a_loc = doc.nodes[cell_a].unrounded_layout.location;
-    let b_loc = doc.nodes[cell_b].unrounded_layout.location;
+    let a_loc = doc.nodes[cell_a].layout.location;
+    let b_loc = doc.nodes[cell_b].layout.location;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -1733,8 +1733,8 @@ fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let a_loc = doc.nodes[cell_a].unrounded_layout.location;
-    let b_loc = doc.nodes[cell_b].unrounded_layout.location;
+    let a_loc = doc.nodes[cell_a].layout.location;
+    let b_loc = doc.nodes[cell_b].layout.location;
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
@@ -2646,9 +2646,9 @@ fn a_multicol_container_establishes_a_block_formatting_context() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     assert_eq!(bridged_display(&mut doc, &cr, multicol), Display::FlowRoot);
-    assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 0.0);
-    assert_eq!(doc.nodes[child].unrounded_layout.location.y, 15.0);
-    assert_eq!(doc.nodes[multicol].unrounded_layout.size.height, 35.0);
+    assert_eq!(doc.nodes[multicol].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[child].layout.location.y, 15.0);
+    assert_eq!(doc.nodes[multicol].layout.size.height, 35.0);
 }
 
 #[test]
@@ -2743,12 +2743,12 @@ fn changing_a_block_parent_to_flex_refreshes_inline_size_containment_before_clas
 
     let first = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout_single_page(&mut doc, &first, page_box_800x600()).unwrap();
-    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 20.0);
 
     doc.set_element_inline_style(parent, Some("display:flex;align-items:start".into()));
     let second = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout_single_page(&mut doc, &second, page_box_800x600()).unwrap();
-    assert_eq!(doc.nodes[child].unrounded_layout.size, Size::ZERO);
+    assert_eq!(doc.nodes[child].layout.size, Size::ZERO);
 }
 
 #[test]
@@ -2774,14 +2774,14 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
         let (mut fresh, _, fresh_child) = fixture(final_css);
         let fresh_style = cascade(&fresh, &build_rule_tree(&fresh)).unwrap();
         crate::layout_single_page(&mut fresh, &fresh_style, page_box_800x600()).unwrap();
-        let expected = fresh.nodes[fresh_child].unrounded_layout.size;
+        let expected = fresh.nodes[fresh_child].layout.size;
         assert_eq!(expected, Size::ZERO);
 
         let (mut changed, parent, child) = fixture("display:table");
         let first = cascade(&changed, &build_rule_tree(&changed)).unwrap();
         crate::layout_single_page(&mut changed, &first, page_box_800x600()).unwrap();
         assert_eq!(
-            changed.nodes[child].unrounded_layout.size,
+            changed.nodes[child].layout.size,
             Size {
                 width: 40.0,
                 height: 20.0
@@ -2790,7 +2790,7 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
         changed.set_element_inline_style(parent, Some(final_css.into()));
         let second = cascade(&changed, &build_rule_tree(&changed)).unwrap();
         crate::layout_single_page(&mut changed, &second, page_box_800x600()).unwrap();
-        assert_eq!(changed.nodes[child].unrounded_layout.size, expected);
+        assert_eq!(changed.nodes[child].layout.size, expected);
     }
 }
 

@@ -515,7 +515,7 @@ impl DocumentHost for WptDocumentHost {
             .uncascaded
             .dom
             .get_node(node)
-            .map(|n| n.unrounded_layout.padding)
+            .map(|n| n.layout().padding)
             .unwrap_or_default();
         let right = padding_box
             .right
@@ -614,7 +614,7 @@ impl DocumentHost for WptDocumentHost {
             let painted =
                 border_box_of(scene, index).zip(paint_transform_of(&self.paint_transforms, index));
             if let Some((border_box, transform)) = painted {
-                let margin = node.map(|n| n.unrounded_layout.margin).unwrap_or_default();
+                let margin = node.map(|n| n.layout().margin).unwrap_or_default();
                 let margin_box = rect(
                     border_box.left - f64::from(margin.left),
                     border_box.top - f64::from(margin.top),
@@ -851,7 +851,7 @@ fn collect_generated_boxes(
         let Some((node, border_box)) = root.zip(border_box_of(scene, index)) else {
             continue;
         };
-        let layout = node.unrounded_layout;
+        let layout = node.layout();
         let origin = (
             border_box.left + f64::from(layout.border.left + layout.padding.left),
             border_box.top + f64::from(layout.border.top + layout.padding.top),

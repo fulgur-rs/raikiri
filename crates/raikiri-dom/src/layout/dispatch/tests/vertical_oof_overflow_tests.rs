@@ -34,9 +34,7 @@ fn overflow(display: &str, container_css: &str, child_css: &str) -> (f32, f32, f
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    let rect = doc.nodes[container]
-        .unrounded_layout
-        .scrollable_overflow_rect;
+    let rect = doc.nodes[container].layout.scrollable_overflow_rect;
     (rect.left, rect.top, rect.right, rect.bottom)
 }
 

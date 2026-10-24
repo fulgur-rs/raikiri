@@ -189,7 +189,7 @@ pub(super) fn layout(
             vertical_margins_are_collapsible: Line::FALSE,
         },
     );
-    let mut first_layout = tree.nodes[first].unrounded_layout;
+    let mut first_layout = tree.nodes[first].layout;
     // Parent-owned used margins can still refer to the unfragmented width.
     // Resolve the outer margins against the column before placing this box.
     let margin_style = style_of(tree, first).margin();
@@ -244,7 +244,7 @@ pub(super) fn layout(
     let mut clip_left = column_x;
     let mut clip_right = column_x + context.column_width;
     for &id in chain {
-        let layout = tree.nodes[id].unrounded_layout;
+        let layout = tree.nodes[id].layout;
         position.x += layout.location.x;
         position.y += layout.location.y;
         if !position.x.is_finite() || !position.y.is_finite() || !layout.size.width.is_finite() {
@@ -402,7 +402,7 @@ pub(super) fn layout(
         let mut fragment_parent = container;
         let mut parent_position = Point::ZERO;
         for (depth, &id) in chain.iter().enumerate() {
-            let source = tree.nodes[id].unrounded_layout;
+            let source = tree.nodes[id].layout;
             let y = if order == 0 {
                 positions[depth].y
             } else {

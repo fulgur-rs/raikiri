@@ -532,7 +532,7 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     // Source parts may no longer contain anonymous cells on this pass. Their
     // previous parent-relative boxes must not shift ordinary table cells.
     for &id in &doc.table_objects.materialized_parts {
-        doc.nodes[id].unrounded_layout = BoxLayout::new();
+        doc.nodes[id].layout = BoxLayout::new();
     }
     // An unsuccessful rebuild must not expose cells from the previous pass.
     doc.table_objects = TableObjects::default();
@@ -781,7 +781,7 @@ impl Document {
         let relative = self.table_objects.tables[index]
             .parts
             .iter()
-            .map(|&part| self.nodes[part].unrounded_layout)
+            .map(|&part| self.nodes[part].layout)
             .collect();
         self.table_objects.tables[index].relative_parts = relative;
         self.offset_anonymous_table_parts(table);
@@ -793,13 +793,13 @@ impl Document {
         let Some(BoxKey::AnonymousTable(index)) = self.nodes.box_key(table) else {
             return;
         };
-        let origin = self.nodes[table].unrounded_layout.location;
+        let origin = self.nodes[table].layout.location;
         let anonymous = &self.table_objects.tables[index];
         for (&part, relative) in anonymous.parts.iter().zip(&anonymous.relative_parts) {
             let mut layout = *relative;
             layout.location.x += origin.x;
             layout.location.y += origin.y;
-            self.nodes[part].unrounded_layout = layout;
+            self.nodes[part].layout = layout;
         }
     }
 

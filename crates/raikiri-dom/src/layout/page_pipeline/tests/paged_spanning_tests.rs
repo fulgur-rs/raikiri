@@ -100,7 +100,7 @@ fn spanning_pagination_propagates_an_exhausted_ancestor_growth_budget() {
     assert_eq!(delta, 20.0);
     let planning_cost = limit - work.remaining();
     document.fragment_tree.break_flow_work_used = limit - planning_cost;
-    let parent_height = document.nodes[parent].unrounded_layout.size.height;
+    let parent_height = document.nodes[parent].layout.size.height;
     let result = paginate_flow(
         &mut crate::layout::context::LayoutSession::bridged(&mut document, &cascade),
         &cascade,
@@ -117,13 +117,10 @@ fn spanning_pagination_propagates_an_exhausted_ancestor_growth_budget() {
     assert!(
         matches!(result, Err(LayoutError::FragmentLimitExceeded { limit: actual }) if actual == limit)
     );
+    assert_eq!(document.nodes[parent].layout.size.height, parent_height);
     assert_eq!(
-        document.nodes[parent].unrounded_layout.size.height,
-        parent_height
-    );
-    assert_eq!(
-        document.nodes[owner].unrounded_layout.size.height,
-        probe.nodes[owner].unrounded_layout.size.height
+        document.nodes[owner].layout.size.height,
+        probe.nodes[owner].layout.size.height
     );
 }
 

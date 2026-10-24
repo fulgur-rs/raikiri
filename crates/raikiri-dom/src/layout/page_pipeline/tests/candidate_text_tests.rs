@@ -21,7 +21,7 @@ fn positioned_text_start_y_falls_back_to_the_owned_first_line() {
     let first_top = owned.lines.first().expect("owned line").top;
     assert!(first_top > 0.0);
 
-    let layout = doc.ifc_layout_node(root).unwrap().unrounded_layout;
+    let layout = doc.ifc_layout_node(root).unwrap().layout;
     let expected = current_abs_y(&doc, root) + layout.border.top + layout.padding.top + first_top;
     doc.nodes[root].ifc.as_mut().unwrap().lines = None;
 

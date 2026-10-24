@@ -110,7 +110,7 @@ impl SiblingShifts {
         for (index, &child) in children.iter().enumerate() {
             delta += starts[index];
             if delta != 0.0 && Self::moves(document, parent, child) {
-                document.nodes[child].unrounded_layout.location.y += delta;
+                document.nodes[child].layout.location.y += delta;
                 shifted.insert(child, delta);
             }
         }

@@ -23,7 +23,7 @@ fn a_laid_out_document_with_calc_payloads_moves_across_threads() {
     let rules = build_rule_tree(&doc);
     let layout_cascade = cascade(&doc, &rules).expect("cascade Ok");
     crate::layout::layout_single_page(&mut doc, &layout_cascade, page).expect("layout Ok");
-    assert_eq!(doc.nodes[child].unrounded_layout.size.width, 60.0);
+    assert_eq!(doc.nodes[child].layout.size.width, 60.0);
 
     // The payloads the first layout published travel with the document.
     std::thread::scope(|scope| {
@@ -33,7 +33,7 @@ fn a_laid_out_document_with_calc_payloads_moves_across_threads() {
                 let moved_cascade = cascade(&doc, &rules).expect("cascade Ok");
                 crate::layout::layout_single_page(&mut doc, &moved_cascade, page)
                     .expect("relayout Ok");
-                assert_eq!(doc.nodes[child].unrounded_layout.size.width, 60.0);
+                assert_eq!(doc.nodes[child].layout.size.width, 60.0);
             })
             .join()
             .expect("document moves across threads");

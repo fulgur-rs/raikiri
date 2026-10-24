@@ -36,18 +36,12 @@ fn fifth_review_empty_caption_uses_grid_border_box_without_double_padding() {
             &format!("display:table-caption;height:10px;background:blue;{caption_css}"),
         );
         let computed = layout(&mut doc);
+        assert_eq!(doc.get_node(table).unwrap().layout().size.width, width);
         assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.width,
-            width
-        );
-        assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.size.width,
+            doc.get_node(caption).unwrap().layout().size.width,
             caption_width
         );
-        assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.location.x,
-            x as f32
-        );
+        assert_eq!(doc.get_node(caption).unwrap().layout().location.x, x as f32);
         let (mut reference, body) = document();
         element(
             &mut reference,
@@ -84,16 +78,10 @@ fn fifth_review_all_hidden_empty_row_has_zero_height_and_one_spacing_side() {
         }
         for _ in 0..2 {
             let computed = layout(&mut doc);
-            assert_eq!(
-                doc.get_node(table).unwrap().unrounded_layout.size.height,
-                5.0
-            );
+            assert_eq!(doc.get_node(table).unwrap().layout().size.height, 5.0);
             for &cell in &cells {
-                assert_eq!(
-                    doc.get_node(cell).unwrap().unrounded_layout.size.height,
-                    0.0
-                );
-                assert_eq!(doc.get_node(cell).unwrap().unrounded_layout.location.y, 5.0);
+                assert_eq!(doc.get_node(cell).unwrap().layout().size.height, 0.0);
+                assert_eq!(doc.get_node(cell).unwrap().layout().location.y, 5.0);
             }
             let (mut reference, body) = document();
             element(
@@ -133,13 +121,10 @@ fn fifth_review_hidden_first_middle_and_last_rows_keep_visible_row_origins() {
             cells.push(cell);
         }
         let computed = layout(&mut doc);
-        assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.height,
-            35.0
-        );
+        assert_eq!(doc.get_node(table).unwrap().layout().size.height, 35.0);
         let mut next_y = 5.0;
         for (index, cell) in cells.into_iter().enumerate() {
-            let actual = doc.get_node(cell).unwrap().unrounded_layout;
+            let actual = doc.get_node(cell).unwrap().layout();
             assert_eq!(actual.location.y, next_y);
             assert_eq!(
                 actual.size.height,
@@ -195,10 +180,7 @@ fn fifth_review_empty_row_classification_resets_for_show_collapse_and_new_conten
     ] {
         doc.set_element_attribute(table, "style", format!("display:table;width:40px;border-spacing:0 5px;empty-cells:{empty};border-collapse:{model};background:green")).unwrap();
         let computed = layout(&mut doc);
-        assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.height,
-            height
-        );
+        assert_eq!(doc.get_node(table).unwrap().layout().size.height, height);
         assert_eq!(
             raikiri_dom::paint_rules::hides_empty_table_cell(&doc, &computed, cell),
             height == 5.0
@@ -209,10 +191,7 @@ fn fifth_review_empty_row_classification_resets_for_show_collapse_and_new_conten
     assert!(!raikiri_dom::paint_rules::hides_empty_table_cell(
         &doc, &computed, cell
     ));
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.height,
-        30.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.height, 30.0);
 }
 
 #[test]
@@ -235,22 +214,10 @@ fn fifth_review_nonempty_rowspan_prevents_empty_rows_from_collapsing() {
     let second = element(&mut doc, table, "display:table-row");
     let empty = element(&mut doc, second, "display:table-cell;width:20px");
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.height,
-        35.0
-    );
-    assert_eq!(
-        doc.get_node(span).unwrap().unrounded_layout.size.height,
-        25.0
-    );
-    assert_eq!(
-        doc.get_node(empty).unwrap().unrounded_layout.location.y,
-        20.0
-    );
-    assert_eq!(
-        doc.get_node(empty).unwrap().unrounded_layout.size.height,
-        10.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.height, 35.0);
+    assert_eq!(doc.get_node(span).unwrap().layout().size.height, 25.0);
+    assert_eq!(doc.get_node(empty).unwrap().layout().location.y, 20.0);
+    assert_eq!(doc.get_node(empty).unwrap().layout().size.height, 10.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -291,16 +258,10 @@ fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() 
             },
         );
         layout(&mut doc);
+        assert_eq!(doc.get_node(table).unwrap().layout().size.height, 50.0);
+        assert_eq!(doc.get_node(hidden).unwrap().layout().size.height, 0.0);
         assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.height,
-            50.0
-        );
-        assert_eq!(
-            doc.get_node(hidden).unwrap().unrounded_layout.size.height,
-            0.0
-        );
-        assert_eq!(
-            doc.get_node(other).unwrap().unrounded_layout.size.height,
+            doc.get_node(other).unwrap().layout().size.height,
             if visible { 40.0 } else { 0.0 }
         );
     }
@@ -320,15 +281,9 @@ fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() 
         cells.push(cell);
     }
     layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.height,
-        50.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.height, 50.0);
     for (cell, height) in cells.into_iter().zip([17.5, 0.0, 17.5]) {
-        assert_eq!(
-            doc.get_node(cell).unwrap().unrounded_layout.size.height,
-            height
-        );
+        assert_eq!(doc.get_node(cell).unwrap().layout().size.height, height);
     }
     let (mut doc, body) = document();
     let table = element(
@@ -344,14 +299,8 @@ fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() 
         "display:table-cell;width:20px;height:10px;empty-cells:show",
     );
     layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.height,
-        30.0
-    );
-    assert_eq!(
-        doc.get_node(show).unwrap().unrounded_layout.size.height,
-        20.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.height, 30.0);
+    assert_eq!(doc.get_node(show).unwrap().layout().size.height, 20.0);
 }
 
 #[test]
@@ -385,7 +334,7 @@ fn fourth_review_vertical_caption_minimum_constrains_inline_grid_size() {
             let grid = doc.get_node(table).unwrap().table_grid_box().unwrap();
             assert_eq!(grid.height, 100.0, "{mode}/{columns}");
             for (index, cell) in cells.into_iter().enumerate() {
-                let cell = doc.get_node(cell).unwrap().unrounded_layout;
+                let cell = doc.get_node(cell).unwrap().layout();
                 assert_eq!(cell.size.height, 100.0 / columns as f32);
                 assert_eq!(cell.location.y, index as f32 * 100.0 / columns as f32);
             }
@@ -451,7 +400,7 @@ fn fourth_review_opposite_vertical_cells_use_their_own_block_direction() {
             for _ in 0..2 {
                 let computed = layout(&mut doc);
                 assert_eq!(
-                    doc.get_node(child).unwrap().unrounded_layout.location.x,
+                    doc.get_node(child).unwrap().layout().location.x,
                     x as f32,
                     "{table_mode}/{cell_mode}/{align}"
                 );
@@ -562,13 +511,13 @@ fn fourth_review_vertical_caption_minimum_includes_margins_and_grid_edges() {
             };
             let grid = doc.get_node(table).unwrap().table_grid_box().unwrap();
             assert_eq!((grid.x, grid.width, grid.height), (grid_x, 46.0, 100.0));
-            let caption = doc.get_node(caption).unwrap().unrounded_layout;
+            let caption = doc.get_node(caption).unwrap().layout();
             assert_eq!(
                 (caption.location.x, caption.location.y, caption.size.height),
                 (caption_x, 5.0, 90.0)
             );
             for (cell, y) in cells.into_iter().zip(ys) {
-                let cell = doc.get_node(cell).unwrap().unrounded_layout;
+                let cell = doc.get_node(cell).unwrap().layout();
                 assert_eq!(
                     (cell.location.x, cell.location.y, cell.size.height),
                     (grid_x + 3.0, y, cell_height)
@@ -700,7 +649,7 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
         let cells: Vec<_> = (0..doc.node_count())
             .filter_map(|id| {
                 let node = doc.get_node(id).unwrap();
-                (node.tag_name() == Some("td")).then_some(node.unrounded_layout)
+                (node.tag_name() == Some("td")).then_some(node.layout())
             })
             .collect();
         assert_eq!(cells.len(), 2);
@@ -715,7 +664,7 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
         let children: Vec<_> = (0..doc.node_count())
             .filter_map(|id| {
                 let node = doc.get_node(id).unwrap();
-                (node.tag_name() == Some("div")).then_some(node.unrounded_layout)
+                (node.tag_name() == Some("div")).then_some(node.layout())
             })
             .collect();
         assert_eq!(children.len(), 2);
@@ -750,10 +699,7 @@ fn cell_keywords_align_content_without_moving_cell_backgrounds() {
         );
         doc.append_text(cell, "X");
         let computed = layout(&mut doc);
-        assert_eq!(
-            doc.get_node(cell).unwrap().unrounded_layout.size.height,
-            46.0
-        );
+        assert_eq!(doc.get_node(cell).unwrap().layout().size.height, 46.0);
         let actual = scene(&doc, &computed);
         let baselines: Vec<_> = actual
             .commands
@@ -822,10 +768,7 @@ fn baseline_cells_share_the_first_line_baseline_and_grow_row_height() {
         })
         .collect();
     assert_eq!(baselines, [16.0, 16.0]);
-    assert_eq!(
-        doc.get_node(small).unwrap().unrounded_layout.size.height,
-        20.0
-    );
+    assert_eq!(doc.get_node(small).unwrap().layout().size.height, 20.0);
 }
 
 #[test]
@@ -849,17 +792,17 @@ fn captions_are_outside_the_grid_and_reserve_normal_flow_space() {
         let after = element(&mut doc, body, "width:40px;height:10px;background:red");
         let computed = layout(&mut doc);
         assert_eq!(
-            doc.get_node(cell).unwrap().unrounded_layout.location.y,
+            doc.get_node(cell).unwrap().layout().location.y,
             cell_top,
             "{side}"
         );
         assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.location.y,
+            doc.get_node(caption).unwrap().layout().location.y,
             caption_top,
             "{side}"
         );
         assert_eq!(
-            doc.get_node(after).unwrap().unrounded_layout.location.y,
+            doc.get_node(after).unwrap().layout().location.y,
             30.0,
             "{side}"
         );
@@ -962,18 +905,9 @@ fn fixed_columns_honor_the_first_row_min_width() {
         "display:table-cell;height:10px;background:blue",
     );
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(first).unwrap().unrounded_layout.size.width,
-        30.0
-    );
-    assert_eq!(
-        doc.get_node(second).unwrap().unrounded_layout.location.x,
-        30.0
-    );
-    assert_eq!(
-        doc.get_node(second).unwrap().unrounded_layout.size.width,
-        20.0
-    );
+    assert_eq!(doc.get_node(first).unwrap().layout().size.width, 30.0);
+    assert_eq!(doc.get_node(second).unwrap().layout().location.x, 30.0);
+    assert_eq!(doc.get_node(second).unwrap().layout().size.width, 20.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1072,10 +1006,7 @@ fn block_cell_content_alignment_does_not_accumulate_across_layouts() {
     let computed = layout(&mut doc);
     for _ in 0..3 {
         layout_single_page(&mut doc, &computed, page()).unwrap();
-        assert_eq!(
-            doc.get_node(child).unwrap().unrounded_layout.location.y,
-            15.0
-        );
+        assert_eq!(doc.get_node(child).unwrap().layout().location.y, 15.0);
     }
 }
 
@@ -1131,12 +1062,12 @@ fn fixed_first_row_min_width_uses_the_cell_box_sizing_domain() {
         let second = element(&mut doc, row, "display:table-cell;height:10px");
         layout(&mut doc);
         assert_eq!(
-            doc.get_node(first).unwrap().unrounded_layout.size.width,
+            doc.get_node(first).unwrap().layout().size.width,
             expected,
             "{sizing}"
         );
         assert_eq!(
-            doc.get_node(second).unwrap().unrounded_layout.size.width,
+            doc.get_node(second).unwrap().layout().size.width,
             50.0 - expected,
             "{sizing}"
         );
@@ -1328,22 +1259,22 @@ fn captions_reserve_their_border_box_and_vertical_margins() {
         );
         let computed = layout(&mut doc);
         assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.size.height,
+            doc.get_node(caption).unwrap().layout().size.height,
             16.0,
             "{side}"
         );
         assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.location.y,
+            doc.get_node(caption).unwrap().layout().location.y,
             if side == "top" { 3.0 } else { 13.0 },
             "{side}"
         );
         assert_eq!(
-            doc.get_node(cell).unwrap().unrounded_layout.location.y,
+            doc.get_node(cell).unwrap().layout().location.y,
             if side == "top" { 23.0 } else { 0.0 },
             "{side}"
         );
         assert_eq!(
-            doc.get_node(after).unwrap().unrounded_layout.location.y,
+            doc.get_node(after).unwrap().layout().location.y,
             33.0,
             "{side}"
         );
@@ -1422,18 +1353,9 @@ fn baseline_rowspan_aligns_its_first_row_without_shifting_the_second_row_ink() {
         })
         .collect();
     assert_eq!(baselines, [16.0, 16.0, 26.0]);
-    assert_eq!(
-        doc.get_node(first).unwrap().unrounded_layout.size.height,
-        18.0
-    );
-    assert_eq!(
-        doc.get_node(span).unwrap().unrounded_layout.size.height,
-        28.0
-    );
-    assert_eq!(
-        doc.get_node(second).unwrap().unrounded_layout.location.y,
-        18.0
-    );
+    assert_eq!(doc.get_node(first).unwrap().layout().size.height, 18.0);
+    assert_eq!(doc.get_node(span).unwrap().layout().size.height, 28.0);
+    assert_eq!(doc.get_node(second).unwrap().layout().location.y, 18.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1471,10 +1393,7 @@ fn empty_cell_height_includes_its_content_box_border_and_padding() {
             ),
         );
         layout(&mut doc);
-        assert_eq!(
-            doc.get_node(cell).unwrap().unrounded_layout.size.height,
-            height
-        );
+        assert_eq!(doc.get_node(cell).unwrap().layout().size.height, height);
     }
 }
 
@@ -1494,18 +1413,12 @@ fn empty_table_captions_remain_outside_the_grid_and_reserve_flow_space() {
         );
         let after = element(&mut doc, body, "width:40px;height:10px;background:red");
         let computed = layout(&mut doc);
+        assert_eq!(doc.get_node(table).unwrap().layout().size.height, 30.0);
         assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.height,
-            30.0
-        );
-        assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.location.y,
+            doc.get_node(caption).unwrap().layout().location.y,
             caption_top
         );
-        assert_eq!(
-            doc.get_node(after).unwrap().unrounded_layout.location.y,
-            30.0
-        );
+        assert_eq!(doc.get_node(after).unwrap().layout().location.y, 30.0);
         let (mut reference, body) = document();
         element(
             &mut reference,
@@ -1550,10 +1463,7 @@ fn negative_caption_margin_keeps_the_grid_paint_extent() {
     );
     element(&mut doc, body, "width:40px;height:5px;background:red");
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.height,
-        0.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.height, 0.0);
     let grid = doc.get_node(table).unwrap().table_grid_box().unwrap();
     assert_eq!((grid.y, grid.height), (-10.0, 10.0));
     let (mut reference, body) = document();
@@ -1611,10 +1521,7 @@ fn nested_table_uses_its_first_row_baseline_including_caption_offset() {
     );
     doc.append_text(second, "X");
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(left).unwrap().unrounded_layout.padding.top,
-        28.0
-    );
+    assert_eq!(doc.get_node(left).unwrap().layout().padding.top, 28.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1655,18 +1562,9 @@ fn specified_empty_cell_height_floors_the_row_without_moving_text_baselines() {
         "display:table-cell;width:10px;height:30px;vertical-align:baseline;background:blue",
     );
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(text).unwrap().unrounded_layout.size.height,
-        30.0
-    );
-    assert_eq!(
-        doc.get_node(text).unwrap().unrounded_layout.padding.top,
-        0.0
-    );
-    assert_eq!(
-        doc.get_node(empty).unwrap().unrounded_layout.padding.top,
-        8.0
-    );
+    assert_eq!(doc.get_node(text).unwrap().layout().size.height, 30.0);
+    assert_eq!(doc.get_node(text).unwrap().layout().padding.top, 0.0);
+    assert_eq!(doc.get_node(empty).unwrap().layout().padding.top, 8.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1736,10 +1634,7 @@ fn spanning_only_baseline_cell_keeps_its_baseline_inside_the_first_row() {
     doc.append_text(cell, "X");
     element(&mut doc, table, "display:table-row");
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(cell).unwrap().unrounded_layout.size.height,
-        40.0
-    );
+    assert_eq!(doc.get_node(cell).unwrap().layout().size.height, 40.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
@@ -1820,8 +1715,8 @@ fn block_in_inline_and_preserved_lines_align_to_identical_cell_content() {
     for id in 0..parsed.dom.node_count() {
         let node = parsed.dom.get_node(id).unwrap();
         if node.tag_name() == Some("td") {
-            assert_eq!(node.unrounded_layout.size.height, 150.0);
-            assert_eq!(node.unrounded_layout.padding.top, 0.0);
+            assert_eq!(node.layout().size.height, 150.0);
+            assert_eq!(node.layout().padding.top, 0.0);
         }
     }
     let painted = scene(&parsed.dom, &computed);
@@ -1886,18 +1781,9 @@ fn wider_caption_minimum_sizes_the_grid_wrapper_and_following_flow() {
             "display:block;width:110px;height:10px;background:red",
         );
         let computed = layout(&mut doc);
-        assert_eq!(
-            doc.get_node(table).unwrap().unrounded_layout.size.width,
-            110.0
-        );
-        assert_eq!(
-            doc.get_node(cell).unwrap().unrounded_layout.size.width,
-            110.0
-        );
-        assert_eq!(
-            doc.get_node(sibling).unwrap().unrounded_layout.location.y,
-            20.0
-        );
+        assert_eq!(doc.get_node(table).unwrap().layout().size.width, 110.0);
+        assert_eq!(doc.get_node(cell).unwrap().layout().size.width, 110.0);
+        assert_eq!(doc.get_node(sibling).unwrap().layout().location.y, 20.0);
         let (mut reference, body) = document();
         for (left, top, width, color) in [
             (5, 0, 100, "blue"),
@@ -2012,7 +1898,7 @@ fn vertical_cell_alignment_moves_content_on_the_physical_block_axis() {
             "display:block;width:10px;height:10px;background:green",
         );
         let computed = layout(&mut doc);
-        let child = doc.get_node(child).unwrap().unrounded_layout;
+        let child = doc.get_node(child).unwrap().layout();
         assert_eq!(
             (child.location.x, child.location.y),
             (left as f32, 0.0),
@@ -2079,24 +1965,21 @@ fn vertical_captions_reserve_width_on_the_table_block_side() {
                 "display:block;width:60px;height:10px;background:red",
             );
             let computed = layout(&mut doc);
-            let wrapper = doc.get_node(table).unwrap().unrounded_layout.size;
+            let wrapper = doc.get_node(table).unwrap().layout().size;
             assert_eq!(
                 (wrapper.width, wrapper.height),
                 (60.0, 30.0),
                 "{mode}/{side}/empty{empty}"
             );
-            let caption = doc.get_node(caption).unwrap().unrounded_layout.location;
+            let caption = doc.get_node(caption).unwrap().layout().location;
             assert_eq!((caption.x, caption.y), (caption_left as f32, 0.0));
             if let Some(cell) = cell {
                 assert_eq!(
-                    doc.get_node(cell).unwrap().unrounded_layout.location.x,
+                    doc.get_node(cell).unwrap().layout().location.x,
                     grid_left as f32
                 );
             }
-            assert_eq!(
-                doc.get_node(sibling).unwrap().unrounded_layout.location.y,
-                30.0
-            );
+            assert_eq!(doc.get_node(sibling).unwrap().layout().location.y, 30.0);
             let (mut reference, body) = document();
             for (left, top, width, height, color) in [
                 (grid_left, 0, 40, 30, "green"),
@@ -2162,7 +2045,7 @@ fn vertical_inline_ink_uses_block_padding_without_accumulating_alignment() {
         let expected = raster(scene(&reference, &expected));
         for _ in 0..2 {
             let computed = layout(&mut doc);
-            let size = doc.get_node(cell).unwrap().unrounded_layout.size;
+            let size = doc.get_node(cell).unwrap().layout().size;
             assert_eq!((size.width, size.height), (46.0, 36.0), "{mode}/{align}");
             assert_exact_pixels(raster(scene(&doc, &computed)), expected.clone());
         }
@@ -2266,7 +2149,7 @@ fn vertical_block_content_keeps_authored_margins_when_aligned() {
         let expected = raster(scene(&reference, &expected));
         for _ in 0..2 {
             let computed = layout(&mut doc);
-            let location = doc.get_node(child).unwrap().unrounded_layout.location;
+            let location = doc.get_node(child).unwrap().layout().location;
             assert_eq!(
                 (location.x, location.y),
                 (left as f32, 2.0),
@@ -2341,14 +2224,11 @@ fn vertical_caption_margins_reserve_their_margin_box_without_shifting_inline_flo
             (projected.x, projected.y, projected.width, projected.height),
             (grid_left as f32, 0.0, 40.0, 30.0)
         );
-        let wrapper = doc.get_node(table).unwrap().unrounded_layout.size;
+        let wrapper = doc.get_node(table).unwrap().layout().size;
         assert_eq!((wrapper.width, wrapper.height), (70.0, 30.0));
-        let location = doc.get_node(caption).unwrap().unrounded_layout.location;
+        let location = doc.get_node(caption).unwrap().layout().location;
         assert_eq!((location.x, location.y), (caption_left as f32, 2.0));
-        assert_eq!(
-            doc.get_node(sibling).unwrap().unrounded_layout.location.y,
-            30.0
-        );
+        assert_eq!(doc.get_node(sibling).unwrap().layout().location.y, 30.0);
         let (mut reference, body) = document();
         for (left, top, width, height, color) in [
             (grid_left, 0, 40, 30, "green"),
@@ -2403,23 +2283,14 @@ fn fixed_colspan_minimum_reuses_the_auto_column_without_widening_the_table() {
         })
         .collect();
     let computed = layout(&mut doc);
-    assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.width,
-        90.0
-    );
-    assert_eq!(
-        doc.get_node(span).unwrap().unrounded_layout.size.width,
-        80.0
-    );
-    assert_eq!(
-        doc.get_node(last).unwrap().unrounded_layout.size.width,
-        10.0
-    );
+    assert_eq!(doc.get_node(table).unwrap().layout().size.width, 90.0);
+    assert_eq!(doc.get_node(span).unwrap().layout().size.width, 80.0);
+    assert_eq!(doc.get_node(last).unwrap().layout().size.width, 10.0);
     for (cell, (left, width)) in cells
         .into_iter()
         .zip([(0.0, 40.0), (40.0, 40.0), (80.0, 10.0)])
     {
-        let used = doc.get_node(cell).unwrap().unrounded_layout;
+        let used = doc.get_node(cell).unwrap().layout();
         assert_eq!((used.location.x, used.size.width), (left, width));
     }
     let (mut reference, body) = document();
@@ -2591,7 +2462,7 @@ fn vertical_cell_alignment_keeps_relative_insets_out_of_natural_size() {
             for _ in 0..2 {
                 let computed = layout(&mut doc);
                 assert_eq!(
-                    doc.get_node(child).unwrap().unrounded_layout.location.x,
+                    doc.get_node(child).unwrap().layout().location.x,
                     left as f32,
                     "{mode}/{align}/{insets}"
                 );
@@ -2652,7 +2523,7 @@ fn relative_vertical_block_controls_keep_rtl_priority_and_float_paint_offsets() 
             );
             let computed = layout(&mut doc);
             assert_eq!(
-                doc.get_node(child).unwrap().unrounded_layout.location.x,
+                doc.get_node(child).unwrap().layout().location.x,
                 raw_left as f32,
                 "{mode}/{child_style}"
             );
@@ -2767,11 +2638,11 @@ fn fixed_span_minimum_resolves_mixed_calc_before_box_sizing() {
         );
         let computed = layout(&mut doc);
         assert_eq!(
-            doc.get_node(first).unwrap().unrounded_layout.size.width,
+            doc.get_node(first).unwrap().layout().size.width,
             first_width as f32
         );
         assert_eq!(
-            doc.get_node(last).unwrap().unrounded_layout.size.width,
+            doc.get_node(last).unwrap().layout().size.width,
             last_width as f32
         );
         let (mut reference, body) = document();
@@ -2863,10 +2734,10 @@ fn positioned_captions_do_not_expand_or_shift_the_table_flow_box() {
                 "display:block;width:10px;height:10px;background:red",
             );
             let computed = layout(&mut doc);
-            let table_box = doc.get_node(table).unwrap().unrounded_layout;
-            let caption_box = doc.get_node(caption).unwrap().unrounded_layout;
-            let cell_box = doc.get_node(cell).unwrap().unrounded_layout;
-            let after_box = doc.get_node(after).unwrap().unrounded_layout;
+            let table_box = doc.get_node(table).unwrap().layout();
+            let caption_box = doc.get_node(caption).unwrap().layout();
+            let cell_box = doc.get_node(cell).unwrap().layout();
+            let after_box = doc.get_node(after).unwrap().layout();
             assert_eq!(
                 (
                     table_box.location.x,
@@ -2957,7 +2828,7 @@ fn floated_captions_blockify_into_anonymous_cell_content() {
                 "display:block;width:10px;height:10px;background:red",
             );
             let computed = layout(&mut doc);
-            let table_box = doc.get_node(table).unwrap().unrounded_layout;
+            let table_box = doc.get_node(table).unwrap().layout();
             let caption_node = doc.get_node(caption).unwrap();
             assert_eq!(
                 computed.computed[caption].display,
@@ -2972,7 +2843,7 @@ fn floated_captions_blockify_into_anonymous_cell_content() {
                 (100.0, 30.0),
                 "{float}/{side}"
             );
-            let cell_box = doc.get_node(cell).unwrap().unrounded_layout;
+            let cell_box = doc.get_node(cell).unwrap().layout();
             assert_eq!(
                 (
                     cell_box.location.x,
@@ -2982,28 +2853,25 @@ fn floated_captions_blockify_into_anonymous_cell_content() {
                 ),
                 (0.0, 0.0, 100.0, 20.0)
             );
-            assert_eq!(
-                doc.get_node(after).unwrap().unrounded_layout.location.y,
-                30.0
-            );
+            assert_eq!(doc.get_node(after).unwrap().layout().location.y, 30.0);
             assert_eq!(
                 (
-                    caption_node.unrounded_layout.location.x,
-                    caption_node.unrounded_layout.location.y
+                    caption_node.layout().location.x,
+                    caption_node.layout().location.y
                 ),
                 (0.0, 0.0)
             );
             assert_eq!(
                 (
-                    caption_node.unrounded_layout.size.width,
-                    caption_node.unrounded_layout.size.height
+                    caption_node.layout().size.width,
+                    caption_node.layout().size.height
                 ),
                 (100.0, 10.0)
             );
             assert_eq!(
                 (
-                    doc.get_node(row).unwrap().unrounded_layout.location.y,
-                    doc.get_node(row).unwrap().unrounded_layout.size.height
+                    doc.get_node(row).unwrap().layout().location.y,
+                    doc.get_node(row).unwrap().layout().size.height
                 ),
                 (10.0, 20.0)
             );
@@ -3059,7 +2927,7 @@ fn third_review_calculated_cell_height_floors_the_row() {
             );
             let computed = layout(&mut doc);
             assert_eq!(
-                doc.get_node(cell).unwrap().unrounded_layout.size.height,
+                doc.get_node(cell).unwrap().layout().size.height,
                 height,
                 "{value}/{sizing}"
             );
@@ -3109,10 +2977,7 @@ fn third_review_caption_auto_margins_use_remaining_inline_space() {
             "display:table-cell;height:20px;background:blue",
         );
         let computed = layout(&mut doc);
-        assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.location.x,
-            x
-        );
+        assert_eq!(doc.get_node(caption).unwrap().layout().location.x, x);
         let (mut reference, body) = document();
         element(
             &mut reference,
@@ -3148,12 +3013,9 @@ fn third_review_relative_caption_retains_paint_side_insets() {
         "display:table-cell;height:20px;background:blue",
     );
     let computed = layout(&mut doc);
+    assert_eq!(doc.get_node(table).unwrap().layout().size.height, 30.0);
     assert_eq!(
-        doc.get_node(table).unwrap().unrounded_layout.size.height,
-        30.0
-    );
-    assert_eq!(
-        doc.get_node(caption).unwrap().unrounded_layout.location,
+        doc.get_node(caption).unwrap().layout().location,
         raikiri_layout_geometry::Point { x: 0.0, y: 0.0 }
     );
     doc.project_pages(
@@ -3220,10 +3082,7 @@ fn third_review_auto_caption_preserves_max_width() {
             "display:table-cell;height:20px;background:blue",
         );
         let computed = layout(&mut doc);
-        assert_eq!(
-            doc.get_node(caption).unwrap().unrounded_layout.size.width,
-            20.0
-        );
+        assert_eq!(doc.get_node(caption).unwrap().layout().size.width, 20.0);
         let (mut reference, body) = document();
         element(
             &mut reference,
@@ -3264,7 +3123,7 @@ fn third_review_vertical_caption_percentage_margins_use_inline_height() {
             "display:table-cell;width:40px;height:100px;background:blue",
         );
         let computed = layout(&mut doc);
-        let cap = doc.get_node(caption).unwrap().unrounded_layout;
+        let cap = doc.get_node(caption).unwrap().layout();
         assert_eq!(
             (
                 cap.location.x,

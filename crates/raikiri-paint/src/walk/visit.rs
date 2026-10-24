@@ -31,8 +31,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 .and_then(|parent| document.layout_origin_of(parent));
             let parent_x = parent_origin.map_or(0.0, |parent| parent.x);
             let parent_y = parent_origin.map_or(0.0, |parent| parent.y);
-            visit.parent_abs_x += origin.x - parent_x - node.unrounded_layout.location.x;
-            visit.parent_abs_y += origin.y - parent_y - node.unrounded_layout.location.y;
+            visit.parent_abs_x += origin.x - parent_x - node.layout().location.x;
+            visit.parent_abs_y += origin.y - parent_y - node.layout().location.y;
         }
         if self.push_fragment_visits(&visit, node) {
             return;
@@ -45,7 +45,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if !node.is_in_document() {
             return;
         }
-        let mut node_layout = node.unrounded_layout;
+        let mut node_layout = *node.layout();
         if let Some(rect) = visit.fragment_rect {
             node_layout.size.width = rect.width;
             node_layout.size.height = rect.height;
@@ -118,10 +118,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             let fragment = layout_fragments[current_fragment_id];
             let (node_abs_x, node_abs_y) = fragment.paint_origin(
                 (parent_abs_x, parent_abs_y),
-                (
-                    node.unrounded_layout.location.x,
-                    node.unrounded_layout.location.y,
-                ),
+                (node.layout().location.x, node.layout().location.y),
                 (fragment_origin_x, fragment_origin_y),
             );
             let fragment_clip = fragment.fragmentainer_clip.map(|clip| FragmentRect {
@@ -132,8 +129,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             });
             self.stack.push(PaintFrame::Visit(VisitFrame {
                 node_id,
-                parent_abs_x: node_abs_x - node.unrounded_layout.location.x,
-                parent_abs_y: node_abs_y - node.unrounded_layout.location.y,
+                parent_abs_x: node_abs_x - node.layout().location.x,
+                parent_abs_y: node_abs_y - node.layout().location.y,
                 parent_font_size,
                 shift_y,
                 transform_x,

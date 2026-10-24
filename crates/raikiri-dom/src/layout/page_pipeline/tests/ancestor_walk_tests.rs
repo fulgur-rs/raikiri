@@ -7,10 +7,10 @@ fn defensive_ancestor_position_skips_inline_frames_and_stops_at_root() {
     let root = doc.append_element(Some(0), "div", None::<&str>);
     let inline = doc.append_element(Some(root), "span", None::<&str>);
     let child = doc.append_element(Some(inline), "div", None::<&str>);
-    doc.nodes[0].unrounded_layout.location.y = 1.0;
-    doc.nodes[root].unrounded_layout.location.y = 11.0;
-    doc.nodes[inline].unrounded_layout.location.y = 13.0;
-    doc.nodes[child].unrounded_layout.location.y = 7.0;
+    doc.nodes[0].layout.location.y = 1.0;
+    doc.nodes[root].layout.location.y = 11.0;
+    doc.nodes[inline].layout.location.y = 13.0;
+    doc.nodes[child].layout.location.y = 7.0;
     doc.nodes[root].flags.insert(NodeFlags::IS_IFC_ROOT);
     doc.nodes[inline].flags.insert(NodeFlags::IN_IFC_SUBTREE);
     assert_eq!(current_abs_y_fallback(&doc, child), 19.0);
@@ -20,13 +20,44 @@ fn defensive_ancestor_position_skips_inline_frames_and_stops_at_root() {
 }
 
 #[test]
+fn defensive_ancestor_position_starts_an_anonymous_cell_at_its_own_offset() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let owner = doc.append_element(Some(body), "div", Some("display:block;margin-top:30px"));
+    let first = doc.append_element(Some(owner), "div", Some("display:table-row"));
+    let second = doc.append_element(Some(owner), "div", Some("display:table-row"));
+    doc.append_text(first, "A");
+    doc.append_text(second, "B");
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    // Rows outside a table get an anonymous table and one anonymous cell per
+    // row. The cells have no node in the source arena: the walk starts at the
+    // cell's own offset and continues from the source row it stands for, and
+    // ends where the coordinate-owner fast path does.
+    let cell = doc.nodes.anonymous_cell_key(1);
+    assert_eq!(doc.ifc_source_owner(cell), second);
+    let fallback = current_abs_y_fallback(&doc, cell);
+    assert!(fallback > current_abs_y_fallback(&doc, first));
+    assert_eq!(
+        Some(fallback),
+        doc.layout_origin_of(cell).map(|origin| origin.y)
+    );
+}
+
+#[test]
 fn defensive_ancestor_position_bounds_a_cycle() {
     let mut doc = Document::new();
     let a = doc.append_element(Some(0), "div", None::<&str>);
     let b = doc.append_element(Some(a), "div", None::<&str>);
     doc.nodes[a].parent = Some(b);
-    doc.nodes[a].unrounded_layout.location.y = 2.0;
-    doc.nodes[b].unrounded_layout.location.y = 3.0;
+    doc.nodes[a].layout.location.y = 2.0;
+    doc.nodes[b].layout.location.y = 3.0;
     assert_eq!(current_abs_y_fallback(&doc, a), 10.0);
 }
 
@@ -60,8 +91,8 @@ fn spanning_growth_fixture(
         doc.append_element(Some(root), "div", Some("display:block;height:10px"));
     });
     let outer = fixture.doc.parent_of(fixture.root).unwrap();
-    fixture.doc.nodes[fixture.root].unrounded_layout.size.height = 30.0;
-    fixture.doc.nodes[outer].unrounded_layout.size.height = 100.0;
+    fixture.doc.nodes[fixture.root].layout.size.height = 30.0;
+    fixture.doc.nodes[outer].layout.size.height = 100.0;
     (fixture, owner, outer)
 }
 
@@ -86,11 +117,8 @@ fn spanning_growth_error_does_not_grow_the_current_or_later_ancestor() {
         result,
         Err(LayoutError::FragmentLimitExceeded { limit: 0 })
     ));
-    assert_eq!(
-        fixture.doc.nodes[fixture.root].unrounded_layout.size.height,
-        30.0
-    );
-    assert_eq!(fixture.doc.nodes[outer].unrounded_layout.size.height, 100.0);
+    assert_eq!(fixture.doc.nodes[fixture.root].layout.size.height, 30.0);
+    assert_eq!(fixture.doc.nodes[outer].layout.size.height, 100.0);
     assert_eq!(fixture.doc.parent_of(owner), Some(fixture.root));
 }
 
@@ -116,11 +144,8 @@ fn out_of_flow_spanning_owners_stop_before_charging_or_growing_ancestors() {
             &mut work,
         )
         .unwrap();
-        assert_eq!(
-            fixture.doc.nodes[fixture.root].unrounded_layout.size.height,
-            30.0
-        );
-        assert_eq!(fixture.doc.nodes[outer].unrounded_layout.size.height, 100.0);
+        assert_eq!(fixture.doc.nodes[fixture.root].layout.size.height, 30.0);
+        assert_eq!(fixture.doc.nodes[outer].layout.size.height, 100.0);
     }
 }
 
@@ -142,11 +167,8 @@ fn spanning_growth_stops_at_a_fixed_height_parent() {
         &mut work,
     )
     .unwrap();
-    assert_eq!(
-        fixture.doc.nodes[fixture.root].unrounded_layout.size.height,
-        30.0
-    );
-    assert_eq!(fixture.doc.nodes[outer].unrounded_layout.size.height, 100.0);
+    assert_eq!(fixture.doc.nodes[fixture.root].layout.size.height, 30.0);
+    assert_eq!(fixture.doc.nodes[outer].layout.size.height, 100.0);
 }
 
 #[test]
@@ -187,7 +209,7 @@ fn growth_through_two_contents_ancestors_keeps_the_moved_child() {
         ],
         [100.0, 160.0, 180.0, 190.0]
     );
-    assert_eq!(doc.nodes[ids[0]].unrounded_layout.size.height, 130.0);
+    assert_eq!(doc.nodes[ids[0]].layout.size.height, 130.0);
 }
 
 #[test]
@@ -204,7 +226,7 @@ fn a_fixed_height_ancestor_keeps_its_height_when_the_following_flow_moves() {
         );
         ids[2] = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     });
-    assert_eq!(doc.nodes[ids[0]].unrounded_layout.size.height, 100.0);
+    assert_eq!(doc.nodes[ids[0]].layout.size.height, 100.0);
     assert_eq!(
         [page_flow_y(&doc, ids[1]), page_flow_y(&doc, ids[2])],
         [100.0, 200.0]
@@ -219,10 +241,10 @@ fn contents_parent_offsets_exclude_the_child_and_visited_parent() {
         ids[1] = doc.append_element(Some(ids[0]), "div", Some("display:contents"));
         ids[2] = doc.append_element(Some(ids[1]), "div", Some("display:block"));
     });
-    fixture.doc.nodes[fixture.root].unrounded_layout.location.y = 100.0;
-    fixture.doc.nodes[ids[0]].unrounded_layout.location.y = 11.0;
-    fixture.doc.nodes[ids[1]].unrounded_layout.location.y = 13.0;
-    fixture.doc.nodes[ids[2]].unrounded_layout.location.y = 200.0;
+    fixture.doc.nodes[fixture.root].layout.location.y = 100.0;
+    fixture.doc.nodes[ids[0]].layout.location.y = 11.0;
+    fixture.doc.nodes[ids[1]].layout.location.y = 13.0;
+    fixture.doc.nodes[ids[2]].layout.location.y = 200.0;
     assert_eq!(
         pagination_child_parent_y(&fixture.doc, fixture.root, ids[2], 7.0),
         31.0

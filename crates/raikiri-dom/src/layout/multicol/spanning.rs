@@ -68,9 +68,7 @@ pub(super) fn layout(
         }
         if children[start..end].iter().any(|&child| {
             let node = layout_node(tree, child);
-            node.kind() != NodeKind::Text
-                || node.unrounded_layout.size.height != 0.0
-                || node.ifc.is_some()
+            node.kind() != NodeKind::Text || node.layout.size.height != 0.0 || node.ifc.is_some()
         }) {
             previous_margin = None;
             // A group preceding a spanner is balanced even under auto fill.
@@ -151,7 +149,7 @@ pub(super) fn layout(
                 },
             );
             tree.context.fragmentation_stack = stack;
-            let mut child_layout = tree.nodes[child].unrounded_layout;
+            let mut child_layout = tree.nodes[child].layout;
             child_layout.order = end as u32;
             child_layout.size = output.size;
             let margin_top = child_layout.margin.top;
@@ -194,7 +192,7 @@ pub(super) fn layout(
                 let mut id = tree.fragment_tree.fragments[index].node_id;
                 let mut offset = Point::ZERO;
                 while id != child {
-                    let location = tree.nodes[id].unrounded_layout.location;
+                    let location = tree.nodes[id].layout.location;
                     offset.x += location.x;
                     offset.y += location.y;
                     id = tree

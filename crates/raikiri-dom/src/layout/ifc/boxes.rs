@@ -616,7 +616,7 @@ fn seed_carried_floats(
         .iter()
         .filter(|source| source.fragmentainer < column)
     {
-        let layout = tree.nodes[source.node_id].unrounded_layout;
+        let layout = tree.nodes[source.node_id].layout;
         let margin = resolved_margins(tree, source.node_id, geometry.width);
         let source_column_origin =
             source.fragmentainer.saturating_sub(first_column) as f32 * fragmentainer_height;
@@ -1274,7 +1274,7 @@ fn commit_fragmented_float(
         commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
     oof_candidates.append(&mut child_candidates);
     if perform && let Some(fragmentainer) = fragmentainer {
-        let layout = tree.nodes[node].unrounded_layout;
+        let layout = tree.nodes[node].layout;
         placements.push(IfcBoxFragment {
             node_id: node,
             fragmentainer,
@@ -1309,7 +1309,7 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
     for b in &root.boxes {
         let (dx, dy) = relative_offset_of(tree, idx, owner, &root.offsets, b.node);
         if dx != 0.0 || dy != 0.0 {
-            let mut layout = tree.nodes[b.node].unrounded_layout;
+            let mut layout = tree.nodes[b.node].layout;
             layout.location.x += dx;
             layout.location.y += dy;
             tree.set_unrounded_layout(NodeId::from(b.node), &layout);
@@ -2970,7 +2970,7 @@ pub(crate) fn move_atomics_to_columns(
             |atomic, _, _| {
                 let node = atomic.node.0 as usize;
                 if box_nodes.contains(&node) {
-                    let mut layout = tree.nodes[node].unrounded_layout;
+                    let mut layout = tree.nodes[node].layout;
                     layout.location.x += dx;
                     layout.location.y += dy;
                     tree.set_unrounded_layout(NodeId::from(node), &layout);
@@ -3187,7 +3187,7 @@ pub(crate) fn commit_child_layout_with_edges(
     edges: BoxEdges,
 ) {
     let layout = BoxLayout {
-        order: tree.nodes[node].unrounded_layout.order,
+        order: tree.nodes[node].layout.order,
         location,
         size: output.size,
         scrollable_overflow_rect: output.scrollable_overflow_rect,
@@ -3379,7 +3379,7 @@ pub(crate) fn place_out_of_flow(
             };
             candidates.push(OofCandidate {
                 node: NodeId::from(node),
-                order: tree.nodes[node].unrounded_layout.order,
+                order: tree.nodes[node].layout.order,
                 position,
                 static_position,
             });

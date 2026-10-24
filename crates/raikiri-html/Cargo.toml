@@ -20,7 +20,6 @@ markup5ever    = { workspace = true }
 roxmltree      = { workspace = true }
 rustc-hash     = { workspace = true }
 smol_str       = { workspace = true }
-taffy          = { workspace = true }
 url            = { workspace = true }
 data-url       = { workspace = true }
 

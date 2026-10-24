@@ -534,9 +534,7 @@ fn the_scrollable_overflow_covers_boxes_placed_by_the_grid_axes() {
         &["position:absolute;width:30px;height:30px;right:105px;top:190px"],
     );
     assert_eq!(laid.rects(), [(-7.0, 198.0, 30.0, 30.0)]);
-    let overflow = laid.doc.nodes[laid.grid]
-        .unrounded_layout
-        .scrollable_overflow_rect;
+    let overflow = laid.doc.nodes[laid.grid].layout.scrollable_overflow_rect;
     assert_eq!(
         (overflow.left, overflow.top, overflow.right, overflow.bottom),
         (-15.0, 0.0, 15.0, 220.0)
@@ -556,9 +554,7 @@ fn the_scrollable_overflow_of_the_tracks_follows_the_block_direction() {
             ),
             &["", ""],
         );
-        let overflow = laid.doc.nodes[laid.grid]
-            .unrounded_layout
-            .scrollable_overflow_rect;
+        let overflow = laid.doc.nodes[laid.grid].layout.scrollable_overflow_rect;
         (overflow.left, overflow.top, overflow.right, overflow.bottom)
     };
     assert_eq!(overflow("vertical-rl"), (-40.0, 0.0, 120.0, 50.0));

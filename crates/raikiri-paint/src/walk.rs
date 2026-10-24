@@ -1377,7 +1377,7 @@ fn generated_flow_node_height(
                     let child_node = document.get_node(child)?;
                     Some(
                         child_node
-                            .unrounded_layout
+                            .layout()
                             .size
                             .height
                             .max(cache.get(&child).copied().unwrap_or(0.0)),

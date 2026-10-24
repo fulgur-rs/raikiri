@@ -1667,7 +1667,7 @@ fn a_box_in_a_positioned_ruby_base_container_is_placed_against_its_bases() {
     let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
     let piece = pieces.iter().find(|piece| piece.node == base).unwrap();
     assert_eq!(piece.border_box.width, 20.0, "{piece:?}");
-    let located = doc.nodes[child].unrounded_layout.location.x;
+    let located = doc.nodes[child].layout.location.x;
     assert_eq!(located, piece.border_box.x + 10.0);
 }
 
@@ -1683,7 +1683,7 @@ fn inline_block(doc: &mut Document, parent: usize, width: u32, height: u32) -> u
 
 /// The border box of the box `id` as `(x, y, width, height)`.
 fn border_box(doc: &Document, id: usize) -> (f32, f32, f32, f32) {
-    let layout = doc.nodes[id].unrounded_layout;
+    let layout = doc.nodes[id].layout;
     (
         layout.location.x,
         layout.location.y,
@@ -1752,7 +1752,7 @@ fn annotation_atomic(direction: &str) -> (f32, (f32, f32, f32, f32), (f32, f32))
     let (doc, runs) = lay_out(fixture);
     let base = runs.iter().find(|run| run.0 == ids.0).expect("base").2;
     (
-        doc.nodes[root].unrounded_layout.size.width,
+        doc.nodes[root].layout.size.width,
         border_box(&doc, ids.1),
         base,
     )

@@ -12,12 +12,11 @@ pub(super) fn truncate_flow(
     pages: &PageOrigins,
     control: &PageLayoutControl<'_>,
 ) -> Result<bool, LayoutError> {
-    let root_margin = document.nodes[root].unrounded_layout.margin.top;
+    let root_margin = document.nodes[root].layout.margin.top;
     let root_margin_page = pages.page_index_for_y(root_margin);
     if root_margin_page > 0 {
         control.check_discovery_page_index(root_margin_page)?;
-        document.nodes[root].unrounded_layout.location.y -=
-            root_margin - pages.origin(root_margin_page);
+        document.nodes[root].layout.location.y -= root_margin - pages.origin(root_margin_page);
     }
 
     Ok(truncate(document, cascade, root, pages, control)? || root_margin_page > 0)
@@ -50,11 +49,9 @@ pub(super) fn truncate(
         // The rows an anonymous table wraps are placed relative to the
         // table's parent, which holds them in the DOM.
         let content_y = if document.is_anonymous_table(parent) {
-            flow_y - parent_node.unrounded_layout.location.y
+            flow_y - parent_node.layout.location.y
         } else {
-            flow_y
-                + parent_node.unrounded_layout.border.top
-                + parent_node.unrounded_layout.padding.top
+            flow_y + parent_node.layout.border.top + parent_node.layout.padding.top
         };
         let children: Vec<usize> = document
             .child_ids(protocol::NodeId::from(parent))
@@ -80,7 +77,7 @@ pub(super) fn truncate(
             } else {
                 0.0
             };
-            let mut child_y = flow_y + node.unrounded_layout.location.y - relative;
+            let mut child_y = flow_y + node.layout.location.y - relative;
             let page = pages.page_index_for_y(child_y);
             let leading_child = leading_flow && first_in_flow && !preceding_float;
             if block_flow
@@ -92,7 +89,7 @@ pub(super) fn truncate(
             {
                 control.check_discovery_page_index(page)?;
                 let delta = pages.origin(page) - child_y;
-                document.nodes[child].unrounded_layout.location.y += delta;
+                document.nodes[child].layout.location.y += delta;
                 let followed_ifc_boxes = follow_moved_ifc_block(document, child, delta);
                 shrink_ancestors_after_margin_truncation(
                     document,

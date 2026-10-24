@@ -776,7 +776,7 @@ pub(super) fn compute_vertical_block(
     let output =
         transpose_output_to_physical(output, right_to_left, reverse_extent, shares_parent_context);
     for child in block.into_placed() {
-        let layout = &mut tree.nodes[child].unrounded_layout;
+        let layout = &mut tree.nodes[child].layout;
         *layout = physical_layout(layout, output.size.width, right_to_left);
     }
     output

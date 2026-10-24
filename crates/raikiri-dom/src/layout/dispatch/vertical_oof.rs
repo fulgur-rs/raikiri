@@ -212,7 +212,7 @@ pub(super) fn place_static_block_start(
                 .resolve_to_option(border_box.height, resolve_calc)
                 .unwrap_or(0.0)
         });
-        let layout = &mut tree.nodes[child].unrounded_layout;
+        let layout = &mut tree.nodes[child].layout;
         layout.location.x = match mode {
             WritingMode::VerticalRl | WritingMode::SidewaysRl => {
                 border_box.width - border.right - padding.right - margin.right - layout.size.width

@@ -299,7 +299,7 @@ fn the_icb_uses_the_page_area_inside_page_margins_and_insets() {
         .nodes
         .initial_containing_block_key()
         .expect("page-area ICB");
-    let size = doc.nodes[icb].unrounded_layout.size;
+    let size = doc.nodes[icb].layout.size;
     assert_eq!(size.width, PageBox::A4.width - 26.0);
     assert_eq!(size.height, PageBox::A4.height - 44.0);
 }
@@ -359,7 +359,7 @@ fn layout_single_page_hello_world_produces_body_at_page_width() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     // The body layout size.width matches the A4 width (793.7008).
     let body_id = find_body(&doc).expect("body exists");
-    let body_size = doc.nodes[body_id].unrounded_layout.size;
+    let body_size = doc.nodes[body_id].layout.size;
     assert!(
         (body_size.width - 793.7008).abs() < 0.5,
         "body width should be A4.width (793.7008), got {}",
@@ -378,13 +378,13 @@ fn layout_single_page_can_be_called_multiple_times() {
     let (mut doc, cr) = hello_world_doc();
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("first call Ok");
     let body_id = find_body(&doc).expect("body exists");
-    let first_size = doc.nodes[body_id].unrounded_layout.size;
+    let first_size = doc.nodes[body_id].layout.size;
 
     // Second call — check that resetting per-pass state and rerunning layout
     // produce the same result (detect a silent regression from future incremental
     // optimizations).
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("second call Ok");
-    let second_size = doc.nodes[body_id].unrounded_layout.size;
+    let second_size = doc.nodes[body_id].layout.size;
 
     assert!((first_size.width - second_size.width).abs() < 0.001);
     assert!((first_size.height - second_size.height).abs() < 0.001);
@@ -1182,7 +1182,7 @@ fn stretched_column_flex_image_keeps_the_known_cross_size() {
     let cascade = cascade(&doc, &rules).unwrap();
     layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
     assert_eq!(
-        doc.nodes[image].unrounded_layout.size,
+        doc.nodes[image].layout.size,
         Size {
             width: 800.0,
             height: 400.0
@@ -1245,7 +1245,7 @@ fn ratio_only_inline_svg_uses_the_containing_width() {
         page.width = 800.0;
         layout_single_page(&mut doc, &cascade, page).unwrap();
         assert_eq!(
-            doc.nodes[svg].unrounded_layout.size,
+            doc.nodes[svg].layout.size,
             Size {
                 width: expected_width,
                 height: expected_height
@@ -1292,7 +1292,7 @@ fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).unwrap();
         layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
-        let size = doc.nodes[svg].unrounded_layout.size;
+        let size = doc.nodes[svg].layout.size;
         assert_eq!(
             (size.width, size.height),
             expected,
@@ -1389,8 +1389,8 @@ fn lay_out_body_with_children(body_style: &str) -> (f32, BoxLayout, BoxLayout, P
     let content_width = page_margins(&cr, PageBox::A4).content_width(PageBox::A4);
     (
         content_width,
-        doc.nodes[body].unrounded_layout,
-        doc.nodes[flow].unrounded_layout,
+        doc.nodes[body].layout,
+        doc.nodes[flow].layout,
         doc.layout_origin_of(abs)
             .expect("absolute child has a layout origin"),
     )
@@ -1459,7 +1459,7 @@ fn body_inline_margins_keep_absolute_offsets_against_the_page() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let width = page_margins(&cr, PageBox::A4).content_width(PageBox::A4);
-    let layout = doc.nodes[abs].unrounded_layout;
+    let layout = doc.nodes[abs].layout;
     assert_eq!(layout.size.width, width / 2.0);
     assert_eq!(doc.layout_origin_of(abs).unwrap().x, width / 2.0);
 }

@@ -175,12 +175,12 @@ fn three_columns(table_css: &str, middle: &'static str) -> ColumnFixture {
 
 /// The cell's left edge and width.
 fn column_box(doc: &Document, cell: usize) -> (f32, f32) {
-    let layout = doc.nodes[cell].unrounded_layout;
+    let layout = doc.nodes[cell].layout;
     (layout.location.x, layout.size.width)
 }
 
 fn table_size(fixture: &ColumnFixture) -> (f32, f32) {
-    let layout = fixture.doc.nodes[fixture.table].unrounded_layout;
+    let layout = fixture.doc.nodes[fixture.table].layout;
     (layout.size.width, layout.size.height)
 }
 
@@ -341,7 +341,7 @@ fn cells_in_a_collapsed_column_have_no_extent_and_clip() {
         "padding:0 5px;border:3px solid black",
     );
     let doc = &fixture.doc;
-    let cell = doc.nodes[fixture.cells[0][1]].unrounded_layout;
+    let cell = doc.nodes[fixture.cells[0][1]].layout;
     assert_eq!(cell.size.width, 0.0);
     assert_eq!(cell.padding.left + cell.padding.right, 0.0);
     assert_eq!(cell.border.left + cell.border.right, 0.0);
@@ -370,7 +370,7 @@ fn a_collapsed_column_leaves_the_row_height_it_gave() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-    let layout = doc.nodes[table].unrounded_layout;
+    let layout = doc.nodes[table].layout;
     assert_eq!(layout.size.height, 40.0);
 }
 
@@ -386,7 +386,7 @@ const COLLAPSED_ROW: &str = "visibility:collapse";
 /// how much border the table spends.
 fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
     let (doc, table, _) = laid_out_rows("table-layout:fixed", width, columns, rows);
-    doc.nodes[table].unrounded_layout.size.height
+    doc.nodes[table].layout.size.height
 }
 
 /// The table [`rows_height`] measures, laid out with `table_css` besides its
@@ -554,7 +554,7 @@ fn an_automatic_table_sizes_the_columns_in_place_with_the_borders_they_had() {
     )];
     let height = |columns: &[&'static str]| {
         let (doc, table, _) = laid_out_rows("table-layout:auto", 100, columns, &rows);
-        doc.nodes[table].unrounded_layout.size.height
+        doc.nodes[table].layout.size.height
     };
     let measured = height(&[COL, COLLAPSED_COL, COL]);
     assert_eq!(measured, height(&[COL, COL, COL]));
@@ -582,7 +582,7 @@ fn a_block_cell_beside_a_collapsed_column_is_sized_with_the_borders_it_keeps() {
     let widths = |doc: &Document, cells: &[usize]| -> Vec<f32> {
         cells
             .iter()
-            .map(|&cell| doc.nodes[cell].unrounded_layout.size.width)
+            .map(|&cell| doc.nodes[cell].layout.size.width)
             .collect()
     };
     assert_eq!(
@@ -590,8 +590,8 @@ fn a_block_cell_beside_a_collapsed_column_is_sized_with_the_borders_it_keeps() {
         widths(&reference, &ref_cells[0]),
     );
     assert_eq!(
-        collapsed.nodes[table].unrounded_layout.size.width,
-        reference.nodes[ref_table].unrounded_layout.size.width,
+        collapsed.nodes[table].layout.size.width,
+        reference.nodes[ref_table].layout.size.width,
     );
 }
 
@@ -620,7 +620,7 @@ fn a_cell_beside_a_collapsed_column_breaks_its_lines_at_the_borders_it_keeps() {
         .as_ref()
         .and_then(|root| root.lines.as_ref())
         .expect("the cell breaks its text into lines");
-    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 40.0);
+    assert_eq!(doc.nodes[cell].layout.size.width, 40.0);
     assert_eq!(lines.width, 40.0);
 }
 
@@ -644,7 +644,7 @@ fn a_cell_beside_a_collapsed_column_is_aligned_by_the_lines_it_keeps() {
             ],
         )];
         let (doc, _, cells) = laid_out_rows("table-layout:fixed", 120, &columns, &rows);
-        let layout = doc.nodes[cells[0][2]].unrounded_layout;
+        let layout = doc.nodes[cells[0][2]].layout;
         assert_eq!(layout.size.height, 30.0, "{text}");
         assert_eq!(layout.padding.top, 10.0, "{text}");
     }
@@ -698,7 +698,7 @@ fn height_of_collapsed_columns_that_lay_out_like_the_uncollapsed_ones(
             .and_then(|row| row.last())
             .expect("a cell in the last row");
         (
-            doc.nodes[table].unrounded_layout.size.height,
+            doc.nodes[table].layout.size.height,
             crate::layout::test_support::absolute_rect(&doc, last).1,
         )
     };
@@ -938,7 +938,7 @@ fn collapsed_columns_resolve_borders_against_the_table_edge() {
         None,
         "",
     );
-    let wide = fixture.doc.nodes[fixture.cells[0][0]].unrounded_layout;
+    let wide = fixture.doc.nodes[fixture.cells[0][0]].layout;
     assert_eq!(wide.size.width, 0.0);
     let reference = three_columns(COLLAPSING, COL);
     assert!(table_size(&fixture).0 < table_size(&reference).0);
@@ -1000,7 +1000,7 @@ fn a_vertical_table_keeps_its_collapsed_columns() {
         None,
         "",
     );
-    let layout = fixture.doc.nodes[fixture.cells[0][1]].unrounded_layout;
+    let layout = fixture.doc.nodes[fixture.cells[0][1]].layout;
     assert!(layout.size.width > 0.0 && layout.size.height > 0.0);
     assert!(!fixture.doc.nodes[fixture.cells[0][1]].clips_collapsed_table_span);
 }

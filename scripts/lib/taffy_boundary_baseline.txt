@@ -15,4 +15,3 @@
 # Do not raise a number to make a regression pass; use the owned names, or mark
 # a real exception on its line with `// taffy-boundary-lint:ignore: <reason>`.
 
-4 crates/raikiri-html/src/tests.rs

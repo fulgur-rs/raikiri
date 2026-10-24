@@ -39,14 +39,14 @@ fn percentage_width_under_page_positioned_box_uses_its_owner_page() {
 
     assert_eq!(pages.len(), 2);
     assert_eq!(document.layout_origin_of(child).unwrap().y, 90.0);
-    assert_eq!(document.nodes[child].unrounded_layout.size.width, 400.0);
+    assert_eq!(document.nodes[child].layout.size.width, 400.0);
     assert_eq!(
         document.layout_offset_of(child),
-        Some(document.nodes[child].unrounded_layout.location)
+        Some(document.nodes[child].layout.location)
     );
     assert_eq!(current_abs_y(&document, child), 90.0);
 
-    let local_offset = document.nodes[child].unrounded_layout.location;
+    let local_offset = document.nodes[child].layout.location;
     let coordinate = document.oof_coordinates.get(&positioned).unwrap();
     assert!(coordinate.initial_owner_origin.is_some());
     assert!(coordinate.initial_static_origin.is_some());
@@ -105,7 +105,7 @@ fn vertical_pagination_keeps_an_absolute_box_at_the_page_origin() {
         // The containing block is the initial one, so the page area holds the
         // box whatever the writing mode of the flow it was found in.
         assert_eq!(
-            document.nodes[positioned].unrounded_layout.location,
+            document.nodes[positioned].layout.location,
             Point { x: 0.0, y: 0.0 },
             "{mode}"
         );

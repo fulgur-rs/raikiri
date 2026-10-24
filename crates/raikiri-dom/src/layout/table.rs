@@ -384,7 +384,7 @@ fn layout_table_caption(
             bottom: margin_bottom,
         },
     };
-    doc.store_unrounded_layout(caption_id, &layout);
+    doc.store_layout(caption_id, &layout);
     Some((
         Size {
             width: output.size.width + margin_left + margin_right,
@@ -408,7 +408,7 @@ fn translate_table_caption_candidates(
         .copied()
         .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption)
     {
-        candidates.translate(doc.nodes[caption].unrounded_layout.location);
+        candidates.translate(doc.nodes[caption].layout.location);
     }
 }
 
@@ -453,7 +453,7 @@ fn position_table_caption(
         }
     };
     if let Some(id) = caption_id.filter(|_| in_flow) {
-        let mut layout = doc.nodes[id].unrounded_layout;
+        let mut layout = doc.nodes[id].layout;
         if vertical {
             layout.location.x += if before == right_to_left {
                 grid_size.width
@@ -463,7 +463,7 @@ fn position_table_caption(
         } else {
             layout.location.y += if before { 0.0 } else { grid_size.height };
         }
-        doc.store_unrounded_layout(id, &layout);
+        doc.store_layout(id, &layout);
     }
     if run_mode == RunMode::PerformLayout && in_flow {
         doc.store_table_grid_box(table_idx, grid_origin, grid_size);
@@ -1222,7 +1222,7 @@ fn compute_table_layout_checked(
                             && !hidden_rows[baseline_row]
                     })
                     .map(|cell| {
-                        let layout = doc.table_layout_node_mut(cell.node_id).unrounded_layout;
+                        let layout = doc.table_layout_node_mut(cell.node_id).layout;
                         layout.size.height - layout.padding.bottom - layout.border.bottom
                     })
                     .fold(0.0, f32::max)
@@ -1494,7 +1494,7 @@ fn position_source_table_parts(
         .unwrap_or_default()
         .to_vec()
     {
-        doc.nodes[part].unrounded_layout = BoxLayout::new();
+        doc.nodes[part].layout = BoxLayout::new();
     }
     if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
         for &id in parts.keys() {
@@ -1577,12 +1577,12 @@ fn position_source_table_parts(
     }
     for (id, layout) in projected {
         doc.table_objects.materialized_parts.insert(id);
-        doc.store_unrounded_layout(id, &layout);
+        doc.store_layout(id, &layout);
     }
     for (key, offset) in offsets {
         let node = doc.table_layout_node_mut(key);
-        node.unrounded_layout.location.x -= offset.x;
-        node.unrounded_layout.location.y -= offset.y;
+        node.layout.location.x -= offset.x;
+        node.layout.location.y -= offset.y;
         if doc.is_anonymous_cell(key) {
             let root = doc
                 .ifc_layout_node(key)
@@ -1593,8 +1593,8 @@ fn position_source_table_parts(
                 root.children.clone()
             };
             for child in children {
-                doc.nodes[child].unrounded_layout.location.x -= offset.x;
-                doc.nodes[child].unrounded_layout.location.y -= offset.y;
+                doc.nodes[child].layout.location.x -= offset.x;
+                doc.nodes[child].layout.location.y -= offset.y;
             }
         }
     }
@@ -2851,20 +2851,19 @@ fn first_cell_baseline(doc: &LayoutSession<'_>, root: usize, content_top: f32) -
                 continue;
             }
             let child_node = doc.ifc_layout_node(child).unwrap();
-            let top =
-                child_node.unrounded_layout.padding.top + child_node.unrounded_layout.border.top;
+            let top = child_node.layout.padding.top + child_node.layout.border.top;
             let first = child_node
                 .table_first_baseline
                 .or_else(|| first_cell_baseline(doc, child, top));
             if let Some(first) = first {
-                return Some(child_node.unrounded_layout.location.y + first);
+                return Some(child_node.layout.location.y + first);
             }
         }
         return Some(content_top + baseline);
     }
     let mut stack = Vec::new();
     for &child in node.children.iter().rev() {
-        stack.push((child, doc.nodes[child].unrounded_layout.location.y));
+        stack.push((child, doc.nodes[child].layout.location.y));
     }
     while let Some((id, y)) = stack.pop() {
         let node = doc.ifc_layout_node(id).unwrap();
@@ -2888,12 +2887,10 @@ fn first_cell_baseline(doc: &LayoutSession<'_>, root: usize, content_top: f32) -
         if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())
             && let Some(baseline) = super::ifc::flow::first_baseline(lines)
         {
-            return Some(
-                y + node.unrounded_layout.padding.top + node.unrounded_layout.border.top + baseline,
-            );
+            return Some(y + node.layout.padding.top + node.layout.border.top + baseline);
         }
         for &child in node.children.iter().rev() {
-            stack.push((child, y + doc.nodes[child].unrounded_layout.location.y));
+            stack.push((child, y + doc.nodes[child].layout.location.y));
         }
     }
     None
@@ -3321,9 +3318,9 @@ fn place_cells(
             .clone()
         {
             if doc.nodes[child].taffy_position() != taffy::Position::Absolute {
-                let mut child_layout = doc.nodes[child].unrounded_layout;
+                let mut child_layout = doc.nodes[child].layout;
                 child_layout.location.y += shift;
-                doc.store_unrounded_layout(child, &child_layout);
+                doc.store_layout(child, &child_layout);
             }
         }
         let layout = BoxLayout {
@@ -3343,7 +3340,7 @@ fn place_cells(
             margin: Edges::ZERO,
         };
         cell.resolved = Some(layout);
-        doc.store_unrounded_layout(cell.node_id, &layout);
+        doc.store_layout(cell.node_id, &layout);
         if doc.is_anonymous_cell(cell.node_id) {
             let root = doc
                 .ifc_layout_node(cell.node_id)
@@ -3354,8 +3351,8 @@ fn place_cells(
                 root.children.clone()
             };
             for child in children {
-                doc.nodes[child].unrounded_layout.location.x += cell_x;
-                doc.nodes[child].unrounded_layout.location.y += cell_y;
+                doc.nodes[child].layout.location.x += cell_x;
+                doc.nodes[child].layout.location.y += cell_y;
             }
         }
     }
@@ -3396,7 +3393,7 @@ fn reposition_cells_for_vertical_writing(
         if !cell_writing_mode.is_vertical() {
             // A horizontal cell in a vertical table still aligns content on
             // its own block axis. Preserve the normal pass's vertical shift.
-            doc.store_unrounded_layout(cell.node_id, layout);
+            doc.store_layout(cell.node_id, layout);
             continue;
         }
         // Re-layout at the final physical dimensions before distributing
@@ -3485,7 +3482,7 @@ fn reposition_cells_for_vertical_writing(
                     } else {
                         0.0
                     };
-                    let child = &doc.ifc_layout_node(child).unwrap().unrounded_layout;
+                    let child = &doc.ifc_layout_node(child).unwrap().layout;
                     child.location.x - offset + child.size.width + child.margin.right
                 })
                 .fold(padding.left + border.left, f32::max)
@@ -3524,14 +3521,14 @@ fn reposition_cells_for_vertical_writing(
             .clone()
         {
             if doc.nodes[child].taffy_position() != taffy::Position::Absolute {
-                let mut layout = doc.nodes[child].unrounded_layout;
+                let mut layout = doc.nodes[child].layout;
                 layout.location.x += child_shift;
-                doc.store_unrounded_layout(child, &layout);
+                doc.store_layout(child, &layout);
             }
         }
         layout.padding = padding;
         layout.border = border;
-        doc.store_unrounded_layout(cell.node_id, layout);
+        doc.store_layout(cell.node_id, layout);
     }
 }
 

@@ -646,7 +646,7 @@ fn border_scope_cache_hit_and_forced_miss_keep_geometry_and_paint() {
                 (
                     tree.table_style(idx).border(),
                     tree.nodes[idx].collapsed_border,
-                    tree.nodes[idx].unrounded_layout,
+                    tree.nodes[idx].layout,
                 )
             })
             .collect();
@@ -665,7 +665,7 @@ fn border_scope_cache_hit_and_forced_miss_keep_geometry_and_paint() {
                     (
                         tree.table_style(idx).border(),
                         tree.nodes[idx].collapsed_border,
-                        tree.nodes[idx].unrounded_layout,
+                        tree.nodes[idx].layout,
                     )
                 })
                 .collect();
