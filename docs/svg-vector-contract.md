@@ -1,0 +1,281 @@
+# SVG vector rendering contract
+
+Status: proposed contract for the SVG work that follows (vector scene,
+fonts and CSS, external resources, Krilla output, rendering mode, shared
+path). It fixes the supported scope and the boundaries between crates so each
+step can be built and reviewed on its own. It is not a promise of full SVG
+conformance.
+
+## 1. Where things stand
+
+| Piece | Today |
+| --- | --- |
+| `raikiri-svg` | Parses a bounded SVG (32 MiB input, 1,000,000 XML nodes, depth 128, 1,000,000 nodes after `use` expansion) into a private `usvg` tree, prepares styles (`styled_source*`), and rasterizes with `resvg` under an output byte limit (32 MiB by default). No backend type is public. |
+| Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, every filter effect, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
+| `<img src=*.svg>`, `background-image`, list markers, `content: url()` | `raikiri-net` keeps the SVG bytes and rasterizes lazily at the size paint asks for (1 pixel per CSS pixel of the drawn box), with a per-source LRU of sizes under a shared byte budget. Consumers receive `DecodedImage` pixels through `ImagePixelSource`. |
+| Inline `<svg>` | `Page::inline_svg(fragment)` returns a standalone XML source with viewport, root color, root font and descendant declarations resolved by the cascade. `fulgur-raikiri` parses it again with its own `usvg`, its own font database (bundled faces, optionally system fonts) and draws it through `krilla-svg`. The built-in painter in `raikiri-paint` rasterizes it with `raikiri-svg`. |
+
+Two things follow. Vector output exists only for inline SVG, and it lives in the
+consumer, so SVG fonts and CSS are resolved outside raikiri. Images and
+backgrounds are always pixels.
+
+## 2. Decisions
+
+### D1. Ownership
+
+Raikiri owns SVG resolution: parsing, limits, style resolution, font
+selection, resource policy and the conversion to paint commands. Consumers draw
+paint commands and do not parse SVG.
+
+- `raikiri-svg` keeps the parser, the limits and the raster path, and gains a
+  `scene` builder. `usvg` and `resvg` stay private to it. No `usvg` type
+  appears in a public signature of any raikiri crate.
+- `fulgur-raikiri` stops depending on `usvg` and `krilla-svg` once its scene
+  painter lands. Until then both paths exist side by side (see D12).
+- No new crate is introduced, so the set of crates to publish does not grow.
+
+### D2. The vector paint command boundary
+
+The scene is plain data in `raikiri-traits` (module `vector`), next to the
+other paint types (`PaintRect`, `PaintClip`, `PaintTransform`, `DecodedImage`).
+`raikiri-svg` builds it, `raikiri-net` serves it, `raikiri-html` re-exports it,
+and the consumer walks it. Placing it in `raikiri-traits` lets the image trait
+name it without a dependency cycle.
+
+Sketch of the vocabulary (names are not final; every public enum and struct is
+`#[non_exhaustive]`):
+
+```rust
+pub struct VectorImage {
+    /// Natural size in CSS pixels: the box the scene was built for.
+    pub size: (f32, f32),
+    pub root: Group,
+}
+
+pub enum Node {
+    Group(Group),
+    Path(Path),
+    Image(RasterNode),
+    Text(TextRun),
+}
+
+pub struct Group {
+    pub transform: Transform,
+    pub opacity: f32,
+    pub clip: Option<ClipPath>,
+    pub children: Vec<Node>,
+}
+
+pub struct Path { pub data: PathData, pub fill: Option<Fill>, pub stroke: Option<Stroke> }
+pub enum Paint { Color([u8; 4]), LinearGradient(..), RadialGradient(..) }
+```
+
+Rules of the boundary:
+
+- Coordinates are CSS pixels in the scene's own space: `(0, 0)` to `size` is
+  the viewport box after the root `viewBox` and `preserveAspectRatio` have been
+  applied. A consumer places the scene with one affine transform and a clip.
+- The scene carries SVG-internal opacity only. The opacity and visibility of
+  the host element belong to the page's paint events, so the consumer
+  composites them once, around the host box and the scene together.
+- Paths are already flattened to move, line, quadratic, cubic and close
+  segments; arcs, basic shapes, `use`, `symbol`, `switch` and markers are
+  resolved by the builder.
+- The scene never refers to files, URLs or fonts by name. Raster content is
+  carried as decoded pixels, and glyphs carry the font data they need (see D9).
+- Nothing in the scene depends on the consumer's output format. Krilla-specific
+  decisions (tiling patterns, shading functions, tagged content) stay in
+  `fulgur-raikiri`.
+
+### D3. Initial vector subset
+
+Vector output covers: `svg`, `g`, `defs`, `use`, `symbol`, `switch`, `a`
+(as `g`), the basic shapes, `path`, solid colors, `linearGradient` and
+`radialGradient` (with `gradientTransform`, `spreadMethod` as far as the output
+format allows, and stop opacity), `clipPath` (including `clip-rule` and nested
+clips), `opacity`, `fill-opacity`, `stroke-opacity`, the stroke properties
+(width, caps, joins, miter limit, dashes), `viewBox`, `preserveAspectRatio`,
+`transform`, `visibility`, `display`, `currentColor`, markers (flattened),
+`text` (see D9) and `image` with a raster source (see D10).
+
+Not in the initial subset: `filter` (still rejected as an error, as today),
+`mask`, `pattern`, `foreignObject`, animation (SMIL and CSS animations are
+ignored), scripting and `a` navigation (an inline `<svg>` link is handled by the
+page's link list, not by the scene), and nested SVG documents loaded by
+`<image>`. The goal is the common static document, not conformance.
+
+### D4. Fallback
+
+When the builder meets something outside the vector subset that changes the
+picture (`mask`, `pattern`), it reports that the document cannot be vector. The
+caller then uses the existing raster path for that image, so the output is
+still correct, only resolution dependent. Filters stay an error for both
+paths, as today.
+
+The fallback is per image, not per element, so one picture never mixes two
+renderings. It is also visible: the page keeps a diagnostic with the reason,
+the same way other fallbacks are reported. If the raster path cannot draw the
+document either, the image fails like any broken image.
+
+### D5. Entry points
+
+All consumers of SVG go through one resolved-image abstraction that answers
+with either pixels or a scene, chosen by D6.
+
+- `ImagePixelSource` keeps `get_decoded_at_size` and gains a default method
+  that returns the scene for a URL and a size. Sources without vector support
+  keep the default (`None`), so existing implementations do not break.
+- `<img>`, `background-image` (including pseudo-elements and margin boxes),
+  `list-style-image` and `content: url()` use that method for SVG sources.
+- Inline `<svg>` goes through `Page::inline_svg`, which returns the scene
+  instead of (and in addition to, until D12 completes) the prepared source.
+- A page exposes the choice, not the mechanism: a replaced fragment is either
+  `Raster(pixels)` or `Vector(scene)`.
+
+### D6. Choosing vector or raster
+
+Vector is the default. Raster is an opt-in for one element, for a whole
+document, or for the cases D4 forces.
+
+1. The element that owns the image decides, by the CSS custom property
+   `--raikiri-svg-rendering: vector | raster`. It follows the cascade and
+   inherits like any custom property, so one declaration can cover a subtree
+   or the whole page. The owner is the `<img>` element, the element (or
+   pseudo-element, or margin box) that has the `background-image`, or the
+   `<svg>` root.
+2. Without a valid value there, the library default applies. The library
+   exposes it as `SvgRendering { Vector, Raster }` in the layout options. A
+   consumer wrapper, such as `fulgur-raikiri`'s `RenderOptions`, forwards it.
+3. An invalid or unknown value is ignored (it behaves as if not declared), the
+   same as an invalid declaration of any other property.
+
+Raster resolution is a separate setting: the library option
+`svg_raster_scale` (device pixels per CSS pixel, default 1, so existing
+output does not change). It is not a CSS property in the first version; it can
+be added the same way later if a use appears.
+
+### D7. Sizes, viewports and caching
+
+- The scene is built for a concrete viewport size, in CSS pixels, because
+  percentage lengths and `preserveAspectRatio` depend on it. Natural size and
+  aspect ratio come from the document and are reported without building a
+  scene (as `SvgDocument::intrinsic_size` does).
+- A document with a `viewBox` and no size scales to the box that layout gives
+  it. `background-size`, `object-fit` and tiling are the consumer's business:
+  it places one scene per tile with a transform, and may reuse a scene when
+  the tile size repeats.
+- Scenes are cached per source and size, in the same LRU and byte budget that
+  hold rasters today (the cost of a scene is its estimated heap size).
+
+### D8. Style inputs
+
+- Inline `<svg>`: the host cascade resolves presentation attributes, author
+  CSS, root color, root font and descendant declarations, as today. The
+  builder takes those resolved inputs.
+- SVG used as an image: the document's own `<style>` and attributes apply, as
+  today, and the host contributes only the inherited `color` and the root
+  font. No page stylesheet reaches an image document.
+- `currentColor` resolves to the host `color`. A root that is not visible still
+  lets descendants with `visibility: visible` paint.
+
+### D9. Text and fonts
+
+SVG text uses the same fonts as the HTML around it. The builder is given the
+document's font collection (the registered faces, with the same generic-family
+mapping HTML text uses) instead of building a second font database in the
+consumer. Whether system fonts take part is decided once, for HTML and SVG
+alike, by the library option that already governs HTML text.
+
+- Text is emitted as glyph runs when the backend exposes glyph positions, so
+  the consumer can keep it selectable and embed the font once. Where it cannot,
+  text is emitted as outlines. Both are valid scene content.
+- A glyph run carries a reference to the font data (shared, not copied per
+  glyph), the size, the glyph ids and their positions, the fill and the stroke.
+- `@font-face` fonts declared by the page are visible to inline SVG. An SVG
+  used as an image sees only the bundled and system faces, never fonts it
+  fetches itself.
+
+### D10. External resources and security
+
+The sandbox that governs HTML governs inline SVG: the same `NetworkProvider`,
+the same base directory, the same denial of anything outside it.
+
+Today every `<image>` with a URL is rejected. This contract relaxes that in two
+steps and no further:
+
+- Inline `<svg>` may reference raster images by URL. Every request goes through
+  the page's provider and counts against the page's resource limits. External
+  `use` targets, `@import` and fonts named by the SVG's own CSS stay rejected.
+- An SVG loaded as an image is in static mode, as in browsers: it loads nothing
+  by itself. Fragment references and `data:` raster images inside it work;
+  everything else keeps today's rejection.
+- A `data:` URL never recurses into another SVG document.
+- The existing parse limits stay as they are. This contract adds none that
+  weakens them.
+
+### D11. Budgets
+
+The scene builder is bounded the same way the parser is. Initial values, to be
+tuned when the builder exists:
+
+| Limit | Initial value |
+| --- | --- |
+| Scene nodes | 1,000,000 |
+| Total path segments | 4,000,000 |
+| Clip nesting depth | 64 |
+| Glyphs in one scene | 1,000,000 |
+| Stops in one gradient | 1,024 |
+| Raster pixels carried in one scene | within the existing per-image output limit |
+
+Exceeding a limit is an error for that image (it does not fall back, because
+the raster path would exceed its own limit too). The cost of a scene is charged
+to the shared cache budget, never to an unbounded side allocation.
+
+### D12. Consumers
+
+- `fulgur-raikiri` draws scenes with Krilla paths, fills, strokes, gradients,
+  clips, opacity groups and text, and removes `usvg` and `krilla-svg`. It keeps
+  drawing pixels for raster images and for the fallback.
+- The built-in painter in `raikiri-paint` keeps rasterizing through
+  `raikiri-svg` until it has a scene painter. It exists for dogfooding and for
+  the WPT reftests, so it must not change rendering while vector support
+  arrives; this means the vector path is covered by the consumer's own tests,
+  not by the WPT numbers, until a scene painter is added.
+- The old `Page::inline_svg` source stays available until `fulgur-raikiri` has
+  moved over, then is removed. Every step lands as an additive change first;
+  the removals come last, in the order the public API review fixes.
+
+## 3. Build order
+
+Each step is mergeable alone and leaves rendering unchanged unless noted.
+
+1. Geometry, `viewBox` and `transform` to a scene: the `vector` types in
+   `raikiri-traits`, the builder for shapes and paths with solid fills and
+   strokes, the fallback signal, and tests that compare the scene with the
+   raster of the same document.
+2. Gradients, clips and opacity.
+3. Text, fonts and CSS: font collection input, glyph runs, the inline `<svg>`
+   cascade inputs.
+4. External resources through the network provider for inline SVG.
+5. `fulgur-raikiri` draws scenes with Krilla.
+6. The mode switch: `--raikiri-svg-rendering`, the library default and the
+   raster scale; the default flips to vector here, once step 5 exists.
+7. One path for background, `<img>` and inline SVG, and removal of the old
+   inline source.
+
+## 4. Out of scope
+
+Filters, masks and patterns in vector form, SVG animation, SVG fonts,
+`foreignObject`, interactive features, and SVG as the document root of a page.
+Each can extend the vocabulary later; the types are `#[non_exhaustive]` for
+that reason.
+
+## 5. Risks to watch
+
+- The fallback hides a lot if the subset is too narrow. Each step records how
+  many documents in the test corpus fall back, so a drift shows up as a number.
+- Glyph runs depend on what the backend exposes. If it exposes outlines only,
+  text becomes outlines and loses selectability until the builder reads glyph
+  positions itself.
+- The scene is public API of crates that are meant to be published. Keep the
+  vocabulary small and review each addition as an API change.
