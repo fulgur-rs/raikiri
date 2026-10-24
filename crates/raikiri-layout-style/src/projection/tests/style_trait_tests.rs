@@ -2,9 +2,10 @@
 //! against what the view itself answers.
 
 use super::*;
+use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::property::*;
 use taffy::{
-    BlockContainerStyle as BC, BlockItemStyle as BI, FlexboxContainerStyle as FC,
+    BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle as CS, FlexboxContainerStyle as FC,
     FlexboxItemStyle as FI, GridItemStyle as GI, OofItemStyle as OI,
 };
 
@@ -145,4 +146,70 @@ fn block_float_and_clear_are_projected_with_their_overrides() {
         assert_eq!(BI::float(&TaffyStyle::new(view)), expected);
         assert_eq!(BI::clear(&TaffyStyle::new(view)), taffy::Clear::Both);
     }
+}
+
+#[test]
+fn owned_and_borrowed_projections_agree() {
+    let mut cv = ComputedValues::initial();
+    let expression = CalcLengthPercentage {
+        px: -10.0,
+        percent: 25.0,
+    };
+    cv.width = L::Calc(expression);
+    cv.margin.left = L::Calc(expression);
+    let positive = AlignedCalc::new(expression, true);
+    let signed = AlignedCalc::new(expression, false);
+    let bindings = [
+        PreparedCalc {
+            slot: CalcSlot::Property(LengthProperty::Width),
+            payload: &positive,
+        },
+        PreparedCalc {
+            slot: CalcSlot::Property(LengthProperty::MarginLeft),
+            payload: &signed,
+        },
+    ];
+    let borrowed = PreparedStyle::new(&cv, StyleMetadata::default(), &bindings).unwrap();
+    let owned = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let a = LayoutStyleView::new(&borrowed, ViewContext::default(), &[], &[]);
+    let b = LayoutStyleView::new(&owned, ViewContext::default(), &[], &[]);
+    macro_rules! same {
+        ($trait:ident, $($getter:ident),+ $(,)?) => { $(
+            assert_eq!(
+                $trait::$getter(&TaffyStyle::new(a)),
+                $trait::$getter(&TaffyStyle::new(b)),
+                stringify!($getter)
+            );
+        )+ };
+    }
+    same!(
+        CS,
+        box_generation_mode,
+        is_block,
+        is_compressible_replaced,
+        is_replaced,
+        box_sizing,
+        direction,
+        overflow,
+        scrollbar_width,
+        position,
+        inset,
+        is_containing_block,
+        min_size,
+        max_size,
+        aspect_ratio,
+        padding,
+        border,
+        contain
+    );
+    same!(
+        FC,
+        flex_direction,
+        flex_wrap,
+        gap,
+        align_content,
+        align_items,
+        justify_content
+    );
+    same!(FI, flex_basis, flex_grow, flex_shrink, align_self);
 }
