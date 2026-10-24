@@ -211,6 +211,89 @@ fn an_auto_margin_on_the_side_of_the_kept_inset_leaves_the_box_stretched() {
 }
 
 #[test]
+fn a_box_aligned_to_the_middle_or_end_of_the_vertical_axis_keeps_both_insets() {
+    let child = "position:absolute;top:10px;bottom:10px;left:0;width:50px;height:max-content";
+    // The area between the insets is 80px tall and the box is 20px tall.
+    for (alignment, y) in [
+        ("auto", 10.0),
+        ("normal", 10.0),
+        ("stretch", 10.0),
+        ("start", 10.0),
+        ("flex-start", 10.0),
+        ("baseline", 10.0),
+        ("center", 40.0),
+        ("end", 70.0),
+        ("flex-end", 70.0),
+        // An out-of-flow box takes no part in baseline alignment, and the
+        // fallback alignment of the last baseline is the end.
+        ("last baseline", 70.0),
+    ] {
+        assert_eq!(
+            block_box(CONTAINING_BLOCK, &format!("{child};align-self:{alignment}")),
+            (0.0, y, 50.0, 20.0),
+            "align-self:{alignment}"
+        );
+    }
+}
+
+#[test]
+fn only_the_alignment_of_the_vertical_axis_of_the_containing_block_applies() {
+    let child = "position:absolute;top:10px;bottom:10px;left:0;width:50px;height:max-content";
+    // `justify-self` is the horizontal axis of a horizontal containing block, and
+    // the container's `align-items` does not apply to an out-of-flow box.
+    assert_eq!(
+        block_box(CONTAINING_BLOCK, &format!("{child};justify-self:center")),
+        (0.0, 10.0, 50.0, 20.0)
+    );
+    assert_eq!(
+        block_box(
+            &format!("{CONTAINING_BLOCK};display:flex;align-items:center"),
+            child
+        ),
+        (0.0, 10.0, 50.0, 20.0)
+    );
+    // The vertical axis of a vertical containing block is its inline axis, which
+    // `align-self` does not align. The box sits at the start of that axis, the
+    // bottom under `direction: rtl`.
+    let vertical = format!("{CONTAINING_BLOCK};writing-mode:vertical-rl");
+    for (root_css, y) in [
+        (vertical.clone(), 10.0),
+        (format!("{vertical};direction:rtl"), 70.0),
+    ] {
+        for alignment in ["align-self:center", "align-self:end", "justify-self:start"] {
+            assert_eq!(
+                block_box(&root_css, &format!("{child};{alignment}")),
+                (0.0, y, 50.0, 20.0),
+                "{root_css};{alignment}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_box_in_a_vertical_containing_block_keeps_both_insets_for_its_justify_self() {
+    let child = "position:absolute;top:10px;bottom:10px;left:0;width:50px";
+    // The inset that is kept is the one the box aligns to, so the box is laid
+    // out like one whose height is `auto`.
+    for direction in ["ltr", "rtl"] {
+        let root_css = format!("{CONTAINING_BLOCK};writing-mode:vertical-rl;direction:{direction}");
+        for alignment in ["center", "end", "flex-end", "last baseline"] {
+            assert_eq!(
+                block_box(
+                    &root_css,
+                    &format!("{child};height:max-content;justify-self:{alignment}")
+                ),
+                block_box(
+                    &root_css,
+                    &format!("{child};height:auto;justify-self:{alignment}")
+                ),
+                "{direction}; justify-self:{alignment}"
+            );
+        }
+    }
+}
+
+#[test]
 fn the_root_element_is_its_own_containing_block_for_a_keyword_height() {
     let mut doc = Document::new();
     let html = doc.append_element(

@@ -259,7 +259,13 @@ pub(super) fn unstretched_keyword_height_alignment(
 ///
 /// An `auto` margin on the side of the inset that is kept takes the free space
 /// of the box instead (centered with both margins `auto`), which needs that
-/// inset, so such a box keeps both and stays stretched.
+/// inset, so such a box keeps both and stays stretched. So does a box that
+/// aligns itself to the middle or to the end of the vertical axis, which places
+/// it within the area between both insets: `align-self` for a containing block
+/// on horizontal axes and `justify-self` for one on vertical axes, whose inline
+/// axis is the vertical one. `last baseline` falls back to the end for a box
+/// that is out of flow. The other alignments put the box at the start edge, and
+/// the alignment of the container does not apply to it.
 // spec: https://www.w3.org/TR/CSS21/visudet.html#abs-non-replaced-height
 pub(super) fn ignored_vertical_inset(
     doc: &LayoutSession<'_>,
@@ -300,7 +306,24 @@ pub(super) fn ignored_vertical_inset(
     // `sideways-lr` runs its inline axis from bottom to top, `direction: rtl`
     // reverses it, and `text-orientation: upright` does not change either.
     let block = &cascade.computed[containing_block];
-    let inline_starts_at_bottom = uses_vertical_axes(cascade, containing_block)
+    let vertical_axis_is_inline = uses_vertical_axes(cascade, containing_block);
+    let alignment = if vertical_axis_is_inline {
+        values.justify_self
+    } else {
+        values.align_self
+    };
+    if matches!(
+        alignment,
+        AlignSelfValue::Value(
+            SelfAlignmentValue::Center
+                | SelfAlignmentValue::End
+                | SelfAlignmentValue::FlexEnd
+                | SelfAlignmentValue::LastBaseline
+        )
+    ) {
+        return None;
+    }
+    let inline_starts_at_bottom = vertical_axis_is_inline
         && (block.direction == Direction::Rtl)
             != (block.cssom_writing_mode == WritingMode::SidewaysLr);
     let (ignored, kept_margin) = if inline_starts_at_bottom {
