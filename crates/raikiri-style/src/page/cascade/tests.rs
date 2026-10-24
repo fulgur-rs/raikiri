@@ -1473,6 +1473,115 @@ fn css_wide_keywords_lift_the_computed_shadow_transform_and_position_of_the_root
 }
 
 #[test]
+fn white_space_keywords_resolve_on_the_page_and_its_margin_boxes() {
+    use crate::property::{TextWrapMode, WhiteSpace, WhiteSpaceCollapse};
+    let mut root = ComputedValues::initial();
+    root.white_space = WhiteSpace::Pre;
+    root.white_space_collapse = WhiteSpaceCollapse::Preserve;
+    root.text_wrap = TextWrapMode::Nowrap;
+    root.effective_white_space_collapse = WhiteSpaceCollapse::Preserve;
+    root.effective_text_wrap_mode = TextWrapMode::Nowrap;
+    // A margin box inherits from the page, which takes the root's values only
+    // because it says `inherit` itself.
+    let page = page(
+        "@page { white-space: inherit; white-space-collapse: inherit; text-wrap-mode: inherit; \
+         @top-left { content: 'x'; white-space: inherit; white-space-collapse: inherit; \
+                     text-wrap-mode: inherit } \
+         @top-center { content: 'x'; white-space: initial; white-space-collapse: initial; \
+                       text-wrap-mode: initial } }",
+        &root,
+    );
+    let style = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        page.margin_box_style(&rule, None)
+    };
+    let declared = |style: &ComputedValues| {
+        (
+            style.white_space,
+            style.white_space_collapse,
+            style.text_wrap,
+        )
+    };
+    assert_eq!(
+        declared(&style(PageMarginBoxSlot::TopLeft)),
+        (
+            WhiteSpace::Pre,
+            WhiteSpaceCollapse::Preserve,
+            TextWrapMode::Nowrap
+        )
+    );
+    assert_eq!(
+        declared(&style(PageMarginBoxSlot::TopCenter)),
+        (
+            WhiteSpace::Normal,
+            WhiteSpaceCollapse::Collapse,
+            TextWrapMode::Wrap
+        )
+    );
+}
+
+#[test]
+fn white_space_of_the_page_settles_the_effective_halves_a_margin_box_inherits() {
+    use crate::property::{TextWrapMode, WhiteSpace, WhiteSpaceCollapse};
+    let page = page(
+        "@page { white-space: pre; \
+         @top-left { content: 'x'; white-space: inherit } \
+         @top-center { content: 'x'; white-space: pre-wrap; white-space-collapse: collapse } \
+         @top-right { content: 'x'; white-space-collapse: inherit } \
+         @bottom-left { content: 'x'; text-wrap: wrap } \
+         @bottom-center { content: 'x'; white-space: pre-wrap; text-wrap: nowrap } \
+         @bottom-right { content: 'x'; text-wrap-mode: wrap } \
+         @left-top { content: 'x'; --w: wrap; text-wrap: var(--w) } }",
+        &ComputedValues::initial(),
+    );
+    let style = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        page.margin_box_style(&rule, None)
+    };
+    let halves = |style: &ComputedValues| {
+        (
+            style.effective_white_space_collapse,
+            style.effective_text_wrap_mode,
+        )
+    };
+    let inherited = style(PageMarginBoxSlot::TopLeft);
+    assert_eq!(inherited.white_space, WhiteSpace::Pre);
+    assert_eq!(
+        halves(&inherited),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+    // The last declaration of each half wins, whichever form it takes.
+    assert_eq!(
+        halves(&style(PageMarginBoxSlot::TopCenter)),
+        (WhiteSpaceCollapse::Collapse, TextWrapMode::Wrap)
+    );
+    assert_eq!(
+        halves(&style(PageMarginBoxSlot::TopRight)),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+    // `text-wrap` sets the mode half, so it settles that half by cascade order
+    // against the legacy keyword and leaves the collapse half alone.
+    assert_eq!(
+        halves(&style(PageMarginBoxSlot::BottomLeft)),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+    assert_eq!(
+        halves(&style(PageMarginBoxSlot::BottomCenter)),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Nowrap)
+    );
+    assert_eq!(
+        halves(&style(PageMarginBoxSlot::BottomRight)),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+    // A `text-wrap` written with `var()` stays one declaration with both
+    // longhands, and sets the mode half like the longhand does.
+    assert_eq!(
+        halves(&style(PageMarginBoxSlot::LeftTop)),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+}
+
+#[test]
 fn a_margin_box_keeps_the_block_size_keywords() {
     // A margin box fills its page margin for `height: auto`, so it has to see
     // the keywords that size it to its content, which an element computes to

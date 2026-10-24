@@ -136,6 +136,18 @@ fn parse_value_with_black_currentcolor(
             Ok::<_, ParseError<'_, ()>>(keyword)
         })
     {
+        // The user agent sets `white-space` as one declaration, which these
+        // longhands and `text-wrap` have no cascade slot to roll back to, so a
+        // rollback keyword on them is dropped like any invalid value.
+        if matches!(
+            keyword,
+            CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+        ) && matches!(
+            normalized_name.as_str(),
+            "white-space-collapse" | "text-wrap-mode" | "text-wrap"
+        ) {
+            return None;
+        }
         return Some(PropertyValue::Deferred(DeferredValue {
             property: normalized_name.clone().into(),
             value: keyword.as_css_str().into(),

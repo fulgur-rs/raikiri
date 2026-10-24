@@ -16,7 +16,7 @@ use crate::property::{
     BackgroundImage, BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, CssColor,
     CssWideKeyword, CustomProperty, DeferredValue, Direction, Length, LengthPercentageOrCalc,
     OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TextAlign,
-    TextOrientation, VerticalAlign, WritingMode,
+    TextOrientation, TextWrapMode, VerticalAlign, WhiteSpaceCollapse, WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -2140,6 +2140,17 @@ enum ComputedOverValue {
     Invalid(PropertyKey),
 }
 
+/// The `white-space-collapse` and `text-wrap-mode` halves that `value` sets.
+fn white_space_halves(value: &PropertyValue) -> (Option<WhiteSpaceCollapse>, Option<TextWrapMode>) {
+    match value {
+        PropertyValue::WhiteSpace(keyword) => keyword.collapse_and_wrap().unzip(),
+        PropertyValue::WhiteSpaceCollapse(collapse) => (Some(*collapse), None),
+        PropertyValue::TextWrap(wrap) => (None, Some(*wrap)),
+        PropertyValue::TextWrapShorthand(shorthand) => (None, Some(shorthand.mode)),
+        _ => (None, None),
+    }
+}
+
 fn computed_over(
     parent: &ComputedValues,
     values: impl Iterator<Item = ComputedOverValue>,
@@ -2207,7 +2218,17 @@ fn computed_over(
         specified
             .size_precedence
             .record_in_order(value.key(), position);
+        // The values arrive in cascade order, so the last declaration of each
+        // half of `white-space` settles it; an element settles the halves
+        // after the cascade instead, because it picks one winner per property.
+        let (collapse, wrap) = white_space_halves(&value);
         apply_value(value, &mut specified);
+        if let Some(collapse) = collapse {
+            specified.effective_white_space_collapse = collapse;
+        }
+        if let Some(wrap) = wrap {
+            specified.effective_text_wrap_mode = wrap;
+        }
         for (index, is_computed) in border_width_is_computed.into_iter().enumerate() {
             if is_computed {
                 specified.border_width_is_computed[index] = true;

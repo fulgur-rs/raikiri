@@ -1095,7 +1095,6 @@ fn text_spacing_parses_the_pinned_wpt_values_into_longhands() {
         autospace: TextAutospace::Auto,
     };
     let cases = [
-        ("initial", normal),
         ("normal", normal),
         ("none", none),
         ("auto", auto),
@@ -1141,7 +1140,6 @@ fn text_spacing_reuses_full_autospace_component_grammar_and_rejects_invalid_valu
     );
     for source in [
         "",
-        "inherit",
         "unknown",
         "none trim-start",
         "trim-start space-all",
@@ -1153,6 +1151,43 @@ fn text_spacing_reuses_full_autospace_component_grammar_and_rejects_invalid_valu
         r"trim-start ideograph-alpha\ punctuation",
     ] {
         assert_eq!(parse_entire(source, "text-spacing"), None, "{source}");
+    }
+}
+
+#[test]
+fn white_space_text_wrap_and_text_spacing_keep_css_wide_keyword() {
+    // `text-wrap` and `text-wrap-mode` share a key, so the marker keeps the
+    // spelling that tells the shorthand from the longhand.
+    for name in [
+        "white-space",
+        "white-space-collapse",
+        "text-wrap",
+        "text-wrap-mode",
+        "text-spacing",
+    ] {
+        for keyword in ["inherit", "initial", "unset"] {
+            let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
+                panic!("expected a CSS-wide defaulting marker for `{name}: {keyword}`");
+            };
+            assert_eq!(value.property.as_str(), name);
+            assert_eq!(
+                value.css_wide_keyword(),
+                CssWideKeyword::from_css_ident(keyword)
+            );
+        }
+    }
+    assert_css_wide_keywords_deferred("white-space");
+    assert_css_wide_keywords_deferred("text-spacing");
+}
+
+#[test]
+fn a_rollback_keyword_on_the_white_space_longhands_is_dropped() {
+    // The user agent sets `white-space` as one declaration, which these have
+    // no cascade slot to roll back to.
+    for name in ["white-space-collapse", "text-wrap-mode", "text-wrap"] {
+        for keyword in ["revert", "revert-layer"] {
+            assert_eq!(parse(keyword, name), None, "{name}: {keyword}");
+        }
     }
 }
 
@@ -4546,15 +4581,6 @@ fn white_space_rejects_unknown_keyword() {
 }
 
 #[test]
-fn white_space_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "white-space"), None);
-    }
-}
-
-#[test]
 fn white_space_rejects_non_ident() {
     assert_eq!(parse("16px", "white-space"), None);
     assert_eq!(parse(r#""pre""#, "white-space"), None);
@@ -4613,16 +4639,7 @@ fn white_space_collapse_is_case_insensitive() {
 
 #[test]
 fn white_space_collapse_rejects_invalid_values() {
-    for input in [
-        "bogus",
-        "inherit",
-        "initial",
-        "unset",
-        "revert",
-        "revert-layer",
-    ] {
-        assert_eq!(parse(input, "white-space-collapse"), None, "{input}");
-    }
+    assert_eq!(parse("bogus", "white-space-collapse"), None);
     assert_eq!(parse("16px", "white-space-collapse"), None);
     assert_eq!(parse(r#""preserve""#, "white-space-collapse"), None);
 }

@@ -19,7 +19,8 @@ use std::sync::{Arc, LazyLock};
 use crate::computed::{ComputedBackgroundLayer, ComputedValues};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue,
-    PropertyKey, PropertyValue, TextIndentValue,
+    PropertyKey, PropertyValue, TextIndentValue, TextSpacingShorthand, TextWrapShorthand,
+    WhiteSpace,
 };
 use crate::resolve::{
     ComputedColumnWidth, lift_background_size, lift_border_spacing, lift_box_shadow,
@@ -43,6 +44,29 @@ fn computed_float(source: &ComputedValues) -> FloatValue {
         PositionValue::Absolute | PositionValue::Fixed => FloatValue::None,
         _ => source.float,
     }
+}
+
+/// The `white-space` keyword that stands for the effective
+/// `white-space-collapse` and `text-wrap-mode` of `source`, or the keyword as
+/// authored when none does: the longhands combine in ways the keywords cannot
+/// name. A literal keyword on `white-space` also sets the longhands, which
+/// settle the halves; one written with `var()` has only this keyword to go by.
+fn computed_white_space(source: &ComputedValues) -> WhiteSpace {
+    let halves = (
+        source.effective_white_space_collapse,
+        source.effective_text_wrap_mode,
+    );
+    [
+        WhiteSpace::Normal,
+        WhiteSpace::Pre,
+        WhiteSpace::Nowrap,
+        WhiteSpace::PreWrap,
+        WhiteSpace::PreLine,
+        WhiteSpace::BreakSpaces,
+    ]
+    .into_iter()
+    .find(|keyword| keyword.collapse_and_wrap() == Some(halves))
+    .unwrap_or(source.white_space)
 }
 
 /// The specified `column-width` a computed one converts back to.
@@ -120,6 +144,14 @@ keyword_defaults! {
     BreakInside, false => PropertyValue::BreakInside(dup(&source.break_inside));
     Float, false => PropertyValue::Float(computed_float(source));
     Clear, false => PropertyValue::Clear(dup(&source.clear));
+    // The effective halves, not the fields that hold the longhand as authored:
+    // a legacy `white-space` keyword on the source settles them, and a keyword
+    // takes the computed `white-space-collapse` and `text-wrap-mode` of the
+    // source (CSS Text 4 section 3). `text-wrap-mode` shares its key with
+    // `text-wrap`, whose keyword expands into it and the style first.
+    WhiteSpace, true => PropertyValue::WhiteSpace(computed_white_space(source));
+    WhiteSpaceCollapse, true => PropertyValue::WhiteSpaceCollapse(dup(&source.effective_white_space_collapse));
+    TextWrap, true => PropertyValue::TextWrap(dup(&source.effective_text_wrap_mode));
     TextWrapStyle, true => PropertyValue::TextWrapStyle(dup(&source.text_wrap_style));
     FlexDirection, false => PropertyValue::FlexDirection(dup(&source.flex_direction));
     FlexWrap, false => PropertyValue::FlexWrap(dup(&source.flex_wrap));
@@ -252,6 +284,32 @@ keyword_defaults! {
     TextEmphasisColor, true => PropertyValue::TextEmphasisColor(source.text_emphasis_color);
 }
 
+/// The style that the CSS-wide `keyword` on `key` reads: the parent's for
+/// `inherit`, the initial one for `initial`, and for `unset` one of the two by
+/// whether `key` is inherited.
+fn style_read_by(
+    key: PropertyKey,
+    keyword: CssWideKeyword,
+    inherited: &ComputedValues,
+) -> &ComputedValues {
+    if reads_parent(key, keyword) {
+        inherited
+    } else {
+        &INITIAL
+    }
+}
+
+/// Whether the CSS-wide `keyword` on `key` takes the parent's value.
+fn reads_parent(key: PropertyKey, keyword: CssWideKeyword) -> bool {
+    match keyword {
+        CssWideKeyword::Inherit => true,
+        CssWideKeyword::Initial => false,
+        CssWideKeyword::Unset | CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
+            is_inherited(key)
+        }
+    }
+}
+
 /// The value the CSS-wide `keyword` gives the property `key` under the parent
 /// style `inherited`, or `None` when the table does not cover `key`.
 pub(crate) fn defaulting_value(
@@ -259,15 +317,38 @@ pub(crate) fn defaulting_value(
     keyword: CssWideKeyword,
     inherited: &ComputedValues,
 ) -> Option<PropertyValue> {
-    let from_parent = match keyword {
-        CssWideKeyword::Inherit => true,
-        CssWideKeyword::Initial => false,
-        CssWideKeyword::Unset | CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
-            is_inherited(key)
-        }
-    };
-    if !from_parent && let Some(value) = initial_value(key) {
+    if !reads_parent(key, keyword)
+        && let Some(value) = initial_value(key)
+    {
         return Some(value);
     }
-    specified_from(key, if from_parent { inherited } else { &INITIAL })
+    specified_from(key, style_read_by(key, keyword, inherited))
+}
+
+/// The `text-wrap` shorthand that a CSS-wide `keyword` gives under the parent
+/// style `inherited`, for a keyword that comes from `var()` and so reaches the
+/// cascade as one declaration. It reads the fields of the `TextWrap` and
+/// `TextWrapStyle` rows.
+pub(crate) fn text_wrap_shorthand(
+    keyword: CssWideKeyword,
+    inherited: &ComputedValues,
+) -> TextWrapShorthand {
+    let source = style_read_by(PropertyKey::TextWrap, keyword, inherited);
+    TextWrapShorthand {
+        mode: dup(&source.effective_text_wrap_mode),
+        style: dup(&source.text_wrap_style),
+    }
+}
+
+/// The `text-spacing` shorthand that a CSS-wide `keyword` gives under the
+/// parent style `inherited`; see [`text_wrap_shorthand`].
+pub(crate) fn text_spacing_shorthand(
+    keyword: CssWideKeyword,
+    inherited: &ComputedValues,
+) -> TextSpacingShorthand {
+    let source = style_read_by(PropertyKey::TextSpacingTrim, keyword, inherited);
+    TextSpacingShorthand {
+        trim: dup(&source.text_spacing_trim),
+        autospace: dup(&source.text_autospace),
+    }
 }
