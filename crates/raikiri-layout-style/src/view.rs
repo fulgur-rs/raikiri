@@ -95,6 +95,9 @@ impl<'a> LayoutStyleView<'a> {
     /// `align-self` aligns the box along the physical horizontal axis and
     /// `justify-self` along the physical vertical one (CSS Position 3 §5.2).
     /// The out-of-flow projection takes them the other way round otherwise.
+    /// The post-pass that places a box in a vertical container afterwards reads
+    /// `bridge_align_self` and `bridge_justify_self`, on the axes it resolves
+    /// itself, and does not use the swapped view.
     #[inline]
     pub const fn with_swapped_oof_alignment(mut self) -> Self {
         self.swapped_oof_alignment = true;
