@@ -503,11 +503,19 @@ pub struct Node {
     /// edge of the root's content box. The root records it when it places the
     /// child in normal flow.
     pub(crate) vertical_first_baseline: Option<f32>,
-    /// First baseline of a box in a writing mode orthogonal to its parent's,
-    /// as its last layout found it: an offset along the block axis of the box
-    /// from its block-start border edge. The box exports no baseline to its
-    /// parent, which reads this one to align the box by it.
-    pub(crate) orthogonal_first_baseline: Option<f32>,
+    /// First baseline of a box that its parent aligns by itself, as its last
+    /// layout found it: an offset along the block axis of the box from its
+    /// block-start border edge. A box in a writing mode orthogonal to its
+    /// parent's exports no baseline to it, and one that
+    /// [`Self::opposed_baseline_group`] holds back from the algorithm of its
+    /// parent keeps its own: the parent reads this one to align the box by it.
+    pub(crate) own_first_baseline: Option<f32>,
+    /// Whether the box is an item of a vertical flex row or grid that aligns
+    /// by a baseline against the block direction of its container, and so
+    /// forms a baseline-sharing group of its own. The algorithm of the
+    /// container places it as if it were aligned to the start of the block
+    /// axis, and the container moves it to its group afterwards.
+    pub(crate) opposed_baseline_group: bool,
     /// Computed `break-before` value consumed by column fragmentation.
     pub(crate) break_before: BreakBetween,
     /// Computed `break-after` value consumed by column fragmentation.
@@ -731,7 +739,8 @@ impl Node {
             table_first_baseline: None,
             flex_first_baseline: None,
             vertical_first_baseline: None,
-            orthogonal_first_baseline: None,
+            own_first_baseline: None,
+            opposed_baseline_group: false,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,

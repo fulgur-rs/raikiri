@@ -271,7 +271,8 @@ fn apply_computed_to_style_in_session_inner(
         }
         doc.nodes[idx].flex_first_baseline = None;
         doc.nodes[idx].vertical_first_baseline = None;
-        doc.nodes[idx].orthogonal_first_baseline = None;
+        doc.nodes[idx].own_first_baseline = None;
+        doc.nodes[idx].opposed_baseline_group = false;
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].collapsed_border = None;
@@ -552,6 +553,14 @@ fn apply_computed_to_style_in_session_inner(
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),
+            );
+        }
+        if let Some(placeholder) = settled::opposed_baseline_alignment(doc, cascade, idx) {
+            settled_styles[idx].align_self = Some(placeholder);
+            doc.nodes[idx].opposed_baseline_group = true;
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::align_self(Some(placeholder)),
             );
         }
     }

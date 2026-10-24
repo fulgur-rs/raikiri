@@ -52,7 +52,7 @@
 //! that follows, once the container's frame is left, works on physical
 //! coordinates.
 
-use crate::layout::protocol::{Baselines, LayoutInput, LayoutOutput, NodeId};
+use crate::layout::protocol::{Baselines, LayoutInput, LayoutOutput, NodeId, RunMode};
 use raikiri_layout_geometry::{BoxLayout, Edges, Size};
 use raikiri_layout_style::values::ResolveOrZero;
 use raikiri_style::property::WritingMode;
@@ -237,8 +237,9 @@ impl AxisAdapter {
 /// the box for the central baseline, and the line-under edge of the
 /// container's writing mode for the alphabetic one (CSS Align 3 §9.1).
 ///
-/// An item with the opposite block direction would form a baseline-sharing
-/// group of its own; the synthesized baseline approximates that.
+/// An item with the opposite block direction forms a baseline-sharing group
+/// of its own, which the container aligns after its algorithm has run; the
+/// synthesized baseline is only what the algorithm sees of such an item.
 /// spec: <https://www.w3.org/TR/css-align-3/#baseline-terms>
 fn item_baseline(
     tree: &LayoutSession<'_>,
@@ -340,7 +341,16 @@ impl LayoutSession<'_> {
                 .border()
                 .resolve_or_zero(None);
             let output = tree.dispatch_physical_child(node_id, child.inputs, padding_basis, None);
-            let baseline = item_baseline(tree, frame, usize::from(node_id), &output);
+            // An item that runs against the block direction of the container
+            // is aligned by the container afterwards, by the baseline of its
+            // own first line.
+            let item = usize::from(node_id);
+            if tree.nodes[item].opposed_baseline_group
+                && child.inputs.run_mode == RunMode::PerformLayout
+            {
+                tree.nodes[item].own_first_baseline = output.baselines.first;
+            }
+            let baseline = item_baseline(tree, frame, item, &output);
             adapter.child_output(output, border, baseline)
         })
     }

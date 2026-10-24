@@ -13,6 +13,20 @@ pub enum BaselineSet {
     Last,
 }
 
+/// The set of baselines a box aligns to when its `own` self-alignment, falling
+/// back to the `inherited` default alignment of its container for `auto`,
+/// asks for baseline alignment.
+pub fn baseline_set_of(own: AlignSelfValue, inherited: SelfAlignmentValue) -> Option<BaselineSet> {
+    match match own {
+        AlignSelfValue::Value(value) => value,
+        _ => inherited,
+    } {
+        SelfAlignmentValue::Baseline => Some(BaselineSet::First),
+        SelfAlignmentValue::LastBaseline => Some(BaselineSet::Last),
+        _ => None,
+    }
+}
+
 impl LayoutStyleView<'_> {
     /// Alignment read by project block primitives, independent of trait defaults.
     #[inline]
@@ -43,24 +57,16 @@ impl LayoutStyleView<'_> {
     /// selects `justify-self`, falling back to the `justify-items` of the
     /// container, and otherwise `align-self` and `align-items` decide.
     pub fn self_baseline_set(&self, parent: &Self, justify: bool) -> Option<BaselineSet> {
-        let (own, inherited) = if justify {
-            (
+        if justify {
+            baseline_set_of(
                 self.prepared.values.justify_self,
                 parent.prepared.values.justify_items,
             )
         } else {
-            (
+            baseline_set_of(
                 self.prepared.values.align_self,
                 parent.prepared.values.align_items,
             )
-        };
-        match match own {
-            AlignSelfValue::Value(value) => value,
-            _ => inherited,
-        } {
-            SelfAlignmentValue::Baseline => Some(BaselineSet::First),
-            SelfAlignmentValue::LastBaseline => Some(BaselineSet::Last),
-            _ => None,
         }
     }
     /// Whether the box is a table in a block formatting context.

@@ -1,5 +1,8 @@
-//! Baseline alignment along the inline axis: grid `justify-self` and
-//! `justify-items`, and the cross axis of a column flex container.
+//! Baseline alignment that the flex and grid algorithms leave to the
+//! container: along the inline axis, by grid `justify-self` and
+//! `justify-items` and in the cross axis of a column flex container, and along
+//! the block axis of a vertical flex row or grid, for the items whose block
+//! flow runs against the container's.
 //!
 //! Each expected border box is the one Chromium computes for the same markup
 //! in an 800px by 600px viewport, with the body margin of 8px.
@@ -926,6 +929,1038 @@ fn flex_column_static_position_of_a_direct_abspos_child_stays_while_items_move()
             ("c", (13.0, 8.0, 5.0, 5.0)),
             ("g", (13.0, 8.0, 100.0, 40.0)),
             ("w", (13.0, 8.0, 779.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_items_share_a_baseline_group() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (11.0, 32.0, 18.0, 24.0)),
+            ("a3", (9.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_items_share_a_baseline_group_auto_cross_size() {
+    check(
+        r#"<div id="g" style="display:flex;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (15.0, 11.0, 20.0, 18.0)),
+            ("a2", (11.0, 32.0, 18.0, 24.0)),
+            ("a3", (9.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 29.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_last_baselines_pack_against_the_other_edge() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:last baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (129.0, 11.0, 20.0, 18.0)),
+            ("a2", (132.0, 32.0, 18.0, 24.0)),
+            ("a3", (130.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_and_horizontal_items() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:horizontal-tb;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (131.5, 11.0, 20.0, 18.0)),
+            ("a2", (11.0, 32.0, 18.0, 24.0)),
+            ("a3", (130.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_empty_opposed_item_has_a_central_baseline() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (19.0, 32.0, 8.0, 20.0)),
+            ("a3", (12.0, 60.0, 20.0, 18.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_empty_opposed_items_have_alphabetic_baselines_in_sideways_text() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl;text-orientation:sideways"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;height:20px"></div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;height:30px"></div></div>"#,
+        &[
+            ("a1", (146.0, 11.0, 10.0, 20.0)),
+            ("a2", (11.0, 34.0, 8.0, 20.0)),
+            ("a3", (11.0, 60.0, 15.0, 30.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_two_same_direction_and_three_opposed_items() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="a4" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a5" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;margin-left:7px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (18.0, 32.0, 18.0, 24.0)),
+            ("a3", (16.0, 62.0, 25.0, 19.0)),
+            ("a4", (139.0, 85.0, 18.0, 24.0)),
+            ("a5", (15.0, 117.0, 20.0, 18.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_container_padding_and_border() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;padding:5px 7px 9px 11px;border:3px solid;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (126.0, 19.0, 20.0, 18.0)),
+            ("a2", (25.0, 40.0, 18.0, 24.0)),
+            ("a3", (23.0, 70.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_relative_opposed_items_keep_their_offsets() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;position:relative;left:3px;top:2px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;position:relative;right:4px;bottom:3px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (14.0, 34.0, 18.0, 24.0)),
+            ("a3", (5.0, 59.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_align_self_baseline_among_centered_items() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:center;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:center">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;align-self:baseline">X</div></div>"#,
+        &[
+            ("a1", (74.0, 11.0, 20.0, 18.0)),
+            ("a2", (75.0, 32.0, 18.0, 24.0)),
+            ("a3", (9.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_item_aligned_to_end_does_not_share() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:end">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (11.0, 32.0, 18.0, 24.0)),
+            ("a3", (9.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_items_of_a_definite_block_size() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;width:50px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:40px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;width:30px">X</div></div>"#,
+        &[
+            ("a1", (106.0, 11.0, 50.0, 18.0)),
+            ("a2", (11.0, 32.0, 40.0, 24.0)),
+            ("a3", (9.0, 62.0, 30.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_item_with_an_auto_margin_does_not_participate() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;margin-left:auto">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (139.0, 32.0, 18.0, 24.0)),
+            ("a3", (9.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_opposed_scroll_container_baseline_is_clamped() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;overflow:hidden;height:15px">XX</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (11.0, 32.0, 18.0, 15.0)),
+            ("a3", (9.0, 53.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_inline_direction_rtl() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;direction:rtl;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 289.0, 20.0, 18.0)),
+            ("a2", (11.0, 257.0, 18.0, 24.0)),
+            ("a3", (9.0, 234.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_static_positions_follow_the_moved_opposed_item() {
+    check(
+        r#"<div style="position:relative"><div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;position:relative;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:20px;height:20px"><div id="p" style="position:absolute;width:5px;height:5px"></div></div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="q" style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 18.0)),
+            ("a2", (11.0, 32.0, 20.0, 20.0)),
+            ("a3", (11.0, 58.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+            ("p", (14.0, 40.0, 5.0, 5.0)),
+            ("q", (153.0, 8.0, 5.0, 5.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_items_share_a_baseline_group() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (132.0, 32.0, 18.0, 24.0)),
+            ("a3", (130.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_items_share_a_baseline_group_auto_cross_size() {
+    check(
+        r#"<div id="g" style="display:flex;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (11.0, 32.0, 18.0, 24.0)),
+            ("a3", (9.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 29.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_last_baselines_pack_against_the_other_edge() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:last baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (15.0, 32.0, 18.0, 24.0)),
+            ("a3", (13.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_and_horizontal_items() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:horizontal-tb;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (139.0, 32.0, 18.0, 24.0)),
+            ("a3", (10.5, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_empty_opposed_item_has_a_central_baseline() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (143.0, 32.0, 8.0, 20.0)),
+            ("a3", (136.0, 60.0, 20.0, 18.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_empty_opposed_items_have_alphabetic_baselines_in_sideways_text() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr;text-orientation:sideways"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;height:20px"></div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;height:30px"></div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 10.0, 20.0)),
+            ("a2", (140.0, 34.0, 8.0, 20.0)),
+            ("a3", (140.0, 60.0, 15.0, 30.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_two_same_direction_and_three_opposed_items() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="a4" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a5" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;margin-left:7px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (132.0, 32.0, 18.0, 24.0)),
+            ("a3", (130.0, 62.0, 25.0, 19.0)),
+            ("a4", (15.0, 85.0, 18.0, 24.0)),
+            ("a5", (129.0, 117.0, 20.0, 18.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_container_padding_and_border() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;padding:5px 7px 9px 11px;border:3px solid;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (26.0, 19.0, 20.0, 18.0)),
+            ("a2", (122.0, 40.0, 18.0, 24.0)),
+            ("a3", (120.0, 70.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_relative_opposed_items_keep_their_offsets() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;position:relative;left:3px;top:2px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;position:relative;right:4px;bottom:3px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (135.0, 34.0, 18.0, 24.0)),
+            ("a3", (126.0, 59.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_align_self_baseline_among_centered_items() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:center;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:center">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;align-self:baseline">X</div></div>"#,
+        &[
+            ("a1", (74.0, 11.0, 20.0, 18.0)),
+            ("a2", (75.0, 32.0, 18.0, 24.0)),
+            ("a3", (130.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_item_aligned_to_end_does_not_share() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:end">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (139.0, 32.0, 18.0, 24.0)),
+            ("a3", (130.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_items_of_a_definite_block_size() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;width:50px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:40px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;width:30px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 50.0, 18.0)),
+            ("a2", (110.0, 32.0, 40.0, 24.0)),
+            ("a3", (125.0, 62.0, 30.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_item_with_an_auto_margin_does_not_participate() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;margin-left:auto">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (139.0, 32.0, 18.0, 24.0)),
+            ("a3", (130.0, 62.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_opposed_scroll_container_baseline_is_clamped() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;overflow:hidden;height:15px">XX</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (132.0, 32.0, 18.0, 15.0)),
+            ("a3", (130.0, 53.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_inline_direction_rtl() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;direction:rtl;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 289.0, 20.0, 18.0)),
+            ("a2", (132.0, 257.0, 18.0, 24.0)),
+            ("a3", (130.0, 234.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_static_positions_follow_the_moved_opposed_item() {
+    check(
+        r#"<div style="position:relative"><div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;position:relative;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:20px;height:20px"><div id="p" style="position:absolute;width:5px;height:5px"></div></div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="q" style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (130.0, 32.0, 20.0, 20.0)),
+            ("a3", (130.0, 58.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+            ("p", (140.0, 40.0, 5.0, 5.0)),
+            ("q", (8.0, 8.0, 5.0, 5.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_items_share_a_baseline_group() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_items_share_a_baseline_group_auto_cross_size() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (15.0, 11.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 29.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_last_baselines_pack_against_the_other_edge() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:last baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (129.0, 11.0, 20.0, 96.0)),
+            ("a2", (132.0, 110.0, 18.0, 93.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_and_horizontal_items() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:horizontal-tb;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (131.5, 11.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 18.0, 93.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_empty_opposed_item_has_a_central_baseline() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (19.0, 110.0, 8.0, 20.0)),
+            ("a3", (12.0, 211.0, 20.0, 96.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_empty_opposed_items_have_alphabetic_baselines_in_sideways_text() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl;text-orientation:sideways"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;height:20px"></div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;height:30px"></div></div>"#,
+        &[
+            ("a1", (146.0, 11.0, 10.0, 20.0)),
+            ("a2", (11.0, 110.0, 8.0, 20.0)),
+            ("a3", (11.0, 209.0, 15.0, 30.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_two_same_direction_and_three_opposed_items() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="a4" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a5" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;margin-left:7px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (86.0, 110.0, 18.0, 93.0)),
+            ("a3", (84.0, 209.0, 25.0, 97.0)),
+            ("a4", (64.0, 10.0, 18.0, 93.0)),
+            ("a5", (15.0, 111.0, 20.0, 96.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_container_padding_and_border() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;padding:5px 7px 9px 11px;border:3px solid;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (126.0, 19.0, 20.0, 96.0)),
+            ("a2", (25.0, 118.0, 18.0, 93.0)),
+            ("a3", (23.0, 217.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_relative_opposed_items_keep_their_offsets() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;position:relative;left:3px;top:2px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;position:relative;right:4px;bottom:3px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (14.0, 112.0, 18.0, 93.0)),
+            ("a3", (5.0, 206.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_align_self_baseline_among_centered_items() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:center;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:center">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;align-self:baseline">X</div></div>"#,
+        &[
+            ("a1", (74.0, 11.0, 20.0, 96.0)),
+            ("a2", (75.0, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_item_aligned_to_end_does_not_share() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:end">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_items_of_a_definite_block_size() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;width:50px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:40px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;width:30px">X</div></div>"#,
+        &[
+            ("a1", (106.0, 11.0, 50.0, 96.0)),
+            ("a2", (11.0, 110.0, 40.0, 93.0)),
+            ("a3", (9.0, 209.0, 30.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_item_with_an_auto_margin_does_not_participate() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;margin-left:auto">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (139.0, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_scroll_container_baseline_is_clamped() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;overflow:hidden;height:15px">XX</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 18.0, 15.0)),
+            ("a3", (9.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_inline_direction_rtl() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;direction:rtl;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 211.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 9.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_static_positions_follow_the_moved_opposed_item() {
+    check(
+        r#"<div style="position:relative"><div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;position:relative;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:20px;height:20px"><div id="p" style="position:absolute;width:5px;height:5px"></div></div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="q" style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a1", (136.0, 11.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 20.0, 20.0)),
+            ("a3", (11.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+            ("p", (14.0, 118.0, 5.0, 5.0)),
+            ("q", (153.0, 8.0, 5.0, 5.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_items_share_a_baseline_group() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (132.0, 110.0, 18.0, 93.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_items_share_a_baseline_group_auto_cross_size() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (11.0, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 29.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_last_baselines_pack_against_the_other_edge() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:last baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (15.0, 110.0, 18.0, 93.0)),
+            ("a3", (13.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_and_horizontal_items() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:horizontal-tb;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (139.0, 110.0, 18.0, 93.0)),
+            ("a3", (10.5, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_empty_opposed_item_has_a_central_baseline() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (143.0, 110.0, 8.0, 20.0)),
+            ("a3", (136.0, 211.0, 20.0, 96.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_empty_opposed_items_have_alphabetic_baselines_in_sideways_text() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr;text-orientation:sideways"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;height:20px"></div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;height:20px"></div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;height:30px"></div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 10.0, 20.0)),
+            ("a2", (140.0, 110.0, 8.0, 20.0)),
+            ("a3", (140.0, 209.0, 15.0, 30.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_two_same_direction_and_three_opposed_items() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="a4" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a5" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;margin-left:7px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (57.0, 110.0, 18.0, 93.0)),
+            ("a3", (55.0, 209.0, 25.0, 97.0)),
+            ("a4", (86.0, 10.0, 18.0, 93.0)),
+            ("a5", (136.0, 111.0, 20.0, 96.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_container_padding_and_border() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;padding:5px 7px 9px 11px;border:3px solid;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (26.0, 19.0, 20.0, 96.0)),
+            ("a2", (122.0, 118.0, 18.0, 93.0)),
+            ("a3", (120.0, 217.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_relative_opposed_items_keep_their_offsets() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;position:relative;left:3px;top:2px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;position:relative;right:4px;bottom:3px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (135.0, 112.0, 18.0, 93.0)),
+            ("a3", (126.0, 206.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_align_self_baseline_among_centered_items() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:center;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:center">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;align-self:baseline">X</div></div>"#,
+        &[
+            ("a1", (74.0, 11.0, 20.0, 96.0)),
+            ("a2", (75.0, 110.0, 18.0, 93.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_item_aligned_to_end_does_not_share() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;align-self:end">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (139.0, 110.0, 18.0, 93.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_items_of_a_definite_block_size() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;width:50px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:40px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;width:30px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 50.0, 96.0)),
+            ("a2", (110.0, 110.0, 40.0, 93.0)),
+            ("a3", (125.0, 209.0, 30.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_item_with_an_auto_margin_does_not_participate() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;margin-left:auto">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (139.0, 110.0, 18.0, 93.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_scroll_container_baseline_is_clamped() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;overflow:hidden;height:15px">XX</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (132.0, 110.0, 18.0, 15.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_inline_direction_rtl() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;direction:rtl;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 211.0, 20.0, 96.0)),
+            ("a2", (132.0, 110.0, 18.0, 93.0)),
+            ("a3", (130.0, 9.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_static_positions_follow_the_moved_opposed_item() {
+    check(
+        r#"<div style="position:relative"><div id="g" style="display:grid;grid-template-columns:100px 100px 100px;width:150px;height:300px;align-items:baseline;position:relative;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;width:20px;height:20px"><div id="p" style="position:absolute;width:5px;height:5px"></div></div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="q" style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (130.0, 110.0, 20.0, 20.0)),
+            ("a3", (130.0, 209.0, 25.0, 97.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+            ("p", (140.0, 118.0, 5.0, 5.0)),
+            ("q", (8.0, 8.0, 5.0, 5.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_rl_row_reverse() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;flex-direction:row-reverse;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (136.0, 289.0, 20.0, 18.0)),
+            ("a2", (11.0, 257.0, 18.0, 24.0)),
+            ("a3", (9.0, 234.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_items_share_per_row() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;grid-row:2">X</div><div id="a4" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (186.0, 11.0, 20.0, 96.0)),
+            ("a2", (151.0, 110.0, 18.0, 93.0)),
+            ("a3", (69.0, 9.0, 25.0, 97.0)),
+            ("a4", (129.0, 110.0, 18.0, 93.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_items_share_per_auto_row() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:auto auto;width:200px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;grid-row:2">X</div><div id="a4" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (186.0, 11.0, 20.0, 96.0)),
+            ("a2", (112.5, 110.0, 18.0, 93.0)),
+            ("a3", (9.0, 9.0, 25.0, 97.0)),
+            ("a4", (11.0, 110.0, 18.0, 93.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_spanning_opposed_item_joins_the_group_of_the_row_at_its_packing_edge() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-lr;padding-left:1px;margin-left:3px;grid-row:1/3">X</div><div id="a2" style="writing-mode:vertical-lr;padding-left:9px;margin-left:4px;grid-row:1">X</div></div>"#,
+        &[
+            ("a1", (71.0, 8.0, 11.0, 100.0)),
+            ("a2", (152.0, 108.0, 19.0, 100.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_spanning_opposed_item_joins_the_group_of_the_other_row() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-lr;padding-left:1px;margin-left:3px;grid-row:1/3">X</div><div id="a2" style="writing-mode:vertical-lr;padding-left:9px;margin-left:4px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (80.0, 8.0, 11.0, 100.0)),
+            ("a2", (72.0, 108.0, 19.0, 100.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_spanning_opposed_item_packs_in_its_own_room() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-rl"><div id="a2" style="writing-mode:vertical-lr;padding-left:9px;margin-left:4px;grid-row:1">X</div><div id="a1" style="writing-mode:vertical-lr;padding-left:1px;margin-left:3px;grid-row:1/3">X</div><div id="a3" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (71.0, 108.0, 11.0, 100.0)),
+            ("a2", (152.0, 8.0, 19.0, 100.0)),
+            ("a3", (126.0, 11.0, 20.0, 96.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_vertical_lr_row_reverse() {
+    check(
+        r#"<div id="g" style="display:flex;width:150px;height:300px;align-items:baseline;flex-direction:row-reverse;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 289.0, 20.0, 18.0)),
+            ("a2", (132.0, 257.0, 18.0, 24.0)),
+            ("a3", (130.0, 234.0, 25.0, 19.0)),
+            ("g", (8.0, 8.0, 150.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_items_share_per_row() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;grid-row:2">X</div><div id="a4" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (49.0, 110.0, 18.0, 93.0)),
+            ("a3", (120.0, 9.0, 25.0, 97.0)),
+            ("a4", (71.0, 110.0, 18.0, 93.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_items_share_per_auto_row() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:auto auto;width:200px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px;grid-row:2">X</div><div id="a4" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 96.0)),
+            ("a2", (87.5, 110.0, 18.0, 93.0)),
+            ("a3", (180.0, 9.0, 25.0, 97.0)),
+            ("a4", (182.0, 110.0, 18.0, 93.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_spanning_opposed_item_joins_the_group_of_the_row_at_its_packing_edge() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-rl;padding-right:1px;margin-right:3px;grid-row:1/3">X</div><div id="a2" style="writing-mode:vertical-rl;padding-right:9px;margin-right:4px;grid-row:1">X</div></div>"#,
+        &[
+            ("a1", (134.0, 8.0, 11.0, 100.0)),
+            ("a2", (45.0, 108.0, 19.0, 100.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_spanning_opposed_item_joins_the_group_of_the_other_row() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-rl;padding-right:1px;margin-right:3px;grid-row:1/3">X</div><div id="a2" style="writing-mode:vertical-rl;padding-right:9px;margin-right:4px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (125.0, 8.0, 11.0, 100.0)),
+            ("a2", (125.0, 108.0, 19.0, 100.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_spanning_opposed_item_packs_in_its_own_room() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;writing-mode:vertical-lr"><div id="a2" style="writing-mode:vertical-rl;padding-right:9px;margin-right:4px;grid-row:1">X</div><div id="a1" style="writing-mode:vertical-rl;padding-right:1px;margin-right:3px;grid-row:1/3">X</div><div id="a3" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;grid-row:2">X</div></div>"#,
+        &[
+            ("a1", (134.0, 108.0, 11.0, 100.0)),
+            ("a2", (45.0, 8.0, 19.0, 100.0)),
+            ("a3", (72.0, 11.0, 20.0, 96.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_rl_opposed_items_align_along_both_axes() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;justify-items:baseline;writing-mode:vertical-rl"><div id="a1" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-lr;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-lr;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="a4" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;margin-top:9px">X</div></div>"#,
+        &[
+            ("a1", (186.0, 11.0, 20.0, 18.0)),
+            ("a2", (151.0, 114.0, 18.0, 24.0)),
+            ("a3", (73.0, 10.5, 25.0, 19.0)),
+            ("a4", (72.0, 117.0, 20.0, 18.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_vertical_lr_opposed_items_align_along_both_axes() {
+    check(
+        r#"<div id="g" style="display:grid;grid-template-columns:100px 100px;grid-template-rows:60px 80px;width:200px;height:300px;align-items:baseline;justify-items:baseline;writing-mode:vertical-lr"><div id="a1" style="writing-mode:vertical-lr;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px">X</div><div id="a2" style="writing-mode:vertical-rl;padding:6px 3px 4px 1px;border:2px solid;margin:2px 1px 5px 3px">X</div><div id="a3" style="writing-mode:vertical-rl;padding:1px 7px 2px 2px;border:3px solid;margin:1px 3px 2px 1px">X</div><div id="a4" style="writing-mode:vertical-rl;padding:2px 3px 4px 5px;border:1px solid;margin:3px 2px 1px 4px;margin-top:9px">X</div></div>"#,
+        &[
+            ("a1", (12.0, 11.0, 20.0, 18.0)),
+            ("a2", (49.0, 114.0, 18.0, 24.0)),
+            ("a3", (120.0, 10.5, 25.0, 19.0)),
+            ("a4", (119.0, 117.0, 20.0, 18.0)),
+            ("g", (8.0, 8.0, 200.0, 300.0)),
         ],
     );
 }
