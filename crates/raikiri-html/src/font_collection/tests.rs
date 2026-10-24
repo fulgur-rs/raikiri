@@ -110,3 +110,53 @@ fn builder_preserves_registration_order_for_generic_fallback() {
         }
     }
 }
+
+#[test]
+fn errors_name_a_font_made_from_a_ttc_without_an_authored_family() {
+    assert_eq!(
+        FontCollectionBuildError::EmptyFont {
+            family: String::new()
+        }
+        .to_string(),
+        "bundled TTC/OTC font has no bytes"
+    );
+    assert_eq!(
+        FontCollectionBuildError::FontTooLarge {
+            family: String::new(),
+            limit: 10,
+            actual: 11,
+        }
+        .to_string(),
+        "bundled TTC/OTC font exceeds its byte limit (11 > 10)"
+    );
+    assert_eq!(
+        FontCollectionBuildError::FontRejected {
+            family: String::new()
+        }
+        .to_string(),
+        "font collection rejected bundled TTC/OTC font"
+    );
+    assert_eq!(
+        FontCollectionBuildError::FontRejected {
+            family: "Named".to_owned()
+        }
+        .to_string(),
+        "font collection rejected bundled font \"Named\""
+    );
+    assert_eq!(
+        FontCollectionBuildError::EmptyFont {
+            family: "Named".to_owned()
+        }
+        .to_string(),
+        "bundled font \"Named\" has no bytes"
+    );
+}
+
+#[test]
+fn a_font_from_a_ttc_has_no_authored_family_and_says_so_when_debugged() {
+    let font = BundledFont::from_ttc(b"ttcf".as_slice());
+    assert_eq!(font.family(), "");
+    let named = BundledFont::new("Named", b"ttcf".as_slice());
+    assert!(format!("{font:?}").contains("recorded_families: true"));
+    assert!(format!("{named:?}").contains("recorded_families: false"));
+}

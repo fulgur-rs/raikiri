@@ -273,3 +273,190 @@ fn a_face_with_an_out_of_range_weight_class_is_still_accepted() {
         .build();
     assert!(fonts.is_ok(), "{fonts:?}");
 }
+
+const CANVAS_TEST: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../raikiri-dom/tests/data/text-autospace/CanvasTest-nospace.ttf"
+));
+
+/// A TrueType collection of `fonts`: the faces follow the collection header
+/// and their table offsets are moved from the start of the face to the start
+/// of the collection.
+fn ttc(fonts: &[&[u8]]) -> Vec<u8> {
+    let header = 12 + 4 * fonts.len();
+    let mut out = Vec::new();
+    out.extend_from_slice(b"ttcf");
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&(fonts.len() as u32).to_be_bytes());
+    let mut start = header;
+    for font in fonts {
+        out.extend_from_slice(&(start as u32).to_be_bytes());
+        start += font.len().next_multiple_of(4);
+    }
+    let mut start = header as u32;
+    for font in fonts {
+        let mut moved = font.to_vec();
+        let tables = usize::from(u16::from_be_bytes([moved[4], moved[5]]));
+        for table in 0..tables {
+            let at = 12 + 16 * table + 8;
+            let offset = u32::from_be_bytes(moved[at..at + 4].try_into().unwrap());
+            moved[at..at + 4].copy_from_slice(&(offset + start).to_be_bytes());
+        }
+        moved.resize(moved.len().next_multiple_of(4), 0);
+        start += moved.len() as u32;
+        out.extend_from_slice(&moved);
+    }
+    out
+}
+
+/// The face index of the font shodo resolves for `query` and `text`.
+fn face_index(
+    fonts: &raikiri_html::RenderFonts,
+    query: &shodo::font::FontQuery,
+    text: &str,
+) -> Option<u32> {
+    let matched = fonts.collection().match_cluster(query, text)?;
+    Some(fonts.collection().font_data(matched.id)?.index)
+}
+
+fn named_query(family: &str) -> shodo::font::FontQuery {
+    shodo::font::FontQuery {
+        families: vec![shodo::style::FontFamily::Named(family.to_owned())],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_ttc_registers_each_face_under_the_family_its_name_table_records() {
+    let fonts = FontCollectionBuilder::new()
+        .ttc_bytes(ttc(&[AHEM, CANVAS_TEST]))
+        .build()
+        .expect("the collection registers");
+    assert!(fonts.is_bundled_only());
+    // The test font has glyphs for A to E only.
+    assert_eq!(face_index(&fonts, &named_query("Ahem"), "A"), Some(0));
+    assert_eq!(
+        face_index(&fonts, &named_query("CanvasTestNoSpace"), "A"),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_ttc_leads_the_generic_families_with_its_first_face_and_follows_earlier_fonts() {
+    use shodo::style::{FontFamily, GenericFamily as G};
+    let sans = shodo::font::FontQuery {
+        families: vec![FontFamily::Generic(G::SansSerif)],
+        ..Default::default()
+    };
+    let collection = ttc(&[CANVAS_TEST, AHEM]);
+    let alone = FontCollectionBuilder::new()
+        .ttc_bytes(collection.clone())
+        .build()
+        .expect("fonts");
+    assert_eq!(face_index(&alone, &sans, "A"), Some(0));
+    let after = FontCollectionBuilder::new()
+        .font_bytes("Ahem First", AHEM.to_vec())
+        .ttc_bytes(collection)
+        .build()
+        .expect("fonts");
+    // The face bundled before the collection leads, and the collection's own
+    // faces are still reachable by family.
+    let lead = after.collection().match_cluster(&sans, "A").expect("lead");
+    assert_eq!(
+        after
+            .collection()
+            .font_data(lead.id)
+            .expect("data")
+            .data
+            .as_ref(),
+        AHEM
+    );
+    assert_eq!(
+        face_index(&after, &named_query("CanvasTestNoSpace"), "A"),
+        Some(0)
+    );
+}
+
+#[test]
+fn the_faces_of_one_family_in_a_ttc_resolve_by_weight() {
+    let bold = with_os2_field(AHEM, WEIGHT_CLASS, 700);
+    let fonts = FontCollectionBuilder::new()
+        .ttc_bytes(ttc(&[AHEM, bold.as_slice()]))
+        .build()
+        .expect("fonts");
+    for (weight, expected) in [(400.0_f32, 0), (700.0, 1)] {
+        let query = shodo::font::FontQuery {
+            weight,
+            ..named_query("Ahem")
+        };
+        assert_eq!(face_index(&fonts, &query, "a"), Some(expected), "{weight}");
+    }
+}
+
+#[test]
+fn a_ttc_lays_out_text_with_the_face_the_stylesheet_names() {
+    let line_height_of = |family: &str| {
+        let html = format!(
+            "<html><head><style>body {{ margin: 0; width: max-content; \
+             font: 20px '{family}'; }}</style></head><body>ABCDE</body></html>"
+        );
+        let fonts = FontCollectionBuilder::new()
+            .ttc_bytes(ttc(&[AHEM, CANVAS_TEST]))
+            .build()
+            .expect("fonts");
+        let resources = RenderResources::new().fonts(fonts);
+        let document = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+        let LayoutStatus::Completed(layout) = layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new().resources(&resources),
+        )
+        .unwrap() else {
+            panic!("expected complete layout");
+        };
+        layout
+            .pages()
+            .flat_map(|page| page.fragments().collect::<Vec<_>>())
+            .filter(|fragment| fragment.kind() == FragmentKind::Text)
+            .map(|fragment| fragment.rect().height)
+            .fold(0.0_f32, f32::max)
+    };
+    // The faces differ in vertical metrics, so the line is as tall as the face
+    // the stylesheet names makes it.
+    let ahem = line_height_of("Ahem");
+    let canvas = line_height_of("CanvasTestNoSpace");
+    assert_eq!((ahem, canvas), (20.0, 22.0));
+}
+
+#[test]
+fn a_ttc_is_checked_as_one_file() {
+    use raikiri_html::BundledFont;
+    assert!(matches!(
+        FontCollectionBuilder::new().ttc_bytes(b"".as_slice()).build(),
+        Err(FontCollectionBuildError::EmptyFont { family }) if family.is_empty()
+    ));
+    assert!(matches!(
+        FontCollectionBuilder::new().ttc_bytes(b"bad".as_slice()).build(),
+        Err(FontCollectionBuildError::FontRejected { family }) if family.is_empty()
+    ));
+    let oversized = vec![0; MAX_BUNDLED_FONT_BYTES as usize + 1];
+    assert!(matches!(
+        FontCollectionBuilder::new().ttc_bytes(oversized).build(),
+        Err(FontCollectionBuildError::FontTooLarge { family, limit, actual })
+            if family.is_empty() && limit == MAX_BUNDLED_FONT_BYTES
+                && actual == MAX_BUNDLED_FONT_BYTES + 1
+    ));
+    // A valid collection before a rejected named font: the named font is blamed.
+    assert!(matches!(
+        FontCollectionBuilder::new()
+            .ttc_bytes(ttc(&[AHEM, CANVAS_TEST]))
+            .font_bytes("Broken", b"bad".as_slice())
+            .build(),
+        Err(FontCollectionBuildError::FontRejected { family }) if family == "Broken"
+    ));
+    let font = BundledFont::from_ttc(ttc(&[AHEM]));
+    assert_eq!(font.family(), "");
+    assert!(font.bytes().starts_with(b"ttcf"));
+}

@@ -721,6 +721,17 @@ pub use crate::layout::ifc::font::BundledFace;
 /// collection. With `system_fonts` set, the installed
 /// fonts are consulted after the bundle.
 ///
+/// A font with an empty (or blank) `family` is registered under the family
+/// names its own name table records instead, and every face of a TrueType or
+/// OpenType collection (`.ttc` / `.otc`) is registered that way, with the
+/// weight, width and style the face states. The file is registered once, so
+/// the font library checks and budgets its bytes once however many faces it
+/// holds, and the families of its faces join the generic families in face
+/// order, after the fonts registered before it. The limits of the font
+/// library's default set apply to the whole file: one font file or
+/// collection of at most 32 MiB, at most 64 faces in a collection, and 256
+/// faces and 256 MiB in all.
+///
 /// # Errors
 /// An empty list, a face shodo rejects, or a resource limit.
 pub fn build_bundled_font_collection(
