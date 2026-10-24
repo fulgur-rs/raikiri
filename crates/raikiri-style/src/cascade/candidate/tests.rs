@@ -1,6 +1,8 @@
 use super::*;
+use crate::cascade::rollback::Rollback;
 use crate::cascade::selector_match::MatchCaches;
 use crate::cascade::test_support::{BLUE, RED, collect_top_level};
+use crate::property::CssWideKeyword;
 use crate::ruletree::build_rule_tree;
 use crate::style_dom::StyleNodeId;
 use crate::test_dom::TestDoc;
@@ -94,15 +96,15 @@ fn same_custom_candidates_compares_names_values_and_precedence() {
 #[test]
 fn custom_properties_and_all_revert_layer_are_told_apart_by_their_slot() {
     let owned = owned(&[
-        PropertyValue::AllRevertLayer,
+        PropertyValue::All(CssWideKeyword::RevertLayer),
         custom("--x", "1"),
         PropertyValue::Color(RED),
     ]);
     let decls = owned.candidates();
     assert_eq!(decls.decls().len(), 2);
-    assert!(decls.decls()[0].is_all_revert_layer());
+    assert!(decls.decls()[0].is_all_rollback());
     assert_eq!(decls.decls()[0].rollback(), Rollback::Layer);
-    assert!(!decls.decls()[1].is_all_revert_layer());
+    assert!(!decls.decls()[1].is_all_rollback());
     assert_eq!(*decls.value(1), PropertyValue::Color(RED));
     let names: Vec<_> = owned
         .custom_candidates()
@@ -212,4 +214,162 @@ fn layered_inspection_orders_like_the_ranking() {
             Rollback::Layer
         )
     );
+}
+
+#[test]
+fn with_all_spread_leaves_candidates_without_a_spreading_all_as_they_are() {
+    // `all: revert-layer` rolls back by itself and is not spread.
+    let owned = owned(&[
+        PropertyValue::All(CssWideKeyword::RevertLayer),
+        PropertyValue::All(CssWideKeyword::Revert),
+        PropertyValue::Color(RED),
+    ]);
+    let mut scratch = Vec::new();
+    let spread = owned.candidates().with_all_spread(&mut scratch);
+    assert_eq!(spread.decls().len(), 3);
+    assert!(scratch.is_empty());
+}
+
+#[test]
+fn with_all_spread_puts_a_candidate_for_each_property_in_the_place_of_the_all() {
+    let owned = OwnedCandidates::from_declarations([
+        (
+            Declaration::new(PropertyValue::Color(RED), false),
+            author(0),
+        ),
+        (
+            Declaration::new(PropertyValue::All(CssWideKeyword::Initial), false),
+            author(1),
+        ),
+        (
+            Declaration::new(PropertyValue::Color(BLUE), false),
+            author(2),
+        ),
+    ]);
+    let mut scratch = Vec::new();
+    let spread = owned.candidates().with_all_spread(&mut scratch);
+    let spreading = crate::cascade::all_spread::declarations(CssWideKeyword::Initial);
+    assert_eq!(spread.decls().len(), spreading.len() + 2);
+    assert_eq!(*spread.value(0), PropertyValue::Color(RED));
+    assert_eq!(spread.decls()[0].precedence(), author(0));
+    for (offset, declaration) in spreading.iter().enumerate() {
+        let candidate = spread.decls()[offset + 1];
+        assert_eq!(candidate.key(), declaration.key);
+        assert_eq!(candidate.rollback(), Rollback::None);
+        assert_eq!(candidate.precedence(), author(1));
+        assert!(!candidate.is_all_rollback());
+        assert_eq!(spread.value(offset + 1), &declaration.value);
+    }
+    assert_eq!(
+        *spread.value(spreading.len() + 1),
+        PropertyValue::Color(BLUE)
+    );
+}
+
+/// An author declaration in the cascade layer of the given rank; a higher rank
+/// is a later, stronger layer.
+fn author_in_layer(rank: u32, source_order: u32) -> Precedence {
+    Precedence::new(
+        Origin::Author,
+        false,
+        0,
+        source_order,
+        LayerPosition {
+            attached: false,
+            rank,
+        },
+    )
+}
+
+#[test]
+fn with_all_spread_keeps_the_strongest_declaration_of_a_tier() {
+    // Three in one layer and one in another: a rollback skips the whole layer
+    // it leaves, so only the strongest of each layer can be reached.
+    let all = |keyword| PropertyValue::All(keyword);
+    let owned = OwnedCandidates::from_declarations([
+        (
+            Declaration::new(all(CssWideKeyword::Initial), false),
+            author_in_layer(1, 0),
+        ),
+        (
+            Declaration::new(all(CssWideKeyword::Unset), false),
+            author_in_layer(2, 1),
+        ),
+        (
+            Declaration::new(all(CssWideKeyword::Inherit), false),
+            author_in_layer(2, 3),
+        ),
+        (
+            Declaration::new(all(CssWideKeyword::Initial), false),
+            author_in_layer(2, 2),
+        ),
+    ]);
+    let mut scratch = Vec::new();
+    let spread = owned.candidates().with_all_spread(&mut scratch);
+    let per_all = crate::cascade::all_spread::declarations(CssWideKeyword::Initial).len();
+    assert_eq!(spread.decls().len(), 2 * per_all);
+    let kept: Vec<_> = spread
+        .decls()
+        .chunks(per_all)
+        .map(|chunk| chunk[0].precedence())
+        .collect();
+    assert_eq!(kept, [author_in_layer(1, 0), author_in_layer(2, 3)]);
+    // The one that is kept in the second layer is the `inherit`.
+    assert_eq!(
+        spread.decls()[per_all].value(),
+        ValueRef::Spread {
+            keyword: CssWideKeyword::Inherit,
+            index: 0
+        }
+    );
+}
+
+#[test]
+fn with_all_spread_keeps_equal_declarations_of_one_rule_apart_without_panicking() {
+    // Two `all` of one rule have the same specificity and source order.
+    let owned = OwnedCandidates::from_declarations([
+        (
+            Declaration::new(PropertyValue::All(CssWideKeyword::Initial), false),
+            author(0),
+        ),
+        (
+            Declaration::new(PropertyValue::All(CssWideKeyword::Inherit), false),
+            author(0),
+        ),
+    ]);
+    let mut scratch = Vec::new();
+    let spread = owned.candidates().with_all_spread(&mut scratch);
+    assert_eq!(
+        spread.decls()[0].value(),
+        ValueRef::Spread {
+            keyword: CssWideKeyword::Inherit,
+            index: 0
+        }
+    );
+}
+
+#[test]
+fn with_all_spread_keeps_the_strongest_tiers_when_there_are_too_many() {
+    let excess = 3;
+    let owned =
+        OwnedCandidates::from_declarations((0..MAX_SPREAD_DECLARATIONS + excess).map(|layer| {
+            (
+                Declaration::new(PropertyValue::All(CssWideKeyword::Unset), false),
+                author_in_layer(u32::try_from(layer).unwrap(), 0),
+            )
+        }));
+    let mut scratch = Vec::new();
+    let spread = owned.candidates().with_all_spread(&mut scratch);
+    let per_all = crate::cascade::all_spread::declarations(CssWideKeyword::Unset).len();
+    assert_eq!(spread.decls().len(), MAX_SPREAD_DECLARATIONS * per_all);
+    // The weakest layers are the ones given up, and the rest keep their order.
+    let layers: Vec<_> = spread
+        .decls()
+        .chunks(per_all)
+        .map(|chunk| chunk[0].precedence())
+        .collect();
+    let expected: Vec<_> = (excess..MAX_SPREAD_DECLARATIONS + excess)
+        .map(|layer| author_in_layer(u32::try_from(layer).unwrap(), 0))
+        .collect();
+    assert_eq!(layers, expected);
 }

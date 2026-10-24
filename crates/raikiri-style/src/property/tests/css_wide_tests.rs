@@ -54,3 +54,39 @@ fn svg_export_properties_accept_css_wide_defaulting() {
         }
     }
 }
+
+#[test]
+fn all_takes_the_css_wide_keywords_and_nothing_else() {
+    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+        let expected = CssWideKeyword::from_css_ident(keyword).expect("a CSS-wide keyword");
+        for source in [
+            keyword.to_owned(),
+            keyword.to_uppercase(),
+            format!("/**/ {keyword} /**/"),
+        ] {
+            assert_eq!(
+                parse_entire(&source, "all"),
+                Some(PropertyValue::All(expected)),
+                "{source}"
+            );
+        }
+        assert!(parse_entire(&format!("{keyword} {keyword}"), "all").is_none());
+    }
+    assert_eq!(
+        PropertyValue::All(CssWideKeyword::Unset).key(),
+        PropertyKey::All
+    );
+    // The component values `all` does not have, and the `var()` form, which
+    // is not supported.
+    for source in [
+        "auto",
+        "none",
+        "1",
+        "red",
+        "default",
+        "var(--x)",
+        "initial red",
+    ] {
+        assert!(parse_entire(source, "all").is_none(), "{source}");
+    }
+}

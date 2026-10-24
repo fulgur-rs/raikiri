@@ -3097,6 +3097,30 @@ fn layout_pages_resolves_css_wide_keywords_on_page() {
 }
 
 #[test]
+fn layout_pages_resets_page_with_the_all_shorthand() {
+    for keyword in ["inherit", "initial", "unset"] {
+        // `all` after the name takes it away, as `page` would.
+        let reset = format!("display:block;page:b;all:{keyword};display:block;height:10px");
+        let pages = named_page_slices(
+            "display:block;page:a",
+            &[(reset.as_str(), &[]), ("display:block;height:10px", &[])],
+        );
+        assert_eq!(pages, [Some("a".to_owned())], "{keyword}");
+        // The name after `all` wins.
+        let named = format!("display:block;all:{keyword};display:block;page:b;height:10px");
+        let pages = named_page_slices(
+            "display:block;page:a",
+            &[("display:block;height:10px", &[]), (named.as_str(), &[])],
+        );
+        assert_eq!(
+            pages,
+            [Some("a".to_owned()), Some("b".to_owned())],
+            "{keyword}"
+        );
+    }
+}
+
+#[test]
 fn layout_pages_keeps_page_names_inside_a_static_position_absolute_box() {
     let named: &[&str] = &[
         "display:block;page:a;height:10px",

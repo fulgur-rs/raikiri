@@ -842,7 +842,7 @@ pub(crate) fn pick_winners(
     let decls = candidates.decls();
     let mut has_rollback = false;
     for (idx, candidate) in decls.iter().enumerate() {
-        if candidate.is_all_revert_layer() {
+        if candidate.is_all_rollback() {
             has_rollback = true;
             continue;
         }
@@ -867,7 +867,7 @@ pub(crate) fn pick_winners(
                 continue;
             }
             let selected = super::rollback::select_layered_winner(decls, |idx, candidate| {
-                if candidate.slot(flow) != key && !candidate.is_all_revert_layer() {
+                if candidate.slot(flow) != key && !candidate.is_all_rollback() {
                     return None;
                 }
                 Some(candidate.precedence().layered(idx, candidate.rollback()))
@@ -928,10 +928,7 @@ pub(crate) fn flow_mapping(
     }
     // `all: revert-layer` rolls these winners back as `pick_winners` does;
     // `all` never covers `direction`.
-    if decls
-        .iter()
-        .any(|candidate| candidate.is_all_revert_layer())
-    {
+    if decls.iter().any(|candidate| candidate.is_all_rollback()) {
         for (key, slot) in [
             (PropertyKey::WritingMode, &mut writing_mode),
             (PropertyKey::TextOrientation, &mut text_orientation),
@@ -942,7 +939,7 @@ pub(crate) fn flow_mapping(
                 continue;
             }
             let selected = super::rollback::select_layered_winner(decls, |idx, candidate| {
-                if candidate.key() != key && !candidate.is_all_revert_layer() {
+                if candidate.key() != key && !candidate.is_all_rollback() {
                     return None;
                 }
                 Some(candidate.precedence().layered(idx, candidate.rollback()))
