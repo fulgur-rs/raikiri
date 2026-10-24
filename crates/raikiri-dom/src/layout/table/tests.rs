@@ -11,8 +11,7 @@ use raikiri_style::property::{
 use raikiri_style::{ComputedLength, ResolveContext, build_rule_tree, cascade, resolve_border};
 use raikiri_traits::PageBox;
 
-use raikiri_layout_style::values::StyleRect;
-use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
+use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentageAuto, StyleRect};
 
 mod ancestor_walk_tests;
 mod anonymous_table_tests;

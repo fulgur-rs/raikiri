@@ -32,14 +32,15 @@
 //!   boxes remain tracked by `raikiri-spike-0vv.121`.
 //! - Nested tables are depth-capped fail-closed (`MAX_TABLE_NESTING`).
 
-use raikiri_layout_style::values::StyleRect;
+use raikiri_layout_style::values::{
+    BoxSizing, ContainingBlockClaims, Dimension, Direction, ExpandedDimension, Float, IntoEdges,
+    LengthPercentage, MaybeResolve, Position, ResolveOrZero, StyleRect,
+};
 use raikiri_style::ComputedBorder;
 use raikiri_style::property::{
     BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, PositionValue, Sides,
     TableLayoutValue, VerticalAlign, WritingMode,
 };
-use taffy::style::{CompactLength, Dimension};
-use taffy::{ExpandedDimension, LengthPercentage, Position};
 
 use crate::document::Document;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
@@ -51,7 +52,6 @@ use crate::layout::protocol::{
     SizingMode,
 };
 use crate::layout::style_views::ReadRole;
-use crate::layout::taffy_adapter::{IntoEdges, MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 
@@ -178,7 +178,7 @@ fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertic
         .iter()
         .copied()
         .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
-        .filter(|&id| doc.nodes[id].taffy_position() != taffy::Position::Absolute)
+        .filter(|&id| doc.nodes[id].layout_position() != Position::Absolute)
     else {
         return 0.0;
     };
@@ -375,8 +375,8 @@ fn layout_table_caption(
         size: output.size,
         scrollable_overflow_rect: output.scrollable_overflow_rect,
         scrollbar_size: Size::ZERO,
-        padding: padding.resolve_or_zero(Some(parent_width), crate::layout::dispatch::resolve_calc),
-        border: border.resolve_or_zero(Some(parent_width), crate::layout::dispatch::resolve_calc),
+        padding: padding.resolve_or_zero(Some(parent_width)),
+        border: border.resolve_or_zero(Some(parent_width)),
         margin: Edges {
             left: margin_left,
             right: margin_right,
@@ -426,7 +426,7 @@ fn position_table_caption(
         .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption);
     // Keep the legacy positioned caption layout and ink, but exclude it from flow.
     let in_flow =
-        caption_id.is_some_and(|id| doc.nodes[id].taffy_position() != taffy::Position::Absolute);
+        caption_id.is_some_and(|id| doc.nodes[id].layout_position() != Position::Absolute);
     let caption_size = if in_flow {
         caption_size.unwrap_or(Size::ZERO)
     } else {
@@ -524,7 +524,7 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_grid_box = None;
         doc.nodes[table_idx].table_first_baseline = None;
     }
-    let abspos_table = doc.nodes[table_idx].taffy_position() == taffy::Position::Absolute;
+    let abspos_table = doc.nodes[table_idx].layout_position() == Position::Absolute;
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
@@ -925,7 +925,7 @@ fn compute_table_layout_checked(
         let max_w = resolve_dimension(authored_max.width.into(), inputs.parent_size.width);
         let min_h = resolve_dimension(authored_min.height.into(), inputs.parent_size.height);
         let max_h = resolve_dimension(authored_max.height.into(), inputs.parent_size.height);
-        let is_content_box = box_sizing == taffy::BoxSizing::ContentBox;
+        let is_content_box = box_sizing == BoxSizing::ContentBox;
         let lift_w = if is_content_box {
             padding_border_size.width
         } else {
@@ -1294,9 +1294,7 @@ fn table_layout_output(
         return output;
     }
     let style = doc.table_style(table);
-    let border = style
-        .border()
-        .resolve_or_zero(Some(size.width), crate::layout::dispatch::resolve_calc);
+    let border = style.border().resolve_or_zero(Some(size.width));
     output.oof_candidates = candidates;
     output.oof_positioning_area = Some(OofPositioningArea {
         size: Size {
@@ -1318,7 +1316,7 @@ fn append_direct_table_oof_candidates(
 ) {
     for (order, &child) in doc.nodes[table].children.iter().enumerate() {
         if !doc.nodes[child].is_in_document()
-            || doc.nodes[child].taffy_position() != Position::Absolute
+            || doc.nodes[child].layout_position() != Position::Absolute
             // The table layout has always placed absolute captions at its
             // local origin; preserve that legacy geometry while dispatching
             // fixed captions against the page area.
@@ -1383,7 +1381,7 @@ fn table_part_claimants(
                 && doc
                     .query_style(id, ReadRole::CoreContainer)
                     .is_containing_block()
-                    != taffy::ContainingBlockClaims::NONE
+                    != ContainingBlockClaims::NONE
             {
                 claimants.push(id);
             }
@@ -2318,19 +2316,11 @@ fn resolve_table_columns(
             continue;
         }
         let style = doc.table_style(cell.node_id);
-        if let Some(minimum) = style
-            .min_size()
-            .width
-            .maybe_resolve(Some(avail), crate::layout::dispatch::resolve_calc)
-        {
-            let padding = style
-                .padding()
-                .resolve_or_zero(Some(avail), crate::layout::dispatch::resolve_calc);
-            let border = style
-                .border()
-                .resolve_or_zero(Some(avail), crate::layout::dispatch::resolve_calc);
+        if let Some(minimum) = style.min_size().width.maybe_resolve(Some(avail)) {
+            let padding = style.padding().resolve_or_zero(Some(avail));
+            let border = style.border().resolve_or_zero(Some(avail));
             let cell_insets = padding.left + padding.right + border.left + border.right;
-            let outer = if style.box_sizing() == taffy::BoxSizing::ContentBox {
+            let outer = if style.box_sizing() == BoxSizing::ContentBox {
                 minimum + cell_insets
             } else {
                 minimum.max(cell_insets)
@@ -2392,11 +2382,12 @@ fn resolve_column_widths(
         tests::AUTHORED_LENGTH_CELL_VISITS.with(|count| count.set(count.get() + 1));
         let c = cell.col_start as usize;
         if cell.col_span == 1 && c < n {
-            authored_length[c] |= cell.specified_width.tag() == CompactLength::LENGTH_TAG;
+            authored_length[c] |=
+                matches!(cell.specified_width.expand(), ExpandedDimension::Length(_));
             col_min[c] = f32_max_compat(col_min[c], cell_min[i]);
             col_max[c] = f32_max_compat(col_max[c], cell_max[i]);
-            if cell.specified_width.tag() == CompactLength::PERCENT_TAG {
-                col_pct[c] = f32_max_compat(col_pct[c], cell.specified_width.value());
+            if let ExpandedDimension::Percent(percent) = cell.specified_width.expand() {
+                col_pct[c] = f32_max_compat(col_pct[c], percent);
             }
         }
     }
@@ -2444,8 +2435,7 @@ fn resolve_column_widths(
                 col_max_full[*column] += add;
             }
         }
-        if grid.cells[i].specified_width.tag() == CompactLength::PERCENT_TAG {
-            let p = grid.cells[i].specified_width.value();
+        if let ExpandedDimension::Percent(p) = grid.cells[i].specified_width.expand() {
             let cur_p: f32 = col_pct[s..e].iter().sum();
             if p > cur_p {
                 let add = (p - cur_p) / cnt;
@@ -2462,7 +2452,7 @@ fn resolve_column_widths(
         let c = cell.col_start as usize;
         if cell.col_span == 1
             && c < n
-            && cell.specified_width.tag() == CompactLength::LENGTH_TAG
+            && matches!(cell.specified_width.expand(), ExpandedDimension::Length(_))
             && col_len[c].is_none()
         {
             col_len[c] = resolve_dimension(cell.specified_width, None);
@@ -2501,8 +2491,11 @@ fn resolve_column_widths(
         let max_w = resolve_dimension(sz.max_width, None);
         // Base width: definite length always; percent only when occupied.
         let base = resolve_dimension(sz.width, None);
-        if base.is_none() && sz.width.tag() == CompactLength::PERCENT_TAG && occupied[c] {
-            col_pct[c] = f32_max_compat(col_pct[c], sz.width.value());
+        if let ExpandedDimension::Percent(percent) = sz.width.expand()
+            && base.is_none()
+            && occupied[c]
+        {
+            col_pct[c] = f32_max_compat(col_pct[c], percent);
         }
         // Clamp base by min/max (min wins over max).
         let mut floor = min_w;
@@ -2853,8 +2846,8 @@ fn first_cell_baseline(doc: &LayoutSession<'_>, root: usize, content_top: f32) -
         let node = doc.ifc_layout_node(id).unwrap();
         if !node.is_in_document()
             || node.is_display_none()
-            || node.taffy_position() == taffy::Position::Absolute
-            || doc.table_style(id).float() != taffy::Float::None
+            || node.layout_position() == Position::Absolute
+            || doc.table_style(id).float() != Float::None
         {
             continue;
         }
@@ -3031,14 +3024,10 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
     // Distribute rowspan height across spanned rows (simple: equally)
     cell.natural_height = output.size.height;
     let style = doc.table_style(cell.node_id);
-    let padding = style
-        .padding()
-        .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
-    let border = style
-        .border()
-        .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
+    let padding = style.padding().resolve_or_zero(Some(cell_width));
+    let border = style.border().resolve_or_zero(Some(cell_width));
     let authored_height = resolve_dimension(style.size().height, None).map_or(0.0, |height| {
-        if style.box_sizing() == taffy::BoxSizing::ContentBox {
+        if style.box_sizing() == BoxSizing::ContentBox {
             height + padding.top + padding.bottom + border.top + border.bottom
         } else {
             height
@@ -3245,12 +3234,8 @@ fn place_cells(
         let (mut padding, mut border) = {
             let style = doc.table_style(cell.node_id);
             (
-                style
-                    .padding()
-                    .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc),
-                style
-                    .border()
-                    .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc),
+                style.padding().resolve_or_zero(Some(cell_width)),
+                style.border().resolve_or_zero(Some(cell_width)),
             )
         };
         let vertical_cell = vertical_writing && table_writing_mode(doc, cell.node_id).is_vertical();
@@ -3301,7 +3286,7 @@ fn place_cells(
             .children
             .clone()
         {
-            if doc.nodes[child].taffy_position() != taffy::Position::Absolute {
+            if doc.nodes[child].layout_position() != Position::Absolute {
                 let mut child_layout = doc.nodes[child].layout;
                 child_layout.location.y += shift;
                 doc.store_layout(child, &child_layout);
@@ -3412,12 +3397,8 @@ fn reposition_cells_for_vertical_writing(
             .ifc_layout_node(cell.node_id)
             .expect("table cell layout view");
         let style = doc.table_style(cell.node_id);
-        let mut padding = style
-            .padding()
-            .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
-        let border = style
-            .border()
-            .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
+        let mut padding = style.padding().resolve_or_zero(Some(cell_width));
+        let border = style.border().resolve_or_zero(Some(cell_width));
         let direction = style.direction();
         let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
         let has_lines = lines.is_some_and(|lines| !lines.lines.is_empty());
@@ -3430,26 +3411,20 @@ fn reposition_cells_for_vertical_writing(
         } else {
             node.children
                 .iter()
-                .filter(|&&child| doc.nodes[child].taffy_position() != taffy::Position::Absolute)
+                .filter(|&&child| doc.nodes[child].layout_position() != Position::Absolute)
                 .map(|&child| {
                     let child_style = doc.table_style(child);
                     // Relative insets move ink after normal flow; they must
                     // not consume the cell's alignment space. Taffy leaves
                     // floated boxes at their normal positions, so their
                     // paint-side offsets are not removed here.
-                    let offset = if child_style.float() == taffy::Float::None {
+                    let offset = if child_style.float() == Float::None {
                         let inner_width =
                             cell_width - padding.left - padding.right - border.left - border.right;
                         let inset = child_style.inset();
-                        let left = inset.left.maybe_resolve(
-                            Some(inner_width),
-                            crate::layout::dispatch::resolve_calc,
-                        );
-                        let right = inset.right.maybe_resolve(
-                            Some(inner_width),
-                            crate::layout::dispatch::resolve_calc,
-                        );
-                        if direction == taffy::Direction::Rtl {
+                        let left = inset.left.maybe_resolve(Some(inner_width));
+                        let right = inset.right.maybe_resolve(Some(inner_width));
+                        if direction == Direction::Rtl {
                             right.map(|right| -right).or(left).unwrap_or(0.0)
                         } else {
                             left.or(right.map(|right| -right)).unwrap_or(0.0)
@@ -3495,7 +3470,7 @@ fn reposition_cells_for_vertical_writing(
             .children
             .clone()
         {
-            if doc.nodes[child].taffy_position() != taffy::Position::Absolute {
+            if doc.nodes[child].layout_position() != Position::Absolute {
                 let mut layout = doc.nodes[child].layout;
                 layout.location.x += child_shift;
                 doc.store_layout(child, &layout);
@@ -3515,14 +3490,14 @@ fn resolve_dimension(d: Dimension, basis: Option<f32>) -> Option<f32> {
     super::resolve_dimension(d, basis)
 }
 
-fn resolve_length(lp: taffy::style::LengthPercentage, basis: Option<f32>) -> f32 {
+fn resolve_length(lp: LengthPercentage, basis: Option<f32>) -> f32 {
     super::resolve_length_percentage(lp, basis).unwrap_or(0.0)
 }
 
 /// Resolve a table's padding or border widths (`rect`) against the width of
 /// its containing block (CSS 2.1 §8.4).
 fn resolve_table_rect(
-    rect: &StyleRect<taffy::style::LengthPercentage>,
+    rect: &StyleRect<LengthPercentage>,
     parent_size: Size<Option<f32>>,
 ) -> Edges<f32> {
     let w_basis = parent_size.width;

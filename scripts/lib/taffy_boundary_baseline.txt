@@ -23,16 +23,7 @@
 2 crates/raikiri-dom/src/layout/dispatch/block_flow.rs
 2 crates/raikiri-dom/src/layout/dispatch/block_flow/children.rs
 1 crates/raikiri-dom/src/layout/dispatch/block_flow/sizing.rs
-9 crates/raikiri-dom/src/layout/multicol.rs
-5 crates/raikiri-dom/src/layout/multicol/break_flow.rs
-3 crates/raikiri-dom/src/layout/multicol/constrained_chain.rs
-2 crates/raikiri-dom/src/layout/multicol/lineless.rs
-2 crates/raikiri-dom/src/layout/multicol/paragraph_group.rs
-1 crates/raikiri-dom/src/layout/multicol/tests.rs
 5 crates/raikiri-dom/src/layout/page_pipeline/transposed_flow/tests.rs
 8 crates/raikiri-dom/src/layout/style_views/tests.rs
 4 crates/raikiri-dom/src/layout/style_views/tests/block_view_tests.rs
-21 crates/raikiri-dom/src/layout/table.rs
-1 crates/raikiri-dom/src/layout/table/row_moves.rs
-3 crates/raikiri-dom/src/layout/table/tests.rs
 1 crates/raikiri-dom/src/lib.rs

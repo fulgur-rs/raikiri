@@ -1,6 +1,7 @@
 //! Table boxes that follow the rows pagination moved to a later page.
 
 use crate::Document;
+use raikiri_layout_style::values::Position;
 use raikiri_style::property::{BorderCollapseValue, CaptionSideValue, DisplayValue};
 use std::collections::{BTreeSet, HashMap};
 
@@ -72,7 +73,7 @@ pub(crate) fn follow_moved_rows(
             !document.nodes[id].is_display_none()
                 && document.nodes[id].display() == DisplayValue::TableCaption
                 && document.nodes[id].caption_side == CaptionSideValue::Top
-                && document.nodes[id].taffy_position() != taffy::Position::Absolute
+                && document.nodes[id].layout_position() != Position::Absolute
         });
         let anonymous_rows = groups
             .iter()

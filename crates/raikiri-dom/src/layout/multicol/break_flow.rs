@@ -57,7 +57,7 @@ pub(super) fn supports(
             return false;
         }
         visible = true;
-        if node.taffy_position() == TaffyPosition::Absolute {
+        if node.layout_position() == Position::Absolute {
             // A resumed plain wrapper would replay this unfragmented subtree
             // in every continuation. Atomic parents and root siblings paint once.
             if projected && depth > 0 {
@@ -172,7 +172,7 @@ fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::
         || style.padding() != StyleRect::zero()
         || style.border() != StyleRect::zero()
         || style.inset() != StyleRect::auto()
-        || style.clear() != taffy::Clear::None
+        || style.clear() != Clear::None
         || (!atomic(tree, id)
             && (!node.multicol_auto_width
                 || style.min_size() != StyleSize::auto()
@@ -281,7 +281,7 @@ fn descendant_edge(
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
             && !is_floated(tree, child)
-            && tree.nodes[child].taffy_position() != TaffyPosition::Absolute
+            && tree.nodes[child].layout_position() != Position::Absolute
             && matches!(tree.nodes[child].data, NodeData::Element(_))
     };
     let child = if before {
@@ -305,7 +305,7 @@ fn collect(
         || !tree.nodes[id].is_in_document()
         || tree.nodes[id].is_display_none()
         || !matches!(tree.nodes[id].data, NodeData::Element(_))
-        || tree.nodes[id].taffy_position() == TaffyPosition::Absolute
+        || tree.nodes[id].layout_position() == Position::Absolute
     {
         return;
     }
@@ -346,11 +346,11 @@ fn collect(
             // containing block. Its parent determines block inline alignment;
             // physical float sides remain independent of inline direction.
             inline_offset: match float {
-                taffy::Float::Right => context.column_width - output.size.width,
-                taffy::Float::Left => 0.0,
-                taffy::Float::None => {
+                Float::Right => context.column_width - output.size.width,
+                Float::Left => 0.0,
+                Float::None => {
                     if tree.taffy_parent_of(id).is_some_and(|parent| {
-                        style_of(tree, parent).direction() == taffy::Direction::Rtl
+                        style_of(tree, parent).direction() == Direction::Rtl
                     }) {
                         context.column_width - output.size.width
                     } else {
@@ -439,7 +439,7 @@ fn reserve_measurement_work(tree: &mut LayoutSession<'_>, root: usize) -> bool {
             && in_document
             && element
             && !hidden
-            && node.taffy_position() != TaffyPosition::Absolute;
+            && node.layout_position() != Position::Absolute;
         let cost = measurements
             .saturating_mul(raw_cost)
             .saturating_add(if in_document {

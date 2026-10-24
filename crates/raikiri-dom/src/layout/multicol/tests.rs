@@ -1328,7 +1328,7 @@ fn multicol_block_children_with_lines_get_text_ranges() {
     doc.append_element(Some(second), "br", None::<&str>);
 
     layout_nested_flex_float_fixture(&mut doc);
-    assert_ne!(doc.nodes[multicol].taffy_display(), Display::Flex);
+    assert_ne!(doc.nodes[multicol].layout_display(), Display::Flex);
     assert!(doc.nodes[first].is_ifc_root(), "first child must own lines");
     assert!(
         doc.nodes[first].ifc_multicol_fragments().is_some(),
@@ -4697,7 +4697,7 @@ fn authored_box_reads_what_the_style_view_reads() {
 
         assert_eq!(
             authored.is_border_box(),
-            view.box_sizing() == taffy::BoxSizing::BorderBox,
+            view.box_sizing() == BoxSizing::BorderBox,
             "box-sizing of {ctx}"
         );
         assert_eq!(
