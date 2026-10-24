@@ -7,6 +7,7 @@
 //! stored for a box to be asked about.
 
 use super::*;
+use raikiri_layout_style::LengthProperty;
 use raikiri_layout_style::values::{
     AlignItems, AlignItemsKeyword, AlignmentSafety, Display, Position, baseline_set_of,
 };
@@ -240,6 +241,74 @@ pub(super) fn unstretched_keyword_height_alignment(
         AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
     )
     .then_some(fallback)
+}
+
+/// The vertical inset that out-of-flow box `idx` ignores because its `height`
+/// is `min-content`, `max-content` or `fit-content`, which the cascade computes
+/// to `auto` ([`ComputedValues::height_keyword`] is what is left of it).
+///
+/// A box with a `top`, a `bottom` and a `height` that are all not `auto` is
+/// overconstrained, and the inset at the end of the inline axis of its
+/// containing block is ignored (CSS 2.1 §10.6.4, CSS Position 3): `bottom`
+/// unless the containing block lays out vertical lines from bottom to top. Taffy
+/// sees an `auto` height instead, which `top` and `bottom` stretch the box
+/// between, so the end inset is dropped from its style and the box takes the
+/// height of its content from the start inset. `fit-content(<length>)` stays
+/// out, as browsers treat it like `auto`, and so does a replaced box, whose
+/// natural size Taffy does not stretch.
+///
+/// An `auto` margin on the side of the inset that is kept takes the free space
+/// of the box instead (centered with both margins `auto`), which needs that
+/// inset, so such a box keeps both and stays stretched.
+// spec: https://www.w3.org/TR/CSS21/visudet.html#abs-non-replaced-height
+pub(super) fn ignored_vertical_inset(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> Option<LengthProperty> {
+    use crate::layout::page::inset_is_auto;
+    let values = &cascade.computed[idx];
+    let fixed = values.position == PositionValue::Fixed;
+    if !(fixed || values.position == PositionValue::Absolute)
+        || values.height_keyword.is_none()
+        || inset_is_auto(values.top)
+        || inset_is_auto(values.bottom)
+        || matches!(values.display, DisplayValue::Contents | DisplayValue::None)
+        || crate::paint_rules::is_replaced_element(doc.document, idx)
+    {
+        return None;
+    }
+    // The containing block is the nearest ancestor that holds this kind of
+    // box. The root element stands in for the initial containing block, and
+    // for itself when it is the box.
+    let containing_block = doc
+        .ancestors(idx)
+        .find(|&ancestor| {
+            let node = &doc.nodes[ancestor];
+            if fixed {
+                node.claims_fixed_oof
+            } else {
+                node.claims_absolute_oof
+            }
+        })
+        .or_else(|| {
+            doc.ancestors(idx)
+                .filter(|&ancestor| doc.nodes[ancestor].kind() == NodeKind::Element)
+                .last()
+        })
+        .unwrap_or(idx);
+    // `sideways-lr` runs its inline axis from bottom to top, `direction: rtl`
+    // reverses it, and `text-orientation: upright` does not change either.
+    let block = &cascade.computed[containing_block];
+    let inline_starts_at_bottom = uses_vertical_axes(cascade, containing_block)
+        && (block.direction == Direction::Rtl)
+            != (block.cssom_writing_mode == WritingMode::SidewaysLr);
+    let (ignored, kept_margin) = if inline_starts_at_bottom {
+        (LengthProperty::Top, values.margin.bottom)
+    } else {
+        (LengthProperty::Bottom, values.margin.top)
+    };
+    (!matches!(kept_margin, ComputedLengthPercentageOrAuto::Auto)).then_some(ignored)
 }
 
 /// The alignment taffy gets for in-flow item `idx` of a vertical flex row or

@@ -555,6 +555,17 @@ fn apply_computed_to_style_in_session_inner(
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),
             );
         }
+        if let Some(inset) = settled::ignored_vertical_inset(doc, cascade, idx) {
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::length(
+                    inset,
+                    ComputedLengthPercentageOrAuto::Auto,
+                    false,
+                )
+                .expect("physical inset"),
+            );
+        }
         if let Some(placeholder) = settled::opposed_baseline_alignment(doc, cascade, idx) {
             settled_styles[idx].align_self = Some(placeholder);
             doc.nodes[idx].opposed_baseline_group = true;

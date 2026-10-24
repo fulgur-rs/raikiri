@@ -2812,4 +2812,5 @@ fn layout_values_of_reads_a_vertical_box_sizes_from_its_logical_properties() {
 mod aspect_ratio_tests;
 mod clamp_warning_tests;
 mod content_limit_bridge_tests;
+mod keyword_height_inset_tests;
 mod replaced_sizing_tests;
