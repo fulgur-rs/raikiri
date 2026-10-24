@@ -390,14 +390,14 @@ pub struct TextData {
 ///
 /// The layout bridge classifies every node once per layout pass, after
 /// paragraph roots are assigned. An element built without the bridge takes
-/// the classification of its Taffy display.
+/// the classification of its layout display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FormattingContext {
     /// The element generates no box.
     None,
     /// A block container whose content is block-level boxes. Whether it
     /// establishes an independent block formatting context is left to its
-    /// Taffy display.
+    /// layout display.
     Block,
     /// A block container whose content is a paragraph, laid out by the
     /// inline engine.
@@ -416,8 +416,8 @@ pub(crate) enum FormattingContext {
 }
 
 impl FormattingContext {
-    /// The classification of a box known only by its Taffy display.
-    pub(crate) fn from_taffy_display(display: Display) -> Self {
+    /// The classification of a box known only by its layout display.
+    pub(crate) fn from_layout_display(display: Display) -> Self {
         match display {
             Display::None => Self::None,
             Display::Flex => Self::Flex,
@@ -684,7 +684,7 @@ impl Node {
 
     /// The display layout sees for this box, derived from its CSS identity.
     pub(crate) fn layout_display(&self) -> Display {
-        self.box_properties.taffy_display(
+        self.box_properties.layout_display(
             self.multicol.is_some(),
             self.kind(),
             self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
@@ -693,7 +693,7 @@ impl Node {
 
     /// The position scheme layout sees for this box, derived from its CSS identity.
     pub(crate) fn layout_position(&self) -> Position {
-        self.box_properties.taffy_position()
+        self.box_properties.layout_position()
     }
 
     /// Capture CSS box identity and keep the public backend-style export current.
@@ -720,8 +720,8 @@ impl Node {
         };
         Self {
             formatting_context: match data {
-                NodeData::Element(_) => FormattingContext::from_taffy_display(
-                    box_properties.taffy_display(false, NodeKind::Element, false),
+                NodeData::Element(_) => FormattingContext::from_layout_display(
+                    box_properties.layout_display(false, NodeKind::Element, false),
                 ),
                 _ => FormattingContext::Text,
             },

@@ -451,7 +451,7 @@ fn a_box_known_only_by_its_display_gets_the_matching_formatting_context() {
         (Display::Block, FormattingContext::Block),
         (Display::FlowRoot, FormattingContext::Block),
     ] {
-        assert_eq!(FormattingContext::from_taffy_display(display), expected);
+        assert_eq!(FormattingContext::from_layout_display(display), expected);
     }
 }
 
