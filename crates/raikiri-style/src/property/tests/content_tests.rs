@@ -1264,17 +1264,15 @@ fn page_value_parses_auto_and_custom_ident() {
         parse("xyzabc", "page"),
         Some(PropertyValue::Page(PageValue::Named(Atom::from("xyzabc"))))
     );
-    // CSS-wide keywords and `default` are not custom idents.
-    for kw in [
-        "inherit",
-        "initial",
-        "unset",
-        "revert",
-        "revert-layer",
-        "default",
-    ] {
-        assert_eq!(parse_entire(kw, "page"), None, "{kw}");
+    // CSS-wide keywords are kept for the cascade to resolve; `default` is
+    // reserved too, so it is no custom ident.
+    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+        assert!(
+            matches!(parse_entire(kw, "page"), Some(PropertyValue::Deferred(_))),
+            "{kw} is kept as a marker"
+        );
     }
+    assert_eq!(parse_entire("default", "page"), None);
     // two idents / dimension are grammar-outside (caller drops).
     assert_eq!(parse_entire("not valid", "page"), None);
     assert_eq!(parse_entire("123px", "page"), None);

@@ -5892,7 +5892,7 @@ impl TextUnderlinePosition {
 /// The general mechanism (single-ident parse plus the caller's
 /// `expect_exhausted`) drops `not valid` (two idents), `123px`, and `calc()`
 /// because they do not match the grammar.
-/// This value is parsing-only (see the [`PropertyValue::Page`] documentation).
+/// A CSS-wide keyword is not a value of this type; see [`PropertyValue::Page`].
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageValue {
@@ -7926,6 +7926,7 @@ impl PropertyKey {
                 | PropertyKey::BorderStyle
                 | PropertyKey::BorderWidth
                 | PropertyKey::TextSpacing
+                | PropertyKey::Page
         )
     }
 }
@@ -11603,8 +11604,11 @@ pub enum PropertyValue {
     TextUnderlinePosition(TextUnderlinePosition),
     /// `page: auto | <custom-ident>` — **non-inherited**, initial:
     /// [`PageValue::Auto`] (see the [`PageValue`] docs and CSS Paged Media 3 §8.1).
-    /// Parsing only: the cascade drops the winner instead of storing it in a
-    /// staging field (as with `TextCombineUpright` in E/F/G).
+    /// Computed values do not hold it: the element cascade keeps the winner
+    /// per node in `CascadeResult::page_values`. A CSS-wide keyword stays a
+    /// [`Self::Deferred`] marker there: `inherit` takes the parent's slot, and
+    /// `initial`, `unset` and `revert` (with no declaration to roll back to)
+    /// leave `auto`.
     /// (Appended for the same placement reason as [`Self::TableLayout`].)
     Page(PageValue),
     /// `column-count` — non-inherited, positive integer or `auto`.
@@ -13781,9 +13785,11 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "align-content" => PropertyKey::AlignContent,
         "align-items" => PropertyKey::AlignItems,
         "align-self" => PropertyKey::AlignSelf,
-        "row-gap" => PropertyKey::RowGap,
-        "column-gap" => PropertyKey::ColumnGap,
-        "gap" => PropertyKey::Gap,
+        // The `grid-*` spellings are the legacy aliases of the gap properties
+        // (CSS Box Alignment 3 §8.2); they cascade as the same property.
+        "row-gap" | "grid-row-gap" => PropertyKey::RowGap,
+        "column-gap" | "grid-column-gap" => PropertyKey::ColumnGap,
+        "gap" | "grid-gap" => PropertyKey::Gap,
         "column-count" => PropertyKey::ColumnCount,
         "column-fill" => PropertyKey::ColumnFill,
         "column-span" => PropertyKey::ColumnSpan,
