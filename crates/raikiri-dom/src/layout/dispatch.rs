@@ -1003,9 +1003,9 @@ impl LayoutSession<'_> {
                 {
                     apply_local_sizing(
                         &mut style,
-                        &[OwnedPropertyOverride::aspect_ratio(leaf_intrinsic_ratio(
-                            &tree.nodes[idx],
-                        ))],
+                        &[OwnedPropertyOverride::aspect_ratio(
+                            tree.nodes[idx].keyword_aspect_ratio,
+                        )],
                     );
                 }
                 // A replaced leaf with an `auto` side takes its size from the
@@ -2404,9 +2404,9 @@ fn compute_inline_block_shrink_wrap(
     {
         apply_local_sizing(
             &mut leaf_style,
-            &[OwnedPropertyOverride::aspect_ratio(leaf_intrinsic_ratio(
-                &tree.nodes[idx],
-            ))],
+            &[OwnedPropertyOverride::aspect_ratio(
+                tree.nodes[idx].keyword_aspect_ratio,
+            )],
         );
     }
     if empty {

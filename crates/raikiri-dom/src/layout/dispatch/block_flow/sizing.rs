@@ -41,13 +41,14 @@ fn bounds(own: [Option<f32>; 2], carried: [Option<f32>; 2]) -> (Option<f32>, Opt
 }
 
 impl Metrics {
-    /// `replaced` is whether the box is a replaced element. `content_box_ratio`
-    /// is whether its preferred aspect ratio relates the content box sizes
-    /// whatever the `box-sizing` is: the ratio is the natural ratio of the box,
-    /// or a `<ratio>` given with `auto`.
+    /// `width_stands_in` is whether the `width` in `style` stands in for an
+    /// `auto` one, as it does for an inline `<svg>` that fills the room its
+    /// parent offers. `content_box_ratio` is whether its preferred aspect ratio
+    /// relates the content box sizes whatever the `box-sizing` is: the ratio is
+    /// the natural ratio of the box, or a `<ratio>` given with `auto`.
     pub(crate) fn resolve(
         style: &Style,
-        replaced: bool,
+        width_stands_in: bool,
         content_box_ratio: bool,
         inputs: LayoutInput,
     ) -> Self {
@@ -81,21 +82,20 @@ impl Metrics {
         };
         // A minimum or maximum carries across the aspect ratio only into an
         // axis whose preferred size is `auto`. Under `ContentSize` the
-        // authored size is ignored, so every axis is `auto`. Replaced content
-        // always carries them: an `auto` size of an inline `<svg>` is stood
-        // in for by a percentage.
+        // authored size is ignored, so every axis is `auto`. A width that
+        // stands in for `auto` is no authored one either.
         let carried = |own: Size<Option<f32>>| {
             let across = across_ratio(own);
-            let auto = |preferred: Option<f32>| {
-                replaced || inputs.sizing_mode != SizingMode::InherentSize || preferred.is_none()
+            let auto = |preferred: Option<f32>, stands_in: bool| {
+                stands_in || inputs.sizing_mode != SizingMode::InherentSize || preferred.is_none()
             };
             Size {
                 width: across
                     .width
-                    .filter(|_| own.width.is_none() && auto(specified.width)),
+                    .filter(|_| own.width.is_none() && auto(specified.width, width_stands_in)),
                 height: across
                     .height
-                    .filter(|_| own.height.is_none() && auto(specified.height)),
+                    .filter(|_| own.height.is_none() && auto(specified.height, false)),
             }
         };
         let own_min = style.min_size.maybe_resolve(inputs.parent_size);

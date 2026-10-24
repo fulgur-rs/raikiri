@@ -1930,8 +1930,178 @@ fn a_block_level_image_with_an_authored_height_takes_its_width_from_the_content_
             "height:100px;max-height:60px;padding:5px;box-sizing:border-box",
             (30.0, 60.0),
         ),
-        // A width bound is left to the leaf sizing.
-        ("height:100px;max-width:30px;padding:0 5px", (40.0, 100.0)),
+    ] {
+        let css = format!("display:block;{css}");
+        let (doc, image) = natural_20x50_image(&css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn a_width_bound_does_not_change_the_authored_height_of_a_block_level_image() {
+    // Sizes a browser gives for a 20x50 image. A `min-width` or `max-width`
+    // clamps the width the authored height gives, and the height stays; a
+    // bound on one side does not carry across the ratio onto a side with a
+    // length of its own either.
+    for (css, expected) in [
+        ("display:block;height:100px;max-width:30px", (30.0, 100.0)),
+        ("display:block;height:100px;min-width:60px", (60.0, 100.0)),
+        (
+            "display:block;height:100px;max-width:30px;padding:0 5px",
+            (40.0, 100.0),
+        ),
+        (
+            "display:block;height:100px;min-width:60px;padding:0 5px",
+            (70.0, 100.0),
+        ),
+        (
+            "display:block;height:100px;max-width:30px;padding:0 5px;box-sizing:border-box",
+            (30.0, 100.0),
+        ),
+        (
+            "display:block;height:20px;min-width:60px;padding:0 10px",
+            (80.0, 20.0),
+        ),
+        (
+            "display:block;height:100px;max-height:60px;max-width:10px",
+            (10.0, 60.0),
+        ),
+        (
+            "display:block;height:calc(50px + 50px);max-width:30px",
+            (30.0, 100.0),
+        ),
+        ("display:block;width:100px;max-height:30px", (100.0, 30.0)),
+        ("display:block;width:10px;min-height:300px", (10.0, 300.0)),
+        (
+            "display:block;width:100px;min-width:60px;max-height:30px",
+            (100.0, 30.0),
+        ),
+        (
+            "display:block;width:100px;max-height:30px;padding:5px;box-sizing:border-box",
+            (100.0, 30.0),
+        ),
+        // A percentage is an authored size too; the body is 100px wide.
+        ("display:block;width:50%;max-height:30px", (50.0, 30.0)),
+        // A border or a `border-box` sizing moves the width the bound clamps,
+        // not the height.
+        (
+            "display:block;height:100px;min-width:60px;padding:0 5px;box-sizing:border-box",
+            (60.0, 100.0),
+        ),
+        (
+            "display:block;height:100px;min-width:30px;padding:0 20px;box-sizing:border-box",
+            (80.0, 100.0),
+        ),
+        (
+            "display:block;height:100px;min-width:60px;border:5px solid red",
+            (70.0, 110.0),
+        ),
+        (
+            "display:block;height:100px;max-width:30px;border:5px solid red;box-sizing:border-box",
+            (30.0, 100.0),
+        ),
+        (
+            "display:block;height:100px;aspect-ratio:1;min-width:150px;padding:0 10px",
+            (170.0, 100.0),
+        ),
+        (
+            "display:block;width:100px;max-height:30px;border:5px solid red",
+            (110.0, 40.0),
+        ),
+        ("float:left;height:100px;max-width:30px", (30.0, 100.0)),
+        (
+            "display:inline-block;height:100px;max-width:30px",
+            (30.0, 100.0),
+        ),
+    ] {
+        let (doc, image) = natural_20x50_image(css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn a_keyword_min_or_max_size_takes_the_size_the_other_side_gives_through_the_ratio() {
+    // Sizes a browser gives for a 20x50 image. The keyword size of a side
+    // that nothing authored is the size the natural size takes within the
+    // numeric bounds, along the ratio the box states; a side that is authored
+    // across it gives the size through that ratio, also where both sides are
+    // authored and sizing itself leaves the ratio out.
+    for (css, expected) in [
+        ("aspect-ratio:1;min-height:min-content", (20.0, 20.0)),
+        ("aspect-ratio:2;min-height:max-content", (20.0, 10.0)),
+        (
+            "aspect-ratio:1;height:100px;max-height:min-content",
+            (20.0, 20.0),
+        ),
+        (
+            "aspect-ratio:2;height:100px;max-height:min-content",
+            (20.0, 10.0),
+        ),
+        ("max-width:10px;min-height:min-content", (10.0, 25.0)),
+        ("min-width:50px;max-height:min-content", (50.0, 125.0)),
+        ("max-height:10px;min-width:min-content", (4.0, 10.0)),
+        (
+            "aspect-ratio:2;max-height:5px;min-width:min-content",
+            (10.0, 5.0),
+        ),
+        (
+            "aspect-ratio:2;max-width:10px;min-height:min-content",
+            (10.0, 5.0),
+        ),
+        (
+            "aspect-ratio:2;width:30px;height:100px;min-width:min-content",
+            (200.0, 100.0),
+        ),
+        (
+            "aspect-ratio:2;width:30px;height:100px;min-width:fit-content",
+            (200.0, 100.0),
+        ),
+        (
+            "aspect-ratio:2;width:30px;height:100px;max-height:min-content",
+            (30.0, 15.0),
+        ),
+        (
+            "aspect-ratio:1;width:30px;height:100px;max-height:min-content",
+            (30.0, 30.0),
+        ),
+        (
+            "aspect-ratio:2;width:300px;height:10px;min-height:max-content",
+            (300.0, 150.0),
+        ),
+        // The natural ratio stays where the box states none.
+        (
+            "width:30px;height:100px;min-width:min-content",
+            (40.0, 100.0),
+        ),
+        (
+            "width:30px;height:100px;max-width:min-content",
+            (30.0, 100.0),
+        ),
+        // Padding takes part in the ratio of a `border-box` box only.
+        (
+            "aspect-ratio:2;padding-right:40px;padding-bottom:10px;\
+             box-sizing:border-box;min-height:min-content",
+            (60.0, 30.0),
+        ),
+        (
+            "aspect-ratio:2;padding-right:40px;padding-bottom:10px;min-height:min-content",
+            (60.0, 20.0),
+        ),
+        (
+            "padding-right:40px;padding-bottom:10px;box-sizing:border-box;height:100px;\
+             max-width:min-content",
+            (76.0, 100.0),
+        ),
+        (
+            "aspect-ratio:2;padding-right:40px;padding-bottom:10px;box-sizing:border-box;\
+             width:10px;height:100px;min-width:min-content",
+            (200.0, 100.0),
+        ),
+        (
+            "aspect-ratio:2;padding-right:40px;padding-bottom:10px;width:60px;height:100px;\
+             min-width:min-content",
+            (240.0, 110.0),
+        ),
     ] {
         let css = format!("display:block;{css}");
         let (doc, image) = natural_20x50_image(&css);

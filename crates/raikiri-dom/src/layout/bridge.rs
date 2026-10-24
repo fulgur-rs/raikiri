@@ -320,6 +320,8 @@ fn apply_computed_to_style_in_session_inner(
         let mut settled = Settled::of(cv);
         settled.has_aspect_ratio = preferred_ratio.is_some();
         doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
+        doc.nodes[idx].keyword_aspect_ratio =
+            natural_ratio.and_then(|natural| cv.aspect_ratio.preferred(Some(natural)));
         doc.nodes[idx].ratio_in_content_box = cv.aspect_ratio.relates_content_box(natural_ratio);
         if natural_ratio.is_some() {
             doc.record_pass_override(
