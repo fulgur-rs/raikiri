@@ -308,8 +308,17 @@ inline test は分離する、新規ファイルは最初から `tests.rs` で�
 
 ## Taffy の型は所有型の名前で書く (`scripts/taffy-boundary-lint.sh`)
 
-Taffy の名前を書いてよいのは adapter (`crates/raikiri-dom/src/layout/taffy_adapter/`) と view crate
-(`crates/raikiri-layout-style/`) だけにする方向で移行している。名前は 2 種類あり、状況が違う。
+Taffy の名前を書いてよいのは次の 2 か所だけ。移行は終わっていて、それ以外の場所は Taffy の名前をひとつも持たない。
+
+- adapter (`crates/raikiri-dom/src/layout/taffy_adapter.rs` と `taffy_adapter/`)。所有型と Taffy の型の変換、
+  Taffy の tree trait の実装、Taffy のアルゴリズムの呼び出しを持つ。
+- view crate の射影 (`crates/raikiri-layout-style/src/projection.rs` と `projection/`)。`ComputedValues` から作った
+  used value を Taffy の style trait に写す。自前の値から Taffy の値への変換、Taffy が trait 越しに読む grid の
+  トラック列、flex / grid の Taffy 型の getter、長さを保持する Taffy の compact な形もここにある。
+
+どちらのテストも、その module の中 (`.../projection/tests/`、`.../taffy_adapter/tests/`) に置く。
+
+名前は 2 種類あり、どちらにも自前の名前がある。
 
 **出力側** (layout の結果・幾何・layout 呼び出しの型: `taffy::Layout`、`Size`、`Point`、`Line`、`Rect`、
 `LayoutInput`、`LayoutOutput`、`AvailableSpace`、`NodeId` など) は、Taffy ではなく raikiri が所有する名前で書く。
@@ -322,24 +331,31 @@ Taffy の名前を書いてよいのは adapter (`crates/raikiri-dom/src/layout/
 - layout の呼び出し規約 (`LayoutInput` など): raikiri-dom 内部の `crate::layout::protocol`。
   raikiri-dom の外には出さない。
 
-**入力側** (style trait の `CoreStyle` 系、長さの `Dimension` / `LengthPercentage(Auto)` / `CompactLength`、
-keyword の `Display` / `Position` / `Direction` / `Clear` / `Float` など、`Style`、float と grid の語彙、tree trait、
-アルゴリズムを呼ぶ関数) には、自前の名前がまだ無い。raikiri が style を組み立てて Taffy に渡す側の語彙で、
-置き換え先はこれから作る。それまでは**新しい箇所に Taffy の名前を足さず**、値は style view や既存の helper を
-通して読む。置き換えが入るたびに、その分だけ baseline を下げる。
+**入力側** (style の長さ・keyword・スナップショットと、その読み取り) も、raikiri が所有する名前で書く。
+
+- keyword と小さな値型 (`Display` / `Position` / `Direction` / `Clear` / `Float` / `AlignItems` など)、長さ
+  (`Dimension` / `LengthPercentage` / `LengthPercentageAuto`、`calc()` への参照 `CalcRef`)、長さの解決
+  (`MaybeResolve` / `ResolveOrZero`): `raikiri_layout_style::values`。長さは Taffy の compact な形を私有で
+  持つ newtype なので、射影に渡すときの変換は無償。
+- box の style のスナップショット (Taffy の `Style`): `raikiri_layout_style::BoxStyle`。
+- style の読み取り (Taffy の `CoreStyle` 系の trait を使わない): `LayoutStyleView` の同名の getter。
+  flex / grid は語彙を鏡写しにせず、目的別の accessor (`flex_direction_is_row()`、`has_grid_placement()` など)
+  で読む。float の配置状態は adapter の wrapper に包む。
+- style trait (`CoreStyle` 系)、flex / grid の語彙、tree trait、アルゴリズムを呼ぶ関数は Taffy 自身のインターフェース
+  なので自前の名前を持たず、射影か adapter の中で閉じる。足りない値があれば、Taffy の型を外に出さず、
+  `LayoutStyleView` に自前の型の accessor を足す。
 
 `scripts/taffy-boundary-lint.sh` (`scripts/gate.sh` と CI の両方に組み込み済み) は、`taffy::`
-から始まる path でこれらの名前 (出力側と入力側の両方) を書いた箇所を数え、ファイル単位の件数を
-`scripts/lib/taffy_boundary_baseline.txt` に固定する。件数は**減らす方向にだけ**動かせる。
-増やすと失敗し、減らしたのに baseline を下げ忘れても失敗する (下げ忘れた余白に後から追加が
-隠れるため)。下げるには `scripts/taffy-boundary-lint.sh --update-baseline` (件数が pin を超えているファイルが
-1 つでもあれば拒否する。ファイルを移した場合は baseline の path を手で書き換える)。
+から始まる path でこれらの名前 (出力側と入力側の両方) を書いた箇所を数える。射影と adapter 以外では
+**1 件でもあれば失敗する**。pin の `scripts/lib/taffy_boundary_baseline.txt` は空で、行を足してはいけない
+(空であることは `scripts/lib/test_taffy_boundary_lint.py` が確かめる)。
 
 - `Size` / `Rect` / `Point` / `Line` は幾何にも style 入力 (`Size<Dimension>` など) にも使われ、path だけでは
   区別できないので、型引数によらず数える。`use taffy::Size as StyleSize;` のような別名の定義も 1 件として数える
   (別名の使用箇所は数えない。別名を差し替えれば使用箇所がまとめて替わるため)。
-- 同一行の `// taffy-boundary-lint:ignore: <理由>` marker は、置き換え先が無いこと以外の理由
-  (Taffy の tree trait が Taffy の `NodeId` を取る、など) がある例外にだけ使う。`Size` / `Rect` / `Point` /
-  `Line` には効かない (style 入力の別名を件数から外せないようにするため)。
+- 同一行の `// taffy-boundary-lint:ignore: <理由>` marker は、置き換え先が無いこと以外の理由がある例外にだけ使う。
+  Taffy の tree trait が Taffy の `NodeId` を取る、テストが射影の Taffy 型の getter を読む・session の tree trait を
+  呼ぶ、ツールが Taffy 型の getter を dump する、など。`Size` / `Rect` / `Point` / `Line` には効かない
+  (style 入力の別名を件数から外せないようにするため)。marker を付けた箇所は実行のたびに件数が表示される。
 - 数える範囲、名前の一覧と区分、例外にする path の一覧 (`scripts/lib/taffy_boundary_exempt.txt`) は
-  `scripts/lib/taffy_boundary_lint.py` の docstring を参照。baseline を上げて回帰を通さないこと。
+  `scripts/lib/taffy_boundary_lint.py` の docstring を参照。exempt に path を足して回帰を通さないこと。

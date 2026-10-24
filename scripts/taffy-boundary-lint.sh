@@ -4,12 +4,11 @@
 # Wraps scripts/lib/taffy_boundary_lint.py — see that module's docstring for
 # what is counted, how the per-file baseline works, and how to mark a real
 # exception. In short: Taffy's types may only be named by the adapter and the
-# view crate. Layout results, geometry, the layout call types and the node
-# handle have owned names that must be used everywhere else; the style input
-# (traits, lengths, keywords, Style, float and grid state) has none yet, so no
-# new uses may be added. While the migration to owned names is under way, the
-# number of remaining uses is pinned per file in
-# scripts/lib/taffy_boundary_baseline.txt and may only go down.
+# projection module of the view crate. Layout results, geometry, the layout call
+# types and the node handle have owned names, and so do the style input
+# (lengths, keywords, the style snapshot) and its resolution helpers; they must
+# be used everywhere else. The number of uses outside those two places is pinned
+# in scripts/lib/taffy_boundary_baseline.txt, and it is zero.
 #
 # Usage:
 #   scripts/taffy-boundary-lint.sh                    # gate mode: PASS/FAIL
