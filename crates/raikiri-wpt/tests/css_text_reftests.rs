@@ -621,7 +621,7 @@ fn text_encoding_unpinned_diagnostics() {
         ("css/css-text/text-encoding/shaping-no-join-002.html", 0),
         ("css/css-text/text-encoding/shaping-no-join-003.html", 0),
         ("css/css-text/text-encoding/shaping-tatweel-001.html", 0),
-        ("css/css-text/text-encoding/shaping-tatweel-002.html", 5212),
+        ("css/css-text/text-encoding/shaping-tatweel-002.html", 4796),
         ("css/css-text/text-encoding/shaping-tatweel-003.html", 0),
     ];
     let mut config = ReftestConfig::default();

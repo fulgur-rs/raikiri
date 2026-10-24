@@ -129,6 +129,7 @@ pub(crate) fn bundled_collection(
         limits,
         FontOptions {
             system_fonts,
+            whole_pixel_metrics: true,
             ..FontOptions::default()
         },
     );
@@ -174,6 +175,7 @@ pub(crate) fn wpt_collection(
         limits,
         FontOptions {
             system_fonts: false,
+            whole_pixel_metrics: true,
             ..FontOptions::default()
         },
     );
