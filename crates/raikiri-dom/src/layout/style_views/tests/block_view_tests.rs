@@ -1,5 +1,8 @@
 use super::*;
 use raikiri_layout_geometry::Point;
+use raikiri_layout_style::values::{
+    AlignContent, AlignSelf, Clear, Dimension, Float, LengthPercentage, Position,
+};
 
 #[test]
 fn block_view_prepares_normal_source_and_text_keys() {
@@ -10,10 +13,7 @@ fn block_view_prepares_normal_source_and_text_keys() {
     for idx in tree.nodes.layout_keys() {
         assert!(tree.has_style_view(idx), "missing all-key view for {idx}");
     }
-    assert_eq!(
-        tree.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
-    );
+    assert_eq!(tree.style_view(child).size().width, Dimension::length(31.0));
     assert_eq!(tree.style_view(text).size(), LayoutStyle::default().size());
 }
 
@@ -81,7 +81,7 @@ fn block_view_reads_each_new_role_and_bridge_alignment() {
                 assert!(!query.is_containing_block().fixed);
                 assert_eq!(BI::align_self(&projected), None);
                 assert_eq!(BI::justify_self(&projected), None);
-                assert_eq!(BI::align_content(&projected), taffy::AlignContent::NORMAL);
+                assert_eq!(BI::align_content(&projected), AlignContent::NORMAL);
                 let _ = (
                     BI::is_table(&projected),
                     BI::float(&projected),
@@ -104,12 +104,9 @@ fn block_view_reads_each_new_role_and_bridge_alignment() {
             }
             _ => unreachable!(),
         }
-        assert_eq!(query.bridge_align_self(), Some(taffy::AlignSelf::CENTER));
-        assert_eq!(query.bridge_justify_self(), Some(taffy::AlignSelf::END));
-        assert_eq!(
-            query.bridge_align_content(),
-            taffy::AlignContent::SPACE_BETWEEN
-        );
+        assert_eq!(query.bridge_align_self(), Some(AlignSelf::CENTER));
+        assert_eq!(query.bridge_justify_self(), Some(AlignSelf::END));
+        assert_eq!(query.bridge_align_content(), AlignContent::SPACE_BETWEEN);
     }
 }
 
@@ -124,11 +121,11 @@ fn block_view_basis_is_role_specific_and_scopes_restore() {
         .block_item_percent_bases
         .push((parent, Some(100.0)));
     let item = tree.query_style(child, ReadRole::BlockItem);
-    assert_eq!(item.padding().top, taffy::LengthPercentage::length(10.0));
-    assert_eq!(item.padding().left, taffy::LengthPercentage::percent(0.1));
+    assert_eq!(item.padding().top, LengthPercentage::length(10.0));
+    assert_eq!(item.padding().left, LengthPercentage::percent(0.1));
     assert_eq!(
         tree.query_style(child, ReadRole::Oof).padding().top,
-        taffy::LengthPercentage::percent(0.1)
+        LengthPercentage::percent(0.1)
     );
     let key = tree.nodes.box_key(child).unwrap();
     tree.with_overrides(
@@ -145,19 +142,19 @@ fn block_view_basis_is_role_specific_and_scopes_restore() {
             ] {
                 assert_eq!(
                     tree.query_style(child, role).size().width,
-                    taffy::Dimension::length(19.0)
+                    Dimension::length(19.0)
                 );
             }
         },
     );
     assert_eq!(
         tree.query_style(child, ReadRole::BlockItem).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
     tree.context.block_item_percent_bases.pop();
     assert_eq!(
         tree.query_style(child, ReadRole::BlockItem).padding().top,
-        taffy::LengthPercentage::percent(0.1)
+        LengthPercentage::percent(0.1)
     );
 }
 
@@ -177,7 +174,7 @@ fn block_view_oof_table_identity_is_independent() {
         );
         assert_eq!(
             tree.query_style(child, ReadRole::BlockItem).size().width,
-            taffy::Dimension::length(31.0)
+            Dimension::length(31.0)
         );
     }
     let (mut doc, cascade, child, _) = fixture_with_styles("display:block", "width:31px");
@@ -199,21 +196,21 @@ fn block_view_materialized_input_reads_real_getters_and_bridge_alignment() {
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
     let container = style_input::container(&tree, parent);
-    assert_eq!(container.size.width, taffy::Dimension::length(100.0));
+    assert_eq!(container.size.width, Dimension::length(100.0));
     let input = style_input::child(&tree, child);
     assert_eq!(
         input.size,
         StyleSize {
-            width: taffy::Dimension::length(31.0),
-            height: taffy::Dimension::length(7.0)
+            width: Dimension::length(31.0),
+            height: Dimension::length(7.0)
         }
     );
     assert!(input.is_block());
-    assert_eq!(input.align_self, Some(taffy::AlignSelf::CENTER));
-    assert_eq!(input.justify_self, Some(taffy::AlignSelf::END));
-    assert_eq!(input.align_content, taffy::AlignContent::SPACE_BETWEEN);
-    assert_eq!(input.float, taffy::Float::Left);
-    assert_eq!(input.clear, taffy::Clear::Both);
+    assert_eq!(input.align_self, Some(AlignSelf::CENTER));
+    assert_eq!(input.justify_self, Some(AlignSelf::END));
+    assert_eq!(input.align_content, AlignContent::SPACE_BETWEEN);
+    assert_eq!(input.float, Float::Left);
+    assert_eq!(input.clear, Clear::Both);
 }
 
 #[test]
@@ -230,7 +227,7 @@ fn block_view_basis_excludes_absolute_items_other_parents_and_unknown_widths() {
             tree.context.block_item_percent_bases.push((owner, basis));
             assert_eq!(
                 tree.query_style(child, ReadRole::BlockItem).padding().top,
-                taffy::LengthPercentage::percent(0.1)
+                LengthPercentage::percent(0.1)
             );
             tree.context.block_item_percent_bases.pop();
         }
@@ -238,9 +235,9 @@ fn block_view_basis_excludes_absolute_items_other_parents_and_unknown_widths() {
             .block_item_percent_bases
             .push((parent, Some(100.0)));
         let expected = if position == "absolute" {
-            taffy::LengthPercentage::percent(0.1)
+            LengthPercentage::percent(0.1)
         } else {
-            taffy::LengthPercentage::length(10.0)
+            LengthPercentage::length(10.0)
         };
         assert_eq!(
             tree.query_style(child, ReadRole::BlockItem).padding().top,
@@ -323,10 +320,7 @@ fn native_sticky_flex_grid_insets_keep_the_bridge_position() {
             ReadRole::BlockItem,
             ReadRole::Oof,
         ] {
-            assert_eq!(
-                tree.query_style(child, role).position(),
-                taffy::Position::Sticky
-            );
+            assert_eq!(tree.query_style(child, role).position(), Position::Sticky);
         }
     }
 }

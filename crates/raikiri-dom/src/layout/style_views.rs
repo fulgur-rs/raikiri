@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use super::box_style_data::{BoxStyleData, LayoutBase, PreparedStamp, recipes};
 use crate::{Document, layout::context::LayoutSession, node::arena::BoxKey};
+use raikiri_layout_style::values::{
+    Dimension, Direction as LayoutDirection, LengthPercentageAuto, Position,
+};
 use raikiri_layout_style::{
     LayoutStyleView, OwnedPropertyOverride, PercentBasis, PreparedData, PreparedStyle,
     StyleMetadata, ViewContext,
@@ -60,23 +63,23 @@ impl BlockAxis<'_> {
         }
     }
 
-    pub(crate) fn height(&self) -> taffy::Dimension {
+    pub(crate) fn height(&self) -> Dimension {
         self.read(|facts| facts.height, |style| style.size().height)
     }
 
-    pub(crate) fn min_height(&self) -> taffy::LengthPercentageAuto {
+    pub(crate) fn min_height(&self) -> LengthPercentageAuto {
         self.read(|facts| facts.min_height, |style| style.min_size().height)
     }
 
-    pub(crate) fn max_height(&self) -> taffy::LengthPercentageAuto {
+    pub(crate) fn max_height(&self) -> LengthPercentageAuto {
         self.read(|facts| facts.max_height, |style| style.max_size().height)
     }
 
-    pub(crate) fn margin_top(&self) -> taffy::LengthPercentageAuto {
+    pub(crate) fn margin_top(&self) -> LengthPercentageAuto {
         self.read(|facts| facts.margin.top, |style| style.margin().top)
     }
 
-    pub(crate) fn margin_bottom(&self) -> taffy::LengthPercentageAuto {
+    pub(crate) fn margin_bottom(&self) -> LengthPercentageAuto {
         self.read(|facts| facts.margin.bottom, |style| style.margin().bottom)
     }
 
@@ -180,7 +183,7 @@ impl<'a> StyleViews<'a> {
                 doc.box_style_data.publish_recipe(
                     key,
                     recipes::neutral_source(recipes::BoxFacts {
-                        direction: taffy::Direction::Ltr,
+                        direction: LayoutDirection::Ltr,
                         metadata: metadata::node_metadata(
                             &doc.nodes[idx],
                             raikiri_layout_style::StyleFlags::EMPTY,
@@ -458,7 +461,7 @@ impl LayoutSession<'_> {
                 .block_item_percent_bases
                 .last()
                 .filter(|&&(container, _)| {
-                    self.nodes[idx].taffy_position() != taffy::Position::Absolute
+                    self.nodes[idx].layout_position() != Position::Absolute
                         && self.taffy_parent_of(idx) == Some(container)
                 })
                 .and_then(|&(_, basis)| basis);

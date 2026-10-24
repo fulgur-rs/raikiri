@@ -8,13 +8,28 @@ pub(crate) use scoped_override_tests::with_setup_inspector;
 
 use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession};
 use crate::{Document, LayoutStyle};
-use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+use raikiri_layout_style::{AlignedCalc, LengthProperty, OwnedPropertyOverride};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, build_rule_tree, cascade};
 
 use raikiri_layout_style::TaffyStyle;
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{
+    AlignItems, BoxGenerationMode, ContainingBlockClaims, Dimension, Direction as LayoutDirection,
+    Display, LengthExt, LengthIdentity, LengthPercentage, Overflow, Position, StyleSize,
+};
+use std::sync::Arc;
 use taffy::CoreStyle;
 use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the Taffy tree traits of the session take Taffy's id
+
+/// The identity a calc length has when it points at `owner`.
+fn calc_identity(owner: &Arc<AlignedCalc>) -> LengthIdentity {
+    Dimension::calc(Arc::as_ptr(owner).cast()).identity()
+}
+
+/// The payload in `owners` that the calc `length` points at.
+fn owner_of(owners: &[Arc<AlignedCalc>], length: impl LengthExt) -> Option<&Arc<AlignedCalc>> {
+    let identity = length.identity();
+    owners.iter().find(|owner| calc_identity(owner) == identity)
+}
 
 pub(crate) fn fixture() -> (Document, raikiri_style::CascadeResult, usize, usize) {
     fixture_with_styles("display:flex", "width:31px;height:7px")
@@ -60,42 +75,27 @@ fn nested_override_restore_on_error_and_unwind() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let result: Result<(), ()> = session.with_style_overrides(child, width(11.0), |tree| {
-        assert_eq!(
-            tree.style_view(child).size().width,
-            taffy::Dimension::length(11.0)
-        );
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
         let error: Result<(), ()> = tree.with_style_overrides(child, width(17.0), |tree| {
-            assert_eq!(
-                tree.style_view(child).size().width,
-                taffy::Dimension::length(17.0)
-            );
+            assert_eq!(tree.style_view(child).size().width, Dimension::length(17.0));
             Err(())
         });
         assert!(error.is_err());
-        assert_eq!(
-            tree.style_view(child).size().width,
-            taffy::Dimension::length(11.0)
-        );
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             tree.with_style_overrides(child, width(23.0), |tree| {
-                assert_eq!(
-                    tree.style_view(child).size().width,
-                    taffy::Dimension::length(23.0)
-                );
+                assert_eq!(tree.style_view(child).size().width, Dimension::length(23.0));
                 panic!("scope unwind");
             });
         }));
         assert!(panic.is_err());
-        assert_eq!(
-            tree.style_view(child).size().width,
-            taffy::Dimension::length(11.0)
-        );
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
         Ok(())
     });
     assert!(result.is_ok());
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
     assert_eq!(session.style_override_depth(child), 0);
 }
@@ -126,7 +126,7 @@ fn known_image_fallback_dimensions_are_prepared_as_sparse_overrides() {
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(100.0)
+        Dimension::length(100.0)
     );
 }
 
@@ -147,7 +147,6 @@ fn prepared_containment_clears_the_natural_ratio_override() {
 
 #[test]
 fn prepared_grid_alignment_preserves_the_semantic_bridge_overrides() {
-    use taffy::AlignItems;
     for (container, child_css, align_self, justify_self, aspect_ratio) in [
         // A definite size keeps `stretch` from reaching the item.
         (
@@ -246,7 +245,7 @@ fn contents_recipe_keeps_only_explicit_inherited_direction() {
     assert_neutral_getters(
         tree.style_view(child),
         &LayoutStyle {
-            direction: taffy::Direction::Rtl,
+            direction: LayoutDirection::Rtl,
             ..LayoutStyle::default()
         },
     );
@@ -263,10 +262,10 @@ fn initial_containing_block_recipe_uses_page_dimensions() {
     assert_neutral_getters(
         tree.style_view(icb),
         &LayoutStyle {
-            display: taffy::Display::Block,
+            display: Display::Block,
             size: StyleSize {
-                width: taffy::Dimension::length(123.0),
-                height: taffy::Dimension::length(456.0),
+                width: Dimension::length(123.0),
+                height: Dimension::length(456.0),
             },
             ..LayoutStyle::default()
         },
@@ -310,8 +309,8 @@ fn anonymous_table_and_cell_recipes_inherit_only_selected_facts() {
         assert_neutral_getters(
             tree.style_view(idx),
             &LayoutStyle {
-                display: taffy::Display::Block,
-                direction: taffy::Direction::Rtl,
+                display: Display::Block,
+                direction: LayoutDirection::Rtl,
                 ..LayoutStyle::default()
             },
         );
@@ -329,11 +328,11 @@ fn resolved_edge_scopes_do_not_resolve_percentages_twice_and_restore_on_unwind()
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
     let original = tree.style_view(child).padding();
     let result: Result<(), ()> = tree.with_resolved_edges(child, 200.0, true, |tree| {
-        let expected = taffy::LengthPercentage::length(25.0);
+        let expected = LengthPercentage::length(25.0);
         assert_eq!(tree.style_view(child).padding().left, expected);
         assert_eq!(
             tree.style_view(child).padding().bottom,
-            taffy::LengthPercentage::length(7.0)
+            LengthPercentage::length(7.0)
         );
         tree.with_resolved_edges(child, 300.0, false, |tree| {
             assert_eq!(tree.style_view(child).padding().left, expected);
@@ -348,16 +347,8 @@ fn resolved_edge_scopes_do_not_resolve_percentages_twice_and_restore_on_unwind()
     assert!(panic.is_err());
     assert_eq!(tree.style_view(child).padding(), original);
     // The restored padding is the authored expression again: 10% + 5px.
-    let pointer = tree
-        .style_view(child)
-        .padding()
-        .left
-        .into_raw()
-        .calc_value();
-    assert_eq!(
-        raikiri_layout_style::values::CalcHandle::resolve(pointer, 100.0),
-        15.0
-    );
+    let left = tree.style_view(child).padding().left;
+    assert_eq!(left.resolve(Some(100.0)), Some(15.0));
 }
 
 #[test]
@@ -367,9 +358,9 @@ fn viewport_overflow_is_recorded_when_the_body_write_happens() {
     let body = doc.nodes[child].parent.unwrap();
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-    assert_eq!(tree.style_view(body).overflow().x, taffy::Overflow::Hidden);
+    assert_eq!(tree.style_view(body).overflow().x, Overflow::Hidden);
     tree.propagate_viewport_overflow(&cascade, body);
-    assert_eq!(tree.style_view(body).overflow().x, taffy::Overflow::Visible);
+    assert_eq!(tree.style_view(body).overflow().x, Overflow::Visible);
     assert_eq!(
         cascade.computed[body].overflow.x,
         raikiri_style::property::OverflowValue::Hidden
@@ -379,20 +370,16 @@ fn viewport_overflow_is_recorded_when_the_body_write_happens() {
 #[test]
 fn fixed_and_vertical_direction_are_physical() {
     for (css, position, direction) in [
-        (
-            "position:fixed",
-            taffy::Position::Absolute,
-            taffy::Direction::Ltr,
-        ),
+        ("position:fixed", Position::Absolute, LayoutDirection::Ltr),
         (
             "writing-mode:sideways-lr;direction:ltr",
-            taffy::Position::Static,
-            taffy::Direction::Rtl,
+            Position::Static,
+            LayoutDirection::Rtl,
         ),
         (
             "writing-mode:vertical-rl;text-orientation:upright;direction:rtl",
-            taffy::Position::Static,
-            taffy::Direction::Ltr,
+            Position::Static,
+            LayoutDirection::Ltr,
         ),
     ] {
         let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", css);
@@ -438,7 +425,7 @@ fn source_metadata_covers_hidden_logical_and_keyword_policies() {
         apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
         prepare_for_inspection(&mut tree);
         assert_eq!(
-            tree.style_view(child).box_generation_mode() == taffy::BoxGenerationMode::None,
+            tree.style_view(child).box_generation_mode() == BoxGenerationMode::None,
             child_css == "display:none",
             "{child_css}"
         );
@@ -508,7 +495,7 @@ fn pass_override_publication_invalidates_parent_before_child_compute() {
     assert!(!session.layout_cache_context.can_store(key));
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(55.0)
+        Dimension::length(55.0)
     );
     session.layout_cache_context.leave(frame);
 }
@@ -537,7 +524,7 @@ fn repeated_pass_overrides_replace_the_property() {
     assert_eq!(session.box_style_data.get(key).unwrap().pass.len(), 1);
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(55.0)
+        Dimension::length(55.0)
     );
 }
 
@@ -596,7 +583,7 @@ fn fallback_image_replaced_policy_uses_normalized_keyword_sizes() {
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(100.0)
+        Dimension::length(100.0)
     );
     assert!(session.style_view(child).is_replaced());
 }
@@ -651,7 +638,7 @@ fn flex_grid_queries_preserve_legacy_claims_and_prepared_facts() {
                         .is_containing_block()
                         .fixed
                 );
-                let expected = taffy::ContainingBlockClaims {
+                let expected = ContainingBlockClaims {
                     absolute: position == "relative",
                     fixed: false,
                 };

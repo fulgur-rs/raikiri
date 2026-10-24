@@ -1,5 +1,6 @@
 use super::*;
 use crate::node::arena::BoxKey;
+use raikiri_layout_style::values::{BoxGenerationMode, Dimension, LengthExt, LengthPercentage};
 
 #[test]
 fn all_key_preparation_includes_hidden_oof_flattened_and_unrelated_boxes() {
@@ -17,15 +18,15 @@ fn all_key_preparation_includes_hidden_oof_flattened_and_unrelated_boxes() {
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     assert_eq!(
         session.style_view(oof).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
     assert_eq!(
         session.style_view(hidden).size().width,
-        taffy::Dimension::length(17.0)
+        Dimension::length(17.0)
     );
     assert_eq!(
         session.style_view(flattened).size().width,
-        taffy::Dimension::length(23.0)
+        Dimension::length(23.0)
     );
     assert!(
         session
@@ -65,7 +66,7 @@ fn pass_overrides_survive_reparenting_between_block_and_flex() {
     session.with_cache_frame(child, raikiri_layout_style::ViewContext::default(), |_| {});
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(47.0)
+        Dimension::length(47.0)
     );
     session.document.append_child(body, child).unwrap();
     session.with_cache_frame(child, raikiri_layout_style::ViewContext::default(), |_| {});
@@ -83,7 +84,7 @@ fn pass_overrides_survive_reparenting_between_block_and_flex() {
     session.with_cache_frame(child, raikiri_layout_style::ViewContext::default(), |_| {});
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(53.0)
+        Dimension::length(53.0)
     );
 }
 
@@ -101,18 +102,18 @@ fn prepared_edge_scopes_keep_both_query_restoration_and_epoch_notifications() {
     session.with_resolved_edges(child, 200.0, false, |session| {
         assert_eq!(
             session.style_view(child).padding().left,
-            taffy::LengthPercentage::length(20.0)
+            LengthPercentage::length(20.0)
         );
     });
     assert_eq!(
         session.style_view(child).padding().left,
-        taffy::LengthPercentage::percent(0.1)
+        LengthPercentage::percent(0.1)
     );
     assert_ne!(session.layout_cache_context.epoch(), epoch);
     assert!(session.has_style_view(child));
     assert_eq!(
         session.style_view(child).padding().left,
-        taffy::LengthPercentage::percent(0.1)
+        LengthPercentage::percent(0.1)
     );
 }
 
@@ -132,12 +133,12 @@ fn preparation_rejects_live_override_tokens_without_losing_them() {
     assert!(result.is_err());
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(99.0)
+        Dimension::length(99.0)
     );
     session.restore_style_overrides(token);
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
 }
 
@@ -150,7 +151,7 @@ fn publication_refreshes_metadata_before_parent_cache_lookup() {
     session.with_cache_frame(child, raikiri_layout_style::ViewContext::default(), |_| {});
     assert_eq!(
         session.style_view(child).box_generation_mode(),
-        taffy::BoxGenerationMode::Normal
+        BoxGenerationMode::Normal
     );
     assert!(!session.document.layout_dirty);
     session
@@ -164,7 +165,7 @@ fn publication_refreshes_metadata_before_parent_cache_lookup() {
         |session| {
             assert_eq!(
                 session.style_view(child).box_generation_mode(),
-                taffy::BoxGenerationMode::None
+                BoxGenerationMode::None
             );
         },
     );
@@ -189,14 +190,14 @@ fn publication_is_prepared_before_size_scope_target_selection() {
         |session| {
             assert_eq!(
                 session.style_view(child).size().width,
-                taffy::Dimension::length(99.0)
+                Dimension::length(99.0)
             );
         },
     );
     session.restore_recorded_style_overrides(marker);
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
 }
 
@@ -213,14 +214,14 @@ fn publication_is_prepared_before_resolved_edge_basis_is_installed() {
             |session| {
                 assert_eq!(
                     session.style_view(child).padding().left,
-                    taffy::LengthPercentage::length(20.0)
+                    LengthPercentage::length(20.0)
                 );
             },
         );
     });
     assert_eq!(
         session.style_view(child).padding().left,
-        taffy::LengthPercentage::percent(0.1)
+        LengthPercentage::percent(0.1)
     );
 }
 
@@ -281,13 +282,13 @@ fn metadata_publication_inside_edge_scope_is_rejected_and_restored() {
         assert!(result.is_err());
         assert_eq!(
             session.style_view(child).padding().left,
-            taffy::LengthPercentage::length(20.0)
+            LengthPercentage::length(20.0)
         );
     });
     session.with_cache_frame(child, raikiri_layout_style::ViewContext::default(), |_| {});
     assert_eq!(
         session.style_view(child).padding().left,
-        taffy::LengthPercentage::percent(0.1)
+        LengthPercentage::percent(0.1)
     );
 }
 
@@ -331,7 +332,7 @@ fn batch_defers_queries_until_pending_values_and_icb_are_ready() {
     assert!(!session.document.layout_dirty);
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(47.0)
+        Dimension::length(47.0)
     );
 }
 
@@ -343,20 +344,8 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
             fixture_with_styles("display:flex", "width:calc(50% + 10px)");
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-        let handle = session
-            .style_view(child)
-            .size()
-            .width
-            .into_raw()
-            .calc_value();
-        let owner = Arc::downgrade(
-            session
-                .box_style_data
-                .calc_values
-                .iter()
-                .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
-                .unwrap(),
-        );
+        let width = session.style_view(child).size().width;
+        let owner = Arc::downgrade(owner_of(&session.box_style_data.calc_values, width).unwrap());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             session.with_style_preparation_batch(|session| {
                 apply_computed_to_style_in_session(session, &cascade).unwrap();
@@ -388,16 +377,8 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
             .unwrap();
         assert!(owner.upgrade().is_none());
         assert_eq!(
-            crate::layout::dispatch::resolve_calc(
-                session
-                    .style_view(child)
-                    .size()
-                    .width
-                    .into_raw()
-                    .calc_value(),
-                100.0
-            ),
-            60.0
+            session.style_view(child).size().width.resolve(Some(100.0)),
+            Some(60.0)
         );
     }
 }

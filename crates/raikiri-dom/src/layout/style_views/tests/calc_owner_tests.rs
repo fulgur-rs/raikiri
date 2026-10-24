@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_layout_style::values::{Dimension, LengthExt, LengthIdentity};
 use raikiri_layout_style::{
     AlignedCalc, LayoutStyleView, PreparedStyle, StyleMetadata, ViewContext,
 };
@@ -35,10 +36,12 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
             }
             let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
             let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-            let handle = if non_negative {
-                view.size().width.into_raw().calc_value()
-            } else {
-                view.margin().left.into_raw().calc_value()
+            let resolve_view = |basis: f32| {
+                if non_negative {
+                    view.size().width.resolve(Some(basis))
+                } else {
+                    view.margin().left.resolve(Some(basis))
+                }
             };
             for basis in [0.0, 1.0, 37.0, 100.0, f32::INFINITY, f32::NAN] {
                 let expected = owners[0].resolve(basis);
@@ -46,12 +49,9 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
                     crate::layout::dispatch::resolve_calc(legacy, basis),
                     expected
                 );
+                assert_eq!(resolve_view(basis), Some(expected));
                 assert_eq!(
-                    crate::layout::dispatch::resolve_calc(handle, basis),
-                    expected
-                );
-                assert_eq!(
-                    raikiri_layout_style::values::CalcHandle::resolve(handle, basis),
+                    raikiri_layout_style::values::CalcHandle::resolve(legacy, basis),
                     expected
                 );
             }
@@ -63,27 +63,17 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
 fn session_drop_preserves_retained_handle_owner() {
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex", "width:calc(50% + 10px);height:7px");
-    let (handle, owner) = {
+    let (width, owner) = {
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-        let handle = session
-            .style_view(child)
-            .size()
-            .width
-            .into_raw()
-            .calc_value();
-        let owner = session
-            .document
-            .box_style_data
-            .calc_values
-            .iter()
-            .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+        let width = session.style_view(child).size().width;
+        let owner = owner_of(&session.document.box_style_data.calc_values, width)
             .map(Arc::downgrade)
             .expect("the document retains the exact payload before the handle escapes");
-        (handle, owner)
+        (width, owner)
     };
     let retained = owner.upgrade().expect("the document outlives its session");
-    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 60.0);
+    assert_eq!(width.resolve(Some(100.0)), Some(60.0));
     drop(retained);
     drop(doc);
     assert!(owner.upgrade().is_none());
@@ -100,18 +90,8 @@ fn rebridge_failure_keeps_old_handle_alive() {
     doc.set_font_collection_with_limits(ahem_fonts(), Limits::default());
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-    let handle = session
-        .style_view(child)
-        .size()
-        .width
-        .into_raw()
-        .calc_value();
-    let owner = session
-        .document
-        .box_style_data
-        .calc_values
-        .iter()
-        .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+    let width = session.style_view(child).size().width;
+    let owner = owner_of(&session.document.box_style_data.calc_values, width)
         .map(Arc::downgrade)
         .expect("the published view has a document owner");
     session.document.set_font_collection_with_limits(
@@ -126,7 +106,7 @@ fn rebridge_failure_keeps_old_handle_alive() {
     let retained = owner
         .upgrade()
         .expect("a failed bridge retains the old owner prefix");
-    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 60.0);
+    assert_eq!(width.resolve(Some(100.0)), Some(60.0));
     drop(retained);
     session
         .document
@@ -138,7 +118,7 @@ fn rebridge_failure_keeps_old_handle_alive() {
 #[test]
 fn popped_override_handle_outlives_the_session() {
     let (mut doc, cascade, child, _) = fixture();
-    let (handle, owner) = {
+    let (width, owner) = {
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
         let token = session.push_style_overrides(
@@ -155,31 +135,21 @@ fn popped_override_handle_outlives_the_session() {
                 .unwrap(),
             ],
         );
-        let handle = session
-            .style_view(child)
-            .size()
-            .width
-            .into_raw()
-            .calc_value();
-        let owner = session
-            .document
-            .box_style_data
-            .calc_values
-            .iter()
-            .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+        let width = session.style_view(child).size().width;
+        let owner = owner_of(&session.document.box_style_data.calc_values, width)
             .map(Arc::downgrade)
             .expect("the document retains a scoped payload before publication");
         session.restore_style_overrides(token);
         assert_eq!(
             session.style_view(child).size().width,
-            taffy::Dimension::length(31.0)
+            Dimension::length(31.0)
         );
-        (handle, owner)
+        (width, owner)
     };
     let retained = owner
         .upgrade()
         .expect("popping the scope does not invalidate an escaped handle");
-    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 22.0);
+    assert_eq!(width.resolve(Some(100.0)), Some(22.0));
     drop(retained);
     drop(doc);
     assert!(owner.upgrade().is_none());
@@ -191,18 +161,8 @@ fn rebridge_unwind_keeps_old_handle_alive() {
         fixture_with_styles("display:flex", "width:calc(50% + 10px);height:7px");
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-    let handle = session
-        .style_view(child)
-        .size()
-        .width
-        .into_raw()
-        .calc_value();
-    let owner = session
-        .document
-        .box_style_data
-        .calc_values
-        .iter()
-        .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+    let width = session.style_view(child).size().width;
+    let owner = owner_of(&session.document.box_style_data.calc_values, width)
         .map(Arc::downgrade)
         .unwrap();
     session.nodes[child].children.push(usize::MAX - 1);
@@ -213,7 +173,7 @@ fn rebridge_unwind_keeps_old_handle_alive() {
     let retained = owner
         .upgrade()
         .expect("unwinding leaves the old prefix retained");
-    assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 60.0);
+    assert_eq!(width.resolve(Some(100.0)), Some(60.0));
     drop(retained);
     session.nodes[child].children.pop();
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
@@ -224,7 +184,7 @@ fn rebridge_unwind_keeps_old_handle_alive() {
 fn pass_and_recorded_scope_calcs_get_document_owners() {
     for scoped in [false, true] {
         let (mut doc, cascade, child, _) = fixture();
-        let (handle, owner) = {
+        let (width, owner) = {
             let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
             apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
             let value = L::Calc(CalcLengthPercentage {
@@ -242,25 +202,15 @@ fn pass_and_recorded_scope_calcs_get_document_owners() {
                 );
                 None
             };
-            let handle = session
-                .style_view(child)
-                .size()
-                .width
-                .into_raw()
-                .calc_value();
-            let owner = session
-                .document
-                .box_style_data
-                .calc_values
-                .iter()
-                .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+            let width = session.style_view(child).size().width;
+            let owner = owner_of(&session.document.box_style_data.calc_values, width)
                 .map(Arc::downgrade)
                 .expect("each override writer retains its payload before publication");
             session.restore_style_overrides(token);
-            (handle, owner)
+            (width, owner)
         };
         let retained = owner.upgrade().unwrap();
-        assert_eq!(crate::layout::dispatch::resolve_calc(handle, 100.0), 22.0);
+        assert_eq!(width.resolve(Some(100.0)), Some(22.0));
         drop(retained);
         drop(doc);
         assert!(owner.upgrade().is_none());
@@ -310,16 +260,18 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
         let pool = &session.box_style_data.calc_values;
-        let check = |handle: *const (), expression: CalcLengthPercentage, range| {
-            let first = pool
-                .iter()
+        let first_owner = |expression: CalcLengthPercentage, range| {
+            pool.iter()
                 .find(|owner| {
                     let value = owner.expression();
                     value.px.to_bits() == expression.px.to_bits()
                         && value.percent.to_bits() == expression.percent.to_bits()
                         && owner.non_negative() == range
                 })
-                .unwrap();
+                .unwrap()
+        };
+        let check = |handle: *const (), expression: CalcLengthPercentage, range| {
+            let first = first_owner(expression, range);
             assert_eq!(handle, Arc::as_ptr(first).cast::<()>());
             assert!(
                 session
@@ -329,10 +281,15 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
                     .any(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
             );
         };
+        let check_length = |identity: LengthIdentity, expression: CalcLengthPercentage, range| {
+            let first = first_owner(expression, range);
+            assert_eq!(identity, calc_identity(first));
+            assert!(pool.iter().any(|owner| calc_identity(owner) == identity));
+        };
         let view = session.style_view(child);
-        check(view.size().width.into_raw().calc_value(), a, true);
-        check(view.size().height.into_raw().calc_value(), b, true);
-        check(view.margin().left.into_raw().calc_value(), a, false);
+        check_length(view.size().width.identity(), a, true);
+        check_length(view.size().height.identity(), b, true);
+        check_length(view.margin().left.identity(), a, false);
         for list in [TrackList::TemplateColumns, TrackList::TemplateRows] {
             let tracks = track_calcs(&view, list);
             // Two single tracks, then the two tracks of the repetition.

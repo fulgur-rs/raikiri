@@ -12,8 +12,7 @@
 //! to be swapped in the document's own styles: the styles of the boxes stay on
 //! physical axes while pagination runs.
 
-use raikiri_layout_style::values::StyleRect;
-use taffy::{Dimension, LengthPercentageAuto};
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, StyleRect};
 
 /// The style of a box along the axis pagination breaks the flow on.
 ///

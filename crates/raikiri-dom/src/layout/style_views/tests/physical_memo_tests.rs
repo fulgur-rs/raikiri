@@ -1,5 +1,6 @@
 use super::*;
 use raikiri_layout_style::LayoutStyleView;
+use raikiri_layout_style::values::Dimension;
 use std::cell::Cell;
 
 /// A reduction that only carries the box's size, counting its runs.
@@ -29,7 +30,7 @@ fn a_reduced_physical_style_is_read_once_until_the_next_preparation() {
     let second = tree.reduced_physical_style(child, reduce);
     assert_eq!(reads.get(), 1);
     assert_eq!(first.size, second.size);
-    assert_eq!(first.size.width, taffy::Dimension::length(31.0));
+    assert_eq!(first.size.width, Dimension::length(31.0));
 
     tree.prepare_style_views();
     tree.reduced_physical_style(child, reduce);
@@ -48,7 +49,7 @@ fn a_scoped_override_hides_the_kept_reduction_only_while_it_applies() {
 
     tree.with_overrides(vec![(key, width_override(11.0))], |tree| {
         let inside = tree.reduced_physical_style(child, reduce);
-        assert_eq!(inside.size.width, taffy::Dimension::length(11.0));
+        assert_eq!(inside.size.width, Dimension::length(11.0));
         assert_eq!(reads.get(), 2);
     });
 
@@ -57,7 +58,7 @@ fn a_scoped_override_hides_the_kept_reduction_only_while_it_applies() {
     // kept again from the first read on.
     let after = tree.reduced_physical_style(child, reduce);
     let reads_after = reads.get();
-    assert_eq!(after.size.width, taffy::Dimension::length(31.0));
+    assert_eq!(after.size.width, Dimension::length(31.0));
     tree.reduced_physical_style(child, reduce);
     assert_eq!(reads.get(), reads_after);
 }
@@ -74,7 +75,7 @@ fn a_pass_override_ends_the_kept_reduction() {
     tree.record_pass_override(child, width_override(50.0));
     for _ in 0..2 {
         let overridden = tree.reduced_physical_style(child, reduce);
-        assert_eq!(overridden.size.width, taffy::Dimension::length(50.0));
+        assert_eq!(overridden.size.width, Dimension::length(50.0));
     }
     assert_eq!(reads.get(), 3);
 }

@@ -19,20 +19,13 @@
 # `// taffy-boundary-lint:ignore: <reason>`.
 
 1 crates/raikiri-dom/src/document/tests/taffy_filter_tests.rs
-2 crates/raikiri-dom/src/layout/block_axis_style.rs
-11 crates/raikiri-dom/src/layout/box_style_data/recipes.rs
-24 crates/raikiri-dom/src/layout/box_style_data/recipes/tests.rs
-1 crates/raikiri-dom/src/layout/bridge.rs
-12 crates/raikiri-dom/src/layout/bridge/settled.rs
-17 crates/raikiri-dom/src/layout/bridge/tests.rs
-2 crates/raikiri-dom/src/layout/bridge/tests/content_limit_bridge_tests.rs
+5 crates/raikiri-dom/src/layout/box_style_data/recipes/tests.rs
 2 crates/raikiri-dom/src/layout/cache_context/tests/restore_tests.rs
-4 crates/raikiri-dom/src/layout/compact_length.rs
 2 crates/raikiri-dom/src/layout/dispatch/block_flow.rs
 2 crates/raikiri-dom/src/layout/dispatch/block_flow/children.rs
 1 crates/raikiri-dom/src/layout/dispatch/block_flow/sizing.rs
 1 crates/raikiri-dom/src/layout/initial_containing_block.rs
-12 crates/raikiri-dom/src/layout/mod.rs
+11 crates/raikiri-dom/src/layout/mod.rs
 9 crates/raikiri-dom/src/layout/multicol.rs
 5 crates/raikiri-dom/src/layout/multicol/break_flow.rs
 3 crates/raikiri-dom/src/layout/multicol/constrained_chain.rs
@@ -46,16 +39,8 @@
 1 crates/raikiri-dom/src/layout/relative.rs
 4 crates/raikiri-dom/src/layout/sanitize/tests.rs
 1 crates/raikiri-dom/src/layout/spanner_wrappers.rs
-7 crates/raikiri-dom/src/layout/style_views.rs
-1 crates/raikiri-dom/src/layout/style_views/frozen.rs
-3 crates/raikiri-dom/src/layout/style_views/metadata.rs
-37 crates/raikiri-dom/src/layout/style_views/tests.rs
-28 crates/raikiri-dom/src/layout/style_views/tests/block_view_tests.rs
-1 crates/raikiri-dom/src/layout/style_views/tests/calc_owner_tests.rs
-7 crates/raikiri-dom/src/layout/style_views/tests/foundation_tests.rs
-4 crates/raikiri-dom/src/layout/style_views/tests/physical_memo_tests.rs
-19 crates/raikiri-dom/src/layout/style_views/tests/preparation_tests.rs
-12 crates/raikiri-dom/src/layout/style_views/tests/scoped_override_tests.rs
+8 crates/raikiri-dom/src/layout/style_views/tests.rs
+4 crates/raikiri-dom/src/layout/style_views/tests/block_view_tests.rs
 21 crates/raikiri-dom/src/layout/table.rs
 1 crates/raikiri-dom/src/layout/table/row_moves.rs
 3 crates/raikiri-dom/src/layout/table/tests.rs

@@ -1,4 +1,5 @@
 use raikiri_layout_style::StyleMetadata;
+use raikiri_layout_style::values::{Direction as LayoutDirection, Display};
 use raikiri_style::property::{BorderCollapseValue, CaptionSideValue, Direction, DisplayValue};
 use raikiri_style::{ComputedBorderSpacing, ComputedLengthPercentageOrAuto as L, ComputedValues};
 use std::sync::{Arc, OnceLock};
@@ -15,18 +16,18 @@ pub(crate) enum RecipeKind {
 
 #[derive(Clone, Copy)]
 pub(crate) struct BoxFacts {
-    pub(crate) direction: taffy::Direction,
+    pub(crate) direction: LayoutDirection,
     pub(crate) metadata: StyleMetadata,
 }
 
 impl BoxFacts {
-    pub(crate) fn for_node(node: &crate::node::Node, direction: taffy::Direction) -> Self {
-        let mut flags = if node.taffy_display() == taffy::Display::Block {
+    pub(crate) fn for_node(node: &crate::node::Node, direction: LayoutDirection) -> Self {
+        let mut flags = if node.layout_display() == Display::Block {
             raikiri_layout_style::StyleFlags::BLOCK
         } else {
             raikiri_layout_style::StyleFlags::EMPTY
         };
-        if node.taffy_display() == taffy::Display::None {
+        if node.layout_display() == Display::None {
             flags = flags.union(raikiri_layout_style::StyleFlags::HIDDEN);
         }
         Self {
@@ -104,8 +105,8 @@ fn values(facts: BoxFacts, display: DisplayValue) -> ComputedValues {
     let mut values = neutral_initial_values();
     values.display = display;
     values.direction = match facts.direction {
-        taffy::Direction::Ltr => Direction::Ltr,
-        taffy::Direction::Rtl => Direction::Rtl,
+        LayoutDirection::Ltr => Direction::Ltr,
+        LayoutDirection::Rtl => Direction::Rtl,
     };
     values
 }
@@ -169,8 +170,8 @@ pub(crate) fn neutral_source(facts: BoxFacts) -> Recipe {
     static LTR: OnceLock<Arc<ComputedValues>> = OnceLock::new();
     static RTL: OnceLock<Arc<ComputedValues>> = OnceLock::new();
     let shared = match facts.direction {
-        taffy::Direction::Ltr => &LTR,
-        taffy::Direction::Rtl => &RTL,
+        LayoutDirection::Ltr => &LTR,
+        LayoutDirection::Rtl => &RTL,
     };
     Recipe {
         kind: RecipeKind::NeutralSource,
@@ -269,7 +270,7 @@ pub(crate) fn refresh(
                 "changed source identity requires source bridge"
             );
             let facts = BoxFacts {
-                direction: taffy::Direction::Ltr,
+                direction: LayoutDirection::Ltr,
                 metadata: crate::layout::style_views::metadata::node_metadata(
                     &document.nodes[index],
                     raikiri_layout_style::StyleFlags::EMPTY,
@@ -279,8 +280,8 @@ pub(crate) fn refresh(
         }
     };
     let direction = match facts.direction {
-        taffy::Direction::Ltr => Direction::Ltr,
-        taffy::Direction::Rtl => Direction::Rtl,
+        LayoutDirection::Ltr => Direction::Ltr,
+        LayoutDirection::Rtl => Direction::Rtl,
     };
     let same_table = table_facts.is_none_or(|facts| {
         values.border_collapse == facts.border_collapse

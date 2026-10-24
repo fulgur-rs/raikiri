@@ -7,7 +7,9 @@
 //! stored for a box to be asked about.
 
 use super::*;
-use taffy::AlignItemsKeyword;
+use raikiri_layout_style::values::{
+    AlignItems, AlignItemsKeyword, AlignmentSafety, Display, Position,
+};
 
 /// The facts of a box that a correction replaces before another reads them.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -15,9 +17,9 @@ pub(super) struct Settled {
     /// Whether the box has a preferred aspect ratio.
     pub(super) has_aspect_ratio: bool,
     /// The `align-self` of the box, `None` for `auto`.
-    pub(super) align_self: Option<TaffyAlignItems>,
+    pub(super) align_self: Option<AlignItems>,
     /// The `justify-self` of the box, `None` for `auto`.
-    pub(super) justify_self: Option<TaffyAlignItems>,
+    pub(super) justify_self: Option<AlignItems>,
 }
 
 impl Settled {
@@ -39,23 +41,23 @@ impl Settled {
 /// baseline` falls back to `safe self-end` and `baseline` to `safe start` (CSS
 /// Box Alignment 3 §9.1). Taffy places `baseline` at the start edge already,
 /// but keeps the default overflow alignment.
-fn own_alignment(cv: &ComputedValues, value: AlignSelfValue) -> Option<TaffyAlignItems> {
+fn own_alignment(cv: &ComputedValues, value: AlignSelfValue) -> Option<AlignItems> {
     let abspos = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
     match value {
         AlignSelfValue::Value(SelfAlignmentValue::LastBaseline) if abspos => {
-            Some(TaffyAlignItems::SAFE_SELF_END)
+            Some(AlignItems::SAFE_SELF_END)
         }
-        AlignSelfValue::Value(SelfAlignmentValue::Baseline) if abspos => Some(TaffyAlignItems {
+        AlignSelfValue::Value(SelfAlignmentValue::Baseline) if abspos => Some(AlignItems {
             keyword: AlignItemsKeyword::Baseline,
-            safety: taffy::AlignmentSafety::Safe,
+            safety: AlignmentSafety::Safe,
         }),
         value => self_alignment_or_auto_to_taffy(value),
     }
 }
 
 /// The `align-items` or `justify-items` of a container with these values.
-fn container_alignment(value: SelfAlignmentValue) -> TaffyAlignItems {
-    self_alignment_to_taffy(value).unwrap_or(TaffyAlignItems::NORMAL)
+fn container_alignment(value: SelfAlignmentValue) -> AlignItems {
+    self_alignment_to_taffy(value).unwrap_or(AlignItems::NORMAL)
 }
 
 /// The alignments that replace the `auto` ones of an absolutely positioned
@@ -71,7 +73,7 @@ fn container_alignment(value: SelfAlignmentValue) -> TaffyAlignItems {
 pub(super) fn inherited_last_baseline(
     cv: &ComputedValues,
     parent: &ComputedValues,
-) -> (Option<TaffyAlignItems>, Option<TaffyAlignItems>) {
+) -> (Option<AlignItems>, Option<AlignItems>) {
     let mut overrides = (None, None);
     if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
         return overrides;
@@ -84,14 +86,14 @@ pub(super) fn inherited_last_baseline(
         && auto(cv.top)
         && auto(cv.bottom)
     {
-        overrides.0 = Some(TaffyAlignItems::SAFE_SELF_END);
+        overrides.0 = Some(AlignItems::SAFE_SELF_END);
     }
     if matches!(cv.justify_self, AlignSelfValue::Auto)
         && parent.justify_items == SelfAlignmentValue::LastBaseline
         && auto(cv.left)
         && auto(cv.right)
     {
-        overrides.1 = Some(TaffyAlignItems::SAFE_SELF_END);
+        overrides.1 = Some(AlignItems::SAFE_SELF_END);
     }
     overrides
 }
@@ -105,9 +107,9 @@ fn container_laid_out_as<'a>(
     doc: &LayoutSession<'_>,
     cascade: &'a CascadeResult,
     parent: usize,
-    display: taffy::Display,
+    display: Display,
 ) -> Option<&'a ComputedValues> {
-    (parent < doc.nodes.len() && doc.nodes[parent].taffy_display() == display)
+    (parent < doc.nodes.len() && doc.nodes[parent].layout_display() == display)
         .then(|| &cascade.computed[parent])
 }
 
@@ -155,7 +157,7 @@ pub(super) fn is_stretched_by_keyword_width(
         return false;
     }
     let Some((parent, container)) = doc.taffy_parent_of(idx).and_then(|parent| {
-        container_laid_out_as(doc, cascade, parent, taffy::Display::Flex)
+        container_laid_out_as(doc, cascade, parent, Display::Flex)
             .map(|container| (parent, container))
     }) else {
         return false;
@@ -181,15 +183,13 @@ pub(super) fn is_stretched_by_replaced_keyword_width_in_grid(
 ) -> bool {
     replaced_keyword_width(doc.document, cascade, idx)
         && doc.taffy_parent_of(idx).is_some_and(|parent| {
-            container_laid_out_as(doc, cascade, parent, taffy::Display::Grid).is_some_and(
-                |container| {
-                    settled[idx]
-                        .justify_self
-                        .unwrap_or_else(|| container_alignment(container.justify_items))
-                        .keyword
-                        == AlignItemsKeyword::Stretch
-                },
-            )
+            container_laid_out_as(doc, cascade, parent, Display::Grid).is_some_and(|container| {
+                settled[idx]
+                    .justify_self
+                    .unwrap_or_else(|| container_alignment(container.justify_items))
+                    .keyword
+                    == AlignItemsKeyword::Stretch
+            })
         })
 }
 
@@ -211,26 +211,26 @@ pub(super) fn unstretched_keyword_height_alignment(
     cascade: &CascadeResult,
     idx: usize,
     settled: &[Settled],
-) -> Option<TaffyAlignItems> {
+) -> Option<AlignItems> {
     let values = &cascade.computed[idx];
     if values.height_keyword.is_none()
         || matches!(values.display, DisplayValue::Contents | DisplayValue::None)
     {
         return None;
     }
-    if doc.nodes[idx].taffy_position() == taffy::Position::Absolute {
+    if doc.nodes[idx].layout_position() == Position::Absolute {
         return None;
     }
     let parent = doc.taffy_parent_of(idx)?;
     let (container, fallback) =
-        if let Some(grid) = container_laid_out_as(doc, cascade, parent, taffy::Display::Grid) {
-            (grid, TaffyAlignItems::START)
+        if let Some(grid) = container_laid_out_as(doc, cascade, parent, Display::Grid) {
+            (grid, AlignItems::START)
         } else {
-            let flex = container_laid_out_as(doc, cascade, parent, taffy::Display::Flex)?;
+            let flex = container_laid_out_as(doc, cascade, parent, Display::Flex)?;
             if !flex_cross_axis_is_vertical(cascade, parent, flex) {
                 return None;
             }
-            (flex, TaffyAlignItems::FLEX_START)
+            (flex, AlignItems::FLEX_START)
         };
     matches!(
         settled[idx]
@@ -262,18 +262,16 @@ pub(super) fn stretches_on_both_grid_axes(
     cv: &ComputedValues,
     settled: &[Settled],
 ) -> bool {
-    if !settled[idx].has_aspect_ratio
-        || doc.nodes[idx].taffy_position() == taffy::Position::Absolute
-    {
+    if !settled[idx].has_aspect_ratio || doc.nodes[idx].layout_position() == Position::Absolute {
         return false;
     }
     let Some(parent) = doc.taffy_parent_of(idx) else {
         return false;
     };
-    let Some(container) = container_laid_out_as(doc, cascade, parent, taffy::Display::Grid) else {
+    let Some(container) = container_laid_out_as(doc, cascade, parent, Display::Grid) else {
         return false;
     };
-    let stretch = |value: Option<TaffyAlignItems>, fallback: SelfAlignmentValue| {
+    let stretch = |value: Option<AlignItems>, fallback: SelfAlignmentValue| {
         value
             .unwrap_or_else(|| container_alignment(fallback))
             .keyword
@@ -326,8 +324,8 @@ fn has_only_fixed_rows(
         .child_ids(protocol::NodeId::from(grid))
         .map(usize::from)
         .filter(|&child| {
-            doc.nodes[child].taffy_display() != taffy::Display::None
-                && doc.nodes[child].taffy_position() != taffy::Position::Absolute
+            doc.nodes[child].layout_display() != Display::None
+                && doc.nodes[child].layout_position() != Position::Absolute
         });
     let lone_auto_placed_item = match (items.next(), items.next()) {
         (Some(item), None) => {
