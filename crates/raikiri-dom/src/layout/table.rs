@@ -2880,6 +2880,10 @@ fn resolve_row_heights(
     spacing: (f32, f32),
 ) -> Result<Vec<f32>, raikiri_traits::LayoutError> {
     let mut row_heights = vec![0.0f32; grid.rows.len()];
+    // A row is fixed when its own `height`, or the `height` of a cell confined
+    // to it, is a length; the rows without one stretch first when a spanning
+    // cell is taller than the rows it spans.
+    let mut fixed_rows = vec![false; grid.rows.len()];
     // Authored `height` on rows floors the row (CSS 2.1 §17.5.3; lengths
     // only — percentages need the table height, indefinite at this stage).
     // Anonymous-row markers reuse the first cell's id; flooring by a cell's
@@ -2892,38 +2896,51 @@ fn resolve_row_heights(
         let h = doc.table_style(row_id).size().height;
         if let Some(height) = resolve_dimension(h, None) {
             row_heights[r] = f32_max_compat(row_heights[r], height);
+            fixed_rows[r] = true;
         }
     }
+    // Cells that span rows only grow the rows once every single-row cell has
+    // had its say: what they lack depends on the heights of the rows below.
+    let mut spanning = Vec::new();
     for cell in &mut grid.cells {
         let columns = cell_column_range(cell, column_widths.len())?;
         let cell_width = spanned_size(&column_widths[columns], spacing.0);
         let h = measure_cell(doc, cell, cell_width);
-        let rs = cell.row_span as usize;
-        if rs == 1 {
-            row_heights[cell.row as usize] = f32_max_compat(row_heights[cell.row as usize], h);
-        } else {
-            let start = cell.row as usize;
-            let end_row = (start + rs).min(row_heights.len());
-            let cnt = (end_row - start) as f32;
-            if cnt > 0.0 {
-                // The first spanned row must contain the cell's baseline
-                // before the remaining span height is distributed (CSS 2.2 17.5.3).
-                if cell_baseline_aligned(
-                    doc.ifc_layout_node(cell.node_id)
-                        .expect("table cell layout view")
-                        .table_vertical_align,
-                ) {
-                    row_heights[start] = row_heights[start].max(cell.baseline);
-                }
-                // Need to ensure span can accommodate h: if sum current < h, distribute deficit
-                let cur = spanned_size(&row_heights[start..end_row], spacing.1);
-                if h > cur {
-                    let add = (h - cur) / cnt;
-                    for slot in row_heights[start..end_row].iter_mut() {
-                        *slot += add;
-                    }
-                }
+        let start = cell.row as usize;
+        let end_row = (start + cell.row_span as usize).min(row_heights.len());
+        if end_row - start > 1 {
+            // The first spanned row must contain the cell's baseline
+            // before the remaining span height is distributed (CSS 2.2 17.5.3).
+            if cell_baseline_aligned(
+                doc.ifc_layout_node(cell.node_id)
+                    .expect("table cell layout view")
+                    .table_vertical_align,
+            ) {
+                row_heights[start] = row_heights[start].max(cell.baseline);
             }
+            spanning.push((start..end_row, h));
+        } else {
+            row_heights[start] = f32_max_compat(row_heights[start], h);
+            fixed_rows[start] |=
+                resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
+        }
+    }
+    // Shorter spans settle before the longer ones that cross them, and
+    // among those ending in the same row the one starting last goes first.
+    spanning.sort_by_key(|(rows, _)| (rows.end, std::cmp::Reverse(rows.start)));
+    let mut starts_span = vec![false; grid.rows.len()];
+    for (rows, _) in &spanning {
+        starts_span[rows.start] = true;
+    }
+    for (rows, h) in spanning {
+        let current = spanned_size(&row_heights[rows.clone()], spacing.1);
+        if h > current {
+            share_span_deficit(
+                &mut row_heights[rows.clone()],
+                &fixed_rows[rows.clone()],
+                &starts_span[rows],
+                h - current,
+            );
         }
     }
     // Baseline-aligned cells can require more height than any individual
@@ -2953,6 +2970,51 @@ fn resolve_row_heights(
         }
     }
     Ok(row_heights)
+}
+
+/// Shares the height a spanning cell lacks among the `heights` of the rows it
+/// spans, the way browsers do (CSS Tables 3 leaves it to the user agent):
+///
+/// 1. Equally among the later rows where another spanning cell starts
+///    (`starts_span`), when there are any.
+/// 2. Otherwise in proportion to the heights of the rows without an authored
+///    height (`fixed`), when those have any height at all.
+/// 3. Otherwise in proportion to the heights of all the rows.
+/// 4. Otherwise to the last row.
+fn share_span_deficit(heights: &mut [f32], fixed: &[bool], starts_span: &[bool], deficit: f32) {
+    let anchored = starts_span.iter().skip(1).filter(|&&starts| starts).count();
+    if anchored > 0 {
+        let share = deficit / anchored as f32;
+        for (height, &starts) in heights.iter_mut().zip(starts_span).skip(1) {
+            if starts {
+                *height += share;
+            }
+        }
+        return;
+    }
+    let free_total: f32 = heights
+        .iter()
+        .zip(fixed)
+        .filter(|&(_, &fixed)| !fixed)
+        .map(|(&height, _)| height)
+        .sum();
+    // The rows without an authored height weigh first; when none of them has
+    // any height, every row weighs by its own.
+    let weigh_fixed = free_total <= 0.0;
+    let total = if weigh_fixed {
+        heights.iter().sum()
+    } else {
+        free_total
+    };
+    if total > 0.0 {
+        for (height, &fixed) in heights.iter_mut().zip(fixed) {
+            if weigh_fixed || !fixed {
+                *height += deficit * *height / total;
+            }
+        }
+    } else if let Some(last) = heights.last_mut() {
+        *last += deficit;
+    }
 }
 
 /// Lay `cell` out at `cell_width` with no definite height, and record what the
@@ -3021,7 +3083,6 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
             scrollable_overflow_rect: output.scrollable_overflow_rect,
         },
     );
-    // Distribute rowspan height across spanned rows (simple: equally)
     cell.natural_height = output.size.height;
     let style = doc.table_style(cell.node_id);
     let padding = style.padding().resolve_or_zero(Some(cell_width));

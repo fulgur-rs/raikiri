@@ -216,8 +216,10 @@ fn fifth_review_nonempty_rowspan_prevents_empty_rows_from_collapsing() {
     let computed = layout(&mut doc);
     assert_eq!(doc.get_node(table).unwrap().layout().size.height, 35.0);
     assert_eq!(doc.get_node(span).unwrap().layout().size.height, 25.0);
-    assert_eq!(doc.get_node(empty).unwrap().layout().location.y, 20.0);
-    assert_eq!(doc.get_node(empty).unwrap().layout().size.height, 10.0);
+    // Both rows are empty, so the last one takes the 20px the spanning cell
+    // needs beyond the spacing, as in browsers.
+    assert_eq!(doc.get_node(empty).unwrap().layout().location.y, 10.0);
+    assert_eq!(doc.get_node(empty).unwrap().layout().size.height, 20.0);
     let (mut reference, body) = document();
     element(
         &mut reference,
