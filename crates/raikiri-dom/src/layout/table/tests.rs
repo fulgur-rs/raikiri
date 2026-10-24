@@ -523,7 +523,65 @@ fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
     })
     .unwrap();
     assert_eq!(grid.cells[0].baseline, 32.0);
-    assert_eq!(heights, [36.0, 4.0]);
+    // The baseline floors the first row at 32, and that height is what the
+    // remaining 8 follow into; with the second row empty it takes none.
+    assert_eq!(heights, [40.0, 0.0]);
+}
+
+#[test]
+fn a_spanning_cells_missing_height_goes_where_the_rule_for_the_spanned_rows_says() {
+    // (heights, fixed, starts_span, deficit, expected). `starts_span` and
+    // `fixed` stand for the rows the spanning cell crosses; the first entry of
+    // `starts_span` is the cell's own row and never counts.
+    type Case<'a> = (&'a [f32], &'a [bool], &'a [bool], f32, &'a [f32]);
+    let cases: &[Case<'_>] = &[
+        // Equally among the later rows where another span starts, whatever
+        // their heights or authored heights.
+        (
+            &[10.0, 0.0, 30.0],
+            &[false, false, true],
+            &[true, true, true],
+            60.0,
+            &[10.0, 30.0, 60.0],
+        ),
+        // In proportion to the rows without an authored height.
+        (
+            &[10.0, 20.0, 40.0],
+            &[false, true, false],
+            &[false, false, false],
+            50.0,
+            &[20.0, 20.0, 80.0],
+        ),
+        // The authored rows weigh when the others have no height.
+        (
+            &[0.0, 20.0, 30.0],
+            &[false, true, true],
+            &[false, false, false],
+            50.0,
+            &[0.0, 40.0, 60.0],
+        ),
+        // Every row weighs when all of them are authored.
+        (
+            &[20.0, 30.0],
+            &[true, true],
+            &[false, false],
+            50.0,
+            &[40.0, 60.0],
+        ),
+        // The last row takes it when all the rows are empty.
+        (
+            &[0.0, 0.0, 0.0],
+            &[false, true, false],
+            &[false, false, false],
+            12.0,
+            &[0.0, 0.0, 12.0],
+        ),
+    ];
+    for &(heights, fixed, starts_span, deficit, expected) in cases {
+        let mut heights = heights.to_vec();
+        super::share_span_deficit(&mut heights, fixed, starts_span, deficit);
+        assert_eq!(heights, expected);
+    }
 }
 
 fn oversized_columns_document(explicit_row: bool, columns: bool) -> Document {

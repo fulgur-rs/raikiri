@@ -303,7 +303,9 @@ fn spanning_rows_and_bottom_captions_keep_the_existing_geometry() {
 #[test]
 fn contents_wrapped_cells_keep_the_existing_table_projection() {
     for span in [1, 2] {
-        let body = table(5).replace("<td id='r0'>X</td>", &format!("<td style='display:contents'><div id='r0' rowspan='{span}' style='display:table-cell;width:20px;height:20px'>X</div></td>"));
+        // The baseline-aligned spanning cell makes its first row 8px tall, so
+        // the table needs six rows to run over onto a second page.
+        let body = table(6).replace("<td id='r0'>X</td>", &format!("<td style='display:contents'><div id='r0' rowspan='{span}' style='display:table-cell;width:20px;height:20px'>X</div></td>"));
         let document = lay_out(&body);
         assert_eq!(header_count(&document, 0), 1);
         assert_eq!(header_count(&document, 1), 0);
