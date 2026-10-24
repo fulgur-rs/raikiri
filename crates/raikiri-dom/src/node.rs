@@ -10,6 +10,7 @@ mod box_properties;
 use box_properties::BoxProperties;
 pub(crate) use box_properties::BoxPropertiesRef;
 use raikiri_layout_geometry::{BoxLayout, Size};
+use raikiri_layout_style::values::{Display, Position};
 use smol_str::SmolStr;
 
 use crate::fragment::{MulticolGroup, MulticolStyle};
@@ -668,8 +669,8 @@ impl Node {
         self.box_properties.position()
     }
 
-    /// The backend display derived from this box's CSS identity.
-    pub(crate) fn taffy_display(&self) -> taffy::Display {
+    /// The display layout sees for this box, derived from its CSS identity.
+    pub(crate) fn layout_display(&self) -> Display {
         self.box_properties.taffy_display(
             self.multicol.is_some(),
             self.kind(),
@@ -677,9 +678,19 @@ impl Node {
         )
     }
 
+    /// The position scheme layout sees for this box, derived from its CSS identity.
+    pub(crate) fn layout_position(&self) -> Position {
+        self.box_properties.taffy_position()
+    }
+
+    /// The backend display derived from this box's CSS identity.
+    pub(crate) fn taffy_display(&self) -> taffy::Display {
+        self.layout_display()
+    }
+
     /// The backend position derived from this box's CSS identity.
     pub(crate) fn taffy_position(&self) -> taffy::Position {
-        self.box_properties.taffy_position()
+        self.layout_position()
     }
 
     /// Capture CSS box identity and keep the public backend-style export current.

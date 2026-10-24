@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::test_support::{bridged_display, bridged_style};
-use taffy::Rect as StyleRect;
-use taffy::Size as StyleSize;
+use raikiri_layout_style::values::StyleRect;
+use raikiri_layout_style::values::StyleSize;
 
 #[test]
 fn apply_computed_to_style_bridges_display_to_taffy() {

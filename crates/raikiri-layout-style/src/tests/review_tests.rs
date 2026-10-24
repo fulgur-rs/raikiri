@@ -9,12 +9,17 @@ fn explicit_normal_alignment_does_not_inherit_like_auto() {
     cv.justify_self = cv.align_self;
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+    assert_eq!(v.align_self(), Some(taffy::AlignItems::NORMAL));
+    let projected = TaffyStyle::new(v);
     assert_eq!(
-        FlexboxItemStyle::align_self(&v),
+        FlexboxItemStyle::align_self(&projected),
         Some(taffy::AlignItems::NORMAL)
     );
-    assert_eq!(GI::align_self(&v), Some(taffy::AlignItems::NORMAL));
-    assert_eq!(GI::justify_self(&v), Some(taffy::AlignItems::NORMAL));
+    assert_eq!(GI::align_self(&projected), Some(taffy::AlignItems::NORMAL));
+    assert_eq!(
+        GI::justify_self(&projected),
+        Some(taffy::AlignItems::NORMAL)
+    );
 }
 
 fn side_border(cv: &mut ComputedValues) {

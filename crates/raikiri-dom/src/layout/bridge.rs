@@ -4,11 +4,11 @@ use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::node::{FormattingContext, Node};
 use clamp_warnings::{report_non_finite_rest, report_non_finite_sizes};
+use raikiri_layout_style::values::StyleRect;
+use raikiri_layout_style::values::StyleSize;
 use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 use settled::Settled;
-use taffy::Rect as StyleRect;
-use taffy::Size as StyleSize;
 
 mod clamp_warnings;
 mod settled;

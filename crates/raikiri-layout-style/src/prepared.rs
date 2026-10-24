@@ -147,7 +147,7 @@ impl std::error::Error for PrepareError {}
 ///     PreparedStyle::new(&values, StyleMetadata::default(), &bindings).unwrap()
 /// };
 /// let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-/// let _ = taffy::CoreStyle::size(&view);
+/// let _ = view.size();
 /// ```
 ///
 /// Keeping both owners and bindings alive makes the same query valid.
@@ -162,7 +162,7 @@ impl std::error::Error for PrepareError {}
 /// let bindings = [PreparedCalc { slot: CalcSlot::Property(LengthProperty::Width), payload: &payload }];
 /// let prepared = PreparedStyle::new(&values, StyleMetadata::default(), &bindings).unwrap();
 /// let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-/// let _ = taffy::CoreStyle::size(&view);
+/// let _ = view.size();
 /// ```
 #[derive(Clone, Debug)]
 pub struct PreparedStyle<'a> {

@@ -3,8 +3,8 @@ use crate::layout::{
     context::LayoutSession,
     style_views::{ReadRole, tests::fixture_with_styles},
 };
-use taffy::Size as StyleSize;
-use taffy::{CoreStyle, LengthPercentage};
+use raikiri_layout_style::values::StyleSize;
+use taffy::LengthPercentage;
 
 fn frame(
     tree: &mut LayoutSession<'_>,

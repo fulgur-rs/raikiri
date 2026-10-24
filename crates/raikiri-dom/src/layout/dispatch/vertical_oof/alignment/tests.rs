@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Point as StylePoint;
+use raikiri_layout_style::values::StylePoint;
 
 /// A box in a positioning area that spans 10..110 of its container.
 fn axis_box(

@@ -172,7 +172,7 @@ fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::
         || style.padding() != StyleRect::zero()
         || style.border() != StyleRect::zero()
         || style.inset() != StyleRect::auto()
-        || BlockItemStyle::clear(&style) != taffy::Clear::None
+        || style.clear() != taffy::Clear::None
         || (!atomic(tree, id)
             && (!node.multicol_auto_width
                 || style.min_size() != StyleSize::auto()
@@ -191,7 +191,7 @@ fn avoided(value: BreakBetween) -> bool {
 fn atomic(tree: &LayoutSession<'_>, id: usize) -> bool {
     let node = layout_node(tree, id);
     let style = style_of(tree, id);
-    BlockItemStyle::float(&style).is_floated()
+    style.float().is_floated()
         || (node.display().is_block_flex_or_grid_container()
             || matches!(
                 node.display(),
@@ -311,10 +311,7 @@ fn collect(
     }
     let (float, auto_width) = {
         let style = style_of(tree, id);
-        (
-            BlockItemStyle::float(&style),
-            style.size().width == Dimension::auto(),
-        )
+        (style.float(), style.size().width == Dimension::auto())
     };
     let floated = float.is_floated();
     let known_width = (tree.nodes[id].multicol_auto_width

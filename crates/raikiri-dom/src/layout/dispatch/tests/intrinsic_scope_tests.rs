@@ -9,7 +9,7 @@ use crate::layout::{
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::{CoreStyle, Dimension, FlexboxItemStyle, LengthPercentageAuto as Lpa};
+use taffy::{Dimension, LengthPercentageAuto as Lpa};
 
 #[test]
 fn intrinsic_scope_preserves_unrelated_updates() {

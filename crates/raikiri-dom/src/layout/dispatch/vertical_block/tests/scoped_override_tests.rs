@@ -2,10 +2,10 @@ use super::super::*;
 use crate::layout::style_views::tests::fixture_with_styles;
 use crate::layout::taffy_adapter::IntoEdges;
 use raikiri_layout_geometry::Edges;
+use raikiri_layout_style::values::StyleRect;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::Rect as StyleRect;
-use taffy::{CoreStyle, Dimension, LengthPercentage};
+use taffy::{Dimension, LengthPercentage};
 
 /// The same values on the same sides, as the style vocabulary's rectangle.
 fn style_rect<T>(edges: Edges<T>) -> StyleRect<T> {
@@ -344,7 +344,7 @@ fn border_scope_transposes_opposite_frames() {
                         bottom: LengthPercentage::length(bottom)
                     }
                 );
-                assert_eq!(taffy::FlexboxItemStyle::flex_shrink(&view), 0.5);
+                assert_eq!(view.flex_shrink(), 0.5);
             }
             assert_eq!(
                 tree.context.transposed_blocks[1]
@@ -364,6 +364,6 @@ fn border_scope_transposes_opposite_frames() {
     for (block, original) in tree.context.transposed_blocks.iter().zip(originals) {
         let view = block.child_views[&child].view();
         assert_eq!(view.border(), original);
-        assert_eq!(taffy::FlexboxItemStyle::flex_shrink(&view), 1.0);
+        assert_eq!(view.flex_shrink(), 1.0);
     }
 }

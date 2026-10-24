@@ -4,7 +4,6 @@ use raikiri_layout_style::{
 };
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 use std::sync::Arc;
-use taffy::CoreStyle;
 
 #[test]
 #[allow(unsafe_code)]
@@ -51,9 +50,8 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
                     crate::layout::dispatch::resolve_calc(handle, basis),
                     expected
                 );
-                // SAFETY: The prepared view retains this payload throughout resolution.
                 assert_eq!(
-                    unsafe { raikiri_layout_style::resolve_calc(handle, basis) },
+                    raikiri_layout_style::values::CalcHandle::resolve(handle, basis),
                     expected
                 );
             }
@@ -276,7 +274,7 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
         ComputedGridTrackListComponent as C, ComputedGridTrackRepeat, ComputedGridTrackSize as S,
         property::GridRepeatCount,
     };
-    use taffy::{GenericRepetition, GridContainerStyle};
+    use taffy::GenericRepetition;
     for (a, b) in [
         (0.0, -0.0),
         (f32::from_bits(0x7fc0_0001), f32::from_bits(0x7fc0_0002)),

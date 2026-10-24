@@ -82,7 +82,6 @@ fn synthetic_rebuild_invalidates_parent() {
 
 #[test]
 fn nested_scope_success_error_unwind_restores_values() {
-    use taffy::CoreStyle;
     let (mut doc, cascade, child, _) = crate::layout::style_views::tests::fixture();
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
@@ -155,7 +154,6 @@ fn cold_warm_uncached_outputs_agree() {
 
 #[test]
 fn legacy_session_size_scope_restores_values_after_unwind() {
-    use taffy::CoreStyle;
     let (mut doc, mut cascade, child, _) = crate::layout::style_views::tests::fixture();
     cascade.computed[child].min_width = raikiri_style::ComputedLengthPercentageOrAuto::MaxContent;
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).unwrap();

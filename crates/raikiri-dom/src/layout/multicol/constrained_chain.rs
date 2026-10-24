@@ -31,8 +31,8 @@ pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<u
         let overflow = style.overflow();
         if node.display() != DisplayValue::Block
             || style.direction() != direction
-            || BlockItemStyle::float(&style).is_floated()
-            || BlockItemStyle::clear(&style) != taffy::Clear::None
+            || style.float().is_floated()
+            || style.clear() != taffy::Clear::None
             || !super::insets_are_a_relative_inline_offset(tree, child)
             || style.padding() != StyleRect::zero()
             || style.border() != StyleRect::zero()

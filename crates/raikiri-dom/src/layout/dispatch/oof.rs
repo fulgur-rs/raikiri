@@ -17,7 +17,6 @@ use crate::layout::taffy_adapter::algorithms::{
 };
 use crate::layout::taffy_adapter::{GridInfo, OofBatch, OofSpan};
 use raikiri_layout_geometry::Size;
-use taffy::CoreStyle;
 
 impl LayoutSession<'_> {
     /// Forget the hoisted children recorded for `node` by an earlier layout.

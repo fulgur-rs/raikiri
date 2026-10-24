@@ -17,48 +17,30 @@ impl LayoutStyleView<'_> {
     pub fn bridge_align_content(&self) -> taffy::AlignContent {
         crate::flex::content(self.prepared.values.align_content)
     }
-}
-
-impl taffy::BlockContainerStyle for LayoutStyleView<'_> {
-    fn align_content(&self) -> taffy::AlignContent {
+    /// The content alignment of a container.
+    #[inline]
+    pub fn align_content(&self) -> taffy::AlignContent {
         self.bridge_align_content()
     }
-    fn justify_items(&self) -> taffy::AlignItems {
+    /// The default inline alignment of the items of a container.
+    pub fn justify_items(&self) -> taffy::AlignItems {
         crate::flex::items(self.prepared.values.justify_items)
     }
-}
-
-impl taffy::BlockItemStyle for LayoutStyleView<'_> {
-    fn is_table(&self) -> bool {
+    /// Whether the box is a table in a block formatting context.
+    pub fn is_table(&self) -> bool {
         self.flags().contains(StyleFlags::BLOCK_TABLE)
     }
-    fn float(&self) -> taffy::Float {
+    /// Whether the box is a table when positioned out of flow.
+    pub(crate) fn is_oof_table(&self) -> bool {
+        self.flags().contains(StyleFlags::BLOCK_TABLE)
+            || self.flags().contains(StyleFlags::OOF_TABLE)
+    }
+    /// The physical float side.
+    pub fn float(&self) -> taffy::Float {
         match self.prepared.values.float {
             FloatValue::Left => taffy::Float::Left,
             FloatValue::Right => taffy::Float::Right,
             _ => taffy::Float::None,
         }
-    }
-    fn clear(&self) -> taffy::Clear {
-        LayoutStyleView::clear(self)
-    }
-}
-
-impl taffy::OofItemStyle for LayoutStyleView<'_> {
-    fn align_self(&self) -> Option<taffy::AlignSelf> {
-        self.bridge_align_self()
-    }
-    fn justify_self(&self) -> Option<taffy::AlignSelf> {
-        self.bridge_justify_self()
-    }
-    fn is_table(&self) -> bool {
-        self.flags().contains(StyleFlags::BLOCK_TABLE)
-            || self.flags().contains(StyleFlags::OOF_TABLE)
-    }
-    fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<raikiri_style::SmolStr>> {
-        taffy::GridItemStyle::grid_row(self)
-    }
-    fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<raikiri_style::SmolStr>> {
-        taffy::GridItemStyle::grid_column(self)
     }
 }

@@ -5,7 +5,6 @@ use crate::layout::protocol::{
 use crate::layout::style_views::tests::fixture;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::CoreStyle;
 
 fn assert_unrelated_pass_height_survives(panic_body: bool) {
     use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};

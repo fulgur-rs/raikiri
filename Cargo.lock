@@ -2727,6 +2727,7 @@ version = "0.0.2"
 name = "raikiri-layout-style"
 version = "0.0.2"
 dependencies = [
+ "raikiri-layout-geometry",
  "raikiri-style",
  "taffy 0.15.0",
 ]

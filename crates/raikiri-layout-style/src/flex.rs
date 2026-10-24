@@ -64,7 +64,9 @@ impl LayoutStyleView<'_> {
             _ => None,
         }
     }
-    pub(crate) fn gap_value(&self) -> taffy::Size<taffy::LengthPercentage> {
+    /// The row and column gaps.
+    #[inline]
+    pub fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
         // Grid columns/rows and gaps keep their CSS inline/block semantics.
         taffy::Size {
             width: self
@@ -73,10 +75,9 @@ impl LayoutStyleView<'_> {
             height: self.length(LengthProperty::RowGap).lp(PercentBasis::Taffy),
         }
     }
-}
-impl taffy::FlexboxContainerStyle for LayoutStyleView<'_> {
+    /// The main-axis direction of a flex container.
     #[inline]
-    fn flex_direction(&self) -> taffy::FlexDirection {
+    pub fn flex_direction(&self) -> taffy::FlexDirection {
         match self.prepared.values.flex_direction {
             D::RowReverse => taffy::FlexDirection::RowReverse,
             D::Column => taffy::FlexDirection::Column,
@@ -84,34 +85,28 @@ impl taffy::FlexboxContainerStyle for LayoutStyleView<'_> {
             _ => taffy::FlexDirection::Row,
         }
     }
+    /// Whether and how a flex container wraps its lines.
     #[inline]
-    fn flex_wrap(&self) -> taffy::FlexWrap {
+    pub fn flex_wrap(&self) -> taffy::FlexWrap {
         match self.prepared.values.flex_wrap {
             W::Wrap => taffy::FlexWrap::Wrap,
             W::WrapReverse => taffy::FlexWrap::WrapReverse,
             _ => taffy::FlexWrap::NoWrap,
         }
     }
+    /// How a container distributes free space along its main axis.
     #[inline]
-    fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
-        self.gap_value()
-    }
-    #[inline]
-    fn align_content(&self) -> taffy::AlignContent {
-        content(self.prepared.values.align_content)
-    }
-    #[inline]
-    fn justify_content(&self) -> taffy::JustifyContent {
+    pub fn justify_content(&self) -> taffy::JustifyContent {
         content(self.prepared.values.justify_content)
     }
+    /// The default cross-axis alignment of the items of a container.
     #[inline]
-    fn align_items(&self) -> taffy::AlignItems {
+    pub fn align_items(&self) -> taffy::AlignItems {
         items(self.prepared.values.align_items)
     }
-}
-impl taffy::FlexboxItemStyle for LayoutStyleView<'_> {
+    /// The flex basis of a flex item.
     #[inline]
-    fn flex_basis(&self) -> taffy::Dimension {
+    pub fn flex_basis(&self) -> taffy::Dimension {
         if matches!(self.prepared.values.flex_basis, ComputedFlexBasis::Content) {
             if self
                 .overrides()
@@ -125,12 +120,14 @@ impl taffy::FlexboxItemStyle for LayoutStyleView<'_> {
             self.length(LengthProperty::FlexBasis).dimension()
         }
     }
+    /// The flex grow factor of a flex item.
     #[inline]
-    fn flex_grow(&self) -> f32 {
+    pub fn flex_grow(&self) -> f32 {
         self.prepared.values.flex_grow
     }
+    /// The flex shrink factor of a flex item, including an intrinsic-probe override.
     #[inline]
-    fn flex_shrink(&self) -> f32 {
+    pub fn flex_shrink(&self) -> f32 {
         self.overrides()
             .find_map(|o| match o {
                 OverrideKind::FlexShrink(v) => Some(v),
@@ -138,8 +135,12 @@ impl taffy::FlexboxItemStyle for LayoutStyleView<'_> {
             })
             .unwrap_or(self.prepared.values.flex_shrink)
     }
+    /// The self alignment of a flex item along the axis `align_axis_is_inline` selects.
+    ///
+    /// Grid and out-of-flow items read [`Self::bridge_align_self`] and
+    /// [`Self::bridge_justify_self`] instead.
     #[inline]
-    fn align_self(&self) -> Option<taffy::AlignSelf> {
+    pub fn align_self(&self) -> Option<taffy::AlignSelf> {
         self.self_alignment(self.context.align_axis_is_inline)
     }
 }

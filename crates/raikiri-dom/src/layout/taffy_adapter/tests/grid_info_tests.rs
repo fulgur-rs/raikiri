@@ -9,7 +9,7 @@ use crate::layout::taffy_adapter::algorithms::compute_grid_layout;
 use crate::layout::taffy_adapter::grid_info::GridItemLines;
 use crate::layout::taffy_adapter::{GridInfo, GridRowCounts};
 use crate::layout::test_support::cascaded;
-use taffy::Line as StyleLine;
+use raikiri_layout_style::values::StyleLine;
 use taffy::prelude::TaffyGridLine;
 use taffy::{Direction, GridPlacement};
 

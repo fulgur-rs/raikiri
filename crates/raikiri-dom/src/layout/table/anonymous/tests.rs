@@ -1,6 +1,5 @@
 use super::*;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::CoreStyle;
 
 pub(super) fn record_owner_clone(source: &Node) {
     OWNER_CLONE_ENTRIES.with(|entries| {

@@ -114,16 +114,3 @@ pub struct PreparedCalc<'a> {
     /// Immutable, aligned payload.
     pub payload: &'a AlignedCalc,
 }
-
-/// Resolve a raw Taffy calc handle produced by this crate.
-///
-/// # Safety
-/// The pointer must come from a getter of this crate, refer to a live
-/// AlignedCalc, and its owner must remain alive throughout this call.
-/// A Taffy length is Copy and does not carry that lifetime; retaining the
-/// length after dropping its prepared owner does not permit resolving it.
-#[allow(unsafe_code)]
-pub unsafe fn resolve_calc(pointer: *const (), basis: f32) -> f32 {
-    // SAFETY: The caller guarantees origin, alignment, liveness and immutable access.
-    unsafe { &*pointer.cast::<AlignedCalc>() }.resolve(basis)
-}

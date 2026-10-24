@@ -1,4 +1,5 @@
 use super::*;
+use crate::resolve::CalcHandle;
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 use taffy::{CoreStyle, FlexboxContainerStyle, FlexboxItemStyle};
@@ -9,6 +10,7 @@ mod physical_sizing_tests;
 mod policy_tests;
 mod pr_review_tests;
 mod prepared_data_tests;
+mod resolve_tests;
 mod resolved_length_tests;
 mod review_tests;
 

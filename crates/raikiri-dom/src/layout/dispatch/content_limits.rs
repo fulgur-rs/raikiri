@@ -8,8 +8,8 @@
 //! for the duration of that layout. Every algorithm that clamps the box to its
 //! `min_size` and `max_size` then reads the sizes the keywords stand for.
 
+use raikiri_layout_style::values::StyleSize;
 use std::collections::HashMap;
-use taffy::Size as StyleSize;
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
@@ -23,7 +23,7 @@ use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
-use taffy::{BoxSizing, CoreStyle, Dimension, ExpandedDimension, LengthPercentageAuto};
+use taffy::{BoxSizing, Dimension, ExpandedDimension, LengthPercentageAuto};
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
 /// (`min-content`, `max-content`, `fit-content`, `fit-content(<length-percentage>)`),

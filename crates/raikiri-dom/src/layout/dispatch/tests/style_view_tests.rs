@@ -1,7 +1,6 @@
 use crate::layout::protocol::{LayoutInput, NodeId, RunMode};
 use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
 use raikiri_layout_geometry::Size;
-use taffy::{CoreStyle, FlexboxItemStyle};
 
 #[test]
 fn flex_intrinsic_probe_records_and_restores_its_temporary_limit() {

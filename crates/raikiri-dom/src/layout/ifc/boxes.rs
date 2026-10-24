@@ -30,7 +30,7 @@ use shodo::{
     FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
 };
 use std::collections::{HashMap, HashSet};
-use taffy::{BlockContainerStyle, BlockItemStyle, Clear, CoreStyle, FloatDirection};
+use taffy::{Clear, FloatDirection};
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
 /// laid out as a box of its own and painted by the walk.
@@ -2083,8 +2083,7 @@ fn layout_vertical_block_child(
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size));
     let shares_context = in_the_roots_formatting_context(tree, node)
-        && BlockContainerStyle::align_content(&tree.physical_style(node)).keyword
-            == taffy::AlignContentKeyword::Normal
+        && tree.physical_style(node).align_content().keyword == taffy::AlignContentKeyword::Normal
         && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
             node_direction
                 == matches!(
@@ -2412,7 +2411,6 @@ fn layout_vertical_block_child(
 /// box that is not a scroll container. Flow roots, flex and grid containers
 /// and scroll containers establish formatting contexts of their own.
 fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> bool {
-    use taffy::CoreStyle;
     let style = tree.query_style(node, ReadRole::BlockContainer);
     let overflow = style.overflow();
     tree.nodes[node].taffy_display() == taffy::Display::Block
@@ -3161,7 +3159,7 @@ impl BoxEdges {
 
     /// The edges `style` states, with percentages of `basis` and `auto`
     /// margins as zero.
-    pub(crate) fn of(style: &impl CoreStyle, basis: f32) -> Self {
+    pub(crate) fn of(style: &raikiri_layout_style::LayoutStyleView<'_>, basis: f32) -> Self {
         Self {
             border: style.border().resolve_or_zero(Some(basis), resolve_calc),
             padding: style.padding().resolve_or_zero(Some(basis), resolve_calc),

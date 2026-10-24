@@ -31,7 +31,8 @@ use crate::layout::protocol::{
 };
 use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::{Edges, Line, Size};
-use taffy::{BlockItemStyle, BoxSizing, CoreStyle, Position as TaffyPosition};
+use raikiri_layout_style::values::TaffyPosition;
+use taffy::BoxSizing;
 
 use super::block_flow::compute_block_flow;
 use super::resolve_calc;
@@ -616,7 +617,7 @@ fn orthogonal_child_inputs(
         // to fit.
         if inputs.known_dimensions.width.is_none()
             && style.size().width.is_auto()
-            && BlockItemStyle::float(&style) == taffy::Float::None
+            && style.float() == taffy::Float::None
             && !is_table_box(tree.nodes[idx].display())
         {
             inputs.known_dimensions.width = Some(stretched_width(&style, space, inputs));
@@ -630,7 +631,11 @@ fn orthogonal_child_inputs(
 /// min and max widths. Its margins, which the container places like its
 /// other children's, resolve against the container's inline size, its
 /// physical height.
-fn stretched_width(style: &impl CoreStyle, space: f32, inputs: LayoutInput) -> f32 {
+fn stretched_width(
+    style: &raikiri_layout_style::LayoutStyleView<'_>,
+    space: f32,
+    inputs: LayoutInput,
+) -> f32 {
     let inline_size = inputs.parent_size.height;
     let margin = style
         .margin()

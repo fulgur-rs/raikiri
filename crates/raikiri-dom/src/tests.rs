@@ -749,6 +749,19 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
     );
     assert_eq!(doc.nodes[root].taffy_display(), Display::Flex);
     assert_eq!(doc.nodes[text].taffy_display(), Display::Flex);
+    // The layout-side names report the same display and position.
+    assert_eq!(
+        doc.nodes[root].layout_display(),
+        raikiri_layout_style::values::Display::Flex
+    );
+    assert_eq!(
+        doc.nodes[root].layout_position(),
+        raikiri_layout_style::values::Position::Static
+    );
+    assert_eq!(
+        doc.nodes[root].layout_position(),
+        doc.nodes[root].taffy_position()
+    );
 }
 
 #[test]

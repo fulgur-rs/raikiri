@@ -27,9 +27,10 @@ fn core_claims_and_block_defaults_stay_distinct() {
     });
     assert!(!block.is_containing_block().absolute);
     assert!(!block.is_containing_block().fixed);
-    assert_eq!(BI::align_self(&block), None);
-    assert_eq!(BI::justify_self(&block), None);
-    assert_eq!(BI::align_content(&block), taffy::AlignContent::NORMAL);
+    let projected = TaffyStyle::new(block);
+    assert_eq!(BI::align_self(&projected), None);
+    assert_eq!(BI::justify_self(&projected), None);
+    assert_eq!(BI::align_content(&projected), taffy::AlignContent::NORMAL);
     assert_eq!(block.bridge_align_self(), Some(taffy::AlignSelf::CENTER));
     assert_eq!(block.bridge_justify_self(), Some(taffy::AlignSelf::END));
     assert_eq!(
@@ -37,18 +38,21 @@ fn core_claims_and_block_defaults_stay_distinct() {
         taffy::AlignContent::SPACE_BETWEEN
     );
     assert_eq!(
-        BC::align_content(&block),
+        BC::align_content(&projected),
         taffy::AlignContent::SPACE_BETWEEN
     );
-    assert_eq!(BC::text_align(&block), taffy::TextAlign::Auto);
-    assert_eq!(BC::justify_items(&block), taffy::AlignItems::NORMAL);
-    assert_eq!(BI::float(&block), taffy::Float::Left);
-    assert_eq!(OI::align_self(&block), Some(taffy::AlignSelf::CENTER));
-    assert_eq!(OI::justify_self(&block), Some(taffy::AlignSelf::END));
-    assert_eq!(OI::grid_row(&block), taffy::GridItemStyle::grid_row(&block));
+    assert_eq!(BC::text_align(&projected), taffy::TextAlign::Auto);
+    assert_eq!(BC::justify_items(&projected), taffy::AlignItems::NORMAL);
+    assert_eq!(BI::float(&projected), taffy::Float::Left);
+    assert_eq!(OI::align_self(&projected), Some(taffy::AlignSelf::CENTER));
+    assert_eq!(OI::justify_self(&projected), Some(taffy::AlignSelf::END));
     assert_eq!(
-        OI::grid_column(&block),
-        taffy::GridItemStyle::grid_column(&block)
+        OI::grid_row(&projected),
+        taffy::GridItemStyle::grid_row(&projected)
+    );
+    assert_eq!(
+        OI::grid_column(&projected),
+        taffy::GridItemStyle::grid_column(&projected)
     );
 }
 
@@ -68,8 +72,9 @@ fn block_and_oof_table_facts_are_separate_from_formatting_context() {
             },
         );
         let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-        assert_eq!(BI::is_table(&view), block);
-        assert_eq!(OI::is_table(&view), oof);
+        assert_eq!(view.is_table(), block);
+        assert_eq!(BI::is_table(&TaffyStyle::new(view)), block);
+        assert_eq!(OI::is_table(&TaffyStyle::new(view)), oof);
     }
 }
 
@@ -88,8 +93,10 @@ fn block_float_and_clear_keep_authored_and_override_values() {
         let pass = [OwnedPropertyOverride::clear(ClearValue::Both)];
         let view =
             LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
-        assert_eq!(BI::float(&view), expected);
-        assert_eq!(BI::clear(&view), taffy::Clear::Both);
+        assert_eq!(view.float(), expected);
+        assert_eq!(view.clear(), taffy::Clear::Both);
+        assert_eq!(BI::float(&TaffyStyle::new(view)), expected);
+        assert_eq!(BI::clear(&TaffyStyle::new(view)), taffy::Clear::Both);
     }
 }
 

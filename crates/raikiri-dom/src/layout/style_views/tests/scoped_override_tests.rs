@@ -5,7 +5,7 @@ use crate::layout::protocol::{
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
 use std::cell::Cell;
-use taffy::{Dimension, FlexboxItemStyle};
+use taffy::Dimension;
 
 type SetupInspector = fn(&LayoutSession<'_>, usize, usize);
 

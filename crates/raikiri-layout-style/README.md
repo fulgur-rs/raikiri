@@ -55,10 +55,16 @@ as `taffy::Style` does. Absent template areas remain `None`.
 Taffy lengths are `Copy` and can carry a raw handle without a Rust lifetime.
 Keep every prepared payload owner alive until **all** consumers of those
 returned lengths have finished resolving them. Do not resolve saved lengths
-after dropping their owners. `resolve_calc` is deliberately `unsafe`: callers
-must guarantee this crate's handle origin, alignment, liveness and immutable
-access. Foreign Taffy calc handles cannot be resolved by this function.
-No standalone safe API exposes a raw pointer to a payload.
+after dropping their owners.
+
+The resolution API (`CalcHandle`, `LengthExt`, `MaybeResolve` and
+`ResolveOrZero` in `resolve`) is safe to call. It dereferences the handle in
+one place, `resolve::payload`, and relies on a contract the type system does
+not yet check: a length that holds a calc handle must come from a getter of
+this crate, and its owner must be alive when the length is resolved. A length
+built from a foreign Taffy calc handle must not be resolved with it. The
+contract holds while the style input types are Taffy's own; owned length types
+with a private constructor will let the compiler check the origin.
 
 ## Checks
 

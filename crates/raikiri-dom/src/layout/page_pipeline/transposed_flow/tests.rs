@@ -651,7 +651,7 @@ fn pagination_error_and_panic_restore_binding() {
     assert_eq!(session.block_axis(root).height(), size.height);
     assert!(!session.context.pagination_on_transposed_axes);
     session.assert_style_queries_allowed();
-    assert_eq!(taffy::CoreStyle::size(&session.style_view(root)), size);
+    assert_eq!(session.style_view(root).size(), size);
 }
 
 #[test]
@@ -754,7 +754,6 @@ fn paginated_facts(session: &LayoutSession<'_>, key: usize) -> Facts {
 
 /// The facts of the physical view of `key`.
 fn physical_facts(session: &LayoutSession<'_>, key: usize) -> Facts {
-    use taffy::CoreStyle;
     let view = session.style_view(key);
     let (size, min, max, margin) = (view.size(), view.min_size(), view.max_size(), view.margin());
     (
@@ -770,7 +769,6 @@ fn physical_facts(session: &LayoutSession<'_>, key: usize) -> Facts {
 /// The facts of the physical view of `key` with the physical sizes and sides
 /// exchanged onto transposed axes.
 fn swapped_facts(axes: FlowAxes, session: &LayoutSession<'_>, key: usize) -> Facts {
-    use taffy::CoreStyle;
     let view = session.style_view(key);
     let margin = axes.rect(view.margin().into_edges());
     (
