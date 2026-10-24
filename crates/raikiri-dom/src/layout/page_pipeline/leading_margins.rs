@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::layout::context::LayoutSession;
+use raikiri_layout_style::values::{AlignContent, Clear, Float, Position};
 
 /// Truncate the root and descendant leading margins for one pagination pass.
 pub(super) fn truncate_flow(
@@ -39,8 +40,7 @@ pub(super) fn truncate(
         control.check_aborted()?;
         let parent_node = &document.nodes[parent];
         let block_flow = parent_node.formatting_context == FormattingContext::Block
-            && document.pagination_style(parent).bridge_align_content()
-                == taffy::AlignContent::NORMAL
+            && document.pagination_style(parent).bridge_align_content() == AlignContent::NORMAL
             && (matches!(
                 parent_node.display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
@@ -64,11 +64,11 @@ pub(super) fn truncate(
                 continue;
             }
             let style = document.pagination_style(child);
-            if style.float() != TaffyFloat::None {
+            if style.float() != Float::None {
                 preceding_float = true;
                 continue;
             }
-            if node.taffy_position() == TaffyPosition::Absolute {
+            if node.layout_position() == Position::Absolute {
                 continue;
             }
             let relative = if document.is_source_node(child) {
@@ -81,7 +81,7 @@ pub(super) fn truncate(
             let leading_child = leading_flow && first_in_flow && !preceding_float;
             if block_flow
                 && leading_child
-                && style.clear() == TaffyClear::None
+                && style.clear() == Clear::None
                 && child_y > content_y
                 && page > pages.page_index_for_y(content_y)
                 && child_y > pages.origin(page) + 0.001

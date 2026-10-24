@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
+use raikiri_layout_style::values::Overflow;
 use raikiri_style::{build_rule_tree, cascade};
 
 /// `html(html_css) > body(body_css) > div(child_css)`, cascaded. Returns the
@@ -60,7 +61,7 @@ fn boxes_that_keep_the_margins_apart_add_them() {
 
 /// The vertical overflow the layout of a document gives its body, and the
 /// top of the body.
-fn laid_out_body_overflow(html_css: &str, body_css: &str) -> (TaffyOverflow, f32) {
+fn laid_out_body_overflow(html_css: &str, body_css: &str) -> (Overflow, f32) {
     let (mut doc, cascade, body, _) = body_doc(html_css, body_css, "margin-top:30px");
     with_ahem(&mut doc);
     let mut session = crate::layout::context::LayoutSession::with_cascade(&mut doc, &cascade);
@@ -81,10 +82,10 @@ fn laid_out_body_overflow(html_css: &str, body_css: &str) -> (TaffyOverflow, f32
 fn body_overflow_is_visible_only_when_it_propagates_to_the_viewport() {
     assert_eq!(
         laid_out_body_overflow("", "margin:8px;overflow:hidden"),
-        (TaffyOverflow::Visible, 30.0)
+        (Overflow::Visible, 30.0)
     );
     let (overflow, top) = laid_out_body_overflow("overflow:hidden", "margin:8px;overflow:hidden");
-    assert_ne!(overflow, TaffyOverflow::Visible);
+    assert_ne!(overflow, Overflow::Visible);
     assert_eq!(top, 8.0);
 }
 

@@ -417,12 +417,12 @@ pub(crate) enum FormattingContext {
 
 impl FormattingContext {
     /// The classification of a box known only by its Taffy display.
-    pub(crate) fn from_taffy_display(display: taffy::Display) -> Self {
+    pub(crate) fn from_taffy_display(display: Display) -> Self {
         match display {
-            taffy::Display::None => Self::None,
-            taffy::Display::Flex => Self::Flex,
-            taffy::Display::Grid => Self::Grid,
-            taffy::Display::Block | taffy::Display::FlowRoot => Self::Block,
+            Display::None => Self::None,
+            Display::Flex => Self::Flex,
+            Display::Grid => Self::Grid,
+            Display::Block | Display::FlowRoot => Self::Block,
         }
     }
 
@@ -684,12 +684,12 @@ impl Node {
     }
 
     /// The backend display derived from this box's CSS identity.
-    pub(crate) fn taffy_display(&self) -> taffy::Display {
+    pub(crate) fn taffy_display(&self) -> Display {
         self.layout_display()
     }
 
     /// The backend position derived from this box's CSS identity.
-    pub(crate) fn taffy_position(&self) -> taffy::Position {
+    pub(crate) fn taffy_position(&self) -> Position {
         self.layout_position()
     }
 

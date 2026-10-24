@@ -1,8 +1,8 @@
 use super::*;
 use crate::layout::protocol::{self, AvailableSpace};
 use raikiri_layout_geometry::{BoxLayout, Point, Size};
+use raikiri_layout_style::values::{Display, Position};
 use raikiri_traits::{Dom, Element, Node, NodeId, NodeKind};
-use taffy::Display;
 
 /// Lays out the subtree under `root` as taffy does, in a session over `doc`
 /// whose styles are bridged from the cascade of the inline styles.
@@ -747,21 +747,9 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
             height: 65.0
         }
     );
-    assert_eq!(doc.nodes[root].taffy_display(), Display::Flex);
-    assert_eq!(doc.nodes[text].taffy_display(), Display::Flex);
-    // The layout-side names report the same display and position.
-    assert_eq!(
-        doc.nodes[root].layout_display(),
-        raikiri_layout_style::values::Display::Flex
-    );
-    assert_eq!(
-        doc.nodes[root].layout_position(),
-        raikiri_layout_style::values::Position::Static
-    );
-    assert_eq!(
-        doc.nodes[root].layout_position(),
-        doc.nodes[root].taffy_position()
-    );
+    assert_eq!(doc.nodes[root].layout_display(), Display::Flex);
+    assert_eq!(doc.nodes[text].layout_display(), Display::Flex);
+    assert_eq!(doc.nodes[root].layout_position(), Position::Static);
 }
 
 #[test]

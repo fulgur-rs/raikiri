@@ -2,7 +2,7 @@
 
 use super::{Document, FragmentEdits, HashMap, LayoutError, ProjectionWork};
 use crate::layout::context::LayoutSession;
-use raikiri_layout_style::values::TaffyPosition;
+use raikiri_layout_style::values::Position;
 
 /// Moves of the siblings that follow each paginated column container and
 /// its ancestors. A container that grows moves every later sibling at each
@@ -46,7 +46,7 @@ impl SiblingShifts {
     /// placed by its parent's paragraph.
     fn moves(document: &LayoutSession<'_>, parent: usize, sibling: usize) -> bool {
         let node = &document.nodes[sibling];
-        node.taffy_position() != TaffyPosition::Absolute
+        node.layout_position() != Position::Absolute
             && !node.in_ifc_subtree()
             && !document.nodes[parent]
                 .ifc

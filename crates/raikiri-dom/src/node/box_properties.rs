@@ -1,5 +1,6 @@
 //! Canonical CSS box identity shared by layout and the Taffy adapter.
 
+use raikiri_layout_style::values::{Display, Position};
 use raikiri_style::ComputedValues;
 use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::NodeKind;
@@ -63,41 +64,36 @@ impl BoxProperties {
     }
 
     /// Lower CSS display to the box types supported by Taffy.
-    pub(crate) fn taffy_display(
-        &self,
-        multicol: bool,
-        kind: NodeKind,
-        root: bool,
-    ) -> taffy::Display {
+    pub(crate) fn taffy_display(&self, multicol: bool, kind: NodeKind, root: bool) -> Display {
         // Non-elements have no CSS display property. Preserve the native
         // default used by programmatic document layout instead of lowering
         // their inline text identity as an element's block box.
         if kind != NodeKind::Element && self.display == DisplayValue::Inline {
-            return taffy::Display::DEFAULT;
+            return Display::DEFAULT;
         }
         let display = match self.display {
-            DisplayValue::None => taffy::Display::None,
-            DisplayValue::FlowRoot => taffy::Display::FlowRoot,
-            display if display.is_flex_container() => taffy::Display::Flex,
-            display if display.is_grid_container() => taffy::Display::Grid,
-            _ => taffy::Display::Block,
+            DisplayValue::None => Display::None,
+            DisplayValue::FlowRoot => Display::FlowRoot,
+            display if display.is_flex_container() => Display::Flex,
+            display if display.is_grid_container() => Display::Grid,
+            _ => Display::Block,
         };
-        if (multicol || root) && display == taffy::Display::Block {
-            taffy::Display::FlowRoot
+        if (multicol || root) && display == Display::Block {
+            Display::FlowRoot
         } else {
             display
         }
     }
 
-    pub(crate) fn taffy_position(&self) -> taffy::Position {
+    pub(crate) fn taffy_position(&self) -> Position {
         if self.display == DisplayValue::Contents {
-            return taffy::Position::Static;
+            return Position::Static;
         }
         match self.position() {
-            PositionValue::Absolute | PositionValue::Fixed => taffy::Position::Absolute,
-            PositionValue::Relative => taffy::Position::Relative,
-            PositionValue::Sticky => taffy::Position::Sticky,
-            _ => taffy::Position::Static,
+            PositionValue::Absolute | PositionValue::Fixed => Position::Absolute,
+            PositionValue::Relative => Position::Relative,
+            PositionValue::Sticky => Position::Sticky,
+            _ => Position::Static,
         }
     }
 }

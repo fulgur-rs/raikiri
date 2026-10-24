@@ -6,6 +6,7 @@ use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{LineGlyph, PositionedLine, PositionedRun};
 use crate::node::FormattingContext;
+use raikiri_layout_style::values::{AlignItemsKeyword, Float, Position};
 use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
 };
@@ -1015,7 +1016,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             node.is_in_document()
                 && node.kind() != NodeKind::Text
                 && !node.is_display_none()
-                && node.taffy_position() != taffy::Position::Absolute
+                && node.layout_position() != Position::Absolute
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
     };
@@ -1023,7 +1024,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         laid_out(id)
             && document
                 .finished_style(cascade, id)
-                .is_some_and(|style| style.view().float() == taffy::Float::None)
+                .is_some_and(|style| style.view().float() == Float::None)
     };
     let (mut id, mut y) = (owner, 0.0);
     loop {
@@ -1119,7 +1120,7 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
         document.nodes.get(id).is_some_and(|item| {
             item.is_in_document()
                 && !item.is_display_none()
-                && item.taffy_position() != taffy::Position::Absolute
+                && item.layout_position() != Position::Absolute
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
     };
@@ -1205,7 +1206,7 @@ fn aligns_by_baseline(
 ) -> bool {
     let align = item.bridge_align_self().or(Some(container.align_items()));
     let margin = item.margin();
-    align.is_some_and(|align| align.keyword() == taffy::AlignItemsKeyword::Baseline)
+    align.is_some_and(|align| align.keyword() == AlignItemsKeyword::Baseline)
         && !margin.top.is_auto()
         && !margin.bottom.is_auto()
 }

@@ -10,6 +10,7 @@ use super::page::used_computed_length_percentage_or_auto;
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use crate::node::{BoxPropertiesRef, Node};
+use raikiri_layout_style::values::Direction;
 use raikiri_style::property::{DisplayValue, FloatValue, PositionValue, WritingMode};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::NodeKind;
@@ -86,7 +87,7 @@ fn relative_insets_with_box_tree(
         let vertical_axes = crate::layout::bridge::uses_vertical_axes(cascade, block);
         let flipped = used_mode == WritingMode::SidewaysLr && vertical_axes;
         let direction = super::bridge::direction_for_axes(&cascade.computed[block], vertical_axes);
-        (direction == taffy::Direction::Rtl) != flipped
+        (direction == Direction::Rtl) != flipped
     });
     let mode = match used_mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,

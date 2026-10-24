@@ -1,6 +1,7 @@
 use super::*;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use crate::layout::test_support::{bridged_display, bridged_style, with_pass_view};
+use raikiri_layout_style::values::{Clear, LengthExt};
 
 mod ancestor_walk_tests;
 mod avoid_followup_tests;
@@ -1601,14 +1602,14 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     assert!((parent_layout.size.width - 64.0).abs() < 0.01);
     assert!((parent_layout.size.height - 64.0).abs() < 0.01);
     let used_style = &bridged_style(&mut doc, &cascade, parent);
-    assert_eq!(used_style.padding.top.into_raw().value(), 16.0);
-    assert_eq!(used_style.padding.right.into_raw().value(), 32.0);
-    assert_eq!(used_style.padding.bottom.into_raw().value(), 16.0);
-    assert_eq!(used_style.padding.left.into_raw().value(), 16.0);
-    assert_eq!(used_style.margin.top.into_raw().value(), 16.0);
-    assert_eq!(used_style.margin.right.into_raw().value(), 48.0);
-    assert_eq!(used_style.margin.bottom.into_raw().value(), 16.0);
-    assert_eq!(used_style.margin.left.into_raw().value(), 16.0);
+    assert_eq!(used_style.padding.top.resolve(None), Some(16.0));
+    assert_eq!(used_style.padding.right.resolve(None), Some(32.0));
+    assert_eq!(used_style.padding.bottom.resolve(None), Some(16.0));
+    assert_eq!(used_style.padding.left.resolve(None), Some(16.0));
+    assert_eq!(used_style.margin.top.resolve(None), Some(16.0));
+    assert_eq!(used_style.margin.right.resolve(None), Some(48.0));
+    assert_eq!(used_style.margin.bottom.resolve(None), Some(16.0));
+    assert_eq!(used_style.margin.left.resolve(None), Some(16.0));
     assert!((parent_layout.location.x - 16.0).abs() < 0.01);
     assert!((child_layout.size.width - 16.0).abs() < 0.01);
 }
@@ -8709,37 +8710,25 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
     // width only, unless a physical `min-height` is set. A flex container is
     // such a box in a vertical writing mode.
     for (css, expected_height) in [
-        ("writing-mode:vertical-rl;min-block-size:4ch", 0.0),
+        (
+            "writing-mode:vertical-rl;min-block-size:4ch",
+            LengthPercentageAuto::auto(),
+        ),
         (
             "writing-mode:vertical-rl;min-block-size:4ch;min-height:20px",
-            20.0,
+            LengthPercentageAuto::length(20.0),
         ),
         (
             "display:flex;writing-mode:vertical-rl;min-block-size:4ch",
-            0.0,
+            LengthPercentageAuto::auto(),
         ),
     ] {
         let css = format!("font-size:16px;width:16px;height:16px;{css}");
         let (mut doc, cascade, root) = ch_ahem_paragraph("aa", &css);
         lay_out(&mut doc, &cascade);
-        assert_eq!(
-            bridged_style(&mut doc, &cascade, root)
-                .min_size
-                .width
-                .into_raw()
-                .value(),
-            64.0,
-            "{css}"
-        );
-        assert_eq!(
-            bridged_style(&mut doc, &cascade, root)
-                .min_size
-                .height
-                .into_raw()
-                .value(),
-            expected_height,
-            "{css}"
-        );
+        let min_size = bridged_style(&mut doc, &cascade, root).min_size;
+        assert_eq!(min_size.width, LengthPercentageAuto::length(64.0), "{css}");
+        assert_eq!(min_size.height, expected_height, "{css}");
     }
 }
 
@@ -13004,7 +12993,7 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
         with_pass_view(&doc, key, &cascade.computed[second], |view| {
             view.clear()
         }),
-        taffy::Clear::Both
+        Clear::Both
     );
 
     // A single page has no break to clear at, so the box sits beside the
@@ -13015,12 +13004,9 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     authored.clear = ClearValue::Right;
     assert_eq!(
         with_pass_view(&doc, key, &authored, |view| view.clear()),
-        taffy::Clear::Right
+        Clear::Right
     );
-    assert_eq!(
-        bridged_style(&mut doc, &cascade, second).clear,
-        taffy::Clear::None
-    );
+    assert_eq!(bridged_style(&mut doc, &cascade, second).clear, Clear::None);
     assert_eq!(doc.nodes[second].layout.location.y, 0.0);
 }
 

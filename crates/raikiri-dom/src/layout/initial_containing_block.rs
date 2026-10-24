@@ -2,6 +2,7 @@
 
 use crate::Document;
 use crate::node::{Node, NodeFlags};
+use raikiri_layout_style::values::Direction;
 use raikiri_style::CascadeResult;
 
 /// The document element whose principal box is a child of the ICB.
@@ -25,7 +26,7 @@ pub(super) fn recipe_facts(
 ) -> super::box_style_data::recipes::BoxFacts {
     let principal = root_element(document).map(|_| cascade.principal_element_index());
     super::box_style_data::recipes::BoxFacts {
-        direction: principal.map_or(taffy::Direction::Ltr, |id| {
+        direction: principal.map_or(Direction::Ltr, |id| {
             super::bridge::direction_for_axes(
                 &cascade.computed[id],
                 super::bridge::uses_vertical_axes(cascade, id),

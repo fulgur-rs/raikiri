@@ -17,6 +17,7 @@
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
+use raikiri_layout_style::values::Position;
 use raikiri_style::property::WhiteSpaceCollapse;
 
 /// Lets the spanners of multicol containers reach the columns through the
@@ -119,7 +120,7 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
     let padding_is_zero =
         |padding| matches!(padding, ComputedLengthPercentageOrCalc::Px(px) if px == 0.0);
     node.display() == DisplayValue::Block
-        && node.taffy_position() == taffy::Position::Static
+        && node.layout_position() == Position::Static
         && !matches!(cv.float, FloatValue::Left | FloatValue::Right)
         && !matches!(
             cv.clear,

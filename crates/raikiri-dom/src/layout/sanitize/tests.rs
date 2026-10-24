@@ -62,7 +62,7 @@ fn guarded_style_for(inline: &str) -> crate::LayoutStyle {
 /// site 1 — `computed_length_percentage_to_taffy_length_percentage` (padding).
 #[test]
 fn nonfinite_padding_is_clamped_before_taffy() {
-    use taffy::LengthPercentage;
+    use raikiri_layout_style::values::LengthPercentage;
 
     // Reproducer A': `1e40px` becomes +Inf during cssparser's f64→f32 conversion, and **passes** `v >= 0.0`
     // of `parse_padding_side` (inf >= 0.0 is true).
@@ -102,7 +102,7 @@ fn nonfinite_padding_is_clamped_before_taffy() {
 /// site 2 — `computed_length_percentage_or_auto_to_taffy_dimension` (width / height).
 #[test]
 fn nonfinite_size_is_clamped_before_taffy() {
-    use taffy::Dimension;
+    use raikiri_layout_style::values::Dimension;
     let s = guarded_style_for("width: 1e40px; height: 1e40%");
     assert_eq!(s.size.width, Dimension::length(MAX_TAFFY_MAGNITUDE));
     assert_eq!(s.size.height, Dimension::percent(MAX_TAFFY_MAGNITUDE));
@@ -118,7 +118,7 @@ fn nonfinite_size_is_clamped_before_taffy() {
 /// (`[-MAX, MAX]`).
 #[test]
 fn nonfinite_margin_is_clamped_symmetrically_before_taffy() {
-    use taffy::LengthPercentageAuto;
+    use raikiri_layout_style::values::LengthPercentageAuto;
     assert_eq!(
         guarded_style_for("margin-top: 1e40px").margin.top,
         LengthPercentageAuto::length(MAX_TAFFY_MAGNITUDE),
@@ -146,7 +146,7 @@ fn nonfinite_margin_is_clamped_symmetrically_before_taffy() {
 /// site 4 — `computed_length_to_taffy_length_percentage` (border-width).
 #[test]
 fn nonfinite_border_width_is_clamped_before_taffy() {
-    use taffy::LengthPercentage;
+    use raikiri_layout_style::values::LengthPercentage;
     assert_eq!(
         guarded_style_for("border-top-width: 1e40px; border-top-style: solid")
             .border
