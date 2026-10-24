@@ -62,6 +62,10 @@ fn the_body_flow_becomes_the_used_flow_of_the_root() {
 
     // CSSOM reports what the root computed to.
     assert_eq!(
+        result.root_element_own_writing_mode(),
+        Some(WritingMode::HorizontalTb)
+    );
+    assert_eq!(
         flow(&result.cssom_computed(html)),
         (
             WritingMode::HorizontalTb,
@@ -122,6 +126,7 @@ fn a_body_without_its_own_flow_leaves_the_root_unchanged() {
         result.cssom_computed(html),
         std::borrow::Cow::Borrowed(_)
     ));
+    assert_eq!(result.root_element_own_writing_mode(), None);
     assert_eq!(result.clone().into_cssom_computed(), result.computed);
 }
 

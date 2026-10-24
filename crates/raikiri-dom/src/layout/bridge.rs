@@ -628,12 +628,31 @@ fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
         .enumerate()
         .filter_map(|(id, node)| node.parent.is_none().then_some(id))
         .collect();
+    // The principal element's writing mode is the used one of the root
+    // element. A block-level or atomic inline element child of the root that
+    // is not the principal element inherits the mode the root computed to
+    // instead. An inline box that is not atomic lays out in the inline
+    // formatting context of its container and follows its mode.
+    let root = doc.document_element_index();
+    let root_own = cascade.root_element_own_writing_mode();
+    let orthogonal_to_root = |doc: &Document, id: usize| {
+        doc.nodes[id].kind() == NodeKind::Element
+            && cascade.computed.get(id).is_none_or(|cv| {
+                !cv.display.is_inline_level() || cv.display.is_atomic_inline_level()
+            })
+    };
     while let Some(id) = pending.pop() {
         let parent = doc.parent_of(id);
-        let inherited = parent.map_or(WritingMode::HorizontalTb, |parent| {
-            doc.nodes[parent].used_writing_mode
-        });
-        let under_vertical = parent.is_some_and(|parent| doc.nodes[parent].under_vertical_writing);
+        let (inherited, under_vertical) = match (parent, root_own) {
+            (Some(parent), Some(own)) if Some(parent) == root && orthogonal_to_root(doc, id) => {
+                (own, own.is_vertical())
+            }
+            (Some(parent), _) => (
+                doc.nodes[parent].used_writing_mode,
+                doc.nodes[parent].under_vertical_writing,
+            ),
+            (None, _) => (WritingMode::HorizontalTb, false),
+        };
         let node = &mut doc.nodes[id];
         node.used_writing_mode = node.authored_writing_mode.unwrap_or(inherited);
         node.under_vertical_writing = under_vertical

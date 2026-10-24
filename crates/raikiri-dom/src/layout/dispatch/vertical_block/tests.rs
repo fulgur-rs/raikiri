@@ -229,6 +229,65 @@ fn orthogonal_vertical_rl_body_stacks_its_paragraphs_from_the_right() {
     assert_eq!((second.0, second.1, second.2), (18.0, 8.0, 10.0));
 }
 
+/// A root styled `html_css` that holds a `body` styled `body_css` with one
+/// 10px line, and after it a `display:block` child of its own with one line
+/// of 110px, as script can add one. Returns the rects of the body and of that
+/// child.
+fn body_and_a_second_child_of_the_root(
+    html_css: &str,
+    body_css: &str,
+) -> [(f32, f32, f32, f32); 2] {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some(html_css));
+    let font = "font-family:Ahem;font-size:10px;line-height:10px";
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some(format!("display:block;margin:8px;{font};{body_css}").as_str()),
+    );
+    let line = doc.append_element(Some(body), "div", Some("display:block"));
+    doc.append_text(line, "x");
+    let sibling = doc.append_element(
+        Some(html),
+        "div",
+        Some(format!("display:block;margin:0;{font}").as_str()),
+    );
+    doc.append_text(sibling, "abcde fghij");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    [absolute_rect(&doc, body), absolute_rect(&doc, sibling)]
+}
+
+#[test]
+fn another_child_of_the_root_inherits_the_writing_mode_the_root_computed_to() {
+    // The body's vertical mode is the used one of the root, which its other
+    // children do not inherit: this one stays horizontal, an orthogonal flow
+    // beside the body in the block direction of the page.
+    let [body, sibling] =
+        body_and_a_second_child_of_the_root("display:block", "writing-mode:vertical-rl");
+    assert_eq!(body, (782.0, 8.0, 10.0, 584.0));
+    assert_eq!(sibling, (664.0, 0.0, 110.0, 10.0));
+    let [body, sibling] =
+        body_and_a_second_child_of_the_root("display:block", "writing-mode:vertical-lr");
+    assert_eq!(body, (8.0, 8.0, 10.0, 584.0));
+    assert_eq!(sibling, (26.0, 0.0, 110.0, 10.0));
+}
+
+#[test]
+fn another_child_of_a_vertical_root_stays_vertical_under_a_horizontal_body() {
+    // The body's horizontal mode is the used one of the root, which its other
+    // children do not inherit: this one is vertical, as the root computed to.
+    let [body, sibling] = body_and_a_second_child_of_the_root(
+        "display:block;writing-mode:vertical-lr",
+        "writing-mode:horizontal-tb",
+    );
+    assert_eq!(body, (8.0, 8.0, 784.0, 10.0));
+    assert_eq!(sibling, (0.0, 26.0, 10.0, 110.0));
+}
+
 #[test]
 fn vertical_auto_height_never_shrinks_below_its_content() {
     // Content taller than the space under the body keeps its height.

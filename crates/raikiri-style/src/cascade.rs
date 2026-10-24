@@ -436,6 +436,20 @@ impl CascadeResult {
         }
     }
 
+    /// The `writing-mode` the root element computed to, when the principal
+    /// element's mode replaced it in [`Self::computed`]; `None` when the
+    /// root's entry holds it already.
+    ///
+    /// What inherits from the root element, other than the principal element
+    /// and the text directly in the root, inherits this one, as the
+    /// propagation changes the used value and leaves the computed one alone
+    /// (CSS Writing Modes 4 §8).
+    pub fn root_element_own_writing_mode(&self) -> Option<WritingMode> {
+        self.root_own_flow
+            .as_ref()
+            .map(|own| own.cssom_writing_mode)
+    }
+
     /// The computed values of the root element as CSSOM reports them, the
     /// inheritance parent of the `@page` cascade; see [`Self::cssom_computed`].
     ///
