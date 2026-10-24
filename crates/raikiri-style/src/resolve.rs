@@ -4084,6 +4084,102 @@ pub(crate) fn lift_length_percentage_or_normal(
     }
 }
 
+/// Lift a computed `<track-breadth>` back to its specified form, keeping the
+/// keywords, the `fr` number and the mixed `calc()` as they are.
+fn lift_grid_track_breadth(computed: ComputedGridTrackBreadth) -> GridTrackBreadth {
+    match computed {
+        ComputedGridTrackBreadth::Px(v) => GridTrackBreadth::Length(Length::Px(v)),
+        ComputedGridTrackBreadth::Percent(p) => GridTrackBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridTrackBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
+        ComputedGridTrackBreadth::Flex(f) => GridTrackBreadth::Flex(f),
+        ComputedGridTrackBreadth::MinContent => GridTrackBreadth::MinContent,
+        ComputedGridTrackBreadth::MaxContent => GridTrackBreadth::MaxContent,
+        ComputedGridTrackBreadth::Auto => GridTrackBreadth::Auto,
+    }
+}
+
+/// Lift the computed minimum of a `minmax()` back to an `<inflexible-breadth>`.
+/// The grammar keeps `<flex>` out of a minimum, so a computed minimum is never
+/// flexible; `auto` stands in for that case.
+fn lift_grid_inflexible_breadth(computed: ComputedGridTrackBreadth) -> GridInflexibleBreadth {
+    match computed {
+        ComputedGridTrackBreadth::Px(v) => GridInflexibleBreadth::Length(Length::Px(v)),
+        ComputedGridTrackBreadth::Percent(p) => GridInflexibleBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridInflexibleBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
+        ComputedGridTrackBreadth::MinContent => GridInflexibleBreadth::MinContent,
+        ComputedGridTrackBreadth::MaxContent => GridInflexibleBreadth::MaxContent,
+        ComputedGridTrackBreadth::Flex(_) | ComputedGridTrackBreadth::Auto => {
+            GridInflexibleBreadth::Auto
+        }
+    }
+}
+
+/// Lift a computed `<track-size>` back to its specified form.
+fn lift_grid_track_size(computed: ComputedGridTrackSize) -> GridTrackSize {
+    match computed {
+        ComputedGridTrackSize::Breadth(breadth) => {
+            GridTrackSize::Breadth(lift_grid_track_breadth(breadth))
+        }
+        ComputedGridTrackSize::MinMax(min, max) => GridTrackSize::MinMax(
+            lift_grid_inflexible_breadth(min),
+            lift_grid_track_breadth(max),
+        ),
+        ComputedGridTrackSize::FitContent(limit) => {
+            GridTrackSize::FitContent(lift_length_percentage(limit))
+        }
+    }
+}
+
+/// Lift a computed `grid-template-columns` / `grid-template-rows` back to its
+/// specified form. The line names and the `repeat()` counts carry over as they
+/// are.
+pub(crate) fn lift_grid_template_tracks(
+    computed: &ComputedGridTemplateTracks,
+) -> GridTemplateTracks {
+    match computed {
+        ComputedGridTemplateTracks::None => GridTemplateTracks::None,
+        ComputedGridTemplateTracks::List(list) => {
+            let components = list
+                .components
+                .iter()
+                .map(|component| match component {
+                    ComputedGridTrackListComponent::Size(size) => {
+                        GridTrackListComponent::Size(lift_grid_track_size(*size))
+                    }
+                    ComputedGridTrackListComponent::Repeat(repeat) => {
+                        GridTrackListComponent::Repeat(GridTrackRepeat {
+                            count: repeat.count,
+                            line_names: repeat.line_names.clone(),
+                            tracks: lift_grid_track_sizes(&repeat.tracks),
+                        })
+                    }
+                })
+                .collect();
+            GridTemplateTracks::List(Arc::new(GridTrackList {
+                line_names: list.line_names.clone(),
+                components,
+            }))
+        }
+    }
+}
+
+/// Lift a run of computed `<track-size>`s back to their specified form.
+fn lift_grid_track_sizes(computed: &[ComputedGridTrackSize]) -> Vec<GridTrackSize> {
+    computed.iter().copied().map(lift_grid_track_size).collect()
+}
+
+/// Lift a computed `grid-auto-columns` / `grid-auto-rows` back to its specified
+/// form.
+pub(crate) fn lift_grid_auto_track_list(
+    computed: &[ComputedGridTrackSize],
+) -> Arc<Vec<GridTrackSize>> {
+    Arc::new(lift_grid_track_sizes(computed))
+}
+
 /// Lift a computed `text-indent` value into its inherited staging form.
 ///
 /// The parent's `em` term has already been resolved, so a mixed calc is copied
