@@ -60,6 +60,30 @@ fn bundled_collection_matches_the_authored_family() {
     assert!(fonts.font_data(matched.id).is_some());
 }
 
+/// Ahem sits 0.8em above and 0.2em below the baseline: 8.4px and 2.1px at
+/// 10.5px, which Blink rounds to 8px and 2px.
+fn assert_whole_pixel_ahem(fonts: &FontCollection) {
+    let matched = fonts
+        .match_cluster(&named("Ahem"), "a")
+        .expect("ahem matches");
+    let metrics = fonts.metrics(matched.id, 10.5);
+    assert_eq!((metrics.ascent, metrics.descent), (8.0, 2.0));
+}
+
+#[test]
+fn bundled_collections_report_whole_pixel_metrics() {
+    let fonts = bundled_collection(&Limits::default(), vec![face("Ahem", AHEM)], false)
+        .expect("bundle registers");
+    assert_whole_pixel_ahem(&fonts);
+}
+
+#[test]
+fn wpt_collections_report_whole_pixel_metrics() {
+    let dir = font_dir(&[("Ahem.ttf", AHEM)]);
+    let fonts = wpt_collection(dir.path(), &Limits::default(), None).expect("wpt fonts");
+    assert_whole_pixel_ahem(&fonts);
+}
+
 #[test]
 fn generic_families_follow_registration_order() {
     let fonts = bundled_collection(

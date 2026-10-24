@@ -1770,12 +1770,20 @@ pub(crate) fn measure_atomics(
             },
         );
         let id = shodo::node::NodeId(node as u64);
-        // Only the alphabetic baseline is supplied (horizontal lines). shodo
-        // measures it from the margin-box top and falls back to the margin
-        // box's bottom edge when there is none (CSS 2.1 10.8.1).
+        // Only the alphabetic baseline is supplied. shodo measures it from
+        // the margin box's line-over edge and falls back to the margin box's
+        // line-under edge when there is none (CSS 2.1 10.8.1).
         let baseline = match root.line_paragraph.required_baseline(id) {
             Some(shodo::geometry::BaselineKind::Alphabetic) | None => {
-                atomic_baseline(tree, node, &output).map(|b| b + margin.top)
+                atomic_baseline(tree, node, &output).and_then(|from_start| {
+                    baseline_from_line_over(
+                        root.writing_mode,
+                        crate::layout::dispatch::used_writing_mode(tree, node),
+                        output.size.width,
+                        margin,
+                        from_start,
+                    )
+                })
             }
             Some(_) => None,
         };
@@ -3074,6 +3082,36 @@ fn atomic_baseline(tree: &LayoutSession<'_>, node: usize, output: &LayoutOutput)
         return None;
     }
     output.baselines.first
+}
+
+/// The distance from the line-over edge of an atomic inline's margin box to
+/// its first baseline, for a paragraph in `paragraph` mode. `from_start` is
+/// the baseline's distance from the border box's block-start edge in the
+/// atomic's own `item` mode, and `width` its physical border-box width.
+///
+/// Line-over is the physical right edge in vertical-rl and vertical-lr and
+/// the left edge in sideways-lr, whichever way the block axis runs. An
+/// atomic whose lines are not oriented and stacked like the paragraph's, such
+/// as an orthogonal one or one whose block axis runs the other way, has no
+/// baseline to share and sits on its margin box's line-under edge.
+fn baseline_from_line_over(
+    paragraph: WritingMode,
+    item: raikiri_style::property::WritingMode,
+    width: f32,
+    margin: Edges<f32>,
+    from_start: f32,
+) -> Option<f32> {
+    use raikiri_style::property::WritingMode as Item;
+    match (paragraph, item) {
+        (WritingMode::HorizontalTb, _) => Some(margin.top + from_start),
+        (
+            WritingMode::VerticalRl | WritingMode::SidewaysRl,
+            Item::VerticalRl | Item::SidewaysRl,
+        ) => Some(margin.right + from_start),
+        (WritingMode::VerticalLr, Item::VerticalLr) => Some(margin.right + width - from_start),
+        (WritingMode::SidewaysLr, Item::SidewaysLr) => Some(margin.left + from_start),
+        _ => None,
+    }
 }
 
 /// Place a float in the context at the line offset `y` and, when performing
