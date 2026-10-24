@@ -445,11 +445,8 @@ impl LayoutSession<'_> {
         if let Some(view) = transposed {
             return view;
         }
-        let mut context = self
-            .nodes
-            .box_key(idx)
-            .and_then(|key| self.style_views.boxes.get(&key))
-            .map_or_else(ViewContext::default, |prepared| prepared.context);
+        let view = self.prepared_style_view(idx);
+        let mut context = view.context();
         context.claims_policy = if matches!(role, ReadRole::CoreContainer) {
             ClaimsPolicy::Prepared
         } else {
@@ -466,7 +463,7 @@ impl LayoutSession<'_> {
                 })
                 .and_then(|&(_, basis)| basis);
         }
-        self.style_view(idx).with_context(context)
+        view.with_context(context)
     }
 
     /// The physical view of a laid-out box as the paginator reads it.
