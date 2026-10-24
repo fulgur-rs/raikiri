@@ -156,13 +156,13 @@ mod reader {
             out,
             "  core mode={:?} block={} compressible_replaced={} replaced={} box_sizing={:?} \
              position={:?} contain={:?}",
-            view.box_generation_mode(),
-            view.is_block(),
-            view.is_compressible_replaced(),
-            view.is_replaced(),
-            view.box_sizing(),
-            view.position(),
-            view.contain(),
+            CoreStyle::box_generation_mode(&style),
+            CoreStyle::is_block(&style),
+            CoreStyle::is_compressible_replaced(&style),
+            CoreStyle::is_replaced(&style),
+            CoreStyle::box_sizing(&style),
+            CoreStyle::position(&style),
+            CoreStyle::contain(&style),
         );
         // The core container role asks for the prepared claims; every other
         // role, and a view made for flex and grid, for the position alone.
@@ -175,7 +175,7 @@ mod reader {
             } else {
                 view
             };
-            view.is_containing_block()
+            CoreStyle::is_containing_block(&TaffyStyle::new(view))
         };
         let _ = writeln!(
             out,
