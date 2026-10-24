@@ -176,13 +176,15 @@ report a difference when there is one. To check it:
    `rect=[0.0 0.0 800.001 124.0]` in the head, and the same width in the node
    listing. The run ends with `FAIL` and exit status 1. Remove the line again.
 3. **A getter that reads differently.** Make a getter of the style view
-   return another value than it did, one that no box of the run depends on,
-   for example by changing `justify_items` of `BlockContainerStyle` in
-   `crates/raikiri-layout-style/src/block.rs` to return
-   `taffy::AlignItems::CENTER`, and run the script again. The cases differ
-   and the field diff shows `block_container ... justify_items=` lines
-   changing from `Normal` to `Center` and no line of a box: nothing moved, and
-   the getters still tell. Remove the change again.
+   return another value than it did, for example by changing
+   `LayoutStyleView::justify_items` in `crates/raikiri-layout-style/src/block.rs`
+   to return `taffy::AlignItems::CENTER`, and run the script again. The cases
+   differ, and the field diff shows the `block_container ... justify_items=`
+   lines changing from `Normal` to `Center`, and the `grid_container` lines,
+   which read the same getter, next to the boxes that moved where the value
+   reaches a grid. A change of a getter that moves no box of the run differs in
+   its style lines alone, which is the case this part of the text is for
+   (`src/style_view/tests.rs` has one). Remove the change again.
 
 ## When the layout API changes
 
