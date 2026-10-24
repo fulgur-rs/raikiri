@@ -13,15 +13,18 @@ use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::layout::dispatch::block_flow::context::{
     BlockContext, BlockFormattingContext, BoxProbe,
 };
-use crate::layout::dispatch::{fit_content_room, measure_against_parent_height, resolve_calc};
+use crate::layout::dispatch::{fit_content_room, measure_against_parent_height};
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, FloatDirection,
     LayoutInput, LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPosition,
     OofPositioningArea, RequestedAxis, RunMode, SizingMode,
 };
 use crate::layout::style_views::ReadRole;
-use crate::layout::taffy_adapter::{IntoEdges, ResolveOrZero};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
+use raikiri_layout_style::values::{
+    self, AlignContentKeyword, BoxSizing, Clear, Display, ExpandedDimension, IntoEdges, LengthExt,
+    LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
+};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::{LineOptions, TextGroupAlign};
@@ -30,7 +33,6 @@ use shodo::{
     FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
 };
 use std::collections::{HashMap, HashSet};
-use taffy::Clear;
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
 /// laid out as a box of its own and painted by the walk.
@@ -1287,7 +1289,7 @@ fn commit_fragmented_float(
 }
 
 /// The `clear` of the cleared `<br>` that ends `line`, if any.
-fn cleared_break(line: &shodo::Line, cleared: &ClearBreakIndex) -> Option<taffy::Clear> {
+fn cleared_break(line: &shodo::Line, cleared: &ClearBreakIndex) -> Option<Clear> {
     let node = line.forced_break()?.node.0 as usize;
     #[cfg(all(test, debug_assertions))]
     tests::clear_break_tests::note_probe();
@@ -1374,7 +1376,7 @@ fn inline_padding_box(
     let mut border = tree
         .physical_style(inline)
         .border()
-        .resolve_or_zero(Some(basis), resolve_calc);
+        .resolve_or_zero(Some(basis));
     let mut spanned: Vec<_> = pieces.iter().filter(|piece| piece.node == inline).collect();
     if spanned.is_empty() {
         border = Edges::ZERO;
@@ -1578,7 +1580,7 @@ fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Edges<
     tree.physical_style(node)
         .margin()
         .into_edges()
-        .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
+        .map(|margin| margin.resolve(Some(basis)).unwrap_or(0.0))
 }
 
 /// Lay a child of the root out the way taffy's block algorithm lays out a
@@ -1985,7 +1987,7 @@ fn layout_block_child(
         } else {
             y + pending.collapse_with_set(top_set).resolve()
         };
-        let has_clearance = clear != taffy::Clear::None
+        let has_clearance = clear != Clear::None
             && ((collapse_top && ctx.has_adjoining_float(clear)) || hypothetical < clear_y);
         let (top, after) = if has_clearance {
             {
@@ -2100,7 +2102,7 @@ fn layout_vertical_block_child(
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size));
     let shares_context = in_the_roots_formatting_context(tree, node)
-        && tree.physical_style(node).align_content().keyword == taffy::AlignContentKeyword::Normal
+        && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
         && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
             node_direction
                 == matches!(
@@ -2113,7 +2115,7 @@ fn layout_vertical_block_child(
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
     let clears_adjoining_float =
-        clear != taffy::Clear::None && collapse_top && ctx.has_top_adjoining_float(clear);
+        clear != Clear::None && collapse_top && ctx.has_top_adjoining_float(clear);
     let origin_resolved = ctx.origin_resolved();
     let top_margin = pending.collapse_with_margin(block_start_margin);
     let hypothetical = if collapse_top {
@@ -2122,7 +2124,7 @@ fn layout_vertical_block_child(
     } else {
         geometry.top_edge + y + top_margin.resolve()
     };
-    let adjoining_float = collapse_top && ctx.has_top_adjoining_float(taffy::Clear::Both);
+    let adjoining_float = collapse_top && ctx.has_top_adjoining_float(Clear::Both);
     let forced_clearance = clears_adjoining_float;
     let min_y = if forced_clearance {
         ctx.cleared_threshold(clear).unwrap_or(hypothetical)
@@ -2142,9 +2144,9 @@ fn layout_vertical_block_child(
             min_y,
             [margin.top, margin.bottom],
             if geometry.axes.direction() == Direction::Ltr {
-                taffy::Direction::Ltr
+                values::Direction::Ltr
             } else {
-                taffy::Direction::Rtl
+                values::Direction::Rtl
             },
             clear,
             |probe| match probe {
@@ -2321,7 +2323,7 @@ fn layout_vertical_block_child(
             y + pending.collapse_with_set(top_set).resolve()
         };
         let has_clearance = slot_separated
-            || clear != taffy::Clear::None && (clears_adjoining_float || hypothetical < clear_y);
+            || clear != Clear::None && (clears_adjoining_float || hypothetical < clear_y);
         let (block_start, after) = if let Some(slot) = slot {
             let block_start = if collapse_top && !slot_separated {
                 y
@@ -2430,7 +2432,7 @@ fn layout_vertical_block_child(
 fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> bool {
     let style = tree.query_style(node, ReadRole::BlockContainer);
     let overflow = style.overflow();
-    tree.nodes[node].taffy_display() == taffy::Display::Block
+    tree.nodes[node].layout_display() == Display::Block
         && !crate::layout::dispatch::is_table_box(tree.nodes[node].display())
         && !overflow.x.is_scroll_container()
         && !overflow.y.is_scroll_container()
@@ -2464,7 +2466,7 @@ fn layout_formatting_context_child(
     } else {
         geometry.top_edge + y + top_margin.resolve()
     };
-    let adjoining_float = collapse_top && ctx.has_adjoining_float(taffy::Clear::Both);
+    let adjoining_float = collapse_top && ctx.has_adjoining_float(Clear::Both);
     let forced_clearance = collapse_top && ctx.has_adjoining_float(clear);
     let min_y = if forced_clearance {
         ctx.cleared_threshold(clear).unwrap_or(hypothetical)
@@ -2482,7 +2484,7 @@ fn layout_formatting_context_child(
             .find_box_slot(
                 min_y,
                 [margin.left, margin.right],
-                taffy::Direction::Ltr,
+                values::Direction::Ltr,
                 clear,
                 |probe| match probe {
                     BoxProbe::Width { stretch } => {
@@ -2728,20 +2730,16 @@ fn content_keyword_width(
         }
     };
     match keyword.expand() {
-        taffy::ExpandedDimension::MinContent => {
-            Some(OwnWidth::Fixed(measure(AvailableSpace::MinContent)))
-        }
-        taffy::ExpandedDimension::MaxContent => {
-            Some(OwnWidth::Fixed(measure(AvailableSpace::MaxContent)))
-        }
-        taffy::ExpandedDimension::FitContent => Some(OwnWidth::Fit {
+        ExpandedDimension::MinContent => Some(OwnWidth::Fixed(measure(AvailableSpace::MinContent))),
+        ExpandedDimension::MaxContent => Some(OwnWidth::Fixed(measure(AvailableSpace::MaxContent))),
+        ExpandedDimension::FitContent => Some(OwnWidth::Fit {
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
         }),
         // The limit stands in for the room the root leaves the child.
-        taffy::ExpandedDimension::FitContentPx(_)
-        | taffy::ExpandedDimension::FitContentPercent(_)
-        | taffy::ExpandedDimension::FitContentCalc(_) => room.map(|room| {
+        ExpandedDimension::FitContentPx(_)
+        | ExpandedDimension::FitContentPercent(_)
+        | ExpandedDimension::FitContentCalc(_) => room.map(|room| {
             OwnWidth::Fixed(
                 OwnWidth::Fit {
                     min: measure(AvailableSpace::MinContent),
@@ -2767,11 +2765,10 @@ fn used_block_width_with_edge_basis(
     dimension_basis: f32,
     edge_basis: f32,
 ) -> Option<f32> {
-    use crate::layout::taffy_adapter::MaybeResolve;
     tree.physical_style(node)
         .size()
         .width
-        .maybe_resolve(Some(dimension_basis), resolve_calc)
+        .maybe_resolve(Some(dimension_basis))
         .map(|width| width + box_sizing_adjustment(tree, node, edge_basis))
 }
 
@@ -2788,45 +2785,42 @@ fn clamp_block_width_with_edge_basis(
     edge_basis: f32,
     width: f32,
 ) -> f32 {
-    use crate::layout::taffy_adapter::MaybeResolve;
     let style = tree.physical_style(node);
     let adjustment = box_sizing_adjustment(tree, node, edge_basis);
     let min = style
         .min_size()
         .width
-        .maybe_resolve(Some(dimension_basis), resolve_calc)
+        .maybe_resolve(Some(dimension_basis))
         .map(|min| min + adjustment);
     let max = style
         .max_size()
         .width
-        .maybe_resolve(Some(dimension_basis), resolve_calc)
+        .maybe_resolve(Some(dimension_basis))
         .map(|max| max + adjustment);
     let width = max.map_or(width, |max| width.min(max));
     min.map_or(width, |min| width.max(min))
 }
 
 fn used_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Option<f32> {
-    use crate::layout::taffy_adapter::MaybeResolve;
     tree.physical_style(node)
         .size()
         .height
-        .maybe_resolve(Some(basis), resolve_calc)
+        .maybe_resolve(Some(basis))
         .map(|height| height + box_sizing_height_adjustment(tree, node, basis))
 }
 
 fn clamp_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32, height: f32) -> f32 {
-    use crate::layout::taffy_adapter::MaybeResolve;
     let style = tree.physical_style(node);
     let adjustment = box_sizing_height_adjustment(tree, node, basis);
     let min = style
         .min_size()
         .height
-        .maybe_resolve(Some(basis), resolve_calc)
+        .maybe_resolve(Some(basis))
         .map(|min| min + adjustment);
     let max = style
         .max_size()
         .height
-        .maybe_resolve(Some(basis), resolve_calc)
+        .maybe_resolve(Some(basis))
         .map(|max| max + adjustment);
     let height = max.map_or(height, |max| height.min(max));
     min.map_or(height, |min| height.max(min))
@@ -2835,11 +2829,11 @@ fn clamp_block_height(tree: &LayoutSession<'_>, node: usize, basis: f32, height:
 /// What a `content-box` size needs added to become a border-box size.
 pub(crate) fn box_sizing_adjustment(tree: &LayoutSession<'_>, node: usize, basis: f32) -> f32 {
     let style = tree.physical_style(node);
-    if style.box_sizing() != taffy::BoxSizing::ContentBox {
+    if style.box_sizing() != BoxSizing::ContentBox {
         return 0.0;
     }
-    let padding = style.padding().resolve_or_zero(Some(basis), resolve_calc);
-    let border = style.border().resolve_or_zero(Some(basis), resolve_calc);
+    let padding = style.padding().resolve_or_zero(Some(basis));
+    let border = style.border().resolve_or_zero(Some(basis));
     padding.left + padding.right + border.left + border.right
 }
 
@@ -2849,11 +2843,11 @@ pub(crate) fn box_sizing_height_adjustment(
     basis: f32,
 ) -> f32 {
     let style = tree.physical_style(node);
-    if style.box_sizing() != taffy::BoxSizing::ContentBox {
+    if style.box_sizing() != BoxSizing::ContentBox {
         return 0.0;
     }
-    let padding = style.padding().resolve_or_zero(Some(basis), resolve_calc);
-    let border = style.border().resolve_or_zero(Some(basis), resolve_calc);
+    let padding = style.padding().resolve_or_zero(Some(basis));
+    let border = style.border().resolve_or_zero(Some(basis));
     padding.top + padding.bottom + border.top + border.bottom
 }
 
@@ -3036,11 +3030,10 @@ fn relative_inset(
     height: Option<f32>,
     axes: IfcAxes,
 ) -> (f32, f32) {
-    use crate::layout::taffy_adapter::MaybeResolve;
     let inset = tree.physical_style(node).inset();
     if !matches!(
-        tree.nodes[node].taffy_position(),
-        taffy::Position::Relative | taffy::Position::Sticky
+        tree.nodes[node].layout_position(),
+        Position::Relative | Position::Sticky
     ) || inset.left.is_auto()
         && inset.right.is_auto()
         && inset.top.is_auto()
@@ -3048,9 +3041,8 @@ fn relative_inset(
     {
         return (0.0, 0.0);
     }
-    let horizontal =
-        |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(basis), resolve_calc);
-    let vertical = |value: taffy::LengthPercentageAuto| value.maybe_resolve(height, resolve_calc);
+    let horizontal = |value: LengthPercentageAuto| value.maybe_resolve(Some(basis));
+    let vertical = |value: LengthPercentageAuto| value.maybe_resolve(height);
     let (right_wins, bottom_wins) =
         super::style::inset_precedence(axes.writing_mode(), axes.direction() == Direction::Rtl);
     let left = horizontal(inset.left);
@@ -3078,7 +3070,7 @@ fn relative_inset(
 /// scroll container (CSS Overflow 3 §3.1).
 fn atomic_baseline(tree: &LayoutSession<'_>, node: usize, output: &LayoutOutput) -> Option<f32> {
     let overflow = tree.physical_style(node).overflow();
-    let scrolls = |overflow| !matches!(overflow, taffy::Overflow::Visible | taffy::Overflow::Clip);
+    let scrolls = |overflow| !matches!(overflow, Overflow::Visible | Overflow::Clip);
     if scrolls(overflow.x) || scrolls(overflow.y) {
         return None;
     }
@@ -3178,12 +3170,12 @@ impl BoxEdges {
     /// margins as zero.
     pub(crate) fn of(style: &raikiri_layout_style::LayoutStyleView<'_>, basis: f32) -> Self {
         Self {
-            border: style.border().resolve_or_zero(Some(basis), resolve_calc),
-            padding: style.padding().resolve_or_zero(Some(basis), resolve_calc),
+            border: style.border().resolve_or_zero(Some(basis)),
+            padding: style.padding().resolve_or_zero(Some(basis)),
             margin: style
                 .margin()
                 .into_edges()
-                .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0)),
+                .map(|margin| margin.resolve(Some(basis)).unwrap_or(0.0)),
         }
     }
 }
@@ -3243,7 +3235,6 @@ pub(crate) fn place_out_of_flow(
     border_box: Size<f32>,
     output: &mut LayoutOutput,
 ) {
-    use crate::layout::taffy_adapter::MaybeResolve;
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
         return;
     };
@@ -3264,12 +3255,8 @@ pub(crate) fn place_out_of_flow(
         return;
     };
     let style = tree.physical_style(idx);
-    let border = style
-        .border()
-        .resolve_or_zero(Some(border_box.width), resolve_calc);
-    let padding = style
-        .padding()
-        .resolve_or_zero(Some(border_box.width), resolve_calc);
+    let border = style.border().resolve_or_zero(Some(border_box.width));
+    let padding = style.padding().resolve_or_zero(Some(border_box.width));
     // The containing block: the root's padding box.
     let root_cb = PaddingBox {
         x: border.left,
@@ -3381,9 +3368,9 @@ pub(crate) fn place_out_of_flow(
                     }),
                     &crate::layout::dispatch::block_flow::style_input::physical(tree, node),
                     if rtl {
-                        taffy::Direction::Rtl
+                        values::Direction::Rtl
                     } else {
-                        taffy::Direction::Ltr
+                        values::Direction::Ltr
                     },
                     Line {
                         start: content_left,
@@ -3408,15 +3395,9 @@ pub(crate) fn place_out_of_flow(
         // goes to the end margin instead (§10.3.7).
         let auto_vertical_margins = child_margin.top.is_auto() && child_margin.bottom.is_auto();
         let auto_horizontal_margins = child_margin.left.is_auto() && child_margin.right.is_auto();
-        let margin = child_margin.map(|margin| {
-            margin
-                .resolve_to_option(cb.width, resolve_calc)
-                .unwrap_or(0.0)
-        });
-        let horizontal =
-            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb.width), resolve_calc);
-        let vertical =
-            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb.height), resolve_calc);
+        let margin = child_margin.map(|margin| margin.resolve(Some(cb.width)).unwrap_or(0.0));
+        let horizontal = |value: LengthPercentageAuto| value.maybe_resolve(Some(cb.width));
+        let vertical = |value: LengthPercentageAuto| value.maybe_resolve(Some(cb.height));
         let (left, right) = (horizontal(child_inset.left), horizontal(child_inset.right));
         let (top, bottom) = (vertical(child_inset.top), vertical(child_inset.bottom));
         let width = used_block_width(tree, node, cb.width).or(match (left, right) {
@@ -3428,7 +3409,7 @@ pub(crate) fn place_out_of_flow(
         let height = child
             .size()
             .height
-            .maybe_resolve(Some(cb.height), resolve_calc)
+            .maybe_resolve(Some(cb.height))
             .or(match (top, bottom) {
                 (Some(top), Some(bottom)) => {
                     Some((cb.height - top - bottom - margin.top - margin.bottom).max(0.0))

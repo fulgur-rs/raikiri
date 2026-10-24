@@ -179,9 +179,9 @@ fn a_negative_end_inset_moves_the_line_ends_out_past_the_line_space() {
 
 #[test]
 fn logical_clear_sides_are_not_mapped() {
-    assert_eq!(block("clear: left").clear, taffy::Clear::Left);
-    assert_eq!(block("clear: right").clear, taffy::Clear::Right);
-    assert_eq!(block("clear: inline-start").clear, taffy::Clear::None);
+    assert_eq!(block("clear: left").clear, Clear::Left);
+    assert_eq!(block("clear: right").clear, Clear::Right);
+    assert_eq!(block("clear: inline-start").clear, Clear::None);
 }
 
 #[test]

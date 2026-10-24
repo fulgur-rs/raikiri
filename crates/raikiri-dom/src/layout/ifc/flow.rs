@@ -8,13 +8,13 @@ use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::block_flow::context::BlockContext;
 use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use raikiri_layout_geometry::Edges;
+use raikiri_layout_style::values::Clear;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
 use shodo::style::LineOptions;
 use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
-use taffy::Clear;
 
 /// Logical inline space of one line, in content-box coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]

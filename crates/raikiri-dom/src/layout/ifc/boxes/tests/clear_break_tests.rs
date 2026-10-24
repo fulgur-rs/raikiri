@@ -60,7 +60,7 @@ fn clear_break_lookup_preserves_first_entries_and_replayed_queries() {
     projected
         .meta
         .cleared_breaks
-        .push((expected[0].0, taffy::Clear::Right));
+        .push((expected[0].0, Clear::Right));
     let root = IfcRoot::new(projected);
     let copy = root.without_lines();
     let lines = paragraph_lines(&root);
