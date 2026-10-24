@@ -4,6 +4,7 @@
 //! algorithms that read them import those types from here instead of from the
 //! layout library. The names and constructors are the library's own.
 
+pub use crate::block::BaselineSet;
 pub use crate::resolve::{CalcHandle, IntoEdges, LengthExt, LengthIdentity};
 pub use crate::resolve::{MaybeResolve, ResolveOrZero};
 pub use taffy::AlignContentKeyword;

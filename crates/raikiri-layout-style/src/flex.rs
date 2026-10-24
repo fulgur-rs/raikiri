@@ -94,6 +94,12 @@ impl LayoutStyleView<'_> {
             taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
         )
     }
+    /// Whether a flex container wraps its items onto more lines when they do
+    /// not fit.
+    #[inline]
+    pub fn flex_wraps(&self) -> bool {
+        self.prepared.values.flex_wrap != W::NoWrap
+    }
     /// Whether and how a flex container wraps its lines.
     #[inline]
     pub fn flex_wrap(&self) -> taffy::FlexWrap {

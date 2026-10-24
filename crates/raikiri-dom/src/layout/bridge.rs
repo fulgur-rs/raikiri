@@ -271,6 +271,7 @@ fn apply_computed_to_style_in_session_inner(
         }
         doc.nodes[idx].flex_first_baseline = None;
         doc.nodes[idx].vertical_first_baseline = None;
+        doc.nodes[idx].orthogonal_first_baseline = None;
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].collapsed_border = None;

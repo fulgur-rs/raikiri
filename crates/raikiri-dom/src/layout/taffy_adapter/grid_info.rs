@@ -6,12 +6,13 @@ use taffy::{DetailedGridInfo, DetailedLayoutInfo, Direction, GridItemStyle};
 
 /// The grid lines an item of a grid occupies, as 1-based line numbers: the
 /// item spans the rows from `row_start` up to, not including, `row_end`, and
-/// starts at the column line `column_start`.
+/// the columns from `column_start` up to, not including, `column_end`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GridItemLines {
     pub(crate) row_start: u16,
     pub(crate) row_end: u16,
     pub(crate) column_start: u16,
+    pub(crate) column_end: u16,
 }
 
 /// How many rows a grid has before, in and after its explicit grid.
@@ -79,6 +80,7 @@ impl GridInfo {
                 row_start: item.row_start,
                 row_end: item.row_end,
                 column_start: item.column_start,
+                column_end: item.column_end,
             })
     }
 
@@ -97,6 +99,15 @@ impl GridInfo {
     pub(crate) fn item_area_size(&self, index: usize) -> Option<Size<f32>> {
         let (_, size) = self.grid()?.item_grid_area(index)?;
         Some(Size::from_taffy(size))
+    }
+
+    /// The extent of the grid area of the item `index` along the inline axis
+    /// of the container, from its inline start to its inline end, relative to
+    /// the border box of the container: the columns the item spans without
+    /// the gaps around them.
+    pub(crate) fn item_inline_range(&self, index: usize) -> Option<(f32, f32)> {
+        let (start, size) = self.grid()?.item_grid_area(index)?;
+        Some((start.x, start.x + size.width))
     }
 
     /// The grid area that the grid placement of the out-of-flow box `style`

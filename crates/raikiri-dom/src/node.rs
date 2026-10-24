@@ -503,6 +503,11 @@ pub struct Node {
     /// edge of the root's content box. The root records it when it places the
     /// child in normal flow.
     pub(crate) vertical_first_baseline: Option<f32>,
+    /// First baseline of a box in a writing mode orthogonal to its parent's,
+    /// as its last layout found it: an offset along the block axis of the box
+    /// from its block-start border edge. The box exports no baseline to its
+    /// parent, which reads this one to align the box by it.
+    pub(crate) orthogonal_first_baseline: Option<f32>,
     /// Computed `break-before` value consumed by column fragmentation.
     pub(crate) break_before: BreakBetween,
     /// Computed `break-after` value consumed by column fragmentation.
@@ -726,6 +731,7 @@ impl Node {
             table_first_baseline: None,
             flex_first_baseline: None,
             vertical_first_baseline: None,
+            orthogonal_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
