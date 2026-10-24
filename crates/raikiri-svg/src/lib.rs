@@ -1,12 +1,19 @@
-//! Static SVG parsing and bounded rasterization.
+//! Static SVG parsing, bounded rasterization and vector scenes.
 //!
-//! Backend types stay private to this crate. SVG references that could read
-//! local files, issue requests, or recursively load data URLs are rejected.
+//! [`SvgDocument::rasterize`] draws pixels; [`SvgDocument::scene`] builds the
+//! same picture as resolution independent paint commands
+//! ([`raikiri_traits::vector`]). Backend types stay private to this crate. SVG
+//! references that could read local files, issue requests, or recursively load
+//! data URLs are rejected.
 
 use raikiri_traits::DecodedImage;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
+
+mod scene;
+
+pub use scene::{SvgSceneError, SvgSceneFeature, SvgSceneLimit};
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_INITIAL_PARSE_XML_BYTES: u64 = 32 * 1024 * 1024;
@@ -670,6 +677,38 @@ impl SvgDocument {
         (width, height): (u32, u32),
         pixels: &mut Vec<u8>,
     ) -> Result<(), SvgError> {
+        let parsed_tree = self.prepared_tree(viewport, root_style, prepared)?;
+        let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
+        let raster_opacity = if root_style.neutralize_root_opacity {
+            1.0
+        } else {
+            root_style.opacity
+        };
+        render_tree(
+            tree,
+            width,
+            height,
+            viewport,
+            raster_opacity,
+            root_style
+                .neutralize_root_opacity
+                .then_some(root_style.opacity),
+            pixels,
+        )
+    }
+
+    /// Parses the tree that `prepared`, or without one the source prepared
+    /// for `root_style`, describes. `None` stands for this document's own
+    /// tree, when preparing changed nothing.
+    ///
+    /// A root that is not visible is hidden in the source, so only the
+    /// descendants that set `visibility: visible` themselves are drawn.
+    fn prepared_tree(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        prepared: Option<String>,
+    ) -> Result<Option<usvg::Tree>, SvgError> {
         let source = match prepared {
             Some(source) => source,
             None => self.prepare_source(
@@ -682,26 +721,9 @@ impl SvgDocument {
                 false,
             )?,
         };
-        let raster_opacity = if root_style.neutralize_root_opacity {
-            1.0
-        } else {
-            root_style.opacity
-        };
-        let parsed_tree = (source != self.source)
+        (source != self.source)
             .then(|| parse_tree(&source))
-            .transpose()?;
-        let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
-        render_tree(
-            tree,
-            width,
-            height,
-            viewport,
-            raster_opacity,
-            root_style
-                .neutralize_root_opacity
-                .then_some(root_style.opacity),
-            pixels,
-        )
+            .transpose()
     }
 }
 

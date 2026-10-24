@@ -228,6 +228,7 @@ tuned when the builder exists:
 | --- | --- |
 | Scene nodes | 1,000,000 |
 | Total path segments | 4,000,000 |
+| Group nesting depth | 256 |
 | Clip nesting depth | 64 |
 | Glyphs in one scene | 1,000,000 |
 | Stops in one gradient | 1,024 |

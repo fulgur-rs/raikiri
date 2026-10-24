@@ -1,0 +1,320 @@
+//! Vector paint scenes: resolution independent drawing commands.
+//!
+//! A [`VectorImage`] is what a producer such as an SVG builder hands to a
+//! consumer that draws it. It is plain data: no parser, rasterizer or output
+//! format type appears here, and the scene never names a file, a URL or a font.
+//!
+//! ## Space and size
+//!
+//! Coordinates are CSS pixels in the scene's own space. `(0, 0)` to
+//! [`VectorImage::size`] is the viewport box the scene was built for, after
+//! the source's own view box and aspect ratio rules have been applied. A
+//! consumer places the scene in the page with one affine transform and a clip
+//! to that box.
+//!
+//! ## What a scene carries
+//!
+//! The scene carries the opacity of its own content only. The opacity and
+//! visibility of the element that shows it belong to the page's paint events,
+//! so the consumer composites them once around the host box and the scene
+//! together.
+//!
+//! Paths are already flattened to lines, quadratic and cubic curves: arcs,
+//! basic shapes and instanced content are resolved by the producer.
+//!
+//! Every public enum and struct is `#[non_exhaustive]`. Producers build the
+//! structs with their `new` constructors and set the public fields.
+
+use crate::paint::{PaintColor, PaintTransform};
+
+/// A vector drawing of a fixed size.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct VectorImage {
+    /// The viewport box the scene was built for, in CSS pixels.
+    pub size: (f32, f32),
+    /// The content, in the scene's space.
+    pub root: Group,
+}
+
+impl VectorImage {
+    /// A scene of `size` with no content.
+    pub fn new(size: (f32, f32)) -> Self {
+        Self {
+            size,
+            root: Group::new(PaintTransform::IDENTITY),
+        }
+    }
+
+    /// The number of nodes in the scene, groups and the root included.
+    pub fn node_count(&self) -> usize {
+        1 + self.root.descendant_count()
+    }
+
+    /// An estimate of the heap memory the scene holds, in bytes, for charging
+    /// it to a cache budget. It counts the storage of nodes, path segments and
+    /// dash arrays, not allocator overhead.
+    pub fn estimated_heap_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.root.heap_bytes()
+    }
+}
+
+/// One drawing command or a container of them.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Node {
+    /// A group with its own transform and opacity.
+    Group(Group),
+    /// A filled and/or stroked path.
+    Path(Path),
+}
+
+/// A set of nodes drawn together.
+///
+/// The children are drawn in order, after `transform` has been applied to
+/// their coordinates. When `opacity` is below one, the children are first
+/// composited with each other and the result is drawn with that opacity.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Group {
+    /// Maps the children's coordinates to the enclosing space.
+    pub transform: PaintTransform,
+    /// Opacity of the composited children, in `0.0..=1.0`.
+    pub opacity: f32,
+    /// The children, back to front.
+    pub children: Vec<Node>,
+}
+
+impl Group {
+    /// An opaque group with no children.
+    pub fn new(transform: PaintTransform) -> Self {
+        Self {
+            transform,
+            opacity: 1.0,
+            children: Vec::new(),
+        }
+    }
+
+    fn descendant_count(&self) -> usize {
+        self.children
+            .iter()
+            .map(|child| match child {
+                Node::Group(group) => 1 + group.descendant_count(),
+                Node::Path(_) => 1,
+            })
+            .sum()
+    }
+
+    fn heap_bytes(&self) -> usize {
+        let own = self.children.capacity() * std::mem::size_of::<Node>();
+        own + self
+            .children
+            .iter()
+            .map(|child| match child {
+                Node::Group(group) => group.heap_bytes(),
+                Node::Path(path) => path.heap_bytes(),
+            })
+            .sum::<usize>()
+    }
+}
+
+/// A path with its paint.
+///
+/// A path with neither a fill nor a stroke draws nothing.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Path {
+    /// The outline, in the space of the enclosing group.
+    pub segments: Vec<PathSegment>,
+    /// How the inside is painted, if it is.
+    pub fill: Option<Fill>,
+    /// How the outline is painted, if it is.
+    pub stroke: Option<Stroke>,
+    /// Whether the fill or the stroke is drawn first.
+    pub paint_order: PaintOrder,
+}
+
+impl Path {
+    /// An unpainted path along `segments`.
+    pub fn new(segments: Vec<PathSegment>) -> Self {
+        Self {
+            segments,
+            fill: None,
+            stroke: None,
+            paint_order: PaintOrder::FillThenStroke,
+        }
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.segments.capacity() * std::mem::size_of::<PathSegment>()
+            + self.stroke.as_ref().map_or(0, Stroke::heap_bytes)
+    }
+}
+
+/// One step of a path.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum PathSegment {
+    /// Starts a new subpath at the point.
+    MoveTo((f32, f32)),
+    /// A straight line to the point.
+    LineTo((f32, f32)),
+    /// A quadratic curve.
+    QuadTo {
+        /// The control point.
+        control: (f32, f32),
+        /// The end point.
+        to: (f32, f32),
+    },
+    /// A cubic curve.
+    CubicTo {
+        /// The first control point.
+        control1: (f32, f32),
+        /// The second control point.
+        control2: (f32, f32),
+        /// The end point.
+        to: (f32, f32),
+    },
+    /// Closes the current subpath with a line to its start.
+    Close,
+}
+
+/// The paint of the inside of a path.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Fill {
+    /// What covers the inside.
+    pub paint: Paint,
+    /// Opacity of the paint, in `0.0..=1.0`.
+    pub opacity: f32,
+    /// Which points are inside.
+    pub rule: FillRule,
+}
+
+impl Fill {
+    /// An opaque non-zero fill with `paint`.
+    pub fn new(paint: Paint) -> Self {
+        Self {
+            paint,
+            opacity: 1.0,
+            rule: FillRule::NonZero,
+        }
+    }
+}
+
+/// The paint of the outline of a path.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Stroke {
+    /// What covers the outline.
+    pub paint: Paint,
+    /// Opacity of the paint, in `0.0..=1.0`.
+    pub opacity: f32,
+    /// Width of the outline, in the space of the path.
+    pub width: f32,
+    /// How open subpaths end.
+    pub cap: LineCap,
+    /// How segments meet.
+    pub join: LineJoin,
+    /// The longest miter, as a multiple of half the width.
+    pub miter_limit: f32,
+    /// The dash pattern; `None` draws a solid line.
+    pub dash: Option<Dash>,
+}
+
+impl Stroke {
+    /// An opaque solid stroke of `width` with butt caps and miter joins.
+    pub fn new(paint: Paint, width: f32) -> Self {
+        Self {
+            paint,
+            opacity: 1.0,
+            width,
+            cap: LineCap::Butt,
+            join: LineJoin::Miter,
+            miter_limit: 4.0,
+            dash: None,
+        }
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.dash
+            .as_ref()
+            .map_or(0, |dash| dash.array.capacity() * std::mem::size_of::<f32>())
+    }
+}
+
+/// A dash pattern.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Dash {
+    /// Alternating lengths of dashes and gaps, starting with a dash. It has
+    /// an even number of positive entries.
+    pub array: Vec<f32>,
+    /// Where in the pattern the line starts.
+    pub offset: f32,
+}
+
+impl Dash {
+    /// A pattern of alternating dash and gap lengths.
+    pub fn new(array: Vec<f32>, offset: f32) -> Self {
+        Self { array, offset }
+    }
+}
+
+/// What a fill or a stroke is painted with.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Paint {
+    /// A single color. Its alpha is part of the color, on top of the opacity
+    /// of the fill or stroke that holds it.
+    Color(PaintColor),
+}
+
+/// Which points of a path are inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FillRule {
+    /// A point is inside when the path winds around it.
+    NonZero,
+    /// A point is inside when a ray from it crosses the path an odd number of times.
+    EvenOdd,
+}
+
+/// How an open subpath ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LineCap {
+    /// Flat at the end point.
+    Butt,
+    /// A half circle around the end point.
+    Round,
+    /// Flat, half a width beyond the end point.
+    Square,
+}
+
+/// How two segments of an outline meet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LineJoin {
+    /// A sharp corner, cut to a bevel past the miter limit.
+    Miter,
+    /// A sharp corner, clipped at the miter limit instead of bevelled.
+    MiterClip,
+    /// A rounded corner.
+    Round,
+    /// A flat cut across the corner.
+    Bevel,
+}
+
+/// The order in which the fill and the stroke of a path are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PaintOrder {
+    /// The stroke is drawn over the fill.
+    FillThenStroke,
+    /// The fill is drawn over the stroke.
+    StrokeThenFill,
+}
+
+#[cfg(test)]
+mod tests;
