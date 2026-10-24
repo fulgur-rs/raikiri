@@ -5,7 +5,7 @@ use crate::layout::protocol::{AvailableSpace, LayoutInput, RequestedAxis, RunMod
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_style::property::CalcLengthPercentage;
 use taffy::Dimension;
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::Size as StyleSize;
 
 mod intrinsic_keyword_tests;
 mod ratio_box_tests;

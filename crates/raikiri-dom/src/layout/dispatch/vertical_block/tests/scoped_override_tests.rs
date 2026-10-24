@@ -4,7 +4,7 @@ use crate::layout::taffy_adapter::IntoEdges;
 use raikiri_layout_geometry::Edges;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and its relatives are style input
+use taffy::Rect as StyleRect;
 use taffy::{CoreStyle, Dimension, LengthPercentage};
 
 /// The same values on the same sides, as the style vocabulary's rectangle.

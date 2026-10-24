@@ -12,7 +12,7 @@
 //! to be swapped in the document's own styles: the styles of the boxes stay on
 //! physical axes while pagination runs.
 
-use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentageAuto> is style input
+use taffy::Rect as StyleRect;
 use taffy::{Dimension, LengthPercentageAuto};
 
 /// The style of a box along the axis pagination breaks the flow on.

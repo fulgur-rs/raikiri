@@ -9,7 +9,7 @@
 //! `min_size` and `max_size` then reads the sizes the keywords stand for.
 
 use std::collections::HashMap;
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::Size as StyleSize;
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;

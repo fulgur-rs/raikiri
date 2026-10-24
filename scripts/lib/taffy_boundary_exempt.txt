@@ -1,4 +1,4 @@
-# scripts/lib/taffy_boundary_exempt.txt — paths that may name Taffy output types.
+# scripts/lib/taffy_boundary_exempt.txt — paths that may name Taffy's types.
 #
 # One path per line; `#` starts a comment. A trailing `/` exempts a directory.
 # Used by scripts/lib/taffy_boundary_lint.py, which documents what is counted.

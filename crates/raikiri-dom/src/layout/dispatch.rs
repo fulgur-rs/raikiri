@@ -21,7 +21,7 @@ use crate::layout::taffy_adapter::algorithms::{
 };
 use crate::layout::taffy_adapter::{GridInfo, GridRowCounts, MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
-use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
+use taffy::Point as StylePoint;
 use taffy::{BoxGenerationMode, CoreStyle, ExpandedDimension, Position as TaffyPosition};
 
 use self::block_flow::{compute_block_flow, context::BlockContext};

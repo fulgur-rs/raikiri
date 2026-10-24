@@ -18,9 +18,9 @@ use crate::layout::taffy_adapter::MaybeResolve;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{BoxLayout, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
-use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
+use taffy::Point as StylePoint;
 use taffy::{BlockItemStyle, CoreStyle, FlexboxContainerStyle, FlexboxItemStyle};
-use taffy::{Rect as StyleRect, Size as StyleSize}; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and Size<Dimension> are style input
+use taffy::{Rect as StyleRect, Size as StyleSize};
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 

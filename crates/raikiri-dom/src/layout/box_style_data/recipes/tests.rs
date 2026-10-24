@@ -7,7 +7,7 @@ use raikiri_style::{
     ComputedBorderSpacing, ComputedLengthPercentageOrAuto as L,
     property::{BorderCollapseValue, CaptionSideValue, WritingMode},
 };
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
+use taffy::Size as StyleSize;
 use taffy::{
     CoreStyle, FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
     GridItemStyle as GI,

@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::protocol::{RequestedAxis, RunMode, SizingMode};
 use raikiri_layout_geometry::{Edges, Line, Point};
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::Size as StyleSize;
 mod child_walk_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;

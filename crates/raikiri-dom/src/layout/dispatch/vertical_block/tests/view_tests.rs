@@ -3,7 +3,7 @@ use crate::layout::{
     context::LayoutSession,
     style_views::{ReadRole, tests::fixture_with_styles},
 };
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::Size as StyleSize;
 use taffy::{CoreStyle, LengthPercentage};
 
 fn frame(

@@ -306,15 +306,15 @@ inline test は分離する、新規ファイルは最初から `tests.rs` で�
 組み込み済み) で宣言漏れが無いことを確認すること。検出ロジックは
 `scripts/lib/orphan_tests_check.py` 参照。
 
-## Taffy の出力型は所有型の名前で書く (`scripts/taffy-boundary-lint.sh`)
+## Taffy の型は所有型の名前で書く (`scripts/taffy-boundary-lint.sh`)
 
-layout の結果・幾何・layout 呼び出しの型 (`taffy::Layout`、`Size`、`Point`、`Line`、`Rect`、
-`LayoutInput`、`LayoutOutput`、`AvailableSpace`、`NodeId` など) は、Taffy ではなく raikiri
-が所有する名前で書く。これらの出力側の型名を Taffy の名前で書いてよいのは adapter
-(`crates/raikiri-dom/src/layout/taffy_adapter/`) と view crate (`crates/raikiri-layout-style/`) だけで、所有型と
-Taffy の型の変換は adapter が全フィールドを明示して行う。Taffy のアルゴリズムが返す grid の報告 (トラックや item の
-grid line) も adapter の `GridInfo` に包んで持ち、adapter の外はその accessor で読む。入力側の style 語彙
-(`Dimension`、`CoreStyle` 系、`Clear`、`Direction` など) はこの規則の対象外で、lint も数えない。
+Taffy の名前を書いてよいのは adapter (`crates/raikiri-dom/src/layout/taffy_adapter/`) と view crate
+(`crates/raikiri-layout-style/`) だけにする方向で移行している。名前は 2 種類あり、状況が違う。
+
+**出力側** (layout の結果・幾何・layout 呼び出しの型: `taffy::Layout`、`Size`、`Point`、`Line`、`Rect`、
+`LayoutInput`、`LayoutOutput`、`AvailableSpace`、`NodeId` など) は、Taffy ではなく raikiri が所有する名前で書く。
+所有型と Taffy の型の変換は adapter が全フィールドを明示して行う。Taffy のアルゴリズムが返す grid の報告
+(トラックや item の grid line) も adapter の `GridInfo` に包んで持ち、adapter の外はその accessor で読む。
 
 - 幾何と box の layout 結果: `raikiri-layout-geometry` crate の `Size` / `Point` / `Line` /
   `Edges` (Taffy の `Rect`。x / y / width / height の矩形ではなく 4 辺の値) / `BoxLayout`
@@ -322,12 +322,24 @@ grid line) も adapter の `GridInfo` に包んで持ち、adapter の外はそ�
 - layout の呼び出し規約 (`LayoutInput` など): raikiri-dom 内部の `crate::layout::protocol`。
   raikiri-dom の外には出さない。
 
+**入力側** (style trait の `CoreStyle` 系、長さの `Dimension` / `LengthPercentage(Auto)` / `CompactLength`、
+keyword の `Display` / `Position` / `Direction` / `Clear` / `Float` など、`Style`、float と grid の語彙、tree trait、
+アルゴリズムを呼ぶ関数) には、自前の名前がまだ無い。raikiri が style を組み立てて Taffy に渡す側の語彙で、
+置き換え先はこれから作る。それまでは**新しい箇所に Taffy の名前を足さず**、値は style view や既存の helper を
+通して読む。置き換えが入るたびに、その分だけ baseline を下げる。
+
 `scripts/taffy-boundary-lint.sh` (`scripts/gate.sh` と CI の両方に組み込み済み) は、`taffy::`
-から始まる path でこれらの名前を書いた箇所を数え、ファイル単位の件数を
+から始まる path でこれらの名前 (出力側と入力側の両方) を書いた箇所を数え、ファイル単位の件数を
 `scripts/lib/taffy_boundary_baseline.txt` に固定する。件数は**減らす方向にだけ**動かせる。
 増やすと失敗し、減らしたのに baseline を下げ忘れても失敗する (下げ忘れた余白に後から追加が
 隠れるため)。下げるには `scripts/taffy-boundary-lint.sh --update-baseline` (件数が pin を超えているファイルが
-1 つでもあれば拒否する。ファイルを移した場合は baseline の path を手で書き換える)。数える範囲、入力側の `Size<Dimension>` などを除外する同一行の
-`// taffy-boundary-lint:ignore: <理由>` marker、例外にする path の一覧
-(`scripts/lib/taffy_boundary_exempt.txt`) は `scripts/lib/taffy_boundary_lint.py` の
-docstring を参照。baseline を上げて回帰を通さないこと。baseline は現在空 (0 件) で、出力側の Taffy 名を新しく書くと即座に失敗する。
+1 つでもあれば拒否する。ファイルを移した場合は baseline の path を手で書き換える)。
+
+- `Size` / `Rect` / `Point` / `Line` は幾何にも style 入力 (`Size<Dimension>` など) にも使われ、path だけでは
+  区別できないので、型引数によらず数える。`use taffy::Size as StyleSize;` のような別名の定義も 1 件として数える
+  (別名の使用箇所は数えない。別名を差し替えれば使用箇所がまとめて替わるため)。
+- 同一行の `// taffy-boundary-lint:ignore: <理由>` marker は、置き換え先が無いこと以外の理由
+  (Taffy の tree trait が Taffy の `NodeId` を取る、など) がある例外にだけ使う。`Size` / `Rect` / `Point` /
+  `Line` には効かない (style 入力の別名を件数から外せないようにするため)。
+- 数える範囲、名前の一覧と区分、例外にする path の一覧 (`scripts/lib/taffy_boundary_exempt.txt`) は
+  `scripts/lib/taffy_boundary_lint.py` の docstring を参照。baseline を上げて回帰を通さないこと。

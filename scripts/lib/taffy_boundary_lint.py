@@ -1,30 +1,49 @@
 #!/usr/bin/env python3
-"""scripts/lib/taffy_boundary_lint.py — Taffy output-type boundary ratchet.
+"""scripts/lib/taffy_boundary_lint.py — Taffy boundary ratchet.
 
 ## Why this exists
 
-raikiri-dom lays boxes out by calling Taffy, and the layout results, the layout
-call types and the node handle that Taffy defines used to leak into every layer:
-the paint walk, the page pipeline, the inline engine, tables and multicol all
-named `taffy::Layout`, `taffy::Size`, `taffy::LayoutInput` and so on directly.
-Those names are now types owned by this repository: a dependency-free geometry
-crate (`raikiri-layout-geometry`) and a call-protocol module inside raikiri-dom
-(`layout::protocol`). The only code that names Taffy's output types is the
-adapter module (`layout::taffy_adapter`), which converts between the two, and
-the view crate. This lint keeps it that way: it pins what still names a Taffy
-output type outside those places and fails when the number goes up, so the
-remaining uses can only be removed, never added to.
+raikiri-dom lays boxes out by calling Taffy, and Taffy's vocabulary used to leak
+into every layer: the paint walk, the page pipeline, the inline engine, tables
+and multicol all named `taffy::Layout`, `taffy::Size`, `taffy::LayoutInput`,
+`taffy::Dimension`, `taffy::Style` and so on directly. The layout results, the
+layout call types and the node handle are now types owned by this repository: a
+dependency-free geometry crate (`raikiri-layout-geometry`) and a call-protocol
+module inside raikiri-dom (`layout::protocol`). The only code that may name
+Taffy's types is the adapter module (`layout::taffy_adapter`), which converts
+between the two, and the view crate, which implements Taffy's style traits over
+computed values. This lint keeps the boundary from eroding: it pins how many
+uses of Taffy's vocabulary remain outside those places and fails when the number
+goes up, so the remaining uses can only be removed, never added to.
+
+## Two tables of names
+
+Output side (`OUTPUT_NAMES`): what a layout call returns or takes as its
+protocol. That is geometry, layout results, the layout input and output, the
+node handle, the cache, and the detailed grid reports that are handed straight
+back to Taffy. Each one has an owned replacement or is adapter-only.
+
+Input side (`INPUT_CLASSES`, flattened into `INPUT_NAMES`): the rest of Taffy's
+public vocabulary that raikiri-dom could name, which raikiri builds or reads
+before a layout call. That is the style traits, the length types, the keyword
+enums and small value types, `Style`, the float and block formatting state, the
+grid vocabulary, the tree traits, and the functions that run Taffy's algorithms
+or build style values. Almost all of these have no owned replacement yet. They
+are pinned like the output names, so the vocabulary can only shrink while the
+replacements are introduced, and the failure output says "no owned name yet"
+(with the kind of name) instead of naming a type to move to. The few that
+already have an owned replacement are in `OWNED_INPUT_NAMES`.
+
+The tables say which kind a name is and what it moves to; they do not decide
+whether a use is counted. Any name a path reaches from the `taffy` crate is
+counted. One that is in neither table is reported as an unclassified name (its
+own line in the summary), so a name added by a Taffy upgrade cannot slip in
+unpinned. Add it to a table to give it a kind.
 
 ## What is counted
 
-Only the "output side" names in `OUTPUT_NAMES`: geometry, layout results, the
-layout call protocol, the node handle, the cache, and the detailed layout info
-that is handed straight back to Taffy. Input-side vocabulary (`Dimension`,
-`LengthPercentage`, `CoreStyle`, `Style`, `Display`, ...) is deliberately not
-counted.
-
-An occurrence is a *path* that starts at the `taffy` crate and names one of
-those types:
+An occurrence is a *path* that starts at the `taffy` crate and names an item of
+it:
 
   - one per leaf of a `use taffy::...` tree (nested groups and `as` aliases are
     expanded; the occurrence sits on the line of the leaf, so a multi-line
@@ -38,27 +57,42 @@ those types:
     then reached as `t::Size` or `tree::NodeId`, which a path scan cannot tie
     back to Taffy. Import the type itself instead.
 
-A path names a type when its first capitalised segment after `taffy` is one of
-the counted names, so `taffy::Size::ZERO` and `taffy::tree::LayoutInput` count,
-while `taffy::GridPlacement::Line(1)` (an input-side enum variant that happens
-to be called `Line`) does not.
+A path names a type when it has a capitalised segment after `taffy`: the first
+one is the type, so `taffy::Size::ZERO` and `taffy::tree::LayoutInput` count as
+`Size` and `LayoutInput`, while `taffy::GridPlacement::Line(1)` counts as
+`GridPlacement` (an input-side enum), not as `Line`. A path with no capitalised
+segment names a function (`taffy::compute_block_layout(..)`,
+`use taffy::style_helpers::length`), and its last segment is the name. A path
+that ends at a module is not a name by itself; importing a module is counted
+separately, as above.
 
 Comments and string literals are ignored, and only `.rs` files under `crates/`
 are scanned (not `crates/*/target`). Names that arrive through an in-crate
 alias are not seen at the use site: the alias definition is the counted
-occurrence, and swapping it swaps every user.
+occurrence, and swapping it swaps every user. That includes the aliases that
+rename the generic geometry types for style input, such as
+`use taffy::Size as StyleSize;`.
 
-`Size`, `Rect`, `Point` and `Line` are generic. They also appear on the input
-side (`Size<Dimension>`, `Rect<LengthPercentageAuto>`, `Line<GridPlacement>`),
-and a path cannot tell the two apart without type information. They are counted
-regardless, so the number is an upper bound. A site that really is input-side
-(or otherwise has to keep the Taffy name) is marked on the same line:
+`Size`, `Rect`, `Point` and `Line` are generic. Layout geometry uses them
+(`Size<f32>`) and so does style input (`Size<Dimension>`,
+`Rect<LengthPercentageAuto>`, `Point<Overflow>`, `Line<GridPlacement>`), and a
+path cannot tell the two apart without type information. They are counted
+regardless of the type argument, under their output-side names, so the number is
+an upper bound. The hint in the failure output names the owned geometry type and
+says that the style-input use has none yet.
 
-    use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
+A site that has to keep the Taffy name for a reason other than a missing
+replacement is marked on the same line:
+
+    use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the tree traits take Taffy's id
 
 The reason after the second colon is required; a marker without one is not
 honoured. A marked occurrence is neither counted nor baselined; the summary
-shows how many there are (`-v` lists them) so the exceptions stay visible.
+shows how many there are (`-v` lists them) so the exceptions stay visible. A
+marker is never honoured on `Size`, `Rect`, `Point` or `Line` (counted whatever
+their type argument, so a style-input alias cannot be hidden from the baseline)
+or on a glob or module import (which stands for any number of names). The run
+reports such a marker.
 
 ## Where it is not counted
 
@@ -77,25 +111,35 @@ layout input or output), so a use of those names in another crate has no owned
 name to move to and stays pinned until the raikiri-dom API that replaces it
 exists.
 
-Some counted names have no owned replacement because they are handed straight
+Some output names have no owned replacement because they are handed straight
 back to Taffy and belong in the adapter: `Cache`, `ClearState`,
 `DetailedGridInfo`, `DetailedGridTracksInfo`, `DetailedGridItemsInfo` and
 `DetailedLayoutInfo` (shown as "(adapter only)" in the failure output). A use
 outside the adapter is pinned in the baseline; it is not a reason to add an
 ignore marker.
 
+Most input-side names have no owned replacement yet. The failure output shows
+the kind of name ("no owned name yet (length)"). A change that needs a value of
+that kind should read it through the existing style view or helper rather than
+name the Taffy type in a new place. The resolution helper traits are the
+exception: `MaybeMath` is owned by the geometry crate, and `MaybeResolve` and
+`ResolveOrZero` are raikiri-dom's own traits (implemented for Taffy's lengths in
+the adapter).
+
 ## The ratchet
 
 `taffy_boundary_baseline.txt` pins the current count per file. A run fails when
 
   - a file has more occurrences than its baseline (or any, if it has no entry):
-    new uses of a Taffy output type;
+    new uses of a counted Taffy name;
   - a file has fewer occurrences than its baseline, or a baseline entry names a
     file that no longer exists or is now exempt: the pin is stale, and a stale
     pin would let later additions hide behind the slack.
 
 Pinning per file instead of one total keeps parallel import-path changes from
-conflicting on a single number, and names the file that regressed.
+conflicting on a single number, and names the file that regressed. A pin is a
+count, not a list of names, so replacing one use with another in the same file
+passes; the code change is what shows that.
 `--update-baseline` rewrites the file from the current counts, but only
 downwards: it lowers a line, drops a line that reached zero, and refuses to run
 when any file has more occurrences than its pin or has none (a moved file, or
@@ -120,11 +164,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_BASELINE = SCRIPT_DIR / "taffy_boundary_baseline.txt"
 DEFAULT_EXEMPT = SCRIPT_DIR / "taffy_boundary_exempt.txt"
 
-# The Taffy names this lint counts, with the owned name each one is moving to.
-# The owned names live in the `raikiri-layout-geometry` crate (geometry and the
-# box layout result) and in raikiri-dom's `layout::protocol` module (the call
-# protocol). Names without an owned replacement are adapter-only: they are
-# handed straight back to Taffy and stay in the adapter.
+# The output-side Taffy names this lint counts, with the owned name each one is
+# moving to. The owned names live in the `raikiri-layout-geometry` crate
+# (geometry and the box layout result) and in raikiri-dom's `layout::protocol`
+# module (the call protocol). Names without an owned replacement are
+# adapter-only: they are handed straight back to Taffy and stay in the adapter.
+# `Size`, `Point`, `Line` and `Rect` are generic and also name style input; see
+# GENERIC_GEOMETRY.
 OUTPUT_NAMES: dict[str, str] = {
     "Size": "raikiri_layout_geometry::Size",
     "Point": "raikiri_layout_geometry::Point",
@@ -156,16 +202,184 @@ OUTPUT_NAMES: dict[str, str] = {
     "OofLayoutResult": "crate::layout::protocol::OofLayoutResult",
 }
 
+# Generic containers that name layout geometry (`Size<f32>`) and style input
+# (`Size<Dimension>`) alike. They stay under their output-side names and are
+# counted whatever the type argument is.
+GENERIC_GEOMETRY = frozenset({"Size", "Point", "Line", "Rect"})
+
+# The input-side Taffy names this lint counts, grouped by kind. The kind is shown
+# in the failure output because none of them has an owned replacement yet. Type
+# and trait names are capitalised; the lower-case entries are functions, matched
+# by the last segment of a path that has no capitalised segment.
+INPUT_CLASSES: dict[str, tuple[str, ...]] = {
+    "style trait": (
+        "CoreStyle",
+        "BlockContainerStyle",
+        "BlockItemStyle",
+        "OofItemStyle",
+        "FlexboxContainerStyle",
+        "FlexboxItemStyle",
+        "GridContainerStyle",
+        "GridItemStyle",
+        "CheapCloneStr",
+    ),
+    "length": (
+        "Dimension",
+        "LengthPercentage",
+        "LengthPercentageAuto",
+        "ExpandedDimension",
+        "ExpandedLengthPercentage",
+        "ExpandedLengthPercentageAuto",
+        "CompactLength",
+        "TaffyAuto",
+        "TaffyZero",
+        "TaffyMaxContent",
+        "TaffyMinContent",
+        "TaffyFitContent",
+        "TaffyGridLine",
+        "TaffyGridSpan",
+        "FromLength",
+        "FromPercent",
+        "FromFr",
+    ),
+    "resolution helper": (
+        "MaybeResolve",
+        "ResolveOrZero",
+        "MaybeMath",
+    ),
+    "style helper function": (
+        "auto",
+        "zero",
+        "length",
+        "percent",
+        "fr",
+        "flex",
+        "fit_content",
+        "min_content",
+        "max_content",
+        "minmax",
+        "repeat",
+        "line",
+        "span",
+        "evenly_sized_tracks",
+    ),
+    "keyword or small value": (
+        "Direction",
+        "Position",
+        "Display",
+        "Clear",
+        "Float",
+        "BoxSizing",
+        "Overflow",
+        "TextAlign",
+        "Contain",
+        "BoxGenerationMode",
+        "ContainingBlockClaims",
+        "FlexDirection",
+        "FlexWrap",
+        "AlignItems",
+        "AlignSelf",
+        "AlignContent",
+        "JustifyContent",
+        "JustifyItems",
+        "JustifySelf",
+        "AlignItemsKeyword",
+        "AlignContentKeyword",
+        "AlignmentSafety",
+        "AbstractAxis",
+        "MinMax",
+    ),
+    "Style struct": ("Style",),
+    "float or block state": (
+        "FloatContext",
+        "FloatDirection",
+        "FloatIntrinsicWidthCalculator",
+        "BfcSlot",
+        "ContentSlot",
+        "PlacedFloatedBox",
+        "BlockContext",
+        "BlockFormattingContext",
+    ),
+    "grid vocabulary": (
+        "TrackSizingFunction",
+        "MinTrackSizingFunction",
+        "MaxTrackSizingFunction",
+        "ExpandedMinTrackSizingFunction",
+        "ExpandedMaxTrackSizingFunction",
+        "GridPlacement",
+        "GenericGridPlacement",
+        "GridTemplateComponent",
+        "GenericGridTemplateComponent",
+        "GridTemplateRepetition",
+        "GenericRepetition",
+        "RepetitionCount",
+        "GridAutoFlow",
+        "GridAutoTracks",
+        "GridTemplateTracks",
+        "GridTemplateArea",
+        "GridTemplateAreas",
+        "NamedGridLine",
+        "TemplateLineNames",
+    ),
+    "tree trait": (
+        "LayoutPartialTree",
+        "LayoutBlockContainer",
+        "LayoutFlexboxContainer",
+        "LayoutGridContainer",
+        "LayoutContainingBlock",
+        "TraversePartialTree",
+        "TraverseTree",
+        "RoundTree",
+        "PrintTree",
+        "CacheTree",
+        "TaffyTree",
+        "TaffyError",
+        "TaffyResult",
+    ),
+    "algorithm entry point": (
+        "compute_block_align_content_offset",
+        "compute_block_layout",
+        "compute_cached_layout",
+        "compute_flexbox_layout",
+        "compute_grid_layout",
+        "compute_hidden_layout",
+        "compute_leaf_layout",
+        "compute_oof_layout",
+        "compute_oof_layout_for_area",
+        "compute_root_layout",
+        "resolve_static_offset",
+    ),
+}
+
+# Name -> kind, for every input-side name.
+INPUT_NAMES: dict[str, str] = {name: kind for kind, names in INPUT_CLASSES.items() for name in names}
+
+# The input-side names that already have an owned replacement: helper traits that
+# resolve a length against a basis. The owned `MaybeResolve` and `ResolveOrZero`
+# are raikiri-dom's crate-private traits in the adapter.
+OWNED_INPUT_NAMES: dict[str, str] = {
+    "MaybeMath": "raikiri_layout_geometry::MaybeMath",
+    "MaybeResolve": "crate::layout::taffy_adapter::MaybeResolve",
+    "ResolveOrZero": "crate::layout::taffy_adapter::ResolveOrZero",
+}
+
 # A failing file lists at most this many occurrences; -v lists all of them.
 MAX_LISTED_PER_FILE = 12
 
-# Taffy's public modules. Importing one of them (or the crate itself) lets the
-# output types be written as `tree::NodeId`, which the path scan cannot see.
-TAFFY_MODULES = frozenset({"compute", "geometry", "prelude", "style", "style_helpers", "tree", "util"})
+# Taffy's public modules. Importing one of them (or the crate itself) lets
+# Taffy's names be written as `tree::NodeId`, which the path scan cannot see.
+TAFFY_MODULES = frozenset(
+    {"compute", "detailed_info", "geometry", "prelude", "style", "style_helpers", "traits", "tree", "util"}
+)
 
-# Pseudo names for the occurrences that are not a specific output type.
+# Pseudo names for the occurrences that are not a specific name.
 GLOB_IMPORT = "*"
 MODULE_IMPORT = "<module>"
+
+# Occurrences an ignore marker is never honoured on: the generic geometry names
+# (their style-input use must stay counted) and the imports that stand for any
+# number of names.
+MARKER_REFUSED = GENERIC_GEOMETRY | {GLOB_IMPORT, MODULE_IMPORT}
 
 IGNORE_MARKER_RE = re.compile(r"//\s*taffy-boundary-lint:ignore:\s*(\S.*)$")
 IGNORE_MARKER_WITHOUT_REASON_RE = re.compile(r"//\s*taffy-boundary-lint:ignore:\s*$")
@@ -196,6 +410,7 @@ class FileScan:
     counted: tuple[Occurrence, ...]
     ignored: tuple[Occurrence, ...]
     unreasoned_markers: tuple[int, ...]
+    refused_markers: tuple[int, ...] = ()
 
 
 def strip_comments_and_strings(src: str) -> str:
@@ -381,20 +596,23 @@ def _parse_tree(toks: list[_Tok], i: int, prefix: tuple[str, ...], out: list[Use
         raise TokenizeError(f"line {t.line}: unexpected `{t.text}` in a `use` tree")
 
 
-def _output_name(segments: tuple[str, ...]) -> str | None:
-    """The counted type a path starting at `taffy` names, if any.
+def _counted_name(segments: tuple[str, ...]) -> str | None:
+    """The name a path starting at `taffy` refers to, if it names an item.
 
     Modules are lower case, so the first capitalised segment is the type (or
-    the enum whose variant is meant); only that segment is looked up.
+    the enum whose variant is meant). A path without one names a function, so
+    its last segment is the name. A path that ends at a module is not a name.
+    Whether the name is in a table only decides how a failure describes it.
     """
     for seg in segments[1:]:
         if seg[:1].isupper():
-            return seg if seg in OUTPUT_NAMES else None
-    return None
+            return seg
+    last = segments[-1]
+    return None if last == "taffy" or last in TAFFY_MODULES else last
 
 
 def scan_source(rel_path: str, src: str) -> FileScan:
-    """Count the Taffy output-type occurrences in one Rust source file."""
+    """Count the Taffy-name occurrences in one Rust source file."""
     stripped = strip_comments_and_strings(src)
     src_lines = src.split("\n")
 
@@ -427,7 +645,7 @@ def scan_source(rel_path: str, src: str) -> FileScan:
             if module == ("taffy",) or module[-1] in TAFFY_MODULES:
                 raw_hits.append((leaf.pos, leaf.line, MODULE_IMPORT, "use " + "::".join(module)))
                 continue
-            name = _output_name(leaf.segments)
+            name = _counted_name(leaf.segments)
             if name is not None:
                 raw_hits.append((leaf.pos, leaf.line, name, "use " + "::".join(leaf.segments)))
 
@@ -445,7 +663,7 @@ def scan_source(rel_path: str, src: str) -> FileScan:
                 pos = after + 2
                 continue
             break
-        name = _output_name(tuple(segs))
+        name = _counted_name(tuple(segs))
         if name is not None:
             line = inline.count("\n", 0, m.start()) + 1
             raw_hits.append((m.start(), line, name, "::".join(segs)))
@@ -453,16 +671,20 @@ def scan_source(rel_path: str, src: str) -> FileScan:
     counted: list[Occurrence] = []
     ignored: list[Occurrence] = []
     unreasoned: list[int] = []
+    refused: list[int] = []
     for _pos, line, name, text in sorted(raw_hits):
         raw_line = src_lines[line - 1] if line - 1 < len(src_lines) else ""
         occ = Occurrence(rel_path, line, name, text)
-        if IGNORE_MARKER_RE.search(raw_line):
+        has_marker = IGNORE_MARKER_RE.search(raw_line) is not None
+        if has_marker and name not in MARKER_REFUSED:
             ignored.append(occ)
         else:
             if IGNORE_MARKER_WITHOUT_REASON_RE.search(raw_line):
                 unreasoned.append(line)
+            elif has_marker and line not in refused:
+                refused.append(line)
             counted.append(occ)
-    return FileScan(tuple(counted), tuple(ignored), tuple(unreasoned))
+    return FileScan(tuple(counted), tuple(ignored), tuple(unreasoned), tuple(refused))
 
 
 def _skip_space(text: str, pos: int) -> int:
@@ -516,11 +738,12 @@ class Census:
     occurrences: dict[str, tuple[Occurrence, ...]]
     ignored: list[Occurrence]
     unreasoned: list[tuple[str, int]]
+    refused: list[tuple[str, int]]
     exempt_files: int
 
 
 def take_census(repo_root: Path, exempt: list[str]) -> Census:
-    census = Census({}, {}, [], [], 0)
+    census = Census({}, {}, [], [], [], 0)
     for path in source_files(repo_root):
         rel = path.relative_to(repo_root).as_posix()
         if is_exempt(rel, exempt):
@@ -532,6 +755,7 @@ def take_census(repo_root: Path, exempt: list[str]) -> Census:
             raise TokenizeError(f"{rel}: {err}") from err
         census.ignored.extend(scan.ignored)
         census.unreasoned.extend((rel, line) for line in scan.unreasoned_markers)
+        census.refused.extend((rel, line) for line in scan.refused_markers)
         if scan.counted:
             census.counts[rel] = len(scan.counted)
             census.occurrences[rel] = scan.counted
@@ -585,10 +809,28 @@ def _replacement(name: str, path: str) -> str:
         return "import the owned names explicitly"
     if name == MODULE_IMPORT:
         return "import the type by its full path, or its owned name"
-    owned = OUTPUT_NAMES[name]
-    if owned.startswith("crate::layout::protocol::") and not path.startswith("crates/raikiri-dom/"):
+    if name in OWNED_INPUT_NAMES:
+        owned = OWNED_INPUT_NAMES[name]
+    elif name in INPUT_NAMES:
+        return f"no owned name yet ({INPUT_NAMES[name]})"
+    elif name not in OUTPUT_NAMES:
+        return "no owned name yet (not in the name tables)"
+    else:
+        owned = OUTPUT_NAMES[name]
+    if owned.startswith("crate::") and not path.startswith("crates/raikiri-dom/"):
         return "no owned name outside raikiri-dom yet"
+    if name in GENERIC_GEOMETRY:
+        return f"{owned} for layout geometry (none yet for style input)"
     return owned
+
+
+def _side(name: str) -> str:
+    """Which side a counted name is on: output, input, an import of many names, or in neither table."""
+    if name in (GLOB_IMPORT, MODULE_IMPORT):
+        return "import"
+    if name in OUTPUT_NAMES:
+        return "output"
+    return "input" if name in INPUT_NAMES else "unclassified"
 
 
 def _group(path: str) -> str:
@@ -602,6 +844,14 @@ def _print_summary(census: Census, baseline: dict[str, int]) -> None:
     print(f"  pinned in baseline       : {sum(baseline.values())} in {len(baseline)} file(s)")
     print(f"  exempt files not scanned : {census.exempt_files}")
     print(f"  ignored by marker        : {len(census.ignored)}")
+    by_side = {"output": 0, "input": 0, "unclassified": 0, "import": 0}
+    for occs in census.occurrences.values():
+        for occ in occs:
+            by_side[_side(occ.name)] += 1
+    print(f"  output-side names        : {by_side['output']}")
+    print(f"  input-side names         : {by_side['input']}")
+    print(f"  unclassified names       : {by_side['unclassified']}")
+    print(f"  glob and module imports  : {by_side['import']}")
     by_crate: dict[str, int] = {}
     for path, count in census.counts.items():
         by_crate[_group(path)] = by_crate.get(_group(path), 0) + count
@@ -652,7 +902,7 @@ def main(argv: list[str]) -> int:
             print("taffy-boundary-lint: refusing to raise the baseline; these files have more uses than pinned:")
             for path in raised:
                 print(f"  {path}: {census.counts[path]} (pinned {baseline.get(path, 0)})")
-            print("  Remove the new uses of Taffy output types instead, or mark a real exception with")
+            print("  Remove the new uses of Taffy names instead, or mark a real exception with")
             print("  `// taffy-boundary-lint:ignore: <reason>`. If a pinned file moved, rename its line in")
             print("  the baseline by hand.")
             return 1
@@ -671,6 +921,8 @@ def main(argv: list[str]) -> int:
     verdict = compare(census, baseline)
     for path, line in census.unreasoned:
         print(f"note: {path}:{line}: `taffy-boundary-lint:ignore:` needs a reason after the colon; not honoured")
+    for path, line in census.refused:
+        print(f"note: {path}:{line}: `taffy-boundary-lint:ignore:` is not honoured on Size, Rect, Point, Line or a glob or module import; they are counted")
 
     if verdict.ok:
         print(f"taffy-boundary-lint: PASS ({sum(census.counts.values())} pinned occurrences, none new)")
@@ -688,8 +940,10 @@ def main(argv: list[str]) -> int:
         if found > MAX_LISTED_PER_FILE:
             print(f"    ... {found - MAX_LISTED_PER_FILE} more (-v lists every occurrence)")
     if verdict.more:
-        print("  A Taffy output type must not be named outside the adapter and the view crate.")
-        print("  Use the owned name shown after `->`, or mark a real exception on the same line with")
+        print("  A Taffy name must not be added outside the adapter and the view crate.")
+        print("  Use the owned name shown after `->`. Where it says there is no owned name yet, read the")
+        print("  value through the style view or an existing helper instead of naming the Taffy type in a")
+        print("  new place. A real exception is marked on the same line with")
         print("  `// taffy-boundary-lint:ignore: <reason>`.")
     for path in verdict.fewer:
         print(f"  {path}: {census.counts[path]} occurrence(s), baseline {baseline[path]} is stale")

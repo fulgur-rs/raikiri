@@ -22,7 +22,7 @@
 use crate::layout::protocol::{NodeId, OofPositioningArea};
 use crate::layout::taffy_adapter::MaybeResolve;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
-use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
+use taffy::Point as StylePoint;
 use taffy::{
     AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, CoreStyle, Direction, Overflow,
 };

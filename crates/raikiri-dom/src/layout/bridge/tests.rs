@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::test_support::{bridged_display, bridged_style};
-use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentageAuto> is style input
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
+use taffy::Rect as StyleRect;
+use taffy::Size as StyleSize;
 
 #[test]
 fn apply_computed_to_style_bridges_display_to_taffy() {

@@ -37,7 +37,7 @@ use raikiri_style::property::{
     BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, PositionValue, Sides,
     TableLayoutValue, VerticalAlign, WritingMode,
 };
-use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> is style input
+use taffy::Rect as StyleRect;
 use taffy::style::{CompactLength, Dimension};
 use taffy::{BlockItemStyle, CoreStyle, ExpandedDimension, LengthPercentage, Position};
 
