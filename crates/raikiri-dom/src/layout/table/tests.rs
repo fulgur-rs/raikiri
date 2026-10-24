@@ -2978,6 +2978,58 @@ fn resolve_column_widths_colspan_one_percent_cell_sets_column_percentage() {
 }
 
 #[test]
+fn resolve_column_widths_col_percent_sets_percentage_of_occupied_column() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let first = doc.append_element(Some(html), "td", None::<&str>);
+    let second = doc.append_element(Some(html), "td", None::<&str>);
+    doc.mark_in_document_flags();
+
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![],
+        cells: vec![
+            make_cell(first, 0, 0, 1, 1, Dimension::auto()),
+            make_cell(second, 0, 1, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![
+            super::ColSizing {
+                width: Dimension::percent(0.4),
+                min_width: Dimension::auto(),
+                max_width: Dimension::auto(),
+            },
+            super::ColSizing {
+                width: Dimension::auto(),
+                min_width: Dimension::auto(),
+                max_width: Dimension::auto(),
+            },
+        ],
+    };
+    let inputs = LayoutInput {
+        known_dimensions: Size {
+            width: Some(200.0),
+            height: None,
+        },
+        ..column_probe_input()
+    };
+    let widths = resolve_column_widths_in_session(
+        &mut doc,
+        &grid,
+        inputs,
+        Size {
+            width: 0.0,
+            height: 0.0,
+        },
+        0.0,
+    );
+
+    // The `<col>` percentage drives its column like a cell percentage does,
+    // where two empty auto columns would share the 200px equally.
+    assert!((widths[0] - 80.0).abs() < 0.5, "40% of 200: {widths:?}");
+    assert!((widths[1] - 120.0).abs() < 0.5, "the rest: {widths:?}");
+}
+
+#[test]
 fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
