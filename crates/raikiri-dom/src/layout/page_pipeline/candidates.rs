@@ -320,6 +320,11 @@ struct CandidateFrame<'name> {
     named_flex_context: Option<usize>,
     inside_float: bool,
     inside_out_of_flow: bool,
+    /// The source-coordinate y at which the nearest ancestor that clips its
+    /// block-axis overflow hides what its content paints, or infinity when no
+    /// ancestor does. A text or box starting at or past it is never visible,
+    /// so it takes no part in pagination.
+    clip_end: f32,
 }
 
 impl CandidateFrame<'_> {
@@ -337,6 +342,7 @@ impl CandidateFrame<'_> {
             named_flex_context: None,
             inside_float: false,
             inside_out_of_flow: false,
+            clip_end: f32::INFINITY,
         }
     }
 }
@@ -523,19 +529,24 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             None,
                         ),
                     };
-                    self.out.push(PageCandidate {
-                        node_id,
-                        raw_y,
-                        height,
-                        context: BoxContext::text(CandidateFlowContext {
-                            is_float_descendant: inside_float,
-                            is_out_of_flow_descendant: inside_out_of_flow,
-                            page_name_in_flow: !inside_float && !inside_out_of_flow,
-                        }),
-                        page_name: page_name_to_owned(frame.inherited_page_name),
-                        named_flex_context,
-                        ifc_root,
-                    });
+                    // Past a clipping ancestor's edge the text paints nowhere
+                    // and gives the flow no page; a text running over the edge
+                    // occupies only the part above it.
+                    if raw_y < frame.clip_end {
+                        self.out.push(PageCandidate {
+                            node_id,
+                            raw_y,
+                            height: height.min(frame.clip_end - raw_y),
+                            context: BoxContext::text(CandidateFlowContext {
+                                is_float_descendant: inside_float,
+                                is_out_of_flow_descendant: inside_out_of_flow,
+                                page_name_in_flow: !inside_float && !inside_out_of_flow,
+                            }),
+                            page_name: page_name_to_owned(frame.inherited_page_name),
+                            named_flex_context,
+                            ifc_root,
+                        });
+                    }
                 }
             }
             NodeKind::Element => {
@@ -763,6 +774,12 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && can_move_nested;
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
+                // A forced break and a page name change the pages wherever the
+                // box sits, even past the edge of a clipping ancestor.
+                let sets_page_flow = deferred_named_break_after
+                    || own_page_name.is_some()
+                    || page_break_is_forced(document, node_id, computed.break_before)
+                    || page_break_is_forced(document, node_id, computed.break_after);
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
@@ -776,15 +793,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || flex_item_candidate
                         || is_rendered_leaf
                         || grid_item_candidate
-                        || deferred_named_break_after
-                        || own_page_name.is_some()
-                        || page_break_is_forced(document, node_id, computed.break_before)
-                        || page_break_is_forced(document, node_id, computed.break_after));
-                if is_break_candidate {
+                        || sets_page_flow);
+                // A box is measured against a clipping ancestor's edge like
+                // text: one past it is not a candidate, and one running over
+                // it occupies only the part above.
+                if is_break_candidate && (sets_page_flow || candidate_raw_y < frame.clip_end) {
                     self.out.push(PageCandidate {
                         node_id,
                         raw_y: candidate_raw_y,
-                        height: candidate_height,
+                        height: if sets_page_flow {
+                            candidate_height
+                        } else {
+                            candidate_height.min(frame.clip_end - candidate_raw_y)
+                        },
                         context: BoxContext::element(
                             CandidateFlowContext {
                                 is_float_descendant: inside_float,
@@ -818,6 +839,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         node_id,
                         document.context.pagination_on_transposed_axes,
                     );
+                // An absolutely positioned box is clipped by an ancestor only
+                // when that ancestor is its containing block. The walk does not
+                // track containing blocks, so such a box starts afresh. A
+                // document paginated on transposed axes is not measured at
+                // all: the overflow that clips its flow is not the one on y.
+                let clip_end = if document.context.pagination_on_transposed_axes {
+                    f32::INFINITY
+                } else {
+                    let inherited = if matches!(
+                        document.nodes[node_id].position(),
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ) {
+                        f32::INFINITY
+                    } else {
+                        frame.clip_end
+                    };
+                    if !is_body && super::element_clips_overflow(document, cascade, node_id) {
+                        inherited.min(raw_y + node.layout.size.height)
+                    } else {
+                        inherited
+                    }
+                };
                 let child_order = pagination_child_order(document, cascade, node_id);
                 for child_id in child_order {
                     let child_parent_y =
@@ -857,6 +900,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             },
                             inside_float: float_subtree || monolithic,
                             inside_out_of_flow: out_of_flow_subtree,
+                            clip_end,
                         },
                     )?;
                 }
