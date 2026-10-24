@@ -1,7 +1,8 @@
 use super::*;
 use crate::layout::protocol::{RequestedAxis, RunMode, SizingMode};
+use raikiri_layout_geometry::Size;
 use raikiri_layout_geometry::{Edges, Line, Point};
-use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, StyleSize};
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 mod child_walk_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;
@@ -390,11 +391,11 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     // CSS 2.1 10.7: a percentage `max-height` against an indefinite
     // containing block height is treated as `none`.
     let style = Style {
-        size: StyleSize {
+        size: Size {
             width: Dimension::auto(),
             height: Dimension::length(100.0),
         },
-        max_size: StyleSize {
+        max_size: Size {
             width: LengthPercentageAuto::auto(),
             height: LengthPercentageAuto::percent(0.5),
         },
@@ -415,7 +416,7 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
         false,
     );
     let style = Style {
-        max_size: StyleSize {
+        max_size: Size {
             width: LengthPercentageAuto::auto(),
             height: LengthPercentageAuto::calc(calc_ptr),
         },
@@ -438,7 +439,7 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     );
     let length = LengthPercentageAuto::calc(length_ptr);
     let style = Style {
-        max_size: StyleSize {
+        max_size: Size {
             width: LengthPercentageAuto::auto(),
             height: length,
         },
@@ -452,11 +453,11 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
 #[test]
 fn a_non_finite_ifc_content_bound_is_the_initial_value() {
     let style = Style {
-        min_size: StyleSize {
+        min_size: Size {
             width: LengthPercentageAuto::auto(),
             height: LengthPercentageAuto::length(f32::INFINITY),
         },
-        max_size: StyleSize {
+        max_size: Size {
             width: LengthPercentageAuto::auto(),
             height: LengthPercentageAuto::length(f32::NAN),
         },

@@ -2,9 +2,8 @@ use super::*;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::dispatch::replaced_size::keyword_bounds;
 use crate::layout::protocol::RequestedAxis;
-use raikiri_layout_style::values::{
-    BoxSizing, LengthPercentage, LengthPercentageAuto, StyleRect, StyleSize,
-};
+use raikiri_layout_geometry::{Edges, Size};
+use raikiri_layout_style::values::{BoxSizing, LengthPercentage, LengthPercentageAuto};
 
 fn inputs(known_width: Option<f32>) -> LayoutInput {
     LayoutInput {
@@ -35,7 +34,7 @@ fn padded_border_box(ratio: f32) -> Style {
     Style {
         aspect_ratio: Some(ratio),
         box_sizing: BoxSizing::BorderBox,
-        padding: StyleRect {
+        padding: Edges {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(80.0),
             top: LengthPercentage::length(0.0),
@@ -109,7 +108,7 @@ fn a_content_box_box_relates_its_content_boxes_whatever_the_ratio_is() {
 #[test]
 fn an_authored_side_gives_the_other_side_through_the_border_box_ratio() {
     let width = Style {
-        size: StyleSize {
+        size: Size {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
@@ -120,7 +119,7 @@ fn an_authored_side_gives_the_other_side_through_the_border_box_ratio() {
         size(20.0, 50.0)
     );
     let height = Style {
-        size: StyleSize {
+        size: Size {
             width: Dimension::auto(),
             height: Dimension::length(100.0),
         },
@@ -166,7 +165,7 @@ fn a_ratio_the_box_states_replaces_the_natural_ratio_of_its_natural_size() {
     );
     // A `min-height` of 200px moves the width along the border box ratio.
     let min_height = Style {
-        min_size: StyleSize {
+        min_size: Size {
             width: LengthPercentageAuto::auto(),
             height: LengthPercentageAuto::length(200.0),
         },
@@ -199,11 +198,11 @@ fn keyword_bounds_transfer_across_the_border_box_ratio() {
     // 10px of padding at the bottom is taken off. A content box ratio would
     // give a content box of 60 by 30, so a border box 40px high.
     let style = Style {
-        size: StyleSize {
+        size: Size {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
-        padding: StyleRect {
+        padding: Edges {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(40.0),
             top: LengthPercentage::length(0.0),
@@ -212,11 +211,11 @@ fn keyword_bounds_transfer_across_the_border_box_ratio() {
         ..padded_border_box(2.0)
     };
     let limits = ContentLimits {
-        min: StyleSize {
+        min: Size {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
-        max: StyleSize::auto(),
+        max: Size::splat(Dimension::auto()),
     };
     let border_box = keyword_bounds(&style, &inputs(None), natural(), limits, false).unwrap();
     let content_box = keyword_bounds(&style, &inputs(None), natural(), limits, true).unwrap();
@@ -233,7 +232,7 @@ fn keyword_bounds_carry_a_height_bound_to_the_width_across_the_border_box_ratio(
     // box of 80px. A content box ratio would double the 50px high content box
     // instead.
     let style = Style {
-        padding: StyleRect {
+        padding: Edges {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(40.0),
             top: LengthPercentage::length(0.0),
@@ -242,11 +241,11 @@ fn keyword_bounds_carry_a_height_bound_to_the_width_across_the_border_box_ratio(
         ..padded_border_box(2.0)
     };
     let limits = ContentLimits {
-        min: StyleSize {
+        min: Size {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
-        max: StyleSize::auto(),
+        max: Size::splat(Dimension::auto()),
     };
     let border_box = keyword_bounds(&style, &inputs(None), natural(), limits, false).unwrap();
     let content_box = keyword_bounds(&style, &inputs(None), natural(), limits, true).unwrap();
@@ -261,11 +260,11 @@ fn a_keyword_width_takes_the_border_box_width_the_authored_height_gives() {
     // A 2:1 border box 100px high is 200px wide; the content box ratio would
     // give the 90px high content box 180px and a 220px wide border box.
     let style = Style {
-        size: StyleSize {
+        size: Size {
             width: Dimension::auto(),
             height: Dimension::length(100.0),
         },
-        padding: StyleRect {
+        padding: Edges {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(40.0),
             top: LengthPercentage::length(0.0),
@@ -274,11 +273,11 @@ fn a_keyword_width_takes_the_border_box_width_the_authored_height_gives() {
         ..padded_border_box(2.0)
     };
     let limits = ContentLimits {
-        min: StyleSize {
+        min: Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        max: StyleSize::auto(),
+        max: Size::splat(Dimension::auto()),
     };
     let border_box = keyword_bounds(&style, &inputs(None), natural(), limits, false).unwrap();
     let content_box = keyword_bounds(&style, &inputs(None), natural(), limits, true).unwrap();
@@ -293,15 +292,15 @@ fn a_keyword_height_never_falls_below_the_padding_across_the_border_box_ratio() 
     // at the bottom, so the content box the width gives is empty and a
     // `max-height` that stands for it is the padding alone.
     let style = Style {
-        size: StyleSize {
+        size: Size {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
         ..padded_border_box(4.0)
     };
     let limits = ContentLimits {
-        min: StyleSize::auto(),
-        max: StyleSize {
+        min: Size::splat(Dimension::auto()),
+        max: Size {
             width: Dimension::auto(),
             height: Dimension::max_content(),
         },
@@ -313,12 +312,9 @@ fn a_keyword_height_never_falls_below_the_padding_across_the_border_box_ratio() 
 
 /// A `border-box` replaced box with a ratio of 1 and 20px of padding on the
 /// right and 10px at the bottom, its `min-*` and `max-*` sizes as given.
-fn small_padded_square(
-    min: StyleSize<LengthPercentageAuto>,
-    max: StyleSize<LengthPercentageAuto>,
-) -> Style {
+fn small_padded_square(min: Size<LengthPercentageAuto>, max: Size<LengthPercentageAuto>) -> Style {
     Style {
-        padding: StyleRect {
+        padding: Edges {
             left: LengthPercentage::length(0.0),
             right: LengthPercentage::length(20.0),
             top: LengthPercentage::length(0.0),
@@ -333,7 +329,7 @@ fn small_padded_square(
 #[test]
 fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
     use raikiri_layout_style::values::LengthPercentageAuto as Length;
-    let none = StyleSize {
+    let none = Size {
         width: Length::auto(),
         height: Length::auto(),
     };
@@ -343,7 +339,7 @@ fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
     for (name, min, max, expected) in [
         (
             "min-width: 80px",
-            StyleSize {
+            Size {
                 width: Length::length(80.0),
                 height: Length::auto(),
             },
@@ -352,11 +348,11 @@ fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
         ),
         (
             "max-width: 30px",
-            StyleSize {
+            Size {
                 width: Length::auto(),
                 height: Length::auto(),
             },
-            StyleSize {
+            Size {
                 width: Length::length(30.0),
                 height: Length::auto(),
             },
@@ -365,7 +361,7 @@ fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
         (
             "max-height: 30px",
             none,
-            StyleSize {
+            Size {
                 width: Length::auto(),
                 height: Length::length(30.0),
             },

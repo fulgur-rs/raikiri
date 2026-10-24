@@ -2,8 +2,9 @@ use raikiri_html::{
     LayoutConfig, LayoutOptions, LayoutStatus, MediaContext, MediaType, PageDefaults,
     RenderResources, parse_html_with_resources,
 };
-use raikiri_layout_style::LayoutStyleView;
+use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
 use raikiri_traits::PageBox;
+use taffy::CoreStyle; // taffy-boundary-lint:ignore: the test reads the raw calc handle of the projection
 use taffy::{Dimension, LengthPercentage, LengthPercentageAuto}; // taffy-boundary-lint:ignore: the tests build the Taffy values the getters return
 use taffy::{MaxTrackSizingFunction, MinMax, MinTrackSizingFunction}; // taffy-boundary-lint:ignore: the tests build the Taffy values the getters return
 
@@ -75,7 +76,10 @@ const CALC: &str = "calc[5.0 15.0 30.05]";
 /// handle of that calc.
 fn with_calc(check: impl FnOnce(&Text<'_>, *const ())) {
     with_main("<main style='width: calc(5px + 10%)'>x</main>", |view| {
-        let handle = view.size().width.into_raw().calc_value();
+        let handle = CoreStyle::size(&TaffyStyle::new(view))
+            .width
+            .into_raw()
+            .calc_value();
         check(&Text { view }, handle);
     });
 }

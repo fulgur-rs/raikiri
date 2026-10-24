@@ -1,5 +1,7 @@
 use super::*;
-use taffy::{Dimension, LengthPercentage as Lp, LengthPercentageAuto as Lpa};
+use crate::values::{
+    Dimension, ExpandedDimension, LengthPercentage as Lp, LengthPercentageAuto as Lpa,
+};
 
 #[test]
 fn resolved_pixels_preserve_finite_used_values_and_input_policy() {
@@ -23,10 +25,10 @@ fn resolved_pixels_preserve_finite_used_values_and_input_policy() {
                 assert_eq!(value.lp(basis), Lp::length(expected));
             }
             if input == 0.0 {
-                assert_eq!(
-                    value.dimension().into_raw().value().to_bits(),
-                    expected.to_bits()
-                );
+                let ExpandedDimension::Length(bits) = value.dimension().expand() else {
+                    panic!("a resolved pixel value is a plain length");
+                };
+                assert_eq!(bits.to_bits(), expected.to_bits());
             }
         }
     }
@@ -53,7 +55,7 @@ fn resolved_owned_and_borrowed_values_keep_physical_axes_until_projection() {
         )
         .unwrap(),
     ];
-    let mut legacy = taffy::Style::<raikiri_style::SmolStr>::default();
+    let mut legacy = BoxStyle::default();
     for entry in &owned {
         entry.apply_physical_sizing(&mut legacy).unwrap();
     }

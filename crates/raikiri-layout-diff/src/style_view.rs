@@ -389,7 +389,9 @@ mod reader {
         }
         // Padding that a frame has already resolved: a different length on
         // every side.
-        let mut resolved = CoreStyle::padding(&text.style()).map(|_| 0.0);
+        // Built from the view's own padding getter so that the tool compiles
+        // against every tree: the type of the edges differs between them.
+        let mut resolved = text.view.padding().map(|_| 0.0);
         (resolved.left, resolved.right, resolved.top, resolved.bottom) = (1.5, 2.5, 3.5, 4.5);
         let mut context = text.view.context();
         context.resolved_padding = Some(resolved);

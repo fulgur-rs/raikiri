@@ -1,6 +1,6 @@
+use crate::values::{CalcRef, Dimension, LengthPercentage as LP, LengthPercentageAuto as LPA};
 use crate::*;
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P};
-use taffy::{Dimension, LengthPercentage as LP, LengthPercentageAuto as LPA};
 
 pub(crate) fn sanitize(value: f32) -> f32 {
     if value.is_nan() {
@@ -17,8 +17,8 @@ impl LengthValue<'_> {
             sanitize(value)
         }
     }
-    fn pointer(self) -> *const () {
-        self.payload.expect("calc has a prepared payload").pointer()
+    fn calc_ref(self) -> CalcRef {
+        CalcRef::new(self.payload.expect("calc has a prepared payload"))
     }
     #[inline]
     pub(crate) fn dimension(self) -> Dimension {
@@ -29,10 +29,10 @@ impl LengthValue<'_> {
             L::MinContent => Dimension::min_content(),
             L::MaxContent => Dimension::max_content(),
             L::FitContent => Dimension::fit_content(),
-            L::Calc(_) => Dimension::calc(self.pointer()),
+            L::Calc(_) => Dimension::calc(self.calc_ref()),
             L::FitContentOf(P::Px(v)) => Dimension::fit_content_px(sanitize(v)),
             L::FitContentOf(P::Percent(v)) => Dimension::fit_content_percent(sanitize(v / 100.0)),
-            L::FitContentOf(P::Calc(_)) => Dimension::fit_content_calc(self.pointer()),
+            L::FitContentOf(P::Calc(_)) => Dimension::fit_content_calc(self.calc_ref()),
         }
     }
     #[inline]
@@ -40,7 +40,7 @@ impl LengthValue<'_> {
         match self.value {
             L::Px(v) => LPA::length(self.pixel(v)),
             L::Percent(v) => LPA::percent(sanitize(v / 100.0)),
-            L::Calc(_) => LPA::calc(self.pointer()),
+            L::Calc(_) => LPA::calc(self.calc_ref()),
             L::Auto => LPA::auto(),
             _ if margin => LPA::length(0.0),
             _ => LPA::auto(),
@@ -64,7 +64,7 @@ impl LengthValue<'_> {
         match self.value {
             L::Px(v) => LP::length(self.pixel(v)),
             L::Percent(v) => LP::percent(sanitize(v / 100.0)),
-            L::Calc(_) => LP::calc(self.pointer()),
+            L::Calc(_) => LP::calc(self.calc_ref()),
             _ => LP::length(0.0),
         }
     }

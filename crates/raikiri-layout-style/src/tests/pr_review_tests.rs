@@ -13,10 +13,7 @@ fn ignoring_logical_minimum_preserves_explicit_physical_min_height() {
     };
     let prepared = PreparedStyle::new(&cv, metadata, &[]).unwrap();
     let v = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(
-        v.min_size().height,
-        taffy::LengthPercentageAuto::length(19.0)
-    );
+    assert_eq!(v.min_size().height, LengthPercentageAuto::length(19.0));
 }
 
 #[test]
@@ -30,7 +27,7 @@ fn ignoring_logical_minimum_still_suppresses_the_logical_fallback() {
     };
     let prepared = PreparedStyle::new(&cv, metadata, &[]).unwrap();
     let v = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(v.min_size().height, taffy::LengthPercentageAuto::auto());
+    assert_eq!(v.min_size().height, LengthPercentageAuto::auto());
 }
 
 #[test]
@@ -59,24 +56,24 @@ fn sideways_lr_reverses_direction_without_reversing_edges_twice() {
         &[],
         &[],
     );
-    assert_eq!(v.direction(), taffy::Direction::Rtl);
+    assert_eq!(v.direction(), values::Direction::Rtl);
     assert_eq!(
         v.margin(),
-        taffy::Rect {
-            left: taffy::LengthPercentageAuto::length(1.0),
-            right: taffy::LengthPercentageAuto::length(3.0),
-            top: taffy::LengthPercentageAuto::length(4.0),
-            bottom: taffy::LengthPercentageAuto::length(2.0)
+        Edges {
+            left: LengthPercentageAuto::length(1.0),
+            right: LengthPercentageAuto::length(3.0),
+            top: LengthPercentageAuto::length(4.0),
+            bottom: LengthPercentageAuto::length(2.0)
         }
     );
     assert_eq!(v.inset(), v.margin());
     assert_eq!(
         v.padding(),
-        taffy::Rect {
-            left: taffy::LengthPercentage::length(1.0),
-            right: taffy::LengthPercentage::length(3.0),
-            top: taffy::LengthPercentage::length(4.0),
-            bottom: taffy::LengthPercentage::length(2.0)
+        Edges {
+            left: LengthPercentage::length(1.0),
+            right: LengthPercentage::length(3.0),
+            top: LengthPercentage::length(4.0),
+            bottom: LengthPercentage::length(2.0)
         }
     );
 }

@@ -2,9 +2,8 @@ use super::*;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::dispatch::replaced_size::keyword_bounds;
 use crate::layout::protocol::RequestedAxis;
-use raikiri_layout_style::values::{
-    BoxSizing, LengthPercentage, LengthPercentageAuto, StyleRect, StyleSize,
-};
+use raikiri_layout_geometry::{Edges, Size};
+use raikiri_layout_style::values::{BoxSizing, LengthPercentage, LengthPercentageAuto};
 
 fn inputs() -> LayoutInput {
     LayoutInput {
@@ -25,7 +24,7 @@ fn inputs() -> LayoutInput {
     }
 }
 
-fn limits(min: StyleSize<Dimension>, max: StyleSize<Dimension>) -> ContentLimits {
+fn limits(min: Size<Dimension>, max: Size<Dimension>) -> ContentLimits {
     ContentLimits { min, max }
 }
 
@@ -39,7 +38,7 @@ fn natural_size() -> Size<f32> {
 fn ratio_style(width: Dimension, height: Dimension) -> Style {
     Style {
         aspect_ratio: Some(1.0),
-        size: StyleSize { width, height },
+        size: Size { width, height },
         ..Style::default()
     }
 }
@@ -48,11 +47,11 @@ fn ratio_style(width: Dimension, height: Dimension) -> Style {
 fn min_width_min_content_transfers_height_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(10.0), Dimension::length(100.0));
     let limits = limits(
-        StyleSize {
+        Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        StyleSize::auto(),
+        Size::splat(Dimension::auto()),
     );
 
     assert_eq!(
@@ -68,11 +67,11 @@ fn min_width_min_content_transfers_height_bound_through_natural_ratio() {
 fn min_height_min_content_transfers_width_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(100.0), Dimension::length(10.0));
     let limits = limits(
-        StyleSize {
+        Size {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
-        StyleSize::auto(),
+        Size::splat(Dimension::auto()),
     );
 
     assert_eq!(
@@ -88,8 +87,8 @@ fn min_height_min_content_transfers_width_bound_through_natural_ratio() {
 fn max_width_min_content_transfers_height_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(1000.0), Dimension::length(100.0));
     let limits = limits(
-        StyleSize::auto(),
-        StyleSize {
+        Size::splat(Dimension::auto()),
+        Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
@@ -108,8 +107,8 @@ fn max_width_min_content_transfers_height_bound_through_natural_ratio() {
 fn max_height_min_content_transfers_width_bound_through_natural_ratio() {
     let style = ratio_style(Dimension::length(100.0), Dimension::length(1000.0));
     let limits = limits(
-        StyleSize::auto(),
-        StyleSize {
+        Size::splat(Dimension::auto()),
+        Size {
             width: Dimension::auto(),
             height: Dimension::min_content(),
         },
@@ -127,11 +126,11 @@ fn max_height_min_content_transfers_width_bound_through_natural_ratio() {
 #[test]
 fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
     let limits = limits(
-        StyleSize {
+        Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        StyleSize::auto(),
+        Size::splat(Dimension::auto()),
     );
     let without_ratio = Style::default();
     let with_ratio = ratio_style(Dimension::auto(), Dimension::auto());
@@ -159,12 +158,12 @@ fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
 fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
     let style = Style {
         box_sizing: BoxSizing::ContentBox,
-        padding: StyleRect {
+        padding: Edges {
             left: LengthPercentage::length(5.0),
             right: LengthPercentage::length(5.0),
             ..Style::default().padding
         },
-        border: StyleRect {
+        border: Edges {
             left: LengthPercentage::length(1.0),
             right: LengthPercentage::length(1.0),
             ..Style::default().border
@@ -172,11 +171,11 @@ fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
         ..ratio_style(Dimension::auto(), Dimension::auto())
     };
     let limits = limits(
-        StyleSize {
+        Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        StyleSize::auto(),
+        Size::splat(Dimension::auto()),
     );
 
     assert_eq!(
@@ -196,16 +195,16 @@ fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
 fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
     let style = Style {
         box_sizing: BoxSizing::ContentBox,
-        size: StyleSize {
+        size: Size {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
-        padding: StyleRect {
+        padding: Edges {
             left: LengthPercentage::length(5.0),
             right: LengthPercentage::length(5.0),
             ..Style::default().padding
         },
-        border: StyleRect {
+        border: Edges {
             left: LengthPercentage::length(1.0),
             right: LengthPercentage::length(1.0),
             ..Style::default().border
@@ -213,8 +212,8 @@ fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
         ..ratio_style(Dimension::auto(), Dimension::auto())
     };
     let limits = limits(
-        StyleSize::auto(),
-        StyleSize {
+        Size::splat(Dimension::auto()),
+        Size {
             width: Dimension::max_content(),
             height: Dimension::auto(),
         },
@@ -237,11 +236,11 @@ fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
 fn keyword_bounds_transfer_all_min_and_max_sides_through_the_ratio() {
     let style = ratio_style(Dimension::auto(), Dimension::auto());
     let limits = limits(
-        StyleSize {
+        Size {
             width: Dimension::min_content(),
             height: Dimension::min_content(),
         },
-        StyleSize {
+        Size {
             width: Dimension::max_content(),
             height: Dimension::max_content(),
         },
@@ -258,11 +257,11 @@ fn keyword_bounds_transfer_all_min_and_max_sides_through_the_ratio() {
 #[test]
 fn keyword_bounds_reject_nonpositive_natural_dimensions() {
     let limits = limits(
-        StyleSize {
+        Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        StyleSize::auto(),
+        Size::splat(Dimension::auto()),
     );
 
     assert_eq!(
@@ -284,19 +283,19 @@ fn keyword_bounds_reject_nonpositive_natural_dimensions() {
 fn conflicting_numeric_bounds_raise_max_to_min() {
     let style = Style {
         aspect_ratio: Some(1.0),
-        min_size: StyleSize {
+        min_size: Size {
             width: LengthPercentageAuto::length(100.0),
             height: LengthPercentageAuto::auto(),
         },
-        max_size: StyleSize {
+        max_size: Size {
             width: LengthPercentageAuto::length(50.0),
             height: LengthPercentageAuto::auto(),
         },
         ..Style::default()
     };
     let limits = limits(
-        StyleSize::auto(),
-        StyleSize {
+        Size::splat(Dimension::auto()),
+        Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
@@ -324,11 +323,11 @@ fn cyclic_percentage_still_uses_zero_basis_with_intrinsic_limits() {
     ));
     let style = ratio_style(Dimension::auto(), height);
     let limits = limits(
-        StyleSize {
+        Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        StyleSize::auto(),
+        Size::splat(Dimension::auto()),
     );
     let mut layout_inputs = inputs();
     layout_inputs.available_space.width = AvailableSpace::MinContent;

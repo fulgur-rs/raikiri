@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
+use raikiri_layout_style::values::{CalcRef, Dimension, LengthPercentageAuto};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, property::CalcLengthPercentage};
 
@@ -31,7 +31,7 @@ fn local_sizing_overrides_keep_explicit_none_calc_and_signed_zero_without_leakin
     let payload = entries[2].calc_owner().unwrap();
     assert_eq!(
         local.min_size.width.identity(),
-        LengthPercentageAuto::calc(std::ptr::from_ref(payload.as_ref()).cast()).identity()
+        LengthPercentageAuto::calc(CalcRef::retained(payload)).identity()
     );
     assert_eq!(local.min_size.width.resolve(Some(100.0)), Some(15.0));
     assert_eq!(local.max_size.width, LengthPercentageAuto::percent(0.5));

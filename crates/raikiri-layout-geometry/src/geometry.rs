@@ -44,6 +44,17 @@ pub struct Edges<T> {
     pub bottom: T,
 }
 
+impl<T: Copy> Size<T> {
+    /// The size whose width and height are both `value`.
+    #[inline]
+    pub const fn splat(value: T) -> Size<T> {
+        Size {
+            width: value,
+            height: value,
+        }
+    }
+}
+
 impl<T> Size<T> {
     /// Apply `f` to the width and to the height.
     #[inline]
@@ -231,6 +242,19 @@ impl Line<bool> {
         start: false,
         end: false,
     };
+}
+
+impl<T: Copy> Edges<T> {
+    /// The edges whose four sides are all `value`.
+    #[inline]
+    pub const fn splat(value: T) -> Edges<T> {
+        Edges {
+            left: value,
+            right: value,
+            top: value,
+            bottom: value,
+        }
+    }
 }
 
 impl<T> Edges<T> {

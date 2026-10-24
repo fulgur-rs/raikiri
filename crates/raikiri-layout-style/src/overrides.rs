@@ -76,8 +76,8 @@ pub(crate) enum OverrideKind<'a> {
     Overflow(Axis, OverflowValue),
     Clear(ClearValue),
     FlexShrink(f32),
-    AlignSelf(Option<taffy::AlignSelf>),
-    JustifySelf(Option<taffy::AlignSelf>),
+    AlignSelf(Option<crate::values::AlignSelf>),
+    JustifySelf(Option<crate::values::AlignSelf>),
 }
 impl<'a> PropertyOverride<'a> {
     /// Override one physical length property.
@@ -117,11 +117,11 @@ impl<'a> PropertyOverride<'a> {
         Self(OverrideKind::FlexShrink(value))
     }
     /// Override self alignment, including explicit auto.
-    pub const fn align_self(value: Option<taffy::AlignSelf>) -> Self {
+    pub const fn align_self(value: Option<crate::values::AlignSelf>) -> Self {
         Self(OverrideKind::AlignSelf(value))
     }
     /// Override inline self alignment, including explicit auto.
-    pub const fn justify_self(value: Option<taffy::AlignSelf>) -> Self {
+    pub const fn justify_self(value: Option<crate::values::AlignSelf>) -> Self {
         Self(OverrideKind::JustifySelf(value))
     }
 }
@@ -287,13 +287,13 @@ impl OwnedPropertyOverride {
         )))
     }
     /// Override self alignment, including explicit auto.
-    pub const fn align_self(value: Option<taffy::AlignSelf>) -> Self {
+    pub const fn align_self(value: Option<crate::values::AlignSelf>) -> Self {
         Self(OwnedOverrideKind::Inline(PropertyOverride::align_self(
             value,
         )))
     }
     /// Override inline self alignment, including explicit auto.
-    pub const fn justify_self(value: Option<taffy::AlignSelf>) -> Self {
+    pub const fn justify_self(value: Option<crate::values::AlignSelf>) -> Self {
         Self(OwnedOverrideKind::Inline(PropertyOverride::justify_self(
             value,
         )))

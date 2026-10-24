@@ -175,7 +175,7 @@ pub struct StyleMetadata {
     /// The box's own used writing mode.
     pub used_writing_mode: WritingMode,
     /// Explicit containing-block policy; None uses positioning.
-    pub claims: Option<taffy::ContainingBlockClaims>,
+    pub claims: Option<crate::values::ContainingBlockClaims>,
 }
 impl Default for StyleMetadata {
     fn default() -> Self {
@@ -228,7 +228,7 @@ pub struct ViewContext {
     /// Geometry conversion independent of writing-mode policy.
     pub bridge_projection: BridgeProjection,
     /// Fully resolved padding captured in the returned geometry.
-    pub resolved_padding: Option<taffy::Rect<f32>>,
+    pub resolved_padding: Option<raikiri_layout_geometry::Edges<f32>>,
     /// Optional basis for only the returned top and bottom block-item edges.
     pub block_item_basis: Option<f32>,
     /// Containing-block policy for the consuming role.

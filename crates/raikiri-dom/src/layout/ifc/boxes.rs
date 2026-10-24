@@ -22,8 +22,8 @@ use crate::layout::protocol::{
 use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
 use raikiri_layout_style::values::{
-    self, AlignContentKeyword, BoxSizing, Clear, Display, ExpandedDimension, IntoEdges, LengthExt,
-    LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
+    self, AlignContentKeyword, BoxSizing, Clear, Display, ExpandedDimension, LengthPercentageAuto,
+    MaybeResolve, Overflow, Position, ResolveOrZero,
 };
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
@@ -1579,7 +1579,6 @@ fn shorten(base: LineSpace, tentative: &[TentativeFloat]) -> LineSpace {
 fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Edges<f32> {
     tree.physical_style(node)
         .margin()
-        .into_edges()
         .map(|margin| margin.resolve(Some(basis)).unwrap_or(0.0))
 }
 
@@ -3174,7 +3173,6 @@ impl BoxEdges {
             padding: style.padding().resolve_or_zero(Some(basis)),
             margin: style
                 .margin()
-                .into_edges()
                 .map(|margin| margin.resolve(Some(basis)).unwrap_or(0.0)),
         }
     }

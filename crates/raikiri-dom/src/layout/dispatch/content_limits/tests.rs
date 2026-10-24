@@ -22,7 +22,7 @@ use crate::layout::test_support::{
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Line, Size};
-use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, StyleSize};
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 
 /// What the box under test holds.
 #[derive(Clone, Copy)]
@@ -96,11 +96,11 @@ fn replaced_keyword_bounds_handles_nonreplaced_missing_invalid_and_sized_nodes()
         }
     }
     let limits = ContentLimits {
-        min: StyleSize {
+        min: Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        max: StyleSize {
+        max: Size {
             width: Dimension::max_content(),
             height: Dimension::auto(),
         },
@@ -143,11 +143,11 @@ fn replaced_keyword_bounds_follow_the_box_the_ratio_relates() {
     // A 2:1 border box 100px high is 200px wide; the ratio of the content box
     // would give a 90px high content box 180px beside the 40px of padding.
     let limits = ContentLimits {
-        min: StyleSize {
+        min: Size {
             width: Dimension::min_content(),
             height: Dimension::auto(),
         },
-        max: StyleSize::auto(),
+        max: Size::splat(Dimension::auto()),
     };
     let inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,

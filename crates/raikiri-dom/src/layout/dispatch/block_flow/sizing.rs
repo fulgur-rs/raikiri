@@ -1,11 +1,10 @@
 //! Resolve the physical box constraints used by project block flow.
 
-use crate::LayoutStyle as Style;
 use crate::layout::protocol::{LayoutInput, SizingMode};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{Edges, Size};
+use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Overflow, ResolveOrZero};
-use taffy::CoreStyle;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Metrics {
@@ -52,26 +51,26 @@ impl Metrics {
         content_box_ratio: bool,
         inputs: LayoutInput,
     ) -> Self {
-        let padding = style.padding().resolve_or_zero(inputs.parent_size.width);
-        let border = style.border().resolve_or_zero(inputs.parent_size.width);
+        let padding = style.padding.resolve_or_zero(inputs.parent_size.width);
+        let border = style.border.resolve_or_zero(inputs.parent_size.width);
         let padding_border = padding + border;
-        let adjustment = if style.box_sizing() == BoxSizing::ContentBox {
+        let adjustment = if style.box_sizing == BoxSizing::ContentBox {
             padding_border.sum_axes()
         } else {
             Size::ZERO
         };
-        let specified = style.size().maybe_resolve(inputs.parent_size);
-        let ratio = style.aspect_ratio();
+        let specified = style.size.maybe_resolve(inputs.parent_size);
+        let ratio = style.aspect_ratio;
         // The box the ratio relates is the content box of a box sized by its
         // content box and of an `auto <ratio>`, else the border box.
-        let ratio_edges = if style.box_sizing() == BoxSizing::ContentBox || content_box_ratio {
+        let ratio_edges = if style.box_sizing == BoxSizing::ContentBox || content_box_ratio {
             padding_border.sum_axes()
         } else {
             Size::ZERO
         };
         // The other size of a size stated in the box `box-sizing` names.
         let across_ratio = |size: Size<Option<f32>>| {
-            if style.box_sizing() == BoxSizing::ContentBox || !content_box_ratio {
+            if style.box_sizing == BoxSizing::ContentBox || !content_box_ratio {
                 size.maybe_apply_aspect_ratio(ratio)
             } else {
                 size.maybe_max(ratio_edges)
@@ -99,8 +98,8 @@ impl Metrics {
                     .filter(|_| own.height.is_none() && auto(specified.height)),
             }
         };
-        let own_min = style.min_size().maybe_resolve(inputs.parent_size);
-        let own_max = style.max_size().maybe_resolve(inputs.parent_size);
+        let own_min = style.min_size.maybe_resolve(inputs.parent_size);
+        let own_max = style.max_size.maybe_resolve(inputs.parent_size);
         let carried_min = carried(own_min);
         let carried_max = carried(own_max);
         let (min_width, max_width) = bounds(
@@ -127,20 +126,20 @@ impl Metrics {
         // unless the box scrolls or `min-*` says otherwise, an automatic
         // minimum keeps it from ending up smaller than its content.
         let ratio_eligible = |specified: Option<f32>, min_is_auto: bool, overflow: Overflow| {
-            style.aspect_ratio().is_some()
+            style.aspect_ratio.is_some()
                 && (inputs.sizing_mode != SizingMode::InherentSize || specified.is_none())
                 && min_is_auto
                 && !overflow.is_scroll_container()
         };
         let width_eligible = ratio_eligible(
             specified.width,
-            style.min_size().width.is_auto(),
-            style.overflow().x,
+            style.min_size.width.is_auto(),
+            style.overflow.x,
         );
         let height_eligible = ratio_eligible(
             specified.height,
-            style.min_size().height.is_auto(),
-            style.overflow().y,
+            style.min_size.height.is_auto(),
+            style.overflow.y,
         );
         // A size the parent imposed on such an axis was settled with that
         // minimum in mind, so only the maximum the box states caps it, not
@@ -167,7 +166,7 @@ impl Metrics {
             .maybe_clamp(min, limit)
             .maybe_max(padding_border.sum_axes())
             .maybe_sub(ratio_edges)
-            .maybe_apply_aspect_ratio(style.aspect_ratio())
+            .maybe_apply_aspect_ratio(style.aspect_ratio)
             .maybe_add(ratio_edges)
             .maybe_clamp(min, limit);
         // An axis is ratio-dependent when its size is not authored or imposed

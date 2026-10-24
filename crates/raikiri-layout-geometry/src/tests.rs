@@ -542,3 +542,23 @@ fn a_scrollbar_larger_than_the_box_counts_only_as_much_as_the_box() {
     assert_eq!(layout.scroll_width(), 30.0);
     assert_eq!(layout.scroll_height(), 25.0);
 }
+
+#[test]
+fn splat_gives_every_side_and_both_axes_one_value() {
+    assert_eq!(
+        Edges::splat(3.0),
+        Edges {
+            left: 3.0,
+            right: 3.0,
+            top: 3.0,
+            bottom: 3.0,
+        }
+    );
+    assert_eq!(
+        Size::splat(2.0),
+        Size {
+            width: 2.0,
+            height: 2.0,
+        }
+    );
+}

@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use crate::layout::test_support::{bridged_display, bridged_style, with_pass_view};
-use raikiri_layout_style::values::{Clear, LengthExt};
+use raikiri_layout_style::values::Clear;
 
 mod ancestor_walk_tests;
 mod avoid_followup_tests;

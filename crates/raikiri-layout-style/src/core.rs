@@ -1,5 +1,7 @@
 use crate::overrides::OverrideKind;
+use crate::values::{self, Dimension, LengthPercentage, LengthPercentageAuto};
 use crate::*;
+use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_style::{
     ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P,
     property::{
@@ -10,11 +12,11 @@ use raikiri_style::{
 impl LayoutStyleView<'_> {
     /// Whether the box generates a layout box at all.
     #[inline]
-    pub fn box_generation_mode(&self) -> taffy::BoxGenerationMode {
+    pub fn box_generation_mode(&self) -> values::BoxGenerationMode {
         if self.flags().contains(StyleFlags::HIDDEN) {
-            taffy::BoxGenerationMode::None
+            values::BoxGenerationMode::None
         } else {
-            taffy::BoxGenerationMode::Normal
+            values::BoxGenerationMode::Normal
         }
     }
     /// Whether the box lays out as a block-level box.
@@ -34,7 +36,7 @@ impl LayoutStyleView<'_> {
     }
     /// The used box-sizing, including the border-box exception for side borders.
     #[inline]
-    pub fn box_sizing(&self) -> taffy::BoxSizing {
+    pub fn box_sizing(&self) -> values::BoxSizing {
         let c = &*self.prepared.values;
         let side_borders = c.border.left.width().px() > 0.0 || c.border.right.width().px() > 0.0;
         let vertical_clean = c.border.top.width().px() == 0.0
@@ -46,14 +48,14 @@ impl LayoutStyleView<'_> {
                 && vertical_clean
                 && matches!(self.base_length(LengthProperty::Width).value, L::Auto))
         {
-            taffy::BoxSizing::BorderBox
+            values::BoxSizing::BorderBox
         } else {
-            taffy::BoxSizing::ContentBox
+            values::BoxSizing::ContentBox
         }
     }
     /// The used inline direction of the box.
     #[inline]
-    pub fn direction(&self) -> taffy::Direction {
+    pub fn direction(&self) -> values::Direction {
         let c = &*self.prepared.values;
         let vertical =
             self.vertical() || self.flags().contains(StyleFlags::SOURCE_VERTICAL_DIRECTION);
@@ -66,14 +68,14 @@ impl LayoutStyleView<'_> {
         let rtl = c.direction == Direction::Rtl && !upright;
         let reversed = vertical && c.cssom_writing_mode == WritingMode::SidewaysLr;
         if rtl != reversed {
-            taffy::Direction::Rtl
+            values::Direction::Rtl
         } else {
-            taffy::Direction::Ltr
+            values::Direction::Ltr
         }
     }
     /// The used overflow of both axes, in the axes the view returns.
     #[inline]
-    pub fn overflow(&self) -> taffy::Point<taffy::Overflow> {
+    pub fn overflow(&self) -> Point<values::Overflow> {
         let get = |axis, base| {
             self.overrides()
                 .find_map(|o| match o {
@@ -88,25 +90,25 @@ impl LayoutStyleView<'_> {
             overflow(get(Axis::Y, c.overflow.y)),
         );
         if self.geometry_transposed() {
-            taffy::Point { x: y, y: x }
+            Point { x: y, y: x }
         } else {
-            taffy::Point { x, y }
+            Point { x, y }
         }
     }
     /// The used position scheme.
     #[inline]
-    pub fn position(&self) -> taffy::Position {
+    pub fn position(&self) -> values::Position {
         match self.prepared.values.position {
-            PositionValue::Absolute | PositionValue::Fixed => taffy::Position::Absolute,
-            PositionValue::Relative => taffy::Position::Relative,
-            PositionValue::Sticky => taffy::Position::Sticky,
-            _ => taffy::Position::Static,
+            PositionValue::Absolute | PositionValue::Fixed => values::Position::Absolute,
+            PositionValue::Relative => values::Position::Relative,
+            PositionValue::Sticky => values::Position::Sticky,
+            _ => values::Position::Static,
         }
     }
     /// Which kinds of absolutely positioned descendants this box contains.
     #[inline]
-    pub fn is_containing_block(&self) -> taffy::ContainingBlockClaims {
-        let positioning = taffy::ContainingBlockClaims {
+    pub fn is_containing_block(&self) -> values::ContainingBlockClaims {
+        let positioning = values::ContainingBlockClaims {
             absolute: self.position().is_positioned(),
             fixed: false,
         };
@@ -118,7 +120,7 @@ impl LayoutStyleView<'_> {
     }
     /// The preferred size.
     #[inline]
-    pub fn size(&self) -> taffy::Size<taffy::Dimension> {
+    pub fn size(&self) -> Size<Dimension> {
         self.size_axes(
             self.length(LengthProperty::Width).dimension(),
             self.length(LengthProperty::Height).dimension(),
@@ -126,7 +128,7 @@ impl LayoutStyleView<'_> {
     }
     /// The minimum size.
     #[inline]
-    pub fn min_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
+    pub fn min_size(&self) -> Size<LengthPercentageAuto> {
         self.size_axes(
             self.length(LengthProperty::MinWidth).auto(false),
             self.length(LengthProperty::MinHeight).auto(false),
@@ -134,7 +136,7 @@ impl LayoutStyleView<'_> {
     }
     /// The maximum size.
     #[inline]
-    pub fn max_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
+    pub fn max_size(&self) -> Size<LengthPercentageAuto> {
         self.size_axes(
             self.length(LengthProperty::MaxWidth).auto(false),
             self.length(LengthProperty::MaxHeight).auto(false),
@@ -166,7 +168,7 @@ impl LayoutStyleView<'_> {
     }
     /// The margin edges; `auto` is preserved.
     #[inline]
-    pub fn margin(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
+    pub fn margin(&self) -> Edges<LengthPercentageAuto> {
         use LengthProperty::*;
         self.edges(
             self.length(MarginTop).auto(true),
@@ -177,7 +179,7 @@ impl LayoutStyleView<'_> {
     }
     /// The inset edges.
     #[inline]
-    pub fn inset(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
+    pub fn inset(&self) -> Edges<LengthPercentageAuto> {
         use LengthProperty::*;
         self.edges(
             self.length(Top).auto(false),
@@ -188,43 +190,43 @@ impl LayoutStyleView<'_> {
     }
     /// The padding edges.
     #[inline]
-    pub fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
+    pub fn padding(&self) -> Edges<LengthPercentage> {
         if let Some(padding) = self.context.resolved_padding {
-            return padding.map(taffy::LengthPercentage::length);
+            return padding.map(LengthPercentage::length);
         }
         use LengthProperty::*;
         self.percentage_edges([PaddingTop, PaddingRight, PaddingBottom, PaddingLeft])
     }
     /// The border edges.
     #[inline]
-    pub fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
+    pub fn border(&self) -> Edges<LengthPercentage> {
         use LengthProperty::*;
         self.percentage_edges([BorderTop, BorderRight, BorderBottom, BorderLeft])
     }
     /// The layout and paint containment.
     #[inline]
-    pub fn contain(&self) -> taffy::Contain {
+    pub fn contain(&self) -> values::Contain {
         let c = self.prepared.values.contain;
         match (c.contains(Contain::LAYOUT), c.contains(Contain::PAINT)) {
-            (true, true) => taffy::Contain::CONTENT,
-            (true, false) => taffy::Contain::LAYOUT,
-            (false, true) => taffy::Contain::PAINT,
-            _ => taffy::Contain::NONE,
+            (true, true) => values::Contain::CONTENT,
+            (true, false) => values::Contain::LAYOUT,
+            (false, true) => values::Contain::PAINT,
+            _ => values::Contain::NONE,
         }
     }
 }
-pub(crate) fn overflow(value: OverflowValue) -> taffy::Overflow {
+pub(crate) fn overflow(value: OverflowValue) -> values::Overflow {
     match value {
-        OverflowValue::Hidden => taffy::Overflow::Hidden,
-        OverflowValue::Clip => taffy::Overflow::Clip,
-        OverflowValue::Auto | OverflowValue::Scroll => taffy::Overflow::Scroll,
-        _ => taffy::Overflow::Visible,
+        OverflowValue::Hidden => values::Overflow::Hidden,
+        OverflowValue::Clip => values::Overflow::Clip,
+        OverflowValue::Auto | OverflowValue::Scroll => values::Overflow::Scroll,
+        _ => values::Overflow::Visible,
     }
 }
 
 impl LayoutStyleView<'_> {
     /// The physical clearance, including fragmentation-pass overrides.
-    pub fn clear(&self) -> taffy::Clear {
+    pub fn clear(&self) -> values::Clear {
         let value = self
             .overrides()
             .find_map(|entry| match entry {
@@ -236,13 +238,13 @@ impl LayoutStyleView<'_> {
     }
 }
 
-pub(crate) fn clear(value: raikiri_style::property::ClearValue) -> taffy::Clear {
+pub(crate) fn clear(value: raikiri_style::property::ClearValue) -> values::Clear {
     use raikiri_style::property::ClearValue as C;
     match value {
-        C::Left => taffy::Clear::Left,
-        C::Right => taffy::Clear::Right,
-        C::Both => taffy::Clear::Both,
-        _ => taffy::Clear::None,
+        C::Left => values::Clear::Left,
+        C::Right => values::Clear::Right,
+        C::Both => values::Clear::Both,
+        _ => values::Clear::None,
     }
 }
 

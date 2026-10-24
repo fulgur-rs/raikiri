@@ -1,4 +1,5 @@
 use super::*;
+use crate::values::BoxGenerationMode;
 use std::sync::Arc;
 use taffy::GenericRepetition;
 
@@ -96,12 +97,12 @@ fn owned_and_borrowed_getters_agree() {
     );
     for basis in [0.0, 37.0, 100.0] {
         assert_eq!(
-            CalcHandle::resolve(a.size().width.into_raw().calc_value(), basis),
-            CalcHandle::resolve(b.size().width.into_raw().calc_value(), basis)
+            a.size().width.calc_ref().resolve(basis),
+            b.size().width.calc_ref().resolve(basis)
         );
         assert_eq!(
-            CalcHandle::resolve(a.margin().left.into_raw().calc_value(), basis),
-            CalcHandle::resolve(b.margin().left.into_raw().calc_value(), basis)
+            a.margin().left.calc_ref().resolve(basis),
+            b.margin().left.calc_ref().resolve(basis)
         );
     }
 }
@@ -172,10 +173,10 @@ fn owned_overrides_keep_calc_range_and_explicit_none() {
     ];
     let v =
         LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &scoped);
-    assert_eq!(v.size().width, taffy::Dimension::auto());
+    assert_eq!(v.size().width, Dimension::auto());
     assert_eq!(v.aspect_ratio(), None);
     let v = LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
-    assert_eq!(v.size().width, taffy::Dimension::length(30.0));
+    assert_eq!(v.size().width, Dimension::length(30.0));
     assert_eq!(v.aspect_ratio(), Some(2.0));
     assert!(
         OwnedPropertyOverride::length(LengthProperty::LogicalWidth, L::Px(1.0), false).is_err()
@@ -196,9 +197,9 @@ fn owned_overrides_keep_calc_range_and_explicit_none() {
         std::slice::from_ref(&borrowed),
         &[],
     );
-    let pointer = v.size().width.into_raw().calc_value();
-    assert_eq!(CalcHandle::resolve(pointer, 0.0), 0.0);
-    assert_eq!(CalcHandle::resolve(pointer, 100.0), 15.0);
+    let calc = v.size().width.calc_ref();
+    assert_eq!(calc.resolve(0.0), 0.0);
+    assert_eq!(calc.resolve(100.0), 15.0);
 }
 
 #[test]
@@ -230,10 +231,7 @@ fn owner_factory_retains_the_supplied_payload_without_replacing_it() {
         PreparedStyle::prepare_with(&cv, StyleMetadata::default(), |_, _, _| owner.clone())
             .unwrap();
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(
-        view.size().width.into_raw().calc_value(),
-        Arc::as_ptr(&owner).cast()
-    );
+    assert_eq!(view.size().width.calc_ref(), CalcRef::new(&owner));
     drop(owner);
     assert!(weak.upgrade().is_some());
     drop(prepared);
@@ -327,7 +325,7 @@ fn metadata_refresh_keeps_existing_calc_bindings() {
         ..StyleMetadata::default()
     });
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(view.box_generation_mode(), taffy::BoxGenerationMode::None);
+    assert_eq!(view.box_generation_mode(), BoxGenerationMode::None);
     assert_eq!(
         std::ptr::from_ref(prepared.payload(CalcSlot::Property(LengthProperty::Width))),
         pointer

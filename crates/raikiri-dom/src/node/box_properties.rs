@@ -69,7 +69,7 @@ impl BoxProperties {
         // default used by programmatic document layout instead of lowering
         // their inline text identity as an element's block box.
         if kind != NodeKind::Element && self.display == DisplayValue::Inline {
-            return Display::DEFAULT;
+            return Display::Flex;
         }
         let display = match self.display {
             DisplayValue::None => Display::None,

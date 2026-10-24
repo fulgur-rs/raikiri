@@ -8,7 +8,9 @@ use crate::layout::protocol::{
     OofPosition, OofPositioningArea,
 };
 use raikiri_layout_geometry::{Edges, Line, Size};
-use raikiri_layout_style::values::AlignContent;
+use raikiri_layout_style::values::{
+    AlignContent, AlignSelf, ContainingBlockClaims, Direction, Position, ToTaffy,
+};
 
 /// Lay out a flex container.
 #[inline]
@@ -84,8 +86,8 @@ pub(crate) fn compute_oof_layout_for_area(
     owner: NodeId,
     candidates: OofSpan<'_>,
     area: OofPositioningArea,
-    direction: taffy::Direction,
-    claims: taffy::ContainingBlockClaims,
+    direction: Direction,
+    claims: ContainingBlockClaims,
 ) -> OofLayoutResult {
     let taffy::OofLayoutResult {
         hoisted,
@@ -96,8 +98,8 @@ pub(crate) fn compute_oof_layout_for_area(
         owner.into_taffy(),
         candidates.as_taffy(),
         area.into_taffy(),
-        direction,
-        claims,
+        direction.to_taffy(),
+        claims.to_taffy(),
     );
     OofLayoutResult {
         hoisted: hoisted.into_iter().map(NodeId::from_taffy).collect(),
@@ -109,8 +111,11 @@ pub(crate) fn compute_oof_layout_for_area(
 /// Whether a containing block that makes the `claims` is the containing block
 /// of a box with the `position`.
 #[inline]
-pub(crate) fn claims_position(claims: taffy::ContainingBlockClaims, position: OofPosition) -> bool {
-    claims.for_position(position.into_taffy())
+pub(crate) fn claims_position(claims: ContainingBlockClaims, position: OofPosition) -> bool {
+    claims.for_position(match position {
+        OofPosition::Absolute => Position::Absolute,
+        OofPosition::Fixed => Position::Fixed,
+    })
 }
 
 /// The offset along the block axis that `align-content` gives the in-flow
@@ -124,7 +129,7 @@ pub(crate) fn compute_block_align_content_offset(
     align_content: AlignContent,
     free_space: f32,
 ) -> f32 {
-    taffy::compute_block_align_content_offset(align_content, free_space)
+    taffy::compute_block_align_content_offset(align_content.to_taffy(), free_space)
 }
 
 /// The static position in one axis of an out-of-flow box whose alignment is
@@ -136,12 +141,12 @@ pub(crate) fn compute_block_align_content_offset(
 /// right-to-left container.
 #[inline]
 pub(crate) fn static_position_from_alignment(
-    alignment: taffy::AlignSelf,
+    alignment: AlignSelf,
     area: Line<f32>,
     axis_is_rtl: bool,
 ) -> AxisStaticPosition {
     AxisStaticPosition::from_taffy(taffy::AxisStaticPosition::from_alignment(
-        alignment,
+        alignment.to_taffy(),
         area.into_taffy(),
         axis_is_rtl,
     ))

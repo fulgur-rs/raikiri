@@ -4,7 +4,7 @@
 //! only a plain length resolves; callers choose any context-specific fallback
 //! basis and apply their own finite-value or range policy.
 
-use raikiri_layout_style::values::{Dimension, LengthExt, LengthPercentage, LengthPercentageAuto};
+use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 /// Resolve a length or percentage, preserving non-finite plain values.
 pub(crate) fn resolve_length_percentage(

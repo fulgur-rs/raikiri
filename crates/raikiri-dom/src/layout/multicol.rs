@@ -7,6 +7,7 @@ mod paragraph_group;
 pub(super) mod spanning;
 
 use authored::AuthoredBox;
+use raikiri_layout_geometry::Edges;
 
 use super::*;
 use crate::layout::context::LayoutSession;
@@ -18,9 +19,9 @@ use crate::node::FormattingContext;
 use raikiri_layout_geometry::{BoxLayout, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{
-    AlignItems, BoxSizing, CalcHandle, Clear, Contain, Dimension, Direction, Display,
-    ExpandedDimension, ExpandedLengthPercentage, Float, LengthPercentage, LengthPercentageAuto,
-    MaybeResolve, Overflow, Position, StylePoint, StyleRect, StyleSize,
+    AlignItems, BoxSizing, Clear, Contain, Dimension, Direction, Display, ExpandedDimension,
+    ExpandedLengthPercentage, Float, LengthPercentage, LengthPercentageAuto, MaybeResolve,
+    Overflow, Position,
 };
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
@@ -975,8 +976,8 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
             || margin.right != zero_margin
             || margin.bottom != zero_margin
             || margin.left != zero_margin
-            || style.padding() != StyleRect::zero()
-            || style.border() != StyleRect::zero()
+            || style.padding() != Edges::splat(LengthPercentage::ZERO)
+            || style.border() != Edges::splat(LengthPercentage::ZERO)
             || !node.multicol_auto_width
             || !style.min_size().width.is_auto()
             || !style.max_size().width.is_auto()

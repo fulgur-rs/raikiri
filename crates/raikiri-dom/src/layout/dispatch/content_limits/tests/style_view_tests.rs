@@ -59,7 +59,7 @@ fn content_limit_scope_keeps_an_unrelated_pass_update_on_unwind() {
 fn content_limit_resolved_scope_keeps_large_finite_used_values() {
     use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 
-    let mut legacy = crate::LayoutStyle::default();
+    let mut legacy = raikiri_layout_style::BoxStyle::default();
     for entry in (super::super::Bounds {
         min: Some(20_000_000.0),
         max: None,

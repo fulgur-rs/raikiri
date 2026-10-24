@@ -3,6 +3,7 @@ use crate::fragment::{FragmentRect, LayoutFragment};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use crate::node::FormattingContext;
+use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
@@ -161,7 +162,7 @@ fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::
     let zero = LengthPercentageAuto::length(0.0);
     let style = style_of(tree, id);
     let margin = style.margin();
-    let visible = StylePoint {
+    let visible = Point {
         x: TaffyOverflow::Visible,
         y: TaffyOverflow::Visible,
     };
@@ -169,14 +170,14 @@ fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::
         || margin.right != zero
         || margin.bottom != zero
         || margin.left != zero
-        || style.padding() != StyleRect::zero()
-        || style.border() != StyleRect::zero()
-        || style.inset() != StyleRect::auto()
+        || style.padding() != Edges::splat(LengthPercentage::ZERO)
+        || style.border() != Edges::splat(LengthPercentage::ZERO)
+        || style.inset() != Edges::splat(LengthPercentageAuto::auto())
         || style.clear() != Clear::None
         || (!atomic(tree, id)
             && (!node.multicol_auto_width
-                || style.min_size() != StyleSize::auto()
-                || style.max_size() != StyleSize::auto()
+                || style.min_size() != Size::splat(LengthPercentageAuto::auto())
+                || style.max_size() != Size::splat(LengthPercentageAuto::auto())
                 || style.overflow() != visible))
 }
 

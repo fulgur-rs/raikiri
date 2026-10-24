@@ -4,6 +4,9 @@
 use super::*;
 use crate::layout::taffy_adapter::OofSpan;
 use crate::layout::taffy_adapter::algorithms::{claims_position, static_position_from_alignment};
+use raikiri_layout_style::values::{
+    AlignItems, AlignItemsKeyword, AlignmentSafety, ContainingBlockClaims, ToTaffy,
+};
 
 fn candidates(floats: &mut Floats, count: usize) -> Vec<OofCandidate> {
     (0..count)
@@ -242,7 +245,7 @@ fn a_run_past_the_end_of_the_batch_panics() {
 fn a_box_claims_the_positions_the_library_says_it_claims() {
     for absolute in [false, true] {
         for fixed in [false, true] {
-            let claims = taffy::ContainingBlockClaims { absolute, fixed };
+            let claims = ContainingBlockClaims { absolute, fixed };
             for position in [OofPosition::Absolute, OofPosition::Fixed] {
                 let expected = match position {
                     OofPosition::Absolute => absolute,
@@ -255,7 +258,7 @@ fn a_box_claims_the_positions_the_library_says_it_claims() {
                 );
                 assert_eq!(
                     claims_position(claims, position),
-                    claims.for_position(position.into_taffy())
+                    claims.to_taffy().for_position(position.into_taffy())
                 );
             }
         }
@@ -265,32 +268,32 @@ fn a_box_claims_the_positions_the_library_says_it_claims() {
 #[test]
 fn a_static_position_comes_from_the_alignment_as_the_library_computes_it() {
     let keywords = [
-        taffy::AlignItemsKeyword::Normal,
-        taffy::AlignItemsKeyword::Start,
-        taffy::AlignItemsKeyword::End,
-        taffy::AlignItemsKeyword::FlexStart,
-        taffy::AlignItemsKeyword::FlexEnd,
-        taffy::AlignItemsKeyword::Center,
-        taffy::AlignItemsKeyword::Baseline,
-        taffy::AlignItemsKeyword::Stretch,
+        AlignItemsKeyword::Normal,
+        AlignItemsKeyword::Start,
+        AlignItemsKeyword::End,
+        AlignItemsKeyword::FlexStart,
+        AlignItemsKeyword::FlexEnd,
+        AlignItemsKeyword::Center,
+        AlignItemsKeyword::Baseline,
+        AlignItemsKeyword::Stretch,
     ];
     let safeties = [
-        taffy::AlignmentSafety::Default,
-        taffy::AlignmentSafety::Unsafe,
-        taffy::AlignmentSafety::Safe,
+        AlignmentSafety::Default,
+        AlignmentSafety::Unsafe,
+        AlignmentSafety::Safe,
     ];
     let mut floats = Floats(0);
     for keyword in keywords {
         for safety in safeties {
             for axis_is_rtl in [false, true] {
-                let alignment = taffy::AlignSelf { keyword, safety };
+                let alignment = AlignItems { keyword, safety };
                 let area = Line {
                     start: floats.next(),
                     end: floats.next(),
                 };
                 let own = static_position_from_alignment(alignment, area, axis_is_rtl);
                 let theirs = taffy::AxisStaticPosition::from_alignment(
-                    alignment,
+                    alignment.to_taffy(),
                     area.into_taffy(),
                     axis_is_rtl,
                 );

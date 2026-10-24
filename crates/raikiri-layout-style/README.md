@@ -1,9 +1,13 @@
 # raikiri-layout-style
 
-Borrowed `ComputedValues` queries implementing Taffy 0.15 `CoreStyle`,
-`FlexboxContainerStyle`, `FlexboxItemStyle`, `GridContainerStyle` and
-`GridItemStyle`. This crate does not depend on the DOM. `LayoutSession` uses
-these views for production Flex/Grid queries (RAIKIRI-713).
+Borrowed `ComputedValues` queries. `LayoutStyleView` answers each layout
+question with a raikiri-owned type (`values`: keywords, lengths, `CalcRef`;
+`BoxStyle`: the owned snapshot of a box), and `TaffyStyle` projects the same
+view onto the Taffy 0.15 `CoreStyle`, `FlexboxContainerStyle`,
+`FlexboxItemStyle`, `GridContainerStyle` and `GridItemStyle` traits. `LeafStyle`
+does the same for an owned `BoxStyle` that is measured as a leaf. This crate
+does not depend on the DOM. `LayoutSession` uses these views for production
+queries.
 
 `PreparedStyle::new` validates scalar and Grid calc bindings once. The adapter
 supplies immutable `AlignedCalc` payloads, identified by `CalcSlot`, and retains
@@ -52,19 +56,28 @@ as `taffy::Style` does. Absent template areas remain `None`.
 
 ## Calc safety
 
-Taffy lengths are `Copy` and can carry a raw handle without a Rust lifetime.
-Keep every prepared payload owner alive until **all** consumers of those
-returned lengths have finished resolving them. Do not resolve saved lengths
-after dropping their owners.
+A length is `Copy` and a `calc()` length carries a `CalcRef`, a pointer to its
+payload without a Rust lifetime. The compiler checks where a reference comes
+from but not how long its owner lives:
 
-The resolution API (`CalcHandle`, `LengthExt`, `MaybeResolve` and
-`ResolveOrZero` in `resolve`) is safe to call. It dereferences the handle in
-one place, `resolve::payload`, and relies on a contract the type system does
-not yet check: a length that holds a calc handle must come from a getter of
-this crate, and its owner must be alive when the length is resolved. A length
-built from a foreign Taffy calc handle must not be resolved with it. The
-contract holds while the style input types are Taffy's own; owned length types
-with a private constructor will let the compiler check the origin.
+- Safe code cannot build a reference from a raw pointer. `CalcRef` has no
+  public constructor from a pointer, and `Dimension::calc`,
+  `LengthPercentage::calc` and `LengthPercentageAuto::calc` take a `CalcRef`
+  rather than a pointer. A getter of this crate makes a reference from a payload
+  it reads, and the adapter makes one with `CalcRef::retained` from a payload
+  that it holds in an `Arc`.
+- Resolving a reference (`CalcRef::resolve`, `MaybeResolve`, `ResolveOrZero`) is
+  safe. It dereferences the payload in one place, `CalcRef::payload`.
+- The Taffy projection hands raw handles to the layout library, whose callback
+  resolves them. `resolve_projected_calc` is the unsafe entry for that
+  callback, and `LayoutStyleView::resolve_calc_handle` is the checked one: it
+  resolves only a handle that the view's own prepared payloads contain.
+
+The part that stays a contract is the owner. Keep every prepared payload owner
+alive until **all** consumers of the returned lengths have finished resolving
+them, and do not resolve saved lengths after dropping their owners. The adapter
+retains every payload for the lifetime of its session before a getter can
+publish a reference to it.
 
 ## Checks
 
@@ -90,7 +103,8 @@ and out-of-flow children are included because Taffy reads their styles before
 filtering them. Source values are borrowed; synthetic recipes own shared values.
 Every layout algorithm reads its styles through this view: no box keeps a
 converted `taffy::Style`. Block flow and the local sizing steps reduce the
-view to a transient `taffy::Style` for the length of one call.
+view to a transient `BoxStyle` for the length of one call, and a leaf is
+measured through `LeafStyle` over that snapshot.
 
 Document metadata publications refresh preparation before parent cache lookup
 and before entering size or edge scopes. Preparation rejects active scopes;

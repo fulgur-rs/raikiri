@@ -1,8 +1,9 @@
 use super::convert::{FromTaffy, IntoTaffy};
 use raikiri_layout_geometry::{Edges, Size};
+use raikiri_layout_style::values::{Direction, ToTaffy};
 use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
 use smol_str::SmolStr;
-use taffy::{DetailedGridInfo, DetailedLayoutInfo, Direction, GridItemStyle};
+use taffy::{DetailedGridInfo, DetailedLayoutInfo, GridItemStyle};
 
 /// The grid lines an item of a grid occupies, as 1-based line numbers: the
 /// item spans the rows from `row_start` up to, not including, `row_end`, and
@@ -126,7 +127,7 @@ impl GridInfo {
             Edges::from_taffy(grid.resolve_absolute_grid_area(
                 style.grid_row(),
                 style.grid_column(),
-                direction,
+                direction.to_taffy(),
                 padding_box.into_taffy(),
             ))
         })

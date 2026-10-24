@@ -22,20 +22,20 @@ fn box_identity_position_containment_and_overflow_policies_are_explicit() {
         .union(StyleFlags::REPLACED)
         .union(StyleFlags::COMPRESSIBLE_REPLACED);
     for (position, expected) in [
-        (PositionValue::Static, taffy::Position::Static),
-        (PositionValue::Relative, taffy::Position::Relative),
-        (PositionValue::Sticky, taffy::Position::Sticky),
-        (PositionValue::Absolute, taffy::Position::Absolute),
-        (PositionValue::Fixed, taffy::Position::Absolute),
+        (PositionValue::Static, values::Position::Static),
+        (PositionValue::Relative, values::Position::Relative),
+        (PositionValue::Sticky, values::Position::Sticky),
+        (PositionValue::Absolute, values::Position::Absolute),
+        (PositionValue::Fixed, values::Position::Absolute),
     ] {
         cv.position = position;
         for (contain, expected_contain) in [
-            (Contain::NONE, taffy::Contain::NONE),
-            (Contain::LAYOUT, taffy::Contain::LAYOUT),
-            (Contain::PAINT, taffy::Contain::PAINT),
+            (Contain::NONE, values::Contain::NONE),
+            (Contain::LAYOUT, values::Contain::LAYOUT),
+            (Contain::PAINT, values::Contain::PAINT),
             (
                 Contain::LAYOUT.union(Contain::PAINT),
-                taffy::Contain::CONTENT,
+                values::Contain::CONTENT,
             ),
         ] {
             cv.contain = contain;
@@ -51,16 +51,16 @@ fn box_identity_position_containment_and_overflow_policies_are_explicit() {
             let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
             assert_eq!(v.position(), expected);
             assert_eq!(v.contain(), expected_contain);
-            assert_eq!(v.box_generation_mode(), taffy::BoxGenerationMode::None);
+            assert_eq!(v.box_generation_mode(), values::BoxGenerationMode::None);
             assert!(v.is_replaced() && v.is_compressible_replaced());
         }
     }
     for (overflow, expected) in [
-        (OverflowValue::Visible, taffy::Overflow::Visible),
-        (OverflowValue::Hidden, taffy::Overflow::Hidden),
-        (OverflowValue::Clip, taffy::Overflow::Clip),
-        (OverflowValue::Auto, taffy::Overflow::Scroll),
-        (OverflowValue::Scroll, taffy::Overflow::Scroll),
+        (OverflowValue::Visible, values::Overflow::Visible),
+        (OverflowValue::Hidden, values::Overflow::Hidden),
+        (OverflowValue::Clip, values::Overflow::Clip),
+        (OverflowValue::Auto, values::Overflow::Scroll),
+        (OverflowValue::Scroll, values::Overflow::Scroll),
     ] {
         cv.overflow.x = overflow;
         cv.overflow.y = overflow;
@@ -68,7 +68,7 @@ fn box_identity_position_containment_and_overflow_policies_are_explicit() {
         let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
         assert_eq!(
             v.overflow(),
-            taffy::Point {
+            Point {
                 x: expected,
                 y: expected
             }
@@ -78,7 +78,7 @@ fn box_identity_position_containment_and_overflow_policies_are_explicit() {
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     assert_eq!(
         LayoutStyleView::new(&p, ViewContext::default(), &[], &[]).box_sizing(),
-        taffy::BoxSizing::BorderBox
+        values::BoxSizing::BorderBox
     );
 }
 
@@ -93,9 +93,12 @@ fn logical_sources_keyword_policy_and_flex_basis_keep_their_meaning() {
     for (flags, width) in [
         (
             StyleFlags::VERTICAL_LOGICAL_SIZE,
-            taffy::Dimension::length(30.0),
+            values::Dimension::length(30.0),
         ),
-        (StyleFlags::MIN_CONTENT_WIDTH_AUTO, taffy::Dimension::auto()),
+        (
+            StyleFlags::MIN_CONTENT_WIDTH_AUTO,
+            values::Dimension::auto(),
+        ),
     ] {
         let p = PreparedStyle::new(
             &cv,
@@ -111,12 +114,12 @@ fn logical_sources_keyword_policy_and_flex_basis_keep_their_meaning() {
         let _ = v.min_size();
     }
     for (input, expected) in [
-        (F::Content, taffy::Dimension::content()),
-        (F::MinContent, taffy::Dimension::min_content()),
-        (F::MaxContent, taffy::Dimension::max_content()),
-        (F::FitContent, taffy::Dimension::fit_content()),
-        (F::Px(4.0), taffy::Dimension::length(4.0)),
-        (F::Percent(25.0), taffy::Dimension::percent(0.25)),
+        (F::Content, values::Dimension::content()),
+        (F::MinContent, values::Dimension::min_content()),
+        (F::MaxContent, values::Dimension::max_content()),
+        (F::FitContent, values::Dimension::fit_content()),
+        (F::Px(4.0), values::Dimension::length(4.0)),
+        (F::Percent(25.0), values::Dimension::percent(0.25)),
     ] {
         cv.flex_basis = input;
         let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
@@ -178,7 +181,6 @@ fn properties_read_as_is_ignore_every_keyword_and_logical_size_policy() {
 }
 
 #[test]
-#[allow(unsafe_code)]
 fn scalar_calc_slots_resolve_values_with_the_right_range() {
     let expr = CalcLengthPercentage {
         px: -10.0,
@@ -211,13 +213,13 @@ fn scalar_calc_slots_resolve_values_with_the_right_range() {
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &bindings).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
     let handles = [
-        (v.size().width.into_raw().calc_value(), true),
-        (v.min_size().width.into_raw().calc_value(), true),
-        (v.inset().left.into_raw().calc_value(), false),
-        (v.margin().top.into_raw().calc_value(), false),
-        (v.padding().top.into_raw().calc_value(), true),
-        (v.flex_basis().into_raw().calc_value(), true),
-        (v.gap().width.into_raw().calc_value(), true),
+        (v.size().width.calc_ref(), true),
+        (v.min_size().width.calc_ref(), true),
+        (v.inset().left.calc_ref(), false),
+        (v.margin().top.calc_ref(), false),
+        (v.padding().top.calc_ref(), true),
+        (v.flex_basis().calc_ref(), true),
+        (v.gap().width.calc_ref(), true),
     ];
     for (handle, range) in handles {
         for basis in [0.0, 100.0] {
@@ -226,7 +228,7 @@ fn scalar_calc_slots_resolve_values_with_the_right_range() {
             } else {
                 basis * 0.25 - 10.0
             };
-            assert_eq!(CalcHandle::resolve(handle, basis), expected);
+            assert_eq!(handle.resolve(basis), expected);
         }
     }
     assert_eq!(
@@ -270,7 +272,7 @@ fn empty_grid_iterators_and_absent_areas_keep_the_legacy_representation() {
         (0, 0)
     );
     assert_eq!(v.align_self(), None);
-    assert_eq!(v.gap().width, taffy::LengthPercentage::length(4.0));
+    assert_eq!(v.gap().width, values::LengthPercentage::length(4.0));
     cv.grid_template_columns = raikiri_style::ComputedGridTemplateTracks::List(
         std::sync::Arc::new(raikiri_style::ComputedGridTrackList {
             components: vec![],
@@ -285,7 +287,7 @@ fn empty_grid_iterators_and_absent_areas_keep_the_legacy_representation() {
         cv.width = input;
         let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
         let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-        assert_ne!(v.size().width, taffy::Dimension::auto());
+        assert_ne!(v.size().width, values::Dimension::auto());
     }
 }
 
@@ -313,12 +315,12 @@ fn abspos_first_baseline_and_defensive_edge_fallbacks_are_stable() {
         );
         assert_eq!(
             v.align_self(),
-            Some(taffy::AlignItems {
-                keyword: taffy::AlignItemsKeyword::Baseline,
-                safety: taffy::AlignmentSafety::Safe
+            Some(values::AlignItems {
+                keyword: values::AlignItemsKeyword::Baseline,
+                safety: values::AlignmentSafety::Safe
             })
         );
-        assert_eq!(v.padding().top, taffy::LengthPercentage::length(0.0));
-        assert_eq!(v.margin().left, taffy::LengthPercentageAuto::length(0.0));
+        assert_eq!(v.padding().top, values::LengthPercentage::length(0.0));
+        assert_eq!(v.margin().left, values::LengthPercentageAuto::length(0.0));
     }
 }

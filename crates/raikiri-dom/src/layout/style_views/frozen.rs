@@ -1,7 +1,8 @@
 //! Own the inputs captured at a block frame's geometry boundary.
 
 use super::*;
-use raikiri_layout_style::values::{ResolveOrZero, StyleRect};
+use raikiri_layout_geometry::Edges;
+use raikiri_layout_style::values::ResolveOrZero;
 use raikiri_layout_style::{LengthProperty, PercentBasis};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
@@ -107,7 +108,7 @@ impl FrozenViewInput {
     pub(crate) fn resolve_padding(&mut self, basis: Option<f32>) {
         // The padding is stored in the shape the style view reads it in.
         let padding = self.view().padding().resolve_or_zero(basis);
-        self.context.resolved_padding = Some(StyleRect {
+        self.context.resolved_padding = Some(Edges {
             left: padding.left,
             right: padding.right,
             top: padding.top,

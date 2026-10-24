@@ -307,23 +307,20 @@ fn typed_scopes_reject_restoring_an_outer_scope_first() {
 #[test]
 fn measure_lengths_keep_calc_identity_and_canonicalize_nan_and_zero() {
     use raikiri_layout_style::AlignedCalc;
-    use raikiri_layout_style::values::LengthExt;
+    use raikiri_layout_style::values::CalcRef;
     use raikiri_style::property::CalcLengthPercentage;
-    let a = AlignedCalc::new(
-        CalcLengthPercentage {
-            px: 1.0,
-            percent: 20.0,
-        },
-        true,
-    );
-    let b = AlignedCalc::new(
-        CalcLengthPercentage {
-            px: 1.0,
-            percent: 20.0,
-        },
-        true,
-    );
-    let calc = |value: &AlignedCalc| Dimension::calc(std::ptr::from_ref(value).cast()).identity();
+    let owner = || {
+        std::sync::Arc::new(AlignedCalc::new(
+            CalcLengthPercentage {
+                px: 1.0,
+                percent: 20.0,
+            },
+            true,
+        ))
+    };
+    let (a, b) = (owner(), owner());
+    let calc =
+        |value: &std::sync::Arc<AlignedCalc>| Dimension::calc(CalcRef::retained(value)).identity();
     assert_eq!(calc(&a), calc(&a));
     assert_ne!(calc(&a), calc(&b));
     let number = |value| Dimension::length(value).identity();

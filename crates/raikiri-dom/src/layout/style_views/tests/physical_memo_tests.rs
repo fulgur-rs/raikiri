@@ -4,12 +4,12 @@ use raikiri_layout_style::values::Dimension;
 use std::cell::Cell;
 
 /// A reduction that only carries the box's size, counting its runs.
-fn counted_size(reads: &Cell<usize>) -> impl Fn(LayoutStyleView<'_>) -> LayoutStyle + Copy {
+fn counted_size(reads: &Cell<usize>) -> impl Fn(LayoutStyleView<'_>) -> BoxStyle + Copy {
     move |style| {
         reads.set(reads.get() + 1);
-        LayoutStyle {
+        BoxStyle {
             size: style.size(),
-            ..LayoutStyle::default()
+            ..BoxStyle::default()
         }
     }
 }

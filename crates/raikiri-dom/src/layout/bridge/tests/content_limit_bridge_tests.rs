@@ -1,7 +1,8 @@
 use super::*;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::test_support::bridged_style;
-use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, StyleSize};
+use raikiri_layout_geometry::Size;
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 use raikiri_style::{build_rule_tree, cascade};
 
 #[test]
@@ -51,11 +52,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             table,
             ContentLimits {
-                min: StyleSize {
+                min: Size {
                     width: Dimension::min_content(),
                     height: Dimension::fit_content(),
                 },
-                max: StyleSize {
+                max: Size {
                     width: Dimension::max_content(),
                     height: Dimension::min_content(),
                 },
@@ -64,11 +65,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             caption,
             ContentLimits {
-                min: StyleSize {
+                min: Size {
                     width: Dimension::max_content(),
                     height: Dimension::min_content(),
                 },
-                max: StyleSize {
+                max: Size {
                     width: Dimension::min_content(),
                     height: Dimension::max_content(),
                 },
@@ -77,11 +78,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             cell,
             ContentLimits {
-                min: StyleSize {
+                min: Size {
                     width: Dimension::fit_content(),
                     height: Dimension::max_content(),
                 },
-                max: StyleSize {
+                max: Size {
                     width: Dimension::fit_content_px(17.0),
                     height: Dimension::fit_content(),
                 },
@@ -90,11 +91,11 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         (
             canvas,
             ContentLimits {
-                min: StyleSize {
+                min: Size {
                     width: Dimension::min_content(),
                     height: Dimension::max_content(),
                 },
-                max: StyleSize {
+                max: Size {
                     width: Dimension::fit_content(),
                     height: Dimension::fit_content_px(13.0),
                 },
@@ -107,12 +108,12 @@ fn bridge_retains_raw_content_limits_for_table_parts_and_replaced_nodes() {
         let style = &bridged_style(&mut doc, &cascade, node);
         assert_eq!(
             style.min_size,
-            StyleSize::<LengthPercentageAuto>::auto(),
+            Size::splat(LengthPercentageAuto::auto()),
             "Taffy min_size for node {node}"
         );
         assert_eq!(
             style.max_size,
-            StyleSize::<LengthPercentageAuto>::auto(),
+            Size::splat(LengthPercentageAuto::auto()),
             "Taffy max_size for node {node}"
         );
     }

@@ -93,7 +93,7 @@ pub(crate) struct PreparedBox<'a> {
     context: ViewContext,
     /// The reduced physical style of the box, filled by the first read that no
     /// override and no percentage basis touches. It dies with the preparation.
-    physical: OnceCell<Box<crate::LayoutStyle>>,
+    physical: OnceCell<Box<raikiri_layout_style::BoxStyle>>,
 }
 
 pub(crate) struct StyleViews<'a> {
@@ -401,8 +401,8 @@ impl LayoutSession<'_> {
     pub(crate) fn reduced_physical_style(
         &self,
         idx: usize,
-        reduce: impl FnOnce(LayoutStyleView<'_>) -> crate::LayoutStyle,
-    ) -> crate::LayoutStyle {
+        reduce: impl FnOnce(LayoutStyleView<'_>) -> raikiri_layout_style::BoxStyle,
+    ) -> raikiri_layout_style::BoxStyle {
         let Some(prepared) = self.unmodified_box(idx) else {
             return reduce(self.physical_style(idx));
         };

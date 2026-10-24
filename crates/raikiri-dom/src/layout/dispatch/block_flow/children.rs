@@ -2,7 +2,6 @@
 
 use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
-use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
@@ -11,12 +10,12 @@ use crate::layout::protocol::{
 use crate::layout::taffy_adapter::algorithms::compute_block_align_content_offset;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
+use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, BoxGenerationMode, Clear, Direction, ExpandedDimension, Float, IntoEdges,
-    LengthExt, MaybeResolve, Overflow, Position,
+    AlignContentKeyword, BoxGenerationMode, Clear, Direction, ExpandedDimension, Float,
+    MaybeResolve, Overflow, Position,
 };
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
-use taffy::{BlockItemStyle, CoreStyle};
 
 pub(super) struct Flow {
     pub end: f32,
@@ -65,7 +64,6 @@ fn place_inline_axis(
 fn margins(style: &Style, basis: f32) -> Edges<f32> {
     style
         .margin
-        .into_edges()
         .map(|edge| edge.resolve(Some(basis)).unwrap_or(0.0))
 }
 
@@ -449,7 +447,7 @@ pub(super) fn layout(
         let stretches = matches!(
             style.size.width.expand(),
             ExpandedDimension::Auto | ExpandedDimension::Stretch
-        ) && !style.is_table()
+        ) && !style.item_is_table
             && !style.is_compressible_replaced();
         let natural_stretch = content_width - margin.horizontal_axis_sum();
         // `Width`: the border-box width the child gets where an `auto` width

@@ -1,7 +1,8 @@
 use super::*;
-use crate::LayoutStyle;
+use raikiri_layout_geometry::Size;
+use raikiri_layout_style::BoxStyle;
 use raikiri_layout_style::values::{
-    BoxGenerationMode, Dimension, Direction as LayoutDirection, Display, StyleSize,
+    BoxGenerationMode, Dimension, Direction as LayoutDirection, Display,
 };
 use raikiri_layout_style::{
     LayoutStyleView, PreparedStyle, StyleFlags, StyleMetadata, TaffyStyle, ViewContext,
@@ -30,7 +31,8 @@ fn facts(direction: LayoutDirection, block: bool) -> BoxFacts {
     }
 }
 
-fn assert_legacy(recipe: &Recipe, legacy: &LayoutStyle) {
+fn assert_legacy(recipe: &Recipe, legacy: &BoxStyle) {
+    let legacy = &crate::layout::test_support::taffy_style(legacy);
     let prepared = PreparedStyle::prepare(&recipe.values, recipe.metadata);
     let view = TaffyStyle::new(LayoutStyleView::new(
         &prepared,
@@ -69,14 +71,14 @@ fn assert_legacy(recipe: &Recipe, legacy: &LayoutStyle) {
 fn icb_recipe_keeps_physical_dimensions_and_independent_direction() {
     for direction in [LayoutDirection::Ltr, LayoutDirection::Rtl] {
         let recipe = initial_containing_block(80.0, 120.0, facts(direction, true));
-        let legacy = LayoutStyle {
+        let legacy = BoxStyle {
             display: Display::Block,
             direction,
-            size: StyleSize {
+            size: Size {
                 width: Dimension::length(80.0),
                 height: Dimension::length(120.0),
             },
-            ..LayoutStyle::default()
+            ..BoxStyle::default()
         };
         assert_eq!(
             recipe.kind,
@@ -99,16 +101,16 @@ fn contents_and_spanner_have_distinct_origins_with_neutral_layout_values() {
         let spanner = spanner(facts(direction, true));
         assert_eq!(contents.kind, RecipeKind::Contents);
         assert_eq!(spanner.kind, RecipeKind::Spanner);
-        let legacy = LayoutStyle {
+        let legacy = BoxStyle {
             display: Display::Block,
             direction,
-            ..LayoutStyle::default()
+            ..BoxStyle::default()
         };
         assert_legacy(
             &contents,
-            &LayoutStyle {
+            &BoxStyle {
                 direction,
-                ..LayoutStyle::default()
+                ..BoxStyle::default()
             },
         );
         assert_legacy(&spanner, &legacy);
@@ -142,10 +144,10 @@ fn anonymous_recipes_inherit_only_the_explicit_owner_facts() {
         assert_eq!(recipe.metadata.used_writing_mode, WritingMode::VerticalRl);
         assert_legacy(
             &recipe,
-            &LayoutStyle {
+            &BoxStyle {
                 display: Display::Block,
                 direction: LayoutDirection::Rtl,
-                ..LayoutStyle::default()
+                ..BoxStyle::default()
             },
         );
     }
@@ -161,7 +163,7 @@ fn neutral_source_recipe_matches_native_defaults_and_empty_auto_tracks() {
     );
     assert!(recipe.values.grid_auto_columns.is_empty());
     assert!(recipe.values.grid_auto_rows.is_empty());
-    assert_legacy(&recipe, &LayoutStyle::default());
+    assert_legacy(&recipe, &BoxStyle::default());
 }
 
 #[test]
@@ -177,9 +179,9 @@ fn neutral_values_share_only_equal_directions() {
     );
     assert_legacy(
         &rtl,
-        &LayoutStyle {
+        &BoxStyle {
             direction: LayoutDirection::Rtl,
-            ..LayoutStyle::default()
+            ..BoxStyle::default()
         },
     );
 }

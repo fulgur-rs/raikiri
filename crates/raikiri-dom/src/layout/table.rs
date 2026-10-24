@@ -33,8 +33,8 @@
 //! - Nested tables are depth-capped fail-closed (`MAX_TABLE_NESTING`).
 
 use raikiri_layout_style::values::{
-    BoxSizing, ContainingBlockClaims, Dimension, Direction, ExpandedDimension, Float, IntoEdges,
-    LengthPercentage, MaybeResolve, Position, ResolveOrZero, StyleRect,
+    BoxSizing, ContainingBlockClaims, Dimension, Direction, ExpandedDimension, Float,
+    LengthPercentage, MaybeResolve, Position, ResolveOrZero,
 };
 use raikiri_style::ComputedBorder;
 use raikiri_style::property::{
@@ -3497,7 +3497,7 @@ fn resolve_length(lp: LengthPercentage, basis: Option<f32>) -> f32 {
 /// Resolve a table's padding or border widths (`rect`) against the width of
 /// its containing block (CSS 2.1 §8.4).
 fn resolve_table_rect(
-    rect: &StyleRect<LengthPercentage>,
+    rect: &Edges<LengthPercentage>,
     parent_size: Size<Option<f32>>,
 ) -> Edges<f32> {
     let w_basis = parent_size.width;
@@ -3522,7 +3522,7 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
     // in fixed table layout. The style layer folds a `calc()` with only a
     // percentage or only a length into that percentage or length, so every
     // `calc()` left here is such a sum.
-    if width.into_raw().is_plain_calc() {
+    if width.is_calc() {
         return None;
     }
     resolve_dimension(width, Some(avail))
@@ -4268,7 +4268,6 @@ fn compute_collapsed_lines(
                 .cell(c.node_id)
                 .expect("line cell belongs to border state")
                 .widths
-                .into_edges()
                 .map(|width| resolve_length(width, basis))
         })
         .collect();

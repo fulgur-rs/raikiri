@@ -120,12 +120,9 @@ fn scoped_override_production_retains_calc_until_successful_rebinding() {
     .unwrap();
     let owner = value.calc_owner().unwrap();
     let weak = Arc::downgrade(owner);
-    let pointer = std::ptr::from_ref(owner.as_ref()).cast();
+    let calc = raikiri_layout_style::values::CalcRef::retained(owner);
     tree.with_overrides(vec![(key, value)], |tree| {
-        assert_eq!(
-            tree.style_view(child).size().width,
-            Dimension::calc(pointer)
-        );
+        assert_eq!(tree.style_view(child).size().width, Dimension::calc(calc));
         let owner = weak.upgrade().unwrap();
         assert!(owner.non_negative());
         assert_eq!(owner.resolve(0.0), 0.0);
@@ -547,11 +544,11 @@ fn border_scope_retains_calc_until_successful_rebinding() {
     .unwrap();
     let owner = value.calc_owner().unwrap();
     let weak = Arc::downgrade(owner);
-    let pointer = std::ptr::from_ref(owner.as_ref()).cast();
+    let calc = raikiri_layout_style::values::CalcRef::retained(owner);
     tree.with_overrides(vec![(key, value)], |tree| {
         assert_eq!(
             tree.style_view(child).border().left,
-            LengthPercentage::calc(pointer)
+            LengthPercentage::calc(calc)
         );
         let owner = weak.upgrade().unwrap();
         assert!(owner.non_negative());

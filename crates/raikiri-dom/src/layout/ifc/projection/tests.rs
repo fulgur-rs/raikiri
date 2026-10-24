@@ -1,6 +1,5 @@
 use super::*;
 use crate::layout::ifc::test_support::{Fixture, ahem_fonts, block_fixture, span};
-use raikiri_layout_style::values::LengthExt;
 use shodo::AtomicSizes;
 
 #[test]

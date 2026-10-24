@@ -28,11 +28,12 @@ public vocabulary that raikiri-dom could name, which raikiri builds or reads
 before a layout call. That is the style traits, the length types, the keyword
 enums and small value types, `Style`, the float and block formatting state, the
 grid vocabulary, the tree traits, and the functions that run Taffy's algorithms
-or build style values. Almost all of these have no owned replacement yet. They
-are pinned like the output names, so the vocabulary can only shrink while the
-replacements are introduced, and the failure output says "no owned name yet"
-(with the kind of name) instead of naming a type to move to. The few that
-already have an owned replacement are in `OWNED_INPUT_NAMES`.
+or build style values. They are pinned like the output names, so the vocabulary
+can only shrink while the replacements are introduced. The lengths, the keywords
+and small value types, `Style` and the resolution helpers have an owned
+replacement, listed in `OWNED_INPUT_NAMES`, and the failure output names it. The
+others have none yet, and the failure output says "no owned name yet" (with the
+kind of name) instead of naming a type to move to.
 
 The tables say which kind a name is and what it moves to; they do not decide
 whether a use is counted. Any name a path reaches from the `taffy` crate is
@@ -207,7 +208,7 @@ OUTPUT_NAMES: dict[str, str] = {
 GENERIC_GEOMETRY = frozenset({"Size", "Point", "Line", "Rect"})
 
 # The input-side Taffy names this lint counts, grouped by kind. The kind is shown
-# in the failure output because none of them has an owned replacement yet. Type
+# in the failure output for the names that have no owned replacement yet. Type
 # and trait names are capitalised; the lower-case entries are functions, matched
 # by the last segment of a path that has no capitalised segment.
 INPUT_CLASSES: dict[str, tuple[str, ...]] = {
@@ -353,13 +354,41 @@ INPUT_CLASSES: dict[str, tuple[str, ...]] = {
 # Name -> kind, for every input-side name.
 INPUT_NAMES: dict[str, str] = {name: kind for kind, names in INPUT_CLASSES.items() for name in names}
 
-# The input-side names that already have an owned replacement: helper traits that
-# resolve a length against a basis. The owned `MaybeResolve` and `ResolveOrZero`
-# are the view crate's traits.
+# The input-side names that already have an owned replacement: the helper traits
+# that resolve a length against a basis, the length types and their expanded
+# forms, the keyword and small value types that style queries return, and the
+# style struct of a box. The flex and grid vocabulary has none: the Taffy
+# projection of the view crate is the one place that names it.
+_OWNED_VALUE_NAMES = (
+    "MaybeResolve",
+    "ResolveOrZero",
+    "Dimension",
+    "LengthPercentage",
+    "LengthPercentageAuto",
+    "ExpandedDimension",
+    "ExpandedLengthPercentage",
+    "ExpandedLengthPercentageAuto",
+    "Direction",
+    "Position",
+    "Display",
+    "Clear",
+    "Float",
+    "BoxSizing",
+    "Overflow",
+    "Contain",
+    "BoxGenerationMode",
+    "ContainingBlockClaims",
+    "AlignItems",
+    "AlignSelf",
+    "AlignContent",
+    "AlignItemsKeyword",
+    "AlignContentKeyword",
+    "AlignmentSafety",
+)
 OWNED_INPUT_NAMES: dict[str, str] = {
     "MaybeMath": "raikiri_layout_geometry::MaybeMath",
-    "MaybeResolve": "raikiri_layout_style::values::MaybeResolve",
-    "ResolveOrZero": "raikiri_layout_style::values::ResolveOrZero",
+    "Style": "raikiri_layout_style::BoxStyle (block flow and leaf sizing only, no flex or grid fields)",
+    **{name: f"raikiri_layout_style::values::{name}" for name in _OWNED_VALUE_NAMES},
 }
 
 # A failing file lists at most this many occurrences; -v lists all of them.

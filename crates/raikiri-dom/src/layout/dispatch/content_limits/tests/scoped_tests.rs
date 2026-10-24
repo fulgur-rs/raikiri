@@ -1,9 +1,10 @@
 use super::*;
 use crate::layout::style_views::tests::fixture;
+use raikiri_layout_geometry::Size;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
-use raikiri_layout_style::values::{Dimension, StyleSize};
+use raikiri_layout_style::values::Dimension;
 
 #[test]
 fn batched_content_limits_preserve_unrelated_pass_updates_after_unwind() {
@@ -89,8 +90,14 @@ fn batched_oof_scopes_restore_four_raw_constraints_and_keep_unrelated_updates() 
                     }
                     if calls == 2 {
                         for child in [first, second] {
-                            assert_eq!(tree.style_view(child).min_size(), StyleSize::auto());
-                            assert_eq!(tree.style_view(child).max_size(), StyleSize::auto());
+                            assert_eq!(
+                                tree.style_view(child).min_size(),
+                                Size::splat(LengthPercentageAuto::auto())
+                            );
+                            assert_eq!(
+                                tree.style_view(child).max_size(),
+                                Size::splat(LengthPercentageAuto::auto())
+                            );
                         }
                         saw_raw = true;
                     }

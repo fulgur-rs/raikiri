@@ -11,6 +11,7 @@ use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
+use raikiri_layout_geometry::{Edges, Point};
 use raikiri_style::property::BreakInside;
 
 /// The rendered children of `parent` when every one of them is a plain
@@ -64,7 +65,7 @@ fn supported_with_wrapped_blocks(
     let mut boxes = Vec::new();
     for child in rendered_elements(tree, parent) {
         let node = layout_node(tree, child);
-        let has_inset = style_of(tree, child).inset() != StyleRect::auto();
+        let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
         let plain_block = is_plain_block_ignoring_insets(tree, child);
         let plain_wrapper = allow_wrapped_blocks
             && is_plain_wrapper_ignoring_insets(tree, child)
@@ -144,7 +145,7 @@ pub(super) fn starts_the_outer_columns(tree: &LayoutSession<'_>, id: usize) -> b
 /// Whether `child` is a block that can be sliced at a column end, leaving
 /// aside what it contains.
 fn is_plain_block(tree: &LayoutSession<'_>, child: usize) -> bool {
-    style_of(tree, child).inset() == StyleRect::auto()
+    style_of(tree, child).inset() == Edges::splat(LengthPercentageAuto::auto())
         && is_plain_block_ignoring_insets(tree, child)
 }
 
@@ -183,7 +184,7 @@ fn is_plain_block_with_display(
         || style.clear() != Clear::None
         || block_margins(&style).is_none()
         || style.overflow()
-            != (StylePoint {
+            != (Point {
                 x: TaffyOverflow::Visible,
                 y: TaffyOverflow::Visible,
             })
@@ -328,7 +329,7 @@ fn wrapped_block_tree(
             leaf_count += 1;
         } else {
             if !allow_sliced_wrappers
-                || style_of(tree, child).inset() != StyleRect::auto()
+                || style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto())
                 || !is_plain_wrapper_ignoring_insets(tree, child)
             {
                 return None;

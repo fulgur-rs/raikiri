@@ -2,7 +2,7 @@ use super::*;
 use crate::layout::box_style_data::LayoutBase;
 use crate::node::arena::BoxKey;
 use raikiri_layout_style::values::{
-    BoxGenerationMode, Dimension, Direction as LayoutDirection, Display, LengthExt,
+    BoxGenerationMode, Dimension, Direction as LayoutDirection, Display,
 };
 
 #[test]
@@ -555,9 +555,9 @@ fn source_wrapper_rebinds_when_the_same_key_becomes_a_spanner_recipe() {
     assert_eq!(session.style_view(wrapper).aspect_ratio(), None);
     assert_neutral_getters(
         session.style_view(wrapper),
-        &crate::LayoutStyle {
+        &raikiri_layout_style::BoxStyle {
             display: Display::Block,
-            ..crate::LayoutStyle::default()
+            ..raikiri_layout_style::BoxStyle::default()
         },
     );
 }

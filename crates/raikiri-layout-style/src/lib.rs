@@ -1,6 +1,7 @@
 //! Borrowed style queries for Taffy, independent of the DOM adapter.
 
 mod block;
+mod box_style;
 mod calc;
 mod context;
 mod core;
@@ -16,11 +17,13 @@ mod projection;
 mod resolve;
 pub mod values;
 mod view;
+pub use box_style::BoxStyle;
 pub use calc::*;
 pub use context::*;
 pub use overrides::*;
 pub use prepared::*;
-pub use projection::TaffyStyle;
+pub use projection::{LeafStyle, TaffyStyle};
+pub use values::resolve_projected_calc;
 pub use view::*;
 
 #[cfg(test)]

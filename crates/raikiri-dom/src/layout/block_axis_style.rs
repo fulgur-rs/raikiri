@@ -12,7 +12,8 @@
 //! to be swapped in the document's own styles: the styles of the boxes stay on
 //! physical axes while pagination runs.
 
-use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, StyleRect};
+use raikiri_layout_geometry::Edges;
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 
 /// The style of a box along the axis pagination breaks the flow on.
 ///
@@ -23,7 +24,7 @@ pub(crate) struct BlockAxisStyle {
     pub(crate) height: Dimension,
     pub(crate) min_height: LengthPercentageAuto,
     pub(crate) max_height: LengthPercentageAuto,
-    pub(crate) margin: StyleRect<LengthPercentageAuto>,
+    pub(crate) margin: Edges<LengthPercentageAuto>,
     /// Inverted on transposed axes.
     pub(crate) aspect_ratio: Option<f32>,
 }
