@@ -247,12 +247,15 @@ impl CascadeResult {
             .typographic_inheritance
             .get(&(id, pseudo))
             .map_or(ElementCandidates::EMPTY, OwnedCandidates::candidates);
+        let mut spread = Vec::new();
         let mut filtered = Vec::new();
         let values = if pseudo == Some(crate::PseudoElem::FirstLine) {
-            values.filtered(&mut filtered, |candidate| {
-                candidate.is_all_revert_layer()
-                    || super::first_line::first_line_property_applies(candidate.key())
-            })
+            values
+                .with_all_spread(&mut spread)
+                .filtered(&mut filtered, |candidate| {
+                    candidate.is_all_rollback()
+                        || super::first_line::first_line_property_applies(candidate.key())
+                })
         } else {
             values
         };
@@ -299,12 +302,14 @@ impl CascadeResult {
         let custom_candidates = inputs.candidates.custom_candidates();
         let custom = resolve_custom_properties(&parent.custom_properties, custom_candidates);
         let mut specified = SpecifiedValues::inherit_from(parent);
+        let mut spread = Vec::new();
         let mut filtered = Vec::new();
         let declarations = inputs
             .candidates
             .candidates()
+            .with_all_spread(&mut spread)
             .filtered(&mut filtered, |candidate| {
-                candidate.is_all_revert_layer() || property_applies(candidate.key())
+                candidate.is_all_rollback() || property_applies(candidate.key())
             });
         apply_winners(
             declarations,

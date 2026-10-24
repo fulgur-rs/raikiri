@@ -433,7 +433,7 @@ pub(super) fn absolutize_in_page_context(
         // ── already computed-equivalent after phase 2 ──────────────────────
         // `font-size` is already phase-2 output (`Length::Px`); re-absolutizing it
         // here would apply it against its own value instead of the parent's.
-        v @ (PropertyValue::AllRevertLayer
+        v @ (PropertyValue::All(_)
         | PropertyValue::Color(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)

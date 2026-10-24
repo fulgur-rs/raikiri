@@ -395,10 +395,9 @@ pub(crate) fn parse_property_grammar(
 ) -> Option<PropertyValue> {
     // Dispatch property names using ASCII-lowercase comparisons.
     match normalized_name {
-        "all" => {
-            input.expect_ident_matching("revert-layer").ok()?;
-            Some(PropertyValue::AllRevertLayer)
-        }
+        "all" => parse_css_wide_keyword_res(input)
+            .ok()
+            .map(PropertyValue::All),
         "color" => parse_element_color(input, PropertyKey::Color),
         // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
         // "Base Color: the background-color property". Its value grammar is

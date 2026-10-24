@@ -165,7 +165,10 @@ impl Declaration {
     pub(crate) fn update_value(&mut self, update: impl FnOnce(&mut PropertyValue)) {
         update(&mut self.value);
         *self = Self::with_side(
-            std::mem::replace(&mut self.value, PropertyValue::AllRevertLayer),
+            std::mem::replace(
+                &mut self.value,
+                PropertyValue::All(CssWideKeyword::RevertLayer),
+            ),
             self.important,
             self.logical,
         );
@@ -821,7 +824,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         // No longhand variant exists for expansion: push one declaration unchanged.
         // Do not collapse this into `_` (see "Why there is no wildcard arm (contract)" above).
         // Adding a variant here asserts that it has no expansion target.
-        PropertyValue::AllRevertLayer
+        PropertyValue::All(_)
         | PropertyValue::Color(_)
         | PropertyValue::ContextualColor(_)
         | PropertyValue::BackgroundColor(_)

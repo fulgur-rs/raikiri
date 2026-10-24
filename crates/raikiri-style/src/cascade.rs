@@ -872,6 +872,7 @@ fn finish<D: StyleDom>(
     }
 }
 
+mod all_spread;
 mod candidate;
 use candidate::OwnedCandidates;
 mod collect;

@@ -2069,7 +2069,7 @@ fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColo
             {
                 Some((declaration.important, index, HighlightColor(None, None)))
             }
-            PropertyValue::AllRevertLayer => {
+            PropertyValue::All(crate::property::CssWideKeyword::RevertLayer) => {
                 Some((declaration.important, index, HighlightColor(None, None)))
             }
             _ => None,

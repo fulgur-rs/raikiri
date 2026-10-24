@@ -13279,6 +13279,18 @@ fn an_attribute_beaten_by_inherit_leaves_the_property_to_the_html_ancestor() {
 }
 
 #[test]
+fn an_attribute_beaten_by_all_inherit_leaves_the_property_to_the_html_ancestor() {
+    let [root, ..] = html_wrapped_svg_with_root_attributes(
+        "div { fill: red } svg { all: inherit }",
+        &[("fill", "blue")],
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+}
+
+#[test]
 fn an_attribute_beaten_by_a_value_is_replaced_by_that_value() {
     let [root, ..] = html_wrapped_svg_with_root_attributes(
         "div { fill: red } svg { fill: green }",

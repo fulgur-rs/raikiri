@@ -300,8 +300,10 @@ impl PageMarginBoxCascadeResult {
         let mut winners = HashMap::new();
         let mut has_rollback = false;
         for (index, &(rule_index, decl_index, rule, decl)) in candidates.iter().enumerate() {
-            if matches!(decl.value, PropertyValue::AllRevertLayer) {
-                has_rollback = true;
+            if let PropertyValue::All(keyword) = decl.value {
+                // The page context rolls back with `all: revert-layer`; the
+                // other keywords of `all` are not applied to it.
+                has_rollback |= keyword == CssWideKeyword::RevertLayer;
                 continue;
             }
             has_rollback |= matches!(&decl.value, PropertyValue::Deferred(_))
@@ -347,7 +349,10 @@ impl PageMarginBoxCascadeResult {
                             };
                         let reset_all = *key != PropertyKey::Custom
                             && key.is_reset_by_all()
-                            && matches!(decl.value, PropertyValue::AllRevertLayer);
+                            && matches!(
+                                decl.value,
+                                PropertyValue::All(CssWideKeyword::RevertLayer)
+                            );
                         if !same_property && !reset_all {
                             return None;
                         }
@@ -1157,8 +1162,8 @@ fn margin_box_winning_value(
     let index = crate::cascade::rollback::select_layered_winner(
         declared,
         |_, &(rule_index, decl_index, rule, decl)| {
-            let reset_all =
-                key.is_reset_by_all() && matches!(decl.value, PropertyValue::AllRevertLayer);
+            let reset_all = key.is_reset_by_all()
+                && matches!(decl.value, PropertyValue::All(CssWideKeyword::RevertLayer));
             if decl.value.key() != key && !reset_all {
                 return None;
             }
@@ -1250,8 +1255,8 @@ fn page_flow_mapping(
         let index = crate::cascade::rollback::select_layered_winner(
             candidates,
             |index, (value, important, origin, priority, spec, order)| {
-                let reset_all =
-                    key.is_reset_by_all() && matches!(value, PropertyValue::AllRevertLayer);
+                let reset_all = key.is_reset_by_all()
+                    && matches!(value, PropertyValue::All(CssWideKeyword::RevertLayer));
                 if value.key() != key && !reset_all {
                     return None;
                 }
@@ -1678,7 +1683,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
             *value = flow.value(declared, side);
         }
         *value = preferred_size(
-            std::mem::replace(value, PropertyValue::AllRevertLayer),
+            std::mem::replace(value, PropertyValue::All(CssWideKeyword::RevertLayer)),
             flow,
         );
     }
@@ -1690,8 +1695,9 @@ pub(crate) fn cascade_page_with_normal_line_height(
     let mut has_rollback = false;
     let mut has_property_rollback = false;
     for (index, (value, important, origin, layer, spec, order)) in candidates.iter().enumerate() {
-        if matches!(value, PropertyValue::AllRevertLayer) {
-            has_rollback = true;
+        if let PropertyValue::All(keyword) = value {
+            // As in the margin box cascade above, only `revert-layer` is applied.
+            has_rollback |= *keyword == CssWideKeyword::RevertLayer;
             continue;
         }
         has_property_rollback |= matches!(value, PropertyValue::Deferred(_))
@@ -1721,8 +1727,8 @@ pub(crate) fn cascade_page_with_normal_line_height(
             let selected = crate::cascade::rollback::select_layered_winner(
                 &candidates,
                 |idx, (value, important, origin, priority, spec, order)| {
-                    let reset_all =
-                        key.is_reset_by_all() && matches!(value, PropertyValue::AllRevertLayer);
+                    let reset_all = key.is_reset_by_all()
+                        && matches!(value, PropertyValue::All(CssWideKeyword::RevertLayer));
                     if value.key() != *key && !reset_all {
                         return None;
                     }
