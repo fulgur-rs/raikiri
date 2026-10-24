@@ -198,21 +198,32 @@ fn natural_size_within(
     }
 }
 
-/// The content-box size of a replaced leaf whose border-box height the caller
-/// has fixed, as a block container does with the authored height of a child,
+/// The content-box size of a replaced leaf with a side the caller has fixed,
 /// or `None` when Taffy's own leaf sizing applies.
 ///
-/// An `auto` width follows from the content height that is left after the
-/// padding and border, along the ratio (CSS 2.1 §10.3.2). Taffy's leaf sizing
-/// would instead floor the height at the border-box width divided by the ratio,
-/// so a padding on the left or right made the box taller, and it relates the
-/// ratio of a `border-box` box to the whole box even where the ratio is the
-/// natural one of the content. A width the caller fixed as well is kept; the
-/// size is then returned only to switch the floor off.
+/// A block container fixes the border-box height of a child it gives an
+/// authored height, and a flex container fixes the main size of an item it has
+/// grown or shrunk, or the cross size of one it stretches. The other side, if
+/// `auto`, follows from the content size that is left after the padding and
+/// border, along the ratio (CSS 2.1 §10.3.2, §10.6.2; CSS Flexbox §9.2 and
+/// §9.4). A leaf sized by the caller's content would instead keep the natural
+/// size on that side, and Taffy's leaf sizing in its inherent mode floors the
+/// height at the border-box width divided by the ratio, so a padding on the left
+/// or right made the box taller; it also relates the ratio of a `border-box` box
+/// to the whole box even where the ratio is the natural one of the content. A
+/// side the caller fixed as well is kept; the size is then returned only to
+/// switch the floor off.
+///
+/// This is the complement of [`auto_sides_size`], which sizes a box by its own
+/// styles when its natural size is valid and the caller has not fixed the
+/// height. A fixed height gives the width in either sizing mode, since
+/// `auto_sides_size` never handles it. A width that is fixed alone gives the
+/// height here only to a box measured as content, which `auto_sides_size`
+/// leaves alone.
 ///
 /// The `min-*` and `max-*` sizes are left to Taffy, which clamps the box by them
 /// after measuring. `content_box_ratio` is as for [`auto_sides_size`].
-pub(super) fn fixed_height_size(
+pub(super) fn fixed_side_size(
     style: &Style,
     inputs: &LayoutInput,
     content_box_ratio: bool,
@@ -220,18 +231,29 @@ pub(super) fn fixed_height_size(
     let ratio = style
         .aspect_ratio
         .filter(|ratio| ratio.is_finite() && *ratio > 0.0)?;
-    let fixed = inputs
-        .known_dimensions
-        .height
-        .filter(|_| inputs.sizing_mode == SizingMode::InherentSize)?;
     let edges = padding_and_border(style, inputs.parent_size.width);
     let insets = ratio_box_insets(style, edges, content_box_ratio);
-    let height = (fixed - edges.height).max(0.0);
-    let width = inputs.known_dimensions.width.map_or_else(
-        || width_for_height(height, ratio, insets),
-        |fixed| (fixed - edges.width).max(0.0),
-    );
-    Some(Size { width, height })
+    match (
+        inputs.known_dimensions.width,
+        inputs.known_dimensions.height,
+    ) {
+        (width, Some(fixed)) => {
+            let height = (fixed - edges.height).max(0.0);
+            let width = width.map_or_else(
+                || width_for_height(height, ratio, insets),
+                |fixed| (fixed - edges.width).max(0.0),
+            );
+            Some(Size { width, height })
+        }
+        (Some(fixed), None) if inputs.sizing_mode == SizingMode::ContentSize => {
+            let width = (fixed - edges.width).max(0.0);
+            Some(Size {
+                width,
+                height: height_for_width(width, ratio, insets),
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Border-box bounds of the intrinsic sizing keywords on a replaced element.

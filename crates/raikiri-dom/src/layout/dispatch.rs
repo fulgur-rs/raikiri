@@ -509,6 +509,35 @@ impl LayoutSession<'_> {
             .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)
             .is_some_and(|parent| !self.physical_style(parent).flex_direction_is_row())
     }
+
+    /// Whether `known` is only the cross size that a flex container stretches
+    /// its item `node`, with the box style `style`, to while the item's main
+    /// size is measured.
+    ///
+    /// A container that wraps its items onto more than one line does not take
+    /// the cross size it stretches an item with an `auto` cross size to as
+    /// definite then, so that size gives the item no main size through a ratio.
+    pub(crate) fn is_wrapping_stretch_hint(
+        &self,
+        node: usize,
+        style: &Style,
+        known: Size<Option<f32>>,
+    ) -> bool {
+        let Some(container) = self
+            .taffy_parent_of(node)
+            .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)
+            .map(|parent| self.physical_style(parent))
+            .filter(|container| container.flex_wraps())
+        else {
+            return false;
+        };
+        let (known_main, cross_size) = if container.flex_direction_is_row() {
+            (known.width, style.size.height)
+        } else {
+            (known.height, style.size.width)
+        };
+        known_main.is_none() && cross_size.is_auto()
+    }
 }
 
 impl Document {
@@ -1021,7 +1050,13 @@ impl LayoutSession<'_> {
                         content_box_ratio,
                     )
                     .or_else(|| {
-                        replaced_size::fixed_height_size(&style, &inputs, content_box_ratio)
+                        let stretch_hint =
+                            tree.is_wrapping_stretch_hint(idx, &style, inputs.known_dimensions);
+                        if stretch_hint {
+                            None
+                        } else {
+                            replaced_size::fixed_side_size(&style, &inputs, content_box_ratio)
+                        }
                     })
                 });
                 if constrained.is_some() {
