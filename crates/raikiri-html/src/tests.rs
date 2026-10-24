@@ -1483,10 +1483,8 @@ fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit()
     // (d) The Comment persists in the tree, among the body’s children.
     //     Previously it was detached by stripping, leaving only <p> as a
     //     direct child. Now the body children are `[Comment, <p>]` in source order.
-    //     Use UFCS to disambiguate the `Dom::child_ids` and
-    //     `TraversePartialTree::child_ids` methods. Choose the unfiltered Dom
-    //     to inspect raw arena children; the next taffy filter test explicitly
-    //     uses TraversePartialTree.
+    //     Use the unfiltered `Dom::child_ids` to inspect raw arena children;
+    //     the check below goes through the layout children, which are filtered.
     let body_id = find_first_by_tag(doc, "body").expect("body exists");
     let body_kids: Vec<usize> = Dom::child_ids(doc, body_id)
         .map(|id| id.0 as usize)
@@ -1496,24 +1494,21 @@ fn parse_persists_comment_node_as_comment_variant_with_cleared_in_document_bit()
         "Comment node must persist as a child of body (not physically stripped); body kids = {body_kids:?}"
     );
 
-    // (e) The Comment does not leak into the taffy layout tree. TaffyChildIter
-    //     uses the is_in_document() filter (raikiri-dom/src/taffy_impl.rs),
-    //     so the body’s taffy child_count is 1 (only `<p>`). This behavior is
-    //     already checked by `taffy_child_ids_and_count_filter_out_template_descendants`,
-    //     but assert it here independently for the Comment/PI path as a
-    //     regression check.
-    use taffy::TraversePartialTree;
-    let body_taffy_id = taffy::NodeId::from(body_id.0 as usize);
+    // (e) The Comment does not leak into the layout tree. The layout children
+    //     use the is_in_document() filter (raikiri-dom/src/taffy_impl.rs), so
+    //     the body has one layout child (only `<p>`). This behavior is already
+    //     checked by `taffy_child_ids_and_count_filter_out_comment_and_pi_variants`
+    //     in raikiri-dom, but assert it here independently for the Comment/PI
+    //     path as a regression check.
+    let layout_body_children: Vec<usize> = doc.layout_child_ids(body_id.0 as usize).collect();
     assert_eq!(
-        <raikiri_dom::Document as TraversePartialTree>::child_count(doc, body_taffy_id),
+        layout_body_children.len(),
         1,
-        "taffy tree must not leak Comment into body's child count"
+        "layout tree must not leak Comment into body's child count"
     );
-    let taffy_body_children: Vec<taffy::NodeId> =
-        <raikiri_dom::Document as TraversePartialTree>::child_ids(doc, body_taffy_id).collect();
     assert!(
-        !taffy_body_children.contains(&taffy::NodeId::from(comment_id)),
-        "taffy body children must not include Comment"
+        !layout_body_children.contains(&comment_id),
+        "layout children of body must not include Comment"
     );
 }
 
@@ -3655,11 +3650,11 @@ fn parse_annotation_xml_non_integration_wraps_children_in_mathml_namespace() {
 }
 
 #[test]
-fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
+fn parse_persists_bulk_comments_and_filters_them_from_layout_child_count() {
     // Contract rewrite: the old test checked whether 100 "#comment"
     // pseudo-tag Elements were stripped by scanning for that tag’s absence.
     // Now 100 Comment-kind nodes persist in the arena, but all 100 are
-    // filtered from taffy child_count, leaving only <p> as a taffy child of
+    // filtered from the layout children, leaving only <p> as a layout child of
     // body. Assert this bulk invariant positively. The old Element scan
     // would pass vacuously because Comments return as_element() == None.
     use raikiri_traits::{Dom, Node};
@@ -3698,16 +3693,14 @@ fn parse_persists_bulk_comments_and_filters_them_from_taffy_child_count() {
         "all 100 Comment nodes must have IS_IN_DOCUMENT cleared"
     );
 
-    // (c) The body has exactly one taffy child, <p>; the
-    //     TaffyChildIter is_in_document filter removes all 100 Comments.
+    // (c) The body has exactly one layout child, <p>; the is_in_document
+    //     filter removes all 100 Comments.
     //     No leak occurs even for attacker-controlled bulk input (defense in depth).
     let body_id = find_first_by_tag(doc, "body").expect("body exists");
-    use taffy::TraversePartialTree;
-    let body_taffy_id = taffy::NodeId::from(body_id.0 as usize);
     assert_eq!(
-        <raikiri_dom::Document as TraversePartialTree>::child_count(doc, body_taffy_id),
+        doc.layout_child_ids(body_id.0 as usize).count(),
         1,
-        "taffy body child_count must be 1 (only <p>), 100 comments filtered"
+        "body layout child count must be 1 (only <p>), 100 comments filtered"
     );
 }
 

@@ -411,7 +411,7 @@ pub(crate) fn rebreak_roots(
         root.lines = Some(lines);
         // The inline elements follow the new lines; the root's box keeps the
         // border and padding it was laid out with.
-        let layout = doc.nodes[id].unrounded_layout;
+        let layout = doc.nodes[id].layout;
         let geometry = FlowGeometry::horizontal(
             width,
             (

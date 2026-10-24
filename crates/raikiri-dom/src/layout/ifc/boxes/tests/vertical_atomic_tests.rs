@@ -178,7 +178,7 @@ fn a_shrink_to_fit_vertical_root_counts_the_height_of_an_atomic_along_its_lines(
     );
     let mut doc = fixture.doc;
     layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
-    let size = doc.nodes[fixture.root].unrounded_layout.size;
+    let size = doc.nodes[fixture.root].layout.size;
     assert_eq!((size.width, size.height), (20.0, 30.0));
     assert_eq!(absolute_rect(&doc, atomic).3, 10.0);
 }

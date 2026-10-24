@@ -474,7 +474,7 @@ fn space_min_constrained_children(
         // The minimum-sized child makes the list non-empty.
         let child_height = children
             .first()
-            .map_or(0.0, |&first| tree.nodes[first].unrounded_layout.size.height);
+            .map_or(0.0, |&first| tree.nodes[first].layout.size.height);
         // `break-inside: avoid` consumes the unfragmented overflow on both
         // sides of a too-short/too-tall fragmentainer. Taffy does not
         // expose that fragmentation marker on its foundational block
@@ -482,7 +482,7 @@ fn space_min_constrained_children(
         // block offset.
         let step = child_height + 2.0 * (parent_height - child_height).abs();
         for (order, child) in children.into_iter().enumerate() {
-            tree.nodes[child].unrounded_layout.location.y = order as f32 * step;
+            tree.nodes[child].layout.location.y = order as f32 * step;
             tree.nodes[child].needs_relative_block_paint_offset = true;
         }
     }
@@ -498,7 +498,7 @@ fn space_min_constrained_children(
                     && tree.nodes[child].kind() == NodeKind::Element
                     && !tree.nodes[child].is_display_none()
             })
-            .map(|child| tree.nodes[child].unrounded_layout.size.height)
+            .map(|child| tree.nodes[child].layout.size.height)
             .fold(0.0_f32, f32::max);
         *height = height.min(min_child_height);
     }
@@ -897,7 +897,7 @@ fn paragraph_boxes_are_atomic(tree: &Document, node_id: usize) -> bool {
 
 fn can_balance_paragraph_box(tree: &LayoutSession<'_>, child: usize) -> bool {
     let node = layout_node(tree, child);
-    let layout = node.unrounded_layout;
+    let layout = node.layout;
     // Child block-edge decoration needs slice/clone geometry; keep the existing
     // strategy until that geometry is carried by each fragment.
     layout.padding.top == 0.0
@@ -1176,7 +1176,7 @@ fn layout_column_group(
                 tree.nodes[child].cache.clear();
             }
             let output = tree.compute_child_layout(NodeId::from(child), child_inputs);
-            let layout = tree.nodes[child].unrounded_layout;
+            let layout = tree.nodes[child].layout;
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
             let needed = margin_top + output.size.height + margin_bottom;
@@ -1271,7 +1271,7 @@ fn layout_column_group(
                     return fallback_height;
                 }
                 refresh_nested_text_fragments(tree, child, context);
-                let layout = tree.nodes[child].unrounded_layout;
+                let layout = tree.nodes[child].layout;
                 let margin_top = layout.margin.top;
                 let margin_bottom = layout.margin.bottom;
                 let needed = margin_top + output.size.height + margin_bottom;
@@ -1814,7 +1814,7 @@ fn plan_nested_continuation(
     let entries: Vec<_> = children
         .iter()
         .map(|&id| {
-            let layout = tree.nodes[id].unrounded_layout;
+            let layout = tree.nodes[id].layout;
             (
                 id,
                 LayoutOutput::from_outer_size(layout.size),
@@ -1965,7 +1965,7 @@ fn apply_nested_continuation(
     let mut text = std::collections::HashMap::<usize, Vec<MulticolTextFragment>>::new();
     for fragment in &plan.rows.fragments {
         let child = plan.children[fragment.entry];
-        let layout = tree.nodes[child].unrounded_layout;
+        let layout = tree.nodes[child].layout;
         let (row_box, content) = row_boxes[fragment.row];
         let column_x = content.x + plan.context.column_offset_x(fragment.column);
         let rect = crate::fragment::FragmentRect {
@@ -2009,7 +2009,7 @@ fn apply_nested_continuation(
     }
     for piece in &plan.lineless {
         let child = plan.children[piece.entry];
-        let layout = tree.nodes[child].unrounded_layout;
+        let layout = tree.nodes[child].layout;
         let (row_box, content) = row_boxes[piece.row];
         let column_x = content.x + plan.context.column_offset_x(piece.column);
         let rect = crate::fragment::FragmentRect {
@@ -2038,7 +2038,7 @@ fn apply_nested_continuation(
             })?;
         if piece.index == 0 {
             let origin = row_origin(piece.row);
-            tree.nodes[child].unrounded_layout.location = Point {
+            tree.nodes[child].layout.location = Point {
                 x: origin.x + rect.x,
                 y: origin.y + rect.y,
             };
@@ -2090,11 +2090,11 @@ fn apply_nested_continuation(
     for (child, fragments) in text {
         let first = first_rects[&child];
         let node = &mut tree.nodes[child];
-        node.unrounded_layout.location = Point {
+        node.layout.location = Point {
             x: first.x,
             y: first.y,
         };
-        node.unrounded_layout.size.height = first.height;
+        node.layout.size.height = first.height;
         if let Some(root) = node.ifc.as_mut() {
             root.multicol_fragments = Some(fragments);
             root.multicol_fragment_origins_recorded = true;
@@ -2283,7 +2283,7 @@ fn record_nested_ifc_box_fragments(
                     .all(|&ancestor| tree.nodes[ancestor].taffy_display() == Display::Block);
             let node_offset_y = path
                 .iter()
-                .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)
+                .map(|&ancestor| tree.nodes[ancestor].layout.location.y)
                 .sum::<f32>();
 
             // An atomic inline sits on a line, so it belongs to the column of
@@ -2310,7 +2310,7 @@ fn record_nested_ifc_box_fragments(
                             )
                         });
                 for (atomic, range) in atomics {
-                    let layout = tree.nodes[atomic].unrounded_layout;
+                    let layout = tree.nodes[atomic].layout;
                     // The first line of a range is drawn at the top of its
                     // fragment, or at the range's own offset.
                     let range_top = if recorded { 0.0 } else { range.y };
@@ -2355,7 +2355,7 @@ fn record_nested_ifc_box_fragments(
                 let line_shift = line_range
                     .filter(|_| !nested_row_flex_scope && column != root_column)
                     .map(|range| {
-                        tree.nodes[subtree_root].unrounded_layout.location.y - context.origin_y
+                        tree.nodes[subtree_root].layout.location.y - context.origin_y
                             + node_offset_y
                             + range.y
                     });
@@ -2489,7 +2489,7 @@ fn record_nested_ifc_box_fragments(
                     parent = fragment_id;
                 }
                 for &ancestor in &path {
-                    let layout = tree.nodes[ancestor].unrounded_layout;
+                    let layout = tree.nodes[ancestor].layout;
                     let is_flex_item = tree.parent_of(ancestor).is_some_and(|parent| {
                         tree.nodes[parent].formatting_context == FormattingContext::Flex
                     });

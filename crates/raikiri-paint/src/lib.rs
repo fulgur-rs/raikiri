@@ -9,7 +9,7 @@
 //! ## Contract
 //!
 //! - `document` must be post-layout after `layout_single_page` returns
-//!   (Node.unrounded_layout and the paragraph lines have been populated).
+//!   (Node.layout() and the paragraph lines have been populated).
 //! - `cascade.computed.len() == document.node_count()` (caller responsibility).
 //! - The caller must call `scene.reset()` (as in blitz-paint).
 //! - Counter snapshots come from [`Document::shared_counter_snapshots`], built

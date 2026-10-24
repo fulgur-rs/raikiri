@@ -50,9 +50,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
         let segment = &children[start..end];
         if segment.iter().any(|&id| {
             let node = layout_node(tree, id);
-            node.kind() != NodeKind::Text
-                || node.unrounded_layout.size.height != 0.0
-                || node.ifc.is_some()
+            node.kind() != NodeKind::Text || node.layout.size.height != 0.0 || node.ifc.is_some()
         }) {
             let old = &old_groups[group_index];
             group_index += 1;
@@ -63,7 +61,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
             let entries: Vec<_> = segment
                 .iter()
                 .map(|&id| {
-                    let layout = tree.nodes[id].unrounded_layout;
+                    let layout = tree.nodes[id].layout;
                     (
                         id,
                         LayoutOutput::from_outer_size(layout.size),
@@ -90,11 +88,11 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     };
                     let first = fragments[0].rect;
                     let node = &mut tree.nodes[id];
-                    node.unrounded_layout.location = Point {
+                    node.layout.location = Point {
                         x: first.x,
                         y: first.y,
                     };
-                    node.unrounded_layout.size = Size {
+                    node.layout.size = Size {
                         width: first.width,
                         height: first.height,
                     };
@@ -144,7 +142,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
         }
         if let Some(id) = spanner {
             shift_child(tree, &mut shifts, id, delta);
-            let layout = tree.nodes[id].unrounded_layout;
+            let layout = tree.nodes[id].layout;
             let y = owner_y + layout.location.y;
             let (_, origin, height) = page_for(y);
             // A spanner that can be cut where each page ends continues on the
@@ -166,7 +164,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
         edits.replace(id, fragments);
     }
     tree.nodes[owner].multicol_groups = groups;
-    tree.nodes[owner].unrounded_layout.size.height += delta;
+    tree.nodes[owner].layout.size.height += delta;
     edits.grow(owner, delta);
     Ok(delta)
 }
@@ -187,7 +185,7 @@ fn breaks_at_every_page_end(
     let Some(limits) = CutLimits::of(tree, id, work)? else {
         return Ok(false);
     };
-    let bottom = y + tree.nodes[id].unrounded_layout.size.height;
+    let bottom = y + tree.nodes[id].layout.size.height;
     while page_end < bottom - EPSILON {
         if !limits.allows(page_end - y) {
             return Ok(false);
@@ -237,7 +235,7 @@ impl CutLimits {
             {
                 return Ok(None);
             }
-            let layout = node.unrounded_layout;
+            let layout = node.layout;
             let bottom = top + layout.size.height;
             let content_top = top + layout.border.top + layout.padding.top;
             let content_bottom = bottom - layout.border.bottom - layout.padding.bottom;
@@ -271,7 +269,7 @@ impl CutLimits {
             }
             pending.extend(
                 lineless::rendered_elements(tree, current)
-                    .map(|child| (child, top + tree.nodes[child].unrounded_layout.location.y)),
+                    .map(|child| (child, top + tree.nodes[child].layout.location.y)),
             );
         }
         bands.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -301,7 +299,7 @@ impl CutLimits {
 
 /// Move a child now and record the same move for its container fragments.
 fn shift_child(tree: &mut Document, shifts: &mut HashMap<usize, f32>, id: usize, delta: f32) {
-    tree.nodes[id].unrounded_layout.location.y += delta;
+    tree.nodes[id].layout.location.y += delta;
     *shifts.entry(id).or_default() += delta;
 }
 

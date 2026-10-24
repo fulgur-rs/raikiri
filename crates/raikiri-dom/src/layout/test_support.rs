@@ -47,7 +47,7 @@ pub(crate) fn ahem_paragraph_with(
 /// locations of its ancestors.
 pub(crate) fn absolute_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32) {
     let origin = doc.layout_origin_of(node).unwrap_or(Point::ZERO);
-    let size = doc.nodes[node].unrounded_layout.size;
+    let size = doc.nodes[node].layout.size;
     (origin.x, origin.y, size.width, size.height)
 }
 

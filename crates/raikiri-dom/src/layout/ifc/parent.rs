@@ -81,7 +81,7 @@ impl Document {
         if depth > self.nodes.len().saturating_add(2) {
             return None;
         }
-        let mut offset = self.nodes.layout_node(node)?.unrounded_layout.location;
+        let mut offset = self.nodes.layout_node(node)?.layout.location;
         let Some(coordinate) = self.oof_coordinates.get(&node) else {
             return Some(offset);
         };

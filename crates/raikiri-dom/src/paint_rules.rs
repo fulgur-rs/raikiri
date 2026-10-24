@@ -146,7 +146,7 @@ pub fn overflow_clip(
     border: PaintInsets,
 ) -> Option<PaintClip> {
     let clip = clips_element_overflow(document, cascade, node_id).then(|| {
-        let padding = document.nodes[node_id].unrounded_layout.padding;
+        let padding = document.nodes[node_id].layout.padding;
         let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
         OverflowClipGeometry::new(
             &cascade.computed[node_id],

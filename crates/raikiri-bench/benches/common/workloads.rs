@@ -306,12 +306,9 @@ pub fn check_layout(dom: &raikiri::Document, expected_items: usize) {
     for id in 0..dom.node_count() {
         let node = dom.get_node(id).expect("arena node");
         if matches!(node.tag_name(), Some("p" | "td" | "div")) {
+            assert!(node.layout().size.width > 0.0, "element {id} has no width");
             assert!(
-                node.unrounded_layout.size.width > 0.0,
-                "element {id} has no width"
-            );
-            assert!(
-                node.unrounded_layout.size.height > 0.0,
+                node.layout().size.height > 0.0,
                 "element {id} has no height"
             );
         }
@@ -370,7 +367,7 @@ fn check_oof_layout(dom: &raikiri::Document, expected: usize) {
             .position(|kind| Some(*kind) == placement)
             .expect("an out-of-flow element names its placement");
         found[kind] += 1;
-        let layout = &node.unrounded_layout;
+        let layout = node.layout();
         assert_eq!(
             (layout.size.width, layout.size.height),
             (20.0, 10.0),

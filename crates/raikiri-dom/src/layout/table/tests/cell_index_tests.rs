@@ -315,14 +315,14 @@ fn fixed_and_auto_keep_collapsed_geometry_and_painted_widths() {
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
         crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
         assert_eq!(
-            doc.nodes[table].unrounded_layout.size,
+            doc.nodes[table].layout.size,
             Size {
                 width: 80.0,
                 height: 40.0
             }
         );
         for (i, cell) in cells.into_iter().enumerate() {
-            let layout = doc.nodes[cell].unrounded_layout;
+            let layout = doc.nodes[cell].layout;
             assert_eq!(
                 layout.size,
                 Size {

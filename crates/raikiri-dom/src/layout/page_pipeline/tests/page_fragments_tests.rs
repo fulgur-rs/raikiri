@@ -134,10 +134,8 @@ fn separate_ifc_roots_project_their_own_wrapped_pieces_and_text_lines() {
         assert_eq!(owned.root, root);
         assert!(owned.lines.len() >= 2);
         let (root_x, root_y, _, _) = absolute_rect(&document, root);
-        let content_x =
-            root_x + node.unrounded_layout.border.left + node.unrounded_layout.padding.left;
-        let content_y =
-            root_y + node.unrounded_layout.border.top + node.unrounded_layout.padding.top;
+        let content_x = root_x + node.layout.border.left + node.layout.padding.left;
+        let content_y = root_y + node.layout.border.top + node.layout.padding.top;
         let span_item = pages[0]
             .items
             .iter()
@@ -2480,13 +2478,13 @@ fn global_contents_order_preserves_stored_wrapper_source_offsets() {
     let outer = doc.append_element(Some(flex), "div", Some("display:contents"));
     let inner = doc.append_element(Some(outer), "div", Some("display:contents"));
     let item = doc.append_element(Some(inner), "div", Some("display:block"));
-    doc.nodes[outer].unrounded_layout.location.y = 10.0;
-    doc.nodes[inner].unrounded_layout.location.y = 5.0;
+    doc.nodes[outer].layout.location.y = 10.0;
+    doc.nodes[inner].layout.location.y = 5.0;
     let offset = super::super::pagination_child_parent_y;
     assert_eq!(offset(&doc, flex, item, 100.0), 115.0);
     assert_eq!(offset(&doc, inner, item, 100.0), 100.0);
-    assert_eq!(doc.nodes[outer].unrounded_layout.location.y, 10.0);
-    assert_eq!(doc.nodes[inner].unrounded_layout.location.y, 5.0);
+    assert_eq!(doc.nodes[outer].layout.location.y, 10.0);
+    assert_eq!(doc.nodes[inner].layout.location.y, 5.0);
 }
 
 #[test]
@@ -2647,8 +2645,8 @@ fn page_local_footnote_keeps_its_text_attached_inside_flex() {
     page.height = 50.0;
     let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
     assert_eq!(slices.len(), 1);
-    assert_eq!(doc.nodes[note].unrounded_layout.location.y, 40.0);
-    assert_eq!(doc.nodes[following].unrounded_layout.location.y, 20.0);
+    assert_eq!(doc.nodes[note].layout.location.y, 40.0);
+    assert_eq!(doc.nodes[following].layout.location.y, 20.0);
     let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
     let rendered_text = fragments[0]
         .items
@@ -3259,7 +3257,7 @@ fn an_absolutely_positioned_child_stays_when_a_flex_item_breaks_earlier() {
             (1, Some(PageFragmentLineRange::new(1, 3))),
         ]
     );
-    assert_eq!(doc.nodes[positioned].unrounded_layout.location.y, 35.0);
+    assert_eq!(doc.nodes[positioned].layout.location.y, 35.0);
 }
 
 #[test]
@@ -3348,7 +3346,7 @@ fn a_paragraph_with_a_definite_height_moves_as_a_unit_for_its_widows() {
         text_fragments(&doc, &cascade, page, &slices, text),
         [(1, Some(PageFragmentLineRange::new(0, 3)))]
     );
-    assert_eq!(doc.nodes[paragraph].unrounded_layout.size.height, 30.0);
+    assert_eq!(doc.nodes[paragraph].layout.size.height, 30.0);
     assert_eq!(absolute_rect(&doc, after).1, 70.0);
 }
 

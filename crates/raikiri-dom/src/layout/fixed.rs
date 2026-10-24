@@ -253,7 +253,7 @@ pub(crate) fn correct_root_oof_auto_margins(
                 margin.bottom.is_auto(),
             )
         };
-        let layout = &mut document.nodes[node].unrounded_layout;
+        let layout = &mut document.nodes[node].layout;
         if auto_left
             && auto_right
             && let (Some(left), Some(right)) = (left, right)

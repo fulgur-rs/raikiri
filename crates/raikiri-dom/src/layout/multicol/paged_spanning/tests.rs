@@ -82,7 +82,7 @@ fn a_fallback_child_shift_moves_its_column_clip_with_the_source_box() {
         })
     );
     assert_eq!(tree.fragment_tree.fragments[0].rect.y, 0.0);
-    assert_eq!(tree.nodes[child].unrounded_layout.location.y, 10.0);
+    assert_eq!(tree.nodes[child].layout.location.y, 10.0);
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         crate::layout::test_support::page_box_800x600(),
     )
     .unwrap();
-    let measured = tree.nodes[root].unrounded_layout;
+    let measured = tree.nodes[root].layout;
     let entries = [(
         root,
         LayoutOutput::from_outer_size(measured.size),

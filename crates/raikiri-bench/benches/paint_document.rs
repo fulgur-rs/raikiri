@@ -43,7 +43,7 @@ fn bench_paint(c: &mut Criterion) {
                         let node = document.dom.get_node(id).unwrap();
                         if node.tag_name() == Some("p") {
                             // The fixture has 20px page margins and one unshifted container.
-                            let bounds = &node.unrounded_layout;
+                            let bounds = node.layout();
                             assert!(
                                 bounds.location.y + bounds.size.height <= page.height - 40.0,
                                 "paint paragraph {id} overflows the content box"

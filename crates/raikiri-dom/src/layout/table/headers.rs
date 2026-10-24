@@ -96,7 +96,7 @@ impl HeaderRepeats {
             }) {
                 continue;
             }
-            let height = document.nodes[header].unrounded_layout.size.height;
+            let height = document.nodes[header].layout.size.height;
             // Oversized headers keep ordinary fragmentation rather than
             // consuming a continuation page's entire body area.
             if !height.is_finite() || height <= 0.0 || height > page_height / 4.0 {
@@ -178,7 +178,7 @@ impl HeaderRepeats {
                     )
                 })
                 .count();
-            let table_height = node.unrounded_layout.size.height;
+            let table_height = node.layout.size.height;
             let flow_pages = Some((table_height / (page_height * 0.75)).ceil())
                 .filter(|pages| pages.is_finite())
                 .map_or(usize::MAX, |pages| pages.max(0.0) as usize);
@@ -339,14 +339,14 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
                 let node = document.ifc_layout_node(cell).unwrap();
                 if node.display() == DisplayValue::TableCell && !node.is_display_none() {
                     let (x, y) = absolute_position(document, cell);
-                    let size = node.unrounded_layout.size;
+                    let size = node.layout.size;
                     cells.push((x, y, size, node.hides_empty_table_cell));
                 }
             }
         }
         let part_origin = absolute_position(document, part);
         for (_, node) in document.anonymous_table_cells(part) {
-            let layout = node.unrounded_layout;
+            let layout = node.layout;
             cells.push((
                 part_origin.0 + layout.location.x,
                 part_origin.1 + layout.location.y,
@@ -358,7 +358,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
             // A row without cells still takes its own used height, which the
             // parts around it enclose.
             if document.nodes[part].display() == DisplayValue::TableRow {
-                let bottom = part_origin.1 + document.nodes[part].unrounded_layout.size.height;
+                let bottom = part_origin.1 + document.nodes[part].layout.size.height;
                 table_bottom = table_bottom.max(bottom);
                 let owners: Vec<usize> = document
                     .inclusive_ancestors(part)
@@ -367,7 +367,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
                     .collect();
                 for id in owners {
                     let top = absolute_position(document, id).1;
-                    let height = &mut document.nodes[id].unrounded_layout.size.height;
+                    let height = &mut document.nodes[id].layout.size.height;
                     *height = height.max(bottom - top);
                 }
             }
@@ -386,8 +386,8 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
             table_bottom = table_bottom.max(y + size.height);
             for &(id, origin) in &owners {
                 let bottom = y + size.height - origin.1;
-                document.nodes[id].unrounded_layout.size.height =
-                    document.nodes[id].unrounded_layout.size.height.max(bottom);
+                document.nodes[id].layout.size.height =
+                    document.nodes[id].layout.size.height.max(bottom);
                 if !hidden {
                     cells_by_part
                         .entry(id)
@@ -402,7 +402,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
             }
         }
     }
-    let layout = &mut document.nodes[table].unrounded_layout;
+    let layout = &mut document.nodes[table].layout;
     layout.size.height = layout
         .size
         .height

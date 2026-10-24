@@ -282,12 +282,12 @@ fn paged_projection_does_not_change_the_next_single_page_cell_coordinates() {
 
     for _ in 0..2 {
         crate::layout::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
-        assert_eq!(doc.nodes[rows[1]].unrounded_layout.location.y, 0.0);
-        assert_eq!(doc.nodes[cells[1]].unrounded_layout.location.y, 10.0);
+        assert_eq!(doc.nodes[rows[1]].layout.location.y, 0.0);
+        assert_eq!(doc.nodes[cells[1]].layout.location.y, 10.0);
 
         crate::layout::layout_pages(&mut doc, &cascade, PageBox::A4).unwrap();
-        assert_eq!(doc.nodes[rows[1]].unrounded_layout.location.y, 10.0);
-        assert_eq!(doc.nodes[cells[1]].unrounded_layout.location.y, 0.0);
+        assert_eq!(doc.nodes[rows[1]].layout.location.y, 10.0);
+        assert_eq!(doc.nodes[cells[1]].layout.location.y, 0.0);
     }
 }
 
@@ -337,7 +337,7 @@ fn a_proper_table_keeps_its_cell_geometry_through_the_native_callback() {
     );
     assert!(error_none);
     for (column, &cell) in children.iter().enumerate() {
-        let layout = &doc.nodes[cell].unrounded_layout;
+        let layout = &doc.nodes[cell].layout;
         assert_eq!(
             layout.size,
             Size {
@@ -393,7 +393,7 @@ fn anonymous_block_direction_reaches_the_native_callback() {
             }
         );
         assert_eq!(
-            doc.nodes[block].unrounded_layout.location.x,
+            doc.nodes[block].layout.location.x,
             if direction == "rtl" { 80.0 } else { 0.0 }
         );
     }
@@ -420,7 +420,7 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     let view_children = doc.nodes[key].children.clone();
     let row_children = doc.nodes[row].children.clone();
     let row_display = doc.nodes[row].display();
-    let row_layout = doc.nodes[row].unrounded_layout;
+    let row_layout = doc.nodes[row].layout;
     let mut inputs = column_probe_input();
     inputs.known_dimensions.width = Some(100.0);
     inputs.run_mode = RunMode::PerformLayout;
@@ -441,9 +441,9 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     // node and its layout, and the cell's view keeps its children.
     assert_eq!(doc.nodes[row].children, row_children);
     assert_eq!(doc.nodes[row].display(), row_display);
-    assert_eq!(doc.nodes[row].unrounded_layout, row_layout);
+    assert_eq!(doc.nodes[row].layout, row_layout);
     assert_eq!(doc.nodes[key].children, view_children);
-    assert_eq!(doc.nodes[block].unrounded_layout.size.width, 20.0);
+    assert_eq!(doc.nodes[block].layout.size.width, 20.0);
     assert_eq!(doc.parent_of(block), Some(row));
     assert_eq!(doc.taffy_parent_of(block), Some(key));
 }
@@ -493,7 +493,7 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
     assert!(doc.ifc.is_none());
     for (index, child) in children.into_iter().enumerate() {
         assert_eq!(
-            doc.nodes[child].unrounded_layout.location,
+            doc.nodes[child].layout.location,
             Point {
                 x: 0.0,
                 y: (index % 2) as f32 * 10.0
@@ -633,8 +633,8 @@ fn layout_error_drops_scratch_before_document_reuse() {
     );
     let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    assert!(doc.nodes[3].unrounded_layout.size.width > 0.0);
-    assert!(doc.nodes[5].unrounded_layout.size.width > 0.0);
+    assert!(doc.nodes[3].layout.size.width > 0.0);
+    assert!(doc.nodes[5].layout.size.width > 0.0);
 }
 
 #[test]
@@ -1242,9 +1242,9 @@ fn table_simple_2x2_columns_and_rows() {
         .map(|(i, _)| i)
         .collect();
     assert_eq!(td_idxs.len(), 4);
-    let l0 = doc.nodes[td_idxs[0]].unrounded_layout;
-    let l1 = doc.nodes[td_idxs[1]].unrounded_layout;
-    let l2 = doc.nodes[td_idxs[2]].unrounded_layout;
+    let l0 = doc.nodes[td_idxs[0]].layout;
+    let l1 = doc.nodes[td_idxs[1]].layout;
+    let l2 = doc.nodes[td_idxs[2]].layout;
     assert!(
         (l1.location.x - l0.location.x).abs() > 1.0,
         "columns must separate: {} vs {}",
@@ -1265,7 +1265,7 @@ fn table_simple_2x2_columns_and_rows() {
         .iter()
         .position(|n| n.tag_name() == Some("table"))
         .unwrap();
-    let tl = doc.nodes[table_idx].unrounded_layout;
+    let tl = doc.nodes[table_idx].layout;
     let expected_w = l0.size.width + l1.size.width;
     assert!(
         tl.size.width >= expected_w - 1.0,
@@ -1295,9 +1295,9 @@ fn table_vertical_writing_mode_maps_columns_to_inline_axis() {
     let cr = cascade(&doc, &rules).expect("cascade");
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
 
-    let first_layout = doc.nodes[first].unrounded_layout;
-    let second_layout = doc.nodes[second].unrounded_layout;
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let first_layout = doc.nodes[first].layout;
+    let second_layout = doc.nodes[second].layout;
+    let table_layout = doc.nodes[table].layout;
     assert!(
         (first_layout.location.x - second_layout.location.x).abs() < 0.5,
         "vertical columns share the block-axis origin: {:?} vs {:?}", // cov:ignore: assertion diagnostic is evaluated only on failure.
@@ -1337,8 +1337,8 @@ fn empty_table_caption_is_laid_out_and_painted() {
     let cr = cascade(&doc, &rules).expect("cascade");
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
 
-    let caption_layout = doc.nodes[caption].unrounded_layout;
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let caption_layout = doc.nodes[caption].layout;
+    let table_layout = doc.nodes[table].layout;
     assert!((caption_layout.size.width - 100.0).abs() < 0.5);
     assert!((caption_layout.size.height - 50.0).abs() < 0.5);
     assert!((caption_layout.location.x - 200.0).abs() < 0.5);
@@ -1364,9 +1364,9 @@ fn table_colspan_wide_equals_sum_of_spanned_columns() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let wide = doc.nodes[td_wide].unrounded_layout;
-    let a = doc.nodes[td_a].unrounded_layout;
-    let b = doc.nodes[td_b].unrounded_layout;
+    let wide = doc.nodes[td_wide].layout;
+    let a = doc.nodes[td_a].layout;
+    let b = doc.nodes[td_b].layout;
     assert!(
         (wide.size.width - (a.size.width + b.size.width)).abs() < 2.0,
         "wide {} vs a+b {} {}",
@@ -1396,9 +1396,9 @@ fn table_rowspan_distributes_height() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
     // rowspan cell should span at least as tall as two rows combined
-    let span = doc.nodes[td_span].unrounded_layout;
-    let a = doc.nodes[td1].unrounded_layout;
-    let b = doc.nodes[td2].unrounded_layout;
+    let span = doc.nodes[td_span].layout;
+    let a = doc.nodes[td1].layout;
+    let b = doc.nodes[td2].layout;
     assert!(
         span.size.height >= a.size.height - 0.5,
         "rowspan height {} should >= single row {}",
@@ -1447,7 +1447,7 @@ fn table_with_tbody_anonymization() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let td_l = doc.nodes[td].unrounded_layout;
+    let td_l = doc.nodes[td].layout;
     assert!(
         td_l.size.width > 1.0 && td_l.size.height > 1.0,
         "tbody wrapped cell should layout"
@@ -1491,8 +1491,8 @@ fn table_parse_path_via_raikiri_html_uses_ua_display() {
         .map(|(i, _)| i)
         .collect();
     assert_eq!(tds.len(), 2);
-    let l0 = doc.nodes[tds[0]].unrounded_layout;
-    let l1 = doc.nodes[tds[1]].unrounded_layout;
+    let l0 = doc.nodes[tds[0]].layout;
+    let l1 = doc.nodes[tds[1]].layout;
     assert!(
         (l1.location.x - l0.location.x).abs() > 1.0,
         "parsed table columns must separate"
@@ -1532,8 +1532,8 @@ fn fixed_layout_honors_first_row_widths_and_ignores_content() {
         raikiri_style::property::TableLayoutValue::Fixed
     );
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let l0 = doc.nodes[td1].unrounded_layout;
-    let l1 = doc.nodes[td2].unrounded_layout;
+    let l0 = doc.nodes[td1].layout;
+    let l1 = doc.nodes[td2].layout;
     assert!(
         (l0.size.width - 100.0).abs() < 2.0,
         "fixed first column should be 100px, got {}",
@@ -1572,8 +1572,8 @@ fn fixed_layout_ignores_non_first_row_widths() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let l0 = doc.nodes[td1].unrounded_layout;
-    let l1 = doc.nodes[td2].unrounded_layout;
+    let l0 = doc.nodes[td1].layout;
+    let l1 = doc.nodes[td2].layout;
     assert!(
         (l0.size.width - 200.0).abs() < 2.0 && (l1.size.width - 200.0).abs() < 2.0,
         "unfixed columns should split 400px equally, got {} and {}",
@@ -1622,14 +1622,14 @@ fn collapse_overlaps_adjoining_borders_by_pairwise_min() {
     );
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let l0 = doc.nodes[td1].unrounded_layout;
-    let l1 = doc.nodes[td2].unrounded_layout;
+    let l0 = doc.nodes[td1].layout;
+    let l1 = doc.nodes[td2].layout;
     let overlap = (l0.location.x + l0.size.width) - l1.location.x;
     assert!(
         (overlap - 4.0).abs() < 1.0,
         "collapsed interior line should overlap by 4px, got {overlap}"
     );
-    let tl = doc.nodes[table_idx].unrounded_layout;
+    let tl = doc.nodes[table_idx].layout;
     // Right-flush invariant: the last cell's far edge plus the 4px
     // collapsed outer border (no padding, no table border) meets the
     // table's right edge — the interior overlap must not leave slack.
@@ -1665,8 +1665,8 @@ fn separate_cells_abut_without_overlap() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let l0 = doc.nodes[td1].unrounded_layout;
-    let l1 = doc.nodes[td2].unrounded_layout;
+    let l0 = doc.nodes[td1].layout;
+    let l1 = doc.nodes[td2].layout;
     let overlap = (l0.location.x + l0.size.width) - l1.location.x;
     assert!(
         overlap.abs() < 1.0,
@@ -1696,8 +1696,8 @@ fn explicit_single_row_height_resolves_percentage_child() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let cell_layout = doc.nodes[cell].unrounded_layout;
-    let child_layout = doc.nodes[child].unrounded_layout;
+    let cell_layout = doc.nodes[cell].layout;
+    let child_layout = doc.nodes[child].layout;
     assert!(
         cell_layout.size.height >= 99.0,
         "authored table height should stretch the single cell, got {}", // cov:ignore: assertion diagnostic is evaluated only on failure.
@@ -1726,7 +1726,7 @@ fn explicit_table_height_respects_box_sizing() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
         crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-        let table_layout = doc.nodes[table].unrounded_layout;
+        let table_layout = doc.nodes[table].layout;
         assert!(
             (table_layout.size.height - expected_outer).abs() < 1.0,
             "{box_sizing}: table outer height should be {expected_outer}, got {}", // cov:ignore: assertion diagnostic is evaluated only on failure.
@@ -1782,7 +1782,7 @@ fn table_calc_minimum_sizes_resolve_against_the_containing_block() {
         });
         assert_eq!(output.size, expected);
         assert_eq!(
-            doc.nodes[cell].unrounded_layout.size,
+            doc.nodes[cell].layout.size,
             Size {
                 width: expected.width - 16.0,
                 height: expected.height - 16.0,
@@ -1865,9 +1865,9 @@ fn fixed_table_calc_column_geometry(from_column: bool, width: &str) -> (f32, f32
     });
     assert_eq!(output.size.width, 200.0);
     (
-        doc.nodes[first].unrounded_layout.size.width,
-        doc.nodes[second].unrounded_layout.size.width,
-        doc.nodes[second].unrounded_layout.location.x,
+        doc.nodes[first].layout.size.width,
+        doc.nodes[second].layout.size.width,
+        doc.nodes[second].layout.location.x,
     )
 }
 
@@ -1896,8 +1896,8 @@ fn table_min_size_respects_box_sizing() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
         crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-        let tl = doc.nodes[table].unrounded_layout;
-        let cl = doc.nodes[td].unrounded_layout;
+        let tl = doc.nodes[table].layout;
+        let cl = doc.nodes[td].layout;
         assert!(
             (tl.size.width - expect_outer).abs() < 1.5,
             "{box_sizing}: table outer width should be {expect_outer}, got {}",
@@ -1982,9 +1982,9 @@ fn table_colspan_percent_distribution_uses_definite_table_width() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let wide_layout = doc.nodes[wide].unrounded_layout;
-    let left_layout = doc.nodes[left].unrounded_layout;
-    let right_layout = doc.nodes[right].unrounded_layout;
+    let wide_layout = doc.nodes[wide].layout;
+    let left_layout = doc.nodes[left].layout;
+    let right_layout = doc.nodes[right].layout;
     assert!((wide_layout.size.width - 110.0).abs() < 1.0);
     assert!((left_layout.size.width - 55.0).abs() < 1.0);
     assert!((right_layout.size.width - 55.0).abs() < 1.0);
@@ -2012,7 +2012,7 @@ fn absolute_auto_table_uses_definite_containing_block_width() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let table_layout = doc.nodes[table].layout;
     assert!(
         (table_layout.size.width - 100.0).abs() < 1.0,
         "table width was {}",
@@ -3279,7 +3279,7 @@ fn compute_table_layout_empty_table_as_flex_item_uses_container_width() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let table_layout = doc.nodes[table].layout;
     assert!(
         table_layout.size.width >= 299.0,
         "empty table as sole flex item should fill the 300px flex container, got {}",
@@ -3305,7 +3305,7 @@ fn compute_table_layout_max_width_never_shrinks_below_intrinsic_content() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let table_layout = doc.nodes[table].layout;
     assert!(
         table_layout.size.width >= 99.0,
         "max-width below intrinsic content must not shrink the table, got {}",
@@ -3334,11 +3334,11 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let td_layout = doc.nodes[td].unrounded_layout;
+    let td_layout = doc.nodes[td].layout;
     assert_eq!(td_layout.size.width, 40.0);
     assert_eq!(td_layout.location.x, 10.0);
     assert_eq!(td_layout.location.y, 10.0);
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let table_layout = doc.nodes[table].layout;
     assert_eq!(table_layout.size.width, 60.0);
     assert_eq!(table_layout.size.height, 30.0);
 }
@@ -3406,7 +3406,7 @@ fn fixed_auto_width_shrink_wraps_to_content() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let table_layout = doc.nodes[table].layout;
     assert!(
         (table_layout.size.width - 50.0).abs() < 2.0,
         "fixed+auto table should shrink-wrap to 50px content, got {}",
@@ -3434,7 +3434,7 @@ fn fixed_specified_width_fills_to_specified_width() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let table_layout = doc.nodes[table].layout;
     assert!(
         (table_layout.size.width - 400.0).abs() < 2.0,
         "fixed+400px table should fill to 400px, got {}",
@@ -3461,7 +3461,7 @@ fn auto_width_shrink_wraps_to_content_baseline() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    let table_layout = doc.nodes[table].unrounded_layout;
+    let table_layout = doc.nodes[table].layout;
     assert!(
         (table_layout.size.width - 50.0).abs() < 2.0,
         "auto+auto table should shrink-wrap to 50px content, got {}",
@@ -3506,13 +3506,13 @@ fn separate_border_spacing_gaps_columns_rows_and_spanned_cells() {
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let at = |id: usize| {
-        let l = doc.nodes[id].unrounded_layout;
+        let l = doc.nodes[id].layout;
         (l.location.x, l.location.y, l.size.width, l.size.height)
     };
     assert_eq!(at(wide), (5.0, 5.0, 55.0, 10.0));
     assert_eq!(at(a), (5.0, 20.0, 20.0, 10.0));
     assert_eq!(at(b), (30.0, 20.0, 30.0, 10.0));
-    let t = doc.nodes[table].unrounded_layout.size;
+    let t = doc.nodes[table].layout.size;
     assert_eq!((t.width, t.height), (65.0, 35.0));
 }
 
@@ -3554,7 +3554,7 @@ fn separate_border_spacing_counts_spanned_gaps_toward_a_rowspan_height() {
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let at = |id: usize| {
-        let l = doc.nodes[id].unrounded_layout;
+        let l = doc.nodes[id].layout;
         (l.location.x, l.location.y, l.size.width, l.size.height)
     };
     let (top, tall, bottom) = (at(top), at(tall), at(bottom));
@@ -3562,7 +3562,7 @@ fn separate_border_spacing_counts_spanned_gaps_toward_a_rowspan_height() {
     assert_eq!((tall.0, tall.1, tall.3), (20.0, 5.0, 40.0));
     assert_eq!((bottom.0, bottom.1), (5.0, top.1 + top.3 + 5.0));
     assert_eq!(top.3 + 5.0 + bottom.3, 40.0);
-    let t = doc.nodes[table].unrounded_layout.size;
+    let t = doc.nodes[table].layout.size;
     assert_eq!((t.width, t.height), (35.0, 50.0));
 }
 
@@ -3585,9 +3585,9 @@ fn separate_border_spacing_widens_a_table_narrower_than_its_columns() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let cell = doc.nodes[td].unrounded_layout;
+    let cell = doc.nodes[td].layout;
     assert_eq!((cell.location.x, cell.size.width), (2.0, 10.0));
-    assert_eq!(doc.nodes[table].unrounded_layout.size.width, 14.0);
+    assert_eq!(doc.nodes[table].layout.size.width, 14.0);
 }
 
 #[test]
@@ -3608,9 +3608,9 @@ fn separate_border_spacing_gaps_the_stacked_tracks_of_a_vertical_table() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let first = doc.nodes[first].unrounded_layout;
-    let second = doc.nodes[second].unrounded_layout;
-    let table = doc.nodes[table].unrounded_layout.size;
+    let first = doc.nodes[first].layout;
+    let second = doc.nodes[second].layout;
+    let table = doc.nodes[table].layout.size;
     assert_eq!((first.location.x, first.location.y), (3.0, 5.0));
     assert_eq!(
         (second.location.x, second.location.y),
@@ -3642,9 +3642,9 @@ fn separate_border_spacing_grows_a_table_shorter_than_its_rows() {
     let cr = cascade(&doc, &rules).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
-    let cell = doc.nodes[td].unrounded_layout;
+    let cell = doc.nodes[td].layout;
     assert_eq!((cell.location.y, cell.size.height), (2.0, 10.0));
-    assert_eq!(doc.nodes[table].unrounded_layout.size.height, 14.0);
+    assert_eq!(doc.nodes[table].layout.size.height, 14.0);
 }
 
 #[test]
@@ -3730,10 +3730,7 @@ fn negative_absolute_insets_do_not_expand_the_available_table_width() {
         let cascade = cascade(&doc, &rules).expect("cascade");
         doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
         crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-        assert_eq!(
-            doc.nodes[table].unrounded_layout.size.width, 100.0,
-            "{inset}"
-        );
+        assert_eq!(doc.nodes[table].layout.size.width, 100.0, "{inset}");
     }
 }
 

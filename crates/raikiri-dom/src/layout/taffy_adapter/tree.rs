@@ -7,7 +7,6 @@
 //! same names and take the protocol's types.
 
 use super::convert::{FromTaffy, IntoTaffy};
-use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{LayoutInput, NodeId};
 use crate::layout::style_views::ReadRole;
@@ -224,28 +223,3 @@ impl TraversePartialTree for LayoutSession<'_> {
 }
 
 impl TraverseTree for LayoutSession<'_> {}
-
-impl TraversePartialTree for Document {
-    type ChildIter<'a>
-        = ChildIds<'a>
-    where
-        Self: 'a;
-
-    fn child_ids(&self, node_id: taffy::NodeId) -> Self::ChildIter<'_> {
-        ChildIds(TaffyChildIter::new(self, usize::from(node_id), false))
-    }
-
-    fn child_count(&self, node_id: taffy::NodeId) -> usize {
-        TaffyChildIter::new(self, usize::from(node_id), false).count()
-    }
-
-    fn get_child_id(&self, node_id: taffy::NodeId, index: usize) -> taffy::NodeId {
-        taffy::NodeId::from(
-            TaffyChildIter::new(self, usize::from(node_id), false)
-                .nth(index)
-                .expect("get_child_id: index out of range"),
-        )
-    }
-}
-
-impl TraverseTree for Document {}

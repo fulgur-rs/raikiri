@@ -41,7 +41,7 @@ fn laid_out(html_css: &str, body_css: &str, child_css: &str) -> (Document, usize
 fn the_body_margin_collapses_with_the_first_child_margin() {
     let (doc, body, child) = laid_out("", "margin:20px", "margin-top:30px");
     assert_eq!(absolute_rect(&doc, child).1, 30.0);
-    assert_eq!(doc.nodes[child].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[child].layout.location.y, 0.0);
     assert_eq!(absolute_rect(&doc, body).1, 30.0);
 }
 
@@ -112,14 +112,14 @@ fn repeated_layout_keeps_authored_body_padding_and_height() {
         layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
         assert_eq!(absolute_rect(&doc, body), (8.0, 8.0, 784.0, 105.0));
         assert_eq!(absolute_rect(&doc, child).1, 13.0);
-        assert_eq!(doc.nodes[body].unrounded_layout.padding.top, 5.0);
+        assert_eq!(doc.nodes[body].layout.padding.top, 5.0);
     }
 }
 
 #[test]
 fn a_body_uses_the_root_direction_for_its_over_constrained_margins() {
     let (doc, body, _) = laid_out("direction:rtl", "direction:ltr;max-width:300px", "");
-    let layout = doc.nodes[body].unrounded_layout;
+    let layout = doc.nodes[body].layout;
     assert_eq!(layout.location.x + layout.size.width, 800.0);
 }
 
@@ -136,7 +136,7 @@ fn the_body_root_honours_crossed_min_and_max_heights_and_scrollbars() {
         "min-height:200px;max-height:100px;overflow:scroll",
         "",
     );
-    let layout = doc.nodes[body].unrounded_layout;
+    let layout = doc.nodes[body].layout;
     assert_eq!(layout.size.height, 200.0);
     assert!(layout.scrollbar_size.width >= 0.0 && layout.scrollbar_size.height >= 0.0);
 }

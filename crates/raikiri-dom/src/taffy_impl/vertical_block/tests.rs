@@ -583,7 +583,7 @@ fn vertical_body_of_text_keeps_its_bottom_margin() {
         "display:block;margin:8px;writing-mode:vertical-rl",
         &[("text", "", "aa bb")],
     );
-    let layout = doc.nodes[ids[0]].unrounded_layout;
+    let layout = doc.nodes[ids[0]].layout;
     assert_eq!((layout.margin.top, layout.margin.bottom), (8.0, 8.0));
     assert_eq!((layout.padding.top, layout.padding.bottom), (0.0, 0.0));
 }
@@ -666,9 +666,9 @@ fn vertical_body_percentages_follow_the_root_inline_size() {
     let body = "display:block;margin:0;padding-top:10%;writing-mode:vertical-rl";
     let children = [("text", "", "aa bb")];
     let (doc, ids) = layout_body_in("display:block;writing-mode:vertical-rl", body, &children);
-    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.top, 60.0);
+    assert_eq!(doc.nodes[ids[0]].layout.padding.top, 60.0);
     let (doc, ids) = layout_body_in("display:block", body, &children);
-    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.top, 80.0);
+    assert_eq!(doc.nodes[ids[0]].layout.padding.top, 80.0);
 }
 
 #[test]

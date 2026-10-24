@@ -192,7 +192,7 @@ fn replaced_offset_y(mode: raikiri_traits::QuirksMode, tag: &str, text: &str) ->
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
-    doc.nodes[replaced].unrounded_layout.location.y
+    doc.nodes[replaced].layout.location.y
 }
 
 #[test]
@@ -253,7 +253,7 @@ fn image_line_geometry(
         .iter()
         .map(shodo::Line::block_size)
         .collect();
-    (doc.nodes[image].unrounded_layout.location.y, heights)
+    (doc.nodes[image].layout.location.y, heights)
 }
 
 fn mixed_image_line_geometry(
@@ -301,7 +301,7 @@ fn mixed_image_line_geometry(
     layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
     let positions = images
         .into_iter()
-        .map(|image| doc.nodes[image].unrounded_layout.location.y)
+        .map(|image| doc.nodes[image].layout.location.y)
         .collect();
     let lines = doc.nodes[body]
         .ifc_lines()
@@ -484,13 +484,13 @@ fn a_line_break_is_placed_on_the_line_it_ends() {
         .iter()
         .map(shodo::Line::block_size)
         .collect();
-    let first_layout = doc.nodes[first].unrounded_layout;
+    let first_layout = doc.nodes[first].layout;
     assert_eq!(first_layout.location.y, 0.0);
     assert_eq!(first_layout.size.height, heights[0]);
     // The second break is located relative to its span's box on the second
     // line; together they put it at the top of that line.
-    let second_layout = doc.nodes[second].unrounded_layout;
-    let span_y = doc.nodes[span].unrounded_layout.location.y;
+    let second_layout = doc.nodes[second].layout;
+    let span_y = doc.nodes[span].layout.location.y;
     assert_eq!(span_y + second_layout.location.y, heights[0]);
     assert_eq!(second_layout.size.height, heights[1]);
     assert_eq!(second_layout.size.width, 0.0);
@@ -554,7 +554,7 @@ fn a_stretched_horizontal_paragraph_is_not_measured_for_intrinsic_widths() {
     assert_eq!(intrinsic_measurements(&doc), 0);
     let lines = doc.nodes[root].ifc_lines().expect("lines");
     assert_eq!(lines.len(), 3, "breaks at the 60px width");
-    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 60.0);
+    assert_eq!(doc.nodes[root].layout.size.width, 60.0);
 }
 
 #[test]
@@ -564,7 +564,7 @@ fn a_shrink_to_fit_paragraph_is_still_measured_for_intrinsic_widths() {
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
         assert!(intrinsic_measurements(&doc) > 0, "{css}");
         assert_eq!(
-            doc.nodes[root].unrounded_layout.size.width, 90.0,
+            doc.nodes[root].layout.size.width, 90.0,
             "{css} shrinks to its max-content width"
         );
     }
@@ -618,7 +618,7 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
             layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
             let child = child.expect("child appended");
             assert_eq!(
-                doc.nodes[child].unrounded_layout.size.height, height,
+                doc.nodes[child].layout.size.height, height,
                 "{child_css} in a paragraph with {root_css:?}"
             );
         }
@@ -650,8 +650,8 @@ fn inline_block_paragraph_in_an_auto_wrapper(max_css: &str) -> (f32, f32) {
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     (
-        doc.nodes[root].unrounded_layout.size.height,
-        doc.nodes[child].unrounded_layout.size.height,
+        doc.nodes[root].layout.size.height,
+        doc.nodes[child].layout.size.height,
     )
 }
 

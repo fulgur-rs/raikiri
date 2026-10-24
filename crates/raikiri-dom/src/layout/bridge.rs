@@ -432,7 +432,7 @@ fn apply_computed_to_style_in_session_inner(
             // Taffy never lays out a contents element whose children it
             // lifts into their container; zero its layout so it adds
             // nothing to its descendants' positions.
-            doc.nodes[idx].unrounded_layout = BoxLayout::default();
+            doc.nodes[idx].layout = BoxLayout::default();
             doc.nodes[idx].multicol = None;
             doc.nodes[idx].column_span_all = false;
             doc.nodes[idx].multicol_auto_width = true;

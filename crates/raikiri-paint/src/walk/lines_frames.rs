@@ -48,12 +48,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             ..
         } = *paragraph;
         let (document, cascade) = (self.document, self.cascade);
-        let layout = cell.unrounded_layout;
+        let layout = cell.layout();
         let probe = page_name_probe(document, cell, key);
         paint_rules::named_page_matches(document, cascade, probe, self.active_page_name)
             && (box_intersects_page(
                 y,
-                ifc_paint_extent(cell, &layout),
+                ifc_paint_extent(cell, layout),
                 self.geometry.page_top,
                 self.geometry.page_bottom,
             ) || inside_fixed)
@@ -74,7 +74,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             ..
         } = *paragraph;
         let (document, cascade) = (self.document, self.cascade);
-        let layout = cell.unrounded_layout;
+        let layout = cell.layout();
         let owner = document.ifc_source_owner(key);
         let cell_on_band = inside_fixed
             || self.geometry.flow_band.is_none_or(|band| {
@@ -137,7 +137,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fixed_viewport,
             ..
         } = *paragraph;
-        let layout = cell.unrounded_layout;
+        let layout = cell.layout();
         let paint_transform = self.scene.transform;
         crate::ifc_text::draw_ifc_lines_with_resources(
             self.image_cache,

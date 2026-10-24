@@ -334,7 +334,7 @@ fn laying_out_again_keeps_the_wrapper_lifted() {
     assert!(doc.nodes[wrapper].generates_no_box());
     let height = |doc: &Document| {
         doc.nodes[doc.nodes[wrapper].parent.unwrap()]
-            .unrounded_layout
+            .layout
             .size
             .height
     };

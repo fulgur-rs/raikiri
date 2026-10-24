@@ -1049,7 +1049,7 @@ impl PaginationState {
             && self.checked_paragraphs.block_text.insert(block_id)
             && has_fixed_height(document, block_id)
         {
-            let block_height = document.nodes[block_id].unrounded_layout.size.height;
+            let block_height = document.nodes[block_id].layout.size.height;
             let block_effective_y = block_effective_y(
                 document,
                 block_id,
@@ -1147,7 +1147,7 @@ impl PaginationState {
                 cascade.computed[block_id].orphans,
                 cascade.computed[block_id].widows,
             );
-            let block_height = document.nodes[block_id].unrounded_layout.size.height;
+            let block_height = document.nodes[block_id].layout.size.height;
             let can_move_block = blocks.block.is_some()
                 && block_fits_page_step(block_height, page_origins.step_at(self.current_page));
             let fix = line_fit.fix(

@@ -236,7 +236,7 @@ impl<'a> SourceWalk<'a> {
         }) else {
             return Ok(());
         };
-        let layout = node.unrounded_layout;
+        let layout = node.layout;
         if !visit.is_fragment_visit
             && let Some(origin) = document.layout_origin_of(node_id)
         {
@@ -340,7 +340,7 @@ impl<'a> SourceWalk<'a> {
             && crate::paint_rules::clips_element_overflow(self.document, self.cascade, placed.id);
         clips.then(|| {
             let border_box = fragment_area(placed.node, placed.area);
-            let layout = placed.node.unrounded_layout;
+            let layout = placed.node.layout;
             let (border, padding) = (layout.border, layout.padding);
             let index = self.placement_overflow_clips.len();
             self.placement_overflow_clips
@@ -411,7 +411,7 @@ impl<'a> SourceWalk<'a> {
             .chain(document.anonymous_table_cells(placed.id));
         for (root_id, root_node) in roots {
             let column = self.paragraph_column(root_node, visit);
-            let root_layout = root_node.unrounded_layout;
+            let root_layout = root_node.layout;
             let (root_x, root_y) = if root_id == placed.id {
                 (placed.area.x, placed.area.y)
             } else {
@@ -502,7 +502,7 @@ impl<'a> SourceWalk<'a> {
         own_overflow_source: Option<usize>,
     ) -> PageFragmentSource {
         let node = placed.node;
-        let layout = node.unrounded_layout;
+        let layout = node.layout;
         let area = fragment_area(node, placed.area);
         PageFragmentSource {
             node_id: NodeId::new(placed.id as u64),
@@ -633,7 +633,7 @@ impl Paragraphs {
     /// its border box, and which way its lines stack. Returns the origin of
     /// its content box.
     fn place_root(&mut self, root_id: usize, root: &Node, border_origin: (f32, f32)) -> (f32, f32) {
-        let layout = root.unrounded_layout;
+        let layout = root.layout;
         let origin = (
             border_origin.0 + layout.border.left + layout.padding.left,
             border_origin.1 + layout.border.top + layout.padding.top,

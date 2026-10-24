@@ -293,8 +293,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                         counter_snapshots,
                         &mut self.generated_flow_heights,
                     );
-                    flow_extra +=
-                        (required_height - child_node.unrounded_layout.size.height).max(0.0);
+                    flow_extra += (required_height - child_node.layout().size.height).max(0.0);
                 }
             }
         }
@@ -577,8 +576,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         PaintFrame::AnonymousParagraph(AnonymousParagraphFrame {
             key: child,
             cell,
-            x: origin.parent_x + cell.unrounded_layout.location.x,
-            y: origin.parent_y + cell.unrounded_layout.location.y,
+            x: origin.parent_x + cell.layout().location.x,
+            y: origin.parent_y + cell.layout().location.y,
             shift_y: origin.shift_y,
             transform_x: origin.transform_x,
             transform_y: origin.transform_y,
@@ -671,7 +670,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
                         && cascade.computed[child].display != DisplayValue::Contents
                         && !child_node.generates_no_box()
-                        && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
+                        && child_node.layout().size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
                         && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
                 }) => // cov:ignore: exercised by ignored exact paged-text WPT.
             {

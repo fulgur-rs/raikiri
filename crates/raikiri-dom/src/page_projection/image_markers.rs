@@ -157,7 +157,7 @@ pub(super) fn prepare(
                         continue;
                     };
                     let node = &document.nodes[owner];
-                    let layout = node.unrounded_layout;
+                    let layout = node.layout;
                     if !node.children.is_empty()
                         && (layout.size.width <= 0.0 || layout.size.height <= 0.0)
                     {

@@ -56,7 +56,7 @@ fn paginated(
 }
 
 fn origin(doc: &Document, id: usize) -> (f32, f32) {
-    let location = doc.nodes[id].unrounded_layout.location;
+    let location = doc.nodes[id].layout.location;
     (location.x, location.y)
 }
 
@@ -118,7 +118,7 @@ fn a_vertical_grid_in_a_horizontal_document_is_not_broken() {
         "width:60px",
         "width:60px",
     );
-    assert_eq!(doc.nodes[grid].unrounded_layout.size.height, 150.0);
+    assert_eq!(doc.nodes[grid].layout.size.height, 150.0);
     assert_eq!(origin(&doc, first), (60.0, 0.0));
     assert_eq!(origin(&doc, second), (0.0, 0.0));
 }
