@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-svg"
 version.workspace = true
-description = "Static SVG parsing and size-bounded rasterization for Raikiri"
+description = "Static SVG parsing, size-bounded rasterization and vector scenes for Raikiri"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -18,6 +18,7 @@
 //! - [`config`]   — Entry point configs (RenderLimits, LookaheadConfig, ...)
 //! - [`plan`]     — `plan()` output types (DocumentPlan, PageSummary)
 //! - [`io`]       — bounded regular-file read primitive
+//! - [`vector`]   — vector paint scenes (resolution independent drawing commands)
 //!
 //! ## Spec authority
 //!
@@ -38,6 +39,7 @@ pub mod policy;
 pub mod resolver;
 pub mod script;
 pub mod strategy;
+pub mod vector;
 
 // Main types re-exported at the crate root (so consumers can use `use raikiri_traits::*`).
 pub use config::{
