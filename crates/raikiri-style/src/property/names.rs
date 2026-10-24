@@ -5,10 +5,8 @@
 /// excluding custom properties (`--*`, which `parse_value` recognizes
 /// generically rather than through a per-name dispatch arm).
 ///
-/// This is a superset of [`super::property_key_for_name`]'s domain: a few
-/// legacy aliases (`grid-gap`/`grid-column-gap`/`grid-row-gap`)
-/// use other properties' keys instead of having keys of their own, but are names
-/// `parse_value` dispatches on and therefore belong here.
+/// This is a superset of [`super::property_key_for_name`]'s domain: `all` is
+/// the one name `parse_value` dispatches on that the key lookup does not map.
 ///
 /// `names/tests.rs` keeps this list from drifting away from `parse_value`'s
 /// dispatch match (and from `property_key_for_name`'s, which must remain a

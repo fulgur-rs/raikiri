@@ -2,10 +2,11 @@
 //! Cascading 4 §7.3 "Explicit Defaulting").
 
 use super::*;
+use crate::Atom;
 use crate::cascade::keyword_defaults::KEYS;
 use crate::computed::ComputedBackgroundLayer;
 use crate::property::{
-    BoxSizing, FloatValue, TextAutospace, TextSpacingTrim, TextTransform, TextWrapMode,
+    BoxSizing, FloatValue, PageValue, TextAutospace, TextSpacingTrim, TextTransform, TextWrapMode,
     TextWrapStyle, WhiteSpaceCollapse, WordBreak, property_key_for_name,
 };
 use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal};
@@ -835,6 +836,132 @@ fn quotes_auto_does_not_combine_with_a_list() {
     );
     assert_eq!(values.quotes.len(), 1);
     assert!(!values.quotes_auto);
+}
+
+#[test]
+fn the_legacy_grid_gap_names_take_the_keywords_of_the_gap_properties() {
+    let parent = "gap: 3px 4px";
+    for (alias, canonical) in [
+        ("grid-gap", "gap"),
+        ("grid-row-gap", "row-gap"),
+        ("grid-column-gap", "column-gap"),
+    ] {
+        for keyword in ["inherit", "initial", "unset"] {
+            let through_alias = child(
+                parent,
+                &[],
+                &format!("#target {{ {canonical}: 9px; {alias}: {keyword} }}"),
+            );
+            let literal = child(
+                parent,
+                &[],
+                &format!("#target {{ {canonical}: 9px; {canonical}: {keyword} }}"),
+            );
+            assert!(same(&through_alias, &literal), "{alias}: {keyword}");
+        }
+    }
+}
+
+#[test]
+fn the_legacy_grid_gap_names_take_var_and_math_values_like_the_gap_properties() {
+    for (alias, canonical, value) in [
+        ("grid-gap", "gap", "var(--g)"),
+        ("grid-gap", "gap", "calc(1px + 2px) var(--g)"),
+        ("grid-row-gap", "row-gap", "var(--g)"),
+        ("grid-column-gap", "column-gap", "calc(1px + 2px)"),
+    ] {
+        let sheet = |name: &str| format!("#target {{ --g: 7px; {name}: {value} }}");
+        let through_alias = child("", &[], &sheet(alias));
+        let literal = child("", &[], &sheet(canonical));
+        assert!(same(&through_alias, &literal), "{alias}: {value}");
+        let normal = ComputedLengthPercentageOrNormal::Normal;
+        assert!(
+            through_alias.row_gap != normal || through_alias.column_gap != normal,
+            "{alias}: {value} is applied"
+        );
+    }
+}
+
+/// The `page` values of a parent styled `parent` and of its child `p`
+/// (`id="target"`) under the author sheet `css` and the user agent sheet `ua`.
+fn page_pair(parent: &str, ua: &str, css: &str) -> (PageValue, PageValue) {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some(parent));
+    let child = doc.push_element_with_attrs(parent, "p", None, &[("id", "target")]);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(ua, Origin::UserAgent);
+    tree.add_stylesheet(css, Origin::Author);
+    let result = cascade(&doc, &tree).unwrap();
+    (
+        result.page_values[parent].clone(),
+        result.page_values[child].clone(),
+    )
+}
+
+fn named(name: &str) -> PageValue {
+    PageValue::Named(Atom::from(name))
+}
+
+#[test]
+fn page_inherit_takes_the_page_of_the_parent() {
+    let (parent, child) = page_pair("page: wide", "", "#target { page: inherit }");
+    assert_eq!((parent, child), (named("wide"), named("wide")));
+    let (_, child) = page_pair("page: wide", "", "#target { page: other; page: inherit }");
+    assert_eq!(child, named("wide"));
+    // `page` is not inherited, so a parent without a declaration holds `auto`.
+    let (parent, child) = page_pair("", "", "#target { page: other; page: inherit }");
+    assert_eq!((parent, child), (PageValue::Auto, PageValue::Auto));
+}
+
+#[test]
+fn page_initial_and_unset_are_auto() {
+    for keyword in ["initial", "unset"] {
+        let (_, child) = page_pair(
+            "page: wide",
+            "",
+            &format!("#target {{ page: other; page: {keyword} }}"),
+        );
+        assert_eq!(child, PageValue::Auto, "{keyword}");
+    }
+}
+
+#[test]
+fn page_revert_returns_to_the_user_agent_value() {
+    let ua = "p { page: from-ua }";
+    for keyword in ["revert", "revert-layer"] {
+        let (_, child) = page_pair(
+            "",
+            ua,
+            &format!("#target {{ page: other; page: {keyword} }}"),
+        );
+        assert_eq!(child, named("from-ua"), "{keyword}");
+        let (_, child) = page_pair(
+            "",
+            "",
+            &format!("#target {{ page: other; page: {keyword} }}"),
+        );
+        assert_eq!(
+            child,
+            PageValue::Auto,
+            "{keyword} with nothing to roll back to"
+        );
+    }
+}
+
+#[test]
+fn a_page_keyword_substituted_from_var_resolves_like_a_literal() {
+    let (_, child) = page_pair(
+        "page: wide",
+        "",
+        "#target { --kw: inherit; page: var(--kw) }",
+    );
+    assert_eq!(child, named("wide"));
+    let (_, child) = page_pair(
+        "page: wide",
+        "",
+        "#target { page: other; --kw: initial; page: var(--kw) }",
+    );
+    assert_eq!(child, PageValue::Auto);
 }
 
 #[test]

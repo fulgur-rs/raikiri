@@ -712,13 +712,20 @@ pub(crate) fn walk_from<D: StyleDom>(
             // staging representation, so winner application order does not matter.
             let mut specified = SpecifiedValues::inherit_from(parent_computed);
             if let Some(candidates) = element_candidates {
+                let parent_page = parent.map_or(crate::property::PageValue::Auto, |parent| {
+                    out.page_values[parent.0 as usize].clone()
+                });
+                let mut page_slot = out.page_values[idx].clone();
                 apply_winners(
                     candidates,
                     &mut winners,
                     &mut specified,
                     parent_computed,
                     &custom_properties,
-                    Some(&mut out.page_values[idx]),
+                    Some(PageSlot {
+                        value: &mut page_slot,
+                        parent: &parent_page,
+                    }),
                     Some(&mut out.authored_writing_modes[idx]),
                     Some(SvgCollector {
                         properties: &mut node_svg_properties,
@@ -726,6 +733,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                     }),
                     is_svg.then_some(&mut node_svg_relative_presentation_attributes),
                 );
+                out.page_values[idx] = page_slot;
             }
 
             // Phases 2 + 3: absolutize. A root element (no element ancestor) uses
@@ -1378,6 +1386,32 @@ fn resolve_border_css_wide(
     }
 }
 
+/// The `page` value a CSS-wide keyword marker stands for. The property is not
+/// inherited, so only `inherit` reads `parent`; `initial` and `unset` give
+/// `auto`, and so does a `revert` that has no declaration to roll back to.
+fn page_for_keyword(
+    marker: &crate::property::DeferredValue,
+    parent: &crate::property::PageValue,
+) -> crate::property::PageValue {
+    match marker.css_wide_keyword() {
+        Some(CssWideKeyword::Inherit) => parent.clone(),
+        Some(
+            CssWideKeyword::Initial
+            | CssWideKeyword::Unset
+            | CssWideKeyword::Revert
+            | CssWideKeyword::RevertLayer,
+        )
+        | None => crate::property::PageValue::Auto,
+    }
+}
+
+/// An element's authored `page` value, and its parent's, which `page: inherit`
+/// takes: the property is not inherited, so the computed values do not hold it.
+pub(crate) struct PageSlot<'a> {
+    pub(crate) value: &'a mut crate::property::PageValue,
+    pub(crate) parent: &'a crate::property::PageValue,
+}
+
 /// Choose the cascade winners for one node and apply them to the staging
 /// representation (**phase 1**).
 ///
@@ -1432,7 +1466,7 @@ pub(crate) fn apply_winners(
     specified: &mut SpecifiedValues,
     inherited: &ComputedValues,
     custom_properties: &CustomPropertyEnvironment,
-    mut page_value: Option<&mut crate::property::PageValue>,
+    mut page_value: Option<PageSlot<'_>>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<SvgCollector<'_>>,
     mut svg_relative_presentation_attributes: Option<&mut Vec<SvgStyleProperty>>,
@@ -1638,10 +1672,18 @@ pub(crate) fn apply_winners(
                 {
                     *slot = Some(*mode);
                 }
-                if let crate::property::PropertyValue::Page(page) = &value
-                    && let Some(page_slot) = page_value.as_deref_mut()
-                {
-                    *page_slot = page.clone();
+                if let Some(page_slot) = page_value.as_mut() {
+                    match &value {
+                        crate::property::PropertyValue::Page(page) => {
+                            *page_slot.value = page.clone();
+                        }
+                        PropertyValue::Deferred(marker)
+                            if marker.key == crate::property::PropertyKey::Page =>
+                        {
+                            *page_slot.value = page_for_keyword(marker, page_slot.parent);
+                        }
+                        _ => {}
+                    }
                 }
                 white_space_applied.note(&value);
                 radius_applied.note(&value);
@@ -3164,6 +3206,11 @@ pub(crate) fn resolve_against_inherited(
         }
         PropertyValue::BorderLeftCssWide(kw) => {
             PropertyValue::BorderLeft(resolve_border_page_side(kw, inherited, false, false, false))
+        }
+        // The page context has no parent page to inherit from, so every
+        // keyword there leaves `auto`.
+        PropertyValue::Deferred(marker) if marker.key == crate::property::PropertyKey::Page => {
+            PropertyValue::Page(page_for_keyword(&marker, &crate::property::PageValue::Auto))
         }
         // CSS Fonts 4 §2.2.1 "Relative Weights"
         // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: resolve `bolder` /

@@ -3083,6 +3083,20 @@ fn layout_pages_gives_an_inline_level_box_the_page_of_its_container() {
 }
 
 #[test]
+fn layout_pages_resolves_css_wide_keywords_on_page() {
+    // `inherit` and `initial` both end up on the page of the body here, and
+    // each overrides the `b` declared before it instead of opening a page.
+    for keyword in ["inherit", "initial", "unset"] {
+        let first = format!("display:block;page:b;page:{keyword};height:10px");
+        let pages = named_page_slices(
+            "display:block;page:a",
+            &[(first.as_str(), &[]), ("display:block;height:10px", &[])],
+        );
+        assert_eq!(pages, [Some("a".to_owned())], "{keyword}");
+    }
+}
+
+#[test]
 fn layout_pages_keeps_page_names_inside_a_static_position_absolute_box() {
     let named: &[&str] = &[
         "display:block;page:a;height:10px",

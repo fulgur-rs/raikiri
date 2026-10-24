@@ -1,6 +1,6 @@
 use super::*;
 use crate::page::{PageInheritance, cascade_page_with_media_context};
-use crate::property::{PropertyKey, PropertyValue};
+use crate::property::{PageValue, PropertyKey, PropertyValue};
 
 fn computed(css: &str, inline: Option<&str>, other: &[(&str, Origin)]) -> ComputedValues {
     let mut doc = TestDoc::new();
@@ -379,5 +379,24 @@ fn css_wide_text_shadow_on_page_context() {
             );
         };
         assert_eq!(items.len(), expected, "{keyword}");
+    }
+}
+
+#[test]
+fn a_page_keyword_in_the_page_context_leaves_auto() {
+    for keyword in ["inherit", "initial", "unset"] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&format!("@page{{page:{keyword}}}"), Origin::Author);
+        let result = cascade_page_with_media_context(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+            &MediaContext::print(),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::Page),
+            Some(&PropertyValue::Page(PageValue::Auto)),
+            "{keyword}"
+        );
     }
 }

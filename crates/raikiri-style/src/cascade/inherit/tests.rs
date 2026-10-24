@@ -9003,7 +9003,10 @@ fn apply_winners_direct_page_value() {
         &mut specified,
         &inherited,
         &custom_properties,
-        Some(&mut page_value),
+        Some(PageSlot {
+            value: &mut page_value,
+            parent: &PageValue::Auto,
+        }),
         None,
         None,
         None,
