@@ -1,6 +1,8 @@
 //! An atomic inline in a vertical paragraph sits on the line it belongs to:
 //! its logical position along the line and across the lines is mapped to the
 //! physical box through the paragraph's writing mode and direction.
+//!
+//! The expected boxes of the baseline-aligned cases are Chromium's.
 
 use crate::layout::ifc::test_support::block_fixture;
 use crate::layout::layout_single_page;
@@ -200,5 +202,207 @@ fn the_percentage_edges_of_an_atomic_in_a_vertical_root_resolve_against_its_inli
     assert_eq!(
         size("padding:10%;width:50%;box-sizing:border-box"),
         (50.0, 10.0)
+    );
+}
+
+/// The border boxes of inline-blocks holding the text "a", each styled by one
+/// entry of `atomics`, in a sideways 10px Ahem paragraph of a 100px square
+/// styled by `root_css`. Sideways text aligns atomics on the alphabetic
+/// baseline.
+fn text_atomic_rects(root_css: &str, atomics: &[&str]) -> Vec<(f32, f32, f32, f32)> {
+    let mut ids = Vec::new();
+    let fixture = block_fixture(
+        &format!("line-height:10px;text-orientation:sideways;width:100px;height:100px;{root_css}"),
+        |doc, root| {
+            for css in atomics {
+                let atomic = doc.append_element(
+                    Some(root),
+                    "div",
+                    Some(format!("display:inline-block;{css}").as_str()),
+                );
+                doc.append_text(atomic, "a");
+                ids.push(atomic);
+            }
+        },
+    );
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    ids.into_iter().map(|id| absolute_rect(&doc, id)).collect()
+}
+
+/// A 20px box whose text has the baseline 16px from its line-over edge.
+const BIG: &str = "font-size:20px;line-height:20px";
+
+#[test]
+fn atomics_in_vertical_rl_share_the_baseline_of_their_text() {
+    // The 10px text's baseline is 8px from its right edge and the 20px
+    // text's 16px, so the small box sits 8px left of the big one's right
+    // edge.
+    assert_eq!(
+        text_atomic_rects("writing-mode:vertical-rl", &[BIG, ""]),
+        [(80.0, 0.0, 20.0, 20.0), (82.0, 20.0, 10.0, 10.0)]
+    );
+}
+
+#[test]
+fn the_margin_at_the_line_over_edge_of_an_atomic_moves_its_baseline_in_vertical_rl() {
+    // The right margin lies on the line-over side of the baseline: with 20px
+    // of it the small box reaches 28px above the baseline, past the big
+    // one's 16px, and the baseline moves to 28px from the right edge.
+    assert_eq!(
+        text_atomic_rects("writing-mode:vertical-rl", &["margin:0 20px 0 0", BIG]),
+        [(70.0, 0.0, 10.0, 10.0), (68.0, 10.0, 20.0, 20.0)]
+    );
+    // The left margin lies on the line-under side, which does not reach past
+    // the baseline's 16px from the right edge.
+    assert_eq!(
+        text_atomic_rects("writing-mode:vertical-rl", &["margin:0 0 0 20px", BIG]),
+        [(82.0, 0.0, 10.0, 10.0), (80.0, 10.0, 20.0, 20.0)]
+    );
+    // The top and bottom margins lie along the line.
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-rl",
+            &[
+                "margin:3px 6px 5px 7px",
+                "font-size:20px;line-height:20px;margin:1px 2px 3px 4px"
+            ]
+        ),
+        [(80.0, 3.0, 10.0, 10.0), (78.0, 19.0, 20.0, 20.0)]
+    );
+}
+
+#[test]
+fn an_atomic_whose_lines_run_across_the_paragraphs_has_no_baseline_to_share() {
+    // A horizontal box and a box with an opposite block direction sit on
+    // their line-under edge, the left edge of the margin box, which is the
+    // baseline of the big box here.
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-rl",
+            &["writing-mode:horizontal-tb", BIG]
+        ),
+        [(84.0, 0.0, 10.0, 10.0), (80.0, 10.0, 20.0, 20.0)]
+    );
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-rl",
+            &["writing-mode:vertical-lr;margin:0 3px 0 5px", BIG]
+        ),
+        [(87.0, 0.0, 10.0, 10.0), (78.0, 10.0, 20.0, 20.0)]
+    );
+}
+
+#[test]
+fn a_scroll_container_atomic_has_no_baseline_in_a_vertical_line() {
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-rl",
+            &["overflow:hidden;width:15px;height:15px", BIG]
+        ),
+        [(84.0, 0.0, 15.0, 15.0), (80.0, 15.0, 20.0, 20.0)]
+    );
+}
+
+#[test]
+fn atomics_in_vertical_lr_share_the_baseline_of_their_text() {
+    // Text in vertical-lr is rotated like text in vertical-rl, so the line-over
+    // edge is the right one here too: the small box sits 8px left of the
+    // right edge it would share with the big one.
+    assert_eq!(
+        text_atomic_rects("writing-mode:vertical-lr", &[BIG, ""]),
+        [(0.0, 0.0, 20.0, 20.0), (2.0, 20.0, 10.0, 10.0)]
+    );
+}
+
+#[test]
+fn the_margin_at_the_line_over_edge_of_an_atomic_moves_its_baseline_in_vertical_lr() {
+    assert_eq!(
+        text_atomic_rects("writing-mode:vertical-lr", &["margin:0 20px 0 0", BIG]),
+        [(2.0, 0.0, 10.0, 10.0), (0.0, 10.0, 20.0, 20.0)]
+    );
+    assert_eq!(
+        text_atomic_rects("writing-mode:vertical-lr", &["margin:0 0 0 20px", BIG]),
+        [(20.0, 0.0, 10.0, 10.0), (18.0, 10.0, 20.0, 20.0)]
+    );
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-lr",
+            &[
+                "margin:3px 6px 5px 7px",
+                "font-size:20px;line-height:20px;margin:1px 2px 3px 4px"
+            ]
+        ),
+        [(7.0, 3.0, 10.0, 10.0), (5.0, 19.0, 20.0, 20.0)]
+    );
+}
+
+#[test]
+fn an_atomic_with_no_baseline_to_share_sits_on_the_line_under_edge_in_vertical_lr() {
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-lr",
+            &["writing-mode:horizontal-tb", BIG]
+        ),
+        [(4.0, 0.0, 10.0, 10.0), (0.0, 10.0, 20.0, 20.0)]
+    );
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-lr",
+            &["writing-mode:vertical-rl;margin:0 3px 0 5px", BIG]
+        ),
+        [(9.0, 0.0, 10.0, 10.0), (0.0, 10.0, 20.0, 20.0)]
+    );
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:vertical-lr",
+            &["overflow:hidden;width:15px;height:15px", BIG]
+        ),
+        [(4.0, 0.0, 15.0, 15.0), (0.0, 15.0, 20.0, 20.0)]
+    );
+}
+
+#[test]
+fn atomics_in_sideways_lr_share_the_baseline_measured_from_the_left_edge() {
+    // The line-over edge is the left one and the text runs up the line, so
+    // the first box is at the bottom and the small one's baseline, 8px from
+    // its left edge, meets the big one's, 16px from its.
+    assert_eq!(
+        text_atomic_rects("writing-mode:sideways-lr", &[BIG, ""]),
+        [(0.0, 80.0, 20.0, 20.0), (8.0, 70.0, 10.0, 10.0)]
+    );
+    // The left margin lies on the line-over side of the baseline, the right
+    // margin on the line-under side.
+    assert_eq!(
+        text_atomic_rects("writing-mode:sideways-lr", &["margin:0 0 0 20px", BIG]),
+        [(20.0, 90.0, 10.0, 10.0), (12.0, 70.0, 20.0, 20.0)]
+    );
+    assert_eq!(
+        text_atomic_rects("writing-mode:sideways-lr", &["margin:0 20px 0 0", BIG]),
+        [(8.0, 90.0, 10.0, 10.0), (0.0, 70.0, 20.0, 20.0)]
+    );
+}
+
+#[test]
+fn an_atomic_that_is_not_laid_out_like_a_sideways_lr_line_sits_on_its_right_edge() {
+    // Its margin box's right edge is the line-under edge, which is the big
+    // box's baseline, 16px from its left edge.
+    for atomic in [
+        "writing-mode:horizontal-tb",
+        "writing-mode:vertical-lr",
+        "writing-mode:sideways-rl",
+    ] {
+        assert_eq!(
+            text_atomic_rects("writing-mode:sideways-lr", &[atomic, BIG]),
+            [(6.0, 90.0, 10.0, 10.0), (0.0, 70.0, 20.0, 20.0)],
+            "{atomic}"
+        );
+    }
+    assert_eq!(
+        text_atomic_rects(
+            "writing-mode:sideways-lr",
+            &["writing-mode:vertical-rl;margin:0 3px 0 5px", BIG]
+        ),
+        [(5.0, 90.0, 10.0, 10.0), (2.0, 70.0, 20.0, 20.0)]
     );
 }

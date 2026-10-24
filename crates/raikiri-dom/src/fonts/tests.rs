@@ -1589,6 +1589,26 @@ fn an_empty_bundle_is_refused() {
 }
 
 #[test]
+fn text_in_the_system_collection_makes_a_line_of_whole_pixels() {
+    use crate::layout::ifc::test_support::block_fixture;
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{absolute_rect, page_box_800x600};
+
+    // Whichever face the platform offers, and the built-in one when it offers
+    // none, ascent, descent and line gap are whole pixels as in Blink, so a
+    // line of normal height is a whole number of pixels tall. The exact
+    // metrics of a 10.5px face are not.
+    let fixture = block_fixture("font-size:10.5px;line-height:normal", |doc, root| {
+        doc.append_text(root, "a");
+    });
+    let mut doc = fixture.doc;
+    doc.set_font_collection(system_font_collection());
+    layout_single_page(&mut doc, &fixture.cascade, page_box_800x600()).expect("layout");
+    let (_, _, _, height) = absolute_rect(&doc, fixture.root);
+    assert!(height > 0.0 && height.fract() == 0.0, "{height}");
+}
+
+#[test]
 fn the_system_collection_is_built_once_and_shared() {
     let first = system_font_collection();
     let second = system_font_collection();

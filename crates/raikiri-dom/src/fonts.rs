@@ -753,7 +753,13 @@ pub fn system_font_collection() -> shodo::font::FontCollection {
                 max_layer_blob_bytes: None,
                 ..shodo::limits::Limits::default()
             };
-            shodo::font::FontCollection::with_options(&limits, shodo::font::FontOptions::default())
+            shodo::font::FontCollection::with_options(
+                &limits,
+                shodo::font::FontOptions {
+                    whole_pixel_metrics: true,
+                    ..shodo::font::FontOptions::default()
+                },
+            )
         })
         .clone()
 }
