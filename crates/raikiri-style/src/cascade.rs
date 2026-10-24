@@ -31,17 +31,19 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::computed::ComputedValues;
+use crate::computed::{ComputedValues, VerticalLogicalSize};
 use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::page::{
     PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_normal_line_height,
 };
-use crate::property::{CssColor, PropertyKey, WritingMode};
-use crate::resolve::ResolveContext;
+use crate::property::{
+    Contain, CssColor, Direction, DisplayValue, PropertyKey, TextOrientation, WritingMode,
+};
+use crate::resolve::{ComputedLengthPercentageOrAuto, ResolveContext};
 use crate::ruletree::RuleTree;
-use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{PseudoElem, PseudoValueArc};
 
 static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -89,6 +91,15 @@ pub struct CascadeResult {
     /// Index into [`Self::computed`] of the `@page` inheritance parent: the
     /// root element, or the Document node when the tree has no element child.
     root_element_index: usize,
+    /// Index into [`Self::computed`] of the principal element: the element
+    /// whose `writing-mode`, `direction` and `text-orientation` the root
+    /// element takes as its used values (CSS Writing Modes 4 §8). It is the
+    /// root element itself when no value propagates.
+    principal_element_index: usize,
+    /// What the root element's entry of [`Self::computed`] replaced of its own
+    /// values with the principal element's flow. `None` when nothing was
+    /// replaced.
+    root_own_flow: Option<RootOwnFlow>,
     /// Winning custom-highlight background colors keyed by highlight name.
     /// Contextual expressions use initial black in this inspection view. Use
     /// [`Self::custom_highlight_background`] with the originating foreground
@@ -98,6 +109,13 @@ pub struct CascadeResult {
     /// Per-node computed values (indexed by NodeId.0 as usize).
     /// Populated for Element / Text / Document kinds; out-of-range access
     /// panics and is the caller's responsibility.
+    ///
+    /// The root element's entry carries its *used* `writing-mode`,
+    /// `direction` and `text-orientation`, which are the principal
+    /// element's (CSS Writing Modes 4 §8; see [`Self::principal_element_index`]),
+    /// so that layout and paint read one set of values for the root. Its
+    /// descendants and the `@page` cascade inherit from the root's own
+    /// values, and [`Self::cssom_computed`] reports them.
     pub computed: Vec<ComputedValues>,
     /// Per-node flags indicating whether the cascade had an explicit
     /// `opacity` declaration for that node. Inline SVG painting uses this to
@@ -110,7 +128,9 @@ pub struct CascadeResult {
     /// Authored `writing-mode` winners before the computed-value normalization
     /// that currently collapses vertical modes to `horizontal-tb`.  This keeps
     /// paged consumers able to apply physical page-context mapping without
-    /// changing ordinary element layout semantics.
+    /// changing ordinary element layout semantics. The root element's entry
+    /// is the principal element's when that element propagates its
+    /// `writing-mode` to the root (see [`Self::principal_element_index`]).
     pub authored_writing_modes: Vec<Option<WritingMode>>,
     /// The `@page` cascade for the page query supplied to the cascade entry
     /// point. The compatibility entry point uses the unnamed/default query;
@@ -222,6 +242,45 @@ pub struct CascadeResult {
     border_width_device_scale: Option<f32>,
 }
 
+/// The values of the root element that the principal element's flow replaces
+/// in [`CascadeResult::computed`]: the flow itself, and the physical sizes
+/// the root's own writing mode mapped its logical ones to.
+#[derive(Clone, Debug)]
+struct RootOwnFlow {
+    writing_mode: WritingMode,
+    cssom_writing_mode: WritingMode,
+    direction: Direction,
+    text_orientation: TextOrientation,
+    width: ComputedLengthPercentageOrAuto,
+    height: ComputedLengthPercentageOrAuto,
+    vertical_logical_size: Option<VerticalLogicalSize>,
+}
+
+impl RootOwnFlow {
+    fn of(values: &ComputedValues) -> Self {
+        Self {
+            writing_mode: values.writing_mode,
+            cssom_writing_mode: values.cssom_writing_mode,
+            direction: values.direction,
+            text_orientation: values.text_orientation,
+            width: values.width,
+            height: values.height,
+            vertical_logical_size: values.vertical_logical_size.clone(),
+        }
+    }
+
+    /// Put the root's own values back into `values`.
+    fn restore(&self, values: &mut ComputedValues) {
+        values.writing_mode = self.writing_mode;
+        values.cssom_writing_mode = self.cssom_writing_mode;
+        values.direction = self.direction;
+        values.text_orientation = self.text_orientation;
+        values.width = self.width;
+        values.height = self.height;
+        values.vertical_logical_size = self.vertical_logical_size.clone();
+    }
+}
+
 impl CascadeResult {
     /// The device pixels per CSS pixel the cascade snapped border widths to,
     /// `None` for an output-neutral or vector cascade, or for a scale that is
@@ -248,7 +307,7 @@ impl CascadeResult {
         cascade_page_with_normal_line_height(
             rule_tree,
             query,
-            PageInheritance::FromRoot(self.root_element_computed()),
+            PageInheritance::FromRoot(&self.root_element_cssom_computed()),
             media_context,
             self.normal_line_height(),
             self.border_width_device_scale,
@@ -330,11 +389,70 @@ impl CascadeResult {
     /// [`RuleTree`] and [`MediaContext`] can cascade another page query with
     /// [`Self::cascade_page_from_root`] instead of rerunning the whole cascade.
     ///
+    /// Like [`Self::computed`], the values carry the used `writing-mode`,
+    /// `direction` and `text-orientation` of the root element, the principal
+    /// element's. The `@page` cascade inherits from the root's own values
+    /// instead, and [`Self::cssom_computed`] reads them.
+    ///
     /// # Panics
     ///
     /// Panics if [`Self::computed`] was shrunk after the cascade produced it.
     pub fn root_element_computed(&self) -> &ComputedValues {
         &self.computed[self.root_element_index]
+    }
+
+    /// Index into [`Self::computed`] of the principal element, the element
+    /// whose `writing-mode` and `direction` the root element takes as its
+    /// used values (CSS Writing Modes 4 §8).
+    ///
+    /// That is the first `body` child of an HTML `html` root whose `display`
+    /// is not `none`. Containment on the root or on that `body` stops the
+    /// propagation (CSS Containment 2 §2), and a root of another kind has no
+    /// principal child. The index is then the root element's own.
+    pub fn principal_element_index(&self) -> usize {
+        self.principal_element_index
+    }
+
+    /// The computed values of node `index` as CSSOM reports them.
+    ///
+    /// Equal to `computed[index]`, except for the root element when the
+    /// principal element's `writing-mode`, `direction` or `text-orientation`
+    /// replaced the root's own in [`Self::computed`]: the propagation changes
+    /// the used values and leaves the computed ones alone (CSS Writing Modes
+    /// 4 §8), which this returns. It is borrowed unless it has to put those
+    /// back.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is outside [`Self::computed`].
+    pub fn cssom_computed(&self, index: usize) -> std::borrow::Cow<'_, ComputedValues> {
+        match &self.root_own_flow {
+            Some(own) if index == self.root_element_index => {
+                let mut values = self.computed[index].clone();
+                own.restore(&mut values);
+                std::borrow::Cow::Owned(values)
+            }
+            _ => std::borrow::Cow::Borrowed(&self.computed[index]),
+        }
+    }
+
+    /// The computed values of the root element as CSSOM reports them, the
+    /// inheritance parent of the `@page` cascade; see [`Self::cssom_computed`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Self::computed`] was shrunk after the cascade produced it.
+    pub fn root_element_cssom_computed(&self) -> std::borrow::Cow<'_, ComputedValues> {
+        self.cssom_computed(self.root_element_index)
+    }
+
+    /// The computed values of every node as CSSOM reports them, in place of
+    /// [`Self::computed`]; see [`Self::cssom_computed`].
+    pub fn into_cssom_computed(mut self) -> Vec<ComputedValues> {
+        if let Some(own) = self.root_own_flow.take() {
+            own.restore(&mut self.computed[self.root_element_index]);
+        }
+        self.computed
     }
 
     /// Replace the `@page` cascade with one for another page query.
@@ -367,6 +485,8 @@ impl CascadeResult {
             first_line_contexts,
             typographic_inheritance,
             root_element_index,
+            principal_element_index,
+            root_own_flow,
             custom_highlight_styles,
             custom_highlight_sources,
             computed,
@@ -386,6 +506,10 @@ impl CascadeResult {
             .map(|(new, &old)| (old as u64, new as u64))
             .collect();
         let node = |id: &StyleNodeId| new_of_old.get(&id.0).map(|&new| StyleNodeId(new));
+        let root_kept = new_of_old.contains_key(&(*root_element_index as u64));
+        let new_root = new_of_old
+            .get(&(*root_element_index as u64))
+            .map_or(0, |&new| new as usize);
         let generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
         Self {
             generation,
@@ -410,9 +534,18 @@ impl CascadeResult {
                 .iter()
                 .filter_map(|((id, pseudo), value)| Some(((node(id)?, *pseudo), value.clone())))
                 .collect(),
-            root_element_index: new_of_old
-                .get(&(*root_element_index as u64))
-                .map_or(0, |&new| new as usize),
+            root_element_index: new_root,
+            // A root that is kept keeps the flow it was given, whether or not
+            // the principal element is kept with it, and stands in for it
+            // otherwise. A root that was left out takes nothing.
+            principal_element_index: if root_kept {
+                new_of_old
+                    .get(&(*principal_element_index as u64))
+                    .map_or(new_root, |&new| new as usize)
+            } else {
+                new_root
+            },
+            root_own_flow: root_own_flow.clone().filter(|_| root_kept),
             custom_highlight_styles: custom_highlight_styles.clone(),
             custom_highlight_sources: custom_highlight_sources.clone(),
             computed: renumber(computed, old_of_new),
@@ -430,6 +563,103 @@ impl CascadeResult {
             border_width_device_scale: *border_width_device_scale,
         }
     }
+}
+
+/// Index of the element whose `writing-mode` and `direction` the root
+/// element takes: the first HTML `body` child of an `html` root whose
+/// `display` is not `none`, else the root (CSS Writing Modes 4 §8, principal
+/// writing mode). Containment on the root or on that `body` stops the
+/// propagation (CSS Containment 2 §2).
+fn find_principal_element<D: StyleDom>(dom: &D, computed: &[ComputedValues], root: usize) -> usize {
+    const XHTML: &str = "http://www.w3.org/1999/xhtml";
+    let is_html = |id: StyleNodeId, name: &str| {
+        dom.node(id)
+            .and_then(|node| {
+                node.as_element().map(|e| {
+                    (
+                        e.tag_name().eq_ignore_ascii_case(name),
+                        e.namespace_uri().is_none_or(|ns| ns == XHTML),
+                    )
+                })
+            })
+            .is_some_and(|(named, html)| named && html)
+    };
+    // An index outside the arena has no values to read, so it never propagates.
+    let contained = |index: usize| {
+        computed
+            .get(index)
+            .is_none_or(|v| v.contain != Contain::NONE)
+    };
+    let root_id = StyleNodeId::new(root as u64);
+    if !is_html(root_id, "html") || contained(root) {
+        return root;
+    }
+    dom.child_ids(root_id)
+        .map(|id| id.0 as usize)
+        .find(|&index| {
+            is_html(StyleNodeId::new(index as u64), "body")
+                && computed
+                    .get(index)
+                    .is_some_and(|values| values.display != DisplayValue::None)
+        })
+        .filter(|&body| !contained(body))
+        .unwrap_or(root)
+}
+
+/// Give the root element the principal element's used `writing-mode`,
+/// `direction` and `text-orientation`. Returns what the root had of its own
+/// when any of them differs, for CSSOM and the `@page` cascade, which keep
+/// the root's own values (CSS Writing Modes 4 §8: the used values change, not
+/// the computed ones).
+///
+/// The root's authored `writing-mode` takes the principal's too, as the
+/// authored value is what layout resolves the used writing mode of a node
+/// from. Its physical sizes stay what its own writing mode mapped them to.
+fn propagate_principal_flow(
+    outputs: &mut WalkOutputs,
+    root: usize,
+    principal: usize,
+) -> Option<RootOwnFlow> {
+    if root == principal {
+        return None;
+    }
+    let (writing_mode, cssom_writing_mode, direction, text_orientation) = {
+        let values = &outputs.computed[principal];
+        (
+            values.writing_mode,
+            values.cssom_writing_mode,
+            values.direction,
+            values.text_orientation,
+        )
+    };
+    let authored =
+        outputs.authored_writing_modes[principal].or(outputs.authored_writing_modes[root]);
+    let own = &outputs.computed[root];
+    if own.writing_mode == writing_mode
+        && own.cssom_writing_mode == cssom_writing_mode
+        && own.direction == direction
+        && own.text_orientation == text_orientation
+        && authored == outputs.authored_writing_modes[root]
+    {
+        return None;
+    }
+    let own = RootOwnFlow::of(own);
+    let used = &mut outputs.computed[root];
+    used.writing_mode = writing_mode;
+    used.cssom_writing_mode = cssom_writing_mode;
+    used.direction = direction;
+    used.text_orientation = text_orientation;
+    // `inline-size` and `block-size` map onto the physical axes by the root's
+    // own writing mode. Where that one is vertical, the mapping is kept
+    // beside the horizontal one that layout reads for a horizontal used mode.
+    if !cssom_writing_mode.is_vertical()
+        && let Some(size) = used.vertical_logical_size.take()
+    {
+        used.width = size.width;
+        used.height = size.height;
+    }
+    outputs.authored_writing_modes[root] = authored;
+    Some(own)
 }
 
 /// `values[old_of_new[i]]` for each `i`.
@@ -582,7 +812,7 @@ fn finish<D: StyleDom>(
     rule_tree: &RuleTree,
     page_query: &PageContextQuery,
     media_context: &MediaContext,
-    outputs: WalkOutputs,
+    mut outputs: WalkOutputs,
     normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
     border_width_device_scale: Option<f32>,
 ) -> CascadeResult {
@@ -595,6 +825,12 @@ fn finish<D: StyleDom>(
         normal_line_height,
         border_width_device_scale,
     );
+    // The page context and every descendant have inherited from the root's
+    // own values by now; only the root's entry takes the principal flow.
+    let principal_element_index =
+        find_principal_element(dom, &outputs.computed, root_element_index);
+    let root_own_flow =
+        propagate_principal_flow(&mut outputs, root_element_index, principal_element_index);
     let generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
     CascadeResult {
         generation,
@@ -605,6 +841,8 @@ fn finish<D: StyleDom>(
         first_line_contexts: outputs.first_line_contexts,
         typographic_inheritance: outputs.typographic_inheritance,
         root_element_index,
+        principal_element_index,
+        root_own_flow,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
         custom_highlight_sources: rule_tree.custom_highlight_sources().clone(),
         computed: outputs.computed,

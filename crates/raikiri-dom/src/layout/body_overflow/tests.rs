@@ -118,9 +118,26 @@ fn repeated_layout_keeps_authored_body_padding_and_height() {
 
 #[test]
 fn a_body_uses_the_root_direction_for_its_over_constrained_margins() {
-    let (doc, body, _) = laid_out("direction:rtl", "direction:ltr;max-width:300px", "");
+    // Containment on the root keeps the body from handing its direction to it.
+    let (doc, body, _) = laid_out(
+        "direction:rtl;contain:layout",
+        "direction:ltr;max-width:300px",
+        "",
+    );
     let layout = doc.nodes[body].layout;
     assert_eq!(layout.location.x + layout.size.width, 800.0);
+}
+
+#[test]
+fn the_root_takes_its_direction_for_the_body_margins_from_the_body() {
+    // The body's direction is the root's used direction, whatever the root
+    // declares (CSS Writing Modes 4 §8).
+    let (doc, body, _) = laid_out("direction:rtl", "direction:ltr;max-width:300px", "");
+    let layout = doc.nodes[body].layout;
+    assert_eq!((layout.location.x, layout.size.width), (0.0, 300.0));
+    let (doc, body, _) = laid_out("direction:ltr", "direction:rtl;max-width:300px", "");
+    let layout = doc.nodes[body].layout;
+    assert_eq!((layout.location.x, layout.size.width), (500.0, 300.0));
 }
 
 #[test]

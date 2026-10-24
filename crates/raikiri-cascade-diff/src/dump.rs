@@ -339,11 +339,14 @@ fn page_queries<D>(out: &mut String, inputs: &Inputs<'_, D>, result: &CascadeRes
             }),
         ),
     ];
+    // The page context inherits from the root's own values, not from the
+    // principal flow its entry in `computed` carries.
+    let root = result.root_element_cssom_computed();
     for (label, query) in queries {
         let page = cascade_page_with_media_context(
             inputs.tree,
             &query,
-            PageInheritance::FromRoot(result.root_element_computed()),
+            PageInheritance::FromRoot(&root),
             inputs.media,
         );
         push_page(out, &format!("page[{label}]"), &page);
