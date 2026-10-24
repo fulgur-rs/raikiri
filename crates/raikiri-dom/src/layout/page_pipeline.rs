@@ -28,6 +28,7 @@ use super::table::headers::HeaderRepeats;
 use super::*;
 use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
+use raikiri_layout_style::values::{BoxSizing, Position};
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -607,7 +608,7 @@ fn grows_with_paginated_content(
     // auto-sized flex line must still grow around paginated content.
     let assigned_height = node.percent_basis_height.is_some()
         && (block_axis.aspect_ratio().is_some()
-            || node.taffy_position() == TaffyPosition::Absolute
+            || node.layout_position() == Position::Absolute
             || document.taffy_parent_of(node_id).is_some_and(|parent| {
                 let parent_node = &document.nodes[parent];
                 match parent_node.formatting_context {
@@ -3320,7 +3321,7 @@ fn grow_spanning_column_ancestors(
     let mut child = owner;
     let mut walk = AncestorCursor::new(document.layout_parent_of(owner), ParentRelation::Layout);
     while let Some(parent) = walk.current() {
-        if document.nodes[child].taffy_position() == TaffyPosition::Absolute
+        if document.nodes[child].layout_position() == Position::Absolute
             || document.pagination_style(child).float().is_floated()
         {
             break;
@@ -3635,7 +3636,7 @@ fn table_row_leads(
                 document.nodes[child].display() == DisplayValue::TableCaption
                     && cascade.computed[child].caption_side
                         == raikiri_style::property::CaptionSideValue::Top
-                    && document.nodes[child].taffy_position() != taffy::Position::Absolute
+                    && document.nodes[child].layout_position() != Position::Absolute
                     || document.nodes[child].display() != DisplayValue::TableRow
                         && document.anonymous_table_cells(child).next().is_some()
             }) || document.anonymous_table_cells(table).next().is_some()
@@ -4684,7 +4685,7 @@ fn grown_auto_height(
     let layout = &node.layout;
     let vertical_edges =
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
-    let box_sizing_edges = if style.box_sizing() == taffy::BoxSizing::ContentBox {
+    let box_sizing_edges = if style.box_sizing() == BoxSizing::ContentBox {
         vertical_edges
     } else {
         0.0
@@ -4696,7 +4697,7 @@ fn grown_auto_height(
         .and_then(|block| definite_content_height(document, block));
     // One that does not resolve behaves as `0` for `min-height` and as
     // `none` for `max-height`.
-    let bound = |value: taffy::LengthPercentageAuto, auto: f32| {
+    let bound = |value: LengthPercentageAuto, auto: f32| {
         resolve_length_percentage_auto(value, containing_height)
             .map_or(auto, |value| value + box_sizing_edges)
     };
@@ -4767,7 +4768,7 @@ fn grown_auto_height(
         }
         if child_node.kind() == NodeKind::Text
             || document.nodes[child].display() == DisplayValue::None
-            || child_node.taffy_position() == taffy::Position::Absolute
+            || child_node.layout_position() == Position::Absolute
         {
             continue;
         }
@@ -5042,8 +5043,11 @@ fn definite_content_height(
     block: usize,
 ) -> Option<f32> {
     let node = &document.nodes[block];
-    let raw = document.block_axis(block).height().into_raw();
-    let definite = if raw.is_plain_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {
+    let height = document.block_axis(block).height().expand();
+    let definite = if matches!(
+        height,
+        ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_)
+    ) {
         BoxTree::for_layout(document)
             .parent(block, BoxParentScope::Document)
             .is_none_or(|containing| {
@@ -5051,7 +5055,7 @@ fn definite_content_height(
                     || definite_content_height(document, containing).is_some()
             })
     } else {
-        raw.tag() == taffy::CompactLength::LENGTH_TAG
+        matches!(height, ExpandedDimension::Length(_))
     };
     definite.then(|| node.layout.content_box_height())
 }
@@ -5137,7 +5141,7 @@ fn push_in_flow_boxes_rev(
     if !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         || collapsed_text
         || document.nodes[node_id].display() == DisplayValue::None
-        || node.taffy_position() == taffy::Position::Absolute
+        || node.layout_position() == Position::Absolute
         || is_floating_box_for_pagination(document, cascade, node_id)
     {
         return;
@@ -7460,7 +7464,7 @@ fn holds_floats(
                 .formatting_context
                 .is_flex_or_grid()
         });
-    document.nodes[node_id].taffy_display() == Display::FlowRoot
+    document.nodes[node_id].layout_display() == Display::FlowRoot
         || item
         || !(document.nodes[node_id].display().is_inline_flow()
             || matches!(
@@ -7468,7 +7472,7 @@ fn holds_floats(
                 DisplayValue::Block | DisplayValue::ListItem
             ))
         || matches!(computed.float, FloatValue::Left | FloatValue::Right)
-        || document.nodes[node_id].taffy_position() == taffy::Position::Absolute
+        || document.nodes[node_id].layout_position() == Position::Absolute
         || scrolls_overflow(document, computed, node_id)
         || document.nodes[node_id].multicol.is_some()
         || establishes_containment_context(computed)
@@ -7550,7 +7554,7 @@ fn max_border_box_height(
         value => basis.and_then(|basis| used_computed_length_percentage_or_auto(value, basis)),
     }?;
     let layout = &document.nodes[node_id].layout;
-    let edges = if document.pagination_style(node_id).box_sizing() == taffy::BoxSizing::ContentBox {
+    let edges = if document.pagination_style(node_id).box_sizing() == BoxSizing::ContentBox {
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
     } else {
         0.0

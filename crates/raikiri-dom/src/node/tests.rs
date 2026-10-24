@@ -443,6 +443,19 @@ fn a_laid_out_ifc_root_exposes_its_lines() {
 }
 
 #[test]
+fn a_box_known_only_by_its_display_gets_the_matching_formatting_context() {
+    for (display, expected) in [
+        (Display::None, FormattingContext::None),
+        (Display::Flex, FormattingContext::Flex),
+        (Display::Grid, FormattingContext::Grid),
+        (Display::Block, FormattingContext::Block),
+        (Display::FlowRoot, FormattingContext::Block),
+    ] {
+        assert_eq!(FormattingContext::from_taffy_display(display), expected);
+    }
+}
+
+#[test]
 fn canvas_bitmap_errors_have_descriptive_messages() {
     let cases = [
         (

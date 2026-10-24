@@ -1,6 +1,7 @@
 use super::box_tree::BoxTree;
 use super::*;
 use crate::node::FormattingContext;
+use raikiri_layout_style::values::Position;
 use std::borrow::Cow;
 
 #[cfg(test)]
@@ -869,21 +870,20 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
             }
         }
         let should_sort = children.iter().any(|&child| {
-            doc.nodes[child].taffy_position() != TaffyPosition::Absolute
-                && doc.nodes[child].order != 0
+            doc.nodes[child].layout_position() != Position::Absolute && doc.nodes[child].order != 0
         });
         let new_projection = if should_sort {
             let mut ordered_items: Vec<usize> = children
                 .iter()
                 .copied()
-                .filter(|&child| doc.nodes[child].taffy_position() != TaffyPosition::Absolute)
+                .filter(|&child| doc.nodes[child].layout_position() != Position::Absolute)
                 .collect();
             // `sort_by_key` is stable, so equal `order` values retain DOM order.
             ordered_items.sort_by_key(|&child| doc.nodes[child].order);
             let mut ordered_items = ordered_items.into_iter();
             let mut ordered_children = children;
             for child in &mut ordered_children {
-                if doc.nodes[*child].taffy_position() != TaffyPosition::Absolute {
+                if doc.nodes[*child].layout_position() != Position::Absolute {
                     *child = ordered_items
                         .next()
                         .expect("every in-flow child has one ordered entry");
@@ -930,7 +930,7 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
     let child = &document.nodes[child_id];
     child.is_in_document()
         && !child.is_display_none()
-        && child.taffy_position() != TaffyPosition::Absolute
+        && child.layout_position() != Position::Absolute
         && !matches!(
             &child.data,
             NodeData::Text(text)

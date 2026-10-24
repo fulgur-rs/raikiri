@@ -1,8 +1,8 @@
 use super::*;
 use crate::layout::protocol::{LayoutInput, RequestedAxis, RunMode, SizingMode};
-use crate::layout::taffy_adapter::IntoEdges;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
 use raikiri_layout_geometry::Line;
+use raikiri_layout_style::values::{Dimension, IntoEdges, LengthPercentageAuto};
 
 /// Paginate an 800x600 page holding a root styled `html_css` and a body
 /// styled `body_css` (Ahem text, 10px lines) with one block child per entry
@@ -731,11 +731,11 @@ fn pagination_entry_rejects_active_edge_scope() {
 /// The facts the paginator reads along its flow: height, its bounds, the
 /// margins at the flow's start and end, and the aspect ratio.
 type Facts = (
-    taffy::Dimension,
-    taffy::LengthPercentageAuto,
-    taffy::LengthPercentageAuto,
-    taffy::LengthPercentageAuto,
-    taffy::LengthPercentageAuto,
+    Dimension,
+    LengthPercentageAuto,
+    LengthPercentageAuto,
+    LengthPercentageAuto,
+    LengthPercentageAuto,
     Option<f32>,
 );
 

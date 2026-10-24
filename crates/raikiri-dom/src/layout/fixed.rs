@@ -12,8 +12,8 @@ use super::box_tree::BoxTree;
 use super::oof_containing_block::select_fixed_containing_block_from_ancestors;
 use super::*;
 use crate::layout::context::LayoutSession;
-use crate::layout::taffy_adapter::MaybeResolve;
 use crate::node::BoxPropertiesRef;
+use raikiri_layout_style::values::{self, MaybeResolve};
 use raikiri_style::property::WillChange;
 
 /// Whether the element generates a non-atomic inline box: an inline box that
@@ -234,20 +234,10 @@ pub(crate) fn correct_root_oof_auto_margins(
             let style = document.physical_style(node);
             let (inset, margin) = (style.inset(), style.margin());
             (
-                inset
-                    .left
-                    .maybe_resolve(Some(area_size.width), crate::layout::dispatch::resolve_calc),
-                inset
-                    .right
-                    .maybe_resolve(Some(area_size.width), crate::layout::dispatch::resolve_calc),
-                inset.top.maybe_resolve(
-                    Some(area_size.height),
-                    crate::layout::dispatch::resolve_calc,
-                ),
-                inset.bottom.maybe_resolve(
-                    Some(area_size.height),
-                    crate::layout::dispatch::resolve_calc,
-                ),
+                inset.left.maybe_resolve(Some(area_size.width)),
+                inset.right.maybe_resolve(Some(area_size.width)),
+                inset.top.maybe_resolve(Some(area_size.height)),
+                inset.bottom.maybe_resolve(Some(area_size.height)),
                 margin.left.is_auto(),
                 margin.right.is_auto(),
                 margin.top.is_auto(),
@@ -267,7 +257,7 @@ pub(crate) fn correct_root_oof_auto_margins(
             };
             layout.margin.left = margin;
             layout.margin.right = margin;
-            layout.location.x = if direction == TaffyDirection::Rtl {
+            layout.location.x = if direction == values::Direction::Rtl {
                 area_size.width - right - layout.size.width - margin
             } else {
                 left + margin

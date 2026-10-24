@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_layout_style::values::Dimension;
 
 #[test]
 fn old_saved_cache_is_not_restored_into_new_epoch() {
@@ -107,20 +108,14 @@ fn nested_scope_success_error_unwind_restores_values() {
         let error: Result<(), ()> =
             tree.with_style_overrides(child, override_width(30.0), |_| Err(()));
         assert!(error.is_err());
-        assert_eq!(
-            tree.style_view(child).size().width,
-            taffy::Dimension::length(20.0)
-        );
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(20.0));
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             tree.with_style_overrides(child, override_width(40.0), |_| {
                 panic!("nested cache scope")
             })
         }));
         assert!(panic.is_err());
-        assert_eq!(
-            tree.style_view(child).size().width,
-            taffy::Dimension::length(20.0)
-        );
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(20.0));
     });
     assert_eq!(tree.style_view(child).size(), original);
     assert!(tree.cache_get(id, &input).is_none());

@@ -3,6 +3,7 @@
 use crate::Document;
 use crate::layout::ifc::test_support::{Fixture, block_fixture};
 use raikiri_layout_geometry::Point;
+use raikiri_layout_style::values::Display;
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
@@ -145,13 +146,9 @@ pub(crate) fn bridged_style(
 
 /// The display of `node` once `cascade` is bridged into `doc`, in the terms
 /// layout dispatches on (`flow-root`, `grid`, ...).
-pub(crate) fn bridged_display(
-    doc: &mut Document,
-    cascade: &CascadeResult,
-    node: usize,
-) -> taffy::Display {
+pub(crate) fn bridged_display(doc: &mut Document, cascade: &CascadeResult, node: usize) -> Display {
     let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
-    session.nodes[node].taffy_display()
+    session.nodes[node].layout_display()
 }
 
 /// An 800x600 page with no margins.
