@@ -791,58 +791,147 @@ pub(super) fn compute_vertical_block(
 /// instead of filling its available space. Under a horizontal parent, or
 /// as the root, it is an orthogonal flow, whose auto inline size is
 /// fit-content (CSS Writing Modes 4 §7.3.1). Under a vertical block
-/// container it fills the parent's inline size like any block-level box.
+/// container it fills the parent's inline size like any block-level box,
+/// unless it is an atomic inline, which shrinks to fit the room its line
+/// offers (CSS 2.1 §10.3.9). An atomic inline measured under an intrinsic
+/// constraint has no such room: it takes the min-content or max-content
+/// size that is asked for.
 fn shrinks_to_fit(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> bool {
+    let under_vertical = tree
+        .taffy_parent_of(idx)
+        .is_some_and(|parent| is_vertical(tree, parent));
     inputs.sizing_mode == SizingMode::InherentSize
         && tree.physical_style(idx).size().height.is_auto()
-        && !tree
-            .taffy_parent_of(idx)
-            .is_some_and(|parent| is_vertical(tree, parent))
+        && (!under_vertical
+            || (is_atomic_inline(tree, idx)
+                && inputs.available_space.width.into_option().is_some()))
 }
 
-/// The fit-content inline size of the transposed container `node_id`:
-/// its max-content size, unless the available space is smaller, then that
-/// space, but never below its min-content size (CSS Sizing 3 §5.1).
+/// Whether `idx` is an atomic inline, whose line offers it the room net of
+/// its margins. Inline tables size their columns instead.
+fn is_atomic_inline(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    let display = tree.nodes[idx].display();
+    display.is_atomic_inline_level() && display != DisplayValue::InlineTable
+}
+
+/// The fit-content size of a box along its inline axis: the max-content
+/// size, unless the available space is smaller, then that space, but never
+/// below the min-content size (CSS Sizing 3 §5.1). `measure` gives the size
+/// the box takes under an intrinsic constraint, and `margin` is what the
+/// inline margins take of `available`.
+fn fit_content_size(
+    tree: &mut LayoutSession<'_>,
+    available: AvailableSpace,
+    margin: f32,
+    mut measure: impl FnMut(&mut LayoutSession<'_>, AvailableSpace) -> f32,
+) -> f32 {
+    let page_height = tree.fixed_page_area.unwrap_or_default().1;
+    let max_content = measure(tree, AvailableSpace::MaxContent);
+    // Indefinite available space falls back to the inline size of the
+    // initial containing block, the page area height (CSS Writing Modes 4
+    // §7.3.1).
+    let available = available
+        .into_option()
+        .or((page_height > 0.0).then_some(page_height));
+    let stretch = available.map_or(f32::INFINITY, |space| space - margin);
+    if max_content <= stretch.max(0.0) {
+        return max_content;
+    }
+    measure(tree, AvailableSpace::MinContent).max(stretch.max(0.0))
+}
+
+/// `inputs` for measuring the box along its inline axis under `available`.
+fn probe_inputs(inputs: LayoutInput, available: AvailableSpace) -> LayoutInput {
+    LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        axis: RequestedAxis::Horizontal,
+        available_space: Size {
+            width: available,
+            ..inputs.available_space
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+        ..inputs
+    }
+}
+
+/// What the inline margins of `idx` take of its available space. The
+/// transposed horizontal margins are the physical top and bottom. An atomic
+/// inline is offered the room that is left by them already, as long as the
+/// room is definite.
+fn inline_margin_off_available(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> f32 {
+    if is_atomic_inline(tree, idx) && inputs.available_space.width.into_option().is_some() {
+        return 0.0;
+    }
+    let margin = tree
+        .physical_style(idx)
+        .margin()
+        .map(|margin| margin.resolve_or_zero(inputs.parent_size.height, resolve_calc));
+    margin.top + margin.bottom
+}
+
+/// The fit-content inline size of the transposed container `node_id`; see
+/// [`fit_content_size`].
 fn fit_content_inline_size(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> f32 {
-    let page_height = tree.fixed_page_area.unwrap_or_default().1;
-    // The transposed horizontal margins are the physical top and bottom.
-    let margin = tree
-        .physical_style(usize::from(node_id))
-        .margin()
-        .map(|margin| margin.resolve_or_zero(inputs.parent_size.height, resolve_calc));
-    let mut measure = |available: AvailableSpace| {
-        let measure_inputs = LayoutInput {
-            run_mode: RunMode::ComputeSize,
-            axis: RequestedAxis::Horizontal,
-            available_space: Size {
-                width: available,
-                ..inputs.available_space
-            },
-            vertical_margins_are_collapsible: Line::FALSE,
-            ..inputs
-        };
-        compute_block_flow(tree, node_id, measure_inputs, None)
-            .size
-            .width
-    };
-    let max_content = measure(AvailableSpace::MaxContent);
-    // Indefinite available space falls back to the inline size of the
-    // initial containing block, the page area height (CSS Writing Modes 4
-    // §7.3.1).
-    let available = inputs
-        .available_space
-        .width
-        .into_option()
-        .or((page_height > 0.0).then_some(page_height));
-    let stretch = available.map_or(f32::INFINITY, |space| space - margin.top - margin.bottom);
-    if max_content <= stretch.max(0.0) {
-        return max_content;
+    let margin = inline_margin_off_available(tree, usize::from(node_id), &inputs);
+    fit_content_size(
+        tree,
+        inputs.available_space.width,
+        margin,
+        |tree, available| {
+            compute_block_flow(tree, node_id, probe_inputs(inputs, available), None)
+                .size
+                .width
+        },
+    )
+}
+
+/// `inputs` of the flex or grid container `node_id` on its own axes, with
+/// the fit-content inline size as the width when the container is an atomic
+/// inline whose inline size is `auto`. `algorithm` is the container's layout
+/// algorithm, which measures the sizes.
+pub(super) fn with_atomic_fit_content(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    algorithm: impl Fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.width.is_some()
+        || !is_atomic_inline(tree, idx)
+        || !shrinks_to_fit(tree, idx, &inputs)
+    {
+        return inputs;
     }
-    measure(AvailableSpace::MinContent).max(stretch.max(0.0))
+    let margin = inline_margin_off_available(tree, idx, &inputs);
+    let width = fit_content_size(
+        tree,
+        inputs.available_space.width,
+        margin,
+        |tree, available| {
+            algorithm(tree, node_id, probe_inputs(inputs, available))
+                .size
+                .width
+        },
+    );
+    LayoutInput {
+        known_dimensions: Size {
+            width: Some(width),
+            ..inputs.known_dimensions
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            ..inputs.known_dimensions_are_definite
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(width),
+            ..inputs.available_space
+        },
+        ..inputs
+    }
 }
 
 #[cfg(test)]
