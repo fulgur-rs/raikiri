@@ -34,9 +34,9 @@ use raikiri_style::{
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
-    AlignItems as TaffyAlignItems, BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension,
-    Direction as TaffyDirection, Display, ExpandedDimension, ExpandedLengthPercentage,
-    Float as TaffyFloat, LengthPercentage, LengthPercentageAuto, Overflow as TaffyOverflow,
+    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Direction as TaffyDirection,
+    Display, ExpandedDimension, ExpandedLengthPercentage, Float as TaffyFloat, LengthPercentage,
+    LengthPercentageAuto, Overflow as TaffyOverflow,
 };
 
 pub(crate) mod block_axis_style;

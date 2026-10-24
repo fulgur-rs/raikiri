@@ -4,8 +4,8 @@ use crate::layout::protocol::{
 };
 use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_style::values::{Dimension, LengthPercentage};
 use std::cell::Cell;
-use taffy::Dimension;
 
 type SetupInspector = fn(&LayoutSession<'_>, usize, usize);
 
@@ -404,17 +404,17 @@ fn border_scope_edge_overlap() {
         tree.with_overrides(vec![border_entry(key, 17.0)], |tree| {
             assert_eq!(
                 tree.style_view(child).border().left,
-                taffy::LengthPercentage::length(17.0)
+                LengthPercentage::length(17.0)
             );
             let result: Result<(), ()> =
                 tree.with_overrides(vec![border_entry(key, 9.0)], |tree| {
                     assert_eq!(
                         tree.style_view(child).padding().left,
-                        taffy::LengthPercentage::length(20.0)
+                        LengthPercentage::length(20.0)
                     );
                     assert_eq!(
                         tree.style_view(child).border().left,
-                        taffy::LengthPercentage::length(9.0)
+                        LengthPercentage::length(9.0)
                     );
                     Err(())
                 });
@@ -437,11 +437,11 @@ fn border_scope_edge_overlap() {
             assert_eq!(panic.downcast_ref::<&str>(), Some(&"border body failure"));
             assert_eq!(
                 tree.style_view(child).padding().top,
-                taffy::LengthPercentage::length(91.0)
+                LengthPercentage::length(91.0)
             );
             assert_eq!(
                 tree.style_view(child).border().left,
-                taffy::LengthPercentage::length(17.0)
+                LengthPercentage::length(17.0)
             );
         });
         assert_eq!(tree.style_view(child).border(), original);
@@ -449,7 +449,7 @@ fn border_scope_edge_overlap() {
     assert_eq!(tree.override_checkpoint(), 0);
     assert_eq!(
         tree.style_view(child).padding().left,
-        taffy::LengthPercentage::percent(0.1)
+        LengthPercentage::percent(0.1)
     );
 }
 
@@ -459,7 +459,7 @@ fn border_scope_partial_setup_restores_applied_fields() {
         if count == 2 {
             assert_eq!(
                 tree.style_view(idx).border().left,
-                taffy::LengthPercentage::length(17.0)
+                LengthPercentage::length(17.0)
             );
             assert_eq!(tree.style_view(idx).flex_shrink(), 0.0);
             panic!("border setup failure");
@@ -513,7 +513,7 @@ fn border_scope_legacy_session_reaches_synthetic_and_wrapperless_keys() {
         for idx in indices {
             assert_eq!(
                 tree.style_view(idx).border().left,
-                taffy::LengthPercentage::length(17.0)
+                LengthPercentage::length(17.0)
             );
             assert_eq!(tree.style_view(idx).flex_shrink(), 0.0);
         }
@@ -521,7 +521,7 @@ fn border_scope_legacy_session_reaches_synthetic_and_wrapperless_keys() {
     for idx in indices {
         assert_eq!(
             tree.style_view(idx).border().left,
-            taffy::LengthPercentage::length(0.0)
+            LengthPercentage::length(0.0)
         );
         assert_eq!(tree.style_view(idx).flex_shrink(), 1.0);
     }
@@ -551,7 +551,7 @@ fn border_scope_retains_calc_until_successful_rebinding() {
     tree.with_overrides(vec![(key, value)], |tree| {
         assert_eq!(
             tree.style_view(child).border().left,
-            taffy::LengthPercentage::calc(pointer)
+            LengthPercentage::calc(pointer)
         );
         let owner = weak.upgrade().unwrap();
         assert!(owner.non_negative());
@@ -561,7 +561,7 @@ fn border_scope_retains_calc_until_successful_rebinding() {
     assert!(weak.upgrade().is_some());
     assert_eq!(
         tree.style_view(child).border().left,
-        taffy::LengthPercentage::length(0.0)
+        LengthPercentage::length(0.0)
     );
     drop(tree);
     assert!(weak.upgrade().is_some());

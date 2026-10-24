@@ -1,7 +1,7 @@
 //! Own the inputs captured at a block frame's geometry boundary.
 
 use super::*;
-use crate::layout::taffy_adapter::ResolveOrZero;
+use raikiri_layout_style::values::{ResolveOrZero, StyleRect};
 use raikiri_layout_style::{LengthProperty, PercentBasis};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
@@ -56,14 +56,8 @@ impl FrozenViewInput {
         };
         // Capture already-resolved physical edges before changing the output geometry.
         if input.context.percent_basis != PercentBasis::Taffy {
-            let padding = input
-                .view()
-                .padding()
-                .resolve_or_zero(None, crate::layout::dispatch::resolve_calc);
-            let border = input
-                .view()
-                .border()
-                .resolve_or_zero(None, crate::layout::dispatch::resolve_calc);
+            let padding = input.view().padding().resolve_or_zero(None);
+            let border = input.view().border().resolve_or_zero(None);
             for (properties, edges) in [
                 (
                     [
@@ -111,13 +105,13 @@ impl FrozenViewInput {
         )
     }
     pub(crate) fn resolve_padding(&mut self, basis: Option<f32>) {
-        // The padding is stored as the style view reads it, in the library's
-        // `Rect`, so it is resolved with the library's own trait.
-        let padding = taffy::ResolveOrZero::resolve_or_zero(
-            self.view().padding(),
-            basis,
-            crate::layout::dispatch::resolve_calc,
-        );
-        self.context.resolved_padding = Some(padding);
+        // The padding is stored in the shape the style view reads it in.
+        let padding = self.view().padding().resolve_or_zero(basis);
+        self.context.resolved_padding = Some(StyleRect {
+            left: padding.left,
+            right: padding.right,
+            top: padding.top,
+            bottom: padding.bottom,
+        });
     }
 }

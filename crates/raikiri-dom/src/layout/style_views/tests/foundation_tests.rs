@@ -1,6 +1,9 @@
 use super::*;
 use crate::layout::box_style_data::LayoutBase;
 use crate::node::arena::BoxKey;
+use raikiri_layout_style::values::{
+    BoxGenerationMode, Dimension, Direction as LayoutDirection, Display, LengthExt,
+};
 
 #[test]
 fn initial_explicit_preparation_fills_non_element_foundations_without_a_bridge() {
@@ -23,7 +26,7 @@ fn initial_explicit_preparation_fills_non_element_foundations_without_a_bridge()
     }
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
     assert_eq!(cascade.computed.len(), sources);
 }
@@ -311,7 +314,7 @@ fn mismatched_recipe_provenance_cannot_publish_ready_foundations() {
             session.prepare_style_views();
         }
         let facts = recipes::BoxFacts {
-            direction: taffy::Direction::Ltr,
+            direction: LayoutDirection::Ltr,
             metadata: Default::default(),
         };
         match case {
@@ -436,11 +439,10 @@ fn same_generation_and_address_rebind_changed_scalar_and_calc_values() {
         session.prepare_style_views();
         let width = session.style_view(child).size().width;
         match second {
-            L::Px(value) => assert_eq!(width, taffy::Dimension::length(value)),
-            L::Calc(value) => assert_eq!(
-                crate::layout::dispatch::resolve_calc(width.into_raw().calc_value(), 100.0),
-                value.px + value.percent
-            ),
+            L::Px(value) => assert_eq!(width, Dimension::length(value)),
+            L::Calc(value) => {
+                assert_eq!(width.resolve(Some(100.0)), Some(value.px + value.percent))
+            }
             _ => unreachable!(),
         }
     }
@@ -458,7 +460,7 @@ fn new_session_discards_previous_pass_entries_before_rebinding() {
         );
         assert_eq!(
             session.style_view(child).size().width,
-            taffy::Dimension::length(99.0)
+            Dimension::length(99.0)
         );
     }
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
@@ -473,7 +475,7 @@ fn new_session_discards_previous_pass_entries_before_rebinding() {
     );
     assert_eq!(
         session.style_view(child).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
 }
 
@@ -554,7 +556,7 @@ fn source_wrapper_rebinds_when_the_same_key_becomes_a_spanner_recipe() {
     assert_neutral_getters(
         session.style_view(wrapper),
         &crate::LayoutStyle {
-            display: taffy::Display::Block,
+            display: Display::Block,
             ..crate::LayoutStyle::default()
         },
     );
@@ -575,13 +577,8 @@ fn assert_fresh_copy_rebridges(
     let record = session.box_style_data.get(BoxKey::Source(child)).unwrap();
     assert!(!std::sync::Arc::ptr_eq(&record.prepared, old_data));
     assert!(record.pass.is_empty());
-    let pointer = session
-        .style_view(child)
-        .size()
-        .width
-        .into_raw()
-        .calc_value();
-    assert_eq!(crate::layout::dispatch::resolve_calc(pointer, 100.0), 60.0);
+    let width = session.style_view(child).size().width;
+    assert_eq!(width.resolve(Some(100.0)), Some(60.0));
 }
 
 #[test]
@@ -646,7 +643,7 @@ fn invalidated_box_identity_publishes_before_parent_cache_lookup() {
         );
         assert_eq!(
             session.style_view(child).box_generation_mode(),
-            taffy::BoxGenerationMode::None
+            BoxGenerationMode::None
         );
     });
 }
@@ -690,11 +687,6 @@ fn failed_rebinding_keeps_replaced_prepared_data_until_full_recovery() {
     session.prepare_style_views();
     assert!(session.box_style_data.is_ready());
     assert!(old.upgrade().is_none());
-    let pointer = session
-        .style_view(child)
-        .size()
-        .width
-        .into_raw()
-        .calc_value();
-    assert_eq!(crate::layout::dispatch::resolve_calc(pointer, 100.0), 45.0);
+    let width = session.style_view(child).size().width;
+    assert_eq!(width.resolve(Some(100.0)), Some(45.0));
 }

@@ -2,6 +2,7 @@ use super::super::bridge::*;
 use super::*;
 use raikiri_layout_geometry::Size;
 use raikiri_layout_style::StyleFlags;
+use raikiri_layout_style::values::{ContainingBlockClaims, Display};
 use raikiri_style::property::DisplayValue;
 use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
 
@@ -21,10 +22,10 @@ pub(super) fn prepare_metadata(
     if source && !neutral_contents && super::super::bridge::uses_vertical_axes(cascade, idx) {
         flags = flags.union(StyleFlags::SOURCE_VERTICAL_DIRECTION);
     }
-    if !neutral_contents && node.taffy_display() == taffy::Display::Block {
+    if !neutral_contents && node.layout_display() == Display::Block {
         flags = flags.union(StyleFlags::BLOCK);
     }
-    if node.taffy_display() == taffy::Display::None {
+    if node.layout_display() == Display::None {
         flags = flags.union(StyleFlags::HIDDEN);
     }
     if source
@@ -71,8 +72,8 @@ pub(in crate::layout) fn node_metadata(
     StyleMetadata {
         flags,
         used_writing_mode: node.used_writing_mode,
-        claims: Some(taffy::ContainingBlockClaims {
-            absolute: node.claims_absolute_oof || node.taffy_position().is_positioned(),
+        claims: Some(ContainingBlockClaims {
+            absolute: node.claims_absolute_oof || node.layout_position().is_positioned(),
             fixed: node.claims_fixed_oof,
         }),
     }

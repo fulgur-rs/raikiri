@@ -4,8 +4,10 @@ use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::node::{FormattingContext, Node};
 use clamp_warnings::{report_non_finite_rest, report_non_finite_sizes};
-use raikiri_layout_style::values::StyleRect;
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{
+    AlignItems, Dimension, Direction as LayoutDirection, Display, LengthPercentage, StyleRect,
+    StyleSize,
+};
 use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 use settled::Settled;
@@ -461,7 +463,7 @@ fn apply_computed_to_style_in_session_inner(
         if doc.nodes[idx].kind() != NodeKind::Element {
             let recipe = super::box_style_data::recipes::neutral_source(
                 super::box_style_data::recipes::BoxFacts {
-                    direction: taffy::Direction::Ltr,
+                    direction: LayoutDirection::Ltr,
                     metadata: super::style_views::metadata::node_metadata(
                         &doc.nodes[idx],
                         raikiri_layout_style::StyleFlags::EMPTY,
@@ -527,20 +529,18 @@ fn apply_computed_to_style_in_session_inner(
             idx,
             &settled_styles,
         ) {
-            settled_styles[idx].justify_self = Some(TaffyAlignItems::START);
+            settled_styles[idx].justify_self = Some(AlignItems::START);
             doc.record_pass_override(
                 idx,
-                raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(
-                    TaffyAlignItems::START,
-                )),
+                raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(AlignItems::START)),
             );
         }
         if settled::is_stretched_by_keyword_width(doc, cascade, idx, cv, &settled_styles) {
-            settled_styles[idx].align_self = Some(TaffyAlignItems::FLEX_START);
+            settled_styles[idx].align_self = Some(AlignItems::FLEX_START);
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(
-                    TaffyAlignItems::FLEX_START,
+                    AlignItems::FLEX_START,
                 )),
             );
         }
@@ -563,7 +563,7 @@ fn apply_computed_to_style_in_session_inner(
         for node in doc.nodes.layout_nodes_mut() {
             if node.kind() == NodeKind::Element {
                 node.formatting_context =
-                    FormattingContext::from_taffy_display(node.taffy_display());
+                    FormattingContext::from_taffy_display(node.layout_display());
             }
         }
         return Err(error);
@@ -597,7 +597,7 @@ fn apply_computed_to_style_in_session_inner(
 /// multicol container and a bare text root. Taffy has no table or multicol
 /// display, so both are block containers to it.
 fn classify_formatting_context(node: &Node) -> FormattingContext {
-    match node.taffy_display() {
+    match node.layout_display() {
         Display::None => FormattingContext::None,
         _ if node.flags.contains(NodeFlags::IS_IFC_ROOT) => FormattingContext::Inline,
         _ if node.kind() != NodeKind::Element => FormattingContext::Text,
@@ -691,7 +691,7 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
         || cv.mix_blend_mode != initial.mix_blend_mode
 }
 
-/// [`Direction`] → [`taffy::Direction`] mapping.
+/// [`Direction`] → [`LayoutDirection`] mapping.
 ///
 /// Taffy uses this field for horizontal block alignment, table/grid ordering,
 /// and overflow direction.  Text direction is mapped separately, into the
@@ -705,7 +705,7 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
 /// `sideways-lr` runs its inline axis from bottom to top (CSS Writing Modes 4
 /// §3.1), the reverse of `vertical-lr`, whose axes the box lays out on; its
 /// direction is flipped so that the inline start stays at the bottom.
-pub(super) fn direction_for_axes(cv: &ComputedValues, vertical_axes: bool) -> TaffyDirection {
+pub(super) fn direction_for_axes(cv: &ComputedValues, vertical_axes: bool) -> LayoutDirection {
     let upright = vertical_axes
         && cv.text_orientation == TextOrientation::Upright
         && matches!(
@@ -715,9 +715,9 @@ pub(super) fn direction_for_axes(cv: &ComputedValues, vertical_axes: bool) -> Ta
     let rtl = matches!(cv.direction, Direction::Rtl) && !upright;
     let bottom_to_top = vertical_axes && cv.cssom_writing_mode == WritingMode::SidewaysLr;
     if rtl != bottom_to_top {
-        TaffyDirection::Rtl
+        LayoutDirection::Rtl
     } else {
-        TaffyDirection::Ltr
+        LayoutDirection::Ltr
     }
 }
 
@@ -1121,10 +1121,10 @@ pub(super) fn physical_min_height(
     }
 }
 
-/// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by
+/// [`AlignSelfValue`] → `Option<AlignItems>` mapping — shared by
 /// `align-self` and `justify-self` (taffy's `AlignSelf` is a type alias for
 /// `AlignItems`).
-fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<TaffyAlignItems> {
+fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<AlignItems> {
     match v {
         AlignSelfValue::Auto => None,
         // Unlike `auto`, `normal` does not fall back to the parent's
@@ -1133,7 +1133,7 @@ fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<TaffyAlignItems>
         // layout, this value behaves as stretch"; grid is covered too).
         // Preserve Taffy's explicit NORMAL value. None inherits the
         // container property and therefore represents CSS auto instead.
-        AlignSelfValue::Value(SelfAlignmentValue::Normal) => Some(TaffyAlignItems::NORMAL),
+        AlignSelfValue::Value(SelfAlignmentValue::Normal) => Some(AlignItems::NORMAL),
         AlignSelfValue::Value(v) => self_alignment_to_taffy(v),
         // cov:ignore: unreachable while AlignSelfValue is Auto|Value(_)
         // only; required for its #[non_exhaustive] contract
@@ -1146,17 +1146,17 @@ fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<TaffyAlignItems>
 /// shared by the `align-items` mapping and the `AlignSelfValue::Value` branch
 /// of the `align-self` one: non-`auto` values of `align-self` use the
 /// `align-items` keyword set (see [`AlignSelfValue`]'s docs).
-fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
+fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<AlignItems> {
     match v {
         SelfAlignmentValue::Normal => None,
-        SelfAlignmentValue::Stretch => Some(TaffyAlignItems::STRETCH),
-        SelfAlignmentValue::Center => Some(TaffyAlignItems::CENTER),
-        SelfAlignmentValue::Start => Some(TaffyAlignItems::START),
-        SelfAlignmentValue::End => Some(TaffyAlignItems::END),
-        SelfAlignmentValue::FlexStart => Some(TaffyAlignItems::FLEX_START),
-        SelfAlignmentValue::FlexEnd => Some(TaffyAlignItems::FLEX_END),
+        SelfAlignmentValue::Stretch => Some(AlignItems::STRETCH),
+        SelfAlignmentValue::Center => Some(AlignItems::CENTER),
+        SelfAlignmentValue::Start => Some(AlignItems::START),
+        SelfAlignmentValue::End => Some(AlignItems::END),
+        SelfAlignmentValue::FlexStart => Some(AlignItems::FLEX_START),
+        SelfAlignmentValue::FlexEnd => Some(AlignItems::FLEX_END),
         SelfAlignmentValue::Baseline | SelfAlignmentValue::LastBaseline => {
-            Some(TaffyAlignItems::BASELINE)
+            Some(AlignItems::BASELINE)
         }
         // cov:ignore: unreachable while SelfAlignmentValue is the 9
         // variants matched above only; required for its #[non_exhaustive]

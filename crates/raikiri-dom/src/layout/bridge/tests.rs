@@ -1,7 +1,10 @@
 use super::*;
 use crate::layout::test_support::{bridged_display, bridged_style};
-use raikiri_layout_style::values::StyleRect;
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{
+    AlignItems, AlignItemsKeyword, AlignmentSafety, BoxSizing, Dimension,
+    Direction as LayoutDirection, LengthExt, LengthPercentage, LengthPercentageAuto, StyleRect,
+    StyleSize,
+};
 
 #[test]
 fn apply_computed_to_style_bridges_display_to_taffy() {
@@ -72,34 +75,27 @@ fn calc_handles_stay_alive_across_clone_and_relayout() {
     let mut clone = doc.clone();
     let clone_rules = build_rule_tree(&clone);
     let clone_cascade = cascade(&clone, &clone_rules).expect("clone cascade Ok");
-    let clone_calc = bridged_style(&mut clone, &clone_cascade, child)
-        .size
-        .width
-        .into_raw()
-        .calc_value();
+    let clone_width = bridged_style(&mut clone, &clone_cascade, child).size.width;
 
     crate::layout::layout_single_page(&mut doc, &cr, page).expect("original relayout Ok");
     assert_eq!(
-        crate::layout::dispatch::resolve_calc(clone_calc, 100.0),
-        60.0,
+        clone_width.resolve(Some(100.0)),
+        Some(60.0),
         "clone retains its old calc payload after the original relayout"
     );
     drop(doc);
     assert_eq!(
-        crate::layout::dispatch::resolve_calc(clone_calc, 100.0),
-        60.0,
+        clone_width.resolve(Some(100.0)),
+        Some(60.0),
         "clone owns the calc payload after the original document is dropped"
     );
 
     crate::layout::layout_single_page(&mut clone, &clone_cascade, page).expect("clone relayout Ok");
 
     let style = bridged_style(&mut clone, &clone_cascade, child);
-    let width = style.size.width.into_raw();
-    assert!(width.has_calc());
-    assert_eq!(
-        crate::layout::dispatch::resolve_calc(width.calc_value(), 100.0),
-        60.0
-    );
+    let width = style.size.width;
+    assert!(width.is_calc());
+    assert_eq!(width.resolve(Some(100.0)), Some(60.0));
     assert!(clone.nodes[child].layout.size.width.is_finite());
 }
 
@@ -198,7 +194,7 @@ fn apply_computed_to_style_bridges_direction_to_taffy() {
 
     assert_eq!(
         bridged_style(&mut doc, &cr, body).direction,
-        taffy::Direction::Rtl
+        LayoutDirection::Rtl
     );
 }
 
@@ -231,25 +227,22 @@ fn apply_computed_to_style_preserves_authored_list_item_padding() {
         bridged_style(&mut doc, &cr, inside)
             .padding
             .left
-            .into_raw()
-            .value(),
-        0.0
+            .resolve(None),
+        Some(0.0)
     );
     assert_eq!(
         bridged_style(&mut doc, &cr, outside)
             .padding
             .left
-            .into_raw()
-            .value(),
-        0.0
+            .resolve(None),
+        Some(0.0)
     );
     assert_eq!(
         bridged_style(&mut doc, &cr, explicit_padding)
             .padding
             .left
-            .into_raw()
-            .value(),
-        5.0
+            .resolve(None),
+        Some(5.0)
     );
 }
 
@@ -268,7 +261,6 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
     // calls apply_computed_to_style, then asserts body.style.margin.
     // The inline style also checks raikiri-style's shorthand and longhand margin parsing.
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::LengthPercentageAuto;
 
     fn margin_for(inline: &str) -> StyleRect<LengthPercentageAuto> {
         let mut doc = Document::new();
@@ -606,12 +598,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     );
 
     // Case 3: calc() remains a live Taffy handle instead of becoming zero.
-    assert!(
-        max_for(Some("max-width: calc(100px + 1%)"))
-            .width
-            .into_raw()
-            .is_plain_calc()
-    );
+    assert!(max_for(Some("max-width: calc(100px + 1%)")).width.is_calc());
 
     // Case 3b: an inset calc() is preserved the same way.
     let mut doc = Document::new();
@@ -625,20 +612,8 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    assert!(
-        bridged_style(&mut doc, &cr, p)
-            .inset
-            .left
-            .into_raw()
-            .is_plain_calc()
-    );
-    assert!(
-        bridged_style(&mut doc, &cr, p)
-            .inset
-            .top
-            .into_raw()
-            .is_plain_calc()
-    );
+    assert!(bridged_style(&mut doc, &cr, p).inset.left.is_calc());
+    assert!(bridged_style(&mut doc, &cr, p).inset.top.is_calc());
     assert_eq!(
         bridged_style(&mut doc, &cr, p).inset.right,
         LengthPercentageAuto::auto()
@@ -691,7 +666,6 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
     // `border-top: ...` is not yet supported by the parser;
     // see computed.rs lines 228–229.
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::LengthPercentage;
 
     fn border_for(inline: &str) -> StyleRect<LengthPercentage> {
         let mut doc = Document::new();
@@ -815,7 +789,6 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
 #[test]
 fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::LengthPercentage;
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", None::<&str>);
@@ -852,7 +825,6 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     // This test catches regressions that collapse values to 0.0; all
     // expected values are nonzero and derived from font-size.
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{Dimension, LengthPercentage, LengthPercentageAuto};
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("font-size: 20px"));
@@ -916,7 +888,7 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
     // propagates it to taffy, correcting taffy's default as a side effect.
     use raikiri_style::{build_rule_tree, cascade};
 
-    fn box_sizing_for(inline: Option<&str>) -> TaffyBoxSizing {
+    fn box_sizing_for(inline: Option<&str>) -> BoxSizing {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", inline);
@@ -929,18 +901,18 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
     // Case 1: border-box → taffy::BoxSizing::BorderBox
     assert_eq!(
         box_sizing_for(Some("box-sizing: border-box")),
-        TaffyBoxSizing::BorderBox
+        BoxSizing::BorderBox
     );
 
     // Case 2: content-box (explicit) → taffy::BoxSizing::ContentBox
     assert_eq!(
         box_sizing_for(Some("box-sizing: content-box")),
-        TaffyBoxSizing::ContentBox
+        BoxSizing::ContentBox
     );
 
     // Case 3: unspecified → raikiri-style initial (ContentBox) → taffy ContentBox
     // (overwrites taffy's default BorderBox; pins the spec correction)
-    assert_eq!(box_sizing_for(None), TaffyBoxSizing::ContentBox);
+    assert_eq!(box_sizing_for(None), BoxSizing::ContentBox);
 }
 
 #[test]
@@ -951,7 +923,7 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
     // conic reference quadrants (auto width with 150px right border) to
     // 200 rather than 350. Fixed widths keep content-box.
     use raikiri_style::{build_rule_tree, cascade};
-    fn box_sizing_for_width_and_borders(width: Option<&str>, borders: &str) -> TaffyBoxSizing {
+    fn box_sizing_for_width_and_borders(width: Option<&str>, borders: &str) -> BoxSizing {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let style = match width {
@@ -966,19 +938,19 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
     }
     assert_eq!(
         box_sizing_for_width_and_borders(None, "border-right: 150px solid red"),
-        TaffyBoxSizing::BorderBox
+        BoxSizing::BorderBox
     );
     assert_eq!(
         box_sizing_for_width_and_borders(Some("width: 200px"), "border-right: 150px solid red"),
-        TaffyBoxSizing::ContentBox
+        BoxSizing::ContentBox
     );
     assert_eq!(
         box_sizing_for_width_and_borders(None, "border-left: 50px solid black"),
-        TaffyBoxSizing::BorderBox
+        BoxSizing::BorderBox
     );
     assert_eq!(
         box_sizing_for_width_and_borders(None, "border-right: 150px solid red; padding-bottom: 0%"),
-        TaffyBoxSizing::BorderBox
+        BoxSizing::BorderBox
     );
     // Exercise the single-side shorthand CSS-wide and deferred paths so
     // rule expansion for the new left shorthand stays covered.
@@ -1103,23 +1075,14 @@ fn self_alignment_to_taffy_maps_every_keyword() {
     // of `align-self` — check every keyword→taffy constant mapping directly.
     for (value, expected) in [
         (SelfAlignmentValue::Normal, None),
-        (SelfAlignmentValue::Stretch, Some(TaffyAlignItems::STRETCH)),
-        (SelfAlignmentValue::Center, Some(TaffyAlignItems::CENTER)),
-        (SelfAlignmentValue::Start, Some(TaffyAlignItems::START)),
-        (SelfAlignmentValue::End, Some(TaffyAlignItems::END)),
-        (
-            SelfAlignmentValue::FlexStart,
-            Some(TaffyAlignItems::FLEX_START),
-        ),
-        (SelfAlignmentValue::FlexEnd, Some(TaffyAlignItems::FLEX_END)),
-        (
-            SelfAlignmentValue::Baseline,
-            Some(TaffyAlignItems::BASELINE),
-        ),
-        (
-            SelfAlignmentValue::LastBaseline,
-            Some(TaffyAlignItems::BASELINE),
-        ),
+        (SelfAlignmentValue::Stretch, Some(AlignItems::STRETCH)),
+        (SelfAlignmentValue::Center, Some(AlignItems::CENTER)),
+        (SelfAlignmentValue::Start, Some(AlignItems::START)),
+        (SelfAlignmentValue::End, Some(AlignItems::END)),
+        (SelfAlignmentValue::FlexStart, Some(AlignItems::FLEX_START)),
+        (SelfAlignmentValue::FlexEnd, Some(AlignItems::FLEX_END)),
+        (SelfAlignmentValue::Baseline, Some(AlignItems::BASELINE)),
+        (SelfAlignmentValue::LastBaseline, Some(AlignItems::BASELINE)),
     ] {
         assert_eq!(self_alignment_to_taffy(value), expected, "value: {value:?}");
     }
@@ -1144,7 +1107,7 @@ fn settled_alignment_align_self_value_maps_through_self_alignment() {
     let mut cv = ComputedValues::initial();
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
     let style = Settled::of(&cv);
-    assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
+    assert_eq!(style.align_self, Some(AlignItems::CENTER));
 }
 
 #[test]
@@ -1153,9 +1116,9 @@ fn settled_alignment_last_baseline_falls_back_to_end_for_abspos() {
     // `last baseline` falls back to `safe self-end` on both axes. A box in the
     // flow keeps aligning to the baseline.
     for (position, expected) in [
-        (PositionValue::Absolute, TaffyAlignItems::SAFE_SELF_END),
-        (PositionValue::Fixed, TaffyAlignItems::SAFE_SELF_END),
-        (PositionValue::Static, TaffyAlignItems::BASELINE),
+        (PositionValue::Absolute, AlignItems::SAFE_SELF_END),
+        (PositionValue::Fixed, AlignItems::SAFE_SELF_END),
+        (PositionValue::Static, AlignItems::BASELINE),
     ] {
         let label = format!("{position:?}");
         let mut cv = ComputedValues::initial();
@@ -1173,14 +1136,14 @@ fn settled_alignment_baseline_falls_back_to_safe_start_for_abspos() {
     // An absolutely positioned box takes no part in baseline alignment, so
     // `baseline` keeps taffy's start placement with `safe` overflow alignment
     // on both axes. A box in the flow keeps aligning to the baseline.
-    let safe_baseline = TaffyAlignItems {
-        keyword: taffy::AlignItemsKeyword::Baseline,
-        safety: taffy::AlignmentSafety::Safe,
+    let safe_baseline = AlignItems {
+        keyword: AlignItemsKeyword::Baseline,
+        safety: AlignmentSafety::Safe,
     };
     for (position, expected) in [
         (PositionValue::Absolute, safe_baseline),
         (PositionValue::Fixed, safe_baseline),
-        (PositionValue::Static, TaffyAlignItems::BASELINE),
+        (PositionValue::Static, AlignItems::BASELINE),
     ] {
         let label = format!("{position:?}");
         let mut cv = ComputedValues::initial();
@@ -1199,11 +1162,8 @@ fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
     parent.align_items = SelfAlignmentValue::LastBaseline;
     parent.justify_items = SelfAlignmentValue::LastBaseline;
     for (position, expected) in [
-        (
-            PositionValue::Absolute,
-            Some(TaffyAlignItems::SAFE_SELF_END),
-        ),
-        (PositionValue::Fixed, Some(TaffyAlignItems::SAFE_SELF_END)),
+        (PositionValue::Absolute, Some(AlignItems::SAFE_SELF_END)),
+        (PositionValue::Fixed, Some(AlignItems::SAFE_SELF_END)),
         (PositionValue::Static, None),
     ] {
         let label = format!("{position:?}");
@@ -1235,7 +1195,7 @@ fn abspos_auto_alignment_takes_the_containers_last_baseline_only_for_the_static_
     cv.top = ComputedLengthPercentageOrAuto::Px(0.0);
     let style = settled_alignments(&cv, &parent);
     assert_eq!(style.align_self, None);
-    assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
+    assert_eq!(style.justify_self, Some(AlignItems::SAFE_SELF_END));
 }
 
 #[test]
@@ -1246,7 +1206,7 @@ fn abspos_own_alignment_overrides_the_containers_last_baseline() {
     cv.position = PositionValue::Absolute;
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
     let style = settled_alignments(&cv, &parent);
-    assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
+    assert_eq!(style.align_self, Some(AlignItems::CENTER));
     assert_eq!(style.justify_self, None);
 }
 
@@ -1271,8 +1231,8 @@ fn abspos_takes_last_baseline_from_a_display_contents_document_element() {
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
     let style = &bridged_style(&mut doc, &cr, child);
-    assert_eq!(style.align_self, Some(TaffyAlignItems::SAFE_SELF_END));
-    assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
+    assert_eq!(style.align_self, Some(AlignItems::SAFE_SELF_END));
+    assert_eq!(style.justify_self, Some(AlignItems::SAFE_SELF_END));
 }
 
 #[test]
@@ -1289,7 +1249,7 @@ fn settled_alignment_align_self_normal_preserves_normal_instead_of_auto() {
     let mut cv = ComputedValues::initial();
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
     let style = Settled::of(&cv);
-    assert_eq!(style.align_self, Some(TaffyAlignItems::NORMAL));
+    assert_eq!(style.align_self, Some(AlignItems::NORMAL));
 }
 
 #[test]
@@ -1636,7 +1596,7 @@ fn settled_justify_self_keeps_end_and_normal() {
     let mut cv = ComputedValues::initial();
     cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::End);
     let style = Settled::of(&cv);
-    assert_eq!(style.justify_self, Some(TaffyAlignItems::END));
+    assert_eq!(style.justify_self, Some(AlignItems::END));
 
     // `justify-self: normal` behaves as `stretch` (CSS Box Alignment 3
     // §8.3), not as `None` (which would mean "inherit justify-items")
@@ -1645,7 +1605,7 @@ fn settled_justify_self_keeps_end_and_normal() {
     let mut cv = ComputedValues::initial();
     cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
     let style = Settled::of(&cv);
-    assert_eq!(style.justify_self, Some(TaffyAlignItems::NORMAL));
+    assert_eq!(style.justify_self, Some(AlignItems::NORMAL));
 }
 
 #[test]
@@ -2091,7 +2051,7 @@ fn a_calc_size_is_handed_to_taffy_as_a_calc_length() {
         &mut diag,
     );
 
-    assert!(size.into_raw().is_plain_calc());
+    assert!(size.is_calc());
     assert_eq!(calc_values.len(), 1);
     assert!(diag.is_empty());
 }
@@ -2380,10 +2340,7 @@ fn a_vertical_box_takes_its_inline_size_keyword_from_the_height() {
 
 /// The Taffy `align-self` bridged for each `(parent css, child tag, child
 /// css)`, in a child of a `display: contents` wrapper when `wrapped`.
-fn bridged_align_selves(
-    cases: &[(&str, &str, &str)],
-    wrapped: bool,
-) -> Vec<Option<taffy::AlignItems>> {
+fn bridged_align_selves(cases: &[(&str, &str, &str)], wrapped: bool) -> Vec<Option<AlignItems>> {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -2411,7 +2368,7 @@ fn bridged_align_selves(
 
 #[test]
 fn an_item_of_a_column_flex_container_with_a_keyword_width_is_aligned_at_the_start() {
-    let start = Some(taffy::AlignItems::FLEX_START);
+    let start = Some(AlignItems::FLEX_START);
     let column = "display:flex;flex-direction:column";
     for keyword in [
         "min-content",
@@ -2446,8 +2403,6 @@ fn an_item_of_a_column_flex_container_with_a_keyword_width_is_aligned_at_the_sta
 
 #[test]
 fn an_item_that_is_not_stretched_keeps_its_alignment() {
-    use taffy::AlignItems;
-
     let column = "display:flex;flex-direction:column";
     let keyword = "display:block;width:max-content";
     let cases = [
@@ -2493,8 +2448,8 @@ fn an_item_that_is_not_stretched_keeps_its_alignment() {
 fn an_item_with_a_keyword_height_is_aligned_at_the_start_of_the_block_axis() {
     // The cascade computes the keyword to `auto`, which a stretch would fill;
     // only the mark it leaves tells the item from one with an `auto` height.
-    let start = Some(taffy::AlignItems::START);
-    let flex_start = Some(taffy::AlignItems::FLEX_START);
+    let start = Some(AlignItems::START);
+    let flex_start = Some(AlignItems::FLEX_START);
     for keyword in ["min-content", "max-content", "fit-content"] {
         let item = format!("display:block;height:{keyword}");
         for wrapped in [false, true] {
@@ -2531,8 +2486,6 @@ fn an_item_with_a_keyword_height_is_aligned_at_the_start_of_the_block_axis() {
 
 #[test]
 fn an_item_without_a_stretched_keyword_height_keeps_its_alignment() {
-    use taffy::AlignItems;
-
     let keyword = "display:block;height:max-content";
     let cases = [
         // An alignment of its own, or the container's, that is no stretch.
@@ -2626,8 +2579,8 @@ fn an_item_without_a_stretched_keyword_height_keeps_its_alignment() {
 fn an_item_inherits_the_keyword_height_of_its_container() {
     // `height: inherit` takes the keyword of the parent although the cascade
     // computes it to `auto`, so the item is held at the start like the parent.
-    let start = Some(taffy::AlignItems::START);
-    let flex_start = Some(taffy::AlignItems::FLEX_START);
+    let start = Some(AlignItems::START);
+    let flex_start = Some(AlignItems::FLEX_START);
     let inherit = "display:block;height:inherit";
     assert_eq!(
         bridged_align_selves(

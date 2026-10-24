@@ -1,6 +1,8 @@
 use super::*;
 use crate::LayoutStyle;
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{
+    BoxGenerationMode, Dimension, Direction as LayoutDirection, Display, StyleSize,
+};
 use raikiri_layout_style::{
     LayoutStyleView, PreparedStyle, StyleFlags, StyleMetadata, TaffyStyle, ViewContext,
 };
@@ -13,7 +15,7 @@ use taffy::{
     GridItemStyle as GI,
 };
 
-fn facts(direction: taffy::Direction, block: bool) -> BoxFacts {
+fn facts(direction: LayoutDirection, block: bool) -> BoxFacts {
     BoxFacts {
         direction,
         metadata: StyleMetadata {
@@ -65,14 +67,14 @@ fn assert_legacy(recipe: &Recipe, legacy: &LayoutStyle) {
 
 #[test]
 fn icb_recipe_keeps_physical_dimensions_and_independent_direction() {
-    for direction in [taffy::Direction::Ltr, taffy::Direction::Rtl] {
+    for direction in [LayoutDirection::Ltr, LayoutDirection::Rtl] {
         let recipe = initial_containing_block(80.0, 120.0, facts(direction, true));
         let legacy = LayoutStyle {
-            display: taffy::Display::Block,
+            display: Display::Block,
             direction,
             size: StyleSize {
-                width: taffy::Dimension::length(80.0),
-                height: taffy::Dimension::length(120.0),
+                width: Dimension::length(80.0),
+                height: Dimension::length(120.0),
             },
             ..LayoutStyle::default()
         };
@@ -92,13 +94,13 @@ fn icb_recipe_keeps_physical_dimensions_and_independent_direction() {
 
 #[test]
 fn contents_and_spanner_have_distinct_origins_with_neutral_layout_values() {
-    for direction in [taffy::Direction::Ltr, taffy::Direction::Rtl] {
+    for direction in [LayoutDirection::Ltr, LayoutDirection::Rtl] {
         let contents = contents(facts(direction, false));
         let spanner = spanner(facts(direction, true));
         assert_eq!(contents.kind, RecipeKind::Contents);
         assert_eq!(spanner.kind, RecipeKind::Spanner);
         let legacy = LayoutStyle {
-            display: taffy::Display::Block,
+            display: Display::Block,
             direction,
             ..LayoutStyle::default()
         };
@@ -119,7 +121,7 @@ fn contents_and_spanner_have_distinct_origins_with_neutral_layout_values() {
 fn anonymous_recipes_inherit_only_the_explicit_owner_facts() {
     let inherited = TableFacts {
         owner: 0,
-        box_facts: facts(taffy::Direction::Rtl, true),
+        box_facts: facts(LayoutDirection::Rtl, true),
         border_collapse: BorderCollapseValue::Collapse,
         border_spacing: ComputedBorderSpacing {
             horizontal: raikiri_style::ComputedLength(7.0),
@@ -141,8 +143,8 @@ fn anonymous_recipes_inherit_only_the_explicit_owner_facts() {
         assert_legacy(
             &recipe,
             &LayoutStyle {
-                display: taffy::Display::Block,
-                direction: taffy::Direction::Rtl,
+                display: Display::Block,
+                direction: LayoutDirection::Rtl,
                 ..LayoutStyle::default()
             },
         );
@@ -151,7 +153,7 @@ fn anonymous_recipes_inherit_only_the_explicit_owner_facts() {
 
 #[test]
 fn neutral_source_recipe_matches_native_defaults_and_empty_auto_tracks() {
-    let recipe = neutral_source(facts(taffy::Direction::Ltr, false));
+    let recipe = neutral_source(facts(LayoutDirection::Ltr, false));
     assert_eq!(recipe.kind, RecipeKind::NeutralSource);
     assert_eq!(
         recipe.values.box_sizing,
@@ -164,9 +166,9 @@ fn neutral_source_recipe_matches_native_defaults_and_empty_auto_tracks() {
 
 #[test]
 fn neutral_values_share_only_equal_directions() {
-    let ltr = neutral_source(facts(taffy::Direction::Ltr, false));
-    let rtl = neutral_source(facts(taffy::Direction::Rtl, false));
-    let again = neutral_source(facts(taffy::Direction::Rtl, true));
+    let ltr = neutral_source(facts(LayoutDirection::Ltr, false));
+    let rtl = neutral_source(facts(LayoutDirection::Rtl, false));
+    let again = neutral_source(facts(LayoutDirection::Rtl, true));
     assert!(std::sync::Arc::ptr_eq(&rtl.values, &again.values));
     assert!(!std::sync::Arc::ptr_eq(&ltr.values, &rtl.values));
     assert_eq!(
@@ -176,7 +178,7 @@ fn neutral_values_share_only_equal_directions() {
     assert_legacy(
         &rtl,
         &LayoutStyle {
-            direction: taffy::Direction::Rtl,
+            direction: LayoutDirection::Rtl,
             ..LayoutStyle::default()
         },
     );
@@ -186,10 +188,10 @@ fn neutral_values_share_only_equal_directions() {
 fn hidden_box_facts_suppress_box_generation() {
     let mut node = crate::node::Node::new_element("div".into(), None);
     node.set_display(raikiri_style::property::DisplayValue::None);
-    let recipe = contents(BoxFacts::for_node(&node, taffy::Direction::Rtl));
+    let recipe = contents(BoxFacts::for_node(&node, LayoutDirection::Rtl));
     let prepared = PreparedStyle::prepare(&recipe.values, recipe.metadata);
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(view.box_generation_mode(), taffy::BoxGenerationMode::None);
+    assert_eq!(view.box_generation_mode(), BoxGenerationMode::None);
 }
 
 #[test]
