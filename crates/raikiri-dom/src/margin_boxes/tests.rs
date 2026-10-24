@@ -1380,3 +1380,76 @@ fn an_object_replacement_character_in_the_content_keeps_the_range_without_an_ima
         assert_eq!(shown, "9");
     }
 }
+
+/// The glyphs of the page-count placeholders of `head` show it, wherever the
+/// content has images and object replacement characters before them.
+fn assert_deferred_glyphs_show_the_count(head: &MarginBox) {
+    let glyphs = head.deferred_glyphs();
+    assert_eq!(glyphs.len(), 3);
+    let runs = head.text_runs();
+    for glyph in &glyphs {
+        let run = &runs[glyph.run];
+        let shown = &run.text[run.glyphs[glyph.glyph].text_range.clone()];
+        assert_eq!(&head.content[glyph.text_range.clone()], shown);
+        assert_eq!(shown, "9");
+    }
+}
+
+#[test]
+fn a_deferred_placeholder_on_a_later_line_keeps_its_range_after_an_image() {
+    // The image is on the first line; the text of the lines still holds its
+    // replacement character when the counter starts the second.
+    let (mut doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: 'p' url(green.png) '\\A ' counter(pages); \
+                       font-family: Ahem; font-size: 10px } }",
+    );
+    doc.margin_box_images.insert(
+        "green.png".to_owned(),
+        raikiri_traits::ImageRasterSize {
+            width: 20.0,
+            height: 10.0,
+        },
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "p\n999");
+    assert_deferred_glyphs_show_the_count(head);
+}
+
+#[test]
+fn a_deferred_placeholder_keeps_its_range_after_an_image_and_an_authored_replacement_character() {
+    let (mut doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: '\\FFFC x' url(green.png) counter(pages); \
+                       font-family: Ahem; font-size: 10px } }",
+    );
+    doc.margin_box_images.insert(
+        "green.png".to_owned(),
+        raikiri_traits::ImageRasterSize {
+            width: 20.0,
+            height: 10.0,
+        },
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "\u{FFFC}x999");
+    assert_eq!(head.content_images.len(), 1);
+    assert_deferred_glyphs_show_the_count(head);
+}

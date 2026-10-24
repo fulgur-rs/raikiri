@@ -100,7 +100,13 @@ pub struct StandaloneText {
     block_size: f32,
     writing_mode: WritingMode,
     container: PhysicalSize,
+    /// Where each image sits in the text it was shaped with, in order.
+    image_offsets: Vec<usize>,
 }
+
+/// What shodo puts in the processed text of a paragraph for each atomic
+/// inline.
+const OBJECT_REPLACEMENT_LEN: usize = '\u{FFFC}'.len_utf8();
 
 impl StandaloneText {
     /// The lines in order; glyph origins are line-local logical coordinates.
@@ -155,6 +161,20 @@ impl StandaloneText {
         } else {
             self.block_size
         }
+    }
+
+    /// The offset in the text the run was shaped with of the place at
+    /// `processed` in the text of the lines, which holds an object replacement
+    /// character for each image that the shaped text does not. One the text
+    /// itself holds is not an image and keeps its place.
+    pub(crate) fn text_offset(&self, processed: usize) -> usize {
+        let images = self
+            .image_offsets
+            .iter()
+            .enumerate()
+            .take_while(|&(index, &at)| at + index * OBJECT_REPLACEMENT_LEN < processed)
+            .count();
+        processed - images * OBJECT_REPLACEMENT_LEN
     }
 
     /// The border box of each image of the run, as its index in the list the
@@ -735,6 +755,7 @@ impl Document {
             block_size,
             writing_mode: style.writing_mode,
             container,
+            image_offsets: image_offsets(text, images),
         })
     }
 

@@ -1,5 +1,6 @@
 //! The stages of a layout run, in order, and the output they leave.
 
+use super::continuation::prepare_margin_box_images as prepare_images;
 use super::first_page::FirstPage;
 use super::page_layout::{LaidOut, PageLayout};
 use super::stop::Stop;
@@ -38,18 +39,18 @@ impl Run<'_, '_> {
             slices,
             geometries,
             page_styles,
-            continuations,
+            mut continuations,
         } = layout.lay_out(dom, inputs.resume)?;
 
         // Fetch CSS background sources only after the final page schedule is known.
         // Paint remains read-only and consumes the cache through ImagePixelSource.
         if inputs.preload_background_images {
-            let margin_box_images =
-                self.preload_page_background_images(&page_cascader, &slices, &mut preloads);
+            let urls = self.preload_page_background_images(&page_cascader, &slices, &mut preloads);
             // Margin boxes are laid out later, a page at a time, and need the
             // sizes of the images their content shows.
             if let Some(source) = self.resources.image_pixel_source_ref() {
-                document.prepare_margin_box_image_urls(&margin_box_images, source, self.base_url);
+                document.prepare_margin_box_image_urls(&urls, source, self.base_url);
+                prepare_images(&mut continuations, &urls, source, self.base_url);
             }
             // A fetch above may have observed cancellation; do not hand out
             // pages whose backgrounds were left unloaded.

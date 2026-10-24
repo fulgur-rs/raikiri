@@ -1280,9 +1280,6 @@ fn marker_runs<'a>(
     );
 }
 
-/// What shodo puts in the processed text of a line for each atomic inline.
-const OBJECT_REPLACEMENT: char = '\u{FFFC}';
-
 /// Glyph runs of standalone text whose container's top-left is at `origin`,
 /// in the way the built-in painter draws it.
 ///
@@ -1354,19 +1351,9 @@ pub(crate) fn standalone_runs<'a>(
                 .collect();
             let metrics = run.metrics();
             if let Some(starts) = starts.as_deref_mut() {
-                // The processed text holds an object replacement character
-                // for each image, which the content does not. A character of
-                // that kind the content holds itself is not an image.
-                let images = line
-                    .fragments()
-                    .filter(|fragment| matches!(fragment, shodo::Fragment::Atomic(_)))
-                    .count();
-                let before = line
-                    .text()
-                    .get(..text_range.start)
-                    .map_or(0, |before| before.matches(OBJECT_REPLACEMENT).count())
-                    .min(images);
-                starts.push(text_range.start - before * OBJECT_REPLACEMENT.len_utf8());
+                // The text of the lines holds an object replacement character
+                // for each image, which the content does not.
+                starts.push(text.text_offset(text_range.start));
             }
             out.push(PositionedGlyphRun {
                 line: TextLineId {

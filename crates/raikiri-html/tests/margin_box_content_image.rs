@@ -115,3 +115,31 @@ fn each_page_lays_out_the_images_of_its_own_margin_boxes() {
         [(BLUE.to_owned(), [40.0, 0.0, 30.0, 15.0])]
     );
 }
+
+#[test]
+fn pages_laid_out_again_at_their_own_width_show_the_images_of_their_margin_boxes() {
+    // The first page has a wide left margin, so the pages after it are wider
+    // than the first and are laid out again in a copy of the document.
+    let words = (0..60)
+        .map(|index| format!("w{index:03}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let layout = lay_out(
+        &format!(
+            "@page {{ size: 400px 200px; margin: 20px; \
+               @top-left {{ content: url({RED}); vertical-align: top }} }} \
+             @page :first {{ margin-left: 220px }}"
+        ),
+        &format!("<p>{words}</p>"),
+    );
+    let pages: Vec<_> = layout.pages().collect();
+    assert!(pages.len() >= 2, "{} pages", pages.len());
+    for page in &pages {
+        assert_eq!(
+            images(&top_left(page)).len(),
+            1,
+            "page {} shows the image",
+            page.index()
+        );
+    }
+}
