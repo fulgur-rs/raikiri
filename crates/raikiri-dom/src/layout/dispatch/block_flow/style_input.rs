@@ -5,6 +5,7 @@ use crate::{
     layout::{context::LayoutSession, style_views::ReadRole},
 };
 use raikiri_layout_style::LayoutStyleView;
+use raikiri_layout_style::values::{BoxGenerationMode, Display};
 
 pub(crate) fn container(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
     materialize(tree.query_style(idx, ReadRole::BlockContainer))
@@ -23,12 +24,12 @@ pub(crate) fn physical(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
 
 fn materialize(query: LayoutStyleView<'_>) -> LayoutStyle {
     // Primitives distinguish only hidden, block and non-block display here.
-    let display = if query.box_generation_mode() == taffy::BoxGenerationMode::None {
-        taffy::Display::None
+    let display = if query.box_generation_mode() == BoxGenerationMode::None {
+        Display::None
     } else if query.is_block() {
-        taffy::Display::Block
+        Display::Block
     } else {
-        taffy::Display::Flex
+        Display::Flex
     };
     LayoutStyle {
         display,

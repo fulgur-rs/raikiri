@@ -4,17 +4,19 @@ use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
-use crate::layout::dispatch::resolve_calc;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
     FloatDirection, LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RunMode,
 };
 use crate::layout::taffy_adapter::algorithms::compute_block_align_content_offset;
-use crate::layout::taffy_adapter::{IntoEdges, MaybeResolve};
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
+use raikiri_layout_style::values::{
+    AlignContentKeyword, BoxGenerationMode, Clear, Direction, ExpandedDimension, Float, IntoEdges,
+    LengthExt, MaybeResolve, Overflow, Position,
+};
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
-use taffy::{BlockItemStyle, BoxGenerationMode, Clear, CoreStyle, Direction, Float, Position};
+use taffy::{BlockItemStyle, CoreStyle};
 
 pub(super) struct Flow {
     pub end: f32,
@@ -30,7 +32,7 @@ pub(super) struct Flow {
 
 fn place_inline_axis(
     style: &Style,
-    direction: taffy::Direction,
+    direction: Direction,
     container_width: f32,
     insets: [f32; 2],
     (area_start, area_width): (f32, f32),
@@ -45,8 +47,7 @@ fn place_inline_axis(
         (false, true) => (0.0, free.max(0.0)),
         _ => (0.0, 0.0),
     };
-    let offset = if direction == taffy::Direction::Rtl && (free < 0.0 || !left_auto && !right_auto)
-    {
+    let offset = if direction == Direction::Rtl && (free < 0.0 || !left_auto && !right_auto) {
         free
     } else {
         auto_left
@@ -65,7 +66,7 @@ fn margins(style: &Style, basis: f32) -> Edges<f32> {
     style
         .margin
         .into_edges()
-        .map(|edge| edge.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
+        .map(|edge| edge.resolve(Some(basis)).unwrap_or(0.0))
 }
 
 fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> bool {
@@ -194,22 +195,19 @@ fn inline_static_position(
 pub(super) fn relative(
     style: &Style,
     parent: Size<Option<f32>>,
-    direction: taffy::Direction,
+    direction: Direction,
 ) -> Point<f32> {
     if !matches!(style.position, Position::Relative | Position::Sticky) {
         return Point::ZERO;
     }
     let inset = Edges {
-        left: style.inset.left.maybe_resolve(parent.width, resolve_calc),
-        right: style.inset.right.maybe_resolve(parent.width, resolve_calc),
-        top: style.inset.top.maybe_resolve(parent.height, resolve_calc),
-        bottom: style
-            .inset
-            .bottom
-            .maybe_resolve(parent.height, resolve_calc),
+        left: style.inset.left.maybe_resolve(parent.width),
+        right: style.inset.right.maybe_resolve(parent.width),
+        top: style.inset.top.maybe_resolve(parent.height),
+        bottom: style.inset.bottom.maybe_resolve(parent.height),
     };
     Point {
-        x: if direction == taffy::Direction::Rtl {
+        x: if direction == Direction::Rtl {
             inset.right.map(|right| -right).or(inset.left)
         } else {
             inset.left.or(inset.right.map(|right| -right))
@@ -238,8 +236,8 @@ fn overflow(
     let contains_overflow = style.contain.contains_scrollable_overflow()
         || style.overflow.x.is_scroll_container()
         || style.overflow.y.is_scroll_container();
-    if !contains_overflow && style.overflow.x == taffy::Overflow::Visible {
-        let (left, right) = if style.direction == taffy::Direction::Rtl {
+    if !contains_overflow && style.overflow.x == Overflow::Visible {
+        let (left, right) = if style.direction == Direction::Rtl {
             let origin = location.x + output.size.width - metrics.border.right;
             (origin - child.right, origin - child.left)
         } else {
@@ -251,7 +249,7 @@ fn overflow(
         rect.left = rect.left.min(left);
         rect.right = rect.right.max(right);
     }
-    if !contains_overflow && style.overflow.y == taffy::Overflow::Visible {
+    if !contains_overflow && style.overflow.y == Overflow::Visible {
         rect.top = rect.top.min(location.y + metrics.border.top + child.top);
         rect.bottom = rect
             .bottom
@@ -395,8 +393,8 @@ pub(super) fn layout(
                 // or grid container in the room it is offered; the width the
                 // keyword stands for is what the container measures at.
                 let along = match style.size.width.expand() {
-                    taffy::ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
-                    taffy::ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
+                    ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
+                    ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
                     _ => None,
                 };
                 if let Some(along) = along.filter(|_| {
@@ -450,7 +448,7 @@ pub(super) fn layout(
         let same = shares_context(&style);
         let stretches = matches!(
             style.size.width.expand(),
-            taffy::ExpandedDimension::Auto | taffy::ExpandedDimension::Stretch
+            ExpandedDimension::Auto | ExpandedDimension::Stretch
         ) && !style.is_table()
             && !style.is_compressible_replaced();
         let natural_stretch = content_width - margin.horizontal_axis_sum();
@@ -469,8 +467,8 @@ pub(super) fn layout(
                 let mut measure = child_input;
                 measure.run_mode = RunMode::ComputeSize;
                 measure.available_space.width = match style.size.width.expand() {
-                    taffy::ExpandedDimension::MinContent => AvailableSpace::MinContent,
-                    taffy::ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
+                    ExpandedDimension::MinContent => AvailableSpace::MinContent,
+                    ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
                     _ => AvailableSpace::Definite(stretch.max(0.0)),
                 };
                 tree.compute_child_layout_with_block_ctx(child, measure, None)
@@ -714,7 +712,7 @@ pub(super) fn layout(
 }
 
 pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow, free: f32) {
-    if style.align_content.keyword == taffy::AlignContentKeyword::Normal {
+    if style.align_content.keyword == AlignContentKeyword::Normal {
         return;
     }
     let offset = compute_block_align_content_offset(style.align_content, free);

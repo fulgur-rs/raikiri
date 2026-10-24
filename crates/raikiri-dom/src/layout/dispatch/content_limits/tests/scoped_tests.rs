@@ -3,7 +3,7 @@ use crate::layout::style_views::tests::fixture;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{Dimension, StyleSize};
 
 #[test]
 fn batched_content_limits_preserve_unrelated_pass_updates_after_unwind() {
@@ -42,7 +42,7 @@ fn batched_content_limits_preserve_unrelated_pass_updates_after_unwind() {
         assert_eq!(tree.context.content_limit_depth, 0);
         assert_eq!(
             tree.style_view(child).size().height,
-            taffy::Dimension::length(91.0)
+            Dimension::length(91.0)
         );
     }
 }
@@ -128,7 +128,7 @@ fn batched_oof_scopes_restore_four_raw_constraints_and_keep_unrelated_updates() 
         }
         assert_eq!(
             tree.style_view(second).size().height,
-            taffy::Dimension::length(91.0)
+            Dimension::length(91.0)
         );
         assert!(tree.context.content_limit_probes.is_empty());
         assert!(tree.context.oof_content_limit_inputs.is_empty());
@@ -262,14 +262,8 @@ fn intrinsic_probe_restores_after_a_descendant_unwinds() {
     assert_eq!(tree.override_checkpoint(), 0);
     assert_eq!(tree.style_override_depth(root), 0);
     assert_eq!(tree.style_override_depth(child), 0);
-    assert_eq!(
-        tree.style_view(root).size().width,
-        taffy::Dimension::length(31.0)
-    );
-    assert_eq!(
-        tree.style_view(child).size().width,
-        taffy::Dimension::length(23.0)
-    );
+    assert_eq!(tree.style_view(root).size().width, Dimension::length(31.0));
+    assert_eq!(tree.style_view(child).size().width, Dimension::length(23.0));
     assert!(tree.context.content_limit_probes.is_empty());
     assert!(
         tree.context

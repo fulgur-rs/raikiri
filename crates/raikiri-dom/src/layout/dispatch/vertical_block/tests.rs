@@ -5,7 +5,7 @@ mod view_tests;
 use crate::Document;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::LengthPercentage;
+use raikiri_layout_style::values::LengthPercentage;
 
 /// A document whose body (8px margin) holds a container styled
 /// `container_css` with one child per entry of `children`, each a

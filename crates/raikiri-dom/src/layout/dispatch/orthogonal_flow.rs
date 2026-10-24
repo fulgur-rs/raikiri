@@ -20,7 +20,7 @@ use crate::layout::protocol::{
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::TaffyPosition;
+use raikiri_layout_style::values::{Float, Position};
 
 use raikiri_style::property::DisplayValue;
 
@@ -31,7 +31,7 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
     use super::vertical_oof::used_writing_mode;
     let node = &tree.nodes[idx];
     // The style is read last: most boxes are settled by the cheaper tests.
-    node.taffy_position() != TaffyPosition::Absolute
+    node.layout_position() != Position::Absolute
         && (node.display().is_block_flex_or_grid_container()
             || matches!(
                 node.display(),
@@ -46,7 +46,7 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
         })
         && {
             let style = tree.physical_style(idx);
-            style.size().width.is_auto() && style.float() == taffy::Float::None
+            style.size().width.is_auto() && style.float() == Float::None
         }
 }
 

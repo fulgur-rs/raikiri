@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::cache_context::SavedLayoutCache;
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -100,7 +101,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             super::tests::intrinsic_scope_tests::before_child_bounds(tree, child_idx);
             let style = tree.physical_style(child_idx);
             if style.box_generation_mode() == BoxGenerationMode::None
-                || style.position() == TaffyPosition::Absolute
+                || style.position() == Position::Absolute
             {
                 continue;
             }
@@ -132,12 +133,10 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             // bounds clamp it, the minimum over the maximum.
             let new_min = cannot_shrink.then(|| {
                 let floor = max_length.map_or(basis, |max| basis.min(max));
-                taffy::LengthPercentageAuto::length(min_length.map_or(floor, |min| min.max(floor)))
+                LengthPercentageAuto::length(min_length.map_or(floor, |min| min.max(floor)))
             });
             let new_max = (cannot_grow && preferred.is_none()).then(|| {
-                taffy::LengthPercentageAuto::length(
-                    max_length.map_or(basis, |m| m.min(basis)) + margins,
-                )
+                LengthPercentageAuto::length(max_length.map_or(basis, |m| m.min(basis)) + margins)
             });
             let new_width = preferred
                 .filter(|_| cannot_shrink || cannot_grow)
@@ -147,7 +146,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                     } else {
                         preferred
                     };
-                    taffy::Dimension::length(if cannot_grow {
+                    Dimension::length(if cannot_grow {
                         floored.min(basis)
                     } else {
                         floored

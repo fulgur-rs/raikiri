@@ -22,8 +22,7 @@ use crate::layout::test_support::{
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Line, Size};
-use raikiri_layout_style::values::StyleSize;
-use taffy::LengthPercentageAuto;
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, StyleSize};
 
 /// What the box under test holds.
 #[derive(Clone, Copy)]
@@ -98,12 +97,12 @@ fn replaced_keyword_bounds_handles_nonreplaced_missing_invalid_and_sized_nodes()
     }
     let limits = ContentLimits {
         min: StyleSize {
-            width: taffy::Dimension::min_content(),
-            height: taffy::Dimension::auto(),
+            width: Dimension::min_content(),
+            height: Dimension::auto(),
         },
         max: StyleSize {
-            width: taffy::Dimension::max_content(),
-            height: taffy::Dimension::auto(),
+            width: Dimension::max_content(),
+            height: Dimension::auto(),
         },
     };
     let inputs = LayoutInput {
@@ -145,8 +144,8 @@ fn replaced_keyword_bounds_follow_the_box_the_ratio_relates() {
     // would give a 90px high content box 180px beside the 40px of padding.
     let limits = ContentLimits {
         min: StyleSize {
-            width: taffy::Dimension::min_content(),
-            height: taffy::Dimension::auto(),
+            width: Dimension::min_content(),
+            height: Dimension::auto(),
         },
         max: StyleSize::auto(),
     };

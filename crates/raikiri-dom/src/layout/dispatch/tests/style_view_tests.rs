@@ -1,6 +1,7 @@
 use crate::layout::protocol::{LayoutInput, NodeId, RunMode};
 use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
 use raikiri_layout_geometry::Size;
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 
 #[test]
 fn flex_intrinsic_probe_records_and_restores_its_temporary_limit() {
@@ -44,11 +45,8 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
     let result: Result<(), ()> =
         super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), |tree| {
             let view = tree.style_view(child);
-            assert_eq!(view.size().width, taffy::Dimension::length(20.0));
-            assert_eq!(
-                view.min_size().width,
-                taffy::LengthPercentageAuto::length(20.0)
-            );
+            assert_eq!(view.size().width, Dimension::length(20.0));
+            assert_eq!(view.min_size().width, LengthPercentageAuto::length(20.0));
             assert_eq!(view.max_size(), original.2);
             assert_eq!(view.flex_shrink(), 1.0);
             Err(())

@@ -19,18 +19,20 @@ use crate::layout::protocol::{
 use crate::layout::taffy_adapter::algorithms::{
     compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
-use crate::layout::taffy_adapter::{GridInfo, MaybeResolve, ResolveOrZero, RowSizing};
+use crate::layout::taffy_adapter::{GridInfo, RowSizing};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
-use raikiri_layout_style::values::StylePoint;
-use raikiri_layout_style::values::TaffyPosition;
-use taffy::{BoxGenerationMode, ExpandedDimension};
+use raikiri_layout_style::values::{
+    AlignContentKeyword, AlignItems, AlignSelf, BoxGenerationMode, BoxSizing, CalcHandle,
+    Direction, Display, ExpandedDimension, ExpandedLengthPercentageAuto, Float, LengthExt,
+    LengthPercentage, LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
+    StylePoint,
+};
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
-use raikiri_layout_style::values::CalcHandle;
 use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::DisplayValue;
@@ -94,13 +96,6 @@ pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
     val.resolve(basis)
 }
 
-/// Whether a `calc()` payload handle has a percentage term, which needs a
-/// basis to resolve.
-pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
-    // The document keeps this common payload alive during inspection.
-    val.has_percentage()
-}
-
 /// The limit of a `fit-content(<length-percentage>)` size, resolved against
 /// the percentage `basis` of the containing block.
 ///
@@ -108,14 +103,14 @@ pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
 /// that is indefinite: a percentage that cannot resolve leaves the box with no
 /// limit, which CSS Sizing 3 §5.2.1 treats as the initial value, so the room
 /// its parent offers sizes it.
-fn fit_content_limit(size: taffy::ExpandedDimension, basis: Option<f32>) -> Option<f32> {
+fn fit_content_limit(size: ExpandedDimension, basis: Option<f32>) -> Option<f32> {
     let limit = match size {
-        taffy::ExpandedDimension::FitContentPx(limit) => limit,
-        taffy::ExpandedDimension::FitContentPercent(percent) => basis? * percent,
-        taffy::ExpandedDimension::FitContentCalc(handle) if calc_has_percentage(handle) => {
-            resolve_calc(handle, basis?)
+        ExpandedDimension::FitContentPx(limit) => limit,
+        ExpandedDimension::FitContentPercent(percent) => basis? * percent,
+        ExpandedDimension::FitContentCalc(handle) if handle.has_percentage() => {
+            handle.resolve(basis?)
         }
-        taffy::ExpandedDimension::FitContentCalc(handle) => resolve_calc(handle, 0.0),
+        ExpandedDimension::FitContentCalc(handle) => handle.resolve(0.0),
         _ => return None,
     };
     limit.is_finite().then_some(limit.max(0.0))
@@ -132,7 +127,7 @@ fn fit_content_limit(size: taffy::ExpandedDimension, basis: Option<f32>) -> Opti
 pub(crate) fn fit_content_room(
     tree: &LayoutSession<'_>,
     idx: usize,
-    size: taffy::ExpandedDimension,
+    size: ExpandedDimension,
     basis: Option<f32>,
     horizontal: bool,
 ) -> Option<f32> {
@@ -159,7 +154,7 @@ pub(crate) fn height_follows_containing_block(tree: &LayoutSession<'_>, node: us
     .into_iter()
     .any(|height| match height.expand() {
         ExpandedDimension::Percent(_) => true,
-        ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
+        ExpandedDimension::Calc(calc) => calc.has_percentage(),
         _ => false,
     })
 }
@@ -187,7 +182,7 @@ pub(crate) fn measure_against_parent_height<T>(
 
 /// Resolve a padding or border length of an ifc root against the containing
 /// block's inline size.
-fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> f32 {
+fn ifc_edge(value: LengthPercentage, parent_inline_size: Option<f32>) -> f32 {
     let basis = parent_inline_size.unwrap_or(0.0);
     crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
 }
@@ -233,7 +228,7 @@ fn flex_item_percent_basis(tree: &LayoutSession<'_>, node: usize) -> Option<Size
         .flex_item_percent_bases
         .last()
         .filter(|&&(container, _)| {
-            tree.nodes[node].taffy_position() != TaffyPosition::Absolute
+            tree.nodes[node].layout_position() != Position::Absolute
                 && tree.taffy_parent_of(node) == Some(container)
         })
         .map(|&(_, basis)| basis)
@@ -242,10 +237,8 @@ fn flex_item_percent_basis(tree: &LayoutSession<'_>, node: usize) -> Option<Size
 /// Whether a margin, padding or border of `style` depends on its percentage
 /// basis.
 fn has_percent_edge(style: &LayoutStyleView<'_>) -> bool {
-    let margin_depends_on_basis = |edge: taffy::LengthPercentageAuto| {
-        edge.into_raw().is_plain_calc()
-            || edge.resolve_to_option(0.0, resolve_calc)
-                != edge.resolve_to_option(1.0, resolve_calc)
+    let margin_depends_on_basis = |edge: LengthPercentageAuto| {
+        edge.is_calc() || edge.resolve(Some(0.0)) != edge.resolve(Some(1.0))
     };
     let margin = style.margin();
     has_percent_padding_or_border(style)
@@ -264,12 +257,10 @@ fn has_percent_padding_or_border(style: &LayoutStyleView<'_>) -> bool {
 }
 
 /// Whether a padding or border length depends on its percentage basis.
-fn edge_depends_on_basis(edge: taffy::LengthPercentage) -> bool {
+fn edge_depends_on_basis(edge: LengthPercentage) -> bool {
     // A `calc()` edge always carries a percentage term (one without folds to
     // a length) and may clamp to zero at small probe bases.
-    edge.into_raw().is_plain_calc()
-        || edge.resolve_or_zero(Some(0.0), resolve_calc)
-            != edge.resolve_or_zero(Some(1.0), resolve_calc)
+    edge.is_calc() || edge.resolve_or_zero(Some(0.0)) != edge.resolve_or_zero(Some(1.0))
 }
 
 /// Give Taffy pixel edge values resolved against the containing block's
@@ -278,17 +269,16 @@ fn ifc_style_with_inline_edge_basis(style: &Style, inline_size: Option<f32>) -> 
     let basis = inline_size.unwrap_or(0.0);
     let mut style = style.clone();
     style.margin = style.margin.map(|margin| {
-        margin.resolve_to_option(basis, resolve_calc).map_or_else(
-            taffy::LengthPercentageAuto::auto,
-            taffy::LengthPercentageAuto::length,
-        )
+        margin
+            .resolve(Some(basis))
+            .map_or_else(LengthPercentageAuto::auto, LengthPercentageAuto::length)
     });
     style.padding = style
         .padding
-        .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+        .map(|edge| LengthPercentage::length(ifc_edge(edge, Some(basis))));
     style.border = style
         .border
-        .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+        .map(|edge| LengthPercentage::length(ifc_edge(edge, Some(basis))));
     style
 }
 
@@ -514,7 +504,7 @@ impl LayoutSession<'_> {
     /// axis.
     pub(crate) fn in_column_flex_container(&self, node: usize) -> bool {
         self.taffy_parent_of(node)
-            .filter(|&parent| self.nodes[parent].taffy_display() == taffy::Display::Flex)
+            .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)
             .is_some_and(|parent| !self.physical_style(parent).flex_direction_is_row())
     }
 }
@@ -934,12 +924,8 @@ impl LayoutSession<'_> {
                 // as a known dimension; taffy's leaf then hands it to the
                 // measure function as the definite available height.
                 let height_is_authored = style.size.width.is_auto()
-                    && MaybeResolve::maybe_resolve(
-                        style.size.height,
-                        inputs.parent_size.height,
-                        resolve_calc,
-                    )
-                    .is_some();
+                    && MaybeResolve::maybe_resolve(style.size.height, inputs.parent_size.height)
+                        .is_some();
                 let insets = replaced_size::ratio_box_insets(
                     &resolver_style,
                     replaced_size::padding_and_border(&resolver_style, inputs.parent_size.width),
@@ -1211,7 +1197,7 @@ fn compute_ifc_root(
                 .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb)
     });
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
-    let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size, resolve_calc);
+    let stated = MaybeResolve::maybe_resolve(layout_style.size, inputs.parent_size);
     let ratio_height_follows =
         ratio.is_some() && inputs.known_dimensions.height.is_none() && stated.height.is_none();
     let mut inputs = inputs;
@@ -1277,13 +1263,13 @@ fn compute_ifc_root(
         insets: ifc_all_insets(&style, parent_inline_size),
         top_margin_escapes: block_ctx.is_some()
             && inputs.vertical_margins_are_collapsible.start
-            && tree.nodes[idx].taffy_display() == taffy::Display::Block
-            && tree.nodes[idx].taffy_position() != TaffyPosition::Absolute
-            && style.float == taffy::Float::None
+            && tree.nodes[idx].layout_display() == Display::Block
+            && tree.nodes[idx].layout_position() != Position::Absolute
+            && style.float == Float::None
             && !style.overflow.x.is_scroll_container()
             && !style.overflow.y.is_scroll_container()
             && !style.contain.establishes_independent_formatting_context()
-            && style.align_content.keyword == taffy::AlignContentKeyword::Normal
+            && style.align_content.keyword == AlignContentKeyword::Normal
             && tree.nodes[idx].multicol.is_none()
             && block_start_inset == 0.0,
         // CSS 2.1 8.3.1: the bottom margin of a last in-flow child and that
@@ -1319,7 +1305,7 @@ fn compute_ifc_root(
             )
         })
         .map(|height| {
-            let insets = if style.box_sizing == taffy::BoxSizing::BorderBox {
+            let insets = if style.box_sizing == BoxSizing::BorderBox {
                 top_inset
                     + ifc_edge(style.padding.bottom, parent_inline_size)
                     + ifc_edge(style.border.bottom, parent_inline_size)
@@ -1335,7 +1321,7 @@ fn compute_ifc_root(
     let border_box_insets = top_inset
         + ifc_edge(style.padding.bottom, parent_inline_size)
         + ifc_edge(style.border.bottom, parent_inline_size);
-    let border_box = style.box_sizing == taffy::BoxSizing::BorderBox;
+    let border_box = style.box_sizing == BoxSizing::BorderBox;
     measure.definite_height = inputs
         .known_dimensions
         .height
@@ -1467,15 +1453,11 @@ fn compute_ifc_root(
     // When `min-height` gives the used height, the last child's bottom margin
     // no longer adjoins the box's bottom edge and does not collapse through
     // it (CSS 2.1 8.3.1), as taffy's block algorithm decides.
-    let min_height = MaybeResolve::maybe_resolve(
-        style.min_size.height,
-        inputs.parent_size.height,
-        resolve_calc,
-    );
+    let min_height = MaybeResolve::maybe_resolve(style.min_size.height, inputs.parent_size.height);
     let min_block_size = if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
         min_height
     } else {
-        MaybeResolve::maybe_resolve(style.min_size.width, inputs.parent_size.width, resolve_calc)
+        MaybeResolve::maybe_resolve(style.min_size.width, inputs.parent_size.width)
     };
     let block_size = if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
         output.size.height
@@ -1491,7 +1473,7 @@ fn compute_ifc_root(
     // block-axis padding and border added before comparing them.
     let constrained_by_min_block_size = min_block_size.is_some_and(|min| {
         let min_border_box = min
-            + if style.box_sizing == taffy::BoxSizing::ContentBox {
+            + if style.box_sizing == BoxSizing::ContentBox {
                 block_axis_insets
             } else {
                 0.0
@@ -1565,18 +1547,16 @@ fn ifc_content_width_bounds(
 
 /// Drops a percentage bound, or a `calc()` one with a percentage term, which
 /// cannot resolve against an indefinite containing block (CSS 2.1 §10.7).
-fn ifc_length_only(value: taffy::LengthPercentageAuto) -> taffy::LengthPercentageAuto {
-    let raw = value.into_raw();
-    // Calc pointers carry address bits in `tag()`, so test them first.
-    let length = if raw.is_plain_calc() {
-        !calc_has_percentage(raw.calc_value())
-    } else {
-        raw.tag() == taffy::CompactLength::LENGTH_TAG
+fn ifc_length_only(value: LengthPercentageAuto) -> LengthPercentageAuto {
+    let length = match value.expand() {
+        ExpandedLengthPercentageAuto::Calc(handle) => !handle.has_percentage(),
+        ExpandedLengthPercentageAuto::Length(_) => true,
+        ExpandedLengthPercentageAuto::Percent(_) | ExpandedLengthPercentageAuto::Auto => false,
     };
     if length {
         value
     } else {
-        taffy::LengthPercentageAuto::auto()
+        LengthPercentageAuto::auto()
     }
 }
 
@@ -1597,19 +1577,19 @@ fn ifc_content_height_bounds(
 }
 
 fn ifc_content_axis_bounds(
-    min_size: taffy::LengthPercentageAuto,
-    max_size: taffy::LengthPercentageAuto,
-    box_sizing: taffy::BoxSizing,
-    padding: [taffy::LengthPercentage; 2],
-    border: [taffy::LengthPercentage; 2],
+    min_size: LengthPercentageAuto,
+    max_size: LengthPercentageAuto,
+    box_sizing: BoxSizing,
+    padding: [LengthPercentage; 2],
+    border: [LengthPercentage; 2],
     dimension_basis: Option<f32>,
     edge_basis: Option<f32>,
 ) -> (f32, f32) {
     let edge_basis = edge_basis.unwrap_or(0.0);
-    let resolve_lp = |value: taffy::LengthPercentage| {
+    let resolve_lp = |value: LengthPercentage| {
         crate::layout::used_style_length_percentage(value, edge_basis).unwrap_or(0.0)
     };
-    let insets = if box_sizing == taffy::BoxSizing::BorderBox {
+    let insets = if box_sizing == BoxSizing::BorderBox {
         resolve_lp(padding[0])
             + resolve_lp(padding[1])
             + resolve_lp(border[0])
@@ -1617,12 +1597,15 @@ fn ifc_content_axis_bounds(
     } else {
         0.0
     };
-    let resolve_dim = |value: taffy::LengthPercentageAuto, auto: f32| {
-        let raw = value.into_raw();
+    let resolve_dim = |value: LengthPercentageAuto, auto: f32| {
         // A percentage of an indefinite basis behaves as the initial value,
         // as taffy's leaf sizing resolves it.
         let basis = dimension_basis.or_else(|| {
-            (raw.is_plain_calc() && !calc_has_percentage(raw.calc_value())).then_some(0.0)
+            matches!(
+                value.expand(),
+                ExpandedLengthPercentageAuto::Calc(handle) if !handle.has_percentage()
+            )
+            .then_some(0.0)
         });
         let Some(resolved) = crate::layout::resolve_length_percentage_auto(value, basis) else {
             return auto;
@@ -1740,9 +1723,9 @@ fn measure_ifc_root(
     let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
     let limited = matches!(
         tree.physical_style(idx).size().width.expand(),
-        taffy::ExpandedDimension::FitContentPx(_)
-            | taffy::ExpandedDimension::FitContentPercent(_)
-            | taffy::ExpandedDimension::FitContentCalc(_)
+        ExpandedDimension::FitContentPx(_)
+            | ExpandedDimension::FitContentPercent(_)
+            | ExpandedDimension::FitContentCalc(_)
     );
     let available = match page_width {
         Some(page_width)
@@ -2171,7 +2154,7 @@ fn fragmentation_context_for_ifc(
 }
 
 /// Whether `overflow` makes a box a scroll container on either axis.
-fn is_scroll_container(overflow: StylePoint<taffy::Overflow>) -> bool {
+fn is_scroll_container(overflow: StylePoint<Overflow>) -> bool {
     overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
 }
 
@@ -2257,7 +2240,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
     for &child in root_node.children.iter().rev() {
         if doc.nodes[child].is_in_document()
             && !doc.nodes[child].is_display_none()
-            && doc.nodes[child].taffy_position() != TaffyPosition::Absolute
+            && doc.nodes[child].layout_position() != Position::Absolute
         {
             stack.push((
                 child,
@@ -2298,7 +2281,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         for &child in node.children.iter().rev() {
             if doc.nodes[child].is_in_document()
                 && !doc.nodes[child].is_display_none()
-                && doc.nodes[child].taffy_position() != TaffyPosition::Absolute
+                && doc.nodes[child].layout_position() != Position::Absolute
             {
                 stack.push((child, offset_y + doc.nodes[child].layout.location.y, clip));
             }
@@ -2314,7 +2297,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
 /// items instead, which differ from the fit-content size.
 fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
     tree.nodes[idx].display().is_block_flex_or_grid_container()
-        && tree.physical_style(idx).float() != taffy::Float::None
+        && tree.physical_style(idx).float() != Float::None
 }
 
 /// The border-box `min-width` and `max-width` of element `idx` that resolve
@@ -2727,9 +2710,7 @@ fn center_absolute_children_in_block_axis(
     let (border, direction) = {
         let style = tree.physical_style(idx);
         (
-            style
-                .border()
-                .resolve_or_zero(inputs.parent_size.width, resolve_calc),
+            style.border().resolve_or_zero(inputs.parent_size.width),
             style.direction(),
         )
     };
@@ -2761,8 +2742,8 @@ fn center_absolute_children_in_block_axis(
             (area.left, area.right, inset.left, inset.right)
         };
         let area_size = area_end - area_start;
-        let start = start.maybe_resolve(area_size, resolve_calc);
-        let end = end.maybe_resolve(area_size, resolve_calc);
+        let start = start.maybe_resolve(area_size);
+        let end = end.maybe_resolve(area_size);
         let (Some(start), Some(end)) = (start, end) else {
             continue;
         };
@@ -2800,12 +2781,8 @@ fn center_absolute_children_in_block_axis(
                 Some(grid) => grid.area(&style, direction, padding_box),
                 None => padding_box,
             };
-            let start = inset
-                .top
-                .maybe_resolve(area.bottom - area.top, resolve_calc);
-            let end = inset
-                .bottom
-                .maybe_resolve(area.bottom - area.top, resolve_calc);
+            let start = inset.top.maybe_resolve(area.bottom - area.top);
+            let end = inset.bottom.maybe_resolve(area.bottom - area.top);
             let (Some(start), Some(end)) = (start, end) else {
                 continue;
             };
@@ -2816,7 +2793,7 @@ fn center_absolute_children_in_block_axis(
             }
             layout.margin.top = 0.0;
             layout.margin.bottom = 0.0;
-            layout.location.y = if direction == taffy::Direction::Rtl {
+            layout.location.y = if direction == Direction::Rtl {
                 area.bottom - end - layout.size.height
             } else {
                 area.top + start
@@ -2912,20 +2889,14 @@ fn with_content_height_not_definite(
 ) -> LayoutInput {
     if inputs.known_dimensions.height.is_none()
         || !inputs.known_dimensions_are_definite.height
-        || tree.nodes[idx].taffy_position() != TaffyPosition::Absolute
+        || tree.nodes[idx].layout_position() != Position::Absolute
     {
         return inputs;
     }
     let follows_content = {
         let style = tree.physical_style(idx);
-        let min = style
-            .min_size()
-            .maybe_resolve(inputs.parent_size, resolve_calc)
-            .height;
-        let max = style
-            .max_size()
-            .maybe_resolve(inputs.parent_size, resolve_calc)
-            .height;
+        let min = style.min_size().maybe_resolve(inputs.parent_size).height;
+        let max = style.max_size().maybe_resolve(inputs.parent_size).height;
         let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
         let inset = style.inset();
         style.size().height.is_auto()
@@ -2981,8 +2952,8 @@ fn with_column_flex_keyword_room(
         return inputs;
     }
     let room = match tree.physical_style(idx).size().width.expand() {
-        taffy::ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
-        taffy::ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
+        ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
+        ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
         _ => None,
     }
     .filter(|_| tree.in_column_flex_container(idx));
@@ -3011,10 +2982,10 @@ fn with_fit_content_width(
                 .size()
                 .width
                 .expand(),
-            taffy::ExpandedDimension::FitContent
-                | taffy::ExpandedDimension::FitContentPx(_)
-                | taffy::ExpandedDimension::FitContentPercent(_)
-                | taffy::ExpandedDimension::FitContentCalc(_)
+            ExpandedDimension::FitContent
+                | ExpandedDimension::FitContentPx(_)
+                | ExpandedDimension::FitContentPercent(_)
+                | ExpandedDimension::FitContentCalc(_)
         )
     {
         return inputs;
@@ -3176,11 +3147,11 @@ fn auto_grid_abspos_axis_alignment(
     parent: &LayoutStyleView<'_>,
     overflows: Size<bool>,
 ) -> Option<AxisAlignment> {
-    use taffy::{AlignItemsKeyword, AlignmentSafety};
+    use raikiri_layout_style::values::{AlignItemsKeyword, AlignmentSafety};
 
     let (child_direction, parent_direction) = (child.direction(), parent.direction());
     let inset = child.inset();
-    if child.position() != TaffyPosition::Absolute
+    if child.position() != Position::Absolute
         || !inset.top.is_auto()
         || !inset.right.is_auto()
         || !inset.bottom.is_auto()
@@ -3192,8 +3163,8 @@ fn auto_grid_abspos_axis_alignment(
 
     // `self-start` and `self-end` follow the box's own direction where the
     // axis is its inline axis (CSS Box Alignment 3 §5.2).
-    let alignment_fraction = |self_alignment: Option<taffy::AlignSelf>,
-                              parent_alignment: taffy::AlignItems,
+    let alignment_fraction = |self_alignment: Option<AlignSelf>,
+                              parent_alignment: AlignItems,
                               inline: bool,
                               overflows: bool| {
         let alignment = self_alignment
@@ -3223,7 +3194,7 @@ fn auto_grid_abspos_axis_alignment(
             false,
             overflows.height,
         ),
-        inline_reversed: parent_direction == taffy::Direction::Rtl,
+        inline_reversed: parent_direction == Direction::Rtl,
     })
 }
 
@@ -3247,12 +3218,8 @@ fn align_auto_grid_abspos_children(
     let parent_style = tree.physical_style(idx);
     // Percentage padding resolves against the containing block's width, not
     // this grid's used width.
-    let border = parent_style
-        .border()
-        .resolve_or_zero(percent_basis, resolve_calc);
-    let padding = parent_style
-        .padding()
-        .resolve_or_zero(percent_basis, resolve_calc);
+    let border = parent_style.border().resolve_or_zero(percent_basis);
+    let padding = parent_style.padding().resolve_or_zero(percent_basis);
 
     let placed: Vec<(usize, BoxLayout)> = tree
         .context
@@ -3421,16 +3388,11 @@ impl LayoutSession<'_> {
         inputs: &LayoutInput,
     ) -> (Size<Option<f32>>, Size<f32>, Option<f32>) {
         use crate::layout::protocol::SizingMode;
-        use taffy::BoxSizing;
 
         let style = self.physical_style(idx);
         let parent_size = inputs.parent_size;
-        let padding = style
-            .padding()
-            .resolve_or_zero(parent_size.width, resolve_calc);
-        let border = style
-            .border()
-            .resolve_or_zero(parent_size.width, resolve_calc);
+        let padding = style.padding().resolve_or_zero(parent_size.width);
+        let border = style.border().resolve_or_zero(parent_size.width);
         let padding_border_size = (padding + border).sum_axes();
         let box_sizing_adjustment = if style.box_sizing() == BoxSizing::ContentBox {
             padding_border_size
@@ -3440,17 +3402,17 @@ impl LayoutSession<'_> {
         let aspect_ratio = style.aspect_ratio();
         let min_size = style
             .min_size()
-            .maybe_resolve(parent_size, resolve_calc)
+            .maybe_resolve(parent_size)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
         let max_size = style
             .max_size()
-            .maybe_resolve(parent_size, resolve_calc)
+            .maybe_resolve(parent_size)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
         let style_size = style
             .size()
-            .maybe_resolve(parent_size, resolve_calc)
+            .maybe_resolve(parent_size)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
         let clamped_style_size = if inputs.sizing_mode == SizingMode::InherentSize {
@@ -3487,7 +3449,7 @@ impl LayoutSession<'_> {
     /// padding or border that depends on its percentage basis.
     fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
         TaffyChildIter::new_for_session(self, idx).any(|child| {
-            if self.nodes[child].taffy_position() == TaffyPosition::Absolute {
+            if self.nodes[child].layout_position() == Position::Absolute {
                 return false;
             }
             let style = self.physical_style(child);
@@ -3506,8 +3468,8 @@ impl LayoutSession<'_> {
         let parent = usize::from(node_id);
         let children = TaffyChildIter::new_for_session(self, parent)
             .filter(|&child| {
-                self.nodes[child].taffy_display() != taffy::Display::None
-                    && self.nodes[child].taffy_position() != TaffyPosition::Absolute
+                self.nodes[child].layout_display() != Display::None
+                    && self.nodes[child].layout_position() != Position::Absolute
             })
             .collect::<Vec<_>>();
 
@@ -3533,9 +3495,7 @@ impl LayoutSession<'_> {
                 let spanned = usize::from(item.row_start.saturating_sub(1))
                     ..usize::from(item.row_end.saturating_sub(1));
                 let size = self.physical_style(child).size();
-                (if vertical { size.width } else { size.height })
-                    .into_raw()
-                    .uses_percentage()
+                (if vertical { size.width } else { size.height }).uses_percentage()
                     && rows.any_sized_by_content_or_free_space(spanned)
             })
             .map(|(&child, _)| child)

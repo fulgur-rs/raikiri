@@ -10,18 +10,21 @@ pub(crate) use positioned::aligned_static_position;
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::{LayoutSession, TextGroupScope};
-use crate::layout::dispatch::{measure_against_parent_height, resolve_calc};
+use crate::layout::dispatch::measure_against_parent_height;
 use crate::layout::protocol::{
     AvailableSpace, CollapsibleMarginSet, FloatDirection, FloatIntrinsicWidthCalculator,
     LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
-use crate::layout::taffy_adapter::ResolveOrZero;
 use context::{BlockContext, BlockFormattingContext};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
+use raikiri_layout_style::values::{
+    AlignContentKeyword, BoxGenerationMode, Direction, ExpandedDimension, Float, LengthExt,
+    Position, ResolveOrZero,
+};
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
-use taffy::{BlockItemStyle, BoxGenerationMode, CoreStyle, Float, Position};
+use taffy::{BlockItemStyle, CoreStyle};
 
 /// Whether a block child's normal flow shares its parent's float context.
 fn shares_context(style: &Style) -> bool {
@@ -32,7 +35,7 @@ fn shares_context(style: &Style) -> bool {
         && !style.overflow.x.is_scroll_container()
         && !style.overflow.y.is_scroll_container()
         && !style.contain.establishes_independent_formatting_context()
-        && style.align_content.keyword == taffy::AlignContentKeyword::Normal
+        && style.align_content.keyword == AlignContentKeyword::Normal
 }
 
 fn child_style(tree: &LayoutSession<'_>, child: NodeId) -> Style {
@@ -120,7 +123,7 @@ fn intrinsic_widths(
         }
         let margin = style
             .margin
-            .map(|edge| edge.resolve_to_option(0.0, resolve_calc).unwrap_or(0.0));
+            .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0));
         let spans = multicol && style.float == Float::None;
         if spans
             && shares_context(&style)
@@ -131,14 +134,8 @@ fn intrinsic_widths(
             // around each of them. A width of its own fixes what it adds to
             // the columns, and leaves the spanners below it as they are.
             let edges = margin.horizontal_axis_sum()
-                + style
-                    .padding
-                    .resolve_or_zero(None, resolve_calc)
-                    .horizontal_axis_sum()
-                + style
-                    .border
-                    .resolve_or_zero(None, resolve_calc)
-                    .horizontal_axis_sum();
+                + style.padding.resolve_or_zero(None).horizontal_axis_sum()
+                + style.border.resolve_or_zero(None).horizontal_axis_sum();
             let (inner, spanners) = intrinsic_widths(tree, child, true, space, percent_height);
             let columns = if style.size.width.is_auto() {
                 inner + edges
@@ -252,8 +249,8 @@ pub(crate) fn compute_block_flow(
         let minimum = minimum + metrics.inset.horizontal_axis_sum();
         let fit = |limit: f32| maximum.min(limit).max(minimum);
         let width = match style.size.width.expand() {
-            taffy::ExpandedDimension::MinContent => minimum,
-            taffy::ExpandedDimension::MaxContent => maximum,
+            ExpandedDimension::MinContent => minimum,
+            ExpandedDimension::MaxContent => maximum,
             // `fit-content(<length-percentage>)` takes the room its limit
             // makes, which `with_fit_content_room` offers before this runs.
             _ => match inputs.available_space.width {
@@ -387,7 +384,7 @@ fn layout_context(
         height - metrics.inset.bottom - natural_end,
     );
     let mut overflow = flow.overflow.union(flow.float_overflow);
-    if style.direction == taffy::Direction::Rtl {
+    if style.direction == Direction::Rtl {
         let origin = width - metrics.border.right;
         overflow = Edges {
             left: (origin - overflow.right).min(0.0),
@@ -406,7 +403,7 @@ fn layout_context(
     overflow.right = overflow.right.max(0.0);
     overflow.bottom = overflow.bottom.max(0.0);
     if style.overflow.x.is_scroll_container() || style.overflow.y.is_scroll_container() {
-        let end_padding = if style.direction == taffy::Direction::Rtl {
+        let end_padding = if style.direction == Direction::Rtl {
             metrics.padding.left
         } else {
             metrics.padding.right

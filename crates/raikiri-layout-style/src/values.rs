@@ -6,6 +6,7 @@
 
 pub use crate::resolve::{CalcHandle, IntoEdges, LengthExt, LengthIdentity};
 pub use crate::resolve::{MaybeResolve, ResolveOrZero};
+pub use taffy::AlignContentKeyword;
 pub use taffy::{AlignContent, AlignItems, AlignItemsKeyword, AlignSelf, AlignmentSafety};
 pub use taffy::{BoxGenerationMode, BoxSizing, Clear, Contain, ContainingBlockClaims};
 pub use taffy::{CompactLength, Dimension, LengthPercentage, LengthPercentageAuto};

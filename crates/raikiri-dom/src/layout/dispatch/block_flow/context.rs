@@ -4,8 +4,8 @@ use crate::layout::protocol::{
     BfcSlot, CollapsibleMarginSet, ContentSlot, FloatContext, FloatDirection,
 };
 use raikiri_layout_geometry::{Point, Size};
+use raikiri_layout_style::values::{Clear, Direction};
 use std::sync::Arc;
-use taffy::{Clear, Direction};
 
 /// How much wider than a slot a box may be and still count as fitting it.
 const FIT_SLACK: f32 = 0.001;
