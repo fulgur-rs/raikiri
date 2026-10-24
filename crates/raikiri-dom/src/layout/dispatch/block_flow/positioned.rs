@@ -7,7 +7,7 @@ use crate::layout::protocol::{
 };
 use crate::layout::taffy_adapter::algorithms::static_position_from_alignment;
 use raikiri_layout_geometry::{Line, Point, Size};
-use taffy::{AlignItems, Direction};
+use raikiri_layout_style::values::{AlignItems, Direction};
 
 /// Record the out-of-flow child `node` of a block container for the
 /// containing block that claims it.

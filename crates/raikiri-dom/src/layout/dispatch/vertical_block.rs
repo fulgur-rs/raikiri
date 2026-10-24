@@ -29,13 +29,10 @@ use crate::layout::protocol::{
     AvailableSpace, Baselines, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode,
     SizingMode,
 };
-use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::{Edges, Line, Size};
-use raikiri_layout_style::values::TaffyPosition;
-use taffy::BoxSizing;
+use raikiri_layout_style::values::{BoxSizing, Float, MaybeResolve, Position, ResolveOrZero};
 
 use super::block_flow::compute_block_flow;
-use super::resolve_calc;
 use super::transposed_axes::{
     physical_layout, transpose_child_output_to_vertical, transpose_inputs,
     transpose_output_to_physical,
@@ -127,7 +124,7 @@ impl TransposedBlock {
     /// holds its views.
     pub(super) fn container_border(&self) -> Edges<f32> {
         self.container_view.as_ref().map_or(Edges::ZERO, |input| {
-            input.view().border().resolve_or_zero(None, resolve_calc)
+            input.view().border().resolve_or_zero(None)
         })
     }
 
@@ -601,7 +598,7 @@ fn orthogonal_child_inputs(
 ) -> LayoutInput {
     if !flows_horizontally(tree, idx)
         || inputs.sizing_mode != SizingMode::InherentSize
-        || tree.nodes[idx].taffy_position() == TaffyPosition::Absolute
+        || tree.nodes[idx].layout_position() == Position::Absolute
     {
         return inputs;
     }
@@ -617,7 +614,7 @@ fn orthogonal_child_inputs(
         // to fit.
         if inputs.known_dimensions.width.is_none()
             && style.size().width.is_auto()
-            && style.float() == taffy::Float::None
+            && style.float() == Float::None
             && !is_table_box(tree.nodes[idx].display())
         {
             inputs.known_dimensions.width = Some(stretched_width(&style, space, inputs));
@@ -639,7 +636,7 @@ fn stretched_width(
     let inline_size = inputs.parent_size.height;
     let margin = style
         .margin()
-        .map(|margin| margin.resolve_or_zero(inline_size, resolve_calc));
+        .map(|margin| margin.resolve_or_zero(inline_size));
     // Min and max widths are content-box sizes under `box-sizing:
     // content-box`.
     let edges = match style.box_sizing() {
@@ -648,17 +645,17 @@ fn stretched_width(
             // Against the container's inline size, as the child's own
             // layout resolves them.
             let basis = inputs.parent_size.height;
-            let padding = style.padding().resolve_or_zero(basis, resolve_calc);
-            let border = style.border().resolve_or_zero(basis, resolve_calc);
+            let padding = style.padding().resolve_or_zero(basis);
+            let border = style.border().resolve_or_zero(basis);
             padding.left + padding.right + border.left + border.right
         }
     };
     let basis = Some(space);
     let mut width = space - margin.left - margin.right;
-    if let Some(max) = style.max_size().width.maybe_resolve(basis, resolve_calc) {
+    if let Some(max) = style.max_size().width.maybe_resolve(basis) {
         width = width.min(max + edges);
     }
-    if let Some(min) = style.min_size().width.maybe_resolve(basis, resolve_calc) {
+    if let Some(min) = style.min_size().width.maybe_resolve(basis) {
         width = width.max(min + edges);
     }
     width.max(0.0)
@@ -680,14 +677,8 @@ pub(super) fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
         .container_view
         .as_ref()
         .expect("a frame holds view input");
-    let padding = container
-        .view()
-        .padding()
-        .resolve_or_zero(None, resolve_calc);
-    let border = container
-        .view()
-        .border()
-        .resolve_or_zero(None, resolve_calc);
+    let padding = container.view().padding().resolve_or_zero(None);
+    let border = container.view().border().resolve_or_zero(None);
     let candidate_inline_size =
         (width - padding.left - padding.right - border.left - border.right).max(0.0);
     for input in block.child_views.values_mut() {
@@ -764,8 +755,8 @@ pub(super) fn compute_vertical_block(
                 .view();
             (view.padding(), view.border())
         };
-        let padding = padding.resolve_or_zero(None, resolve_calc);
-        let border = border.resolve_or_zero(None, resolve_calc);
+        let padding = padding.resolve_or_zero(None);
+        let border = border.resolve_or_zero(None);
         (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
     });
     let (output, block) = with_transposed_frame(tree, block, |tree| {
@@ -865,7 +856,7 @@ fn inline_margin_off_available(tree: &LayoutSession<'_>, idx: usize, inputs: &La
     let margin = tree
         .physical_style(idx)
         .margin()
-        .map(|margin| margin.resolve_or_zero(inputs.parent_size.height, resolve_calc));
+        .map(|margin| margin.resolve_or_zero(inputs.parent_size.height));
     margin.top + margin.bottom
 }
 

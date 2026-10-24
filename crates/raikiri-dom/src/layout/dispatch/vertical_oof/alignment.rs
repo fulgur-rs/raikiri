@@ -20,13 +20,14 @@
 //! Taffy merged from the boxes is recomputed for their new positions.
 
 use crate::layout::protocol::{NodeId, OofPositioningArea};
-use crate::layout::taffy_adapter::MaybeResolve;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
-use raikiri_layout_style::values::StylePoint;
-use taffy::{AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, Direction, Overflow};
+use raikiri_layout_style::values::{
+    AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, Direction, MaybeResolve, Overflow,
+    StylePoint,
+};
 
 use super::super::grid_oof::GridAreas;
-use super::super::{block_right_to_left, hoisted_children, resolve_calc};
+use super::super::{block_right_to_left, hoisted_children};
 use super::used_writing_mode;
 use crate::layout::context::LayoutSession;
 use crate::layout::style_views::ReadRole;
@@ -419,8 +420,8 @@ fn align_children(
             };
             let cb_size = area_line.end - area_line.start;
             let (Some(inset_start), Some(inset_end)) = (
-                inset.start.maybe_resolve(cb_size, resolve_calc),
-                inset.end.maybe_resolve(cb_size, resolve_calc),
+                inset.start.maybe_resolve(cb_size),
+                inset.end.maybe_resolve(cb_size),
             ) else {
                 continue;
             };

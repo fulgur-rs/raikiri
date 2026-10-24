@@ -2,8 +2,9 @@ use super::*;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::dispatch::replaced_size::keyword_bounds;
 use crate::layout::protocol::RequestedAxis;
-use raikiri_layout_style::values::StyleRect;
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{
+    BoxSizing, LengthPercentage, LengthPercentageAuto, StyleRect, StyleSize,
+};
 
 fn inputs() -> LayoutInput {
     LayoutInput {
@@ -157,15 +158,15 @@ fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
 #[test]
 fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
     let style = Style {
-        box_sizing: taffy::BoxSizing::ContentBox,
+        box_sizing: BoxSizing::ContentBox,
         padding: StyleRect {
-            left: taffy::LengthPercentage::length(5.0),
-            right: taffy::LengthPercentage::length(5.0),
+            left: LengthPercentage::length(5.0),
+            right: LengthPercentage::length(5.0),
             ..Style::default().padding
         },
         border: StyleRect {
-            left: taffy::LengthPercentage::length(1.0),
-            right: taffy::LengthPercentage::length(1.0),
+            left: LengthPercentage::length(1.0),
+            right: LengthPercentage::length(1.0),
             ..Style::default().border
         },
         ..ratio_style(Dimension::auto(), Dimension::auto())
@@ -194,19 +195,19 @@ fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
 #[test]
 fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
     let style = Style {
-        box_sizing: taffy::BoxSizing::ContentBox,
+        box_sizing: BoxSizing::ContentBox,
         size: StyleSize {
             width: Dimension::length(100.0),
             height: Dimension::auto(),
         },
         padding: StyleRect {
-            left: taffy::LengthPercentage::length(5.0),
-            right: taffy::LengthPercentage::length(5.0),
+            left: LengthPercentage::length(5.0),
+            right: LengthPercentage::length(5.0),
             ..Style::default().padding
         },
         border: StyleRect {
-            left: taffy::LengthPercentage::length(1.0),
-            right: taffy::LengthPercentage::length(1.0),
+            left: LengthPercentage::length(1.0),
+            right: LengthPercentage::length(1.0),
             ..Style::default().border
         },
         ..ratio_style(Dimension::auto(), Dimension::auto())
@@ -284,12 +285,12 @@ fn conflicting_numeric_bounds_raise_max_to_min() {
     let style = Style {
         aspect_ratio: Some(1.0),
         min_size: StyleSize {
-            width: taffy::LengthPercentageAuto::length(100.0),
-            height: taffy::LengthPercentageAuto::auto(),
+            width: LengthPercentageAuto::length(100.0),
+            height: LengthPercentageAuto::auto(),
         },
         max_size: StyleSize {
-            width: taffy::LengthPercentageAuto::length(50.0),
-            height: taffy::LengthPercentageAuto::auto(),
+            width: LengthPercentageAuto::length(50.0),
+            height: LengthPercentageAuto::auto(),
         },
         ..Style::default()
     };

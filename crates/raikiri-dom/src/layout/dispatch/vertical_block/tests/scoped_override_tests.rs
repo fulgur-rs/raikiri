@@ -1,11 +1,9 @@
 use super::super::*;
 use crate::layout::style_views::tests::fixture_with_styles;
-use crate::layout::taffy_adapter::IntoEdges;
 use raikiri_layout_geometry::Edges;
-use raikiri_layout_style::values::StyleRect;
+use raikiri_layout_style::values::{Dimension, IntoEdges, LengthPercentage, StyleRect};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::{Dimension, LengthPercentage};
 
 /// The same values on the same sides, as the style vocabulary's rectangle.
 fn style_rect<T>(edges: Edges<T>) -> StyleRect<T> {

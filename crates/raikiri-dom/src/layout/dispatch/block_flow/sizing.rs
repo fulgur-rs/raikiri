@@ -1,12 +1,11 @@
 //! Resolve the physical box constraints used by project block flow.
 
 use crate::LayoutStyle as Style;
-use crate::layout::dispatch::resolve_calc;
 use crate::layout::protocol::{LayoutInput, SizingMode};
-use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{Edges, Size};
-use taffy::{BoxSizing, CoreStyle, Overflow};
+use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Overflow, ResolveOrZero};
+use taffy::CoreStyle;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Metrics {
@@ -53,19 +52,15 @@ impl Metrics {
         content_box_ratio: bool,
         inputs: LayoutInput,
     ) -> Self {
-        let padding = style
-            .padding()
-            .resolve_or_zero(inputs.parent_size.width, resolve_calc);
-        let border = style
-            .border()
-            .resolve_or_zero(inputs.parent_size.width, resolve_calc);
+        let padding = style.padding().resolve_or_zero(inputs.parent_size.width);
+        let border = style.border().resolve_or_zero(inputs.parent_size.width);
         let padding_border = padding + border;
         let adjustment = if style.box_sizing() == BoxSizing::ContentBox {
             padding_border.sum_axes()
         } else {
             Size::ZERO
         };
-        let specified = style.size().maybe_resolve(inputs.parent_size, resolve_calc);
+        let specified = style.size().maybe_resolve(inputs.parent_size);
         let ratio = style.aspect_ratio();
         // The box the ratio relates is the content box of a box sized by its
         // content box and of an `auto <ratio>`, else the border box.
@@ -104,12 +99,8 @@ impl Metrics {
                     .filter(|_| own.height.is_none() && auto(specified.height)),
             }
         };
-        let own_min = style
-            .min_size()
-            .maybe_resolve(inputs.parent_size, resolve_calc);
-        let own_max = style
-            .max_size()
-            .maybe_resolve(inputs.parent_size, resolve_calc);
+        let own_min = style.min_size().maybe_resolve(inputs.parent_size);
+        let own_max = style.max_size().maybe_resolve(inputs.parent_size);
         let carried_min = carried(own_min);
         let carried_max = carried(own_max);
         let (min_width, max_width) = bounds(

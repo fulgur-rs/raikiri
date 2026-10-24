@@ -53,11 +53,10 @@
 //! coordinates.
 
 use crate::layout::protocol::{Baselines, LayoutInput, LayoutOutput, NodeId};
-use crate::layout::taffy_adapter::ResolveOrZero;
 use raikiri_layout_geometry::{BoxLayout, Edges, Size};
+use raikiri_layout_style::values::ResolveOrZero;
 use raikiri_style::property::WritingMode;
 
-use super::resolve_calc;
 use super::transposed_axes::{
     OverflowFrame, padding_box, physical_layout, swap, transpose_child_output_to_vertical,
     transpose_inputs, transpose_output_to_physical,
@@ -339,7 +338,7 @@ impl LayoutSession<'_> {
             let border = tree
                 .physical_style(usize::from(node_id))
                 .border()
-                .resolve_or_zero(None, resolve_calc);
+                .resolve_or_zero(None);
             let output = tree.dispatch_physical_child(node_id, child.inputs, padding_basis, None);
             let baseline = item_baseline(tree, frame, usize::from(node_id), &output);
             adapter.child_output(output, border, baseline)

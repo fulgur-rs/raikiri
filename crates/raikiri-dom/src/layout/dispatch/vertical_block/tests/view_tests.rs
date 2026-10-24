@@ -3,8 +3,9 @@ use crate::layout::{
     context::LayoutSession,
     style_views::{ReadRole, tests::fixture_with_styles},
 };
-use raikiri_layout_style::values::StyleSize;
-use taffy::LengthPercentage;
+use raikiri_layout_style::values::{
+    Dimension, ExpandedDimension, LengthPercentage, LengthPercentageAuto, StyleSize,
+};
 
 fn frame(
     tree: &mut LayoutSession<'_>,
@@ -39,8 +40,8 @@ fn opposite_frames_keep_independent_view_geometry() {
         assert_eq!(
             query.size(),
             StyleSize {
-                width: taffy::Dimension::length(7.0),
-                height: taffy::Dimension::length(31.0)
+                width: Dimension::length(7.0),
+                height: Dimension::length(31.0)
             }
         );
         assert_eq!(query.border().top, LengthPercentage::length(2.0));
@@ -82,7 +83,7 @@ fn opposite_frames_keep_independent_view_geometry() {
     });
     assert_eq!(
         tree.query_style(child, ReadRole::BlockItem).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
 }
 
@@ -100,8 +101,8 @@ fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
         assert_eq!(
             tree.query_style(child, ReadRole::BlockItem).size(),
             StyleSize {
-                width: taffy::Dimension::length(7.0),
-                height: taffy::Dimension::length(31.0)
+                width: Dimension::length(7.0),
+                height: Dimension::length(31.0)
             }
         );
         let physical = tree.physical_style(child);
@@ -109,18 +110,12 @@ fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
         assert_eq!(
             physical.size(),
             StyleSize {
-                width: taffy::Dimension::length(31.0),
-                height: taffy::Dimension::length(7.0)
+                width: Dimension::length(31.0),
+                height: Dimension::length(7.0)
             }
         );
-        assert_eq!(
-            physical.margin().left,
-            taffy::LengthPercentageAuto::length(5.0)
-        );
-        assert_eq!(
-            physical.margin().top,
-            taffy::LengthPercentageAuto::length(9.0)
-        );
+        assert_eq!(physical.margin().left, LengthPercentageAuto::length(5.0));
+        assert_eq!(physical.margin().top, LengthPercentageAuto::length(9.0));
     });
 }
 
@@ -142,11 +137,11 @@ fn frame_snapshot_ignores_later_pass_and_metadata() {
         tree.nodes[child].claims_fixed_oof = true;
         tree.prepare_style_views();
         let live = tree.query_style(child, ReadRole::CoreContainer);
-        assert_eq!(live.size().width, taffy::Dimension::length(99.0));
+        assert_eq!(live.size().width, Dimension::length(99.0));
         assert!(live.is_containing_block().fixed);
         assert_eq!(
             tree.query_style(child, ReadRole::BlockItem).size().height,
-            taffy::Dimension::length(31.0)
+            Dimension::length(31.0)
         );
         let frozen = tree.context.transposed_blocks.last().unwrap().child_views[&child].view();
         assert!(
@@ -181,7 +176,7 @@ fn late_override_preserves_unrelated_frame_property() {
             |tree| {
                 assert_eq!(
                     tree.query_style(child, ReadRole::BlockItem).size().height,
-                    taffy::Dimension::length(20.0)
+                    Dimension::length(20.0)
                 );
                 let block = tree.context.transposed_blocks.last_mut().unwrap();
                 OwnedPropertyOverride::length(LengthProperty::Height, L::Px(91.0), true)
@@ -193,8 +188,8 @@ fn late_override_preserves_unrelated_frame_property() {
         assert_eq!(
             query.size(),
             StyleSize {
-                width: taffy::Dimension::length(91.0),
-                height: taffy::Dimension::length(31.0)
+                width: Dimension::length(91.0),
+                height: Dimension::length(31.0)
             }
         );
         assert_eq!(query.padding().left, LengthPercentage::length(10.0));
@@ -207,7 +202,7 @@ fn frame_setup_failure_restores_original_payload() {
         if count == 1 {
             assert_eq!(
                 tree.query_style(index, ReadRole::BlockItem).size().height,
-                taffy::Dimension::length(11.0)
+                Dimension::length(11.0)
             );
             std::panic::panic_any(719_u64);
         }
@@ -249,7 +244,7 @@ fn frame_setup_failure_restores_original_payload() {
             }));
             assert_eq!(
                 tree.query_style(child, ReadRole::BlockItem).size().height,
-                taffy::Dimension::length(31.0)
+                Dimension::length(31.0)
             );
             std::panic::resume_unwind(result.unwrap_err());
         });
@@ -260,7 +255,7 @@ fn frame_setup_failure_restores_original_payload() {
     assert_eq!(tree.override_checkpoint(), 0);
     assert_eq!(
         tree.query_style(child, ReadRole::BlockItem).size().width,
-        taffy::Dimension::length(31.0)
+        Dimension::length(31.0)
     );
 }
 
@@ -370,7 +365,7 @@ fn frame_baked_edges_preserve_duplicate_override_precedence() {
 
 #[test]
 fn materialized_calc_survives_frame_and_bridge_retirement() {
-    use crate::layout::taffy_adapter::MaybeResolve;
+    use raikiri_layout_style::values::MaybeResolve;
     use std::sync::Arc;
     for batched in [false, true] {
         let (mut doc, cascade, child, _) =
@@ -389,7 +384,9 @@ fn materialized_calc_survives_frame_and_bridge_retirement() {
             )
             .unwrap(),
         );
-        let handle = tree.style_view(child).size().width.into_raw().calc_value();
+        let ExpandedDimension::Calc(handle) = tree.style_view(child).size().width.expand() else {
+            panic!("the width is a calc()");
+        };
         let owner = Arc::downgrade(
             tree.box_style_data
                 .calc_values
@@ -425,17 +422,11 @@ fn materialized_calc_survives_frame_and_bridge_retirement() {
             .upgrade()
             .expect("escaped frame calc survives successful bridge retirement");
         assert_eq!(
-            materialized
-                .size
-                .height
-                .maybe_resolve(Some(100.0), crate::layout::dispatch::resolve_calc),
+            materialized.size.height.maybe_resolve(Some(100.0)),
             Some(11.0)
         );
         assert_eq!(
-            materialized
-                .size
-                .height
-                .maybe_resolve(Some(200.0), crate::layout::dispatch::resolve_calc),
+            materialized.size.height.maybe_resolve(Some(200.0)),
             Some(21.0)
         );
     }
@@ -466,7 +457,7 @@ fn frame_capture_keeps_publication_and_foundation_stamps() {
 
 #[test]
 fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
-    use crate::layout::taffy_adapter::MaybeResolve;
+    use raikiri_layout_style::values::MaybeResolve;
     use std::sync::Arc;
     for batched in [false, true] {
         let (mut doc, cascade, child, _) =
@@ -504,10 +495,7 @@ fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
             .expect("escaped late calc survives scope, frame and bridge retirement");
         for (basis, expected) in [(100.0, 11.0), (200.0, 21.0)] {
             assert_eq!(
-                materialized
-                    .size
-                    .height
-                    .maybe_resolve(Some(basis), crate::layout::dispatch::resolve_calc),
+                materialized.size.height.maybe_resolve(Some(basis)),
                 Some(expected)
             );
         }
@@ -543,7 +531,7 @@ fn frozen_sizing_undo_rejects_reused_frame_generation() {
     );
     assert_eq!(
         blocks[0].child_views[&child].view().size().height,
-        taffy::Dimension::length(20.0)
+        Dimension::length(20.0)
     );
 }
 
@@ -559,18 +547,12 @@ fn a_physical_read_of_a_vertical_box_keeps_the_physical_axes() {
     assert_eq!(
         physical.size(),
         StyleSize {
-            width: taffy::Dimension::length(31.0),
-            height: taffy::Dimension::length(7.0)
+            width: Dimension::length(31.0),
+            height: Dimension::length(7.0)
         }
     );
-    assert_eq!(
-        physical.margin().left,
-        taffy::LengthPercentageAuto::length(5.0)
-    );
-    assert_eq!(
-        physical.margin().top,
-        taffy::LengthPercentageAuto::length(9.0)
-    );
+    assert_eq!(physical.margin().left, LengthPercentageAuto::length(5.0));
+    assert_eq!(physical.margin().top, LengthPercentageAuto::length(9.0));
     assert_eq!(physical.padding().right, LengthPercentage::length(3.0));
     assert_eq!(physical.border().bottom, LengthPercentage::length(2.0));
 }

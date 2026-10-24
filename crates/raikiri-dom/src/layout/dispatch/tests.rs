@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::protocol::{RequestedAxis, RunMode, SizingMode};
 use raikiri_layout_geometry::{Edges, Line, Point};
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto, StyleSize};
 mod child_walk_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;
@@ -15,7 +15,7 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
     use crate::layout::dispatch::block_flow::context::BlockFormattingContext;
     use crate::layout::ifc::test_support::block_fixture_with_ahem;
     use crate::layout::protocol::AvailableSpace;
-    use taffy::Clear;
+    use raikiri_layout_style::values::Clear;
 
     fn fixture() -> (crate::Document, usize) {
         let mut wrapper = 0;
@@ -391,12 +391,12 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     // containing block height is treated as `none`.
     let style = Style {
         size: StyleSize {
-            width: taffy::Dimension::auto(),
-            height: taffy::Dimension::length(100.0),
+            width: Dimension::auto(),
+            height: Dimension::length(100.0),
         },
         max_size: StyleSize {
-            width: taffy::LengthPercentageAuto::auto(),
-            height: taffy::LengthPercentageAuto::percent(0.5),
+            width: LengthPercentageAuto::auto(),
+            height: LengthPercentageAuto::percent(0.5),
         },
         ..Style::default()
     };
@@ -416,8 +416,8 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     );
     let style = Style {
         max_size: StyleSize {
-            width: taffy::LengthPercentageAuto::auto(),
-            height: taffy::LengthPercentageAuto::calc(calc_ptr),
+            width: LengthPercentageAuto::auto(),
+            height: LengthPercentageAuto::calc(calc_ptr),
         },
         ..style
     };
@@ -436,34 +436,29 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
         },
         false,
     );
-    let length = taffy::LengthPercentageAuto::calc(length_ptr);
+    let length = LengthPercentageAuto::calc(length_ptr);
     let style = Style {
         max_size: StyleSize {
-            width: taffy::LengthPercentageAuto::auto(),
+            width: LengthPercentageAuto::auto(),
             height: length,
         },
         ..style
     };
     assert_eq!(ifc_content_height_bounds(&style, None, None), (0.0, 30.0));
-    assert!(ifc_length_only(length).into_raw().is_plain_calc());
-    assert!(
-        ifc_length_only(taffy::LengthPercentageAuto::calc(calc_ptr))
-            .into_raw()
-            .tag()
-            == taffy::CompactLength::AUTO_TAG
-    );
+    assert!(ifc_length_only(length).is_calc());
+    assert!(ifc_length_only(LengthPercentageAuto::calc(calc_ptr)).is_auto());
 }
 
 #[test]
 fn a_non_finite_ifc_content_bound_is_the_initial_value() {
     let style = Style {
         min_size: StyleSize {
-            width: taffy::LengthPercentageAuto::auto(),
-            height: taffy::LengthPercentageAuto::length(f32::INFINITY),
+            width: LengthPercentageAuto::auto(),
+            height: LengthPercentageAuto::length(f32::INFINITY),
         },
         max_size: StyleSize {
-            width: taffy::LengthPercentageAuto::auto(),
-            height: taffy::LengthPercentageAuto::length(f32::NAN),
+            width: LengthPercentageAuto::auto(),
+            height: LengthPercentageAuto::length(f32::NAN),
         },
         ..Style::default()
     };
@@ -475,26 +470,19 @@ fn a_non_finite_ifc_content_bound_is_the_initial_value() {
 
 #[test]
 fn the_fit_content_limit_resolves_against_the_basis_it_needs() {
-    let limit =
-        |size: taffy::Dimension, basis: Option<f32>| fit_content_limit(size.expand(), basis);
+    let limit = |size: Dimension, basis: Option<f32>| fit_content_limit(size.expand(), basis);
     let mut arena = Vec::new();
     let mut calc = |percent: f32, px: f32| {
         let value = raikiri_style::property::CalcLengthPercentage { percent, px };
-        taffy::Dimension::fit_content_calc(push_calc(&mut arena, value, true))
+        Dimension::fit_content_calc(push_calc(&mut arena, value, true))
     };
 
     // A length needs no basis.
-    assert_eq!(
-        limit(taffy::Dimension::fit_content_px(120.0), None),
-        Some(120.0)
-    );
+    assert_eq!(limit(Dimension::fit_content_px(120.0), None), Some(120.0));
     // A percentage leaves no limit while the basis is indefinite.
+    assert_eq!(limit(Dimension::fit_content_percent(0.25), None), None);
     assert_eq!(
-        limit(taffy::Dimension::fit_content_percent(0.25), None),
-        None
-    );
-    assert_eq!(
-        limit(taffy::Dimension::fit_content_percent(0.25), Some(400.0)),
+        limit(Dimension::fit_content_percent(0.25), Some(400.0)),
         Some(100.0)
     );
     // So does a calc() with a percentage term, which a calc() of lengths does not.
@@ -505,8 +493,8 @@ fn the_fit_content_limit_resolves_against_the_basis_it_needs() {
     // A limit never goes below zero.
     assert_eq!(limit(mixed, Some(100.0)), Some(0.0));
     // Other sizes have no limit.
-    assert_eq!(limit(taffy::Dimension::length(10.0), Some(400.0)), None);
-    assert_eq!(limit(taffy::Dimension::auto(), Some(400.0)), None);
+    assert_eq!(limit(Dimension::length(10.0), Some(400.0)), None);
+    assert_eq!(limit(Dimension::auto(), Some(400.0)), None);
 }
 
 #[test]

@@ -23,11 +23,9 @@
 //! the auto margins of the boxes that the root contains.
 
 use crate::layout::protocol::{AvailableSpace, LayoutInput};
-use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::TaffyPosition;
+use raikiri_layout_style::values::{LengthExt, MaybeResolve, Position, ResolveOrZero};
 
-use super::resolve_calc;
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::node::NodeFlags;
@@ -45,8 +43,7 @@ pub(crate) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {
 }
 
 fn is_absolute(tree: &Document, node: usize) -> bool {
-    tree.nodes[node].taffy_position() == TaffyPosition::Absolute
-        && !tree.nodes[node].is_display_none()
+    tree.nodes[node].layout_position() == Position::Absolute && !tree.nodes[node].is_display_none()
 }
 
 /// The physical height of the padding box `node` would fill as a vertical
@@ -77,7 +74,7 @@ pub(super) fn containing_block_inline_size(
     if style
         .size()
         .height
-        .maybe_resolve(inputs.parent_size.height, resolve_calc)
+        .maybe_resolve(inputs.parent_size.height)
         .is_some()
     {
         return None;
@@ -89,17 +86,15 @@ pub(super) fn containing_block_inline_size(
         (None, _) => return None,
     };
     let basis = Some(available);
-    let margin = style.margin().map(|margin| {
-        margin
-            .resolve_to_option(available, resolve_calc)
-            .unwrap_or(0.0)
-    });
-    let border = style.border().resolve_or_zero(basis, resolve_calc);
+    let margin = style
+        .margin()
+        .map(|margin| margin.resolve(Some(available)).unwrap_or(0.0));
+    let border = style.border().resolve_or_zero(basis);
     let mut border_box = (available - margin.top - margin.bottom).max(0.0);
-    if let Some(max) = style.max_size().height.maybe_resolve(basis, resolve_calc) {
+    if let Some(max) = style.max_size().height.maybe_resolve(basis) {
         border_box = border_box.min(max);
     }
-    if let Some(min) = style.min_size().height.maybe_resolve(basis, resolve_calc) {
+    if let Some(min) = style.min_size().height.maybe_resolve(basis) {
         border_box = border_box.max(min);
     }
     Some((border_box - border.top - border.bottom).max(0.0))
@@ -187,12 +182,8 @@ pub(super) fn place_static_block_start(
     let (border, padding) = {
         let style = tree.physical_style(node);
         (
-            style
-                .border()
-                .resolve_or_zero(Some(border_box.height), resolve_calc),
-            style
-                .padding()
-                .resolve_or_zero(Some(border_box.height), resolve_calc),
+            style.border().resolve_or_zero(Some(border_box.height)),
+            style.padding().resolve_or_zero(Some(border_box.height)),
         )
     };
     let children: Vec<usize> = tree.nodes[node]
@@ -207,11 +198,9 @@ pub(super) fn place_static_block_start(
         if !inset.left.is_auto() || !inset.right.is_auto() {
             continue;
         }
-        let margin = child_style.margin().map(|margin| {
-            margin
-                .resolve_to_option(border_box.height, resolve_calc)
-                .unwrap_or(0.0)
-        });
+        let margin = child_style
+            .margin()
+            .map(|margin| margin.resolve(Some(border_box.height)).unwrap_or(0.0));
         let layout = &mut tree.nodes[child].layout;
         layout.location.x = match mode {
             WritingMode::VerticalRl | WritingMode::SidewaysRl => {

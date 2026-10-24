@@ -7,9 +7,9 @@ use crate::layout::{
     style_views::tests::{fixture_with_styles, with_setup_inspector},
 };
 use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto as Lpa};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::{Dimension, LengthPercentageAuto as Lpa};
 
 #[test]
 fn intrinsic_scope_preserves_unrelated_updates() {

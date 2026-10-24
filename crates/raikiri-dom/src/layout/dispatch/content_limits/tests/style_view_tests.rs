@@ -4,6 +4,7 @@ use crate::layout::protocol::{
 };
 use crate::layout::style_views::tests::fixture;
 use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
 fn assert_unrelated_pass_height_survives(panic_body: bool) {
@@ -36,11 +37,11 @@ fn assert_unrelated_pass_height_survives(panic_body: bool) {
     assert_eq!(tree.style_override_depth(child), 0);
     assert_eq!(
         tree.style_view(child).min_size().width,
-        taffy::LengthPercentageAuto::auto()
+        LengthPercentageAuto::auto()
     );
     assert_eq!(
         tree.style_view(child).size().height,
-        taffy::Dimension::length(91.0)
+        Dimension::length(91.0)
     );
 }
 
@@ -69,7 +70,7 @@ fn content_limit_resolved_scope_keeps_large_finite_used_values() {
     }
     assert_eq!(
         legacy.min_size.width,
-        taffy::LengthPercentageAuto::length(20_000_000.0)
+        LengthPercentageAuto::length(20_000_000.0)
     );
 
     let (mut doc, cascade, child, _) = fixture();
@@ -84,7 +85,7 @@ fn content_limit_resolved_scope_keeps_large_finite_used_values() {
         |tree| {
             assert_eq!(
                 tree.style_view(child).min_size().width,
-                taffy::LengthPercentageAuto::length(20_000_000.0)
+                LengthPercentageAuto::length(20_000_000.0)
             );
         },
     );

@@ -19,7 +19,7 @@ use crate::layout::taffy_adapter::GridInfo;
 use crate::layout::taffy_adapter::OofSpan;
 use crate::layout::taffy_adapter::algorithms::{claims_position, compute_oof_layout_for_area};
 use raikiri_layout_geometry::{Edges, Point, Size};
-use taffy::{ContainingBlockClaims, Direction};
+use raikiri_layout_style::values::{ContainingBlockClaims, Direction};
 
 use super::vertical_block::block_right_to_left;
 use crate::layout::context::LayoutSession;

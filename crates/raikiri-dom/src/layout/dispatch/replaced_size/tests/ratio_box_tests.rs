@@ -2,9 +2,9 @@ use super::*;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::dispatch::replaced_size::keyword_bounds;
 use crate::layout::protocol::RequestedAxis;
-use raikiri_layout_style::values::StyleRect;
-use raikiri_layout_style::values::StyleSize;
-use taffy::{BoxSizing, LengthPercentage};
+use raikiri_layout_style::values::{
+    BoxSizing, LengthPercentage, LengthPercentageAuto, StyleRect, StyleSize,
+};
 
 fn inputs(known_width: Option<f32>) -> LayoutInput {
     LayoutInput {
@@ -167,8 +167,8 @@ fn a_ratio_the_box_states_replaces_the_natural_ratio_of_its_natural_size() {
     // A `min-height` of 200px moves the width along the border box ratio.
     let min_height = Style {
         min_size: StyleSize {
-            width: taffy::LengthPercentageAuto::auto(),
-            height: taffy::LengthPercentageAuto::length(200.0),
+            width: LengthPercentageAuto::auto(),
+            height: LengthPercentageAuto::length(200.0),
         },
         ..padded_border_box(2.0)
     };
@@ -314,8 +314,8 @@ fn a_keyword_height_never_falls_below_the_padding_across_the_border_box_ratio() 
 /// A `border-box` replaced box with a ratio of 1 and 20px of padding on the
 /// right and 10px at the bottom, its `min-*` and `max-*` sizes as given.
 fn small_padded_square(
-    min: StyleSize<taffy::LengthPercentageAuto>,
-    max: StyleSize<taffy::LengthPercentageAuto>,
+    min: StyleSize<LengthPercentageAuto>,
+    max: StyleSize<LengthPercentageAuto>,
 ) -> Style {
     Style {
         padding: StyleRect {
@@ -332,7 +332,7 @@ fn small_padded_square(
 
 #[test]
 fn a_stated_ratio_brings_the_border_box_within_the_min_and_max_sizes() {
-    use taffy::LengthPercentageAuto as Length;
+    use raikiri_layout_style::values::LengthPercentageAuto as Length;
     let none = StyleSize {
         width: Length::auto(),
         height: Length::auto(),

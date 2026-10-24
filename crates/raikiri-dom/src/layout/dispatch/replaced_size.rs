@@ -1,14 +1,13 @@
 //! The size of a replaced leaf with an intrinsic ratio and an `auto` side.
 
-use super::{calc_has_percentage, resolve_calc};
 use crate::LayoutStyle as Style;
 use crate::image_geometry::constrain_with_ratio;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::protocol::{AvailableSpace, LayoutInput, SizingMode};
-use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::Size;
-use taffy::{
-    BoxSizing, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto, LengthPercentageAuto,
+use raikiri_layout_style::values::{
+    BoxSizing, CalcHandle, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto,
+    LengthPercentageAuto, MaybeResolve, ResolveOrZero,
 };
 
 /// The content-box size a replaced leaf takes when `width`, `height` or both
@@ -340,13 +339,11 @@ fn resolve_cyclic_size(value: Dimension, basis: Option<f32>, min_content: bool) 
     if min_content && basis.is_none() {
         return match value.expand() {
             ExpandedDimension::Percent(_) => Some(0.0),
-            ExpandedDimension::Calc(handle) if calc_has_percentage(handle) => {
-                Some(resolve_calc(handle, 0.0))
-            }
-            _ => value.maybe_resolve(basis, resolve_calc),
+            ExpandedDimension::Calc(handle) if handle.has_percentage() => Some(handle.resolve(0.0)),
+            _ => value.maybe_resolve(basis),
         };
     }
-    value.maybe_resolve(basis, resolve_calc)
+    value.maybe_resolve(basis)
 }
 
 /// A cyclic percentage in a replaced box's minimum size resolves against zero
@@ -359,13 +356,13 @@ fn resolve_bound(
     if min_content && basis.is_none() {
         return match value.expand() {
             ExpandedLengthPercentageAuto::Percent(_) => Some(0.0),
-            ExpandedLengthPercentageAuto::Calc(handle) if calc_has_percentage(handle) => {
-                Some(resolve_calc(handle, 0.0))
+            ExpandedLengthPercentageAuto::Calc(handle) if handle.has_percentage() => {
+                Some(handle.resolve(0.0))
             }
-            _ => value.maybe_resolve(basis, resolve_calc),
+            _ => value.maybe_resolve(basis),
         };
     }
-    value.maybe_resolve(basis, resolve_calc)
+    value.maybe_resolve(basis)
 }
 
 /// A side of a box resolved against the box `style` sizes: the side itself for
@@ -380,9 +377,7 @@ fn content_side(style: &Style, side: f32, edges: f32) -> f32 {
 /// The padding and border of `style` on each axis, with percentages resolved
 /// against `basis`, the width of the containing block.
 pub(super) fn padding_and_border(style: &Style, basis: Option<f32>) -> Size<f32> {
-    (style.padding.resolve_or_zero(basis, resolve_calc)
-        + style.border.resolve_or_zero(basis, resolve_calc))
-    .sum_axes()
+    (style.padding.resolve_or_zero(basis) + style.border.resolve_or_zero(basis)).sum_axes()
 }
 
 /// The part of the `edges` (padding and border) that lies between the content

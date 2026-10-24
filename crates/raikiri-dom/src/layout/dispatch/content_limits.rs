@@ -8,22 +8,24 @@
 //! for the duration of that layout. Every algorithm that clamps the box to its
 //! `min_size` and `max_size` then reads the sizes the keywords stand for.
 
-use raikiri_layout_style::values::StyleSize;
+use raikiri_layout_style::values::{
+    BoxSizing, Dimension, Display, ExpandedDimension, LengthExt, LengthIdentity,
+    LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero, StyleSize,
+};
 use std::collections::HashMap;
 
 use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
-use crate::layout::dispatch::{fit_content_room, resolve_calc};
+use crate::layout::dispatch::fit_content_room;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
 use crate::layout::protocol::{
     AvailableSpace, LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
-use crate::layout::taffy_adapter::{LayoutCache, MaybeResolve, ResolveOrZero};
+use crate::layout::taffy_adapter::LayoutCache;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Line, Size};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
-use taffy::{BoxSizing, Dimension, ExpandedDimension, LengthPercentageAuto};
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
 /// (`min-content`, `max-content`, `fit-content`, `fit-content(<length-percentage>)`),
@@ -504,13 +506,13 @@ fn clamp_known_width_to_style(
     let minimum = style
         .min_size()
         .width
-        .maybe_resolve(parent_width, resolve_calc)
+        .maybe_resolve(parent_width)
         .map(|width| width + adjustment)
         .unwrap_or(0.0);
     let maximum = style
         .max_size()
         .width
-        .maybe_resolve(parent_width, resolve_calc)
+        .maybe_resolve(parent_width)
         .map(|width| width + adjustment)
         .unwrap_or(f32::INFINITY)
         .max(minimum);
@@ -531,13 +533,13 @@ fn clamp_known_height_to_style(
     let minimum = style
         .min_size()
         .height
-        .maybe_resolve(parent_height, resolve_calc)
+        .maybe_resolve(parent_height)
         .map(|height| height + adjustment)
         .unwrap_or(0.0);
     let maximum = style
         .max_size()
         .height
-        .maybe_resolve(parent_height, resolve_calc)
+        .maybe_resolve(parent_height)
         .map(|height| height + adjustment)
         .unwrap_or(f32::INFINITY)
         .max(minimum);
@@ -821,7 +823,7 @@ fn has_percentage_fit_content(limits: &ContentLimits) -> bool {
         matches!(
             dimension.expand(),
             ExpandedDimension::FitContentPercent(_) | ExpandedDimension::FitContentCalc(_)
-        ) && dimension.into_raw().uses_percentage()
+        ) && dimension.uses_percentage()
     })
 }
 
@@ -837,8 +839,7 @@ fn grid_item_area_bases(
         .child_ids(node_id)
         .filter(|&child| {
             let node = &tree.nodes[usize::from(child)];
-            node.taffy_display() != taffy::Display::None
-                && node.taffy_position() != taffy::Position::Absolute
+            node.layout_display() != Display::None && node.layout_position() != Position::Absolute
         })
         .collect::<Vec<_>>();
     // The areas are on the layout axes of the grid, which are the physical
@@ -905,33 +906,6 @@ impl Bounds {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct MeasureLength {
-    tag: usize,
-    value: usize,
-}
-
-impl MeasureLength {
-    fn new(raw: taffy::style::CompactLength) -> Self {
-        let value = if raw.has_calc() {
-            raw.calc_value().addr()
-        } else {
-            let value = raw.value();
-            if value.is_nan() {
-                f32::NAN.to_bits() as usize
-            } else if value == 0.0 {
-                0
-            } else {
-                value.to_bits() as usize
-            }
-        };
-        Self {
-            tag: raw.tag(),
-            value,
-        }
-    }
-}
-
 /// What a measure of a box is keyed by: the box, the axis measured, and
 /// everything the layout it runs reads besides the box's contents.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -944,8 +918,8 @@ pub(crate) struct MeasureKey {
     /// The basis a flex item's percentage edges were resolved against.
     edge_basis: Option<u32>,
     percentage_height_basis: Option<u32>,
-    insets: [MeasureLength; 8],
-    cross_sizes: [Option<MeasureLength>; 3],
+    insets: [LengthIdentity; 8],
+    cross_sizes: [Option<LengthIdentity>; 3],
     empty: bool,
     orthogonal_guard: bool,
     /// The minimum and maximum width the height is measured under.
@@ -975,17 +949,17 @@ impl MeasureKey {
             [None; 3]
         } else if width {
             [
-                Some(MeasureLength::new(size.height.into_raw())),
-                Some(MeasureLength::new(min_size.height.into_raw())),
-                Some(MeasureLength::new(max_size.height.into_raw())),
+                Some(size.height.identity()),
+                Some(min_size.height.identity()),
+                Some(max_size.height.identity()),
             ]
         } else if flex_grid {
-            [Some(MeasureLength::new(size.width.into_raw())), None, None]
+            [Some(size.width.identity()), None, None]
         } else {
             [
-                Some(MeasureLength::new(size.width.into_raw())),
-                Some(MeasureLength::new(min_size.width.into_raw())),
-                Some(MeasureLength::new(max_size.width.into_raw())),
+                Some(size.width.identity()),
+                Some(min_size.width.identity()),
+                Some(max_size.width.identity()),
             ]
         };
         let edge_basis = if tree.nodes[node].formatting_context == FormattingContext::Inline {
@@ -1017,7 +991,7 @@ impl MeasureKey {
                 border.bottom,
                 border.left,
             ]
-            .map(|edge| MeasureLength::new(edge.into_raw())),
+            .map(LengthExt::identity),
             cross_sizes,
             empty: tree.context.size_contained_measure.last() == Some(&node),
             orthogonal_guard: tree.context.orthogonal_block_in_layout == Some(node),
@@ -1298,12 +1272,8 @@ fn content_percentage_height_basis(
 ) -> Option<f32> {
     let style = tree.physical_style(idx);
     let parent_width = inputs.parent_size.width.unwrap_or(0.0);
-    let edges = (style
-        .padding()
-        .resolve_or_zero(Some(parent_width), resolve_calc)
-        + style
-            .border()
-            .resolve_or_zero(Some(parent_width), resolve_calc))
+    let edges = (style.padding().resolve_or_zero(Some(parent_width))
+        + style.border().resolve_or_zero(Some(parent_width)))
     .sum_axes()
     .height;
     if let Some(height) = inputs.known_dimensions.height {
@@ -1318,12 +1288,12 @@ fn content_percentage_height_basis(
     let preferred = style
         .size()
         .height
-        .maybe_resolve(inputs.parent_size.height, resolve_calc)?
+        .maybe_resolve(inputs.parent_size.height)?
         + box_sizing_adjustment;
     let minimum = style
         .min_size()
         .height
-        .maybe_resolve(inputs.parent_size.height, resolve_calc)
+        .maybe_resolve(inputs.parent_size.height)
         .map(|height| height + box_sizing_adjustment)
         .unwrap_or(0.0);
     Some((preferred.max(minimum) - edges).max(0.0))
@@ -1338,8 +1308,7 @@ fn stretch_fit_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput,
         return room.max(0.0);
     };
     let margin = tree.physical_style(idx).margin();
-    let side =
-        |side: LengthPercentageAuto| side.resolve_to_option(basis, resolve_calc).unwrap_or(0.0);
+    let side = |side: LengthPercentageAuto| side.resolve(Some(basis)).unwrap_or(0.0);
     (basis - side(margin.left) - side(margin.right))
         .min(room)
         .max(0.0)

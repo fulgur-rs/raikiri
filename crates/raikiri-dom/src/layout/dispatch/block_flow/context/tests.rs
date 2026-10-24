@@ -1,7 +1,7 @@
 use super::{BlockFormattingContext, BoxProbe};
 use crate::layout::protocol::{CollapsibleMarginSet, FloatDirection};
 use raikiri_layout_geometry::{Point, Size};
-use taffy::{Clear, Direction};
+use raikiri_layout_style::values::{Clear, Direction};
 
 #[test]
 fn rollback_preserves_prior_floats_and_discards_speculative_clearance_and_ceiling() {

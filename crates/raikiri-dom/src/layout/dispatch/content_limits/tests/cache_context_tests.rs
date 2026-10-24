@@ -1,5 +1,6 @@
 use super::super::{Bounds, height_bounds, scoped};
 use super::*;
+use raikiri_layout_style::values::Dimension;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
@@ -305,8 +306,8 @@ fn typed_scopes_reject_restoring_an_outer_scope_first() {
 
 #[test]
 fn measure_lengths_keep_calc_identity_and_canonicalize_nan_and_zero() {
-    use super::super::MeasureLength;
     use raikiri_layout_style::AlignedCalc;
+    use raikiri_layout_style::values::LengthExt;
     use raikiri_style::property::CalcLengthPercentage;
     let a = AlignedCalc::new(
         CalcLengthPercentage {
@@ -322,12 +323,10 @@ fn measure_lengths_keep_calc_identity_and_canonicalize_nan_and_zero() {
         },
         true,
     );
-    let calc = |value: &AlignedCalc| {
-        MeasureLength::new(taffy::Dimension::calc(std::ptr::from_ref(value).cast()).into_raw())
-    };
+    let calc = |value: &AlignedCalc| Dimension::calc(std::ptr::from_ref(value).cast()).identity();
     assert_eq!(calc(&a), calc(&a));
     assert_ne!(calc(&a), calc(&b));
-    let number = |value| MeasureLength::new(taffy::Dimension::length(value).into_raw());
+    let number = |value| Dimension::length(value).identity();
     assert_eq!(number(f32::NAN), number(f32::from_bits(0x7fc0_0001)));
     assert_eq!(number(-0.0), number(0.0));
     assert_ne!(number(1.0), number(2.0));

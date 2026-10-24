@@ -17,6 +17,7 @@ use crate::layout::taffy_adapter::algorithms::{
 };
 use crate::layout::taffy_adapter::{GridInfo, OofBatch, OofSpan};
 use raikiri_layout_geometry::Size;
+use raikiri_layout_style::values::{ContainingBlockClaims, Direction};
 
 impl LayoutSession<'_> {
     /// Forget the hoisted children recorded for `node` by an earlier layout.
@@ -161,8 +162,8 @@ pub(super) fn layout_candidates(
     owner: NodeId,
     candidates: &OofBatch,
     area: OofPositioningArea,
-    direction: taffy::Direction,
-    claims: taffy::ContainingBlockClaims,
+    direction: Direction,
+    claims: ContainingBlockClaims,
     grid: Option<grid_oof::GridAxes>,
 ) -> OofLayoutResult {
     let candidate_ids = candidates

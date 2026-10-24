@@ -5,8 +5,8 @@ use crate::layout::protocol::{
 };
 use crate::layout::test_support::{restyle, with_bridged_session};
 use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_style::values::{Clear, Float};
 use raikiri_style::property::{DisplayValue, PositionValue};
-use taffy::Float;
 
 fn block_layout(
     tree: &mut Document,
@@ -752,7 +752,7 @@ fn float_box(
     tree: &mut Document,
     parent: usize,
     side: Float,
-    clear: taffy::Clear,
+    clear: Clear,
     width: f32,
     height: f32,
 ) -> usize {
@@ -763,10 +763,10 @@ fn float_box(
         Float::None => "none",
     };
     let clear = match clear {
-        taffy::Clear::None => "none",
-        taffy::Clear::Left => "left",
-        taffy::Clear::Right => "right",
-        taffy::Clear::Both => "both",
+        Clear::None => "none",
+        Clear::Left => "left",
+        Clear::Right => "right",
+        Clear::Both => "both",
     };
     restyle(tree, float, &format!("float:{side};clear:{clear}"));
     float
@@ -792,22 +792,8 @@ fn a_formatting_context_taller_than_its_gap_moves_below_the_float_it_would_overl
     let mut tree = Document::new();
     let root = flow_root_container(&mut tree);
     // 140 + 80 > 200, so the second float sits below the first, at the right.
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::None,
-        140.0,
-        10.0,
-    );
-    float_box(
-        &mut tree,
-        root,
-        Float::Right,
-        taffy::Clear::None,
-        80.0,
-        30.0,
-    );
+    float_box(&mut tree, root, Float::Left, Clear::None, 140.0, 10.0);
+    float_box(&mut tree, root, Float::Right, Clear::None, 80.0, 30.0);
     // 40px fit in the 60px gap beside the first float, but that gap ends
     // after 10px while the box goes on for 30.
     let tall = formatting_context_box(&mut tree, root, Some(40.0), 30.0);
@@ -820,22 +806,8 @@ fn a_formatting_context_taller_than_its_gap_moves_below_the_float_it_would_overl
 fn a_formatting_context_no_taller_than_its_gap_stays_beside_the_first_float() {
     let mut tree = Document::new();
     let root = flow_root_container(&mut tree);
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::None,
-        140.0,
-        10.0,
-    );
-    float_box(
-        &mut tree,
-        root,
-        Float::Right,
-        taffy::Clear::None,
-        80.0,
-        30.0,
-    );
+    float_box(&mut tree, root, Float::Left, Clear::None, 140.0, 10.0);
+    float_box(&mut tree, root, Float::Right, Clear::None, 80.0, 30.0);
     let short = formatting_context_box(&mut tree, root, Some(40.0), 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     let layout = tree.nodes[short].layout;
@@ -846,22 +818,8 @@ fn a_formatting_context_no_taller_than_its_gap_stays_beside_the_first_float() {
 fn a_formatting_context_that_fits_no_band_goes_below_all_the_floats() {
     let mut tree = Document::new();
     let root = flow_root_container(&mut tree);
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::None,
-        140.0,
-        10.0,
-    );
-    float_box(
-        &mut tree,
-        root,
-        Float::Right,
-        taffy::Clear::None,
-        80.0,
-        30.0,
-    );
+    float_box(&mut tree, root, Float::Left, Clear::None, 140.0, 10.0);
+    float_box(&mut tree, root, Float::Right, Clear::None, 80.0, 30.0);
     // Wider than the 60px gap, and the band below it is shared with the
     // right float for 30px more.
     let wide = formatting_context_box(&mut tree, root, Some(130.0), 20.0);
@@ -874,15 +832,8 @@ fn a_formatting_context_that_fits_no_band_goes_below_all_the_floats() {
 fn a_formatting_context_slides_to_the_room_every_band_it_reaches_shares() {
     let mut tree = Document::new();
     let root = flow_root_container(&mut tree);
-    float_box(&mut tree, root, Float::Left, taffy::Clear::None, 60.0, 10.0);
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::Left,
-        100.0,
-        10.0,
-    );
+    float_box(&mut tree, root, Float::Left, Clear::None, 60.0, 10.0);
+    float_box(&mut tree, root, Float::Left, Clear::Left, 100.0, 10.0);
     // The second band starts 40px further in than the first, so the box
     // keeps clear of it too.
     let sliding = formatting_context_box(&mut tree, root, Some(50.0), 30.0);
@@ -895,15 +846,8 @@ fn a_formatting_context_slides_to_the_room_every_band_it_reaches_shares() {
 fn an_auto_width_formatting_context_narrows_to_the_room_every_band_it_reaches_shares() {
     let mut tree = Document::new();
     let root = flow_root_container(&mut tree);
-    float_box(&mut tree, root, Float::Left, taffy::Clear::None, 60.0, 10.0);
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::Left,
-        100.0,
-        10.0,
-    );
+    float_box(&mut tree, root, Float::Left, Clear::None, 60.0, 10.0);
+    float_box(&mut tree, root, Float::Left, Clear::Left, 100.0, 10.0);
     let stretching = formatting_context_box(&mut tree, root, None, 30.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     let layout = tree.nodes[stretching].layout;
@@ -917,30 +861,9 @@ fn an_auto_width_formatting_context_narrows_to_the_room_every_band_it_reaches_sh
 fn an_auto_width_formatting_context_narrows_to_the_narrowest_of_several_bands() {
     let mut tree = Document::new();
     let root = flow_root_container(&mut tree);
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::None,
-        100.0,
-        10.0,
-    );
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::Left,
-        150.0,
-        10.0,
-    );
-    float_box(
-        &mut tree,
-        root,
-        Float::Left,
-        taffy::Clear::Left,
-        180.0,
-        10.0,
-    );
+    float_box(&mut tree, root, Float::Left, Clear::None, 100.0, 10.0);
+    float_box(&mut tree, root, Float::Left, Clear::Left, 150.0, 10.0);
+    float_box(&mut tree, root, Float::Left, Clear::Left, 180.0, 10.0);
     // The box reaches all three bands, and the last starts furthest in.
     let stretching = formatting_context_box(&mut tree, root, None, 25.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -958,14 +881,7 @@ fn a_square_formatting_context_settles_in_the_widest_room_it_fits_beside_the_flo
     // Three bands to the right of the floats: 140px from y = 0, 40px from
     // y = 5 and 10px from y = 40.
     for (width, height) in [(60.0, 5.0), (160.0, 35.0), (190.0, 10.0)] {
-        float_box(
-            &mut tree,
-            root,
-            Float::Left,
-            taffy::Clear::Left,
-            width,
-            height,
-        );
+        float_box(&mut tree, root, Float::Left, Clear::Left, width, height);
     }
     let square = formatting_context_box(&mut tree, root, None, 0.0);
     restyle(&mut tree, square, "height:auto;aspect-ratio:1");
