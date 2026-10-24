@@ -159,8 +159,7 @@ keyword_defaults! {
     FlexGrow, false => PropertyValue::FlexGrow(dup(&source.flex_grow));
     FlexShrink, false => PropertyValue::FlexShrink(dup(&source.flex_shrink));
     Order, false => PropertyValue::Order(dup(&source.order));
-    // `counter-reset` is left out: its `inherit` is a marker of its own that the
-    // counter machinery reads.
+    CounterReset, false => PropertyValue::CounterReset(dup(&source.counter_reset));
     CounterIncrement, false => PropertyValue::CounterIncrement(dup(&source.counter_increment));
     CounterSet, false => PropertyValue::CounterSet(dup(&source.counter_set));
     JustifyContent, false => PropertyValue::JustifyContent(dup(&source.justify_content));

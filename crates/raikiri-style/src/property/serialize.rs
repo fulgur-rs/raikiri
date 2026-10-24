@@ -562,7 +562,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::ListStyle(..)
         | PropertyValue::ListStyleImage(..)
         | PropertyValue::CounterReset(..)
-        | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(..)
         | PropertyValue::CounterSet(..)
         | PropertyValue::Content(..)

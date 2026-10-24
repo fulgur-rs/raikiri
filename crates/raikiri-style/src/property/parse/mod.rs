@@ -429,22 +429,13 @@ pub(crate) fn parse_property_grammar(
         // per-element clones). Empty lists use the shared Arc slot common to all
         // three properties (`empty_counter_entries`) to avoid per-node allocation
         // regressions, following the Content/StringSet pattern.
-        "counter-reset" => {
-            if input
-                .try_parse(|i| i.expect_ident_matching("inherit"))
-                .is_ok()
-            {
-                Some(PropertyValue::CounterResetInherit)
+        "counter-reset" => parse_counter_reset_property(input).map(|v| {
+            if v.is_empty() {
+                PropertyValue::CounterReset(empty_counter_reset_entries())
             } else {
-                parse_counter_reset_property(input).map(|v| {
-                    if v.is_empty() {
-                        PropertyValue::CounterReset(empty_counter_reset_entries())
-                    } else {
-                        PropertyValue::CounterReset(Arc::new(v))
-                    }
-                })
+                PropertyValue::CounterReset(Arc::new(v))
             }
-        }
+        }),
         "counter-increment" => parse_counter_property(input, 1).map(|v| {
             if v.is_empty() {
                 PropertyValue::CounterIncrement(empty_counter_entries())

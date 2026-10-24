@@ -837,7 +837,6 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::ListStyleImage(_)
         | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
-        | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)
         | PropertyValue::CounterSet(_)
         | PropertyValue::Content(_)

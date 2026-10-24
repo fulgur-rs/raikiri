@@ -912,17 +912,14 @@ fn margin_counter_value(
         return context.page_count.min(i32::MAX as u32) as i32;
     }
     let page_value = page_counter_value(cascade, page, name, context);
-    let reset_declaration = margin_box_property(rule, PropertyKey::CounterReset);
-    let inherits_page_counter =
-        matches!(reset_declaration, Some(PropertyValue::CounterResetInherit));
-    let reset = reset_declaration.and_then(|value| counter_reset_value(Some(value), name));
+    // A CSS-wide keyword on `counter-reset` is a marker without entries, so it
+    // leaves the page's own value: `inherit` asks for exactly that, and the
+    // others compute to `none`, which starts no counter on the box either.
+    let base = margin_box_property(rule, PropertyKey::CounterReset)
+        .and_then(|value| counter_reset_value(Some(value), name))
+        .unwrap_or(page_value);
     let increment = margin_box_property(rule, PropertyKey::CounterIncrement)
         .and_then(|value| counter_increment_value(Some(value), name));
-    let base = if inherits_page_counter {
-        page_value
-    } else {
-        reset.unwrap_or(page_value)
-    };
     base.saturating_add(increment.unwrap_or(0))
 }
 

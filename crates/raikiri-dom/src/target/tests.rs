@@ -334,6 +334,30 @@ fn counter_snapshots_duplicate_name_in_one_counter_reset_keeps_only_last_value()
 }
 
 #[test]
+fn counter_reset_inherit_starts_the_counters_of_the_parent_again() {
+    // `inherit` takes the parent's computed list, so the child resets the same
+    // counters and the new level nests inside the parent's.
+    let mut doc = Document::new();
+    let section = doc.append_element(Some(0), "section", Some("counter-reset: item 3"));
+    let p = doc.append_element(Some(section), "p", Some("counter-reset: inherit"));
+    doc.mark_in_document_flags();
+    assert_eq!(stack_at(&doc, p, "item"), vec![3, 3]);
+}
+
+#[test]
+fn counter_reset_initial_cancels_an_earlier_reset_of_the_same_element() {
+    let mut doc = Document::new();
+    let section = doc.append_element(Some(0), "section", Some("counter-reset: item 3"));
+    let p = doc.append_element(
+        Some(section),
+        "p",
+        Some("counter-reset: item 7; counter-reset: initial"),
+    );
+    doc.mark_in_document_flags();
+    assert_eq!(stack_at(&doc, p, "item"), vec![3]);
+}
+
+#[test]
 fn counter_increment_continues_across_siblings_sharing_an_ancestor_scope() {
     // Two children of a common <section> that carries counter-reset both
     // see, and continue, that still-open ancestor scope.

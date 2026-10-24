@@ -8614,24 +8614,6 @@ fn height_negative_length_rejected_at_parse_time() {
 }
 
 #[test]
-fn apply_value_direct_counter_reset_inherit() {
-    // `counter-reset: revert`-class staging marker — never produced by
-    // the element parser's normal `counter-reset: <counter-name>? ...`
-    // grammar, but `apply_value` must still reset `target.counter_reset`
-    // to the empty entries sentinel if an internal caller supplies one.
-    let mut cv = SpecifiedValues::initial();
-    cv.counter_reset = std::sync::Arc::new(vec![(
-        SmolStr::new("foo"),
-        crate::property::CounterResetValue::Integer(1),
-    )]);
-    apply_value(PropertyValue::CounterResetInherit, &mut cv);
-    assert_eq!(
-        cv.counter_reset,
-        crate::property::empty_counter_reset_entries()
-    );
-}
-
-#[test]
 fn apply_value_direct_position_sticky_and_fixed() {
     let mut cv = SpecifiedValues::initial();
     apply_value(PropertyValue::Position(PositionValue::Sticky), &mut cv);

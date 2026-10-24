@@ -10248,10 +10248,6 @@ pub enum PropertyValue {
     /// elements, the cost falls from O(N × M) to O(N + M) (a cascade-memory DoS
     /// mitigation following the Content/StringSet pattern).
     CounterReset(Arc<Vec<(SmolStr, CounterResetValue)>>),
-    /// CSS-wide `counter-reset: inherit` retained for page-context resolution.
-    /// The page-margin used-value pass resolves this marker against the
-    /// enclosing page counter scope.
-    CounterResetInherit,
     /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited. The spec's initial value is `none` (CSS Lists 3 §4.2), which
     /// this implementation represents as an empty list.
@@ -12487,9 +12483,7 @@ impl PropertyValue {
             PropertyValue::ListStylePosition(_) => PropertyKey::ListStylePosition,
             PropertyValue::ListStyleImage(_) => PropertyKey::ListStyleImage,
             PropertyValue::ListStyle(_) => PropertyKey::ListStyle,
-            PropertyValue::CounterReset(_) | PropertyValue::CounterResetInherit => {
-                PropertyKey::CounterReset
-            }
+            PropertyValue::CounterReset(_) => PropertyKey::CounterReset,
             PropertyValue::CounterIncrement(_) => PropertyKey::CounterIncrement,
             PropertyValue::CounterSet(_) => PropertyKey::CounterSet,
             PropertyValue::Content(_) => PropertyKey::Content,
