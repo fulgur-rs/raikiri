@@ -50,6 +50,16 @@ const CASES: &[(&str, bool, &[&str])] = &[
     ("flex-shrink", false, &["2", "0", "3"]),
     ("order", false, &["2", "3", "-1"]),
     (
+        "counter-increment",
+        false,
+        &["item 2 other", "note -1", "section"],
+    ),
+    (
+        "counter-set",
+        false,
+        &["item 5 other 0", "note 3", "section -2"],
+    ),
+    (
         "justify-content",
         false,
         &["center", "flex-end", "space-between"],
