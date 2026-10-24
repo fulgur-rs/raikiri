@@ -10082,7 +10082,8 @@ pub enum PropertyValue {
     /// except `direction` and `unicode-bidi` to that keyword's value (CSS
     /// Cascade 4 section 3.1). The rollback keywords stay one candidate that
     /// rolls every slot back; the others are spread over the properties when
-    /// the cascade picks winners.
+    /// the cascade picks winners, or, for the page context and the margin
+    /// boxes, when it collects a rule's declarations.
     All(CssWideKeyword),
     /// A `--<ident>` custom property. The value remains token-preserving until
     /// the computed-value stage, where `var()` references are resolved.

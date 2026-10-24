@@ -16,6 +16,10 @@
 //! `revert` and `revert-layer` are not spread: one candidate rolls every slot
 //! back (`Candidate::is_all_rollback`).
 //!
+//! The page and margin box cascades have no per-element candidate list to
+//! spread lazily, so they take the same declarations at the point where they
+//! collect a rule's own ([`declarations_with_importance`]).
+//!
 //! [`ElementCandidates::with_all_spread`]: super::candidate::ElementCandidates::with_all_spread
 
 use std::collections::HashMap;
@@ -37,14 +41,45 @@ static SPREAD: LazyLock<[Vec<Declaration>; 3]> = LazyLock::new(|| {
     ]
 });
 
+/// The same declarations, each marked `!important`.
+static SPREAD_IMPORTANT: LazyLock<[Vec<Declaration>; 3]> = LazyLock::new(|| {
+    SPREAD.clone().map(|declarations| {
+        declarations
+            .into_iter()
+            .map(|declaration| Declaration {
+                important: true,
+                ..declaration
+            })
+            .collect()
+    })
+});
+
+/// The index of `keyword` in [`SPREAD`] and [`SPREAD_IMPORTANT`]; `None` for
+/// the keywords that roll back.
+const fn slot(keyword: CssWideKeyword) -> Option<usize> {
+    match keyword {
+        CssWideKeyword::Initial => Some(0),
+        CssWideKeyword::Inherit => Some(1),
+        CssWideKeyword::Unset => Some(2),
+        CssWideKeyword::Revert | CssWideKeyword::RevertLayer => None,
+    }
+}
+
 /// The declarations `all: keyword` stands for, one for each property it
 /// resets that accepts the keyword; empty for the keywords that roll back.
 pub(crate) fn declarations(keyword: CssWideKeyword) -> &'static [Declaration] {
-    match keyword {
-        CssWideKeyword::Initial => &SPREAD[0],
-        CssWideKeyword::Inherit => &SPREAD[1],
-        CssWideKeyword::Unset => &SPREAD[2],
-        CssWideKeyword::Revert | CssWideKeyword::RevertLayer => &[],
+    declarations_with_importance(keyword, false)
+}
+
+/// [`declarations`] for an `all` declared with the given importance.
+pub(crate) fn declarations_with_importance(
+    keyword: CssWideKeyword,
+    important: bool,
+) -> &'static [Declaration] {
+    match slot(keyword) {
+        Some(slot) if important => &SPREAD_IMPORTANT[slot],
+        Some(slot) => &SPREAD[slot],
+        None => &[],
     }
 }
 
