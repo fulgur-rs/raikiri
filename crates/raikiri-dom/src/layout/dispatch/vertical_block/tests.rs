@@ -173,10 +173,11 @@ fn horizontal_child_of_a_vertical_container_is_as_tall_as_its_content() {
     assert_eq!(absolute_rect(&doc, child), (268.0, 8.0, 40.0, 10.0));
 }
 
-#[test]
-fn vertical_rl_body_stacks_its_paragraphs_from_the_right() {
+/// A vertical-rl body of two paragraphs under a root styled `html_css`:
+/// the rects of the body and of the paragraphs.
+fn stacked_paragraphs(html_css: &str) -> [(f32, f32, f32, f32); 3] {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some(html_css));
     let body = doc.append_element(
         Some(html),
         "body",
@@ -198,14 +199,93 @@ fn vertical_rl_body_stacks_its_paragraphs_from_the_right() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    let body = absolute_rect(&doc, body);
-    let first = absolute_rect(&doc, paragraphs[0]);
-    let second = absolute_rect(&doc, paragraphs[1]);
+    [
+        absolute_rect(&doc, body),
+        absolute_rect(&doc, paragraphs[0]),
+        absolute_rect(&doc, paragraphs[1]),
+    ]
+}
+
+#[test]
+fn vertical_rl_body_stacks_its_paragraphs_from_the_right() {
+    // The body's vertical writing mode is the root's, so the root and the
+    // body run on the same axes: the body fills the page height and sits at
+    // the right edge, its two 10px columns right to left.
+    let [body, first, second] = stacked_paragraphs("display:block");
+    assert_eq!(body, (762.0, 8.0, 30.0, 584.0));
+    assert_eq!((first.0, first.1, first.2), (782.0, 8.0, 10.0));
+    assert_eq!((second.0, second.1, second.2), (762.0, 8.0, 10.0));
+}
+
+#[test]
+fn orthogonal_vertical_rl_body_stacks_its_paragraphs_from_the_right() {
+    // Containment on the root keeps the body's writing mode from it, which
+    // leaves the body an orthogonal flow.
+    let [body, first, second] = stacked_paragraphs("display:block;contain:layout");
     // The orthogonal auto-sized body uses its max-content inline size (50px).
     // Its two 10px columns and their left margins occupy 40px across the page.
     assert_eq!(body, (8.0, 8.0, 40.0, 50.0));
     assert_eq!((first.0, first.1, first.2), (38.0, 8.0, 10.0));
     assert_eq!((second.0, second.1, second.2), (18.0, 8.0, 10.0));
+}
+
+/// A root styled `html_css` that holds a `body` styled `body_css` with one
+/// 10px line, and after it a `display:block` child of its own with one line
+/// of 110px, as script can add one. Returns the rects of the body and of that
+/// child.
+fn body_and_a_second_child_of_the_root(
+    html_css: &str,
+    body_css: &str,
+) -> [(f32, f32, f32, f32); 2] {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some(html_css));
+    let font = "font-family:Ahem;font-size:10px;line-height:10px";
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some(format!("display:block;margin:8px;{font};{body_css}").as_str()),
+    );
+    let line = doc.append_element(Some(body), "div", Some("display:block"));
+    doc.append_text(line, "x");
+    let sibling = doc.append_element(
+        Some(html),
+        "div",
+        Some(format!("display:block;margin:0;{font}").as_str()),
+    );
+    doc.append_text(sibling, "abcde fghij");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    [absolute_rect(&doc, body), absolute_rect(&doc, sibling)]
+}
+
+#[test]
+fn another_child_of_the_root_inherits_the_writing_mode_the_root_computed_to() {
+    // The body's vertical mode is the used one of the root, which its other
+    // children do not inherit: this one stays horizontal, an orthogonal flow
+    // beside the body in the block direction of the page.
+    let [body, sibling] =
+        body_and_a_second_child_of_the_root("display:block", "writing-mode:vertical-rl");
+    assert_eq!(body, (782.0, 8.0, 10.0, 584.0));
+    assert_eq!(sibling, (664.0, 0.0, 110.0, 10.0));
+    let [body, sibling] =
+        body_and_a_second_child_of_the_root("display:block", "writing-mode:vertical-lr");
+    assert_eq!(body, (8.0, 8.0, 10.0, 584.0));
+    assert_eq!(sibling, (26.0, 0.0, 110.0, 10.0));
+}
+
+#[test]
+fn another_child_of_a_vertical_root_stays_vertical_under_a_horizontal_body() {
+    // The body's horizontal mode is the used one of the root, which its other
+    // children do not inherit: this one is vertical, as the root computed to.
+    let [body, sibling] = body_and_a_second_child_of_the_root(
+        "display:block;writing-mode:vertical-lr",
+        "writing-mode:horizontal-tb",
+    );
+    assert_eq!(body, (8.0, 8.0, 784.0, 10.0));
+    assert_eq!(sibling, (0.0, 26.0, 10.0, 110.0));
 }
 
 #[test]
@@ -588,19 +668,36 @@ fn vertical_body_of_text_keeps_its_bottom_margin() {
     assert_eq!((layout.padding.top, layout.padding.bottom), (0.0, 0.0));
 }
 
-#[test]
-fn vertical_flex_body_keeps_its_vertical_margins() {
-    let (mut doc, ids) = layout_body(
+/// The item of a vertical-rl flex body under a root styled `html_css`.
+fn flex_body_item(html_css: &str) -> (f32, f32, f32, f32) {
+    let (mut doc, ids) = layout_body_in(
+        html_css,
         "display:flex;margin:8px;writing-mode:vertical-rl",
         &[("div", "width:20px;height:10px", "")],
     );
-    // A flex body lays its items out on horizontal axes, below its top
-    // margin rather than below padding in place of it.
     let cascade = crate::layout::test_support::cascaded(&doc);
     let padding = crate::layout::test_support::bridged_style(&mut doc, &cascade, ids[0]).padding;
     let zero = LengthPercentage::length(0.0);
     assert_eq!((padding.top, padding.bottom), (zero, zero));
-    assert_eq!(absolute_rect(&doc, ids[1]), (8.0, 8.0, 20.0, 10.0));
+    absolute_rect(&doc, ids[1])
+}
+
+#[test]
+fn vertical_flex_body_keeps_its_vertical_margins() {
+    // A flex body lays its items out below its top margin rather than below
+    // padding in place of it. It sits at the right edge, the block start of
+    // the vertical root it makes of the page.
+    assert_eq!(flex_body_item("display:block"), (772.0, 8.0, 20.0, 10.0));
+}
+
+#[test]
+fn orthogonal_vertical_flex_body_keeps_its_vertical_margins() {
+    // Without the propagation the flex body lays its items out on horizontal
+    // axes, below its top margin.
+    assert_eq!(
+        flex_body_item("display:block;contain:layout"),
+        (8.0, 8.0, 20.0, 10.0)
+    );
 }
 
 #[test]
@@ -667,7 +764,12 @@ fn vertical_body_percentages_follow_the_root_inline_size() {
     let children = [("text", "", "aa bb")];
     let (doc, ids) = layout_body_in("display:block;writing-mode:vertical-rl", body, &children);
     assert_eq!(doc.nodes[ids[0]].layout.padding.top, 60.0);
+    // The body's writing mode is the root's even when the root declares none.
     let (doc, ids) = layout_body_in("display:block", body, &children);
+    assert_eq!(doc.nodes[ids[0]].layout.padding.top, 60.0);
+    // Containment on the root leaves the body an orthogonal flow of a
+    // horizontal root: the page width.
+    let (doc, ids) = layout_body_in("display:block;contain:layout", body, &children);
     assert_eq!(doc.nodes[ids[0]].layout.padding.top, 80.0);
 }
 
@@ -720,13 +822,11 @@ fn vertical_container_padding_percentages_follow_a_horizontal_parent() {
     assert_eq!(rects[1].0, 188.0);
 }
 
-#[test]
-fn vertical_container_padding_looks_through_a_contents_parent() {
-    // A horizontal `display: contents` parent has no box: the containing
-    // block is the vertical body around it. Its auto inline size fits the
-    // 200px-tall child, so `padding-right: 10%` is 20px.
+/// The container and its child under a vertical-rl body and a horizontal
+/// `display: contents` parent, below a root styled `html_css`.
+fn container_below_a_contents_parent(html_css: &str) -> [(f32, f32, f32, f32); 2] {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some(html_css));
     let body = doc.append_element(
         Some(html),
         "body",
@@ -747,8 +847,27 @@ fn vertical_container_padding_looks_through_a_contents_parent() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(absolute_rect(&doc, container).2, 120.0);
-    assert_eq!(absolute_rect(&doc, child).0, 80.0);
+    [absolute_rect(&doc, container), absolute_rect(&doc, child)]
+}
+
+#[test]
+fn vertical_container_padding_looks_through_a_contents_parent() {
+    // A horizontal `display: contents` parent has no box: the containing
+    // block is the vertical body around it. The body is as tall as the page,
+    // the inline size of the vertical root it makes of it, so
+    // `padding-right: 10%` is 60px.
+    let [container, child] = container_below_a_contents_parent("display:block");
+    assert_eq!(container.2, 160.0);
+    assert_eq!(child.0, 720.0);
+}
+
+#[test]
+fn orthogonal_vertical_container_padding_looks_through_a_contents_parent() {
+    // Containment on the root leaves the body an orthogonal flow, whose auto
+    // inline size fits the 200px-tall child: `padding-right: 10%` is 20px.
+    let [container, child] = container_below_a_contents_parent("display:block;contain:layout");
+    assert_eq!(container.2, 120.0);
+    assert_eq!(child.0, 80.0);
 }
 
 #[test]

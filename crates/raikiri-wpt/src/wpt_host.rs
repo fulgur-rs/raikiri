@@ -468,7 +468,7 @@ impl DocumentHost for WptDocumentHost {
         };
         let scene = self.page_scene.as_ref().expect("scene just built");
         self.generated_boxes = collect_generated_boxes(document, &cascade, scene);
-        self.computed_styles = Some(cascade.computed);
+        self.computed_styles = Some(cascade.into_cssom_computed());
         self.scroll_content_extents = compute_scroll_content_extents(
             document,
             scene,
