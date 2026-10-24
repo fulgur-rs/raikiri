@@ -1621,6 +1621,13 @@ impl SpecifiedValues {
         ) {
             self.writing_mode = WritingMode::VerticalRl;
         }
+        // An inline box whose writing mode differs from its parent's cannot
+        // flow in the parent's inline formatting context, so it computes to
+        // `inline-block`, as browsers report it. The keywords are compared
+        // as written: `vertical-lr` inside `vertical-rl` counts as a change.
+        if self.display == DisplayValue::Inline && self.writing_mode != parent.cssom_writing_mode {
+            self.display = DisplayValue::InlineBlock;
+        }
         // Find the parent's line-height reference (CSS Values 4 §6.1.1 self-reference rule). Both
         // `lh` in phase 2 font-size and `lh` in phase 2.5 line-height use this same parent
         // reference. The parent is already resolved before this call in the parent-to-child tree
