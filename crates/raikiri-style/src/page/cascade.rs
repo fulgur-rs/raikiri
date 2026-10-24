@@ -5,7 +5,7 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::cascade::{
-    ResolvedAgainstInherited, apply_value, cascade_rank, resolve_against_inherited,
+    ResolvedAgainstInherited, all_spread, apply_value, cascade_rank, resolve_against_inherited,
     resolve_css_wide_color_font, resolve_custom_property_environment, resolve_page_deferred_value,
     resolve_relative_weight,
 };
@@ -177,7 +177,9 @@ impl PageMarginBoxCascadeResult {
                 rule.declarations
                     .iter()
                     .enumerate()
-                    .map(move |(decl_index, decl)| (rule_index, decl_index, rule, decl))
+                    .flat_map(move |(decl_index, decl)| {
+                        spread_all(decl).map(move |decl| (rule_index, decl_index, rule, decl))
+                    })
             })
             .collect();
         let local_custom =
@@ -300,10 +302,10 @@ impl PageMarginBoxCascadeResult {
         let mut winners = HashMap::new();
         let mut has_rollback = false;
         for (index, &(rule_index, decl_index, rule, decl)) in candidates.iter().enumerate() {
-            if let PropertyValue::All(keyword) = decl.value {
-                // The page context rolls back with `all: revert-layer`; the
-                // other keywords of `all` are not applied to it.
-                has_rollback |= keyword == CssWideKeyword::RevertLayer;
+            if rolls_back_all(&decl.value) {
+                // The other keywords of `all` were spread over the properties
+                // when the declarations were collected.
+                has_rollback = true;
                 continue;
             }
             has_rollback |= matches!(&decl.value, PropertyValue::Deferred(_))
@@ -349,10 +351,7 @@ impl PageMarginBoxCascadeResult {
                             };
                         let reset_all = *key != PropertyKey::Custom
                             && key.is_reset_by_all()
-                            && matches!(
-                                decl.value,
-                                PropertyValue::All(CssWideKeyword::RevertLayer)
-                            );
+                            && rolls_back_all(&decl.value);
                         if !same_property && !reset_all {
                             return None;
                         }
@@ -1139,6 +1138,38 @@ fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::Laye
     layers.priority(rule.layer, rule.origin, important)
 }
 
+/// The keyword of an `all` declaration that stands for a declaration of each
+/// property it resets. `revert` and `revert-layer` are not spread: one
+/// candidate rolls every property back ([`rolls_back_all`]).
+fn spreading_all(value: &PropertyValue) -> Option<CssWideKeyword> {
+    match value {
+        PropertyValue::All(
+            keyword @ (CssWideKeyword::Initial | CssWideKeyword::Inherit | CssWideKeyword::Unset),
+        ) => Some(*keyword),
+        _ => None,
+    }
+}
+
+/// Whether `value` is `all: revert` or `all: revert-layer`.
+fn rolls_back_all(value: &PropertyValue) -> bool {
+    matches!(
+        value,
+        PropertyValue::All(CssWideKeyword::Revert | CssWideKeyword::RevertLayer)
+    )
+}
+
+/// `decl`, or the declaration of each property it resets when it is an `all`
+/// that [`spreading_all`] spreads, with the importance of the `all`.
+fn spread_all<'a>(decl: &'a Declaration) -> impl Iterator<Item = &'a Declaration> {
+    let spread: &'a [Declaration] = match spreading_all(&decl.value) {
+        Some(keyword) => all_spread::declarations_with_importance(keyword, decl.important),
+        None => &[],
+    };
+    std::iter::once(decl)
+        .filter(|_| spread.is_empty())
+        .chain(spread)
+}
+
 /// The value of the winning declaration of `key` among `declared`, for the
 /// margin context's own `writing-mode`, `text-orientation` and `direction`:
 /// the winner is picked from the declarations of the margin context alone
@@ -1162,8 +1193,7 @@ fn margin_box_winning_value(
     let index = crate::cascade::rollback::select_layered_winner(
         declared,
         |_, &(rule_index, decl_index, rule, decl)| {
-            let reset_all = key.is_reset_by_all()
-                && matches!(decl.value, PropertyValue::All(CssWideKeyword::RevertLayer));
+            let reset_all = key.is_reset_by_all() && rolls_back_all(&decl.value);
             if decl.value.key() != key && !reset_all {
                 return None;
             }
@@ -1255,8 +1285,7 @@ fn page_flow_mapping(
         let index = crate::cascade::rollback::select_layered_winner(
             candidates,
             |index, (value, important, origin, priority, spec, order)| {
-                let reset_all = key.is_reset_by_all()
-                    && matches!(value, PropertyValue::All(CssWideKeyword::RevertLayer));
+                let reset_all = key.is_reset_by_all() && rolls_back_all(value);
                 if value.key() != key && !reset_all {
                     return None;
                 }
@@ -1550,6 +1579,21 @@ pub(crate) fn cascade_page_with_normal_line_height(
                     ));
                     continue;
                 }
+                if let Some(keyword) = spreading_all(&decl.value) {
+                    for spread in all_spread::declarations_with_importance(keyword, decl.important)
+                    {
+                        sides.push(None);
+                        candidates.push((
+                            spread.value.clone(),
+                            decl.important,
+                            rule.origin,
+                            page_layer_rank(rule, decl.important, &layers),
+                            spec,
+                            rule.source_order,
+                        ));
+                    }
+                    continue;
+                }
                 // Expand again before pushing candidates. The page parser
                 // already expanded every declaration, so this is the identity
                 // for them; `PageRule::declarations` is a `pub` field, and
@@ -1695,9 +1739,10 @@ pub(crate) fn cascade_page_with_normal_line_height(
     let mut has_rollback = false;
     let mut has_property_rollback = false;
     for (index, (value, important, origin, layer, spec, order)) in candidates.iter().enumerate() {
-        if let PropertyValue::All(keyword) = value {
-            // As in the margin box cascade above, only `revert-layer` is applied.
-            has_rollback |= *keyword == CssWideKeyword::RevertLayer;
+        if rolls_back_all(value) {
+            // As in the margin box cascade above, the other keywords of `all`
+            // were spread when the candidates were collected.
+            has_rollback = true;
             continue;
         }
         has_property_rollback |= matches!(value, PropertyValue::Deferred(_))
@@ -1727,8 +1772,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
             let selected = crate::cascade::rollback::select_layered_winner(
                 &candidates,
                 |idx, (value, important, origin, priority, spec, order)| {
-                    let reset_all = key.is_reset_by_all()
-                        && matches!(value, PropertyValue::All(CssWideKeyword::RevertLayer));
+                    let reset_all = key.is_reset_by_all() && rolls_back_all(value);
                     if value.key() != *key && !reset_all {
                         return None;
                     }

@@ -8718,32 +8718,198 @@ fn page_rolled_back_writing_mode_does_not_map_logical_margins() {
     );
 }
 
-/// The page context applies `all: revert-layer` alone: the other keywords of
-/// `all` leave the page's own declarations as they are, in the page and in a
-/// margin box.
+fn root_with_color(color: CssColor) -> ComputedValues {
+    ComputedValues {
+        color,
+        ..ComputedValues::initial()
+    }
+}
+
+fn margin_box_color(css: &str, root: &ComputedValues) -> Option<PropertyValue> {
+    page(css, root)
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap()
+        .declarations
+        .iter()
+        .find(|declaration| declaration.key == PropertyKey::Color)
+        .map(|declaration| declaration.value.clone())
+}
+
+/// `all` gives the page context what each property gets from the keyword
+/// alone: `initial` the initial value, `inherit` the root's, and `unset` the
+/// root's for the inherited `color` and the initial value for the margin.
 #[test]
-fn page_context_leaves_the_other_all_keywords_unapplied() {
-    for keyword in ["initial", "inherit", "unset", "revert"] {
+fn page_context_all_keywords_reset_the_page_properties() {
+    let root = root_with_color(BLUE);
+    let initial = ComputedValues::initial().color;
+    for (keyword, color) in [("initial", initial), ("inherit", BLUE), ("unset", BLUE)] {
         let result = page(
-            &format!(
-                "@page {{ margin: 10px; all: {keyword}; \
-                 @top-left {{ content: 'x'; margin-left: 3px; all: {keyword} }} }}"
-            ),
-            &ComputedValues::initial(),
+            &format!("@page {{ margin: 10px; color: red; all: {keyword} }}"),
+            &root,
         );
+        assert_eq!(color_of(&result), Some(color), "{keyword}");
         assert_eq!(
             result.declarations().get(&PropertyKey::MarginTop),
-            Some(&PropertyValue::MarginTop(px_margin(10.0))),
+            Some(&PropertyValue::MarginTop(px_margin(0.0))),
             "{keyword}"
         );
-        let margin = result
+    }
+}
+
+#[test]
+fn page_context_all_leaves_a_later_declaration_in_force() {
+    let result = page(
+        "@page { color: red; all: initial; margin: 10px }",
+        &root_with_color(BLUE),
+    );
+    assert_eq!(color_of(&result), Some(ComputedValues::initial().color));
+    assert_eq!(
+        result.declarations().get(&PropertyKey::MarginTop),
+        Some(&PropertyValue::MarginTop(px_margin(10.0)))
+    );
+}
+
+#[test]
+fn page_context_all_competes_by_importance_layer_and_specificity() {
+    let root = root_with_color(BLUE);
+    let initial = ComputedValues::initial().color;
+    for (css, expected) in [
+        ("@page { color: red !important; all: initial }", RED),
+        ("@page { color: red; all: initial !important }", initial),
+        (
+            "@layer a { @page { color: red } } @layer b { @page { all: initial } }",
+            initial,
+        ),
+        (
+            "@layer a { @page { all: initial } } @layer b { @page { color: red } }",
+            RED,
+        ),
+        (
+            "@page { color: red } @page :first { all: initial }",
+            RED, // the default query is not the first page
+        ),
+        ("@page { all: initial } @page { color: red }", RED),
+        ("@page { color: red } @page { all: initial }", initial),
+    ] {
+        assert_eq!(color_of(&page(css, &root)), Some(expected), "{css}");
+    }
+}
+
+#[test]
+fn page_context_all_revert_returns_to_the_user_agent_page_style() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@page { color: green; margin: 4px }", Origin::UserAgent);
+    tree.add_stylesheet(
+        "@page { color: red; margin: 10px; all: revert }",
+        Origin::Author,
+    );
+    let result = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+    );
+    assert_eq!(color_of(&result), Some(GREEN));
+    assert_eq!(
+        result.declarations().get(&PropertyKey::MarginTop),
+        Some(&PropertyValue::MarginTop(px_margin(4.0)))
+    );
+}
+
+#[test]
+fn page_context_all_does_not_reset_direction_and_a_reset_writing_mode_maps_margins() {
+    let result = page(
+        "@page { direction: rtl; writing-mode: vertical-rl; all: initial; \
+         margin: 0; margin-inline-start: 1px }",
+        &ComputedValues::initial(),
+    );
+    let declarations = result.declarations();
+    // `direction` stays `rtl`, `writing-mode` is back to horizontal: the
+    // inline-start side is the right one.
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginRight),
+        Some(&PropertyValue::MarginRight(px_margin(1.0)))
+    );
+}
+
+/// The margin boxes take `all` the same way: it resets the box's own earlier
+/// declarations, and the declarations after it stay in force.
+#[test]
+fn margin_box_all_keywords_reset_the_margin_box_properties() {
+    let root = root_with_color(BLUE);
+    let initial = ComputedValues::initial().color;
+    for (keyword, color) in [("initial", initial), ("inherit", BLUE), ("unset", BLUE)] {
+        let css = format!(
+            "@page {{ @top-left {{ content: 'x'; margin-left: 3px; color: red; \
+             all: {keyword} }} }}"
+        );
+        assert_eq!(
+            margin_box_color(&css, &root),
+            Some(PropertyValue::Color(color)),
+            "{keyword}"
+        );
+        let margin = page(&css, &root)
             .cascade_margin_box(PageMarginBoxSlot::TopLeft)
             .unwrap();
         assert!(
-            margin.declarations.iter().any(|declaration| {
-                declaration.value == PropertyValue::MarginLeft(px_margin(3.0))
-            }),
+            !margin
+                .declarations
+                .iter()
+                .any(|declaration| declaration.value == PropertyValue::MarginLeft(px_margin(3.0))),
             "{keyword}"
+        );
+        let after =
+            format!("@page {{ @top-left {{ all: {keyword}; content: 'x'; margin-left: 3px }} }}");
+        let margin = page(&after, &root)
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        for value in [
+            PropertyValue::MarginLeft(px_margin(3.0)),
+            PropertyValue::Content(Arc::new(vec![ContentComponent::Literal("x".into())].into())),
+        ] {
+            assert!(
+                margin
+                    .declarations
+                    .iter()
+                    .any(|declaration| declaration.value == value),
+                "{keyword}: {value:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn margin_box_all_competes_by_importance_and_rolls_back() {
+    let root = root_with_color(BLUE);
+    let initial = ComputedValues::initial().color;
+    for (css, expected) in [
+        (
+            "@page { @top-left { color: red !important; all: initial } }",
+            RED,
+        ),
+        (
+            "@page { @top-left { color: red; all: initial !important } }",
+            initial,
+        ),
+        (
+            "@layer a { @page { @top-left { all: initial } } } \
+             @layer b { @page { @top-left { color: red } } }",
+            RED,
+        ),
+        (
+            "@layer a { @page { @top-left { color: red } } } \
+             @layer b { @page { @top-left { all: initial } } }",
+            initial,
+        ),
+        (
+            "@layer a { @page { @top-left { all: initial } } } \
+             @layer b { @page { @top-left { color: revert-layer } } }",
+            initial,
+        ),
+    ] {
+        assert_eq!(
+            margin_box_color(css, &root),
+            Some(PropertyValue::Color(expected)),
+            "{css}"
         );
     }
 }

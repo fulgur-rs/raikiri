@@ -567,6 +567,25 @@ fn margin_box_text_runs_sit_inside_the_box() {
 }
 
 #[test]
+fn margin_box_all_resets_the_color_before_it_and_keeps_the_declarations_after_it() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { color: red; all: initial; content: 'abc'; \
+                       font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let runs = head.text_runs();
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    assert_eq!(run.text, "abc");
+    assert_eq!(run.font_size, 10.0);
+    assert_eq!((run.color.r, run.color.g, run.color.b), (0, 0, 0));
+}
+
+#[test]
 fn margin_box_line_height_sets_the_line_spacing_and_the_first_baseline() {
     // Each line is `line-height` tall, with the text centered in it, so the
     // first baseline sits half of the leading lower and the next line is one

@@ -76,6 +76,24 @@ fn the_spread_covers_ordinary_properties_and_leaves_the_exempt_ones() {
 }
 
 #[test]
+fn the_important_spread_is_the_same_declarations_marked_important() {
+    for keyword in SPREAD_KEYWORDS {
+        let normal = declarations_with_importance(keyword, false);
+        let important = declarations_with_importance(keyword, true);
+        assert_eq!(normal, declarations(keyword));
+        assert_eq!(normal.len(), important.len());
+        for (normal, important) in normal.iter().zip(important) {
+            assert!(!normal.important && important.important);
+            assert_eq!(
+                (&normal.value, normal.key),
+                (&important.value, important.key)
+            );
+        }
+    }
+    assert!(declarations_with_importance(CssWideKeyword::Revert, true).is_empty());
+}
+
+#[test]
 fn a_property_takes_the_keyword_under_its_own_name() {
     // `background` sorts before `background-color` and expands to the same
     // key; the marker that stays names the longhand.
