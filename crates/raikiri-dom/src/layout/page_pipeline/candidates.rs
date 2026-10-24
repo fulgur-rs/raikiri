@@ -856,7 +856,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         frame.clip_end
                     };
                     if !is_body && super::element_clips_overflow(document, cascade, node_id) {
-                        inherited.min(raw_y + node.layout.size.height)
+                        inherited.min(super::clip_block_end(document, cascade, node_id, raw_y))
                     } else {
                         inherited
                     }

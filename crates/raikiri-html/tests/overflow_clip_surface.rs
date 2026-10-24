@@ -252,6 +252,17 @@ fn content_past_a_box_that_does_not_clip_the_block_axis_adds_pages() {
 }
 
 #[test]
+fn an_overflow_clip_margin_keeps_the_pages_of_the_content_it_reveals() {
+    // The 100px outset puts the clip edge 100px below the box, so the lines in
+    // that band are visible and take the second page.
+    let result = spilling_lines("overflow:clip;overflow-clip-margin:100px");
+    assert_eq!(result.page_count(), 2);
+    // A scroll container never clips beyond its padding box.
+    let result = spilling_lines("overflow:hidden;overflow-clip-margin:100px");
+    assert_eq!(result.page_count(), 1);
+}
+
+#[test]
 fn a_paragraph_running_over_a_clip_edge_adds_no_page() {
     let words = "x ".repeat(60);
     let result = laid_out(

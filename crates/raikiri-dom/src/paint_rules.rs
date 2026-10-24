@@ -335,6 +335,13 @@ impl OverflowClipGeometry {
         }
     }
 
+    /// How far the block-end clip edge lies past the border box's block-end
+    /// edge: the outset that `overflow-clip-margin` gives an `overflow: clip`
+    /// axis, and zero when the edge lies on or inside the border box.
+    pub(crate) fn block_end_outset(&self) -> f32 {
+        (-self.edges.bottom).max(0.0)
+    }
+
     /// Snap edges only after translating the whole border box to its page.
     pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
         let x0 = (border_box.x + self.edges.left).floor();
