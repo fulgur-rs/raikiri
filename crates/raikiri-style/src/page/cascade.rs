@@ -2151,6 +2151,31 @@ fn white_space_halves(value: &PropertyValue) -> (Option<WhiteSpaceCollapse>, Opt
     }
 }
 
+/// Give the halves of `white-space` that an invalid declaration of `key` sets
+/// back to the parent's. The declaration computes to `unset`, which takes the
+/// parent's value, and it supersedes what an earlier declaration of an
+/// overlapping property (`white-space` sets both halves) set.
+fn reset_white_space_halves(
+    specified: &mut SpecifiedValues,
+    parent: &ComputedValues,
+    key: PropertyKey,
+) {
+    let (collapse, wrap) = match key {
+        PropertyKey::WhiteSpace => (true, true),
+        PropertyKey::WhiteSpaceCollapse => (true, false),
+        PropertyKey::TextWrap => (false, true),
+        _ => return,
+    };
+    if collapse {
+        specified.white_space_collapse = parent.white_space_collapse;
+        specified.effective_white_space_collapse = parent.effective_white_space_collapse;
+    }
+    if wrap {
+        specified.text_wrap = parent.text_wrap;
+        specified.effective_text_wrap_mode = parent.effective_text_wrap_mode;
+    }
+}
+
 fn computed_over(
     parent: &ComputedValues,
     values: impl Iterator<Item = ComputedOverValue>,
@@ -2171,6 +2196,7 @@ fn computed_over(
         let (value, border_width_is_computed) = match value {
             ComputedOverValue::Invalid(key) => {
                 specified.size_precedence.record_in_order(key, position);
+                reset_white_space_halves(&mut specified, parent, key);
                 continue;
             }
             ComputedOverValue::Resolved(resolved) => {

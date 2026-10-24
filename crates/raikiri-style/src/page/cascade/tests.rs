@@ -1582,6 +1582,45 @@ fn white_space_of_the_page_settles_the_effective_halves_a_margin_box_inherits() 
 }
 
 #[test]
+fn an_invalid_white_space_declaration_takes_the_halves_of_the_parent() {
+    use crate::property::{TextWrapMode, WhiteSpaceCollapse};
+    let page = page(
+        "@page { white-space: pre-line; \
+         @top-left { content: 'x'; white-space: pre; text-wrap-mode: var(--missing) } \
+         @top-center { content: 'x'; white-space-collapse: preserve; white-space: var(--missing) } \
+         @top-right { content: 'x'; text-wrap-mode: nowrap; white-space-collapse: var(--missing) } \
+         @bottom-left { content: 'x'; white-space: var(--missing); white-space-collapse: preserve } }",
+        &ComputedValues::initial(),
+    );
+    let halves = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        let style = page.margin_box_style(&rule, None);
+        (
+            style.effective_white_space_collapse,
+            style.effective_text_wrap_mode,
+        )
+    };
+    // The later invalid declaration replaces what the earlier one set.
+    assert_eq!(
+        halves(PageMarginBoxSlot::TopLeft),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+    assert_eq!(
+        halves(PageMarginBoxSlot::TopCenter),
+        (WhiteSpaceCollapse::PreserveBreaks, TextWrapMode::Wrap)
+    );
+    assert_eq!(
+        halves(PageMarginBoxSlot::TopRight),
+        (WhiteSpaceCollapse::PreserveBreaks, TextWrapMode::Nowrap)
+    );
+    // An earlier invalid declaration leaves the later one in charge of its half.
+    assert_eq!(
+        halves(PageMarginBoxSlot::BottomLeft),
+        (WhiteSpaceCollapse::Preserve, TextWrapMode::Wrap)
+    );
+}
+
+#[test]
 fn a_margin_box_keeps_the_block_size_keywords() {
     // A margin box fills its page margin for `height: auto`, so it has to see
     // the keywords that size it to its content, which an element computes to
