@@ -2882,6 +2882,7 @@ fn flex_layout_sized(
             } else {
                 inputs.parent_size.width
             },
+            &mut output.oof_candidates,
         ) {
         output.scrollable_overflow_rect = output.scrollable_overflow_rect.union(reach);
         in_flow_overflow.union(reach)
@@ -3073,8 +3074,13 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     // at `start`.
     let in_flow_overflow = if inputs.run_mode == RunMode::PerformLayout
         && let Some(grid) = &grid
-        && let Some(reach) = inline_baseline::align_grid(tree, idx, grid, right_to_left.is_some())
-    {
+        && let Some(reach) = inline_baseline::align_grid(
+            tree,
+            idx,
+            grid,
+            right_to_left.is_some(),
+            &mut output.oof_candidates,
+        ) {
         output.scrollable_overflow_rect = output.scrollable_overflow_rect.union(reach);
         in_flow_overflow.union(reach)
     } else {

@@ -709,3 +709,223 @@ fn flex_column_relative_item_keeps_its_offset_rtl() {
         ],
     );
 }
+
+#[test]
+fn grid_static_position_of_an_abspos_follows_its_moved_item() {
+    check(
+        r#"<div id=g style="position:relative;display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (38.0, 8.0, 20.0, 20.0)),
+            ("b", (38.0, 28.0, 20.0, 20.0)),
+            ("bb", (38.0, 28.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_static_position_of_an_abspos_follows_its_moved_item_last_baseline() {
+    check(
+        r#"<div id=g style="position:relative;display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:last baseline;margin-right:30px;width:20px;height:20px"></div><div id=b style="justify-self:last baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (58.0, 8.0, 20.0, 20.0)),
+            ("b", (58.0, 28.0, 20.0, 20.0)),
+            ("bb", (58.0, 28.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_column_static_position_of_an_abspos_follows_its_moved_item() {
+    check(
+        r#"<div id=g style="position:relative;display:flex;flex-direction:column;width:100px"><div id=a style="align-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="align-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (38.0, 8.0, 20.0, 20.0)),
+            ("b", (38.0, 28.0, 20.0, 20.0)),
+            ("bb", (38.0, 28.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_static_position_of_a_nested_abspos_follows_its_moved_item() {
+    check(
+        r#"<div id=g style="position:relative;display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=m style="padding:3px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div></div>"#,
+        &[
+            ("a", (38.0, 8.0, 20.0, 20.0)),
+            ("b", (38.0, 28.0, 20.0, 20.0)),
+            ("bb", (41.0, 31.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+            ("m", (38.0, 28.0, 20.0, 6.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_abspos_in_a_positioned_moved_item_stays_in_the_item() {
+    check(
+        r#"<div id=g style="display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="position:relative;justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (38.0, 8.0, 20.0, 20.0)),
+            ("b", (38.0, 28.0, 20.0, 20.0)),
+            ("bb", (38.0, 28.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_static_position_of_an_abspos_follows_its_moved_item_vertical() {
+    check(
+        r#"<div id=g style="position:relative;display:grid;writing-mode:vertical-rl;grid-template-columns:100px;height:100px"><div id=a style="justify-self:baseline;margin-top:30px;width:20px;height:20px"></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (28.0, 38.0, 20.0, 20.0)),
+            ("b", (8.0, 38.0, 20.0, 20.0)),
+            ("bb", (23.0, 38.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 40.0, 100.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_static_position_of_an_abspos_follows_its_moved_item_to_a_distant_containing_block() {
+    check(
+        r#"<div id=w style="position:relative;margin-left:5px"><div id=g style="display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div></div>"#,
+        &[
+            ("a", (43.0, 8.0, 20.0, 20.0)),
+            ("b", (43.0, 28.0, 20.0, 20.0)),
+            ("bb", (43.0, 28.0, 5.0, 5.0)),
+            ("g", (13.0, 8.0, 100.0, 40.0)),
+            ("w", (13.0, 8.0, 779.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_column_static_position_of_an_abspos_follows_its_moved_item_to_a_distant_containing_block() {
+    check(
+        r#"<div id=w style="position:relative;margin-left:5px"><div id=g style="display:flex;flex-direction:column;width:100px"><div id=a style="align-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="align-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div></div>"#,
+        &[
+            ("a", (43.0, 8.0, 20.0, 20.0)),
+            ("b", (43.0, 28.0, 20.0, 20.0)),
+            ("bb", (43.0, 28.0, 5.0, 5.0)),
+            ("g", (13.0, 8.0, 100.0, 40.0)),
+            ("w", (13.0, 8.0, 779.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_abspos_anchored_by_an_inset_does_not_follow_its_moved_item() {
+    check(
+        r#"<div id=g style="position:relative;display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;left:7px;top:auto;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (38.0, 8.0, 20.0, 20.0)),
+            ("b", (38.0, 28.0, 20.0, 20.0)),
+            ("bb", (15.0, 28.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_column_static_position_of_an_abspos_follows_its_moved_item_rtl() {
+    check(
+        r#"<div id=g style="position:relative;display:flex;flex-direction:column;direction:rtl;width:100px"><div id=a style="align-self:baseline;margin-right:30px;width:20px;height:20px"></div><div id=b style="align-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (58.0, 8.0, 20.0, 20.0)),
+            ("b", (58.0, 28.0, 20.0, 20.0)),
+            ("bb", (73.0, 28.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_column_static_position_of_an_abspos_follows_its_moved_item_vertical() {
+    check(
+        r#"<div id=g style="position:relative;display:flex;flex-direction:column;writing-mode:vertical-rl;height:100px"><div id=a style="align-self:baseline;margin-top:30px;width:20px;height:20px"></div><div id=b style="align-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (28.0, 38.0, 20.0, 20.0)),
+            ("b", (8.0, 38.0, 20.0, 20.0)),
+            ("bb", (23.0, 38.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 40.0, 100.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_static_positions_follow_each_of_the_moved_items() {
+    check(
+        r#"<div id=g style="position:relative;display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"><div id=aa style="position:absolute;width:5px;height:5px"></div></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (38.0, 8.0, 20.0, 20.0)),
+            ("aa", (38.0, 8.0, 5.0, 5.0)),
+            ("b", (38.0, 28.0, 20.0, 20.0)),
+            ("bb", (38.0, 28.0, 5.0, 5.0)),
+            ("g", (8.0, 8.0, 100.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_static_position_of_an_abspos_follows_its_moved_item_to_a_distant_containing_block_vertical()
+{
+    check(
+        r#"<div id=w style="position:relative;margin-left:5px;writing-mode:vertical-rl"><div id=g style="display:grid;grid-template-columns:100px;height:100px"><div id=a style="justify-self:baseline;margin-top:30px;width:20px;height:20px"></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div></div>"#,
+        &[
+            ("a", (33.0, 38.0, 20.0, 20.0)),
+            ("b", (13.0, 38.0, 20.0, 20.0)),
+            ("bb", (28.0, 38.0, 5.0, 5.0)),
+            ("g", (13.0, 8.0, 40.0, 100.0)),
+            ("w", (13.0, 8.0, 40.0, 100.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_column_static_position_of_an_abspos_follows_its_moved_item_to_a_distant_containing_block_vertical()
+ {
+    check(
+        r#"<div id=w style="position:relative;margin-left:5px;writing-mode:vertical-rl"><div id=g style="display:flex;flex-direction:column;height:100px"><div id=a style="align-self:baseline;margin-top:30px;width:20px;height:20px"></div><div id=b style="align-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div></div></div>"#,
+        &[
+            ("a", (33.0, 38.0, 20.0, 20.0)),
+            ("b", (13.0, 38.0, 20.0, 20.0)),
+            ("bb", (28.0, 38.0, 5.0, 5.0)),
+            ("g", (13.0, 8.0, 40.0, 100.0)),
+            ("w", (13.0, 8.0, 40.0, 100.0)),
+        ],
+    );
+}
+
+#[test]
+fn grid_static_position_of_a_direct_abspos_child_stays_while_items_move() {
+    check(
+        r#"<div id=w style="position:relative;margin-left:5px"><div id=g style="display:grid;grid-template-columns:100px;width:100px"><div id=a style="justify-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="justify-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div><div id=c style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (43.0, 8.0, 20.0, 20.0)),
+            ("b", (43.0, 28.0, 20.0, 20.0)),
+            ("bb", (43.0, 28.0, 5.0, 5.0)),
+            ("c", (13.0, 8.0, 5.0, 5.0)),
+            ("g", (13.0, 8.0, 100.0, 40.0)),
+            ("w", (13.0, 8.0, 779.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn flex_column_static_position_of_a_direct_abspos_child_stays_while_items_move() {
+    check(
+        r#"<div id=w style="position:relative;margin-left:5px"><div id=g style="display:flex;flex-direction:column;width:100px"><div id=a style="align-self:baseline;margin-left:30px;width:20px;height:20px"></div><div id=b style="align-self:baseline;width:20px;height:20px"><div id=bb style="position:absolute;width:5px;height:5px"></div></div><div id=c style="position:absolute;width:5px;height:5px"></div></div></div>"#,
+        &[
+            ("a", (43.0, 8.0, 20.0, 20.0)),
+            ("b", (43.0, 28.0, 20.0, 20.0)),
+            ("bb", (43.0, 28.0, 5.0, 5.0)),
+            ("c", (13.0, 8.0, 5.0, 5.0)),
+            ("g", (13.0, 8.0, 100.0, 40.0)),
+            ("w", (13.0, 8.0, 779.0, 40.0)),
+        ],
+    );
+}

@@ -19,11 +19,15 @@
 //! mode of the container is given a synthesized one. An item in the orthogonal
 //! writing mode has its block axis along the alignment axis, and shares the
 //! baseline of its first line.
+//!
+//! The container positions the out-of-flow boxes inside its items before the
+//! items move, so a box whose static position lies inside a moved item is
+//! carried along with it afterwards.
 // spec: https://www.w3.org/TR/css-align-3/#baseline-sharing-group
 
-use super::{TaffyChildIter, block_right_to_left};
+use super::{TaffyChildIter, block_right_to_left, hoisted_children};
 use crate::layout::context::LayoutSession;
-use crate::layout::protocol::NodeId;
+use crate::layout::protocol::{NodeId, OofCandidates};
 use crate::layout::taffy_adapter::GridInfo;
 use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
@@ -37,6 +41,14 @@ enum Axis {
 }
 
 impl Axis {
+    /// The coordinate of `point` along the axis.
+    fn coordinate(self, point: Point<f32>) -> f32 {
+        match self {
+            Self::Horizontal => point.x,
+            Self::Vertical => point.y,
+        }
+    }
+
     /// The extent of `size` along the axis.
     fn extent(self, size: Size<f32>) -> f32 {
         match self {
@@ -182,11 +194,7 @@ impl Container {
         // Taffy places the box at the start of the room and then adds the
         // offset of a relative box, which moving the box must keep.
         let offset = if style.position() == Position::Relative {
-            let start = match self.axis {
-                Axis::Horizontal => layout.location.x,
-                Axis::Vertical => layout.location.y,
-            };
-            start
+            self.axis.coordinate(layout.location)
                 - if self.right_to_left {
                     room.1 - size - margin.1
                 } else {
@@ -206,11 +214,20 @@ impl Container {
         })
     }
 
-    /// Move the `members` to their groups' baselines; the scrollable overflow
-    /// that the moved items reach, relative to the container, or `None` when
-    /// nothing moved.
-    fn align(&self, tree: &mut LayoutSession<'_>, members: &[Member]) -> Option<Edges<f32>> {
+    /// Move the `members` of the container `idx` to their groups' baselines,
+    /// and carry the out-of-flow boxes that sit inside a moved item along with
+    /// it, `candidates` being the ones still bubbling up out of the container.
+    /// Returns the scrollable overflow that the moved boxes reach, relative to
+    /// the container, or `None` when nothing moved.
+    fn align(
+        &self,
+        tree: &mut LayoutSession<'_>,
+        idx: usize,
+        members: &[Member],
+        candidates: &mut OofCandidates,
+    ) -> Option<Edges<f32>> {
         let mut overflow = None;
+        let mut shifts = Vec::new();
         for (index, member) in members.iter().enumerate() {
             if members[..index].iter().any(|m| m.group == member.group) {
                 continue;
@@ -232,19 +249,100 @@ impl Container {
             for placed in members.iter().filter(|m| m.group == member.group) {
                 let start = position - placed.baseline + placed.offset;
                 let mut layout = tree.nodes[placed.child].layout;
+                let shift = start - self.axis.coordinate(layout.location);
+                if shift != 0.0 {
+                    shifts.push((placed.child, shift));
+                }
                 layout.location = self.axis.moved(layout.location, start);
                 tree.set_unrounded_layout(NodeId::from(placed.child), &layout);
-                let reach = Edges {
-                    left: layout.location.x + layout.scrollable_overflow_rect.left,
-                    right: layout.location.x + layout.scrollable_overflow_rect.right,
-                    top: layout.location.y + layout.scrollable_overflow_rect.top,
-                    bottom: layout.location.y + layout.scrollable_overflow_rect.bottom,
-                };
+                let reach = reach_of(layout.location, layout.scrollable_overflow_rect);
                 overflow = Some(overflow.map_or(reach, |seen: Edges<f32>| seen.union(reach)));
             }
         }
+        match self.follow(tree, idx, &shifts, candidates) {
+            Some(reach) => overflow.map(|seen| seen.union(reach)),
+            None => overflow,
+        }
+    }
+
+    /// Carry the out-of-flow boxes whose static position lies inside a moved
+    /// item along with it, as the box that is their static parent: those that
+    /// the container `idx` has laid out, and the `candidates` that continue
+    /// to bubble up. `shifts` lists each moved item with the distance it
+    /// moved. Returns the scrollable overflow that the laid out boxes that
+    /// moved reach, relative to the container.
+    fn follow(
+        &self,
+        tree: &mut LayoutSession<'_>,
+        idx: usize,
+        shifts: &[(usize, f32)],
+        candidates: &mut OofCandidates,
+    ) -> Option<Edges<f32>> {
+        if shifts.is_empty() {
+            return None;
+        }
+        let axis = self.axis;
+        candidates.for_each_mut(|candidate| {
+            if let Some(shift) = shift_of(tree, idx, shifts, usize::from(candidate.node)) {
+                let position = match axis {
+                    Axis::Horizontal => &mut candidate.static_position.x,
+                    Axis::Vertical => &mut candidate.static_position.y,
+                };
+                position.area.start += shift;
+                position.area.end += shift;
+            }
+        });
+        let mut overflow = None;
+        for child in hoisted_children(tree, idx) {
+            // A box that an inset anchors in the axis does not depend on its
+            // static position.
+            let follows = tree
+                .oof_coordinates
+                .get(&child)
+                .is_some_and(|c| match axis {
+                    Axis::Horizontal => c.follow_static_x,
+                    Axis::Vertical => c.follow_static_y,
+                });
+            let Some(shift) = shift_of(tree, idx, shifts, child).filter(|_| follows) else {
+                continue;
+            };
+            let mut layout = tree.nodes[child].layout;
+            layout.location = axis.moved(layout.location, axis.coordinate(layout.location) + shift);
+            tree.set_unrounded_layout(NodeId::from(child), &layout);
+            let reach = reach_of(layout.location, layout.scrollable_overflow_rect);
+            overflow = Some(overflow.map_or(reach, |seen: Edges<f32>| seen.union(reach)));
+        }
         overflow
     }
+}
+
+/// How far a box at `location` whose content reaches `overflow` from its
+/// own border box reaches from the origin of its parent.
+fn reach_of(location: Point<f32>, overflow: Edges<f32>) -> Edges<f32> {
+    Edges {
+        left: location.x + overflow.left,
+        right: location.x + overflow.right,
+        top: location.y + overflow.top,
+        bottom: location.y + overflow.bottom,
+    }
+}
+
+/// The distance the item of the container `idx` that holds `node` moved, when
+/// it did.
+fn shift_of(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    shifts: &[(usize, f32)],
+    node: usize,
+) -> Option<f32> {
+    // The item is the last box on the way up from `node` before the container.
+    let item = std::iter::successors(Some(node), |&current| tree.taffy_parent_of(current))
+        .take_while(|&current| current != idx)
+        .last()?;
+    shifts
+        .iter()
+        .find(|&&(moved, _)| moved == item)
+        .map(|&(_, shift)| shift)
 }
 
 /// Align the items of the grid container `idx` that align by a baseline along
@@ -258,6 +356,7 @@ pub(super) fn align_grid(
     idx: usize,
     grid: &GridInfo,
     vertical: bool,
+    candidates: &mut OofCandidates,
 ) -> Option<Edges<f32>> {
     let parent = tree.physical_style(idx);
     let container = Container::new(
@@ -290,7 +389,7 @@ pub(super) fn align_grid(
     if members.is_empty() {
         return None;
     }
-    container.align(tree, &members)
+    container.align(tree, idx, &members, candidates)
 }
 
 /// Align the items of the column flex container `idx`, whose border box is
@@ -309,6 +408,7 @@ pub(super) fn align_column_flex(
     size: Size<f32>,
     vertical: bool,
     percent_basis: Option<f32>,
+    candidates: &mut OofCandidates,
 ) -> Option<Edges<f32>> {
     let style = tree.physical_style(idx);
     if style.flex_direction_is_row() || style.flex_wraps() {
@@ -337,5 +437,5 @@ pub(super) fn align_column_flex(
     if members.is_empty() {
         return None;
     }
-    container.align(tree, &members)
+    container.align(tree, idx, &members, candidates)
 }
