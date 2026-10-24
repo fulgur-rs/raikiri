@@ -232,6 +232,24 @@ fn element_clips_overflow(document: &Document, cascade: &CascadeResult, node_id:
         && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
 }
 
+/// The block offset at which the overflow clip of `node_id` hides what its
+/// content paints, for a border box that starts at `y`: the border box's own
+/// edge, or the farther one that `overflow-clip-margin` names on an
+/// `overflow: clip` axis. A clip edge inside the border box (a padding box
+/// clip) still counts as the border box's edge.
+fn clip_block_end(document: &Document, cascade: &CascadeResult, node_id: usize, y: f32) -> f32 {
+    let layout = &document.nodes[node_id].layout;
+    let (border, padding) = (layout.border, layout.padding);
+    let geometry = crate::paint_rules::OverflowClipGeometry::new(
+        &cascade.computed[node_id],
+        PaintRect::new(0.0, y, layout.size.width, layout.size.height),
+        PaintInsets::new(border.top, border.right, border.bottom, border.left),
+        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
+        crate::paint_rules::is_replaced_element(document, node_id),
+    );
+    y + layout.size.height + geometry.block_end_outset()
+}
+
 /// The lowest edge painted by the fragments under `roots`, placed at the
 /// block offset `y`.
 ///

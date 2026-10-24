@@ -1208,12 +1208,10 @@ fn inline_start_inset_follows_direction() {
     );
 }
 
-/// An overflow box that starts on the first page and ends there while its
-/// content runs on: on the later pages the box has no fragment, and the
-/// walker's clip for it lies wholly above the page, so nothing inside it is
-/// drawn there.
+/// Lines that run past a fixed-height overflow box are clipped away, so they
+/// add no pages and the box paints in the order the walker draws it.
 #[test]
-fn overflow_box_absent_from_later_pages() {
+fn overflow_box_content_past_the_box_adds_no_pages() {
     let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
     let result = assert_same_order(
         &format!(
@@ -1222,22 +1220,13 @@ fn overflow_box_absent_from_later_pages() {
         ),
         "",
     );
-    assert_multi_page(&result);
-    // The premise: on a later page the walker opens the box's clip off the
-    // page, and nothing of the box's content is left to compare.
-    let page = result.pages().nth(1).expect("a second page");
-    assert!(
-        trace(&page)
-            .iter()
-            .any(|event| matches!(event, PaintTraceEvent::PushOverflowClip(..)))
-    );
-    assert!(api_steps(&page).is_empty(), "{:?}", api_steps(&page));
+    assert_eq!(result.page_count(), 1);
 }
 
-/// As above with an opacity group on the box: on the later pages the group
-/// is still opened and closed, with nothing in it.
+/// As above with an opacity group on the box: the group is opened and closed
+/// once, on the only page.
 #[test]
-fn translucent_overflow_box_absent_from_later_pages() {
+fn translucent_overflow_box_content_past_the_box_adds_no_pages() {
     let inner: String = (0..25).map(|i| format!("<p>line {i}</p>")).collect();
     let result = assert_same_order(
         &format!(
@@ -1246,9 +1235,44 @@ fn translucent_overflow_box_absent_from_later_pages() {
         ),
         "",
     );
+    assert_eq!(result.page_count(), 1);
+    let steps = api_steps(&result.pages().next().expect("a first page"));
+    assert_eq!(
+        steps
+            .iter()
+            .filter(|step| **step == Step::PushOpacity)
+            .count(),
+        1,
+        "{steps:?}",
+    );
+    assert_eq!(
+        steps
+            .iter()
+            .filter(|step| **step == Step::PopOpacity)
+            .count(),
+        1,
+        "{steps:?}",
+    );
+}
+
+/// A forced break inside an overflow box still starts a page, so the box
+/// continues on the next one with its clip, in the same order in the walker
+/// and the public list.
+#[test]
+fn overflow_box_split_by_a_forced_break_continues_on_the_next_page() {
+    let result = assert_same_order(
+        "<p>x</p><div style=\"overflow: hidden; height: 100px; background: #eee\">\
+         <p>line 0</p><p style=\"break-before: page\">line 1</p><p>line 2</p></div>\
+         <p>after</p>",
+        "",
+    );
     assert_multi_page(&result);
     let page = result.pages().nth(1).expect("a second page");
-    assert_eq!(api_steps(&page), [Step::PushOpacity, Step::PopOpacity]);
+    assert!(
+        trace(&page)
+            .iter()
+            .any(|event| matches!(event, PaintTraceEvent::PushOverflowClip(..)))
+    );
 }
 
 /// A paragraph root whose only line holds a canvas and whitespace: no

@@ -5236,3 +5236,7 @@ css/css-writing-modes/text-indent-vrl-002.xht
 css/css-writing-modes/text-indent-vrl-004.xht
 css/css-writing-modes/text-indent-vrl-006.xht
 css/css-writing-modes/text-indent-vrl-008.xht
+
+# --- content past a clipping box adds no page (WPT pin 97ea26e2, EXACT, Linux, 2026-10-24) ---
+# The lines of a box that run past the edge of a box clipping its block-axis overflow are never visible, so they no longer open pages; the margin-box page and its reference, a grid that clips with `overflow: clip`, both take one page; KEEP in two audit-vacuous-passes runs.
+css/css-page/margin-boxes/dimensions-008-print.html

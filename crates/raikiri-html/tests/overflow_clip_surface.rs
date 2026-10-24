@@ -200,3 +200,203 @@ fn an_off_page_parent_clip_keeps_its_child_in_paint_order() {
         ));
     }
 }
+
+/// A clipping box as tall as the page, holding a box whose lines run far below
+/// the page: the part past the clip is never visible.
+fn spilling_lines(clip_css: &str) -> DocumentLayout {
+    let lines = "x<br>".repeat(30);
+    laid_out(
+        &format!(
+            "<div id='clip'><div style='height:20px'></div><div style='height:30px'>{lines}</div></div>"
+        ),
+        &format!("#clip{{height:100px;{clip_css}}}"),
+    )
+}
+
+/// The tops of the text lines painted inside the clip of `id` on page
+/// `page_index`, rounded to whole pixels.
+fn visible_line_tops(result: &DocumentLayout, page_index: u32, id: &str) -> Vec<i32> {
+    let window = clip(result, page_index, id).unwrap().rect;
+    let mut tops: Vec<i32> = result
+        .page(page_index)
+        .unwrap()
+        .text_runs()
+        .iter()
+        .map(|run| (run.origin.1 - run.ascent).round() as i32)
+        .filter(|&top| top as f32 + 1.0 > window.y && (top as f32) < window.y + window.height)
+        .collect();
+    tops.sort_unstable();
+    tops
+}
+
+#[test]
+fn content_past_a_clip_adds_no_page() {
+    for overflow in [
+        "overflow:clip",
+        "overflow:hidden",
+        "overflow:auto",
+        "overflow:scroll",
+        "overflow:clip hidden",
+    ] {
+        let result = spilling_lines(overflow);
+        assert_eq!(result.page_count(), 1, "{overflow}");
+    }
+}
+
+#[test]
+fn content_past_a_box_that_does_not_clip_the_block_axis_adds_pages() {
+    for overflow in ["overflow:visible", "overflow-x:clip;overflow-y:visible"] {
+        let result = spilling_lines(overflow);
+        assert!(result.page_count() > 1, "{overflow}");
+    }
+}
+
+#[test]
+fn an_overflow_clip_margin_keeps_the_pages_of_the_content_it_reveals() {
+    // The 100px outset puts the clip edge 100px below the box, so the lines in
+    // that band are visible and take the second page.
+    let result = spilling_lines("overflow:clip;overflow-clip-margin:100px");
+    assert_eq!(result.page_count(), 2);
+    // A scroll container never clips beyond its padding box.
+    let result = spilling_lines("overflow:hidden;overflow-clip-margin:100px");
+    assert_eq!(result.page_count(), 1);
+}
+
+#[test]
+fn a_paragraph_running_over_a_clip_edge_adds_no_page() {
+    let words = "x ".repeat(60);
+    let result = laid_out(
+        &format!("<div id='clip'><p>{words}</p></div>"),
+        "#clip{height:100px;overflow:hidden}p{width:12px;margin:0}",
+    );
+    assert_eq!(result.page_count(), 1);
+}
+
+#[test]
+fn boxes_past_a_clip_edge_add_no_page() {
+    let rows = "<tr><td>x</td></tr>".repeat(30);
+    let items = "<div>x</div>".repeat(30);
+    for (body, css) in [
+        (
+            format!("<table>{rows}</table>"),
+            "table{border-collapse:collapse}",
+        ),
+        (
+            format!("<div id='column'>{items}</div>"),
+            "#column{display:flex;flex-direction:column}",
+        ),
+        (
+            "<div style='height:400px;background:green'></div>".to_owned(),
+            "",
+        ),
+    ] {
+        let result = laid_out(
+            &format!("<div id='clip'>{body}</div>"),
+            &format!("#clip{{height:100px;overflow:hidden}}{css}"),
+        );
+        assert_eq!(result.page_count(), 1, "{css}");
+    }
+}
+
+#[test]
+fn a_clip_taller_than_a_page_still_breaks_across_pages() {
+    let lines = "x<br>".repeat(30);
+    let result = laid_out(
+        &format!("<div id='clip'>{lines}</div>"),
+        "#clip{height:150px;overflow:hidden}",
+    );
+    assert_eq!(result.page_count(), 2);
+    assert_eq!(clip(&result, 0, "clip").unwrap().rect.height, 150.0);
+}
+
+#[test]
+fn the_flow_after_a_clip_starts_where_the_clip_ends() {
+    let lines = "x<br>".repeat(30);
+    let result = laid_out(
+        &format!("<div id='clip'>{lines}</div><p>AFTER</p>"),
+        "#clip{height:100px;overflow:hidden}p{margin:0}",
+    );
+    assert_eq!(result.page_count(), 2);
+    let runs = result.page(1).unwrap().text_runs();
+    let after = runs
+        .iter()
+        .find(|run| run.text == "AFTER")
+        .expect("the paragraph after the clip is on the second page");
+    assert!((after.origin.1 - after.ascent).abs() < 0.01);
+}
+
+#[test]
+fn a_clip_pushed_down_by_the_flow_keeps_its_visible_lines() {
+    let lines = "x<br>".repeat(30);
+    // The avoiding box does not fit below the spacer, so it and the clip after
+    // it move down by a page break; the clip then crosses the next one.
+    let result = laid_out(
+        &format!(
+            "<div style='height:60px'></div><div style='height:60px;break-inside:avoid'></div><div id='clip'>{lines}</div>"
+        ),
+        "#clip{height:50px;overflow:hidden}",
+    );
+    assert_eq!(result.page_count(), 3);
+    assert_eq!(visible_line_tops(&result, 1, "clip"), [60, 72, 84]);
+    assert_eq!(visible_line_tops(&result, 2, "clip"), [-4, 8]);
+}
+
+#[test]
+fn columns_in_a_clip_keep_their_pages() {
+    let lines = "x<br>".repeat(30);
+    let more_lines = "x<br>".repeat(60);
+    for (body, css, pages) in [
+        // The columns are taller than a page and are all visible.
+        (
+            lines.clone(),
+            "#clip{height:300px;overflow:hidden;column-count:2}",
+            3,
+        ),
+        // Columns inside a clip show up to its edge and no further.
+        (
+            format!("<div style='column-count:2'>{more_lines}</div>"),
+            "#clip{height:300px;overflow:hidden}",
+            3,
+        ),
+        (
+            format!("<div style='column-count:2'>{more_lines}</div>"),
+            "#clip{height:150px;overflow:hidden}",
+            2,
+        ),
+        (
+            format!("<div style='column-count:3'>{lines}</div>"),
+            "#clip{height:100px;overflow:hidden}",
+            1,
+        ),
+    ] {
+        let result = laid_out(&format!("<div id='clip'>{body}</div>"), css);
+        assert_eq!(result.page_count(), pages, "{css}");
+    }
+}
+
+#[test]
+fn a_forced_break_past_a_clip_edge_still_breaks() {
+    let result = laid_out(
+        "<div id='clip'><div style='height:120px'></div><div style='break-before:page'>X</div></div>",
+        "#clip{height:100px;overflow:hidden}",
+    );
+    assert_eq!(result.page_count(), 2);
+}
+
+#[test]
+fn a_positioned_clip_clips_its_own_content() {
+    for position in ["absolute", "relative"] {
+        let result = spilling_lines(&format!("position:{position};overflow:hidden"));
+        assert_eq!(result.page_count(), 1, "{position}");
+    }
+}
+
+#[test]
+fn an_inline_block_clips_its_own_content() {
+    let lines = "x<br>".repeat(30);
+    let result = laid_out(
+        &format!("<p>text <span id='clip'>{lines}</span></p>"),
+        "p{margin:0}#clip{display:inline-block;height:20px;overflow:hidden;vertical-align:top}",
+    );
+    assert_eq!(result.page_count(), 1);
+}
