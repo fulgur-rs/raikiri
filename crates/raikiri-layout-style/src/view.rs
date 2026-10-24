@@ -100,7 +100,7 @@ impl<'a> LayoutStyleView<'a> {
     /// with the computed values, or one an override brought. Any other address
     /// gives `None` and is never dereferenced, so a tool that compares getter
     /// results can resolve what it was handed without the unsafe contract of
-    /// [`resolve_calc`].
+    /// `resolve_calc`.
     #[doc(hidden)]
     pub fn resolve_calc_handle(&self, handle: *const (), basis: f32) -> Option<f32> {
         let from_overrides = self.overrides().find_map(|entry| match entry {

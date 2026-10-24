@@ -65,10 +65,10 @@ impl Document {
     /// Reads the style of box `idx` as the last layout left it, through
     /// `read`, for a tool that compares what two builds make of the same
     /// document. The view is the box's own style with no role context, like
-    /// [`LayoutSession::physical_style`](crate::layout::context::LayoutSession::physical_style),
-    /// and handles into calc payloads it returns stay valid while `read` runs.
+    /// `crate::layout::context::LayoutSession::physical_style`, and handles
+    /// into calc payloads it returns stay valid while `read` runs.
     ///
-    /// `None` under the conditions of [`Self::finished_style`].
+    /// `None` under the conditions of `Self::finished_style`.
     #[doc(hidden)]
     pub fn read_finished_style<R>(
         &self,
