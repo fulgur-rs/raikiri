@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::cascade::keyword_defaults::KEYS;
+use crate::computed::ComputedBackgroundLayer;
 use crate::property::{BoxSizing, FloatValue, TextTransform, WordBreak, property_key_for_name};
 use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal};
 
@@ -265,6 +266,45 @@ const CASES: &[(&str, bool, &[&str])] = &[
         false,
         &["10px 20px", "30% 40%", "right bottom 8px"],
     ),
+    (
+        "background-image",
+        false,
+        &[
+            "linear-gradient(red, blue)",
+            "url(a.png)",
+            "url(b.png), none",
+        ],
+    ),
+    (
+        "background-repeat",
+        false,
+        &["no-repeat", "repeat-x", "space round, repeat-y"],
+    ),
+    (
+        "background-attachment",
+        false,
+        &["fixed", "local", "fixed, scroll"],
+    ),
+    (
+        "background-clip",
+        false,
+        &["padding-box", "content-box", "text"],
+    ),
+    (
+        "background-origin",
+        false,
+        &["content-box", "border-box", "border-box, padding-box"],
+    ),
+    (
+        "background-position",
+        false,
+        &["10px 20px", "30% 40%", "right 5px bottom 6px, center"],
+    ),
+    (
+        "background-size",
+        false,
+        &["cover", "contain", "20px 30%, auto 5px"],
+    ),
     ("outline-style", false, &["dashed", "dotted", "double"]),
     ("outline-color", false, &["red", "blue", "green"]),
     ("outline-offset", false, &["3px", "5px", "-2px"]),
@@ -319,6 +359,15 @@ const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         &["hidden scroll", "scroll", "clip hidden"],
     ),
     ("columns", false, &["30px 3", "50px 2", "auto 4"]),
+    (
+        "background",
+        false,
+        &[
+            "url(a.png) no-repeat fixed 10px 20px / cover red",
+            "linear-gradient(red, blue) padding-box content-box blue, url(b.png)",
+            "green",
+        ],
+    ),
     (
         "outline",
         false,
@@ -528,6 +577,59 @@ fn outline_width_keywords_take_the_computed_width() {
             "{keyword}"
         );
     }
+}
+
+#[test]
+fn a_background_keyword_takes_one_item_per_layer_of_the_parent() {
+    let parent = "background-image: url(a.png), url(b.png); \
+                  background-repeat: no-repeat, repeat-x; \
+                  background-position: 10px 20px, 30% 40%; \
+                  background-size: cover, 5px auto; \
+                  background-attachment: fixed, local; \
+                  background-clip: padding-box, content-box; \
+                  background-origin: content-box, border-box";
+    let parent_style = child("", &[], &format!("#target {{ {parent} }}"));
+    let inherited = child(
+        parent,
+        &[],
+        "#target { background-image: url(c.png), url(d.png); background-repeat: inherit; \
+         background-position: inherit; background-size: inherit; \
+         background-attachment: inherit; background-clip: inherit; background-origin: inherit }",
+    );
+    let (parent_layers, layers) = (
+        parent_style.background_layers(),
+        inherited.background_layers(),
+    );
+    assert_eq!(layers.len(), 2);
+    for (layer, parent_layer) in layers.iter().zip(parent_layers) {
+        assert_eq!(layer.repeat, parent_layer.repeat);
+        assert_eq!(layer.position, parent_layer.position);
+        assert_eq!(layer.size, parent_layer.size);
+        assert_eq!(layer.attachment, parent_layer.attachment);
+        assert_eq!(layer.clip, parent_layer.clip);
+        assert_eq!(layer.origin, parent_layer.origin);
+    }
+    // The child's own images stay, and `background: inherit` takes them too.
+    assert_ne!(layers[0].image, parent_layers[0].image);
+    let whole = child(parent, &[], "#target { background: inherit }");
+    assert_eq!(whole.background_layers(), parent_style.background_layers());
+}
+
+#[test]
+fn an_initial_background_keyword_is_one_initial_layer() {
+    let parent = "background-image: url(a.png), url(b.png); background-repeat: no-repeat";
+    let values = child(
+        parent,
+        &[],
+        "#target { background-image: url(c.png), url(d.png); background-repeat: initial }",
+    );
+    assert_eq!(values.background_layers().len(), 2);
+    assert!(
+        values
+            .background_layers()
+            .iter()
+            .all(|layer| layer.repeat == ComputedBackgroundLayer::initial().repeat)
+    );
 }
 
 #[test]

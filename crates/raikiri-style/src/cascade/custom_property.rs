@@ -399,8 +399,8 @@ fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
 /// The property name of a longhand key of a shorthand that takes a CSS-wide
 /// keyword as a whole: the margin, padding and offset sides, and the longhands
 /// of `font`, `flex`, `flex-flow`, `gap`, `place-*`, `grid-row`,
-/// `grid-column`, `overflow`, `columns`, `outline`, `text-decoration` and
-/// `text-emphasis`.
+/// `grid-column`, `overflow`, `columns`, `outline`, `text-decoration`,
+/// `text-emphasis` and `background`.
 pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
     Some(match key {
         PropertyKey::MarginTop => "margin-top",
@@ -461,6 +461,14 @@ pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
         PropertyKey::TextDecorationColor => "text-decoration-color",
         PropertyKey::TextEmphasisStyle => "text-emphasis-style",
         PropertyKey::TextEmphasisColor => "text-emphasis-color",
+        PropertyKey::BackgroundColor => "background-color",
+        PropertyKey::BackgroundImage => "background-image",
+        PropertyKey::BackgroundRepeat => "background-repeat",
+        PropertyKey::BackgroundAttachment => "background-attachment",
+        PropertyKey::BackgroundPosition => "background-position",
+        PropertyKey::BackgroundSize => "background-size",
+        PropertyKey::BackgroundClip => "background-clip",
+        PropertyKey::BackgroundOrigin => "background-origin",
         _ => return None,
     })
 }

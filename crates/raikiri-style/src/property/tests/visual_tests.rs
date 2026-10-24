@@ -233,10 +233,8 @@ fn background_repeat_is_case_insensitive() {
 }
 
 #[test]
-fn background_repeat_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "background-repeat"), None, "{keyword}");
-    }
+fn background_repeat_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background-repeat");
 }
 
 #[test]
@@ -289,10 +287,8 @@ fn background_attachment_is_case_insensitive() {
 }
 
 #[test]
-fn background_attachment_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "background-attachment"), None, "{keyword}");
-    }
+fn background_attachment_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background-attachment");
 }
 
 #[test]
@@ -369,10 +365,18 @@ fn background_clip_and_origin_are_case_insensitive() {
 }
 
 #[test]
-fn background_clip_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "background-clip"), None, "{keyword}");
-    }
+fn background_clip_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background-clip");
+}
+
+#[test]
+fn background_origin_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background-origin");
+}
+
+#[test]
+fn background_shorthand_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background");
 }
 
 #[test]
@@ -501,10 +505,8 @@ fn background_size_accepts_percentage() {
 }
 
 #[test]
-fn background_size_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "background-size"), None, "{keyword}");
-    }
+fn background_size_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background-size");
 }
 
 #[test]
@@ -909,10 +911,8 @@ fn background_position_is_case_insensitive() {
 }
 
 #[test]
-fn background_position_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "background-position"), None, "{keyword}");
-    }
+fn background_position_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background-position");
 }
 
 #[test]
@@ -1710,10 +1710,8 @@ fn background_image_rejects_bare_string_without_url_wrapper() {
 }
 
 #[test]
-fn background_image_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "background-image"), None, "{keyword}");
-    }
+fn background_image_keeps_css_wide_keyword() {
+    assert_css_wide_keywords_deferred("background-image");
 }
 
 #[test]
