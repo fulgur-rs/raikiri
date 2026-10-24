@@ -9,9 +9,10 @@ use crate::layout::taffy_adapter::algorithms::compute_grid_layout;
 use crate::layout::taffy_adapter::grid_info::GridItemLines;
 use crate::layout::taffy_adapter::{GridInfo, GridRowCounts};
 use crate::layout::test_support::cascaded;
-use raikiri_layout_style::values::StyleLine;
-use taffy::prelude::TaffyGridLine;
-use taffy::{Direction, GridPlacement};
+use raikiri_layout_style::{LayoutStyleView, PreparedStyle, StyleMetadata, ViewContext};
+use raikiri_style::ComputedValues;
+use raikiri_style::property::GridLineValue;
+use taffy::Direction;
 
 /// A grid of two columns (50px, 70px) and one explicit row (20px), with three
 /// children of 10px height: the third one lands in an implicit row.
@@ -69,11 +70,25 @@ fn lines(row_start: u16, row_end: u16, column_start: u16) -> GridItemLines {
     }
 }
 
-fn placement(start: i16, end: i16) -> StyleLine<GridPlacement<smol_str::SmolStr>> {
-    StyleLine {
-        start: GridPlacement::from_line_index(start),
-        end: GridPlacement::from_line_index(end),
-    }
+/// Run `check` on the view of a box placed between the grid lines `row` and
+/// between the grid lines `column`.
+fn placed<R>(
+    row: (i32, i32),
+    column: (i32, i32),
+    check: impl FnOnce(&LayoutStyleView<'_>) -> R,
+) -> R {
+    let mut values = ComputedValues::initial();
+    values.grid_row_start = GridLineValue::Line(row.0);
+    values.grid_row_end = GridLineValue::Line(row.1);
+    values.grid_column_start = GridLineValue::Line(column.0);
+    values.grid_column_end = GridLineValue::Line(column.1);
+    let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
+    check(&LayoutStyleView::new(
+        &prepared,
+        ViewContext::default(),
+        &[],
+        &[],
+    ))
 }
 
 #[test]
@@ -120,12 +135,9 @@ fn a_placed_box_gets_the_area_its_lines_bound() {
         top: 3.0,
         bottom: 40.0,
     };
-    let area = info.resolve_absolute_grid_area(
-        placement(1, 2),
-        placement(2, 3),
-        Direction::Ltr,
-        padding_box,
-    );
+    let area = placed((1, 2), (2, 3), |style| {
+        info.resolve_absolute_grid_area(style, Direction::Ltr, padding_box)
+    });
 
     // The second column starts after the first one's 50px, and the first row
     // is 20px high, both from the content box origin at (6, 3).
@@ -150,12 +162,11 @@ fn a_report_without_tracks_reads_as_an_empty_grid() {
     assert_eq!(info.items().len(), 0);
     assert_eq!(info.item_area_size(0), None);
     assert_eq!(
-        info.resolve_absolute_grid_area(
-            placement(1, 2),
-            placement(1, 2),
+        placed((1, 2), (1, 2), |style| info.resolve_absolute_grid_area(
+            style,
             Direction::Ltr,
-            padding_box,
-        ),
+            padding_box
+        )),
         padding_box
     );
     assert_eq!(*info.detailed(), taffy::DetailedLayoutInfo::None);

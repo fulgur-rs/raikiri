@@ -19,7 +19,7 @@ use crate::layout::protocol::{
 use crate::layout::taffy_adapter::algorithms::{
     compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
-use crate::layout::taffy_adapter::{GridInfo, GridRowCounts, MaybeResolve, ResolveOrZero};
+use crate::layout::taffy_adapter::{GridInfo, MaybeResolve, ResolveOrZero, RowSizing};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
 use raikiri_layout_style::values::StylePoint;
 use raikiri_layout_style::values::TaffyPosition;
@@ -515,12 +515,7 @@ impl LayoutSession<'_> {
     pub(crate) fn in_column_flex_container(&self, node: usize) -> bool {
         self.taffy_parent_of(node)
             .filter(|&parent| self.nodes[parent].taffy_display() == taffy::Display::Flex)
-            .is_some_and(|parent| {
-                matches!(
-                    self.physical_style(parent).flex_direction(),
-                    taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
-                )
-            })
+            .is_some_and(|parent| !self.physical_style(parent).flex_direction_is_row())
     }
 }
 
@@ -2170,10 +2165,7 @@ fn fragmentation_context_for_ifc(
             return (has_row_flex && multicol.horizontal).then_some(context);
         }
         has_row_flex |= node.formatting_context == FormattingContext::Flex
-            && matches!(
-                tree.physical_style(node_id).flex_direction(),
-                taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-            );
+            && tree.physical_style(node_id).flex_direction_is_row();
     }
     None // cov:ignore: the unsupported ancestor path remains outside the ignored nested flex-float WPT scope.
 }
@@ -3172,20 +3164,16 @@ fn auto_grid_abspos_axis_alignment(
     parent: &LayoutStyleView<'_>,
     overflows: Size<bool>,
 ) -> Option<AxisAlignment> {
-    use taffy::{AlignItemsKeyword, AlignmentSafety, GridPlacement};
+    use taffy::{AlignItemsKeyword, AlignmentSafety};
 
     let (child_direction, parent_direction) = (child.direction(), parent.direction());
     let inset = child.inset();
-    let (grid_row, grid_column) = (child.grid_row(), child.grid_column());
     if child.position() != TaffyPosition::Absolute
         || !inset.top.is_auto()
         || !inset.right.is_auto()
         || !inset.bottom.is_auto()
         || !inset.left.is_auto()
-        || !matches!(&grid_row.start, GridPlacement::Auto)
-        || !matches!(&grid_row.end, GridPlacement::Auto)
-        || !matches!(&grid_column.start, GridPlacement::Auto)
-        || !matches!(&grid_column.end, GridPlacement::Auto)
+        || child.has_grid_placement()
     {
         return None;
     }
@@ -3522,7 +3510,7 @@ impl LayoutSession<'_> {
             .map(|(&child, item)| (child, item.row_start))
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let rows = row_sizing_functions(&self.physical_style(parent), info.row_counts());
+        let rows = RowSizing::of(&self.physical_style(parent), info.row_counts());
         // The rows run along the block axis: the physical height, or the
         // physical width in a vertical writing mode.
         let vertical = grid_oof::right_to_left(self, parent).is_some();
@@ -3536,11 +3524,7 @@ impl LayoutSession<'_> {
                 (if vertical { size.width } else { size.height })
                     .into_raw()
                     .uses_percentage()
-                    && rows.get(spanned).is_some_and(|rows| {
-                        rows.iter().any(|row| {
-                            row.min.is_intrinsic() || row.max.is_intrinsic() || row.max.is_fr()
-                        })
-                    })
+                    && rows.any_sized_by_content_or_free_space(spanned)
             })
             .map(|(&child, _)| child)
             .collect::<Vec<_>>()
@@ -3598,78 +3582,6 @@ impl LayoutSession<'_> {
                 .expect("get_child_id: index out of range"),
         )
     }
-}
-
-/// The sizing function of every row of the grid laid out with `style`, from
-/// the first implicit row before the explicit grid to the last after it,
-/// as taffy's grid algorithm expands them for the row counts `rows`
-/// (CSS Grid 1 §7.2 explicit tracks, §7.6 implicit tracks).
-fn row_sizing_functions(
-    style: &LayoutStyleView<'_>,
-    rows: GridRowCounts,
-) -> Vec<taffy::TrackSizingFunction> {
-    use taffy::prelude::TaffyAuto;
-    use taffy::{
-        GenericGridTemplateComponent, GenericRepetition, RepetitionCount, TrackSizingFunction,
-    };
-
-    let negative = usize::from(rows.negative_implicit);
-    let explicit = usize::from(rows.explicit);
-    let positive = usize::from(rows.positive_implicit);
-    let auto_rows = style.grid_auto_rows().collect::<Vec<_>>();
-    // Without `grid-auto-rows`, implicit rows are `auto`.
-    let implicit = |index: usize| {
-        let count = auto_rows.len().max(1);
-        auto_rows
-            .get(index % count)
-            .copied()
-            .unwrap_or(TrackSizingFunction::AUTO)
-    };
-    let mut functions = Vec::with_capacity(negative + explicit + positive);
-    // The implicit rows before the explicit grid end with the last of
-    // `grid-auto-rows`.
-    let offset = if auto_rows.is_empty() {
-        0
-    } else {
-        auto_rows.len() - negative % auto_rows.len()
-    };
-    functions.extend((0..negative).map(|index| implicit(offset + index)));
-    // An automatic repetition takes the explicit rows that the other
-    // components leave.
-    let fixed_count = style
-        .grid_template_rows()
-        .into_iter()
-        .flatten()
-        .map(|component| match component {
-            GenericGridTemplateComponent::Single(_) => 1,
-            GenericGridTemplateComponent::Repeat(repeat) => match repeat.count() {
-                RepetitionCount::Count(count) => repeat.tracks().len() * usize::from(count),
-                RepetitionCount::AutoFill | RepetitionCount::AutoFit => 0,
-            },
-        })
-        .sum::<usize>();
-    let mut template = Vec::with_capacity(explicit);
-    for component in style.grid_template_rows().into_iter().flatten() {
-        match component {
-            GenericGridTemplateComponent::Single(function) => template.push(function),
-            GenericGridTemplateComponent::Repeat(repeat) => {
-                let count = match repeat.count() {
-                    RepetitionCount::Count(count) => repeat.tracks().len() * usize::from(count),
-                    RepetitionCount::AutoFill | RepetitionCount::AutoFit => {
-                        explicit.saturating_sub(fixed_count)
-                    }
-                };
-                template.extend(repeat.tracks().cycle().take(count));
-            }
-        }
-    }
-    template.truncate(explicit);
-    let template_len = template.len();
-    functions.extend(template);
-    // Explicit rows the template does not reach, if any, are sized as the
-    // implicit rows after them.
-    functions.extend((0..explicit - template_len + positive).map(implicit));
-    functions
 }
 
 // SAFETY: with taffy calc support enabled, taffy length types hold

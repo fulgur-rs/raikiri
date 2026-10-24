@@ -269,12 +269,12 @@ fn pass_and_recorded_scope_calcs_get_document_owners() {
 
 #[test]
 fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
+    use crate::layout::taffy_adapter::track_calcs::{TrackList, track_calcs};
     use raikiri_style::{
         ComputedGridTemplateTracks as G, ComputedGridTrackBreadth as B, ComputedGridTrackList,
         ComputedGridTrackListComponent as C, ComputedGridTrackRepeat, ComputedGridTrackSize as S,
         property::GridRepeatCount,
     };
-    use taffy::GenericRepetition;
     for (a, b) in [
         (0.0, -0.0),
         (f32::from_bits(0x7fc0_0001), f32::from_bits(0x7fc0_0002)),
@@ -333,30 +333,23 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
         check(view.size().width.into_raw().calc_value(), a, true);
         check(view.size().height.into_raw().calc_value(), b, true);
         check(view.margin().left.into_raw().calc_value(), a, false);
-        for template in [view.grid_template_columns(), view.grid_template_rows()] {
-            let mut single = 0;
-            for component in template.unwrap() {
-                match component {
-                    taffy::GenericGridTemplateComponent::Single(track) => {
-                        let expected = [a, b][single];
-                        check(track.min.into_raw().calc_value(), expected, true);
-                        check(track.max.into_raw().calc_value(), expected, true);
-                        single += 1;
-                    }
-                    taffy::GenericGridTemplateComponent::Repeat(repeat) => {
-                        for (track, expected) in repeat.tracks().zip([a, b]) {
-                            check(track.min.into_raw().calc_value(), expected, true);
-                            check(track.max.into_raw().calc_value(), expected, true);
-                        }
-                    }
-                }
+        for list in [TrackList::TemplateColumns, TrackList::TemplateRows] {
+            let tracks = track_calcs(&view, list);
+            // Two single tracks, then the two tracks of the repetition.
+            let expected = [(false, a), (false, b), (true, a), (true, b)];
+            assert_eq!(tracks.len(), expected.len());
+            for (track, (in_repetition, expected)) in tracks.iter().zip(expected) {
+                assert_eq!(track.in_repetition, in_repetition);
+                check(track.min, expected, true);
+                check(track.max, expected, true);
             }
-            assert_eq!(single, 2);
         }
-        for (tracks, expected) in [(view.grid_auto_columns(), b), (view.grid_auto_rows(), a)] {
+        for (list, expected) in [(TrackList::AutoColumns, b), (TrackList::AutoRows, a)] {
+            let tracks = track_calcs(&view, list);
+            assert_eq!(tracks.len(), 1);
             for track in tracks {
-                check(track.min.into_raw().calc_value(), expected, true);
-                check(track.max.into_raw().calc_value(), expected, true);
+                check(track.min, expected, true);
+                check(track.max, expected, true);
             }
         }
     }

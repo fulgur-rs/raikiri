@@ -85,6 +85,15 @@ impl LayoutStyleView<'_> {
             _ => taffy::FlexDirection::Row,
         }
     }
+    /// Whether the main axis of a flex container runs along its rows, as
+    /// `row` and `row-reverse` do, rather than along its columns.
+    #[inline]
+    pub fn flex_direction_is_row(&self) -> bool {
+        matches!(
+            self.flex_direction(),
+            taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+        )
+    }
     /// Whether and how a flex container wraps its lines.
     #[inline]
     pub fn flex_wrap(&self) -> taffy::FlexWrap {

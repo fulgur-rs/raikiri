@@ -474,32 +474,6 @@ fn a_non_finite_ifc_content_bound_is_the_initial_value() {
 }
 
 #[test]
-fn implicit_rows_are_auto_without_grid_auto_rows() {
-    use taffy::prelude::TaffyAuto;
-
-    let rows = GridRowCounts {
-        negative_implicit: 1,
-        explicit: 0,
-        positive_implicit: 2,
-    };
-    let values = raikiri_style::ComputedValues::initial();
-    let prepared = raikiri_layout_style::PreparedStyle::prepare(
-        &values,
-        raikiri_layout_style::StyleMetadata::default(),
-    );
-    let view = LayoutStyleView::new(
-        &prepared,
-        raikiri_layout_style::ViewContext::default(),
-        &[],
-        &[],
-    );
-    assert_eq!(
-        row_sizing_functions(&view, rows),
-        vec![taffy::TrackSizingFunction::AUTO; 3]
-    );
-}
-
-#[test]
 fn the_fit_content_limit_resolves_against_the_basis_it_needs() {
     let limit =
         |size: taffy::Dimension, basis: Option<f32>| fit_content_limit(size.expand(), basis);
