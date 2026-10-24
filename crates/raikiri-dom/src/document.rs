@@ -240,6 +240,12 @@ pub struct Document {
     /// whether the pseudo-element is `::after`, and the index of the image
     /// among the images of its `content` list.
     content_images: std::collections::HashMap<(usize, bool, usize), PreparedImage>,
+    /// The sizes of the images that page-margin boxes show with `content:
+    /// url()`, by authored URL; see [`Document::prepare_margin_box_images`].
+    /// Margin boxes are laid out per page after the document, so the table
+    /// outlives the preparation of the other generated images.
+    pub(crate) margin_box_images:
+        std::collections::HashMap<String, raikiri_traits::ImageRasterSize>,
     /// Named-counter snapshots of the tree, built once for the element
     /// cascade whose [`CascadeResult::element_generation`] is stored beside
     /// them and shared by layout, page projection and paint (see
@@ -499,6 +505,7 @@ impl Document {
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             content_images: Default::default(),
+            margin_box_images: Default::default(),
             counter_snapshot_cache: std::sync::OnceLock::new(),
             root: 0,
             layout_dirty: false,
@@ -1844,6 +1851,7 @@ impl Document {
             canvas_bitmap_bytes: _,
             list_marker_images,
             content_images,
+            margin_box_images,
             counter_snapshot_cache: _,
             root: _,
             layout_dirty: _,
@@ -1917,6 +1925,7 @@ impl Document {
                 Some(((element, after, index), image.clone()))
             })
             .collect();
+        document.margin_box_images = margin_box_images.clone();
         document.canvas_bitmap_bytes = CanvasBitmapByteCount(None);
         document.ifc = ifc.clone();
         document.normal_line_height = normal_line_height.clone();
@@ -3216,6 +3225,9 @@ impl Document {
                 );
             }
         }
+        // The first page's margin boxes can show images too. Boxes of other
+        // pages are prepared by whoever loads their images.
+        self.prepare_margin_box_images(&cascade.page, source, base_url);
         self.layout_dirty = true;
         self.oof_coordinates.clear();
     }
@@ -3356,7 +3368,7 @@ impl Document {
 /// `height` size it as CSS 2.1 §10.3.2 and §10.6.2 size an inline replaced
 /// element, and its absolute `min-*` and `max-*` sizes constrain it as
 /// CSS 2.1 §10.4 and §10.7 constrain one.
-fn content_image_size(
+pub(crate) fn content_image_size(
     intrinsic: raikiri_traits::ImageIntrinsicSize,
     style: Option<&raikiri_style::ComputedValues>,
 ) -> raikiri_traits::ImageRasterSize {

@@ -109,14 +109,16 @@ pub use layout::pages_follow_x_axis;
 pub use layout::placed_without_relative_offset;
 pub use layout::{RootBox, root_box};
 #[doc(hidden)]
-pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
+pub use layout::{StandaloneAlign, StandaloneImage, StandaloneStyle, StandaloneText};
 #[doc(hidden)]
 pub use layout::{establishes_fixed_containing_block, has_applied_transform, is_transformable};
+pub use margin_boxes::MarginBoxContentImage;
 pub use margin_boxes::{
     DeferredGlyph, DeferredSlot, DeferredValue, MarginBox, MarginBoxBackgroundImage,
     MarginBoxBorder, MarginBoxNamedValues, MarginBoxPageContext, MarginBoxRunning, MarginBoxText,
     page_margin_boxes, page_margin_boxes_with_values,
 };
+pub use margin_boxes::{margin_box_content_image_urls, page_margin_box_content_image_urls};
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::continuation::{CrossingBox, PageStart, PageStartToken};
 pub use page_projection::fragment::{Fragment, FragmentKind, OverflowClip, RepeatKind};

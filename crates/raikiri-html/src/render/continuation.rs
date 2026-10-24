@@ -18,7 +18,7 @@ use raikiri_dom::{
 };
 use raikiri_style::CascadeResult;
 use raikiri_style::property::PageValue;
-use raikiri_traits::{LayoutError, ReplacedResolver};
+use raikiri_traits::{ImagePixelSource, LayoutError, ReplacedResolver};
 
 use raikiri_dom::ResolvedPageGeometry;
 
@@ -32,6 +32,22 @@ pub struct Continuation {
     /// The element cascade of `document`, with the page context of
     /// `first_page`.
     pub cascade: CascadeResult,
+}
+
+/// Record in the copies of the document the sizes of the images that the
+/// margin boxes show with `content`. The copies were made before the images
+/// were fetched, and the pages laid out in them are drawn from them.
+pub(super) fn prepare_margin_box_images(
+    continuations: &mut [Continuation],
+    urls: &[String],
+    source: &dyn ImagePixelSource,
+    base_url: Option<&url::Url>,
+) {
+    for continuation in continuations {
+        continuation
+            .document
+            .prepare_margin_box_image_urls(urls, source, base_url);
+    }
 }
 
 /// Inputs shared by every relayout of one layout run.

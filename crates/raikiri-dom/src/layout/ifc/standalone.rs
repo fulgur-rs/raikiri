@@ -8,14 +8,18 @@
 use crate::Document;
 use crate::layout::ifc::style::map_font_family;
 use raikiri_style::FontFamilyName;
+use raikiri_traits::PaintRect;
 use shodo::font::FontCollection;
-use shodo::geometry::{Direction, PhysicalSize, WritingMode};
+use shodo::geometry::{Direction, PhysicalConverter, PhysicalSize, WritingMode};
 use shodo::limits::Limits;
+use shodo::node::{InlineEdges, NodeId, TextSource};
 use shodo::style::{
     InlineStyle, LineHeight, LineOptions, ParagraphStyle, TextAlign, TextOrientation, TextWrapMode,
     WhiteSpaceCollapse,
 };
-use shodo::{AtomicSizes, LayoutContext, Line, Paragraph, RichText};
+use shodo::{
+    AtomicSize, AtomicSizes, Fragment, LayoutContext, Line, Paragraph, ParagraphBuilder, RichText,
+};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -53,6 +57,20 @@ impl Default for StandaloneStyle {
     }
 }
 
+/// An image inside a standalone run, laid out as an atomic inline that sits on
+/// the baseline of its line (CSS 2.1 §10.8.1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StandaloneImage {
+    /// Byte offset in the text of the place the image is inserted at. It must
+    /// follow the offset of the image before it; one inside a character is
+    /// moved back to the start of the character.
+    pub offset: usize,
+    /// Width of the image box in CSS px.
+    pub width: f32,
+    /// Height of the image box in CSS px.
+    pub height: f32,
+}
+
 /// Alignment along the inline axis inside the given inline size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StandaloneAlign {
@@ -82,7 +100,13 @@ pub struct StandaloneText {
     block_size: f32,
     writing_mode: WritingMode,
     container: PhysicalSize,
+    /// Where each image sits in the text it was shaped with, in order.
+    image_offsets: Vec<usize>,
 }
+
+/// What shodo puts in the processed text of a paragraph for each atomic
+/// inline.
+const OBJECT_REPLACEMENT_LEN: usize = '\u{FFFC}'.len_utf8();
 
 impl StandaloneText {
     /// The lines in order; glyph origins are line-local logical coordinates.
@@ -137,6 +161,47 @@ impl StandaloneText {
         } else {
             self.block_size
         }
+    }
+
+    /// The offset in the text the run was shaped with of the place at
+    /// `processed` in the text of the lines, which holds an object replacement
+    /// character for each image that the shaped text does not. One the text
+    /// itself holds is not an image and keeps its place.
+    pub(crate) fn text_offset(&self, processed: usize) -> usize {
+        let images = self
+            .image_offsets
+            .iter()
+            .enumerate()
+            .take_while(|&(index, &at)| at + index * OBJECT_REPLACEMENT_LEN < processed)
+            .count();
+        processed - images * OBJECT_REPLACEMENT_LEN
+    }
+
+    /// The border box of each image of the run, as its index in the list the
+    /// run was shaped with and its place relative to the origin of the run.
+    /// An image that was not placed, because the run broke off before it, is
+    /// left out.
+    pub fn images(&self) -> Vec<(usize, PaintRect)> {
+        let mut out = Vec::new();
+        for (index, line) in self.lines.iter().enumerate() {
+            let converter =
+                PhysicalConverter::new(line.writing_mode(), line.used_direction(), self.container);
+            let shift = self.hang_shift(index);
+            for fragment in line.fragments() {
+                let Fragment::Atomic(atomic) = fragment else {
+                    continue;
+                };
+                let mut logical = atomic.border_rect;
+                logical.inline_start += shift;
+                logical.block_start += line.block_offset();
+                let rect = converter.rect(logical);
+                out.push((
+                    atomic.node.0 as usize,
+                    PaintRect::new(rect.x, rect.y, rect.width, rect.height),
+                ));
+            }
+        }
+        out
     }
 }
 
@@ -277,13 +342,60 @@ fn align_of(align: StandaloneAlign) -> TextAlign {
     }
 }
 
+/// Where each of `images` is inserted into `text`: the offset kept at or after
+/// the image before it, inside the text, and at the start of a character.
+fn image_offsets(text: &str, images: &[StandaloneImage]) -> Vec<usize> {
+    let mut start = 0;
+    images
+        .iter()
+        .map(|image| {
+            let mut at = image.offset.clamp(start, text.len());
+            while !text.is_char_boundary(at) {
+                at -= 1;
+            }
+            start = at.max(start);
+            start
+        })
+        .collect()
+}
+
 /// `text` with the blanks (space, tab, U+00A0) removed from the end of every
-/// line, which [`StandaloneText::width`] leaves out.
-fn without_trailing_blanks(text: &str) -> String {
-    text.split('\n')
-        .map(|line| line.trim_end_matches([' ', '\t', '\u{a0}']))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// line, which [`StandaloneText::width`] leaves out, and `images` moved to the
+/// same places in the shorter text. Blanks in front of an image are not at the
+/// end of its line, so they stay.
+fn without_trailing_blanks(
+    text: &str,
+    images: &[StandaloneImage],
+) -> (String, Vec<StandaloneImage>) {
+    let at = image_offsets(text, images);
+    let mut stripped = String::with_capacity(text.len());
+    let mut moved = images.to_vec();
+    let mut next = 0;
+    let mut line_start = 0;
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            stripped.push('\n');
+        }
+        let line_end = line_start + line.len();
+        let out_start = stripped.len();
+        // The images sit in order, so those on this line come next in the list.
+        let on_line = at[next..]
+            .iter()
+            .take_while(|&&offset| offset <= line_end)
+            .count();
+        let kept_end = match on_line {
+            0 => line_start,
+            n => at[next + n - 1],
+        };
+        stripped.push_str(&text[line_start..kept_end]);
+        stripped.push_str(text[kept_end..line_end].trim_end_matches([' ', '\t', '\u{a0}']));
+        for slot in next..next + on_line {
+            moved[slot].offset = out_start + (at[slot] - line_start);
+        }
+        next += on_line;
+        line_start = line_end + 1;
+    }
+    (stripped, moved)
 }
 
 /// Break `text` into lines with the document's engine and fonts.
@@ -292,6 +404,8 @@ struct Shaped {
     paragraph: Paragraph,
     // The layout context is per run: the document's shared one needs `&mut`.
     cx: LayoutContext,
+    /// The sizes of the images of the run, by their index in the image list.
+    atomics: AtomicSizes,
 }
 
 impl Shaped {
@@ -299,6 +413,7 @@ impl Shaped {
         fonts: &FontCollection,
         limits: &Limits,
         text: &str,
+        images: &[StandaloneImage],
         style: &StandaloneStyle,
     ) -> Option<Self> {
         let inline = InlineStyle {
@@ -318,11 +433,66 @@ impl Shaped {
             ..ParagraphStyle::default()
         };
         let mut cx = LayoutContext::new();
-        let paragraph = RichText::with_limits(&paragraph_style, limits)
-            .push(text, &inline)
-            .build(&mut cx, fonts)
-            .ok()?;
-        Some(Self { paragraph, cx })
+        if images.is_empty() {
+            let paragraph = RichText::with_limits(&paragraph_style, limits)
+                .push(text, &inline)
+                .build(&mut cx, fonts)
+                .ok()?;
+            return Some(Self {
+                paragraph,
+                cx,
+                atomics: AtomicSizes::new(),
+            });
+        }
+        // Text between images goes in as spans of their own, numbered after
+        // the images, whose ids are their positions in the list.
+        let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
+        let mut atomics = AtomicSizes::new();
+        let horizontal = style.writing_mode == WritingMode::HorizontalTb;
+        let mut spans = images.len() as u64;
+        let mut push_span = |builder: &mut ParagraphBuilder, start: usize, end: usize| {
+            if end > start {
+                let node = NodeId(spans);
+                spans += 1;
+                let offset = u32::try_from(start).unwrap_or(u32::MAX);
+                builder
+                    .open_inline(node, &inline, InlineEdges::default())
+                    .push_text(TextSource::Dom { node, offset }, &text[start..end])
+                    .close_inline();
+            }
+        };
+        // A size that is not a length is no size at all.
+        let usable = |length: f32| {
+            if length.is_finite() {
+                length.max(0.0)
+            } else {
+                0.0
+            }
+        };
+        let mut start = 0;
+        for (index, (image, at)) in images.iter().zip(image_offsets(text, images)).enumerate() {
+            push_span(&mut builder, start, at);
+            start = at;
+            let node = NodeId(index as u64);
+            builder.push_atomic(node, &inline, InlineEdges::default());
+            // The baseline of an image is its bottom margin edge.
+            let (width, height) = (usable(image.width), usable(image.height));
+            atomics.insert(
+                node,
+                AtomicSize {
+                    inline_size: if horizontal { width } else { height },
+                    block_size: if horizontal { height } else { width },
+                    ..AtomicSize::default()
+                },
+            );
+        }
+        push_span(&mut builder, start, text.len());
+        let paragraph = builder.build(&mut cx, fonts).ok()?;
+        Some(Self {
+            paragraph,
+            cx,
+            atomics,
+        })
     }
 
     fn lines(&mut self, width: Option<f32>, align: StandaloneAlign) -> Vec<Line> {
@@ -334,7 +504,7 @@ impl Shaped {
             &mut self.cx,
             &options,
             width.unwrap_or(UNBOUNDED_WIDTH),
-            &AtomicSizes::EMPTY,
+            &self.atomics,
         )
     }
 }
@@ -377,7 +547,22 @@ impl Document {
         width: Option<f32>,
         align: StandaloneAlign,
     ) -> Option<StandaloneText> {
-        self.shape_standalone(text, style, StandaloneWidth::Given(width), align)
+        self.shape_standalone(text, &[], style, StandaloneWidth::Given(width), align)
+    }
+
+    /// [`Document::shape_standalone_text`] with `images` inserted into the
+    /// text as atomic inlines that sit on the baseline of their line, which
+    /// [`StandaloneText::images`] places. A run of images alone has no text.
+    #[doc(hidden)]
+    pub fn shape_standalone_text_with_images(
+        &self,
+        text: &str,
+        images: &[StandaloneImage],
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> Option<StandaloneText> {
+        self.shape_standalone(text, images, style, StandaloneWidth::Given(width), align)
     }
 
     /// [`Document::shape_standalone_text`] for callers that shape the same
@@ -400,10 +585,28 @@ impl Document {
         width: Option<f32>,
         align: StandaloneAlign,
     ) -> Option<Arc<StandaloneText>> {
-        let remembered = self.ifc.as_ref().filter(|_| is_remembered(text, style));
+        self.shape_standalone_text_shared_with_images(text, &[], style, width, align)
+    }
+
+    /// [`Document::shape_standalone_text_shared`] with `images` inserted as
+    /// [`Document::shape_standalone_text_with_images`] does. A run with images
+    /// is not remembered.
+    #[doc(hidden)]
+    pub fn shape_standalone_text_shared_with_images(
+        &self,
+        text: &str,
+        images: &[StandaloneImage],
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> Option<Arc<StandaloneText>> {
+        let remembered = self
+            .ifc
+            .as_ref()
+            .filter(|_| images.is_empty() && is_remembered(text, style));
         let Some(state) = remembered else {
             return self
-                .shape_standalone_text(text, style, width, align)
+                .shape_standalone_text_with_images(text, images, style, width, align)
                 .map(Arc::new);
         };
         // Read before shaping: a change of the fonts while this run is shaped
@@ -436,17 +639,23 @@ impl Document {
         style: &StandaloneStyle,
         align: StandaloneAlign,
     ) -> Option<StandaloneText> {
-        self.shape_standalone(text, style, StandaloneWidth::Fit, align)
+        self.shape_standalone(text, &[], style, StandaloneWidth::Fit, align)
     }
 
     fn shape_standalone(
         &self,
         text: &str,
+        images: &[StandaloneImage],
         style: &StandaloneStyle,
         width: StandaloneWidth,
         align: StandaloneAlign,
     ) -> Option<StandaloneText> {
-        if !self.standalone_text_eligible(text, style.font_size) {
+        // Images give a run something to lay out when there is no text.
+        let images_alone = text.is_empty()
+            && !images.is_empty()
+            && style.font_size.is_finite()
+            && style.font_size > 0.0;
+        if !self.standalone_text_eligible(text, style.font_size) && !images_alone {
             return None;
         }
         let installed;
@@ -457,16 +666,16 @@ impl Document {
                 (&installed.0, &installed.1)
             }
         };
-        let mut shaped = Shaped::build(fonts, limits, text, style)?;
+        let mut shaped = Shaped::build(fonts, limits, text, images, style)?;
         // shodo keeps the trailing spaces that fit on the last line and before
         // a forced break inside `inline_size`; the width leaves them out. The
         // width and the alignment shift therefore use a copy without trailing
-        // blanks.
-        let stripped = without_trailing_blanks(text);
-        let mut ink = if stripped == text || stripped.is_empty() {
+        // blanks, whose images stay at the same places in the text.
+        let (stripped, ink_images) = without_trailing_blanks(text, images);
+        let mut ink = if stripped == text || (stripped.is_empty() && ink_images.is_empty()) {
             None
         } else {
-            Some(Shaped::build(fonts, limits, &stripped, style)?)
+            Some(Shaped::build(fonts, limits, &stripped, &ink_images, style)?)
         };
         let width = match width {
             StandaloneWidth::Given(width) => width,
@@ -546,6 +755,7 @@ impl Document {
             block_size,
             writing_mode: style.writing_mode,
             container,
+            image_offsets: image_offsets(text, images),
         })
     }
 

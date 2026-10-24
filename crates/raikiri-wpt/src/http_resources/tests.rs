@@ -234,3 +234,41 @@ fn generated_content_images_that_layout_cannot_place_are_not_prefetched() {
         ["http://web-platform.test/css/shown.png"]
     );
 }
+
+#[test]
+fn margin_box_content_images_are_prefetched_against_the_base_url() {
+    struct Recording(std::cell::RefCell<Vec<String>>);
+    impl raikiri_traits::ReplacedResolver for Recording {
+        fn resolve(
+            &self,
+            req: ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            self.0.borrow_mut().push(req.url().to_string());
+            Err(raikiri_traits::ResolverError::Decode("not an image".into()))
+        }
+    }
+    let mut doc = raikiri_dom::Document::new();
+    let style = doc.append_element(Some(0), "style", None::<&str>);
+    doc.append_text(
+        style,
+        "@page { @top-left { content: 'a' url(/images/green.png) url(http://[) } \
+                 @bottom-right { content: url(https://images.test/b.png) } \
+                 @bottom-left { content: 'no image' } }",
+    );
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let resolver = Recording(Default::default());
+    let base = Url::parse("http://web-platform.test/css/test.html").unwrap();
+    let mut page = cascade.page.clone();
+    prepare_page_images(&mut page, &base, &resolver);
+    let mut requested = resolver.0.into_inner();
+    requested.sort();
+    // An unparsable URL is skipped.
+    assert_eq!(
+        requested,
+        [
+            "http://web-platform.test/images/green.png",
+            "https://images.test/b.png"
+        ]
+    );
+}

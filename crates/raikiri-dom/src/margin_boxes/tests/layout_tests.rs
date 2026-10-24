@@ -1313,44 +1313,188 @@ fn shared_named_values_take_the_last_assignment_on_every_page() {
     }
 }
 
+/// `boxes_for` for a document that knows `green.png` is 100x50, as the pages of
+/// the render pipeline do once its images are loaded.
+fn boxes_with_images(css: &str) -> Vec<MarginBox> {
+    let (mut doc, cascade) = page_cascade_fixture(css);
+    doc.margin_box_images.insert(
+        "green.png".to_owned(),
+        raikiri_traits::ImageRasterSize {
+            width: 100.0,
+            height: 50.0,
+        },
+    );
+    layout_page(&doc, &cascade, small_page())
+}
+
+fn image_rects(margin_box: &MarginBox) -> Vec<(&str, [f32; 4])> {
+    margin_box
+        .content_images
+        .iter()
+        .map(|image| {
+            let rect = image.rect;
+            (
+                image.url.as_str(),
+                [rect.x, rect.y, rect.width, rect.height].map(|v| (v * 100.0).round() / 100.0),
+            )
+        })
+        .collect()
+}
+
 #[test]
-fn a_lime_content_image_is_placed_after_the_text() {
-    let boxes = boxes_for(&format!(
-        "@page {{ margin: 40px; @top-left {{ content: 'ab' url(green.png); {AHEM} }} }}"
+fn a_content_image_follows_the_text_on_its_baseline() {
+    let boxes = boxes_with_images(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'ab' url(green.png); \
+           vertical-align: top; {AHEM} }} }}"
     ));
     let [margin_box] = boxes.as_slice() else {
         panic!("one box: {boxes:?}");
     };
     assert_eq!(margin_box.content, "ab");
+    // The image is as large as itself and sits on the baseline of a line that
+    // the image makes 50px tall above it, so the text drops to the baseline.
     assert_eq!(
-        margin_box.lime_content_image,
-        Some(PaintRect::new(60.0, 0.0, 100.0, 50.0))
+        image_rects(margin_box),
+        [("green.png", [60.0, 0.0, 100.0, 50.0])]
+    );
+    let text = margin_box.text.as_ref().expect("the text is shaped");
+    let first_glyph = glyph_positions(text)[0];
+    assert_eq!(first_glyph.0, 40.0);
+    // The Ahem ascent of 10px text is 8px, over a baseline 50px down.
+    assert_eq!(first_glyph.1, 50.0);
+}
+
+#[test]
+fn a_content_image_alone_in_a_box_is_laid_out() {
+    let boxes = boxes_with_images(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: url(green.png); \
+           vertical-align: top; {AHEM} }} }}"
+    ));
+    let [margin_box] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(margin_box.content, "");
+    assert_eq!(
+        image_rects(margin_box),
+        [("green.png", [40.0, 0.0, 100.0, 50.0])]
     );
 }
 
 #[test]
-fn an_overflowing_lime_content_image_keeps_its_intrinsic_extent() {
-    let boxes = boxes_for(&format!(
+fn a_content_image_moves_with_the_alignment_of_its_box() {
+    // The line is 52px tall: the 50px of the image over the baseline, and the
+    // 2px of the strut under it. The box is 40px tall.
+    let image_y = |vertical_align: &str| {
+        let boxes = boxes_with_images(&format!(
+            "@page {{ margin: 40px; @top-left {{ content: url(green.png); \
+               vertical-align: {vertical_align}; {AHEM} }} }}"
+        ));
+        let [margin_box] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        image_rects(margin_box)[0].1[1]
+    };
+    assert_eq!(image_y("top"), 0.0);
+    assert_eq!(image_y("middle"), -6.0);
+    assert_eq!(image_y("bottom"), -12.0);
+    // Horizontally, `text-align` places the line of the image.
+    let boxes = boxes_with_images(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: url(green.png); \
+           text-align: right; width: 300px; {AHEM} }} }}"
+    ));
+    assert_eq!(image_rects(&boxes[0])[0].1[0], 240.0);
+}
+
+#[test]
+fn content_images_keep_their_order_and_their_authored_urls() {
+    let (mut doc, cascade) = page_cascade_fixture(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: url(a.png) 'x' url(b.png) 'y'; \
+           vertical-align: top; {AHEM} }} }}"
+    ));
+    for (url, width, height) in [("a.png", 30.0, 20.0), ("b.png", 40.0, 10.0)] {
+        doc.margin_box_images.insert(
+            url.to_owned(),
+            raikiri_traits::ImageRasterSize { width, height },
+        );
+    }
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [margin_box] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(margin_box.content, "xy");
+    // The images are 20px and 10px tall, so the line is 20px over the
+    // baseline: 'x' follows the first image, and the second follows 'x'.
+    assert_eq!(
+        image_rects(margin_box),
+        [
+            ("a.png", [40.0, 0.0, 30.0, 20.0]),
+            ("b.png", [80.0, 10.0, 40.0, 10.0]),
+        ]
+    );
+}
+
+#[test]
+fn an_image_that_could_not_be_loaded_represents_nothing() {
+    // The document knows no size for `green.png`, so the box is that of its
+    // text alone.
+    let with_image = boxes_for(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'ab' url(green.png); {AHEM} }} }}"
+    ));
+    let without = boxes_for(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'ab'; {AHEM} }} }}"
+    ));
+    let [margin_box] = with_image.as_slice() else {
+        panic!("one box: {with_image:?}");
+    };
+    assert!(margin_box.content_images.is_empty());
+    assert_eq!(rects(&with_image), rects(&without));
+    // A box with nothing else shows nothing, but is still a box.
+    let alone = boxes_for(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: url(green.png); \
+           background: red; {AHEM} }} }}"
+    ));
+    assert_eq!(alone.len(), 1);
+    assert!(alone[0].text.is_none());
+    assert!(alone[0].content_images.is_empty());
+}
+
+#[test]
+fn an_overflowing_content_image_keeps_its_intrinsic_extent() {
+    let boxes = boxes_with_images(&format!(
         "@page {{ margin: 40px; @top-left {{ content: 'abcdefghij' url(green.png); \
-           {AHEM} width: 20px; height: 20px }} }}"
+           vertical-align: top; {AHEM} width: 20px; height: 20px }} }}"
     ));
     let [margin_box] = boxes.as_slice() else {
         panic!("one box: {boxes:?}");
     };
     assert!(margin_box.overflow_clip.is_none());
+    // The box is 20px tall and sits against the page area, at y = 20. The
+    // word fills a line of 10px, and the image that cannot fit beside it takes
+    // the next one, wider and taller than the box.
+    assert_eq!(
+        image_rects(margin_box),
+        [("green.png", [40.0, 30.0, 100.0, 50.0])]
+    );
+}
 
-    let image = margin_box
-        .lime_content_image
-        .expect("the image remains after text overflows the box");
-    assert!(image.x >= margin_box.rect.x + margin_box.rect.width);
-    assert_eq!((image.width, image.height), (100.0, 50.0));
+#[test]
+fn a_clipping_box_clips_its_content_images() {
+    let boxes = boxes_with_images(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: url(green.png); \
+           overflow: hidden; width: 20px; {AHEM} }} }}"
+    ));
+    let [margin_box] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert!(margin_box.overflow_clip.is_some());
+    assert_eq!(margin_box.content_images.len(), 1);
 }
 
 #[test]
 fn a_content_image_counts_in_the_sizes_of_the_box_along_a_top_edge() {
     // The image is 100px wide after the 20px of 'ab', and cannot be broken.
     let row = |width: &str| {
-        rects(&boxes_for(&format!(
+        rects(&boxes_with_images(&format!(
             "@page {{ margin: 40px; {AHEM} \
                @top-left {{ content: 'ab' url(green.png); width: {width} }} \
                @top-right {{ content: 'x' }} }}"
@@ -1375,7 +1519,7 @@ fn a_content_image_counts_in_the_sizes_of_the_box_along_a_top_edge() {
     }
     // A box with nothing but the image is as wide as the image.
     assert_eq!(
-        rects(&boxes_for(&format!(
+        rects(&boxes_with_images(&format!(
             "@page {{ margin: 40px; {AHEM} \
                @top-left {{ content: url(green.png); width: max-content }} }}"
         ))),
@@ -1385,15 +1529,17 @@ fn a_content_image_counts_in_the_sizes_of_the_box_along_a_top_edge() {
 
 #[test]
 fn a_content_image_counts_in_the_height_of_a_left_box() {
-    // The 50px of the image is taller than the 10px line of text next to it.
-    for content in ["url(green.png)", "'a' url(green.png)"] {
+    // The line of an image is the 50px of the image over its baseline and the
+    // 2px of the strut under it. In the 40px column of the box, the 'a' left of
+    // the image goes on a line of its own, 10px tall.
+    for (content, expected) in [("url(green.png)", 52.0), ("'a' url(green.png)", 62.0)] {
         for height in ["max-content", "min-content"] {
             assert_eq!(
-                rects(&boxes_for(&format!(
+                rects(&boxes_with_images(&format!(
                     "@page {{ margin: 40px; {AHEM} \
                        @left-top {{ content: {content}; height: {height} }} }}"
                 ))),
-                [(PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 50.0])],
+                [(PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, expected])],
                 "{content} {height}"
             );
         }

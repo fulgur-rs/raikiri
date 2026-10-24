@@ -1351,7 +1351,9 @@ pub(crate) fn standalone_runs<'a>(
                 .collect();
             let metrics = run.metrics();
             if let Some(starts) = starts.as_deref_mut() {
-                starts.push(text_range.start);
+                // The text of the lines holds an object replacement character
+                // for each image, which the content does not.
+                starts.push(text.text_offset(text_range.start));
             }
             out.push(PositionedGlyphRun {
                 line: TextLineId {

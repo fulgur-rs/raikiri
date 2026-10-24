@@ -4166,12 +4166,34 @@ fn margin_box_without_area_paints_nothing() {
     assert!(scene.commands.is_empty());
 }
 
+/// A source holding a 2x2 red image under every URL.
+struct RedMarginPixels;
+
+impl ImagePixelSource for RedMarginPixels {
+    fn get_decoded(&self, _: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+            width: 2,
+            height: 2,
+            rgba: [255, 0, 0, 255].repeat(4),
+        }))
+    }
+}
+
+fn margin_box_with_content_image(rect: PaintRect) -> raikiri_dom::MarginBox {
+    let mut margin_box = fixed_margin_box();
+    margin_box.background_color = None;
+    margin_box.content_images = vec![raikiri_dom::MarginBoxContentImage::new(
+        "https://example.com/a.png",
+        rect,
+    )];
+    margin_box
+}
+
 #[test]
-fn lime_margin_box_placeholders_fill_inside_the_box() {
+fn lime_margin_box_background_placeholder_fills_the_box() {
     let mut margin_box = fixed_margin_box();
     margin_box.background_color = None;
     margin_box.lime_background = true;
-    margin_box.lime_content_image = Some(PaintRect::new(10.0, 0.0, 50.0, 20.0));
     let mut scene = Scene::new();
     paint_margin_box(
         &crate::walk::ImageBrushCache::default(),
@@ -4186,15 +4208,93 @@ fn lime_margin_box_placeholders_fill_inside_the_box() {
         .iter()
         .filter(|command| matches!(command, RenderCommand::Fill(_)))
         .count();
-    assert_eq!(fills, 2, "the lime background and the lime content image");
+    assert_eq!(fills, 1, "the lime background");
+}
+
+#[test]
+fn margin_box_content_images_are_drawn_where_the_layout_placed_them() {
+    let margin_box = margin_box_with_content_image(PaintRect::new(10.0, 5.0, 50.0, 20.0));
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        &PageBox::new(),
+        Some(&RedMarginPixels),
+        &mut warnings,
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let [RenderCommand::Fill(fill)] = scene.commands.as_slice() else {
+        panic!("one fill: {:?}", scene.commands);
+    };
+    // The 2x2 pixels are stretched over the 50x20 box of the image.
+    let bounds = kurbo::Shape::bounding_box(&(fill.transform * &fill.shape));
+    assert_eq!(bounds, kurbo::Rect::new(10.0, 5.0, 60.0, 25.0));
+}
+
+#[test]
+fn margin_box_content_images_wait_for_a_pixel_source_and_warn_for_missing_pixels() {
+    struct NoPixels;
+    impl ImagePixelSource for NoPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            None
+        }
+    }
+    let margin_box = margin_box_with_content_image(PaintRect::new(10.0, 5.0, 50.0, 20.0));
+    // Without a source, nothing is drawn and nothing is reported.
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        &PageBox::new(),
+        None,
+        &mut warnings,
+    );
+    assert!(scene.commands.is_empty());
+    assert!(warnings.is_empty());
+    // A source that holds no pixels for the image is reported.
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        &PageBox::new(),
+        Some(&NoPixels),
+        &mut warnings,
+    );
+    assert!(scene.commands.is_empty());
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].details.contains("content image"));
+    // An image with no area, or a URL that names nothing, is skipped quietly.
+    let mut empty = margin_box_with_content_image(PaintRect::new(10.0, 5.0, 0.0, 20.0));
+    empty
+        .content_images
+        .push(raikiri_dom::MarginBoxContentImage::new(
+            "#fragment",
+            PaintRect::new(0.0, 0.0, 10.0, 10.0),
+        ));
+    let mut warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &empty,
+        &PageBox::new(),
+        Some(&RedMarginPixels),
+        &mut warnings,
+    );
+    assert!(scene.commands.is_empty());
+    assert!(warnings.is_empty());
 }
 
 #[test]
 fn margin_box_content_overflows_unless_overflow_clips() {
     let clip_bounds = |overflow_clip| {
-        let mut margin_box = fixed_margin_box();
-        margin_box.background_color = None;
-        margin_box.lime_content_image = Some(PaintRect::new(10.0, 0.0, 200.0, 20.0));
+        let mut margin_box = margin_box_with_content_image(PaintRect::new(10.0, 0.0, 200.0, 20.0));
         margin_box.overflow_clip = overflow_clip;
         let mut scene = Scene::new();
         paint_margin_box(
@@ -4202,7 +4302,7 @@ fn margin_box_content_overflows_unless_overflow_clips() {
             &mut scene,
             &margin_box,
             &PageBox::new(),
-            None,
+            Some(&RedMarginPixels),
             &mut Vec::new(),
         );
         let pushes = scene
@@ -4219,6 +4319,15 @@ fn margin_box_content_overflows_unless_overflow_clips() {
             .filter(|command| matches!(command, RenderCommand::PopLayer))
             .count();
         assert_eq!(pushes.len(), pops, "every clip is popped");
+        assert_eq!(
+            scene
+                .commands
+                .iter()
+                .filter(|command| matches!(command, RenderCommand::Fill(_)))
+                .count(),
+            1,
+            "the image is drawn either way"
+        );
         pushes
     };
 

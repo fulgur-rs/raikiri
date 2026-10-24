@@ -14,8 +14,8 @@ use crate::page_projection::text_runs::standalone_runs;
 use crate::paint_rules::OverflowClipGeometry;
 use crate::running::element_string_value;
 use crate::{
-    Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneStyle, StandaloneText,
-    TextShadow,
+    Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneImage, StandaloneStyle,
+    StandaloneText, TextShadow,
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
@@ -30,7 +30,7 @@ use raikiri_style::{
     MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult, PageMarginBoxCascadeResult,
     PageMarginBoxSlot,
 };
-use raikiri_traits::{NodeId, PageBox, PaintClip, PaintInsets, PaintRect};
+use raikiri_traits::{ImagePixelSource, NodeId, PageBox, PaintClip, PaintInsets, PaintRect};
 use smol_str::SmolStr;
 use std::borrow::Cow;
 use std::ops::Range;
@@ -173,6 +173,31 @@ impl std::fmt::Debug for MarginBoxText {
     }
 }
 
+/// An image a margin box shows with `content: url()`, and where it is drawn.
+///
+/// The image sits in the line of the box's text as an inline replaced element
+/// (CSS Content 3 §2.2): it is as large as the image itself, and rests on the
+/// baseline of its line.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct MarginBoxContentImage {
+    /// Authored `url()` value; resolve it against the document base URL.
+    pub url: String,
+    /// Border box on the page, in CSS px.
+    pub rect: PaintRect,
+}
+
+impl MarginBoxContentImage {
+    /// An image at `rect`. Used to build boxes in tests.
+    #[doc(hidden)]
+    pub fn new(url: impl Into<String>, rect: PaintRect) -> Self {
+        Self {
+            url: url.into(),
+            rect,
+        }
+    }
+}
+
 /// What a [`DeferredSlot`] stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -305,10 +330,9 @@ pub struct MarginBox {
     /// background image that refers to `green.png`.
     #[doc(hidden)]
     pub lime_background: bool,
-    /// Test-suite placeholder: a lime rectangle in place of a content image
-    /// that refers to `green.png`.
-    #[doc(hidden)]
-    pub lime_content_image: Option<PaintRect>,
+    /// The images of the box's `content`, in content order. An image that
+    /// could not be loaded represents nothing and is not listed.
+    pub content_images: Vec<MarginBoxContentImage>,
 }
 
 impl MarginBox {
@@ -333,7 +357,7 @@ impl MarginBox {
             deferred: Vec::new(),
             running: None,
             lime_background: false,
-            lime_content_image: None,
+            content_images: Vec::new(),
         }
     }
 
@@ -467,7 +491,12 @@ struct MarginBoxSpec {
     background_layers: Vec<MarginBoxBackgroundImage>,
     background_layer_count: usize,
     background_image_lime: bool,
-    content_image_lime: bool,
+    /// The authored URLs of the images of `content`, by the index of the image
+    /// in [`Self::images`], which holds their sizes and the places they are
+    /// inserted at in [`Self::content`]. An image that could not be loaded is
+    /// in neither.
+    image_urls: Vec<String>,
+    images: Vec<StandaloneImage>,
     /// Used borders in top/right/bottom/left order.
     border: [Option<(f32, CssColor)>; 4],
     margin_auto: [bool; 4],
@@ -585,26 +614,32 @@ impl FixedExtent {
     }
 }
 
-/// The width and height of the lime rectangle that stands in for a content
-/// image that refers to `green.png`.
-const LIME_CONTENT_IMAGE_SIZE: (f32, f32) = (100.0, 50.0);
-
 impl MarginBoxSpec {
     /// Used border widths in top/right/bottom/left order.
     fn border_widths(&self) -> [f32; 4] {
         self.border.map(|side| side.map_or(0.0, |(width, _)| width))
     }
 
-    /// The size the content image takes along `axis` of the box: none without
-    /// one. The image is placed after the text and cannot be broken.
-    fn content_image_size(&self, axis: Axis) -> f32 {
-        if !self.content_image_lime {
-            return 0.0;
-        }
-        match axis {
-            Axis::Horizontal => LIME_CONTENT_IMAGE_SIZE.0,
-            Axis::Vertical => LIME_CONTENT_IMAGE_SIZE.1,
-        }
+    /// Whether the box has anything to shape: text or an image.
+    fn has_content(&self) -> bool {
+        !self.content.is_empty() || !self.images.is_empty()
+    }
+
+    /// The content of the box shaped to `inline_size`, with its images in the
+    /// line as atomic inlines.
+    fn shape(
+        &self,
+        document: &Document,
+        inline_size: Option<f32>,
+        align: StandaloneAlign,
+    ) -> Option<Arc<StandaloneText>> {
+        document.shape_standalone_text_shared_with_images(
+            &self.content,
+            &self.images,
+            &self.text_style,
+            inline_size,
+            align,
+        )
     }
 
     /// The used extent along `axis` of a box in a page margin `region` long,
@@ -1037,6 +1072,16 @@ fn named_string_value<'v>(
 /// may take in its counter style; Roman numerals take up to four.
 const MAX_PLACEHOLDER_WIDENING: usize = 4;
 
+/// The generated content of a margin box as text, with what is not text.
+struct ResolvedContent {
+    text: String,
+    /// The placeholders of values not known yet, as ranges of `text`.
+    deferred: Vec<(Range<usize>, CounterStyle)>,
+    /// The images of the content in order, with the byte offset of `text` each
+    /// one is inserted at.
+    images: Vec<(usize, String)>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolved_margin_content(
     components: &[ContentComponent],
@@ -1048,8 +1093,9 @@ fn resolved_margin_content(
     quotes: &[(SmolStr, SmolStr)],
     quotes_auto: bool,
     values: &MarginBoxNamedValues,
-) -> (String, Vec<(Range<usize>, CounterStyle)>) {
+) -> ResolvedContent {
     let mut deferred = Vec::new();
+    let mut images = Vec::new();
     let mut text = String::new();
     let mut quote_depth = QuoteDepth::default();
     let mut push_counter = |text: &mut String, name: &str, style: &CounterStyle| {
@@ -1107,13 +1153,23 @@ fn resolved_margin_content(
             ContentComponent::Quote(keyword) => {
                 text.push_str(quote_depth.apply(*keyword, quotes, quotes_auto));
             }
-            // Images, attributes, and target-dependent content need resources
-            // or a document-wide generated-content pass. They remain absent
-            // rather than leaking their URL/function spelling.
+            // An image goes in the line of the text where it is listed.
+            ContentComponent::Image { url } => {
+                if images.len() < crate::generated_content::MAX_GENERATED_IMAGES {
+                    images.push((text.len(), url.clone()));
+                }
+            }
+            // Attributes and target-dependent content need a document-wide
+            // generated-content pass. They remain absent rather than leaking
+            // their function spelling.
             _ => {}
         }
     }
-    (text, deferred)
+    ResolvedContent {
+        text,
+        deferred,
+        images,
+    }
 }
 
 fn margin_box_content(
@@ -1124,8 +1180,12 @@ fn margin_box_content(
     style: &ComputedValues,
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
-) -> (String, Vec<DeferredSlot>) {
-    let (text, deferred) = resolved_margin_content(
+) -> (String, Vec<DeferredSlot>, Vec<(usize, String)>) {
+    let ResolvedContent {
+        text,
+        deferred,
+        images,
+    } = resolved_margin_content(
         &style.content,
         document,
         cascade,
@@ -1151,7 +1211,7 @@ fn margin_box_content(
             registry: Arc::clone(registry.as_ref().expect("created for deferred slots")),
         })
         .collect();
-    (text, deferred)
+    (text, deferred, images)
 }
 
 /// The rules of `registry` that formatting in `styles` can reach: each named
@@ -1227,15 +1287,24 @@ fn margin_box_spec(
     if components.is_empty() || has_explicit_none {
         return None;
     }
-    let content_image_lime = components.iter().any(|component| {
-        matches!(
-            component,
-            ContentComponent::Image { url }
-                if url.ends_with("/green.png") || url == "green.png"
-        )
-    });
-    let (content, deferred) =
+    let (content, deferred, content_images) =
         margin_box_content(document, cascade, page, rule, &style, context, values);
+    // An image whose size is not known could not be loaded; it represents
+    // nothing (CSS Content 3 §2.2).
+    let (image_urls, images): (Vec<_>, Vec<_>) = content_images
+        .into_iter()
+        .filter_map(|(offset, url)| {
+            let size = document.margin_box_image_size(&url)?;
+            Some((
+                url,
+                StandaloneImage {
+                    offset,
+                    width: size.width,
+                    height: size.height,
+                },
+            ))
+        })
+        .unzip();
     // A zero size still shapes, at a size too small to see.
     let font_size = style.font_size.px().max(0.1);
     let text_color = style.color;
@@ -1329,7 +1398,8 @@ fn margin_box_spec(
         background_layers,
         background_layer_count: style.background_layers().len().max(1),
         background_image_lime,
-        content_image_lime,
+        image_urls,
+        images,
         border,
         margin_auto,
         margin,
@@ -1395,22 +1465,18 @@ fn place_margin_box(
         content_width,
         content_height,
     );
-    let lime_content_image = spec.content_image_lime.then(|| {
-        let advance = document
-            .shape_standalone_text_shared(
-                &spec.content,
-                &spec.text_style,
-                None,
-                StandaloneAlign::Start,
-            )
-            .map_or(0.0, |text| text.width());
-        let image_x = (content_x + advance).round();
-        PaintRect::new(
-            image_x,
-            content_y,
-            LIME_CONTENT_IMAGE_SIZE.0,
-            LIME_CONTENT_IMAGE_SIZE.1,
-        )
+    let content_images = text.as_ref().map_or_else(Vec::new, |text| {
+        let (x, y) = text.origin();
+        text.shaped()
+            .images()
+            .into_iter()
+            .filter_map(|(index, rect)| {
+                Some(MarginBoxContentImage {
+                    url: spec.image_urls.get(index)?.clone(),
+                    rect: PaintRect::new(rect.x + x, rect.y + y, rect.width, rect.height),
+                })
+            })
+            .collect()
     });
     let border = |side: Option<(f32, CssColor)>| {
         side.map(|(width, color)| {
@@ -1455,7 +1521,7 @@ fn place_margin_box(
         overflow_clip,
         running,
         lime_background: spec.background_image_lime,
-        lime_content_image,
+        content_images,
     })
 }
 
@@ -1470,18 +1536,13 @@ fn place_margin_text(
     width: f32,
     height: f32,
 ) -> Option<MarginBoxText> {
-    if spec.content.is_empty() || width <= 0.0 || height <= 0.0 {
+    if !spec.has_content() || width <= 0.0 || height <= 0.0 {
         return None;
     }
     let style = &spec.text_style;
     let vertical = style.writing_mode.is_vertical();
     let inline_size = if vertical { height } else { width };
-    let shaped = document.shape_standalone_text_shared(
-        &spec.content,
-        style,
-        Some(inline_size),
-        spec.alignment,
-    )?;
+    let shaped = spec.shape(document, Some(inline_size), spec.alignment)?;
     // Text that is thicker than the box has negative free space, which
     // `bottom` and `middle` take as well: the text ends flush with the end of
     // the block axis, or overflows on both sides, and not on the end side
@@ -1516,6 +1577,128 @@ fn margin_box_rule(
     page.cascade_margin_box(slot)
 }
 
+/// The authored URLs of the images that the margin boxes `rules` show with
+/// `content`, in rule order, at most [`MAX_GENERATED_IMAGES`] per box.
+///
+/// [`MAX_GENERATED_IMAGES`]: crate::generated_content::MAX_GENERATED_IMAGES
+pub fn margin_box_content_image_urls(rules: &[PageMarginBoxCascadeResult]) -> Vec<String> {
+    let mut urls = Vec::new();
+    for rule in rules {
+        let winning = rule
+            .declarations
+            .iter()
+            .rfind(|declaration| declaration.value().key() == PropertyKey::Content);
+        let Some(PropertyValue::Content(components)) =
+            winning.map(|declaration| declaration.value())
+        else {
+            continue;
+        };
+        urls.extend(
+            components
+                .iter()
+                .filter_map(|component| match component {
+                    ContentComponent::Image { url } => Some(url.clone()),
+                    _ => None,
+                })
+                .take(crate::generated_content::MAX_GENERATED_IMAGES),
+        );
+    }
+    urls
+}
+
+/// [`margin_box_content_image_urls`] for the margin boxes of `page`.
+pub fn page_margin_box_content_image_urls(page: &PageCascadeResult) -> Vec<String> {
+    let mut slots = Vec::new();
+    for rule in page.margin_boxes() {
+        if !slots.contains(&rule.slot) {
+            slots.push(rule.slot);
+        }
+    }
+    let rules: Vec<_> = slots
+        .into_iter()
+        .filter_map(|slot| margin_box_rule(page, slot))
+        .collect();
+    margin_box_content_image_urls(&rules)
+}
+
+impl Document {
+    /// Record the sizes of the images that the margin boxes of `page` show
+    /// with `content: url()`, so that the boxes can lay them out. The pixels
+    /// come from `source`, which must already hold the images; one it does not
+    /// know represents nothing (CSS Content 3 §2.2). Relative URLs resolve
+    /// against `base_url`.
+    ///
+    /// Margin boxes are laid out one page at a time, after the document, and
+    /// a page's boxes can differ from another's, so this adds to what earlier
+    /// calls recorded rather than replacing it. An image it names again takes
+    /// the size `source` gives it now.
+    pub fn prepare_margin_box_images(
+        &mut self,
+        page: &PageCascadeResult,
+        source: &dyn ImagePixelSource,
+        base_url: Option<&url::Url>,
+    ) {
+        self.prepare_margin_box_image_urls(
+            &page_margin_box_content_image_urls(page),
+            source,
+            base_url,
+        );
+    }
+
+    /// [`Self::prepare_margin_box_images`] for the authored `urls` of the
+    /// images, as [`margin_box_content_image_urls`] lists them.
+    pub fn prepare_margin_box_image_urls(
+        &mut self,
+        urls: &[String],
+        source: &dyn ImagePixelSource,
+        base_url: Option<&url::Url>,
+    ) {
+        for raw in urls {
+            let size = margin_box_image_url(raw, base_url)
+                .and_then(|url| source.intrinsic_size(&url))
+                .map(|intrinsic| crate::document::content_image_size(intrinsic, None))
+                .filter(|size| {
+                    size.width.is_finite()
+                        && size.height.is_finite()
+                        && size.width > 0.0
+                        && size.height > 0.0
+                });
+            // The latest source decides: an image that was loaded before and
+            // is gone now represents nothing.
+            match size {
+                Some(size) => {
+                    self.margin_box_images.insert(raw.clone(), size);
+                }
+                None => {
+                    self.margin_box_images.remove(raw);
+                }
+            }
+        }
+    }
+
+    /// The size a margin box gives the image authored as `url` in its
+    /// `content`, from [`Self::prepare_margin_box_images`]. `None` for an
+    /// image that could not be loaded, which represents nothing.
+    pub fn margin_box_image_size(&self, url: &str) -> Option<raikiri_traits::ImageRasterSize> {
+        self.margin_box_images.get(url).copied()
+    }
+}
+
+/// The absolute URL an image of a margin box's `content` names, without its
+/// fragment, which is how the image is fetched. An empty or fragment-only URL
+/// names no external image.
+fn margin_box_image_url(raw: &str, base_url: Option<&url::Url>) -> Option<url::Url> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let mut url = url::Url::parse(raw)
+        .ok()
+        .or_else(|| base_url.and_then(|base| base.join(raw).ok()))?;
+    url.set_fragment(None);
+    Some(url)
+}
+
 fn margin_box_text_width(
     document: &Document,
     spec: &MarginBoxSpec,
@@ -1526,15 +1709,10 @@ fn margin_box_text_width(
     } else {
         None
     };
-    let measured = document
-        .shape_standalone_text_shared(
-            &spec.content,
-            &spec.text_style,
-            inline_size,
-            StandaloneAlign::Start,
-        )
+    let measured = spec
+        .shape(document, inline_size, StandaloneAlign::Start)
         .map_or(0.0, |text| text.width());
-    measured.max(text_width_floor(spec)).max(0.0) + spec.content_image_size(Axis::Horizontal)
+    measured.max(text_width_floor(spec)).max(0.0)
 }
 
 /// The least width text takes: a font size, once it has anything but
@@ -1551,7 +1729,7 @@ fn text_width_floor(spec: &MarginBoxSpec) -> f32 {
     }
 }
 
-/// The content width of `spec`: that of its text and image on a single line.
+/// The content width of `spec`: that of its text and images on a single line.
 fn margin_box_content_width(
     document: &Document,
     spec: &MarginBoxSpec,
@@ -1565,22 +1743,39 @@ fn margin_box_content_width(
     margin_box_text_width(document, spec, Some(content_height))
 }
 
-/// The content height of `spec`: its text on as many lines as it takes at the
-/// width the box has in a column of `cross_size`, or its image if taller.
+/// The lines of `text` that are lines of the box.
+///
+/// A line feed that ends the text ends its last line; it does not start
+/// another one. The shaper still adds an empty line after it, with no height,
+/// which is not a line of the box. An empty line between two feeds has a
+/// height and is one.
+fn box_lines(text: &StandaloneText) -> &[shodo::Line] {
+    let lines = text.lines();
+    let after_last_feed = lines.len() > 1 && lines.last().is_some_and(|line| line.is_empty());
+    &lines[..lines.len() - usize::from(after_last_feed)]
+}
+
+/// The content height of `spec`: its content on as many lines as it takes at
+/// the width the box has in a column of `cross_size`.
 fn margin_box_content_height(document: &Document, spec: &MarginBoxSpec, cross_size: f32) -> f32 {
-    let image_height = spec.content_image_size(Axis::Vertical);
-    if spec.content.is_empty() {
-        return image_height;
+    if !spec.has_content() {
+        return 0.0;
     }
-    let text_height = if spec.text_style.writing_mode.is_vertical() {
-        document
-            .shape_standalone_text_shared(
-                &spec.content,
-                &spec.text_style,
-                None,
-                StandaloneAlign::Start,
-            )
+    if spec.text_style.writing_mode.is_vertical() {
+        spec.shape(document, None, StandaloneAlign::Start)
             .map_or(0.0, |text| text.height())
+    } else if !spec.images.is_empty() {
+        // A line is as tall as its images make it, so the lines are measured
+        // rather than counted.
+        let column_width = spec.fixed_content_size(Axis::Horizontal, cross_size);
+        spec.shape(
+            document,
+            (column_width > 0.0).then_some(column_width),
+            StandaloneAlign::Start,
+        )
+        .map_or(0.0, |text| {
+            box_lines(&text).iter().map(shodo::Line::block_size).sum()
+        })
     } else {
         let explicit_lines = spec
             .content
@@ -1591,22 +1786,13 @@ fn margin_box_content_height(document: &Document, spec: &MarginBoxSpec, cross_si
         // Text wraps where the box is as wide as the column; a box with no
         // width to wrap in keeps the lines its text breaks into by itself.
         let column_width = spec.fixed_content_size(Axis::Horizontal, cross_size);
-        let line_count = document
-            .shape_standalone_text_shared(
-                &spec.content,
-                &spec.text_style,
+        let line_count = spec
+            .shape(
+                document,
                 (column_width > 0.0).then_some(column_width),
                 StandaloneAlign::Start,
             )
-            .map_or(explicit_lines, |text| {
-                // A line feed that ends the text ends its last line; it does
-                // not start another one. The shaper still adds an empty line
-                // after it, with no height, which is not a line of the box.
-                // An empty line between two feeds has a height and is one.
-                let after_last_feed = text.lines().len() > 1
-                    && text.lines().last().is_some_and(|line| line.is_empty());
-                (text.lines().len() - usize::from(after_last_feed)).max(1) as f32
-            });
+            .map_or(explicit_lines, |text| box_lines(&text).len().max(1) as f32);
         let font_size = spec.text_style.font_size.max(0.0);
         // Unitless numbers were already resolved against the box's own font
         // size when the spec was built.
@@ -1615,8 +1801,7 @@ fn margin_box_content_height(document: &Document, spec: &MarginBoxSpec, cross_si
             _ => font_size,
         };
         line_count * line_height.max(0.0)
-    };
-    text_height.max(image_height)
+    }
 }
 
 /// One side of the page-margin area: the three slots along it, in
@@ -1720,22 +1905,16 @@ fn edge_min_content(document: &Document, spec: &MarginBoxSpec, axis: Axis) -> Op
     // Text can break at every opportunity along its inline axis. Across it,
     // the size is the same however narrow the box gets.
     let along_inline_axis = spec.text_style.writing_mode.is_vertical() == (axis == Axis::Vertical);
-    if spec.size(axis).is_some() || !along_inline_axis || spec.content.is_empty() {
+    if spec.size(axis).is_some() || !along_inline_axis || !spec.has_content() {
         return None;
     }
-    let image = spec.content_image_size(axis);
-    let measured = document
-        .shape_standalone_text_shared(
-            &spec.content,
-            &spec.text_style,
-            Some(MIN_CONTENT_PROBE),
-            StandaloneAlign::Start,
-        )
+    let measured = spec
+        .shape(document, Some(MIN_CONTENT_PROBE), StandaloneAlign::Start)
         .map_or(0.0, |text| match axis {
             Axis::Horizontal => text.width().max(text_width_floor(spec)),
             Axis::Vertical => text.height(),
         });
-    Some(measured.max(image).max(0.0))
+    Some(measured.max(0.0))
 }
 
 /// The content size along `axis` that the sizing `keyword` of `spec` asks for

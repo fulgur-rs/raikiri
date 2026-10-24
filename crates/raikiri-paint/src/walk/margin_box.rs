@@ -1,5 +1,5 @@
 //! The painting of one laid-out page-margin box: its background color and
-//! images, borders, then its text and shadows.
+//! images, borders, then its text, shadows and content images.
 
 use super::{
     ImageBrushCache, clip_inset_rect, css_color, origin_inset_rect, paint_background_from_source,
@@ -11,7 +11,7 @@ use peniko::{Color, Fill};
 use raikiri_dom::MarginBox;
 use raikiri_style::property::VisualBox;
 use raikiri_traits::{
-    ImagePixelSource, PageBox, PaintRect, RenderWarning, ResourceKind, WarningKind,
+    ImagePixelSource, ImageRasterSize, PageBox, PaintRect, RenderWarning, ResourceKind, WarningKind,
 };
 
 /// Paint one laid-out page-margin box: background color, background image,
@@ -46,7 +46,7 @@ pub(super) fn paint_margin_box(
         true
     });
     painter.paint_text(scene);
-    painter.paint_content_image(scene);
+    painter.paint_content_images(image_cache, scene, pixel_source, warnings);
     if clipped {
         scene.pop_layer();
     }
@@ -300,21 +300,62 @@ impl<'a> MarginBoxPaint<'a> {
         }
     }
 
-    /// Paint the green placeholder of the content image.
-    fn paint_content_image(&self, scene: &mut impl PaintScene) {
-        if let Some(image) = self.margin_box.lime_content_image {
-            let image_rect = Rect::new(
-                image.x as f64,
-                image.y as f64,
-                (image.x + image.width) as f64,
-                (image.y + image.height) as f64,
-            );
+    /// Paint the images of the box's `content` where the layout placed them,
+    /// over its text. Without a pixel source there is nothing to draw.
+    fn paint_content_images(
+        &self,
+        image_cache: &ImageBrushCache,
+        scene: &mut impl PaintScene,
+        pixel_source: Option<&dyn ImagePixelSource>,
+        warnings: &mut Vec<RenderWarning>,
+    ) {
+        let Some(source) = pixel_source else {
+            return;
+        };
+        for image in &self.margin_box.content_images {
+            let rect = image.rect;
+            let Some(url) = image_cache.image_url(&image.url) else {
+                continue;
+            };
+            if !(rect.width > 0.0 && rect.height > 0.0) {
+                continue;
+            }
+            let size = ImageRasterSize {
+                width: rect.width,
+                height: rect.height,
+            };
+            let Some(decoded) = source
+                .get_decoded_at_size(&url, size, None)
+                .filter(|decoded| decoded.width > 0 && decoded.height > 0)
+            else {
+                warnings.push(RenderWarning {
+                    kind: WarningKind::ResourceFallback {
+                        kind: ResourceKind::Image,
+                        url: Some(redacted_image_url(&url)),
+                    },
+                    node_id: None,
+                    details:
+                        "margin-box content image could not be rasterized; the image was skipped"
+                            .into(),
+                });
+                continue;
+            };
+            let brush = image_cache.whole(&decoded);
             scene.fill(
                 Fill::NonZero,
-                Affine::IDENTITY,
-                Color::from_rgba8(0, 255, 0, 255),
+                Affine::translate((f64::from(rect.x), f64::from(rect.y)))
+                    * Affine::scale_non_uniform(
+                        f64::from(rect.width) / f64::from(decoded.width),
+                        f64::from(rect.height) / f64::from(decoded.height),
+                    ),
+                brush.as_ref(),
                 None,
-                &image_rect,
+                &Rect::new(
+                    0.0,
+                    0.0,
+                    f64::from(decoded.width),
+                    f64::from(decoded.height),
+                ),
             );
         }
     }

@@ -3277,6 +3277,33 @@ pub(crate) fn render_raikiri_pages_with_resources(
         uncascaded.dom.set_canvases_in_tree_order_owned(bitmaps);
     }
 
+    // Margin boxes lay out the images of their `content` at the sizes the
+    // document holds, which the page cascades of this document's pages decide.
+    // Loading those images is the page preparation, as for backgrounds.
+    if let Some(source) = image_pixel_source {
+        let mut margin_box_images = Vec::new();
+        for slice in &slices {
+            let query = page_query_for_slice(slice, first_page_is_left);
+            let mut page = page_for(&cascade, &query);
+            if let Some(prepare) = prepare_cascade_images {
+                prepare.prepare_page(&mut page);
+            }
+            margin_box_images.extend(raikiri_dom::page_margin_box_content_image_urls(&page));
+        }
+        margin_box_images.sort();
+        margin_box_images.dedup();
+        uncascaded
+            .dom
+            .prepare_margin_box_image_urls(&margin_box_images, source, base_url);
+        for continuation in &mut continuations {
+            continuation.document.prepare_margin_box_image_urls(
+                &margin_box_images,
+                source,
+                base_url,
+            );
+        }
+    }
+
     let custom_highlights = resources
         .custom_highlight_ranges
         .map(|ranges| resolve_custom_highlights(&uncascaded.dom, ranges))
