@@ -11,6 +11,7 @@
 use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
 use crate::layout::dispatch::block_flow::context::{BlockContext, BoxProbe, BoxSlot};
 use crate::layout::protocol::CollapsibleMarginSet;
+use raikiri_layout_style::values::{Clear, Direction};
 use raikiri_style::property::{
     BoxSizing, BreakBetween, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue,
     Sides,
@@ -20,7 +21,6 @@ use raikiri_style::{
     ComputedTextIndent, ComputedValues,
 };
 use shodo::style::LineOptions;
-use taffy::Direction;
 
 /// Marks the end token of a block-level `::before` or `::after`: the id of
 /// its start token with this bit set. The ids of other content of the
@@ -86,7 +86,7 @@ pub(crate) struct GeneratedBlock {
     min_height: ComputedLengthPercentageOrAuto,
     max_height: ComputedLengthPercentageOrAuto,
     border_box: bool,
-    clear: taffy::Clear,
+    clear: Clear,
     /// Whether the box establishes an independent formatting context, which
     /// keeps margins from collapsing through it.
     formatting_root: bool,
@@ -130,10 +130,10 @@ impl GeneratedBlock {
             // Logical sides are not mapped, as for an element's box (see the
             // taffy bridge).
             clear: match cv.clear {
-                ClearValue::Left => taffy::Clear::Left,
-                ClearValue::Right => taffy::Clear::Right,
-                ClearValue::Both => taffy::Clear::Both,
-                _ => taffy::Clear::None,
+                ClearValue::Left => Clear::Left,
+                ClearValue::Right => Clear::Right,
+                ClearValue::Both => Clear::Both,
+                _ => Clear::None,
             },
             formatting_root: orthogonal || establishes_formatting_context(cv),
             own_lines: lines,
@@ -784,7 +784,7 @@ pub(crate) fn open(
     let top_set = flow.pending.collapse_with_margin(margins.top);
     // Clearance (CSS 2.1 9.5.2) puts the top border edge below the floats
     // it clears; the margins above no longer collapse with it.
-    let clear_y = (block.clear != taffy::Clear::None)
+    let clear_y = (block.clear != Clear::None)
         .then(|| flow.ctx.cleared_threshold(block.clear))
         .flatten()
         .map(|threshold| threshold - flow.top_edge);
@@ -804,7 +804,7 @@ pub(crate) fn open(
     // them, which like clearance takes its margins out of the collapse. A
     // float adjoining the margins that escape above the box moves with them,
     // so the box is first tried beside that float without its margin.
-    let adjoining = escapes && flow.ctx.has_adjoining_float(taffy::Clear::Both);
+    let adjoining = escapes && flow.ctx.has_adjoining_float(Clear::Both);
     let top_bound = clearance.unwrap_or(if adjoining { *flow.y } else { hypothetical });
     let beside = block
         .formatting_root

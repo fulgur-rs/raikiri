@@ -4,8 +4,8 @@ use crate::layout::ifc::projection::project_ifc;
 use crate::layout::ifc::test_support::{ahem_fonts, block_fixture};
 use crate::layout::protocol::FloatDirection;
 use raikiri_layout_geometry::Size;
+use raikiri_layout_style::values::Clear;
 use shodo::limits::Limits;
-use taffy::Clear;
 
 fn root_of(css: &str, text: &str) -> (IfcRoot, LayoutContext) {
     // Ahem at 10px: an explicit line-height keeps these tests about breaking,

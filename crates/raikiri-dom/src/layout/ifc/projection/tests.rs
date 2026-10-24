@@ -1,5 +1,6 @@
 use super::*;
 use crate::layout::ifc::test_support::{Fixture, ahem_fonts, block_fixture, span};
+use raikiri_layout_style::values::LengthExt;
 use shodo::AtomicSizes;
 
 #[test]
@@ -564,13 +565,13 @@ fn a_cleared_line_break_is_recorded_with_its_physical_side() {
         }
     });
     let projected = project(&fixture).expect("project");
-    let sides: Vec<taffy::Clear> = projected
+    let sides: Vec<Clear> = projected
         .meta
         .cleared_breaks
         .iter()
         .map(|(_, clear)| *clear)
         .collect();
-    assert_eq!(sides, [taffy::Clear::Left, taffy::Clear::Both]);
+    assert_eq!(sides, [Clear::Left, Clear::Both]);
 }
 
 #[test]
@@ -923,9 +924,8 @@ fn inside_marker_is_first_inline_content_and_only_indents_the_first_line() {
         )
         .padding
         .left
-        .into_raw()
-        .value(),
-        0.0
+        .resolve(Some(100.0)),
+        Some(0.0)
     );
 }
 

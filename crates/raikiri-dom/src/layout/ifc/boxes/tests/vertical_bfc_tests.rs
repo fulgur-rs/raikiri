@@ -10,8 +10,8 @@ use crate::layout::test_support::{
     page_box_800x600, with_ahem,
 };
 use raikiri_layout_geometry::{Edges, Size};
+use raikiri_layout_style::values::Clear;
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
-use taffy::Clear;
 
 type BoxRect = (f32, f32, f32, f32);
 

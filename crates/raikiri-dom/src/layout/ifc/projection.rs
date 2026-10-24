@@ -23,6 +23,7 @@ use crate::generated_content::{
 };
 use crate::node::BoxPropertiesRef;
 use crate::target::{CounterSnapshotLimitExceeded, CounterSnapshots};
+use raikiri_layout_style::values::Clear;
 use raikiri_style::property::{
     ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
 };
@@ -99,7 +100,7 @@ pub(crate) struct ProjectedMeta {
     pub(crate) percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
-    pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
+    pub(crate) cleared_breaks: Vec<(usize, Clear)>,
     /// The root is a fixed box: its containing block is the page area.
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
@@ -641,11 +642,11 @@ pub(crate) fn box_kind_in(
 
 /// A physical `clear` side; `None` for `none` and the logical sides, which
 /// the taffy bridge maps to none.
-fn physical_clear(clear: ClearValue) -> Option<taffy::Clear> {
+fn physical_clear(clear: ClearValue) -> Option<Clear> {
     match clear {
-        ClearValue::Left => Some(taffy::Clear::Left),
-        ClearValue::Right => Some(taffy::Clear::Right),
-        ClearValue::Both => Some(taffy::Clear::Both),
+        ClearValue::Left => Some(Clear::Left),
+        ClearValue::Right => Some(Clear::Right),
+        ClearValue::Both => Some(Clear::Both),
         _ => None,
     }
 }
