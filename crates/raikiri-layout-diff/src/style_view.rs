@@ -24,7 +24,9 @@
 //! the DOM recorded for the box, and the overrides that were still in force
 //! when layout returned. Layout reads a box through a role (`ReadRole` in the
 //! DOM crate), each of which is one of the style traits below and a context
-//! that tells how the box is projected:
+//! that tells how the box is projected. The traits are the ones Taffy's
+//! algorithms read: `TaffyStyle` projects the view onto them, and it is read
+//! through here, together with the getters of the view that have no trait.
 //!
 //! | role | traits | context that matters |
 //! | --- | --- | --- |
@@ -69,7 +71,7 @@ mod reader {
     use std::fmt::Write as _;
 
     use raikiri_layout_style::{
-        BridgeProjection, ClaimsPolicy, LayoutStyleView, PercentBasis, ViewContext,
+        BridgeProjection, ClaimsPolicy, LayoutStyleView, PercentBasis, TaffyStyle, ViewContext,
     };
     use raikiri_style::property::WritingMode;
     // Every Taffy name of this file is marked. The getters are the methods of
@@ -149,10 +151,11 @@ mod reader {
     /// aligns itself and its children.
     fn facts(out: &mut String, text: &Text<'_>) {
         let view = &text.view;
+        let style = text.style();
         let _ = writeln!(
             out,
             "  core mode={:?} block={} compressible_replaced={} replaced={} box_sizing={:?} \
-             position={:?} contain={:?} scrollbar_width={}",
+             position={:?} contain={:?}",
             view.box_generation_mode(),
             view.is_block(),
             view.is_compressible_replaced(),
@@ -160,7 +163,6 @@ mod reader {
             view.box_sizing(),
             view.position(),
             view.contain(),
-            number(view.scrollbar_width()),
         );
         // The core container role asks for the prepared claims; every other
         // role, and a view made for flex and grid, for the position alone.
@@ -185,11 +187,11 @@ mod reader {
         let _ = writeln!(
             out,
             "  oof_item align_self={:?} justify_self={:?} table={} grid_row={:?} grid_column={:?}",
-            OofItem::align_self(view),
-            OofItem::justify_self(view),
-            OofItem::is_table(view),
-            OofItem::grid_row(view),
-            OofItem::grid_column(view),
+            OofItem::align_self(&style),
+            OofItem::justify_self(&style),
+            OofItem::is_table(&style),
+            OofItem::grid_row(&style),
+            OofItem::grid_column(&style),
         );
         let _ = writeln!(
             out,
@@ -201,58 +203,57 @@ mod reader {
     }
 
     fn block(out: &mut String, text: &Text<'_>) {
-        let view = &text.view;
+        let style = text.style();
         let _ = writeln!(
             out,
-            "  block_container text_align={:?} align_content={:?} justify_items={:?}",
-            BlockContainer::text_align(view),
-            BlockContainer::align_content(view),
-            BlockContainer::justify_items(view),
+            "  block_container align_content={:?} justify_items={:?}",
+            BlockContainer::align_content(&style),
+            BlockContainer::justify_items(&style),
         );
         let _ = writeln!(
             out,
-            "  block_item table={} float={:?} clear={:?} own_clear={:?}",
-            BlockItem::is_table(view),
-            BlockItem::float(view),
-            BlockItem::clear(view),
-            view.clear(),
+            "  block_item table={} float={:?} clear={:?}",
+            BlockItem::is_table(&style),
+            BlockItem::float(&style),
+            BlockItem::clear(&style),
         );
     }
 
     fn flex(out: &mut String, text: &Text<'_>) {
         let view = &text.view;
+        let style = text.style();
         let _ = writeln!(
             out,
             "  flex_container direction={:?} wrap={:?} gap={} align_content={:?} \
              justify_content={:?} align_items={:?}",
-            FlexContainer::flex_direction(view),
-            FlexContainer::flex_wrap(view),
-            text.pair(size!(FlexContainer::gap(view)), Text::length_percentage),
-            FlexContainer::align_content(view),
-            FlexContainer::justify_content(view),
-            FlexContainer::align_items(view),
+            FlexContainer::flex_direction(&style),
+            FlexContainer::flex_wrap(&style),
+            text.pair(size!(FlexContainer::gap(&style)), Text::length_percentage),
+            FlexContainer::align_content(&style),
+            FlexContainer::justify_content(&style),
+            FlexContainer::align_items(&style),
         );
         // Along the block axis the item aligns itself as the flex role asks;
         // along the inline axis, when the role has been told to.
         let along = |inline: bool| {
             let mut context = view.context();
             context.align_axis_is_inline = inline;
-            FlexItem::align_self(&view.with_context(context))
+            FlexItem::align_self(&TaffyStyle::new(view.with_context(context)))
         };
         let _ = writeln!(
             out,
             "  flex_item basis={} grow={} shrink={} align_self={:?} inline_align_self={:?}",
-            text.dimension(FlexItem::flex_basis(view)),
-            number(FlexItem::flex_grow(view)),
-            number(FlexItem::flex_shrink(view)),
+            text.dimension(FlexItem::flex_basis(&style)),
+            number(FlexItem::flex_grow(&style)),
+            number(FlexItem::flex_shrink(&style)),
             along(false),
             along(true),
         );
     }
 
     fn grid(out: &mut String, text: &Text<'_>) {
-        let view = &text.view;
-        let areas: Vec<_> = GridContainer::grid_template_areas(view)
+        let style = text.style();
+        let areas: Vec<_> = GridContainer::grid_template_areas(&style)
             .into_iter()
             .flatten()
             .collect();
@@ -260,27 +261,27 @@ mod reader {
             out,
             "  grid_container auto_flow={:?} gap={} align_content={:?} justify_content={:?} \
              align_items={:?} justify_items={:?} area_rows={} area_columns={} areas={areas:?}",
-            GridContainer::grid_auto_flow(view),
-            text.pair(size!(GridContainer::gap(view)), Text::length_percentage),
-            GridContainer::align_content(view),
-            GridContainer::justify_content(view),
-            GridContainer::align_items(view),
-            GridContainer::justify_items(view),
-            GridContainer::grid_template_area_row_count(view),
-            GridContainer::grid_template_area_column_count(view),
+            GridContainer::grid_auto_flow(&style),
+            text.pair(size!(GridContainer::gap(&style)), Text::length_percentage),
+            GridContainer::align_content(&style),
+            GridContainer::justify_content(&style),
+            GridContainer::align_items(&style),
+            GridContainer::justify_items(&style),
+            GridContainer::grid_template_area_row_count(&style),
+            GridContainer::grid_template_area_column_count(&style),
         );
         for (axis, template, names, auto) in [
             (
                 "rows",
-                GridContainer::grid_template_rows(view),
-                GridContainer::grid_template_row_names(view),
-                text.tracks(GridContainer::grid_auto_rows(view)),
+                GridContainer::grid_template_rows(&style),
+                GridContainer::grid_template_row_names(&style),
+                text.tracks(GridContainer::grid_auto_rows(&style)),
             ),
             (
                 "columns",
-                GridContainer::grid_template_columns(view),
-                GridContainer::grid_template_column_names(view),
-                text.tracks(GridContainer::grid_auto_columns(view)),
+                GridContainer::grid_template_columns(&style),
+                GridContainer::grid_template_column_names(&style),
+                text.tracks(GridContainer::grid_auto_columns(&style)),
             ),
         ] {
             let components: Vec<String> = template
@@ -313,10 +314,10 @@ mod reader {
         let _ = writeln!(
             out,
             "  grid_item row={:?} column={:?} align_self={:?} justify_self={:?}",
-            GridItem::grid_row(view),
-            GridItem::grid_column(view),
-            GridItem::align_self(view),
-            GridItem::justify_self(view),
+            GridItem::grid_row(&style),
+            GridItem::grid_column(&style),
+            GridItem::align_self(&style),
+            GridItem::justify_self(&style),
         );
     }
 
@@ -331,28 +332,34 @@ mod reader {
                 context.bridge_projection = projection;
                 let view = text.view.with_context(context);
                 let text = Text { view };
-                let view = &text.view;
-                let overflow = CoreStyle::overflow(view);
+                let style = text.style();
+                let overflow = CoreStyle::overflow(&style);
                 let _ = writeln!(
                     out,
                     "  geometry {writing_mode:?} {projection:?} direction={:?} size={} min={} \
                      max={} aspect_ratio={} margin={} inset={} padding={} border={} \
                      overflow=[{:?} {:?}]",
-                    CoreStyle::direction(view),
-                    text.pair(size!(CoreStyle::size(view)), Text::dimension),
+                    CoreStyle::direction(&style),
+                    text.pair(size!(CoreStyle::size(&style)), Text::dimension),
                     text.pair(
-                        size!(CoreStyle::min_size(view)),
+                        size!(CoreStyle::min_size(&style)),
                         Text::length_percentage_auto
                     ),
                     text.pair(
-                        size!(CoreStyle::max_size(view)),
+                        size!(CoreStyle::max_size(&style)),
                         Text::length_percentage_auto
                     ),
-                    CoreStyle::aspect_ratio(view).map_or_else(|| "-".to_owned(), number),
-                    text.edges(rect!(CoreStyle::margin(view)), Text::length_percentage_auto),
-                    text.edges(rect!(CoreStyle::inset(view)), Text::length_percentage_auto),
-                    text.edges(rect!(CoreStyle::padding(view)), Text::length_percentage),
-                    text.edges(rect!(CoreStyle::border(view)), Text::length_percentage),
+                    CoreStyle::aspect_ratio(&style).map_or_else(|| "-".to_owned(), number),
+                    text.edges(
+                        rect!(CoreStyle::margin(&style)),
+                        Text::length_percentage_auto
+                    ),
+                    text.edges(
+                        rect!(CoreStyle::inset(&style)),
+                        Text::length_percentage_auto
+                    ),
+                    text.edges(rect!(CoreStyle::padding(&style)), Text::length_percentage),
+                    text.edges(rect!(CoreStyle::border(&style)), Text::length_percentage),
                     overflow.x,
                     overflow.y,
                 );
@@ -382,19 +389,21 @@ mod reader {
         }
         // Padding that a frame has already resolved: a different length on
         // every side.
-        let mut resolved = CoreStyle::padding(&text.view).map(|_| 0.0);
+        let mut resolved = CoreStyle::padding(&text.style()).map(|_| 0.0);
         (resolved.left, resolved.right, resolved.top, resolved.bottom) = (1.5, 2.5, 3.5, 4.5);
         let mut context = text.view.context();
         context.resolved_padding = Some(resolved);
         variants.push(("resolved_padding".to_owned(), context));
         for (label, context) in variants {
-            let view = text.view.with_context(context);
-            let text = Text { view };
+            let text = Text {
+                view: text.view.with_context(context),
+            };
+            let style = text.style();
             let _ = writeln!(
                 out,
                 "  edges {label} padding={} border={}",
-                text.edges(rect!(CoreStyle::padding(&view)), Text::length_percentage),
-                text.edges(rect!(CoreStyle::border(&view)), Text::length_percentage),
+                text.edges(rect!(CoreStyle::padding(&style)), Text::length_percentage),
+                text.edges(rect!(CoreStyle::border(&style)), Text::length_percentage),
             );
         }
     }
@@ -404,7 +413,12 @@ mod reader {
         pub(super) view: LayoutStyleView<'a>,
     }
 
-    impl Text<'_> {
+    impl<'a> Text<'a> {
+        /// The view as Taffy's algorithms read it.
+        pub(super) fn style(&self) -> TaffyStyle<'a> {
+            TaffyStyle::new(self.view)
+        }
+
         /// `[first second]`, each written by `side`.
         fn pair<T>(&self, (first, second): (T, T), side: fn(&Self, T) -> String) -> String {
             format!("[{} {}]", side(self, first), side(self, second))

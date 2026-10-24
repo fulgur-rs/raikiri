@@ -4,7 +4,7 @@ use raikiri_html::{
 };
 use raikiri_layout_style::LayoutStyleView;
 use raikiri_traits::PageBox;
-use taffy::{CoreStyle, Dimension, LengthPercentage, LengthPercentageAuto}; // taffy-boundary-lint:ignore: the tests build the Taffy values the getters return
+use taffy::{Dimension, LengthPercentage, LengthPercentageAuto}; // taffy-boundary-lint:ignore: the tests build the Taffy values the getters return
 use taffy::{MaxTrackSizingFunction, MinMax, MinTrackSizingFunction}; // taffy-boundary-lint:ignore: the tests build the Taffy values the getters return
 
 use super::reader::Text;
@@ -75,7 +75,7 @@ const CALC: &str = "calc[5.0 15.0 30.05]";
 /// handle of that calc.
 fn with_calc(check: impl FnOnce(&Text<'_>, *const ())) {
     with_main("<main style='width: calc(5px + 10%)'>x</main>", |view| {
-        let handle = CoreStyle::size(&view).width.into_raw().calc_value();
+        let handle = view.size().width.into_raw().calc_value();
         check(&Text { view }, handle);
     });
 }
@@ -194,7 +194,7 @@ fn the_claims_of_a_box_depend_on_the_policy_that_reads_them() {
         "{text}"
     );
     assert!(
-        text.contains("block_item table=false float=Left clear=Both own_clear=Both"),
+        text.contains("block_item table=false float=Left clear=Both"),
         "{text}"
     );
 }
