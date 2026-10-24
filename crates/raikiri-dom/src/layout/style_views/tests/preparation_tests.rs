@@ -1,6 +1,5 @@
 use super::*;
 use crate::node::arena::BoxKey;
-use taffy::CoreStyle;
 
 #[test]
 fn all_key_preparation_includes_hidden_oof_flattened_and_unrelated_boxes() {

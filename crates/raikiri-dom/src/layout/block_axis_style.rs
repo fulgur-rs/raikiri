@@ -12,7 +12,7 @@
 //! to be swapped in the document's own styles: the styles of the boxes stay on
 //! physical axes while pagination runs.
 
-use taffy::Rect as StyleRect;
+use raikiri_layout_style::values::StyleRect;
 use taffy::{Dimension, LengthPercentageAuto};
 
 /// The style of a box along the axis pagination breaks the flow on.
@@ -32,7 +32,6 @@ pub(crate) struct BlockAxisStyle {
 impl BlockAxisStyle {
     /// The facts a style view gives for the axes of its context.
     pub(crate) fn of_view(view: &raikiri_layout_style::LayoutStyleView<'_>) -> Self {
-        use taffy::CoreStyle;
         let size = view.size();
         Self {
             height: size.height,

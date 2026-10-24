@@ -179,8 +179,8 @@ fn is_plain_block_with_display(
         || node.size_containment.height
         || node.taffy_position() != TaffyPosition::Relative
             && node.taffy_position() != TaffyPosition::Static
-        || BlockItemStyle::float(&style).is_floated()
-        || BlockItemStyle::clear(&style) != taffy::Clear::None
+        || style.float().is_floated()
+        || style.clear() != taffy::Clear::None
         || block_margins(&style).is_none()
         || style.overflow()
             != (StylePoint {

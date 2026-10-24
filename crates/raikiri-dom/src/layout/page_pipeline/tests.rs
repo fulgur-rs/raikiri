@@ -13002,7 +13002,7 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     assert_eq!(cascade.computed[second].clear, ClearValue::None);
     assert_eq!(
         with_pass_view(&doc, key, &cascade.computed[second], |view| {
-            taffy::BlockItemStyle::clear(view)
+            view.clear()
         }),
         taffy::Clear::Both
     );
@@ -13014,9 +13014,7 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     let mut authored = cascade.computed[second].clone();
     authored.clear = ClearValue::Right;
     assert_eq!(
-        with_pass_view(&doc, key, &authored, |view| taffy::BlockItemStyle::clear(
-            view
-        )),
+        with_pass_view(&doc, key, &authored, |view| view.clear()),
         taffy::Clear::Right
     );
     assert_eq!(
@@ -18385,7 +18383,6 @@ fn block_axis_insets_of_the_transposed_cascade_match_a_view_on_the_roots_axes() 
         let expected: Vec<(bool, bool)> = keys
             .iter()
             .map(|&key| {
-                use taffy::CoreStyle;
                 let view = session.style_view(key);
                 let context = raikiri_layout_style::ViewContext {
                     layout_wm: axes.layout_wm(),

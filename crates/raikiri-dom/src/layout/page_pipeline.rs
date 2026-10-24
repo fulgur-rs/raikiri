@@ -31,7 +31,6 @@ use crate::page_projection::records::OverflowClipSource;
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use taffy::{BlockItemStyle, CoreStyle};
 
 type ProjectedSlices = (
     Vec<PageFragment>,
@@ -7607,7 +7606,7 @@ fn grid_stacks_items(document: &super::context::LayoutSession<'_>, grid: usize) 
 /// and implicit row track is intrinsic and uncapped, so its items grow
 /// with what they hold.
 fn grid_rows_size_to_content(document: &super::context::LayoutSession<'_>, grid: usize) -> bool {
-    use taffy::{GenericGridTemplateComponent as Component, GenericRepetition, GridContainerStyle};
+    use taffy::{GenericGridTemplateComponent as Component, GenericRepetition};
     let style = document.pagination_style(grid);
     // `auto`, `min-content` and `max-content` grow with the content;
     // `fit-content()` caps it.
@@ -7615,12 +7614,12 @@ fn grid_rows_size_to_content(document: &super::context::LayoutSession<'_>, grid:
         track.min.is_intrinsic()
             && (track.max.is_auto() || track.max.is_min_content() || track.max.is_max_content())
     };
-    GridContainerStyle::grid_template_rows(&style).is_none_or(|mut components| {
+    style.grid_template_rows().is_none_or(|mut components| {
         components.all(|component| match component {
             Component::Single(track) => auto(track),
             Component::Repeat(repetition) => repetition.tracks().all(auto),
         })
-    }) && GridContainerStyle::grid_auto_rows(&style).all(auto)
+    }) && style.grid_auto_rows().all(auto)
 }
 
 /// Find both ancestor conditions that prevent moving a nested candidate with one walk.

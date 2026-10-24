@@ -18,9 +18,9 @@ use crate::layout::taffy_adapter::MaybeResolve;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{BoxLayout, Line, Point, Size};
 use raikiri_layout_style::LayoutStyleView;
-use taffy::Point as StylePoint;
-use taffy::{BlockItemStyle, CoreStyle, FlexboxContainerStyle, FlexboxItemStyle};
-use taffy::{Rect as StyleRect, Size as StyleSize};
+use raikiri_layout_style::values::StylePoint;
+
+use raikiri_layout_style::values::{StyleRect, StyleSize};
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
@@ -39,7 +39,7 @@ fn layout_node(tree: &Document, idx: usize) -> &crate::node::Node {
 
 /// Whether `idx` is a float.
 fn is_floated(tree: &LayoutSession<'_>, idx: usize) -> bool {
-    BlockItemStyle::float(&style_of(tree, idx)).is_floated()
+    style_of(tree, idx).float().is_floated()
 }
 
 /// How far block flow moved a box right for its `position: relative` insets
@@ -339,7 +339,7 @@ pub(crate) fn compute_multicol_layout(
         let placement = tree.parent_of(index).filter(|_| !positioned).map(|parent| {
             let container = style_of(tree, parent);
             let stretched = matches!(
-                FlexboxItemStyle::align_self(&css).or(Some(container.align_items())),
+                css.align_self().or(Some(container.align_items())),
                 None | Some(taffy::AlignItems::STRETCH | taffy::AlignItems::NORMAL)
             );
             match tree.nodes[parent].formatting_context {
@@ -595,7 +595,7 @@ fn column_horizontal_margins(
     child_width: f32,
 ) -> (f32, f32) {
     let (left, right) = column_definite_margins(style, column_width);
-    let free = if BlockItemStyle::float(style).is_floated() {
+    let free = if style.float().is_floated() {
         0.0
     } else {
         (column_width - child_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
@@ -627,7 +627,7 @@ fn column_child_layout_input(
         );
     }
     let style = style_of(tree, child);
-    let floated = BlockItemStyle::float(&style).is_floated();
+    let floated = style.float().is_floated();
     // The room between the horizontal margins, where an auto margin counts as
     // zero.
     let room = || {
@@ -838,7 +838,7 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
                     .all(|edge| edge == zero_margin)
                 && node.taffy_position() != TaffyPosition::Absolute
                 && insets_are_a_relative_inline_offset(tree, child)
-                && !BlockItemStyle::float(&style).is_floated()
+                && !style.float().is_floated()
                 && style.size().height.is_auto()
                 && style.min_size().height.is_auto()
                 && style.max_size().height.is_auto()
@@ -979,7 +979,7 @@ fn plain_paragraph_chain_leaf(tree: &LayoutSession<'_>, start: usize) -> Option<
         if clips
             || painted
             || node.display() != DisplayValue::Block
-            || BlockItemStyle::float(&style).is_floated()
+            || style.float().is_floated()
             || margin.top != zero_margin
             || margin.right != zero_margin
             || margin.bottom != zero_margin
@@ -1387,7 +1387,7 @@ fn layout_column_group(
         // resolve against the column the child ends up in.
         let (margin_left, margin_right, x) = {
             let style = style_of(tree, child);
-            let float = BlockItemStyle::float(&style);
+            let float = style.float();
             let (margin_left, margin_right) =
                 column_horizontal_margins(&style, context.column_width, child_output.size.width);
             // A right-to-left container aligns its blocks to the right edge
@@ -2755,8 +2755,7 @@ fn multicol_subtree_has_float_or_block_margin(
         }
         let style = style_of(tree, node_id);
         let margin = style.margin();
-        if BlockItemStyle::float(&style).is_floated() || margin.top != zero || margin.bottom != zero
-        {
+        if style.float().is_floated() || margin.top != zero || margin.bottom != zero {
             return true;
         }
         pending.extend(node.children.iter().copied());

@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::protocol::{RequestedAxis, RunMode, SizingMode};
 use raikiri_layout_geometry::{Edges, Line, Point};
-use taffy::Size as StyleSize;
+use raikiri_layout_style::values::StyleSize;
 mod child_walk_tests;
 pub(super) mod intrinsic_scope_tests;
 mod local_sizing_tests;
@@ -482,8 +482,19 @@ fn implicit_rows_are_auto_without_grid_auto_rows() {
         explicit: 0,
         positive_implicit: 2,
     };
+    let values = raikiri_style::ComputedValues::initial();
+    let prepared = raikiri_layout_style::PreparedStyle::prepare(
+        &values,
+        raikiri_layout_style::StyleMetadata::default(),
+    );
+    let view = LayoutStyleView::new(
+        &prepared,
+        raikiri_layout_style::ViewContext::default(),
+        &[],
+        &[],
+    );
     assert_eq!(
-        row_sizing_functions(&Style::default(), rows),
+        row_sizing_functions(&view, rows),
         vec![taffy::TrackSizingFunction::AUTO; 3]
     );
 }

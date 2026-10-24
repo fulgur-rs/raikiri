@@ -32,14 +32,14 @@
 //!   boxes remain tracked by `raikiri-spike-0vv.121`.
 //! - Nested tables are depth-capped fail-closed (`MAX_TABLE_NESTING`).
 
+use raikiri_layout_style::values::StyleRect;
 use raikiri_style::ComputedBorder;
 use raikiri_style::property::{
     BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, PositionValue, Sides,
     TableLayoutValue, VerticalAlign, WritingMode,
 };
-use taffy::Rect as StyleRect;
 use taffy::style::{CompactLength, Dimension};
-use taffy::{BlockItemStyle, CoreStyle, ExpandedDimension, LengthPercentage, Position};
+use taffy::{ExpandedDimension, LengthPercentage, Position};
 
 use crate::document::Document;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};

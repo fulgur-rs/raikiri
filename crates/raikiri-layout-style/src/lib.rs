@@ -12,11 +12,15 @@ mod length;
 mod overrides;
 mod physical_sizing;
 mod prepared;
+mod projection;
+mod resolve;
+pub mod values;
 mod view;
 pub use calc::*;
 pub use context::*;
 pub use overrides::*;
 pub use prepared::*;
+pub use projection::TaffyStyle;
 pub use view::*;
 
 #[cfg(test)]

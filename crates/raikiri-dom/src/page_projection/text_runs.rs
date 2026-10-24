@@ -1021,9 +1021,9 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
     };
     let in_flow = |id: usize| {
         laid_out(id)
-            && document.finished_style(cascade, id).is_some_and(|style| {
-                taffy::BlockItemStyle::float(&style.view()) == taffy::Float::None
-            })
+            && document
+                .finished_style(cascade, id)
+                .is_some_and(|style| style.view().float() == taffy::Float::None)
     };
     let (mut id, mut y) = (owner, 0.0);
     loop {
@@ -1177,11 +1177,9 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
         Some(mut line) => {
             // A scroll container's baseline, and the line that decides its
             // page, stay within its border box (CSS Box Alignment 3 §9.1).
-            let scrolls = document.finished_style(cascade, item).is_some_and(|style| {
-                taffy::CoreStyle::overflow(&style.view())
-                    .y
-                    .is_scroll_container()
-            });
+            let scrolls = document
+                .finished_style(cascade, item)
+                .is_some_and(|style| style.view().overflow().y.is_scroll_container());
             if scrolls {
                 line.baseline = line.baseline.clamp(0.0, bottom);
                 line.center = line.center.clamp(0.0, bottom);
@@ -1205,10 +1203,8 @@ fn aligns_by_baseline(
     container: &raikiri_layout_style::LayoutStyleView<'_>,
     item: &raikiri_layout_style::LayoutStyleView<'_>,
 ) -> bool {
-    let align = item
-        .bridge_align_self()
-        .or(Some(taffy::GridContainerStyle::align_items(container)));
-    let margin = taffy::CoreStyle::margin(item);
+    let align = item.bridge_align_self().or(Some(container.align_items()));
+    let margin = item.margin();
     align.is_some_and(|align| align.keyword() == taffy::AlignItemsKeyword::Baseline)
         && !margin.top.is_auto()
         && !margin.bottom.is_auto()

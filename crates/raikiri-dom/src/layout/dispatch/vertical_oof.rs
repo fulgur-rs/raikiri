@@ -25,7 +25,7 @@
 use crate::layout::protocol::{AvailableSpace, LayoutInput};
 use crate::layout::taffy_adapter::{MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::Size;
-use taffy::{CoreStyle, Position as TaffyPosition};
+use raikiri_layout_style::values::TaffyPosition;
 
 use super::resolve_calc;
 use crate::document::Document;

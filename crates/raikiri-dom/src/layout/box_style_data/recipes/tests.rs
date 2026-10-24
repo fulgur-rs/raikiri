@@ -1,13 +1,13 @@
 use super::*;
 use crate::LayoutStyle;
+use raikiri_layout_style::values::StyleSize;
 use raikiri_layout_style::{
-    LayoutStyleView, PreparedStyle, StyleFlags, StyleMetadata, ViewContext,
+    LayoutStyleView, PreparedStyle, StyleFlags, StyleMetadata, TaffyStyle, ViewContext,
 };
 use raikiri_style::{
     ComputedBorderSpacing, ComputedLengthPercentageOrAuto as L,
     property::{BorderCollapseValue, CaptionSideValue, WritingMode},
 };
-use taffy::Size as StyleSize;
 use taffy::{
     CoreStyle, FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
     GridItemStyle as GI,
@@ -30,9 +30,15 @@ fn facts(direction: taffy::Direction, block: bool) -> BoxFacts {
 
 fn assert_legacy(recipe: &Recipe, legacy: &LayoutStyle) {
     let prepared = PreparedStyle::prepare(&recipe.values, recipe.metadata);
-    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    let view = TaffyStyle::new(LayoutStyleView::new(
+        &prepared,
+        ViewContext::default(),
+        &[],
+        &[],
+    ));
+    let view = &view;
     macro_rules! same {
-        ($t:ident: $($method:ident),+ $(,)?) => { $(assert_eq!($t::$method(&view), $t::$method(legacy), stringify!($method));)+ };
+        ($t:ident: $($method:ident),+ $(,)?) => { $(assert_eq!($t::$method(view), $t::$method(legacy), stringify!($method));)+ };
     }
     same!(CoreStyle: box_generation_mode, is_block, is_compressible_replaced, is_replaced, box_sizing, direction, overflow, scrollbar_width, position, inset, is_containing_block, size, min_size, max_size, aspect_ratio, margin, padding, border, contain);
     same!(FC: flex_direction, flex_wrap, gap, align_content, align_items, justify_content);
@@ -40,19 +46,19 @@ fn assert_legacy(recipe: &Recipe, legacy: &LayoutStyle) {
     same!(GC: grid_auto_flow, gap, align_content, justify_content, align_items, justify_items, grid_template_area_row_count, grid_template_area_column_count);
     same!(GI: grid_row, grid_column, align_self, justify_self);
     assert_eq!(
-        GC::grid_auto_columns(&view).count(),
+        GC::grid_auto_columns(view).count(),
         GC::grid_auto_columns(legacy).count()
     );
     assert_eq!(
-        GC::grid_auto_rows(&view).count(),
+        GC::grid_auto_rows(view).count(),
         GC::grid_auto_rows(legacy).count()
     );
     assert_eq!(
-        GC::grid_template_columns(&view).is_some(),
+        GC::grid_template_columns(view).is_some(),
         GC::grid_template_columns(legacy).is_some()
     );
     assert_eq!(
-        GC::grid_template_rows(&view).is_some(),
+        GC::grid_template_rows(view).is_some(),
         GC::grid_template_rows(legacy).is_some()
     );
 }
@@ -481,7 +487,7 @@ fn restoring_a_source_box_discards_contents_and_spanner_recipes() {
                     &doc,
                     key,
                     &raikiri_style::ComputedValues::initial(),
-                    |view| CoreStyle::aspect_ratio(view),
+                    |view| view.aspect_ratio(),
                 ),
                 None
             );

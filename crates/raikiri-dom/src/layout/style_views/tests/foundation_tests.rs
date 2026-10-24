@@ -502,7 +502,6 @@ fn metadata_refresh_shares_document_prepared_data_and_pass_entries() {
 
 #[test]
 fn source_wrapper_rebinds_when_the_same_key_becomes_a_spanner_recipe() {
-    use taffy::GridContainerStyle;
     let (mut doc, _, wrapper, _) = fixture_with_styles(
         "display:block;column-count:2;width:120px",
         "display:block;grid-template-columns:7px 11px",

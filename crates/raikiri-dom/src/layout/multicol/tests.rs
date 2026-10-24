@@ -4697,27 +4697,27 @@ fn authored_box_reads_what_the_style_view_reads() {
 
         assert_eq!(
             authored.is_border_box(),
-            CoreStyle::box_sizing(&view) == taffy::BoxSizing::BorderBox,
+            view.box_sizing() == taffy::BoxSizing::BorderBox,
             "box-sizing of {ctx}"
         );
         assert_eq!(
             authored.is_floated(),
-            BlockItemStyle::float(&view).is_floated(),
+            view.float().is_floated(),
             "float of {ctx}"
         );
         assert_eq!(
             authored.is_replaced(),
-            CoreStyle::is_replaced(&view),
+            view.is_replaced(),
             "replaced of {ctx}"
         );
         assert_eq!(
             authored.has_preferred_aspect_ratio(),
-            CoreStyle::aspect_ratio(&view).is_some(),
+            view.aspect_ratio().is_some(),
             "aspect ratio of {ctx}"
         );
         for basis in [0.0, 37.5, 200.0, f32::INFINITY] {
-            let padding = CoreStyle::padding(&view);
-            let border = CoreStyle::border(&view);
+            let padding = view.padding();
+            let border = view.border();
             let edges = multicol_resolve_inset(&tree, padding.left, basis)
                 + multicol_resolve_inset(&tree, padding.right, basis)
                 + multicol_resolve_inset(&tree, border.left, basis)
@@ -4729,22 +4729,14 @@ fn authored_box_reads_what_the_style_view_reads() {
             assert!(
                 close_option(
                     authored.min_width(basis),
-                    multicol_definite_dimension(
-                        &tree,
-                        CoreStyle::min_size(&view).width.into(),
-                        Some(basis)
-                    )
+                    multicol_definite_dimension(&tree, view.min_size().width.into(), Some(basis))
                 ),
                 "min-width of {ctx} against {basis}"
             );
             assert!(
                 close_option(
                     authored.max_width(basis),
-                    multicol_definite_dimension(
-                        &tree,
-                        CoreStyle::max_size(&view).width.into(),
-                        Some(basis)
-                    )
+                    multicol_definite_dimension(&tree, view.max_size().width.into(), Some(basis))
                 ),
                 "max-width of {ctx} against {basis}"
             );

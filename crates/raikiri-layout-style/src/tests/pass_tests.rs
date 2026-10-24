@@ -19,7 +19,7 @@ fn clear_override_has_pass_and_scope_precedence() {
 
 #[test]
 fn every_physical_override_reaches_its_getter() {
-    use taffy::{Dimension, GridItemStyle, LengthPercentage as Lp, LengthPercentageAuto as Lpa};
+    use taffy::{Dimension, LengthPercentage as Lp, LengthPercentageAuto as Lpa};
     let values = ComputedValues::initial();
     let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
     let mut entries = Vec::new();
@@ -99,11 +99,8 @@ fn every_physical_override_reaches_its_getter() {
     );
     assert_eq!(view.clear(), taffy::Clear::Both);
     assert_eq!(view.flex_shrink(), 0.5);
-    assert_eq!(
-        FlexboxItemStyle::align_self(&view),
-        Some(taffy::AlignSelf::START)
-    );
-    assert_eq!(view.justify_self(), Some(taffy::AlignSelf::END));
+    assert_eq!(view.align_self(), Some(taffy::AlignSelf::START));
+    assert_eq!(view.bridge_justify_self(), Some(taffy::AlignSelf::END));
 }
 
 #[test]

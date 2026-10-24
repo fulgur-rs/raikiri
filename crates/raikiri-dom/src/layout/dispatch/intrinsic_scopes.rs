@@ -86,7 +86,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
 ) -> R {
     tree.sync_layout_cache_mutations();
     let is_row = matches!(
-        taffy::FlexboxContainerStyle::flex_direction(&tree.physical_style(usize::from(node_id))),
+        (tree.physical_style(usize::from(node_id))).flex_direction(),
         taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
     );
     let children: Vec<NodeId> = if is_row {
@@ -105,9 +105,8 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             {
                 continue;
             }
-            let Some(basis) =
-                crate::layout::resolve_dimension(taffy::FlexboxItemStyle::flex_basis(&style), None)
-                    .filter(|basis| basis.is_finite())
+            let Some(basis) = crate::layout::resolve_dimension(style.flex_basis(), None)
+                .filter(|basis| basis.is_finite())
             else {
                 continue;
             };
@@ -127,10 +126,8 @@ pub(super) fn with_flex_item_basis_bounds<R>(
                     crate::layout::resolve_length_percentage_auto(margin, None).unwrap_or(0.0)
                 })
                 .sum();
-            let (cannot_shrink, cannot_grow) = (
-                taffy::FlexboxItemStyle::flex_shrink(&style) == 0.0,
-                taffy::FlexboxItemStyle::flex_grow(&style) == 0.0,
-            );
+            let (cannot_shrink, cannot_grow) =
+                (style.flex_shrink() == 0.0, style.flex_grow() == 0.0);
             let preferred = crate::layout::resolve_dimension(width, None);
             // The flex base size floors the contribution, and then the item's own
             // bounds clamp it, the minimum over the maximum.

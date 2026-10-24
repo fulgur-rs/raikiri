@@ -20,10 +20,9 @@ use crate::layout::protocol::{
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::Size;
-use taffy::Position as TaffyPosition;
+use raikiri_layout_style::values::TaffyPosition;
 
 use raikiri_style::property::DisplayValue;
-use taffy::{BlockItemStyle, CoreStyle};
 
 /// Whether `idx` is an in-flow block-level box with an auto width in a
 /// vertical writing mode, its own or inherited, under a horizontal block
@@ -47,7 +46,7 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
         })
         && {
             let style = tree.physical_style(idx);
-            style.size().width.is_auto() && BlockItemStyle::float(&style) == taffy::Float::None
+            style.size().width.is_auto() && style.float() == taffy::Float::None
         }
 }
 

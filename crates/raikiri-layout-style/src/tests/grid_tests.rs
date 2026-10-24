@@ -31,14 +31,10 @@ use raikiri_style::{
     SmolStr, property::*,
 };
 use std::sync::Arc;
-use taffy::{
-    GenericGridTemplateComponent as T, GenericRepetition, GridContainerStyle, GridItemStyle,
-};
+use taffy::{GenericGridTemplateComponent as T, GenericRepetition, GridContainerStyle};
 
-#[allow(unsafe_code)]
 fn resolve(pointer: *const (), basis: f32) -> f32 {
-    // SAFETY: Each test keeps its prepared payloads alive during resolution.
-    unsafe { resolve_calc(pointer, basis) }
+    CalcHandle::resolve(pointer, basis)
 }
 
 #[test]

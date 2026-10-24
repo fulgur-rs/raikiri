@@ -1,7 +1,6 @@
 use super::*;
 use raikiri_style::ComputedLengthPercentageOrAuto;
 use std::cell::Cell;
-use taffy::CoreStyle;
 
 fn fixture(
     widths: &[u8],

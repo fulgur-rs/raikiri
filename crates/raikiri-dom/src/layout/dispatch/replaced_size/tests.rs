@@ -3,9 +3,9 @@ use crate::LayoutStyle as Style;
 use crate::layout::dispatch::push_calc;
 use crate::layout::protocol::{AvailableSpace, LayoutInput, RequestedAxis, RunMode, SizingMode};
 use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_style::values::StyleSize;
 use raikiri_style::property::CalcLengthPercentage;
 use taffy::Dimension;
-use taffy::Size as StyleSize;
 
 mod intrinsic_keyword_tests;
 mod ratio_box_tests;

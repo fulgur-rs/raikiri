@@ -61,32 +61,26 @@ impl BlockAxis<'_> {
     }
 
     pub(crate) fn height(&self) -> taffy::Dimension {
-        use taffy::CoreStyle;
         self.read(|facts| facts.height, |style| style.size().height)
     }
 
     pub(crate) fn min_height(&self) -> taffy::LengthPercentageAuto {
-        use taffy::CoreStyle;
         self.read(|facts| facts.min_height, |style| style.min_size().height)
     }
 
     pub(crate) fn max_height(&self) -> taffy::LengthPercentageAuto {
-        use taffy::CoreStyle;
         self.read(|facts| facts.max_height, |style| style.max_size().height)
     }
 
     pub(crate) fn margin_top(&self) -> taffy::LengthPercentageAuto {
-        use taffy::CoreStyle;
         self.read(|facts| facts.margin.top, |style| style.margin().top)
     }
 
     pub(crate) fn margin_bottom(&self) -> taffy::LengthPercentageAuto {
-        use taffy::CoreStyle;
         self.read(|facts| facts.margin.bottom, |style| style.margin().bottom)
     }
 
     pub(crate) fn aspect_ratio(&self) -> Option<f32> {
-        use taffy::CoreStyle;
         self.read(|facts| facts.aspect_ratio, |style| style.aspect_ratio())
     }
 }

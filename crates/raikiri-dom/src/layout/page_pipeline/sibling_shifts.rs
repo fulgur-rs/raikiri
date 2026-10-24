@@ -2,7 +2,7 @@
 
 use super::{Document, FragmentEdits, HashMap, LayoutError, ProjectionWork};
 use crate::layout::context::LayoutSession;
-use taffy::{BlockItemStyle, Position as TaffyPosition};
+use raikiri_layout_style::values::TaffyPosition;
 
 /// Moves of the siblings that follow each paginated column container and
 /// its ancestors. A container that grows moves every later sibling at each

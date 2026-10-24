@@ -13,7 +13,7 @@ use crate::layout::dispatch::TaffyChildIter;
 use crate::layout::protocol::{LayoutInput, NodeId};
 use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::BoxLayout;
-use raikiri_layout_style::LayoutStyleView;
+use raikiri_layout_style::TaffyStyle;
 use taffy::{
     CacheTree, DetailedGridInfo, DetailedLayoutInfo, LayoutBlockContainer, LayoutContainingBlock,
     LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree, TraversePartialTree,
@@ -68,12 +68,12 @@ impl CacheTree for LayoutSession<'_> {
 impl LayoutPartialTree for LayoutSession<'_> {
     type CustomIdent = smol_str::SmolStr;
     type CoreContainerStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
 
     fn get_core_container_style(&self, node_id: taffy::NodeId) -> Self::CoreContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::CoreContainer)
+        TaffyStyle::new(self.query_style(usize::from(node_id), ReadRole::CoreContainer))
     }
 
     fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
@@ -104,30 +104,30 @@ impl LayoutPartialTree for LayoutSession<'_> {
 
 impl LayoutBlockContainer for LayoutSession<'_> {
     type BlockContainerStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
     type BlockItemStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
 
     fn get_block_container_style(&self, node_id: taffy::NodeId) -> Self::BlockContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::BlockContainer)
+        TaffyStyle::new(self.query_style(usize::from(node_id), ReadRole::BlockContainer))
     }
 
     fn get_block_child_style(&self, child_node_id: taffy::NodeId) -> Self::BlockItemStyle<'_> {
-        self.query_style(usize::from(child_node_id), ReadRole::BlockItem)
+        TaffyStyle::new(self.query_style(usize::from(child_node_id), ReadRole::BlockItem))
     }
 }
 
 impl LayoutFlexboxContainer for LayoutSession<'_> {
     type FlexboxContainerStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
     type FlexboxItemStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
 
@@ -135,30 +135,30 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         &self,
         node_id: taffy::NodeId,
     ) -> Self::FlexboxContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::FlexContainer)
+        TaffyStyle::new(self.query_style(usize::from(node_id), ReadRole::FlexContainer))
     }
 
     fn get_flexbox_child_style(&self, child_node_id: taffy::NodeId) -> Self::FlexboxItemStyle<'_> {
-        self.query_style(usize::from(child_node_id), ReadRole::FlexItem)
+        TaffyStyle::new(self.query_style(usize::from(child_node_id), ReadRole::FlexItem))
     }
 }
 
 impl LayoutGridContainer for LayoutSession<'_> {
     type GridContainerStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
     type GridItemStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
 
     fn get_grid_container_style(&self, node_id: taffy::NodeId) -> Self::GridContainerStyle<'_> {
-        self.query_style(usize::from(node_id), ReadRole::GridContainer)
+        TaffyStyle::new(self.query_style(usize::from(node_id), ReadRole::GridContainer))
     }
 
     fn get_grid_child_style(&self, child_node_id: taffy::NodeId) -> Self::GridItemStyle<'_> {
-        self.query_style(usize::from(child_node_id), ReadRole::GridItem)
+        TaffyStyle::new(self.query_style(usize::from(child_node_id), ReadRole::GridItem))
     }
 
     fn set_detailed_grid_info(
@@ -176,12 +176,12 @@ impl LayoutGridContainer for LayoutSession<'_> {
 
 impl LayoutContainingBlock for LayoutSession<'_> {
     type OofItemStyle<'a>
-        = LayoutStyleView<'a>
+        = TaffyStyle<'a>
     where
         Self: 'a;
 
     fn get_oof_item_style(&self, node: taffy::NodeId) -> Self::OofItemStyle<'_> {
-        self.query_style(usize::from(node), ReadRole::Oof)
+        TaffyStyle::new(self.query_style(usize::from(node), ReadRole::Oof))
     }
 
     fn clear_hoisted_children(&mut self, node: taffy::NodeId) {

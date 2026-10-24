@@ -22,8 +22,8 @@ use crate::layout::test_support::{
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_style::values::StyleSize;
 use taffy::LengthPercentageAuto;
-use taffy::Size as StyleSize;
 
 /// What the box under test holds.
 #[derive(Clone, Copy)]
@@ -1835,8 +1835,7 @@ fn grid_percentage_fit_content_uses_container_basis_without_track_details() {
         |tree, _, _| {
             dispatches += 1;
             if dispatches == 2 {
-                installed_min_width =
-                    Some(taffy::CoreStyle::min_size(&tree.style_view(child)).width);
+                installed_min_width = Some(tree.style_view(child).min_size().width);
             }
             LayoutOutput::from_outer_size(Size {
                 width: 200.0,

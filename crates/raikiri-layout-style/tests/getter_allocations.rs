@@ -101,7 +101,8 @@ fn consume_template(tracks: TemplateTracks<'_>) {
         }
     }
 }
-fn read_all(v: &LayoutStyleView<'_>) {
+fn read_all(view: &LayoutStyleView<'_>) {
+    let v = &TaffyStyle::new(*view);
     macro_rules! query {
         ($t:ident: $($method:ident),+ $(,)?) => { $(black_box($t::$method(v));)+ };
     }
@@ -109,9 +110,9 @@ fn read_all(v: &LayoutStyleView<'_>) {
     query!(BC: text_align,align_content,justify_items);
     query!(BI: is_table,align_self,justify_self,align_content,float,clear);
     query!(OI: align_self,justify_self,is_table,grid_row,grid_column);
-    black_box(v.bridge_align_self());
-    black_box(v.bridge_justify_self());
-    black_box(v.bridge_align_content());
+    black_box(view.bridge_align_self());
+    black_box(view.bridge_justify_self());
+    black_box(view.bridge_align_content());
     query!(FC: flex_direction,flex_wrap,gap,align_content,align_items,justify_content);
     query!(FI: flex_basis,flex_grow,flex_shrink,align_self);
     query!(GC: grid_auto_flow,gap,align_content,justify_content,align_items,justify_items,grid_template_area_row_count,grid_template_area_column_count);

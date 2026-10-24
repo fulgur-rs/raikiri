@@ -18,10 +18,11 @@ fn block_view_prepares_normal_source_and_text_keys() {
 }
 
 use crate::layout::style_views::ReadRole;
-use raikiri_layout_style::LayoutStyleView;
+use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
 use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, OofItemStyle as OI};
 
 fn read_core(query: &LayoutStyleView<'_>) {
+    let query = &TaffyStyle::new(*query);
     macro_rules! read {
         ($($method:ident),+ $(,)?) => { $(let _ = taffy::CoreStyle::$method(query);)+ };
     }
@@ -64,36 +65,41 @@ fn block_view_reads_each_new_role_and_bridge_alignment() {
         ReadRole::Physical,
     ] {
         let query = tree.query_style(child, role);
+        let projected = TaffyStyle::new(query);
         read_core(&query);
         match role {
             ReadRole::CoreContainer => assert!(query.is_containing_block().fixed),
             ReadRole::BlockContainer => {
                 assert!(!query.is_containing_block().fixed);
                 let _ = (
-                    BC::text_align(&query),
-                    BC::align_content(&query),
-                    BC::justify_items(&query),
+                    BC::text_align(&projected),
+                    BC::align_content(&projected),
+                    BC::justify_items(&projected),
                 );
             }
             ReadRole::BlockItem => {
                 assert!(!query.is_containing_block().fixed);
-                assert_eq!(BI::align_self(&query), None);
-                assert_eq!(BI::justify_self(&query), None);
-                assert_eq!(BI::align_content(&query), taffy::AlignContent::NORMAL);
-                let _ = (BI::is_table(&query), BI::float(&query), BI::clear(&query));
+                assert_eq!(BI::align_self(&projected), None);
+                assert_eq!(BI::justify_self(&projected), None);
+                assert_eq!(BI::align_content(&projected), taffy::AlignContent::NORMAL);
+                let _ = (
+                    BI::is_table(&projected),
+                    BI::float(&projected),
+                    BI::clear(&projected),
+                );
             }
             ReadRole::Physical => {
                 assert!(!query.is_containing_block().fixed);
-                let _ = (BI::float(&query), BI::clear(&query));
+                let _ = (BI::float(&projected), BI::clear(&projected));
             }
             ReadRole::Oof => {
                 assert!(!query.is_containing_block().fixed);
                 let _ = (
-                    OI::align_self(&query),
-                    OI::justify_self(&query),
-                    OI::is_table(&query),
-                    OI::grid_row(&query),
-                    OI::grid_column(&query),
+                    OI::align_self(&projected),
+                    OI::justify_self(&projected),
+                    OI::is_table(&projected),
+                    OI::grid_row(&projected),
+                    OI::grid_column(&projected),
                 );
             }
             _ => unreachable!(),
@@ -162,9 +168,11 @@ fn block_view_oof_table_identity_is_independent() {
             fixture_with_styles("display:block", &format!("display:{display};width:31px"));
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-        assert!(!BI::is_table(&tree.query_style(child, ReadRole::BlockItem)));
+        assert!(!BI::is_table(&TaffyStyle::new(
+            tree.query_style(child, ReadRole::BlockItem)
+        )));
         assert_eq!(
-            OI::is_table(&tree.query_style(child, ReadRole::Oof)),
+            OI::is_table(&TaffyStyle::new(tree.query_style(child, ReadRole::Oof))),
             display != "block"
         );
         assert_eq!(
@@ -249,32 +257,33 @@ pub(super) fn assert_all_new_roles(tree: &LayoutSession<'_>, idx: usize) {
         ReadRole::Oof,
     ] {
         let query = tree.query_style(idx, role);
+        let projected = TaffyStyle::new(query);
         read_core(&query);
         match role {
             ReadRole::BlockContainer => {
                 let _ = (
-                    BC::text_align(&query),
-                    BC::align_content(&query),
-                    BC::justify_items(&query),
+                    BC::text_align(&projected),
+                    BC::align_content(&projected),
+                    BC::justify_items(&projected),
                 );
             }
             ReadRole::BlockItem => {
                 let _ = (
-                    BI::is_table(&query),
-                    BI::align_self(&query),
-                    BI::justify_self(&query),
-                    BI::align_content(&query),
-                    BI::float(&query),
-                    BI::clear(&query),
+                    BI::is_table(&projected),
+                    BI::align_self(&projected),
+                    BI::justify_self(&projected),
+                    BI::align_content(&projected),
+                    BI::float(&projected),
+                    BI::clear(&projected),
                 );
             }
             ReadRole::Oof => {
                 let _ = (
-                    OI::align_self(&query),
-                    OI::justify_self(&query),
-                    OI::is_table(&query),
-                    OI::grid_row(&query),
-                    OI::grid_column(&query),
+                    OI::align_self(&projected),
+                    OI::justify_self(&projected),
+                    OI::is_table(&projected),
+                    OI::grid_row(&projected),
+                    OI::grid_column(&projected),
                 );
             }
             _ => {}

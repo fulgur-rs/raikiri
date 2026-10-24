@@ -5,7 +5,6 @@ use crate::{
     layout::{context::LayoutSession, style_views::ReadRole},
 };
 use raikiri_layout_style::LayoutStyleView;
-use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle};
 
 pub(crate) fn container(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
     materialize(tree.query_style(idx, ReadRole::BlockContainer))
@@ -33,7 +32,7 @@ fn materialize(query: LayoutStyleView<'_>) -> LayoutStyle {
     };
     LayoutStyle {
         display,
-        item_is_table: BI::is_table(&query),
+        item_is_table: query.is_table(),
         item_is_replaced: query.is_replaced(),
         item_is_compressible_replaced: query.is_compressible_replaced(),
         box_sizing: query.box_sizing(),
@@ -49,9 +48,9 @@ fn materialize(query: LayoutStyleView<'_>) -> LayoutStyle {
         margin: query.margin(),
         padding: query.padding(),
         border: query.border(),
-        float: BI::float(&query),
-        clear: BI::clear(&query),
-        justify_items: BC::justify_items(&query),
+        float: query.float(),
+        clear: query.clear(),
+        justify_items: query.justify_items(),
         align_content: query.bridge_align_content(),
         align_self: query.bridge_align_self(),
         justify_self: query.bridge_justify_self(),

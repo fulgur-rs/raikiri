@@ -9,9 +9,11 @@ use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutS
 use crate::{Document, LayoutStyle};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, build_rule_tree, cascade};
+
+use raikiri_layout_style::TaffyStyle;
+use raikiri_layout_style::values::StyleSize;
 use taffy::CoreStyle;
 use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the Taffy tree traits of the session take Taffy's id
-use taffy::Size as StyleSize;
 
 pub(crate) fn fixture() -> (Document, raikiri_style::CascadeResult, usize, usize) {
     fixture_with_styles("display:flex", "width:31px;height:7px")
@@ -175,12 +177,12 @@ fn prepared_grid_alignment_preserves_the_semantic_bridge_overrides() {
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
         let view = session.style_view(child);
         assert_eq!(
-            taffy::GridItemStyle::align_self(&view),
+            view.bridge_align_self(),
             align_self,
             "{container}: {child_css}"
         );
         assert_eq!(
-            taffy::GridItemStyle::justify_self(&view),
+            view.bridge_justify_self(),
             justify_self,
             "{container}: {child_css}"
         );
@@ -197,8 +199,9 @@ fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, expec
         FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
         GridItemStyle as GI,
     };
+    let view = &TaffyStyle::new(view);
     macro_rules! same {
-        ($trait:ident: $($getter:ident),+ $(,)?) => { $(assert_eq!($trait::$getter(&view), $trait::$getter(expected), "{}", stringify!($getter));)+ };
+        ($trait:ident: $($getter:ident),+ $(,)?) => { $(assert_eq!($trait::$getter(view), $trait::$getter(expected), "{}", stringify!($getter));)+ };
     }
     same!(CoreStyle: box_generation_mode, is_block, is_compressible_replaced, is_replaced, box_sizing, direction, overflow, scrollbar_width, position, inset, is_containing_block, size, min_size, max_size, aspect_ratio, margin, padding, border, contain);
     same!(FC: flex_direction, flex_wrap, gap, align_content, align_items, justify_content);
@@ -206,19 +209,19 @@ fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, expec
     same!(GC: grid_auto_flow, gap, align_content, justify_content, align_items, justify_items, grid_template_area_row_count, grid_template_area_column_count);
     same!(GI: grid_row, grid_column, align_self, justify_self);
     assert_eq!(
-        GC::grid_template_columns(&view).is_none(),
+        GC::grid_template_columns(view).is_none(),
         GC::grid_template_columns(expected).is_none()
     );
     assert_eq!(
-        GC::grid_template_rows(&view).is_none(),
+        GC::grid_template_rows(view).is_none(),
         GC::grid_template_rows(expected).is_none()
     );
     assert_eq!(
-        GC::grid_auto_columns(&view).count(),
+        GC::grid_auto_columns(view).count(),
         GC::grid_auto_columns(expected).count()
     );
     assert_eq!(
-        GC::grid_auto_rows(&view).count(),
+        GC::grid_auto_rows(view).count(),
         GC::grid_auto_rows(expected).count()
     );
 }
@@ -350,11 +353,10 @@ fn resolved_edge_scopes_do_not_resolve_percentages_twice_and_restore_on_unwind()
         .left
         .into_raw()
         .calc_value();
-    // SAFETY: The prepared style retains its owners.
-    #[allow(unsafe_code)]
-    unsafe {
-        assert_eq!(raikiri_layout_style::resolve_calc(pointer, 100.0), 15.0);
-    }
+    assert_eq!(
+        raikiri_layout_style::values::CalcHandle::resolve(pointer, 100.0),
+        15.0
+    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use super::*;
 use std::sync::Arc;
-use taffy::{GenericRepetition, GridContainerStyle};
+use taffy::GenericRepetition;
 
 #[test]
 fn owned_and_borrowed_getters_agree() {
@@ -52,7 +52,10 @@ fn owned_and_borrowed_getters_agree() {
     assert_eq!(a.overflow(), b.overflow());
     macro_rules! same {
         ($trait:ident, $($getter:ident),+ $(,)?) => { $(
-            assert_eq!($trait::$getter(&a), $trait::$getter(&b));
+            assert_eq!(
+                $trait::$getter(&TaffyStyle::new(a)),
+                $trait::$getter(&TaffyStyle::new(b))
+            );
         )+ };
     }
     same!(
@@ -92,18 +95,14 @@ fn owned_and_borrowed_getters_agree() {
         align_self
     );
     for basis in [0.0, 37.0, 100.0] {
-        // SAFETY: Each view's prepared owner stays alive throughout these calls.
-        #[allow(unsafe_code)]
-        unsafe {
-            assert_eq!(
-                resolve_calc(a.size().width.into_raw().calc_value(), basis),
-                resolve_calc(b.size().width.into_raw().calc_value(), basis)
-            );
-            assert_eq!(
-                resolve_calc(a.margin().left.into_raw().calc_value(), basis),
-                resolve_calc(b.margin().left.into_raw().calc_value(), basis)
-            );
-        }
+        assert_eq!(
+            CalcHandle::resolve(a.size().width.into_raw().calc_value(), basis),
+            CalcHandle::resolve(b.size().width.into_raw().calc_value(), basis)
+        );
+        assert_eq!(
+            CalcHandle::resolve(a.margin().left.into_raw().calc_value(), basis),
+            CalcHandle::resolve(b.margin().left.into_raw().calc_value(), basis)
+        );
     }
 }
 
@@ -198,12 +197,8 @@ fn owned_overrides_keep_calc_range_and_explicit_none() {
         &[],
     );
     let pointer = v.size().width.into_raw().calc_value();
-    // SAFETY: The override owns this handle and outlives both resolutions.
-    #[allow(unsafe_code)]
-    unsafe {
-        assert_eq!(resolve_calc(pointer, 0.0), 0.0);
-        assert_eq!(resolve_calc(pointer, 100.0), 15.0);
-    }
+    assert_eq!(CalcHandle::resolve(pointer, 0.0), 0.0);
+    assert_eq!(CalcHandle::resolve(pointer, 100.0), 15.0);
 }
 
 #[test]

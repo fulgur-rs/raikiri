@@ -3,7 +3,6 @@ use raikiri_style::{
     ComputedFlexBasis as F, ComputedLengthPercentageOrCalc as P,
     ComputedLengthPercentageOrNormal as N, property::*,
 };
-use taffy::GridContainerStyle as G;
 
 #[test]
 fn preparation_only_slots_cannot_be_used_as_physical_overrides() {
@@ -175,10 +174,7 @@ fn scalar_calc_slots_resolve_values_with_the_right_range() {
         (v.margin().top.into_raw().calc_value(), false),
         (v.padding().top.into_raw().calc_value(), true),
         (v.flex_basis().into_raw().calc_value(), true),
-        (
-            FlexboxContainerStyle::gap(&v).width.into_raw().calc_value(),
-            true,
-        ),
+        (v.gap().width.into_raw().calc_value(), true),
     ];
     for (handle, range) in handles {
         for basis in [0.0, 100.0] {
@@ -187,8 +183,7 @@ fn scalar_calc_slots_resolve_values_with_the_right_range() {
             } else {
                 basis * 0.25 - 10.0
             };
-            // SAFETY: All handles were emitted by v and both payload owners are alive.
-            assert_eq!(unsafe { resolve_calc(handle, basis) }, expected);
+            assert_eq!(CalcHandle::resolve(handle, basis), expected);
         }
     }
     assert_eq!(
@@ -232,10 +227,7 @@ fn empty_grid_iterators_and_absent_areas_keep_the_legacy_representation() {
         (0, 0)
     );
     assert_eq!(v.align_self(), None);
-    assert_eq!(
-        FlexboxContainerStyle::gap(&v).width,
-        taffy::LengthPercentage::length(4.0)
-    );
+    assert_eq!(v.gap().width, taffy::LengthPercentage::length(4.0));
     cv.grid_template_columns = raikiri_style::ComputedGridTemplateTracks::List(
         std::sync::Arc::new(raikiri_style::ComputedGridTrackList {
             components: vec![],

@@ -4,7 +4,6 @@ use super::*;
 use crate::layout::taffy_adapter::ResolveOrZero;
 use raikiri_layout_style::{LengthProperty, PercentBasis};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
-use taffy::CoreStyle;
 
 #[derive(Clone, Debug)]
 pub(crate) struct FrozenViewInput {

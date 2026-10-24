@@ -19,7 +19,7 @@ use crate::layout::taffy_adapter::GridInfo;
 use crate::layout::taffy_adapter::OofSpan;
 use crate::layout::taffy_adapter::algorithms::{claims_position, compute_oof_layout_for_area};
 use raikiri_layout_geometry::{Edges, Point, Size};
-use taffy::{ContainingBlockClaims, Direction, GridItemStyle, GridPlacement};
+use taffy::{ContainingBlockClaims, Direction, GridPlacement};
 
 use super::vertical_block::block_right_to_left;
 use crate::layout::context::LayoutSession;
@@ -118,8 +118,8 @@ impl<'a> GridAreas<'a> {
     ) -> Edges<f32> {
         let resolve = |padding_box| {
             self.info.resolve_absolute_grid_area(
-                GridItemStyle::grid_row(style),
-                GridItemStyle::grid_column(style),
+                style.grid_row(),
+                style.grid_column(),
                 direction,
                 padding_box,
             )
@@ -164,10 +164,7 @@ impl<'a> GridAreas<'a> {
 /// Whether `style` places its box in the grid with a grid-placement property,
 /// rather than leaving it to the padding box.
 fn is_placed(style: &LayoutStyleView<'_>) -> bool {
-    let (row, column) = (
-        GridItemStyle::grid_row(style),
-        GridItemStyle::grid_column(style),
-    );
+    let (row, column) = (style.grid_row(), style.grid_column());
     [row.start, row.end, column.start, column.end]
         .iter()
         .any(|placement| !matches!(placement, GridPlacement::Auto))

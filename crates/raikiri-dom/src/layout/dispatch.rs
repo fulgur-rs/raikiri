@@ -21,15 +21,17 @@ use crate::layout::taffy_adapter::algorithms::{
 };
 use crate::layout::taffy_adapter::{GridInfo, GridRowCounts, MaybeResolve, ResolveOrZero};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
-use taffy::Point as StylePoint;
-use taffy::{BoxGenerationMode, CoreStyle, ExpandedDimension, Position as TaffyPosition};
+use raikiri_layout_style::values::StylePoint;
+use raikiri_layout_style::values::TaffyPosition;
+use taffy::{BoxGenerationMode, ExpandedDimension};
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
-use raikiri_layout_style::LayoutStyleView;
+use raikiri_layout_style::values::CalcHandle;
+use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::DisplayValue;
 
@@ -87,19 +89,16 @@ pub(crate) fn push_calc(
 ///
 /// The handle does not depend on the document, so leaf measure callbacks that
 /// cannot borrow the tree call this directly.
-#[allow(unsafe_code)]
 pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
-    // SAFETY: The document retains the common payload before publishing any raw handle.
-    unsafe { raikiri_layout_style::resolve_calc(val, basis) }
+    // The document retains the common payload before publishing any raw handle.
+    val.resolve(basis)
 }
 
 /// Whether a `calc()` payload handle has a percentage term, which needs a
 /// basis to resolve.
-#[allow(unsafe_code)]
 pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
-    // SAFETY: The document keeps this common payload alive during inspection.
-    let calc = unsafe { &*val.cast::<raikiri_layout_style::AlignedCalc>() };
-    calc.expression().percent != 0.0
+    // The document keeps this common payload alive during inspection.
+    val.has_percentage()
 }
 
 /// The limit of a `fit-content(<length-percentage>)` size, resolved against
@@ -242,7 +241,7 @@ fn flex_item_percent_basis(tree: &LayoutSession<'_>, node: usize) -> Option<Size
 
 /// Whether a margin, padding or border of `style` depends on its percentage
 /// basis.
-fn has_percent_edge(style: &impl CoreStyle) -> bool {
+fn has_percent_edge(style: &LayoutStyleView<'_>) -> bool {
     let margin_depends_on_basis = |edge: taffy::LengthPercentageAuto| {
         edge.into_raw().is_plain_calc()
             || edge.resolve_to_option(0.0, resolve_calc)
@@ -256,7 +255,7 @@ fn has_percent_edge(style: &impl CoreStyle) -> bool {
 }
 
 /// Whether a padding or border of `style` depends on its percentage basis.
-fn has_percent_padding_or_border(style: &impl CoreStyle) -> bool {
+fn has_percent_padding_or_border(style: &LayoutStyleView<'_>) -> bool {
     [style.padding(), style.border()].into_iter().any(|edges| {
         [edges.left, edges.right, edges.top, edges.bottom]
             .into_iter()
@@ -514,13 +513,11 @@ impl LayoutSession<'_> {
     /// Whether box `node` is an item of a flex container with a vertical main
     /// axis.
     pub(crate) fn in_column_flex_container(&self, node: usize) -> bool {
-        use taffy::FlexboxContainerStyle;
-
         self.taffy_parent_of(node)
             .filter(|&parent| self.nodes[parent].taffy_display() == taffy::Display::Flex)
             .is_some_and(|parent| {
                 matches!(
-                    FlexboxContainerStyle::flex_direction(&self.physical_style(parent)),
+                    self.physical_style(parent).flex_direction(),
                     taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
                 )
             })
@@ -886,10 +883,15 @@ impl LayoutSession<'_> {
                 // or aspect ratio; the style bridge left only the ratio the
                 // box states itself.
                 let style = tree.physical_style(idx);
-                return compute_leaf_layout(inputs, &style, resolve_calc, |known, _| Size {
-                    width: known.width.unwrap_or(0.0),
-                    height: known.height.unwrap_or(0.0),
-                });
+                return compute_leaf_layout(
+                    inputs,
+                    &TaffyStyle::new(style),
+                    resolve_calc,
+                    |known, _| Size {
+                        width: known.width.unwrap_or(0.0),
+                        height: known.height.unwrap_or(0.0),
+                    },
+                );
             }
             if tree.nodes[idx].is_inline_svg_root()
                 && tree.nodes[idx].attribute("width").is_none()
@@ -2169,7 +2171,7 @@ fn fragmentation_context_for_ifc(
         }
         has_row_flex |= node.formatting_context == FormattingContext::Flex
             && matches!(
-                taffy::FlexboxContainerStyle::flex_direction(&tree.physical_style(node_id)),
+                tree.physical_style(node_id).flex_direction(),
                 taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
             );
     }
@@ -2320,7 +2322,7 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
 /// items instead, which differ from the fit-content size.
 fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
     tree.nodes[idx].display().is_block_flex_or_grid_container()
-        && taffy::BlockItemStyle::float(&tree.physical_style(idx)) != taffy::Float::None
+        && tree.physical_style(idx).float() != taffy::Float::None
 }
 
 /// The border-box `min-width` and `max-width` of element `idx` that resolve
@@ -3170,16 +3172,11 @@ fn auto_grid_abspos_axis_alignment(
     parent: &LayoutStyleView<'_>,
     overflows: Size<bool>,
 ) -> Option<AxisAlignment> {
-    use taffy::{
-        AlignItemsKeyword, AlignmentSafety, GridContainerStyle, GridItemStyle, GridPlacement,
-    };
+    use taffy::{AlignItemsKeyword, AlignmentSafety, GridPlacement};
 
     let (child_direction, parent_direction) = (child.direction(), parent.direction());
     let inset = child.inset();
-    let (grid_row, grid_column) = (
-        GridItemStyle::grid_row(child),
-        GridItemStyle::grid_column(child),
-    );
+    let (grid_row, grid_column) = (child.grid_row(), child.grid_column());
     if child.position() != TaffyPosition::Absolute
         || !inset.top.is_auto()
         || !inset.right.is_auto()
@@ -3216,13 +3213,13 @@ fn auto_grid_abspos_axis_alignment(
     Some(AxisAlignment {
         inline: alignment_fraction(
             child.bridge_justify_self(),
-            GridContainerStyle::justify_items(parent),
+            parent.justify_items(),
             true,
             overflows.width,
         ),
         block: alignment_fraction(
             child.bridge_align_self(),
-            GridContainerStyle::align_items(parent),
+            parent.align_items(),
             false,
             overflows.height,
         ),
@@ -3608,7 +3605,7 @@ impl LayoutSession<'_> {
 /// as taffy's grid algorithm expands them for the row counts `rows`
 /// (CSS Grid 1 §7.2 explicit tracks, §7.6 implicit tracks).
 fn row_sizing_functions(
-    style: &impl taffy::GridContainerStyle,
+    style: &LayoutStyleView<'_>,
     rows: GridRowCounts,
 ) -> Vec<taffy::TrackSizingFunction> {
     use taffy::prelude::TaffyAuto;

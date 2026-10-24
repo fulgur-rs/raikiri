@@ -22,10 +22,8 @@
 use crate::layout::protocol::{NodeId, OofPositioningArea};
 use crate::layout::taffy_adapter::MaybeResolve;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
-use taffy::Point as StylePoint;
-use taffy::{
-    AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, CoreStyle, Direction, Overflow,
-};
+use raikiri_layout_style::values::StylePoint;
+use taffy::{AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, Direction, Overflow};
 
 use super::super::grid_oof::GridAreas;
 use super::super::{block_right_to_left, hoisted_children, resolve_calc};

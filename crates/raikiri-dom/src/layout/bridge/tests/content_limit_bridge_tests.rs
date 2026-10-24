@@ -1,8 +1,8 @@
 use super::*;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::test_support::bridged_style;
+use raikiri_layout_style::values::StyleSize;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Size as StyleSize;
 use taffy::{Dimension, LengthPercentageAuto};
 
 #[test]

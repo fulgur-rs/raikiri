@@ -1,4 +1,3 @@
-use crate::flex::{content, items};
 use crate::length::sanitize;
 use crate::*;
 use raikiri_style::{
@@ -11,9 +10,8 @@ use raikiri_style::{
     },
 };
 use taffy::{
-    GenericGridTemplateComponent, GenericRepetition, GridContainerStyle, GridItemStyle,
-    GridPlacement, MaxTrackSizingFunction as Max, MinTrackSizingFunction as Min,
-    TrackSizingFunction,
+    GenericGridTemplateComponent, GenericRepetition, GridPlacement, MaxTrackSizingFunction as Max,
+    MinTrackSizingFunction as Min, TrackSizingFunction,
 };
 
 /// Borrowed top-level Grid components; cloning preserves the current cursor.
@@ -213,64 +211,48 @@ impl LayoutStyleView<'_> {
         }
     }
 }
-impl GridContainerStyle for LayoutStyleView<'_> {
-    type Repetition<'a>
-        = GridRepetition<'a>
-    where
-        Self: 'a;
-    type TemplateTrackList<'a>
-        = TemplateTracks<'a>
-    where
-        Self: 'a;
-    type AutoTrackList<'a>
-        = Tracks<'a>
-    where
-        Self: 'a;
-    type TemplateLineNames<'a>
-        = LineNames<'a>
-    where
-        Self: 'a;
-    type GridTemplateAreas<'a>
-        = Areas<'a>
-    where
-        Self: 'a;
-    fn grid_template_rows(&self) -> Option<TemplateTracks<'_>> {
+impl LayoutStyleView<'_> {
+    /// The explicit row tracks; empty when the box has no template rows.
+    pub fn grid_template_rows(&self) -> Option<TemplateTracks<'_>> {
         Some(self.template_tracks(Axis::Y))
     }
-    fn grid_template_columns(&self) -> Option<TemplateTracks<'_>> {
+    /// The explicit column tracks; empty when the box has no template columns.
+    pub fn grid_template_columns(&self) -> Option<TemplateTracks<'_>> {
         Some(self.template_tracks(Axis::X))
     }
-    fn grid_auto_rows(&self) -> Tracks<'_> {
+    /// The implicit row track sizes.
+    pub fn grid_auto_rows(&self) -> Tracks<'_> {
         self.auto_tracks(Axis::Y)
     }
-    fn grid_auto_columns(&self) -> Tracks<'_> {
+    /// The implicit column track sizes.
+    pub fn grid_auto_columns(&self) -> Tracks<'_> {
         self.auto_tracks(Axis::X)
     }
-    fn grid_template_column_names(&self) -> Option<LineNames<'_>> {
+    pub(crate) fn grid_template_column_names(&self) -> Option<LineNames<'_>> {
         Some(self.template_names(Axis::X))
     }
-    fn grid_template_row_names(&self) -> Option<LineNames<'_>> {
+    pub(crate) fn grid_template_row_names(&self) -> Option<LineNames<'_>> {
         Some(self.template_names(Axis::Y))
     }
-    fn grid_template_areas(&self) -> Option<Areas<'_>> {
+    pub(crate) fn grid_template_areas(&self) -> Option<Areas<'_>> {
         match &self.prepared.values.grid_template_areas {
             GridTemplateAreasValue::Areas(areas) => Some(Areas(areas.areas.iter())),
             _ => None,
         }
     }
-    fn grid_template_area_row_count(&self) -> u16 {
+    pub(crate) fn grid_template_area_row_count(&self) -> u16 {
         match &self.prepared.values.grid_template_areas {
             GridTemplateAreasValue::Areas(a) => u16_sat(a.row_count),
             _ => 0,
         }
     }
-    fn grid_template_area_column_count(&self) -> u16 {
+    pub(crate) fn grid_template_area_column_count(&self) -> u16 {
         match &self.prepared.values.grid_template_areas {
             GridTemplateAreasValue::Areas(a) => u16_sat(a.column_count),
             _ => 0,
         }
     }
-    fn grid_auto_flow(&self) -> taffy::GridAutoFlow {
+    pub(crate) fn grid_auto_flow(&self) -> taffy::GridAutoFlow {
         match self.prepared.values.grid_auto_flow {
             GridAutoFlowValue::Column => taffy::GridAutoFlow::Column,
             GridAutoFlowValue::RowDense => taffy::GridAutoFlow::RowDense,
@@ -278,40 +260,19 @@ impl GridContainerStyle for LayoutStyleView<'_> {
             _ => taffy::GridAutoFlow::Row,
         }
     }
-    fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
-        self.gap_value()
-    }
-    fn align_content(&self) -> taffy::AlignContent {
-        content(self.prepared.values.align_content)
-    }
-    fn justify_content(&self) -> taffy::JustifyContent {
-        content(self.prepared.values.justify_content)
-    }
-    fn align_items(&self) -> taffy::AlignItems {
-        items(self.prepared.values.align_items)
-    }
-    fn justify_items(&self) -> taffy::JustifyItems {
-        items(self.prepared.values.justify_items)
-    }
-}
-impl GridItemStyle for LayoutStyleView<'_> {
-    fn grid_row(&self) -> taffy::Line<GridPlacement<SmolStr>> {
+    /// The grid row placement of a grid item.
+    pub fn grid_row(&self) -> taffy::Line<GridPlacement<SmolStr>> {
         taffy::Line {
             start: placement(&self.prepared.values.grid_row_start),
             end: placement(&self.prepared.values.grid_row_end),
         }
     }
-    fn grid_column(&self) -> taffy::Line<GridPlacement<SmolStr>> {
+    /// The grid column placement of a grid item.
+    pub fn grid_column(&self) -> taffy::Line<GridPlacement<SmolStr>> {
         taffy::Line {
             start: placement(&self.prepared.values.grid_column_start),
             end: placement(&self.prepared.values.grid_column_end),
         }
-    }
-    fn align_self(&self) -> Option<taffy::AlignSelf> {
-        self.self_alignment(false)
-    }
-    fn justify_self(&self) -> Option<taffy::AlignSelf> {
-        self.self_alignment(true)
     }
 }
 fn u16_sat(value: u32) -> u16 {
