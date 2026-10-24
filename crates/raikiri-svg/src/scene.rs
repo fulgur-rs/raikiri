@@ -453,6 +453,7 @@ impl Builder {
         let mut node = Path::new(segments(path.data()));
         node.fill = fill;
         node.stroke = stroke;
+        node.anti_alias = path.rendering_mode().use_shape_antialiasing();
         node.paint_order = match path.paint_order() {
             usvg::PaintOrder::FillAndStroke => PaintOrder::FillThenStroke,
             usvg::PaintOrder::StrokeAndFill => PaintOrder::StrokeThenFill,

@@ -84,5 +84,6 @@ fn constructors_pick_the_css_defaults() {
     );
     let path = Path::new(Vec::new());
     assert_eq!(path.paint_order, PaintOrder::FillThenStroke);
+    assert!(path.anti_alias);
     assert!(path.fill.is_none() && path.stroke.is_none());
 }

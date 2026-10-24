@@ -132,16 +132,21 @@ pub struct Path {
     pub stroke: Option<Stroke>,
     /// Whether the fill or the stroke is drawn first.
     pub paint_order: PaintOrder,
+    /// Whether the edges are smoothed. `false` asks for hard edges, as
+    /// `shape-rendering: crispEdges` and `optimizeSpeed` do; a consumer that
+    /// cannot control smoothing may ignore it.
+    pub anti_alias: bool,
 }
 
 impl Path {
-    /// An unpainted path along `segments`.
+    /// An unpainted, smoothed path along `segments`.
     pub fn new(segments: Vec<PathSegment>) -> Self {
         Self {
             segments,
             fill: None,
             stroke: None,
             paint_order: PaintOrder::FillThenStroke,
+            anti_alias: true,
         }
     }
 

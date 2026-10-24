@@ -121,13 +121,9 @@ fn draw_path(pixmap: &mut tiny_skia::Pixmap, path: &Path, transform: tiny_skia::
             if let Some(dash) = &stroke.dash {
                 line.dash = tiny_skia::StrokeDash::new(dash.array.clone(), dash.offset);
             }
-            pixmap.stroke_path(
-                &outline,
-                &solid(&stroke.paint, stroke.opacity),
-                &line,
-                transform,
-                None,
-            );
+            let mut paint = solid(&stroke.paint, stroke.opacity);
+            paint.anti_alias = path.anti_alias;
+            pixmap.stroke_path(&outline, &paint, &line, transform, None);
         }
     };
     match path.paint_order {
@@ -613,6 +609,30 @@ fn paths_carry_their_paint_properties() {
         (0.25, 2.0, LineCap::Round, LineJoin::MiterClip, 3.0)
     );
     assert_eq!(stroke.dash, Some(Dash::new(vec![3.0, 1.0], 1.0)));
+}
+
+#[test]
+fn shape_rendering_decides_whether_edges_are_smoothed() {
+    let body = |rendering: &str| {
+        format!(
+            r##"<path d="M1.5 1.5 L18.5 3.5 L10.5 17.5 Z" fill="#e11" stroke="#14c" stroke-width="2.5"
+                  shape-rendering="{rendering}"/>"##
+        )
+    };
+    let smooth = document(&body("geometricPrecision"));
+    let scene = smooth.scene(VIEWPORT, style(1.0)).unwrap();
+    assert!(paths(&scene.root)[0].anti_alias);
+    assert_scene_matches_raster(&smooth, style(1.0), 2);
+    let smooth_picture = render(&scene);
+    for rendering in ["crispEdges", "optimizeSpeed"] {
+        let hard = document(&body(rendering));
+        let scene = hard.scene(VIEWPORT, style(1.0)).unwrap();
+        assert!(!paths(&scene.root)[0].anti_alias);
+        assert_scene_matches_raster(&hard, style(1.0), 2);
+        // Hard edges are a different picture, so the comparison above can
+        // only pass when the flag reaches the drawing.
+        assert_ne!(render(&scene), smooth_picture);
+    }
 }
 
 #[test]
