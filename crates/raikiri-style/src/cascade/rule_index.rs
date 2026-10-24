@@ -187,6 +187,10 @@ pub(crate) struct IndexedRule<'a> {
     /// ([`crate::rule::expand_shorthand_into`]); the rule tree has no path that
     /// changes a rule after parsing.
     pub(crate) declarations: &'a [Declaration],
+    /// How many candidates the rule adds to an element it matches: one for
+    /// each of `declarations`, and for an `all` that is spread, one for every
+    /// property it resets ([`super::candidate::candidates_of`]).
+    pub(crate) candidates: usize,
     /// The cascade layer position of the rule's declarations under this
     /// cascade's layer order.
     pub(crate) layer: LayerPosition,
@@ -284,6 +288,7 @@ impl<'a> RuleIndex<'a> {
             index.rules.push(IndexedRule {
                 rule,
                 declarations: &rule.declarations,
+                candidates: super::candidate::candidates_of_all(&rule.declarations),
                 layer: LayerPosition {
                     attached: false,
                     rank: layers.rank(rule.layer, rule.origin),

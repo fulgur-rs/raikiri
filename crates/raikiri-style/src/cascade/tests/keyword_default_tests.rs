@@ -14,7 +14,7 @@ use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrN
 /// A property, whether it is inherited, and values that compute apart: the
 /// first is the parent's, the second the user agent's, and a box `before`
 /// each keyword declaration may start from takes any of them.
-const CASES: &[(&str, bool, &[&str])] = &[
+pub(super) const CASES: &[(&str, bool, &[&str])] = &[
     ("position", false, &["relative", "absolute", "fixed"]),
     (
         "box-sizing",
@@ -391,7 +391,7 @@ const CASES: &[(&str, bool, &[&str])] = &[
 /// The shorthands over properties of the table, with the same three kinds of
 /// value as [`CASES`]. Each shorthand sets every longhand it expands to, so a
 /// keyword on it leaves nothing of an earlier value behind.
-const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
+pub(super) const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
     (
         "font",
         true,
@@ -499,7 +499,7 @@ const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
 
 /// The computed values of a parent styled `parent` and of its child `p`
 /// (`id="target"`) under `sheets`, followed by `css` as an author sheet.
-fn child(parent: &str, sheets: &[(&str, Origin)], css: &str) -> ComputedValues {
+pub(super) fn child(parent: &str, sheets: &[(&str, Origin)], css: &str) -> ComputedValues {
     let mut doc = TestDoc::new();
     let parent = doc.push_element(0, "div", Some(parent));
     let child = doc.push_element_with_attrs(parent, "p", None, &[("id", "target")]);
@@ -511,17 +511,17 @@ fn child(parent: &str, sheets: &[(&str, Origin)], css: &str) -> ComputedValues {
     cascade(&doc, &tree).unwrap().computed[child].clone()
 }
 
-fn same(left: &ComputedValues, right: &ComputedValues) -> bool {
+pub(super) fn same(left: &ComputedValues, right: &ComputedValues) -> bool {
     format!("{left:?}") == format!("{right:?}")
 }
 
 /// Rows with a test of their own: the computed value depends on another
 /// property, so a case that sets only this one cannot tell the keywords apart.
-const SEPARATE_TESTS: &[&str] = &["outline-width", "white-space"];
+pub(super) const SEPARATE_TESTS: &[&str] = &["outline-width", "white-space"];
 
 /// Properties that drop `revert` and `revert-layer`: the user agent sets
 /// `white-space` whole, so these have no cascade slot to roll back to.
-const NO_ROLLBACK: &[&str] = &["white-space-collapse", "text-wrap-mode", "text-wrap"];
+pub(super) const NO_ROLLBACK: &[&str] = &["white-space-collapse", "text-wrap-mode", "text-wrap"];
 
 #[test]
 fn every_table_row_has_a_case() {

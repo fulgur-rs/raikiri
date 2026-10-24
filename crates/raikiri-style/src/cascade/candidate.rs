@@ -17,11 +17,12 @@ use crate::PseudoElem;
 use crate::error::CascadeError;
 use crate::layer::LayerPosition;
 use crate::logical::{FlowMapping, LogicalSide};
-use crate::property::{CustomProperty, PropertyKey, PropertyValue};
+use crate::property::{CssWideKeyword, CustomProperty, PropertyKey, PropertyValue};
 use crate::rule::Declaration;
 use crate::ruletree::Origin;
 use crate::specified::CascadePrecedence;
 
+use super::all_spread;
 use super::collect::{
     CASCADED_PSEUDO_ELEMENTS, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
     RankedDecl, Specificity, cascade_rank,
@@ -44,6 +45,9 @@ pub(crate) enum ValueRef {
     /// element's first one. Equal positions of two elements refer to two
     /// different declarations.
     Local(u32),
+    /// Declaration `index` of what `all: keyword` spreads over the properties,
+    /// which [`all_spread::declarations`] keeps for every element.
+    Spread { keyword: CssWideKeyword, index: u16 },
 }
 
 /// One candidate declaration of an element or of one of its pseudo-elements:
@@ -114,12 +118,33 @@ impl Candidate {
         self.precedence
     }
 
-    /// Whether the declaration is `all: revert-layer`: the `all` property
-    /// keeps no other value, and no other value has its slot.
+    /// Whether the declaration is `all: revert` or `all: revert-layer`, which
+    /// roll back every slot at once. The other keywords of `all` are spread
+    /// over the properties before winners are picked
+    /// ([`ElementCandidates::with_all_spread`]), and no other value has the
+    /// `all` slot.
     #[inline]
-    pub(crate) fn is_all_revert_layer(self) -> bool {
+    pub(crate) fn is_all_rollback(self) -> bool {
         self.key == PropertyKey::All
     }
+}
+
+/// How many candidates `declaration` counts as against the candidate limits:
+/// one, or for an `all: initial`, `all: inherit` or `all: unset` the number of
+/// properties it resets, which is what [`ElementCandidates::with_all_spread`]
+/// makes of it.
+pub(crate) fn candidates_of(declaration: &Declaration) -> usize {
+    match &declaration.value {
+        PropertyValue::All(keyword) if declaration.rollback == Rollback::None => {
+            all_spread::declarations(*keyword).len()
+        }
+        _ => 1,
+    }
+}
+
+/// [`candidates_of`] summed over `declarations`.
+pub(crate) fn candidates_of_all(declarations: &[Declaration]) -> usize {
+    declarations.iter().map(candidates_of).sum()
 }
 
 /// A custom-property candidate. Its declaration's value is a
@@ -161,6 +186,9 @@ impl<'a> ValueSource<'a> {
             ValueRef::Rule { rule, decl } => &self.rules[rule as usize].declarations[decl as usize],
             ValueRef::Cached { block, decl } => &self.blocks[block as usize][decl as usize],
             ValueRef::Local(index) => &self.local[index as usize],
+            ValueRef::Spread { keyword, index } => {
+                &all_spread::declarations(keyword)[index as usize]
+            }
         }
     }
 
@@ -215,6 +243,74 @@ impl<'a> ElementCandidates<'a> {
     #[inline]
     pub(crate) fn value(self, idx: usize) -> &'a PropertyValue {
         &self.declaration(idx).value
+    }
+
+    /// These candidates with every `all: initial`, `all: inherit` and
+    /// `all: unset` replaced, in its place, by one candidate for each property
+    /// it resets (see [`all_spread`]), each with the precedence of the `all`
+    /// declaration. The replacements are written to `scratch`; candidates
+    /// without such a declaration are returned as they are.
+    ///
+    /// Of the spreading declarations an element keeps the strongest of each
+    /// cascade tier (origin, importance and layer), because a rollback skips
+    /// every declaration of the tier it leaves, so the weaker ones can neither
+    /// win nor be rolled back to. Every one stands for a few hundred
+    /// candidates, which is why [`candidates_of`] counts them that way against
+    /// the candidate limits when they are collected.
+    pub(crate) fn with_all_spread<'b>(
+        self,
+        scratch: &'b mut Vec<Candidate>,
+    ) -> ElementCandidates<'b>
+    where
+        'a: 'b,
+    {
+        let spreads = |candidate: &Candidate| {
+            candidate.key == PropertyKey::All && candidate.rollback == Rollback::None
+        };
+        if !self.decls.iter().any(spreads) {
+            return self;
+        }
+        let mut spreading: Vec<(usize, CssWideKeyword)> = self
+            .decls
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, candidate)| match self.value(idx) {
+                PropertyValue::All(keyword) if spreads(candidate) => Some((idx, *keyword)),
+                _ => None,
+            })
+            .collect();
+        if spreading.len() > 1 {
+            let order = |idx: usize| self.decls[idx].precedence.layered(idx, Rollback::None).0;
+            // Strongest first. The order starts with the tier, so the
+            // declarations of one tier are neighbors.
+            spreading.sort_unstable_by_key(|&(idx, _)| std::cmp::Reverse(order(idx)));
+            spreading.dedup_by_key(|&mut (idx, _)| {
+                let (rank, layer_priority, ..) = order(idx);
+                (rank, layer_priority)
+            });
+            spreading.sort_unstable_by_key(|&(idx, _)| idx);
+        }
+        scratch.clear();
+        for (idx, candidate) in self.decls.iter().enumerate() {
+            if !spreads(candidate) {
+                scratch.push(*candidate);
+            } else if let Ok(at) = spreading.binary_search_by_key(&idx, |&(idx, _)| idx) {
+                let keyword = spreading[at].1;
+                scratch.extend(all_spread::declarations(keyword).iter().zip(0u16..).map(
+                    |(declaration, index)| Candidate {
+                        value: ValueRef::Spread { keyword, index },
+                        key: declaration.key,
+                        rollback: declaration.rollback,
+                        logical: declaration.logical,
+                        precedence: candidate.precedence,
+                    },
+                ));
+            }
+        }
+        ElementCandidates {
+            decls: scratch,
+            source: self.source,
+        }
     }
 
     /// The candidates `keep` accepts, copied into `scratch` in the same order
@@ -395,12 +491,12 @@ impl<'a> CandidateSink<'a> {
         rule: u32,
         precedence: impl Fn(&Declaration) -> Precedence,
     ) -> Result<(), CascadeError> {
-        let declarations = rules[rule as usize].declarations;
-        self.budget.charge(declarations.len())?;
+        let indexed = &rules[rule as usize];
+        self.budget.charge(indexed.candidates)?;
         push_rule_candidates(
             (&mut *self.decls, &mut *self.custom),
             rule,
-            declarations,
+            indexed.declarations,
             precedence,
         );
         Ok(())
@@ -423,12 +519,12 @@ impl<'a> CandidateSink<'a> {
         rule: u32,
         precedence: impl Fn(&Declaration) -> Precedence,
     ) -> Result<(), CascadeError> {
-        let declarations = rules[rule as usize].declarations;
-        self.budget.charge(declarations.len())?;
+        let indexed = &rules[rule as usize];
+        self.budget.charge(indexed.candidates)?;
         push_rule_candidates(
             (&mut pseudo.decls, &mut pseudo.custom),
             rule,
-            declarations,
+            indexed.declarations,
             precedence,
         );
         Ok(())
@@ -449,7 +545,7 @@ impl<'a> CandidateSink<'a> {
         precedence: impl Fn(&Declaration) -> Precedence,
     ) -> Result<(), CascadeError> {
         let declarations = &blocks[block as usize];
-        self.budget.charge(declarations.len())?;
+        self.budget.charge(candidates_of_all(declarations))?;
         // The cache checked that every position in a stored block fits in
         // `u32` when it stored the block.
         for (decl, index) in declarations.iter().zip(0u32..) {
@@ -478,7 +574,7 @@ impl<'a> CandidateSink<'a> {
     ) -> Result<(), CascadeError> {
         let index = u32::try_from(self.locals.len() - self.local_start)
             .map_err(|_| too_many("own declarations of one element"))?;
-        self.budget.charge(1)?;
+        self.budget.charge(candidates_of(&decl))?;
         push_candidate(
             (&mut *self.decls, &mut *self.custom),
             ValueRef::Local(index),
@@ -579,8 +675,8 @@ fn debug_assert_derived_fields(decl: &Declaration) {
     // other value has this slot
     debug_assert_eq!(
         decl.key == PropertyKey::All,
-        matches!(decl.value, PropertyValue::AllRevertLayer),
-        "the All slot belongs to all: revert-layer alone"
+        matches!(decl.value, PropertyValue::All(_)),
+        "the All slot belongs to the all shorthand alone"
     );
 }
 

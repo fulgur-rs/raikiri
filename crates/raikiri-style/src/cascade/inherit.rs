@@ -531,6 +531,10 @@ pub(crate) fn walk_from<D: StyleDom>(
     // Scratch buffer for the candidates that apply to `::first-line`, reused
     // the same way.
     let mut first_line_scratch: Vec<Candidate> = Vec::new();
+    let mut first_line_spread: Vec<Candidate> = Vec::new();
+    // Likewise for the candidates the pre-pass over an element's own
+    // declarations looks at once `all` is spread over the properties.
+    let mut declared_spread: Vec<Candidate> = Vec::new();
     while let Some(entry) = stack.pop() {
         let WalkEntry {
             id,
@@ -587,8 +591,10 @@ pub(crate) fn walk_from<D: StyleDom>(
         if is_element && let Some(elem) = node.as_element() {
             collector.collect(id, &elem, &ancestor_path, &ancestor_filter, &mut input)?;
             // Whether the element's own candidates include `opacity` and
-            // `background-color`, whichever declaration wins.
+            // `background-color`, whichever declaration wins. An `all` stands
+            // for a candidate of each property it resets.
             if let (Some(candidates), _) = input.element(collector.shared()) {
+                let candidates = candidates.with_all_spread(&mut declared_spread);
                 for (position, candidate) in candidates.decls().iter().enumerate() {
                     match candidate.key() {
                         crate::property::PropertyKey::Opacity => out.opacity_specified[idx] = true,
@@ -864,9 +870,13 @@ pub(crate) fn walk_from<D: StyleDom>(
                     // deferred var() values and expanded shorthand candidates.
                     let candidates = if pseudo == PseudoElem::FirstLine {
                         candidates.map(|values| {
-                            values.filtered(&mut first_line_scratch, |candidate| {
-                                first_line_property_applies(candidate.key())
-                            })
+                            values.with_all_spread(&mut first_line_spread).filtered(
+                                &mut first_line_scratch,
+                                |candidate| {
+                                    candidate.is_all_rollback()
+                                        || first_line_property_applies(candidate.key())
+                                },
+                            )
                         })
                     } else {
                         candidates
@@ -1216,8 +1226,7 @@ fn rollback_index(
     flow: Option<FlowMapping>,
 ) -> Option<usize> {
     super::rollback::select_layered_winner(candidates.decls(), |idx, candidate| {
-        if candidate.slot(flow) != slot
-            && !(candidate.is_all_revert_layer() && slot.is_reset_by_all())
+        if candidate.slot(flow) != slot && !(candidate.is_all_rollback() && slot.is_reset_by_all())
         {
             return None;
         }
@@ -1471,6 +1480,8 @@ pub(crate) fn apply_winners(
     mut svg_properties: Option<SvgCollector<'_>>,
     mut svg_relative_presentation_attributes: Option<&mut Vec<SvgStyleProperty>>,
 ) {
+    let mut spread = Vec::new();
+    let candidates = candidates.with_all_spread(&mut spread);
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
     let flow = flow_mapping(candidates, inherited, |key, idx| {
         flow_winner_value(candidates, key, idx, &mut deferred_resolver)
@@ -3738,7 +3749,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderSpacing(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)
-        | PropertyValue::AllRevertLayer
+        | PropertyValue::All(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::ContextualColor(_)
@@ -4375,9 +4386,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.column_width = value.width;
         }
         // Resolved before ordinary winners reach this function.
-        PropertyValue::AllRevertLayer
-        | PropertyValue::CustomProperty(_)
-        | PropertyValue::Deferred(_) => {}
+        PropertyValue::All(_) | PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_) => {}
     }
 }
 

@@ -9990,9 +9990,8 @@ pub enum FilterFunction {
 /// `overflow` and `columns`), which expand to per-longhand markers; the
 /// others (`text-wrap` and the like) do not accept them yet.
 /// `text-align-all`, which has no computed field of its own, does not
-/// yet. The `all` shorthand additionally accepts literal `revert-layer`
-/// through [`PropertyValue::AllRevertLayer`]; its other CSS-wide values and
-/// `var()` form are not supported. Custom
+/// yet. The `all` shorthand accepts the five keywords through
+/// [`PropertyValue::All`]; its `var()` form is not supported. Custom
 /// properties interpret literal `revert` and `revert-layer` during cascading;
 /// their other CSS-wide defaults are not supported.
 ///
@@ -10079,8 +10078,12 @@ pub struct TextIndentValue {
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
-    /// Roll back all ordinary properties except direction and unicode-bidi by layer.
-    AllRevertLayer,
+    /// The `all` shorthand with a CSS-wide keyword, which sets every property
+    /// except `direction` and `unicode-bidi` to that keyword's value (CSS
+    /// Cascade 4 section 3.1). The rollback keywords stay one candidate that
+    /// rolls every slot back; the others are spread over the properties when
+    /// the cascade picks winners.
+    All(CssWideKeyword),
     /// A `--<ident>` custom property. The value remains token-preserving until
     /// the computed-value stage, where `var()` references are resolved.
     CustomProperty(CustomProperty),
@@ -12475,7 +12478,7 @@ impl PropertyValue {
     /// cascade, and as the key in the `@page` cascade result map.
     pub fn key(&self) -> PropertyKey {
         match self {
-            PropertyValue::AllRevertLayer => PropertyKey::All,
+            PropertyValue::All(_) => PropertyKey::All,
             PropertyValue::CustomProperty(_) => PropertyKey::Custom,
             PropertyValue::Deferred(value) => value.key,
             PropertyValue::ContextualColor(value) => value.key,

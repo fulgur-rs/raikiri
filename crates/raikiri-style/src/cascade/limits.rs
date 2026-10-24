@@ -23,7 +23,9 @@ pub struct CascadeLimits {
     /// matches the element or one of its pseudo-elements, of its `style`
     /// attribute and animation, and of its presentational hints. A `style`
     /// attribute stops being parsed as soon as its declarations would pass
-    /// it. This bounds what the cascade holds for the element it resolves.
+    /// it. An `all: initial`, `all: inherit` or `all: unset` counts as one for
+    /// each property it resets. This bounds what the cascade holds for the
+    /// element it resolves.
     ///
     /// Defaults to `Some(65_536)`; elements of ordinary documents collect a
     /// few hundred at most.

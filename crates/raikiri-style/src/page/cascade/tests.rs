@@ -27,31 +27,31 @@ use crate::property::{
     BorderColor, BorderRadius, BorderSpacingValue, BoxDecorationBreak, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath,
     ColumnCountValue, ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue,
-    ContentComponent, CssColor, CssPosition, CssPositionOffset, CustomProperty, Direction,
-    DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow,
-    FlexShorthand, FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize,
-    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSetting,
-    FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox, GridAreaShorthand,
-    GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount,
-    GridShorthand, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
-    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
-    GridTrackSize, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars,
-    HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
-    LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
-    ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
-    PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
-    StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll, TextAlignLast, TextAutospace,
-    TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
-    TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition,
-    TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle, TextEmphasisVEdge,
-    TextIndentLength, TextIndentValue, TextJustify, TextOrientation, TextShadowColor,
-    TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform, TextUnderlineOffset,
-    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
-    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    ContentComponent, CssColor, CssPosition, CssPositionOffset, CssWideKeyword, CustomProperty,
+    Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
+    FlexFlow, FlexShorthand, FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand,
+    FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
+    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
+    FontVariationSetting, FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox,
+    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
+    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
+    LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
+    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor,
+    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand,
+    PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition,
+    SelfAlignmentValue, StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll,
+    TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
+    TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
+    TextDecorationStyle, TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle,
+    TextEmphasisVEdge, TextIndentLength, TextIndentValue, TextJustify, TextOrientation,
+    TextShadowColor, TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform,
+    TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction,
+    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
     WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
@@ -4582,7 +4582,7 @@ macro_rules! property_key_samples {
     }
 
 property_key_samples! {
-    All => PropertyValue::AllRevertLayer,    Color => PropertyValue::Color(RED),
+    All => PropertyValue::All(CssWideKeyword::RevertLayer),    Color => PropertyValue::Color(RED),
     BackgroundColor => PropertyValue::BackgroundColor(BLUE),
     FontFamily => PropertyValue::FontFamily(Arc::new(vec![crate::property::FontFamilyName::generic("serif")])),
     FontSize => PropertyValue::FontSize(Length::Em(2.0)),
@@ -5482,13 +5482,13 @@ fn page_corpus() -> Vec<PropertyValue> {
 macro_rules! property_value_variant_registry {
         ($($variant:ident),+ $(,)?) => {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
-                "AllRevertLayer", "MarginTopInherit", "MarginRightInherit",
+                "All", "MarginTopInherit", "MarginRightInherit",
                 "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
                 "BorderRadiusInherit", "QuotesAuto", "GridArea", "Grid", "TransformOrigin"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
-                    PropertyValue::AllRevertLayer => "AllRevertLayer",
+                    PropertyValue::All(_) => "All",
                     PropertyValue::MarginTopInherit => "MarginTopInherit",
                     PropertyValue::MarginRightInherit => "MarginRightInherit",
                     PropertyValue::MarginBottomInherit => "MarginBottomInherit",
@@ -6092,7 +6092,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
 
     match value {
-            PropertyValue::AllRevertLayer => Some("all layer rollback"),
+            PropertyValue::All(_) => Some("all layer rollback"),
             PropertyValue::FontWeight(fw) => font_weight(*fw),
             PropertyValue::TextAlign(ta) => text_align(*ta),
             PropertyValue::HangingPunctuation(_) => None,
@@ -7369,7 +7369,7 @@ fn page_declarations_carry_no_specified_layer_residue() {
         .into_iter()
         // The all-properties marker is consumed by layer winner selection;
         // it has no isolated value to resolve without the candidate list.
-        .filter(|v| !matches!(v, PropertyValue::AllRevertLayer))
+        .filter(|v| !matches!(v, PropertyValue::All(_)))
         .map(|v| resolve_against_inherited(v, &root, &ctx))
         .map(|v| {
             absolutize_in_page_context(
@@ -8716,6 +8716,36 @@ fn page_rolled_back_writing_mode_does_not_map_logical_margins() {
         declarations.get(&PropertyKey::MarginTop),
         Some(&PropertyValue::MarginTop(px_margin(0.0)))
     );
+}
+
+/// The page context applies `all: revert-layer` alone: the other keywords of
+/// `all` leave the page's own declarations as they are, in the page and in a
+/// margin box.
+#[test]
+fn page_context_leaves_the_other_all_keywords_unapplied() {
+    for keyword in ["initial", "inherit", "unset", "revert"] {
+        let result = page(
+            &format!(
+                "@page {{ margin: 10px; all: {keyword}; \
+                 @top-left {{ content: 'x'; margin-left: 3px; all: {keyword} }} }}"
+            ),
+            &ComputedValues::initial(),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::MarginTop),
+            Some(&PropertyValue::MarginTop(px_margin(10.0))),
+            "{keyword}"
+        );
+        let margin = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        assert!(
+            margin.declarations.iter().any(|declaration| {
+                declaration.value == PropertyValue::MarginLeft(px_margin(3.0))
+            }),
+            "{keyword}"
+        );
+    }
 }
 
 /// Margin boxes map flow-relative margins through their own `direction`,

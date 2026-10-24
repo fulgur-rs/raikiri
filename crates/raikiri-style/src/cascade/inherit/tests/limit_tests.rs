@@ -4,6 +4,7 @@ use crate::cascade::limits::WalkCounts;
 use crate::cascade::{CascadeLimits, CascadeOptions, cascade_with_options};
 use crate::error::{CascadeError, CascadeLimitKind};
 use crate::page::PageContextQuery;
+use crate::property::CssWideKeyword;
 
 const SVG: &str = "http://www.w3.org/2000/svg";
 
@@ -253,6 +254,38 @@ fn every_kind_of_candidate_counts_against_its_element() {
         );
         assert!(walk_within(doc, tree, candidate_limit(2), true).is_ok());
     }
+}
+
+#[test]
+fn an_all_counts_for_each_property_it_resets_unless_it_rolls_back() {
+    let per_all = crate::cascade::all_spread::declarations(CssWideKeyword::Initial).len();
+    let spreading = u32::try_from(per_all).expect("a small count");
+    let rule = small_doc("p { all: initial }", |doc, body| {
+        doc.push_element(body, "p", None);
+    });
+    let pseudo = small_doc("p::before { all: unset }", |doc, body| {
+        doc.push_element(body, "p", None);
+    });
+    let inline = small_doc("", |doc, body| {
+        doc.push_element(body, "p", Some("all: inherit"));
+    });
+    for (doc, tree) in [&rule, &pseudo, &inline] {
+        assert_eq!(
+            exceeded(walk_within(doc, tree, candidate_limit(spreading - 1), true)),
+            (
+                CascadeLimitKind::CandidatesPerElement,
+                u64::from(spreading) - 1,
+                u64::from(spreading)
+            )
+        );
+        assert!(walk_within(doc, tree, candidate_limit(spreading), true).is_ok());
+    }
+    // One candidate rolls everything back.
+    let rollback = small_doc("p { all: revert; all: revert-layer }", |doc, body| {
+        doc.push_element(body, "p", None);
+    });
+    let (doc, tree) = &rollback;
+    assert!(walk_within(doc, tree, candidate_limit(2), true).is_ok());
 }
 
 #[test]

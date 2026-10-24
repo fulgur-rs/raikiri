@@ -1,5 +1,5 @@
 use super::*;
-use crate::property::PropertyValue;
+use crate::property::{CssWideKeyword, PropertyValue};
 use cssparser::ToCss;
 const GREEN: CssColor = CssColor {
     r: 0,
@@ -783,8 +783,13 @@ fn invalid_layer_name_tokens_are_rejected_and_all_marker_serializes() {
     let tree = author_tree(&["@layer a:b{p{color:blue}} @layer a!{p{color:blue}} p{color:red}"]);
     assert_eq!(color(&tree, &MediaContext::print()), RED);
     assert_eq!(
-        crate::property::serialize_value(&PropertyValue::AllRevertLayer).as_deref(),
+        crate::property::serialize_value(&PropertyValue::All(CssWideKeyword::RevertLayer))
+            .as_deref(),
         Some("revert-layer")
+    );
+    assert_eq!(
+        crate::property::serialize_value(&PropertyValue::All(CssWideKeyword::Unset)).as_deref(),
+        Some("unset")
     );
 }
 
