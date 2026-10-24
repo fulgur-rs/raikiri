@@ -55,6 +55,24 @@ fn estimated_heap_bytes_grows_with_segments_and_dashes() {
 }
 
 #[test]
+fn estimated_heap_bytes_counts_nested_groups() {
+    let mut flat = VectorImage::new((10.0, 10.0));
+    flat.root.children.push(Node::Path(square()));
+    let mut inner = Group::new(PaintTransform::translate(1.0, 2.0));
+    inner.children.push(Node::Path(square()));
+    let mut nested = VectorImage::new((10.0, 10.0));
+    nested.root.children.push(Node::Group(inner));
+    // The inner group holds a path of its own, and the outer group holds the
+    // inner group.
+    let path_bytes = Path::heap_bytes(&square());
+    assert!(path_bytes > 0);
+    assert!(
+        nested.estimated_heap_bytes()
+            >= flat.estimated_heap_bytes() + path_bytes - std::mem::size_of::<Node>()
+    );
+}
+
+#[test]
 fn constructors_pick_the_css_defaults() {
     let fill = Fill::new(black());
     assert_eq!((fill.opacity, fill.rule), (1.0, FillRule::NonZero));

@@ -53,10 +53,8 @@ pub enum SvgSceneFeature {
     Mask,
     /// A blend mode other than normal.
     BlendMode,
-    /// An embedded image.
+    /// An embedded image, or text, which the builder does not draw yet.
     Image,
-    /// A text element.
-    Text,
     /// The group of the root `<svg>` element could not be told from the
     /// groups of its content, so the host opacity could not be left out.
     RootOpacity,
@@ -70,8 +68,7 @@ impl SvgSceneFeature {
             Self::ClipPath => "clip paths",
             Self::Mask => "masks",
             Self::BlendMode => "blend modes",
-            Self::Image => "images",
-            Self::Text => "text",
+            Self::Image => "images and text",
             Self::RootOpacity => "separating the root opacity",
         }
     }
@@ -252,36 +249,47 @@ impl SvgDocument {
             Err(error) => return Err(error.into()),
         };
         let tree = parsed.as_ref().unwrap_or(&self.tree);
-        let tree_size = tree.size();
-        let fit = PaintTransform::new(
-            viewport.width / tree_size.width(),
-            0.0,
-            0.0,
-            viewport.height / tree_size.height(),
-            0.0,
-            0.0,
-        );
-        let host_opacity = root_style.opacity;
-        let strips_opacity = host_opacity < 1.0 && !within_four_ulps_of_one(host_opacity);
-        let host_group = if strips_opacity {
-            host_group_depth(tree.root(), host_opacity)
-        } else {
-            None
-        };
-        let mut builder = Builder::new(limits);
-        // The root of the scene counts as a node.
-        builder.charge_node()?;
-        let mut root = Group::new(fit * transform(tree.root().transform()));
-        root.children = builder.children(tree.root(), 0, host_group)?;
-        // A document that draws nothing has no group for the host opacity
-        // either, and needs none.
-        if strips_opacity && host_group.is_none() && !root.children.is_empty() {
-            return unsupported(SvgSceneFeature::RootOpacity);
-        }
-        let mut image = VectorImage::new(size);
-        image.root = root;
-        Ok(image)
+        scene_from_tree(tree, viewport, root_style.opacity, limits)
     }
+}
+
+/// The scene of `tree` placed in `viewport`. The root `<svg>` element of the
+/// tree carries `host_opacity` on behalf of the host; the scene leaves that
+/// opacity out.
+fn scene_from_tree(
+    tree: &usvg::Tree,
+    viewport: SvgViewport,
+    host_opacity: f32,
+    limits: SceneLimits,
+) -> Result<VectorImage, SvgSceneError> {
+    let tree_size = tree.size();
+    let fit = PaintTransform::new(
+        viewport.width / tree_size.width(),
+        0.0,
+        0.0,
+        viewport.height / tree_size.height(),
+        0.0,
+        0.0,
+    );
+    let strips_opacity = host_opacity < 1.0 && !within_four_ulps_of_one(host_opacity);
+    let host_group = if strips_opacity {
+        host_group_depth(tree.root(), host_opacity)
+    } else {
+        None
+    };
+    let mut builder = Builder::new(limits);
+    // The root of the scene counts as a node.
+    builder.charge_node()?;
+    let mut root = Group::new(fit * transform(tree.root().transform()));
+    root.children = builder.children(tree.root(), 0, host_group)?;
+    // A document that draws nothing has no group for the host opacity
+    // either, and needs none.
+    if strips_opacity && host_group.is_none() && !root.children.is_empty() {
+        return unsupported(SvgSceneFeature::RootOpacity);
+    }
+    let mut image = VectorImage::new((viewport.width, viewport.height));
+    image.root = root;
+    Ok(image)
 }
 
 fn check_viewport(viewport: SvgViewport) -> Result<(), SvgError> {
@@ -372,8 +380,12 @@ impl Builder {
                 usvg::Node::Path(path) => {
                     nodes.extend(self.path(path)?.map(Node::Path));
                 }
-                usvg::Node::Image(_) => return unsupported(SvgSceneFeature::Image),
-                usvg::Node::Text(_) => return unsupported(SvgSceneFeature::Text),
+                // The parser here resolves no image reference and reads no
+                // text, so these nodes appear only if that changes; until the
+                // builder draws them, they keep the document on the raster.
+                usvg::Node::Image(_) | usvg::Node::Text(_) => {
+                    return unsupported(SvgSceneFeature::Image);
+                }
             }
         }
         Ok(nodes)
@@ -432,11 +444,10 @@ impl Builder {
         if !path.is_visible() {
             return Ok(None);
         }
+        // The parser marks a path with neither a fill nor a stroke as not
+        // visible, so a visible one has at least one of them.
         let fill = path.fill().map(fill).transpose()?;
         let stroke = path.stroke().map(stroke).transpose()?;
-        if fill.is_none() && stroke.is_none() {
-            return Ok(None);
-        }
         self.charge_node()?;
         self.charge_segments(path.data().len())?;
         let mut node = Path::new(segments(path.data()));

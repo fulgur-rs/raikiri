@@ -711,6 +711,120 @@ fn unused_definitions_do_not_force_the_fallback() {
     assert!(document.scene(VIEWPORT, style(1.0)).is_ok());
 }
 
+/// A tree as the parser alone builds it. A document would not hand some of
+/// these over: it rejects filters, and it resolves no image reference.
+fn raw_tree(body: &str) -> usvg::Tree {
+    usvg::Tree::from_str(
+        &format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">{body}</svg>"##
+        ),
+        &usvg::Options::default(),
+    )
+    .unwrap()
+}
+
+fn scene_of(tree: &usvg::Tree, host_opacity: f32) -> Result<VectorImage, SvgSceneError> {
+    scene_from_tree(tree, VIEWPORT, host_opacity, SceneLimits::default())
+}
+
+#[test]
+fn nodes_the_document_parser_never_hands_over_are_not_drawn() {
+    let image = raw_tree(
+        r##"<image width="10" height="10"
+            href="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'&gt;&lt;rect width='1' height='1'/&gt;&lt;/svg&gt;"/>"##,
+    );
+    assert!(matches!(
+        scene_of(&image, 1.0),
+        Err(SvgSceneError::Unsupported(SvgSceneFeature::Image))
+    ));
+    // A filter is an error and not a fallback, like it is for the raster.
+    let blurred = raw_tree(
+        r##"<filter id="f"><feGaussianBlur stdDeviation="1"/></filter>
+            <rect width="5" height="5" filter="url(#f)"/>"##,
+    );
+    let error = scene_of(&blurred, 1.0).unwrap_err();
+    assert!(matches!(
+        error,
+        SvgSceneError::Svg(SvgError::UnsupportedFilterEffects)
+    ));
+    assert!(!error.falls_back_to_raster());
+}
+
+#[test]
+fn the_host_group_is_told_from_the_content_by_its_place_and_opacity() {
+    let rects = raw_tree(r##"<rect width="5" height="5"/><rect x="6" width="5" height="5"/>"##);
+    // Not one group.
+    assert_eq!(host_group_depth(rects.root(), 0.5), None);
+    // One group of an opacity that is neither the host's nor one.
+    let dimmer = raw_tree(r##"<g opacity="0.3"><rect width="5" height="5"/></g>"##);
+    assert_eq!(host_group_depth(dimmer.root(), 0.5), None);
+    assert_eq!(host_group_depth(dimmer.root(), 0.3), Some(1));
+    // Wrappers of opacity one lead to it, up to the search depth.
+    let wrapped = |wrappers: usize| {
+        raw_tree(&format!(
+            r##"{}<g opacity="0.5"><rect width="5" height="5"/></g>{}"##,
+            r##"<g transform="translate(1)">"##.repeat(wrappers),
+            "</g>".repeat(wrappers),
+        ))
+    };
+    assert_eq!(host_group_depth(wrapped(1).root(), 0.5), Some(2));
+    assert_eq!(
+        host_group_depth(wrapped(ROOT_GROUP_SEARCH_DEPTH).root(), 0.5),
+        None
+    );
+}
+
+#[test]
+fn a_tree_without_the_host_group_asks_for_the_raster() {
+    let dimmer = raw_tree(r##"<g opacity="0.3"><rect width="5" height="5"/></g>"##);
+    assert!(matches!(
+        scene_of(&dimmer, 0.5),
+        Err(SvgSceneError::Unsupported(SvgSceneFeature::RootOpacity))
+    ));
+    // The group that carries the host opacity is found and left out.
+    let scene = scene_of(&dimmer, 0.3).unwrap();
+    // Only the root of the scene is left, and the path is its child.
+    assert_eq!(groups(&scene.root).len(), 1);
+    assert_eq!(paths(&scene.root).len(), 1);
+    assert_eq!(scene.root.opacity, 1.0);
+    // Nothing is drawn, so nothing has to be told apart.
+    let empty = raw_tree(r##"<rect width="5" height="5" fill="none"/>"##);
+    assert!(scene_of(&empty, 0.5).unwrap().root.children.is_empty());
+}
+
+fn many_selectors() -> SvgDocument {
+    // More selector matches than the style preparation accepts.
+    let source = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><style>{}</style>{}</svg>"##,
+        "rect { fill:red }".repeat(257),
+        r##"<rect width="1" height="1"/>"##.repeat(256),
+    );
+    SvgDocument::parse(source.as_bytes()).unwrap()
+}
+
+#[test]
+fn a_hidden_root_keeps_an_empty_scene_where_a_visible_one_is_rejected() {
+    let document = many_selectors();
+    let hidden = SvgRootStyle {
+        visible: false,
+        ..SvgRootStyle::default()
+    };
+    let scene = document.scene(VIEWPORT, hidden).unwrap();
+    assert!(scene.root.children.is_empty());
+    let raster = document
+        .rasterize_at_css_pixel_scale(VIEWPORT, hidden, None)
+        .unwrap();
+    assert!(raster.rgba.iter().all(|&byte| byte == 0));
+    // The same document is rejected, as the raster rejects it.
+    let error = document.scene(VIEWPORT, style(1.0)).unwrap_err();
+    assert!(matches!(
+        error,
+        SvgSceneError::Svg(SvgError::InvalidDocument(ref message))
+            if message.contains("selector freezing resource limit")
+    ));
+    assert!(!error.falls_back_to_raster());
+}
+
 // ── Limits and invalid requests ─────────────────────────────
 
 fn limited(document: &SvgDocument, limits: SceneLimits) -> Result<VectorImage, SvgSceneError> {
@@ -839,7 +953,6 @@ fn errors_describe_themselves() {
         SvgSceneFeature::ClipPath,
         SvgSceneFeature::BlendMode,
         SvgSceneFeature::Image,
-        SvgSceneFeature::Text,
         SvgSceneFeature::RootOpacity,
     ] {
         assert!(!feature.name().is_empty());
