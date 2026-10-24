@@ -8,7 +8,7 @@
 //! (counters, `string()`, `element()` and quotes) and shaped with the
 //! document's fonts.
 
-use crate::generated_content::format_counter;
+use crate::generated_content::{QuoteDepth, format_counter};
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
 use crate::paint_rules::OverflowClipGeometry;
@@ -19,7 +19,7 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
-    CssColor, FontFamilyName, OverflowValue, OverflowXY, PropertyKey, PropertyValue, QuoteKeyword,
+    CssColor, FontFamilyName, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
     StringFetchMode, TextAlign, TextShadowColor, VerticalAlign, VisualBox, WritingMode,
     ZIndexValue,
 };
@@ -923,21 +923,6 @@ fn margin_counter_value(
     base.saturating_add(increment.unwrap_or(0))
 }
 
-fn margin_box_quotes(style: &ComputedValues) -> Vec<(String, String)> {
-    if style.quotes.is_empty() && style.quotes_auto {
-        // CSS Content's initial `quotes:auto` uses typographic pairs.
-        return vec![
-            ("“".to_string(), "”".to_string()),
-            ("‘".to_string(), "’".to_string()),
-        ];
-    }
-    style
-        .quotes
-        .iter()
-        .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
-        .collect()
-}
-
 /// The document-wide values that page-margin `element()` and `string()`
 /// references show, keyed by name.
 ///
@@ -1060,12 +1045,13 @@ fn resolved_margin_content(
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
     context: MarginBoxPageContext,
-    quotes: &[(String, String)],
+    quotes: &[(SmolStr, SmolStr)],
+    quotes_auto: bool,
     values: &MarginBoxNamedValues,
 ) -> (String, Vec<(Range<usize>, CounterStyle)>) {
     let mut deferred = Vec::new();
     let mut text = String::new();
-    let mut quote_depth = 0_usize;
+    let mut quote_depth = QuoteDepth::default();
     let mut push_counter = |text: &mut String, name: &str, style: &CounterStyle| {
         let start = text.len();
         let value = margin_counter_value(cascade, page, rule, name, context);
@@ -1118,23 +1104,9 @@ fn resolved_margin_content(
             ContentComponent::String { name, .. } => {
                 text.push_str(named_string_value(document, cascade, values, name.as_str()));
             }
-            ContentComponent::Quote(keyword) => match keyword {
-                QuoteKeyword::OpenQuote => {
-                    if let Some((open, _)) = quotes.get(quote_depth) {
-                        text.push_str(open);
-                    }
-                    quote_depth = quote_depth.saturating_add(1);
-                }
-                QuoteKeyword::CloseQuote => {
-                    quote_depth = quote_depth.saturating_sub(1);
-                    if let Some((_, close)) = quotes.get(quote_depth) {
-                        text.push_str(close);
-                    }
-                }
-                QuoteKeyword::NoOpenQuote => quote_depth = quote_depth.saturating_add(1),
-                QuoteKeyword::NoCloseQuote => quote_depth = quote_depth.saturating_sub(1),
-                _ => {}
-            },
+            ContentComponent::Quote(keyword) => {
+                text.push_str(quote_depth.apply(*keyword, quotes, quotes_auto));
+            }
             // Images, attributes, and target-dependent content need resources
             // or a document-wide generated-content pass. They remain absent
             // rather than leaking their URL/function spelling.
@@ -1153,7 +1125,6 @@ fn margin_box_content(
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
 ) -> (String, Vec<DeferredSlot>) {
-    let quotes = margin_box_quotes(style);
     let (text, deferred) = resolved_margin_content(
         &style.content,
         document,
@@ -1161,7 +1132,8 @@ fn margin_box_content(
         page,
         rule,
         context,
-        &quotes,
+        &style.quotes,
+        style.quotes_auto,
         values,
     );
     let registry = (!deferred.is_empty()).then(|| {

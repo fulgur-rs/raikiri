@@ -1177,6 +1177,24 @@ fn margin_box_quotes_follow_auto_and_the_css_wide_keywords() {
 }
 
 #[test]
+fn margin_box_quotes_repeat_the_last_pair_and_nest_the_auto_marks() {
+    let content =
+        "content: open-quote open-quote open-quote 'x' close-quote close-quote close-quote";
+    let page = |margin_box: &str| {
+        single_content(&format!(
+            "@page {{ margin: 40px; @top-left {{ {content}; {margin_box} }} }}"
+        ))
+    };
+    // A depth past the last pair of a list repeats that pair.
+    assert_eq!(page("quotes: '<' '>'"), "<<<x>>>");
+    assert_eq!(page("quotes: '<' '>' '[' ']'"), "<[[x]]>");
+    // `auto` nests the way body content does: the outer marks at depth zero
+    // and the inner marks at every depth below it.
+    assert_eq!(page("quotes: auto"), "“‘‘x’’”");
+    assert_eq!(page("quotes: none"), "x");
+}
+
+#[test]
 fn named_strings_and_running_elements_resolve_to_document_text() {
     let mut doc = engine_document();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
