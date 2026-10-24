@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Point as StylePoint; // taffy-boundary-lint:ignore: Point<Overflow> is style input
+use taffy::Point as StylePoint;
 
 /// A box in a positioning area that spans 10..110 of its container.
 fn axis_box(

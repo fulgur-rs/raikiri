@@ -11,7 +11,7 @@ use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, build_rule_tree, cascade};
 use taffy::CoreStyle;
 use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the Taffy tree traits of the session take Taffy's id
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
+use taffy::Size as StyleSize;
 
 pub(crate) fn fixture() -> (Document, raikiri_style::CascadeResult, usize, usize) {
     fixture_with_styles("display:flex", "width:31px;height:7px")

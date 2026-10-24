@@ -22,7 +22,12 @@ import unittest
 from pathlib import Path
 
 from taffy_boundary_lint import (
+    GENERIC_GEOMETRY,
+    INPUT_CLASSES,
+    INPUT_NAMES,
     OUTPUT_NAMES,
+    OWNED_INPUT_NAMES,
+    TAFFY_MODULES,
     TokenizeError,
     main,
     scan_source,
@@ -81,9 +86,19 @@ class UseTreeTests(unittest.TestCase):
         self.assertEqual(_names("use taffy::NodeId as TaffyNodeId;\n"), ["NodeId"])
         self.assertEqual(_names("use taffy::{Layout as TaffyLayout, Line as TaffyLine};\n"), ["Layout", "Line"])
 
-    def test_input_side_names_are_not_counted(self) -> None:
+    def test_input_side_names_are_counted(self) -> None:
         src = "use taffy::{CoreStyle, Dimension, Display, LengthPercentage, Style, compute_leaf_layout};\n"
-        self.assertEqual(_names(src), [])
+        self.assertEqual(
+            _names(src),
+            ["CoreStyle", "Dimension", "Display", "LengthPercentage", "Style", "compute_leaf_layout"],
+        )
+
+    def test_input_and_output_names_in_one_import_are_both_counted(self) -> None:
+        self.assertEqual(_names("use taffy::{Size, Dimension, tree::NodeId};\n"), ["Size", "Dimension", "NodeId"])
+
+    def test_alias_of_a_generic_geometry_name_is_counted_without_a_marker(self) -> None:
+        src = "use taffy::Size as StyleSize;\nuse taffy::{Rect as StyleRect, Point as StylePoint, Line as StyleLine};\n"
+        self.assertEqual(_names(src), ["Size", "Rect", "Point", "Line"])
 
     def test_enum_variant_import_counts_once_per_leaf(self) -> None:
         self.assertEqual(_names("use taffy::AvailableSpace::{Definite, MaxContent};\n"), ["AvailableSpace"] * 2)
@@ -91,7 +106,7 @@ class UseTreeTests(unittest.TestCase):
     def test_multi_line_import_is_counted_per_item_with_its_own_line(self) -> None:
         src = "use taffy::{\n    Size,\n    Dimension,\n    Point,\n};\n"
         scan = scan_source("x.rs", src)
-        self.assertEqual([(o.name, o.line) for o in scan.counted], [("Size", 2), ("Point", 4)])
+        self.assertEqual([(o.name, o.line) for o in scan.counted], [("Size", 2), ("Dimension", 3), ("Point", 4)])
 
     def test_other_crates_with_the_same_names_are_not_counted(self) -> None:
         src = "use crate::taffy::Size;\nuse raikiri_layout_geometry::{Size, Point};\nuse std::collections::HashMap;\n"
@@ -108,10 +123,14 @@ class UseTreeTests(unittest.TestCase):
     def test_raw_identifier_in_an_import_is_read(self) -> None:
         self.assertEqual(_names("use taffy::{r#Line, Size};\n"), ["Line", "Size"])
 
-    def test_enum_variant_with_an_output_type_name_is_not_a_type(self) -> None:
-        # GridPlacement::Line is the input-side grid placement variant.
-        self.assertEqual(_names("use taffy::GridPlacement::Line;\nlet p = taffy::GridPlacement::Line(1);\n"), [])
-        self.assertEqual(_names("let q = taffy::style::GridPlacement::Line(2);\n"), [])
+    def test_enum_variant_with_an_output_type_name_is_not_that_type(self) -> None:
+        # GridPlacement::Line is the input-side grid placement variant: it counts as
+        # the enum, not as the generic `Line` geometry type.
+        self.assertEqual(
+            _names("use taffy::GridPlacement::Line;\nlet p = taffy::GridPlacement::Line(1);\n"),
+            ["GridPlacement", "GridPlacement"],
+        )
+        self.assertEqual(_names("let q = taffy::style::GridPlacement::Line(2);\n"), ["GridPlacement"])
 
     def test_importing_the_crate_or_a_module_is_counted(self) -> None:
         for src in (
@@ -119,14 +138,15 @@ class UseTreeTests(unittest.TestCase):
             "use taffy::{self as t};\n",
             "use taffy::tree;\n",
             "use taffy::geometry::{self};\n",
-            "use taffy::{style, Dimension};\n",
         ):
             names = _names(src)
             self.assertEqual(len(names), 1, src)
             self.assertEqual(names[0], "<module>", src)
+        self.assertEqual(_names("use taffy::{style, Dimension};\n"), ["<module>", "Dimension"])
 
     def test_importing_a_function_or_a_trait_is_not_a_module_import(self) -> None:
-        self.assertEqual(_names("use taffy::{compute_leaf_layout, TraversePartialTree};\nuse taffy::prelude::TaffyAuto;\n"), [])
+        src = "use taffy::{compute_leaf_layout, TraversePartialTree};\nuse taffy::prelude::TaffyAuto;\n"
+        self.assertEqual(_names(src), ["compute_leaf_layout", "TraversePartialTree", "TaffyAuto"])
 
     def test_use_inside_a_function_body(self) -> None:
         self.assertEqual(_names("fn f() {\n    use taffy::geometry::Size;\n}\n"), ["Size"])
@@ -152,9 +172,30 @@ class InlinePathTests(unittest.TestCase):
     def test_module_qualified_path(self) -> None:
         self.assertEqual(_names("fn f(i: taffy::tree::LayoutInput) -> taffy::tree::LayoutOutput {}\n"), ["LayoutInput", "LayoutOutput"])
 
-    def test_algorithm_calls_and_traits_are_not_counted(self) -> None:
+    def test_algorithm_calls_and_traits_are_counted(self) -> None:
         src = "taffy::compute_root_layout(tree, id, space);\nimpl taffy::LayoutPartialTree for T {}\n"
-        self.assertEqual(_names(src), [])
+        self.assertEqual(_names(src), ["compute_root_layout", "LayoutPartialTree"])
+
+    def test_function_path_through_a_module_is_counted_by_its_last_segment(self) -> None:
+        src = "let a = taffy::compute::compute_leaf_layout(t, i, &x);\nlet b = taffy::style_helpers::length(1.0);\n"
+        self.assertEqual(_names(src), ["compute_leaf_layout", "length"])
+        self.assertEqual(_names("use taffy::style_helpers::length as taffy_length;\n"), ["length"])
+
+    def test_name_that_is_in_no_table_is_counted_all_the_same(self) -> None:
+        self.assertEqual(
+            _names("let a = taffy::compute_something_else(1);\ntaffy::util::print_tree(&t, id);\n"),
+            ["compute_something_else", "print_tree"],
+        )
+        self.assertEqual(_names("use taffy::{ParseError, SomeFutureType};\n"), ["ParseError", "SomeFutureType"])
+        self.assertEqual(_names("let e: taffy::parse::ParseError;\n"), ["ParseError"])
+
+    def test_a_path_that_ends_at_a_module_is_not_a_name(self) -> None:
+        self.assertEqual(_names("fn f() -> taffy::tree {}\n"), [])
+        self.assertEqual(_names("let a = taffy;\n"), [])
+
+    def test_variant_of_an_input_enum_counts_the_enum(self) -> None:
+        src = "let a = taffy::Display::None;\nlet b = taffy::style::AlignItems::Center;\nlet c: taffy::Style<SmolStr>;\n"
+        self.assertEqual(_names(src), ["Display", "AlignItems", "Style"])
 
     def test_turbofish_stops_the_path(self) -> None:
         self.assertEqual(_names("let z = taffy::Size::<f32>::ZERO;\n"), ["Size"])
@@ -178,10 +219,10 @@ class InlinePathTests(unittest.TestCase):
 
 class IgnoreMarkerTests(unittest.TestCase):
     def test_marker_with_reason_excludes_the_occurrence(self) -> None:
-        src = "use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input\nuse taffy::Point;\n"
+        src = "use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the tree traits take Taffy's id\nuse taffy::Point;\n"
         scan = scan_source("x.rs", src)
         self.assertEqual([o.name for o in scan.counted], ["Point"])
-        self.assertEqual([o.name for o in scan.ignored], ["Size"])
+        self.assertEqual([o.name for o in scan.ignored], ["NodeId"])
 
     def test_marker_without_reason_is_not_honoured_and_is_reported(self) -> None:
         scan = scan_source("x.rs", "use taffy::Size; // taffy-boundary-lint:ignore:\n")
@@ -189,10 +230,42 @@ class IgnoreMarkerTests(unittest.TestCase):
         self.assertEqual(scan.unreasoned_markers, (1,))
 
     def test_marker_applies_to_its_own_line_only(self) -> None:
-        src = "use taffy::{\n    Size, // taffy-boundary-lint:ignore: style input\n    Point,\n};\n"
+        src = "use taffy::{\n    NodeId, // taffy-boundary-lint:ignore: the tree traits take Taffy's id\n    Point,\n};\n"
         scan = scan_source("x.rs", src)
         self.assertEqual([o.name for o in scan.counted], ["Point"])
-        self.assertEqual([o.name for o in scan.ignored], ["Size"])
+        self.assertEqual([o.name for o in scan.ignored], ["NodeId"])
+
+    def test_marker_on_an_input_side_name_is_honoured(self) -> None:
+        src = "use taffy::TraversePartialTree; // taffy-boundary-lint:ignore: the session implements Taffy's tree traits\n"
+        scan = scan_source("x.rs", src)
+        self.assertEqual([o.name for o in scan.ignored], ["TraversePartialTree"])
+        self.assertEqual(scan.counted, ())
+
+    def test_marker_on_a_glob_or_module_import_is_refused_and_reported(self) -> None:
+        src = (
+            "use taffy::prelude::*; // taffy-boundary-lint:ignore: everything\n"
+            "use taffy::style_helpers; // taffy-boundary-lint:ignore: helpers\n"
+        )
+        scan = scan_source("x.rs", src)
+        self.assertEqual([o.name for o in scan.counted], ["*", "<module>"])
+        self.assertEqual(scan.ignored, ())
+        self.assertEqual(scan.refused_markers, (1, 2))
+
+    def test_nested_public_modules_are_module_imports(self) -> None:
+        for src in ("use taffy::tree::traits;\n", "use taffy::compute::detailed_info;\n", "use taffy::tree::traits::{self};\n"):
+            self.assertEqual(_names(src), ["<module>"], src)
+        self.assertEqual(_names("use taffy::tree::traits::LayoutPartialTree;\n"), ["LayoutPartialTree"])
+
+    def test_marker_on_a_generic_geometry_name_is_refused_and_reported(self) -> None:
+        src = (
+            "use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input\n"
+            "use taffy::{Rect as StyleRect, NodeId}; // taffy-boundary-lint:ignore: mixed line\n"
+        )
+        scan = scan_source("x.rs", src)
+        self.assertEqual([(o.name, o.line) for o in scan.counted], [("Size", 1), ("Rect", 2)])
+        self.assertEqual([o.name for o in scan.ignored], ["NodeId"])
+        self.assertEqual(scan.refused_markers, (1, 2))
+        self.assertEqual(scan.unreasoned_markers, ())
 
     def test_marker_on_the_previous_line_is_not_honoured(self) -> None:
         src = "// taffy-boundary-lint:ignore: not on the same line\nuse taffy::Size;\n"
@@ -232,7 +305,7 @@ class RatchetTests(unittest.TestCase):
         _write(self.root, "crates/dom/src/b.rs", "use taffy::Dimension;\n")
         _write(self.root, "crates/dom/src/protocol.rs", "pub use taffy::{LayoutInput, LayoutOutput};\n")
         _write(self.root, "crates/view/src/lib.rs", "use taffy::{Size, Layout};\n")
-        _write(self.root, "baseline.txt", "# pins\n3 crates/dom/src/a.rs\n")
+        _write(self.root, "baseline.txt", "# pins\n3 crates/dom/src/a.rs\n1 crates/dom/src/b.rs\n")
 
     def test_matching_baseline_passes_and_exempt_files_are_not_counted(self) -> None:
         code, out = _run(self.root)
@@ -266,7 +339,7 @@ class RatchetTests(unittest.TestCase):
         self.assertIn("no counted occurrences left", out)
 
     def test_baseline_entry_for_an_exempt_file_fails(self) -> None:
-        _write(self.root, "baseline.txt", "3 crates/dom/src/a.rs\n2 crates/dom/src/protocol.rs\n")
+        _write(self.root, "baseline.txt", "3 crates/dom/src/a.rs\n1 crates/dom/src/b.rs\n2 crates/dom/src/protocol.rs\n")
         code, out = _run(self.root)
         self.assertEqual(code, 1, out)
         self.assertIn("crates/dom/src/protocol.rs", out)
@@ -275,12 +348,94 @@ class RatchetTests(unittest.TestCase):
         _write(
             self.root,
             "crates/dom/src/a.rs",
-            "use taffy::{Size, Point}; // taffy-boundary-lint:ignore: style input\nfn f(_: taffy::Layout) {}\n",
+            "use taffy::{NodeId, LayoutInput}; // taffy-boundary-lint:ignore: the tree traits take Taffy's id\nfn f(_: taffy::Layout) {}\n",
         )
-        _write(self.root, "baseline.txt", "1 crates/dom/src/a.rs\n")
+        _write(self.root, "baseline.txt", "1 crates/dom/src/a.rs\n1 crates/dom/src/b.rs\n")
         code, out = _run(self.root)
         self.assertEqual(code, 0, out)
         self.assertIn("ignored by marker        : 2", out)
+
+    def test_input_side_name_is_pinned_like_an_output_name(self) -> None:
+        code, out = _run(self.root)
+        self.assertEqual(code, 0, out)
+        self.assertIn("input-side names         : 1", out)
+        self.assertIn("output-side names        : 3", out)
+
+    def test_new_input_side_name_in_a_pinned_file_fails(self) -> None:
+        _write(self.root, "crates/dom/src/b.rs", "use taffy::{Dimension, LengthPercentage};\n")
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("crates/dom/src/b.rs: 2 occurrence(s), baseline 1 (+1)", out)
+        self.assertIn("1: use taffy::LengthPercentage  -> no owned name yet (length)", out)
+
+    def test_new_input_side_names_in_a_new_file_fail_with_their_kind(self) -> None:
+        _write(
+            self.root,
+            "crates/dom/src/c.rs",
+            "use taffy::{CoreStyle, Display, FloatContext, TrackSizingFunction, LayoutPartialTree};\n"
+            "fn f(s: &taffy::Style) { taffy::compute_leaf_layout(a, b, c); }\n",
+        )
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("crates/dom/src/c.rs: 7 occurrence(s), no baseline entry (+7)", out)
+        for hint in (
+            "no owned name yet (style trait)",
+            "no owned name yet (keyword or small value)",
+            "no owned name yet (float or block state)",
+            "no owned name yet (grid vocabulary)",
+            "no owned name yet (tree trait)",
+            "no owned name yet (Style struct)",
+            "no owned name yet (algorithm entry point)",
+        ):
+            self.assertIn(hint, out)
+        self.assertIn("read the", out)
+
+    def test_style_input_alias_of_a_generic_name_fails_and_says_it_has_no_owned_name_yet(self) -> None:
+        _write(self.root, "crates/dom/src/c.rs", "use taffy::Size as StyleSize;\n")
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("raikiri_layout_geometry::Size for layout geometry (none yet for style input)", out)
+
+    def test_marker_does_not_hide_a_style_input_alias(self) -> None:
+        _write(
+            self.root,
+            "crates/dom/src/c.rs",
+            "use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input\n",
+        )
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("crates/dom/src/c.rs: 1 occurrence(s), no baseline entry (+1)", out)
+        self.assertIn("crates/dom/src/c.rs:1: `taffy-boundary-lint:ignore:` is not honoured on Size, Rect, Point, Line", out)
+
+    def test_a_taffy_name_in_no_table_fails_in_a_new_file(self) -> None:
+        _write(self.root, "crates/dom/src/c.rs", "use taffy::SomeFutureType;\n")
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("1: use taffy::SomeFutureType  -> no owned name yet (not in the name tables)", out)
+        self.assertIn("input-side names         : 1", out)
+        self.assertIn("unclassified names       : 1", out)
+
+    def test_adding_a_glob_import_to_a_pinned_file_fails(self) -> None:
+        _write(self.root, "crates/dom/src/b.rs", "use taffy::Dimension;\nuse taffy::prelude::*;\n")
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("crates/dom/src/b.rs: 2 occurrence(s), baseline 1 (+1)", out)
+        self.assertIn("2: use taffy::prelude::*  -> import the owned names explicitly", out)
+
+    def test_owned_helper_traits_are_named_in_the_hint(self) -> None:
+        _write(self.root, "crates/raikiri-dom/src/c.rs", "use taffy::{MaybeResolve, ResolveOrZero, MaybeMath};\n")
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("-> crate::layout::taffy_adapter::MaybeResolve", out)
+        self.assertIn("-> crate::layout::taffy_adapter::ResolveOrZero", out)
+        self.assertIn("-> raikiri_layout_geometry::MaybeMath", out)
+
+    def test_crate_private_helper_traits_are_not_named_outside_raikiri_dom(self) -> None:
+        _write(self.root, "crates/other/src/lib.rs", "use taffy::{MaybeResolve, MaybeMath};\n")
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("1: use taffy::MaybeResolve  -> no owned name outside raikiri-dom yet", out)
+        self.assertIn("1: use taffy::MaybeMath  -> raikiri_layout_geometry::MaybeMath", out)
 
     def test_failure_lists_at_most_a_dozen_occurrences_per_file(self) -> None:
         body = "".join(f"let a{i}: taffy::Size<f32>;\n" for i in range(20))
@@ -293,14 +448,14 @@ class RatchetTests(unittest.TestCase):
         (self.root / "baseline.txt").unlink()
         code, out = _run(self.root, "--print-counts")
         self.assertEqual(code, 0, out)
-        self.assertEqual(out.strip(), "3 crates/dom/src/a.rs")
+        self.assertEqual(out.strip(), "3 crates/dom/src/a.rs\n1 crates/dom/src/b.rs")
 
     def test_update_baseline_lowers_and_drops_zero_entries(self) -> None:
         _write(self.root, "crates/dom/src/a.rs", "use taffy::Size;\n")
         _write(self.root, "crates/dom/src/c.rs", "use raikiri_layout_geometry::Size;\n")
         code, out = _run(self.root, "--update-baseline")
         self.assertEqual(code, 0, out)
-        self.assertEqual((self.root / "baseline.txt").read_text(), "# pins\n\n1 crates/dom/src/a.rs\n")
+        self.assertEqual((self.root / "baseline.txt").read_text(), "# pins\n\n1 crates/dom/src/a.rs\n1 crates/dom/src/b.rs\n")
         code, out = _run(self.root)
         self.assertEqual(code, 0, out)
 
@@ -388,7 +543,11 @@ class NameTableTests(unittest.TestCase):
         protocol = self._reexported(protocol_source, r"pub\(crate\)") | set(
             re.findall(r"^pub\(crate\) (?:struct|enum|type|trait) (\w+)", protocol_source, re.M)
         )
-        counted_geometry = set()
+        counted_geometry = {
+            hint.removeprefix("raikiri_layout_geometry::")
+            for hint in OWNED_INPUT_NAMES.values()
+            if hint.startswith("raikiri_layout_geometry::")
+        }
         for name, hint in OUTPUT_NAMES.items():
             if hint.startswith("raikiri_layout_geometry::"):
                 owned = hint.removeprefix("raikiri_layout_geometry::")
@@ -397,13 +556,68 @@ class NameTableTests(unittest.TestCase):
             elif hint.startswith("crate::layout::protocol::"):
                 owned = hint.removeprefix("crate::layout::protocol::")
                 self.assertIn(owned, protocol, f"{name} points at a name the protocol module does not define")
-        # `MaybeMath` is a helper trait, not an output type, so no counted name maps to it.
-        for exported in geometry - {"MaybeMath"}:
+        for exported in geometry:
             self.assertIn(exported, counted_geometry, f"geometry crate exports {exported} but no counted name moves to it")
+
+    def test_owned_input_names_exist_where_the_hints_point(self) -> None:
+        self.assertLessEqual(set(OWNED_INPUT_NAMES), set(INPUT_NAMES))
+        geometry = self._reexported(self._source("crates/raikiri-layout-geometry/src/lib.rs"), "pub")
+        adapter = self._source("crates/raikiri-dom/src/layout/taffy_adapter.rs")
+        resolve = self._source("crates/raikiri-dom/src/layout/taffy_adapter/resolve.rs")
+        reexported = self._reexported(adapter, r"pub\(crate\)")
+        for name, hint in OWNED_INPUT_NAMES.items():
+            if hint.startswith("raikiri_layout_geometry::"):
+                self.assertIn(hint.removeprefix("raikiri_layout_geometry::"), geometry, name)
+            else:
+                self.assertEqual(hint, f"crate::layout::taffy_adapter::{name}")
+                self.assertIn(name, reexported, f"{name} is not re-exported by the adapter module")
+                self.assertRegex(resolve, rf"(?m)^pub\(crate\) trait {name}\b", name)
 
     def test_every_counted_name_has_a_replacement_hint(self) -> None:
         for name, hint in OUTPUT_NAMES.items():
             self.assertTrue(hint, name)
+
+    def test_tables_do_not_overlap_and_names_are_listed_once(self) -> None:
+        self.assertEqual(set(OUTPUT_NAMES) & set(INPUT_NAMES), set())
+        self.assertEqual(sum(len(names) for names in INPUT_CLASSES.values()), len(INPUT_NAMES))
+
+    def test_every_input_kind_is_named_and_non_empty(self) -> None:
+        for kind, names in INPUT_CLASSES.items():
+            self.assertTrue(kind, kind)
+            self.assertTrue(names, kind)
+
+    def test_input_names_are_types_or_plain_function_names(self) -> None:
+        for name in INPUT_NAMES:
+            self.assertRegex(name, r"^(?:[A-Z][A-Za-z0-9]*|[a-z][a-z0-9_]*)$", name)
+        # A function entry is matched by the last segment of a path without a type, so it
+        # must not be readable as a module name.
+        self.assertEqual({n for n in INPUT_NAMES if n[:1].islower()} & TAFFY_MODULES, set())
+
+    def test_the_style_traits_lengths_and_style_struct_are_counted(self) -> None:
+        for name in (
+            "CoreStyle",
+            "BlockContainerStyle",
+            "BlockItemStyle",
+            "OofItemStyle",
+            "FlexboxContainerStyle",
+            "FlexboxItemStyle",
+            "GridContainerStyle",
+            "GridItemStyle",
+            "Dimension",
+            "LengthPercentage",
+            "LengthPercentageAuto",
+            "CompactLength",
+            "MaybeResolve",
+            "ResolveOrZero",
+            "Style",
+            "FloatContext",
+            "compute_block_align_content_offset",
+        ):
+            self.assertIn(name, INPUT_NAMES)
+
+    def test_generic_geometry_names_stay_output_side(self) -> None:
+        self.assertEqual(GENERIC_GEOMETRY, {"Size", "Point", "Line", "Rect"})
+        self.assertLessEqual(GENERIC_GEOMETRY, set(OUTPUT_NAMES))
 
     def test_rect_and_layout_move_to_the_edges_and_box_layout_names(self) -> None:
         self.assertTrue(OUTPUT_NAMES["Rect"].endswith("::Edges"))

@@ -23,7 +23,7 @@ use crate::layout::test_support::{
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Line, Size};
 use taffy::LengthPercentageAuto;
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::Size as StyleSize;
 
 /// What the box under test holds.
 #[derive(Clone, Copy)]

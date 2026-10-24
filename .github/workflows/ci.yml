@@ -130,7 +130,7 @@ jobs:
 
       - name: Taffy boundary lint
         # Same command as scripts/gate.sh. Pure Python; the per-file baseline
-        # of remaining Taffy output-type uses may only go down.
+        # of remaining Taffy name uses may only go down.
         run: scripts/taffy-boundary-lint.sh
 
       - name: Test (workspace, locked)

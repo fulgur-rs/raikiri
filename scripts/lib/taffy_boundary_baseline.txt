@@ -1,9 +1,11 @@
 # scripts/lib/taffy_boundary_baseline.txt — pinned per-file counts for
 # scripts/taffy-boundary-lint.sh.
 #
-# Each line is `<count> <path>`: how many times that file still names a Taffy
-# output type (geometry, layout results, the layout call protocol, the node
-# handle, the cache) through a `taffy::` path. See
+# Each line is `<count> <path>`: how many times that file still names Taffy's
+# vocabulary through a `taffy::` path. That covers the output side (geometry,
+# layout results, the layout call protocol, the node handle, the cache) and the
+# input side (style traits, lengths, keyword enums, `Style`, float and grid
+# state, tree traits, algorithm entry points). See
 # scripts/lib/taffy_boundary_lint.py for exactly what is counted and why.
 #
 # The numbers only go down. A run fails when a file has more occurrences than
@@ -12,6 +14,99 @@
 #   scripts/taffy-boundary-lint.sh --update-baseline
 # which refuses to run if any file has more uses than pinned. A file that
 # reaches zero loses its line; rename the line by hand when a file moves.
-# Do not raise a number to make a regression pass; use the owned names, or mark
-# a real exception on its line with `// taffy-boundary-lint:ignore: <reason>`.
+# Do not raise a number to make a regression pass; use an owned name where one
+# exists, or mark a real exception on its line with
+# `// taffy-boundary-lint:ignore: <reason>`.
 
+1 crates/raikiri-dom/src/document/tests/taffy_filter_tests.rs
+4 crates/raikiri-dom/src/layout/block_axis_style.rs
+11 crates/raikiri-dom/src/layout/box_style_data/recipes.rs
+25 crates/raikiri-dom/src/layout/box_style_data/recipes/tests.rs
+3 crates/raikiri-dom/src/layout/bridge.rs
+12 crates/raikiri-dom/src/layout/bridge/settled.rs
+19 crates/raikiri-dom/src/layout/bridge/tests.rs
+3 crates/raikiri-dom/src/layout/bridge/tests/content_limit_bridge_tests.rs
+4 crates/raikiri-dom/src/layout/cache_context/tests/restore_tests.rs
+4 crates/raikiri-dom/src/layout/compact_length.rs
+73 crates/raikiri-dom/src/layout/dispatch.rs
+1 crates/raikiri-dom/src/layout/dispatch/axis_adapter.rs
+12 crates/raikiri-dom/src/layout/dispatch/block_flow.rs
+23 crates/raikiri-dom/src/layout/dispatch/block_flow/children.rs
+6 crates/raikiri-dom/src/layout/dispatch/block_flow/context.rs
+3 crates/raikiri-dom/src/layout/dispatch/block_flow/context/tests.rs
+2 crates/raikiri-dom/src/layout/dispatch/block_flow/positioned.rs
+3 crates/raikiri-dom/src/layout/dispatch/block_flow/sizing.rs
+7 crates/raikiri-dom/src/layout/dispatch/block_flow/style_input.rs
+20 crates/raikiri-dom/src/layout/dispatch/block_flow/tests.rs
+9 crates/raikiri-dom/src/layout/dispatch/content_limits.rs
+9 crates/raikiri-dom/src/layout/dispatch/content_limits/tests.rs
+2 crates/raikiri-dom/src/layout/dispatch/content_limits/tests/cache_context_tests.rs
+6 crates/raikiri-dom/src/layout/dispatch/content_limits/tests/scoped_tests.rs
+5 crates/raikiri-dom/src/layout/dispatch/content_limits/tests/style_view_tests.rs
+4 crates/raikiri-dom/src/layout/dispatch/grid_oof.rs
+9 crates/raikiri-dom/src/layout/dispatch/intrinsic_scopes.rs
+3 crates/raikiri-dom/src/layout/dispatch/oof.rs
+4 crates/raikiri-dom/src/layout/dispatch/orthogonal_flow.rs
+5 crates/raikiri-dom/src/layout/dispatch/replaced_size.rs
+2 crates/raikiri-dom/src/layout/dispatch/replaced_size/tests.rs
+16 crates/raikiri-dom/src/layout/dispatch/replaced_size/tests/intrinsic_keyword_tests.rs
+9 crates/raikiri-dom/src/layout/dispatch/replaced_size/tests/ratio_box_tests.rs
+25 crates/raikiri-dom/src/layout/dispatch/tests.rs
+4 crates/raikiri-dom/src/layout/dispatch/tests/intrinsic_scope_tests.rs
+3 crates/raikiri-dom/src/layout/dispatch/tests/local_sizing_tests.rs
+4 crates/raikiri-dom/src/layout/dispatch/tests/style_view_tests.rs
+5 crates/raikiri-dom/src/layout/dispatch/vertical_block.rs
+1 crates/raikiri-dom/src/layout/dispatch/vertical_block/tests.rs
+6 crates/raikiri-dom/src/layout/dispatch/vertical_block/tests/scoped_override_tests.rs
+25 crates/raikiri-dom/src/layout/dispatch/vertical_block/tests/view_tests.rs
+2 crates/raikiri-dom/src/layout/dispatch/vertical_oof.rs
+8 crates/raikiri-dom/src/layout/dispatch/vertical_oof/alignment.rs
+1 crates/raikiri-dom/src/layout/dispatch/vertical_oof/alignment/tests.rs
+1 crates/raikiri-dom/src/layout/fixed.rs
+35 crates/raikiri-dom/src/layout/ifc/boxes.rs
+1 crates/raikiri-dom/src/layout/ifc/boxes/tests/clear_break_tests.rs
+2 crates/raikiri-dom/src/layout/ifc/boxes/tests/vertical_bfc_tests.rs
+4 crates/raikiri-dom/src/layout/ifc/clear_breaks.rs
+1 crates/raikiri-dom/src/layout/ifc/flow.rs
+2 crates/raikiri-dom/src/layout/ifc/flow/tests.rs
+8 crates/raikiri-dom/src/layout/ifc/generated_blocks.rs
+3 crates/raikiri-dom/src/layout/ifc/generated_blocks/tests.rs
+5 crates/raikiri-dom/src/layout/ifc/projection.rs
+3 crates/raikiri-dom/src/layout/ifc/projection/tests.rs
+1 crates/raikiri-dom/src/layout/initial_containing_block.rs
+13 crates/raikiri-dom/src/layout/mod.rs
+22 crates/raikiri-dom/src/layout/multicol.rs
+5 crates/raikiri-dom/src/layout/multicol/break_flow.rs
+3 crates/raikiri-dom/src/layout/multicol/constrained_chain.rs
+2 crates/raikiri-dom/src/layout/multicol/lineless.rs
+2 crates/raikiri-dom/src/layout/multicol/paragraph_group.rs
+1 crates/raikiri-dom/src/layout/multicol/tests.rs
+15 crates/raikiri-dom/src/layout/page_pipeline.rs
+2 crates/raikiri-dom/src/layout/page_pipeline/leading_margins.rs
+2 crates/raikiri-dom/src/layout/page_pipeline/sibling_shifts.rs
+6 crates/raikiri-dom/src/layout/page_pipeline/tests.rs
+13 crates/raikiri-dom/src/layout/page_pipeline/transposed_flow/tests.rs
+1 crates/raikiri-dom/src/layout/relative.rs
+4 crates/raikiri-dom/src/layout/sanitize/tests.rs
+1 crates/raikiri-dom/src/layout/spanner_wrappers.rs
+13 crates/raikiri-dom/src/layout/style_views.rs
+2 crates/raikiri-dom/src/layout/style_views/frozen.rs
+3 crates/raikiri-dom/src/layout/style_views/metadata.rs
+40 crates/raikiri-dom/src/layout/style_views/tests.rs
+28 crates/raikiri-dom/src/layout/style_views/tests/block_view_tests.rs
+6 crates/raikiri-dom/src/layout/style_views/tests/calc_owner_tests.rs
+8 crates/raikiri-dom/src/layout/style_views/tests/foundation_tests.rs
+4 crates/raikiri-dom/src/layout/style_views/tests/physical_memo_tests.rs
+20 crates/raikiri-dom/src/layout/style_views/tests/preparation_tests.rs
+13 crates/raikiri-dom/src/layout/style_views/tests/scoped_override_tests.rs
+24 crates/raikiri-dom/src/layout/table.rs
+1 crates/raikiri-dom/src/layout/table/anonymous/tests.rs
+1 crates/raikiri-dom/src/layout/table/row_moves.rs
+5 crates/raikiri-dom/src/layout/table/tests.rs
+1 crates/raikiri-dom/src/layout/table/tests/border_scope_tests.rs
+1 crates/raikiri-dom/src/layout/test_support.rs
+1 crates/raikiri-dom/src/lib.rs
+8 crates/raikiri-dom/src/node.rs
+15 crates/raikiri-dom/src/node/box_properties.rs
+8 crates/raikiri-dom/src/page_projection/text_runs.rs
+1 crates/raikiri-dom/src/tests.rs

@@ -367,12 +367,13 @@ fi
 echo
 
 echo "-- scripts/taffy-boundary-lint.sh --"
-# Keeps Taffy's layout-result, geometry and layout-call types from spreading
-# further while they are being replaced by the owned names: the remaining uses
-# are pinned per file in scripts/lib/taffy_boundary_baseline.txt and may only go
-# down. See scripts/lib/taffy_boundary_lint.py's module docstring.
+# Keeps Taffy's vocabulary (layout results, geometry and layout-call types, and
+# the style input: traits, lengths, keywords, Style, float and grid state) from
+# spreading further while it is being replaced by owned names: the remaining
+# uses are pinned per file in scripts/lib/taffy_boundary_baseline.txt and may
+# only go down. See scripts/lib/taffy_boundary_lint.py's module docstring.
 if ! "$SCRIPT_DIR/taffy-boundary-lint.sh"; then
-  echo "FAIL: scripts/taffy-boundary-lint.sh found a Taffy output type outside its pinned uses"
+  echo "FAIL: scripts/taffy-boundary-lint.sh found a Taffy name outside its pinned uses"
   FAIL=1
 fi
 echo

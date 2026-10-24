@@ -3,7 +3,7 @@ use crate::layout::style_views::tests::fixture;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use taffy::CoreStyle;
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::Size as StyleSize;
 
 #[test]
 fn batched_content_limits_preserve_unrelated_pass_updates_after_unwind() {

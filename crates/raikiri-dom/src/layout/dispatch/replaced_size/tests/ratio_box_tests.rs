@@ -2,8 +2,8 @@ use super::*;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::dispatch::replaced_size::keyword_bounds;
 use crate::layout::protocol::RequestedAxis;
-use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> and its relatives are style input
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> and its relatives are style input
+use taffy::Rect as StyleRect;
+use taffy::Size as StyleSize;
 use taffy::{BoxSizing, LengthPercentage};
 
 fn inputs(known_width: Option<f32>) -> LayoutInput {

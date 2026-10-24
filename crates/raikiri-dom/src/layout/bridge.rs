@@ -7,8 +7,8 @@ use clamp_warnings::{report_non_finite_rest, report_non_finite_sizes};
 use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 use settled::Settled;
-use taffy::Rect as StyleRect; // taffy-boundary-lint:ignore: Rect<LengthPercentage> is style input
-use taffy::Size as StyleSize; // taffy-boundary-lint:ignore: Size<Dimension> is style input
+use taffy::Rect as StyleRect;
+use taffy::Size as StyleSize;
 
 mod clamp_warnings;
 mod settled;
