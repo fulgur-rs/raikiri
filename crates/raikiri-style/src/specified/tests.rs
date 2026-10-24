@@ -1243,6 +1243,66 @@ fn inherit_from_then_finalize_preserves_cssom_writing_mode() {
     assert_eq!(child.cssom_writing_mode, WritingMode::VerticalRl);
 }
 
+/// An inline box whose writing mode differs from its parent's computes to
+/// `inline-block`; the keywords are compared as written, so `vertical-lr`
+/// inside `vertical-rl` counts.
+#[test]
+fn finalize_makes_an_inline_in_another_writing_mode_an_inline_block() {
+    let modes = [
+        WritingMode::HorizontalTb,
+        WritingMode::VerticalRl,
+        WritingMode::VerticalLr,
+        WritingMode::SidewaysRl,
+        WritingMode::SidewaysLr,
+    ];
+    for parent_mode in modes {
+        let parent = ComputedValues {
+            cssom_writing_mode: parent_mode,
+            ..ComputedValues::initial()
+        };
+        for child_mode in modes {
+            let mut sv = SpecifiedValues::initial();
+            sv.display = DisplayValue::Inline;
+            sv.writing_mode = child_mode;
+            let expected = if child_mode == parent_mode {
+                DisplayValue::Inline
+            } else {
+                DisplayValue::InlineBlock
+            };
+            assert_eq!(
+                sv.finalize(&parent, &CTX).display,
+                expected,
+                "{child_mode:?} in {parent_mode:?}"
+            );
+        }
+    }
+}
+
+/// Only `display: inline` changes with the writing mode: a box that is not
+/// inline keeps its display, and a float is blockified as before.
+#[test]
+fn finalize_leaves_other_displays_alone_in_another_writing_mode() {
+    let parent = ComputedValues::initial();
+    for display in [
+        DisplayValue::Block,
+        DisplayValue::InlineBlock,
+        DisplayValue::InlineFlex,
+        DisplayValue::Flex,
+        DisplayValue::None,
+        DisplayValue::Contents,
+    ] {
+        let mut sv = SpecifiedValues::initial();
+        sv.display = display;
+        sv.writing_mode = WritingMode::VerticalRl;
+        assert_eq!(sv.finalize(&parent, &CTX).display, display);
+    }
+    let mut floated = SpecifiedValues::initial();
+    floated.display = DisplayValue::Inline;
+    floated.writing_mode = WritingMode::VerticalRl;
+    floated.float = FloatValue::Left;
+    assert_eq!(floated.finalize(&parent, &CTX).display, DisplayValue::Block);
+}
+
 /// On the root element, `rem` uses different references in phase 2 and phase 3 (see the spec
 /// quotation in the `SpecifiedValues::finalize_as_root` docs).
 ///
