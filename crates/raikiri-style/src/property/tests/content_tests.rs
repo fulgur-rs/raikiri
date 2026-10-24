@@ -1318,6 +1318,18 @@ fn quotes_is_case_insensitive_on_none() {
 }
 
 #[test]
+fn quotes_auto_is_its_own_value() {
+    // `auto` is not the empty list of `none`: the computed value keeps the
+    // two apart (see `PropertyValue::QuotesAuto`).
+    assert_eq!(parse("auto", "quotes"), Some(PropertyValue::QuotesAuto));
+    assert_eq!(parse("AUTO", "quotes"), Some(PropertyValue::QuotesAuto));
+    assert_ne!(
+        parse("auto", "quotes"),
+        Some(PropertyValue::Quotes(empty_quotes_entries()))
+    );
+}
+
+#[test]
 fn quotes_single_pair() {
     assert_eq!(
         parse(r#""«" "»""#, "quotes"),
@@ -1364,6 +1376,7 @@ fn quotes_key_maps_to_quotes_property_key() {
         PropertyValue::Quotes(empty_quotes_entries()).key(),
         PropertyKey::Quotes
     );
+    assert_eq!(PropertyValue::QuotesAuto.key(), PropertyKey::Quotes);
 }
 
 #[test]

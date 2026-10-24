@@ -3533,6 +3533,7 @@ pub(crate) fn resolve_against_inherited(
         // value, `ComputedValues::quotes` doc) — nothing for phase 2 to
         // resolve.
         | PropertyValue::Quotes(_)
+        | PropertyValue::QuotesAuto
         // `text-shadow`'s per-item lengths (offset-x/offset-y/blur-radius)
         // need the *declaring node's own* font-size (phase 3), not the
         // inheritance parent's — same shape as `LetterSpacing`/`WordSpacing`
@@ -4185,6 +4186,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Quotes(v) => {
             target.quotes_auto = false;
             target.quotes = v;
+        }
+        PropertyValue::QuotesAuto => {
+            target.quotes_auto = true;
+            target.quotes = crate::property::empty_quotes_entries();
         }
         PropertyValue::TextShadow(shadows) => {
             target.text_shadow = crate::specified::SpecifiedTextShadow::Specified(shadows);

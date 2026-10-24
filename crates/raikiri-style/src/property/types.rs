@@ -197,7 +197,8 @@ impl CounterResetValue {
 /// The spec says the initial value of `quotes` "depends on user agent"
 /// (CSS2 §12.3.1), without prescribing specific quote marks. Under our
 /// independent-implementation policy (no imported defaults from another UA),
-/// we also use this empty list when no declaration exists (see [`PropertyValue::Quotes`]).
+/// we also use this empty list when no declaration exists, marked `auto` by the
+/// computed `quotes_auto` flag (see [`PropertyValue::Quotes`]).
 pub(crate) fn empty_quotes_entries() -> Arc<Vec<(SmolStr, SmolStr)>> {
     static EMPTY: OnceLock<Arc<Vec<(SmolStr, SmolStr)>>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
@@ -11172,21 +11173,34 @@ pub enum PropertyValue {
     ///
     /// The spec's initial value is "depends on user agent" (CSS2 §12.3.1); it
     /// does not prescribe concrete quote strings. To keep the implementation
-    /// independent of other user agents' defaults, this implementation represents
-    /// an undeclared initial value as an empty list, just like `none` (see
-    /// [`empty_quotes_entries`]).
+    /// independent of other user agents' defaults, this implementation
+    /// represents an undeclared initial value as an empty list (see
+    /// [`empty_quotes_entries`]), the same list as `none` but with the
+    /// computed `quotes_auto` flag set.
     ///
-    /// **Unsupported (spec-valid)**: `auto` / `match-parent` are keyword
-    /// alternatives that CSS Content 3 §2.4.1 added to the legacy CSS2 §12.3.1
-    /// grammar. Neither is implemented; both are rejected at parse time (the
-    /// `parse_quotes_property` grammar does not accept them, so their
-    /// declarations are silently dropped).
+    /// **`auto`** is [`Self::QuotesAuto`], its own variant: the computed
+    /// value keeps a list-less `auto` apart from an explicit `none`.
+    ///
+    /// **Unsupported (spec-valid)**: `match-parent` is a keyword alternative
+    /// that CSS Content 3 §2.4.1 added to the legacy CSS2 §12.3.1 grammar. It
+    /// is not implemented and is rejected at parse time (the
+    /// `parse_quotes_property` grammar does not accept it, so its
+    /// declaration is silently dropped).
     ///
     /// The [`Arc<Vec<..>>`] wrapper has the same rationale as
     /// [`Self::CounterReset`]: for `* { quotes: "«" "»" }` across N elements,
     /// cascade-winner and inheritance-walk clones become shallow Arc reference
     /// count increments, mitigating DoS risk.
     Quotes(Arc<Vec<(SmolStr, SmolStr)>>),
+    /// `quotes: auto` — the initial value (CSS Content 3 §2.4.1
+    /// <https://www.w3.org/TR/css-content-3/#quotes-property>). It computes
+    /// to an empty list with [`crate::computed::ComputedValues::quotes_auto`] set, which the
+    /// quote keywords of `content` read as the typographic pairs of the
+    /// user agent; an explicit `none` is the same empty list without the flag.
+    /// A CSS-wide keyword resolves to this variant when the source computed
+    /// the initial value, so `inherit` from a parent that never set `quotes`
+    /// keeps the quote marks the parent shows.
+    QuotesAuto,
     /// `text-shadow: none | <shadow>#` — **inherited**, initial: `none`
     /// (CSS Text Decoration Module Level 3 §4
     /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>,
@@ -12638,7 +12652,7 @@ impl PropertyValue {
             PropertyValue::TextOrientation(_) => PropertyKey::TextOrientation,
             PropertyValue::UnicodeBidi(_) => PropertyKey::UnicodeBidi,
             PropertyValue::FontVariantCaps(_) => PropertyKey::FontVariantCaps,
-            PropertyValue::Quotes(_) => PropertyKey::Quotes,
+            PropertyValue::Quotes(_) | PropertyValue::QuotesAuto => PropertyKey::Quotes,
             PropertyValue::TextShadow(_) => PropertyKey::TextShadow,
             PropertyValue::GridTemplateColumns(_) => PropertyKey::GridTemplateColumns,
             PropertyValue::GridTemplateRows(_) => PropertyKey::GridTemplateRows,

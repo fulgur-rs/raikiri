@@ -146,6 +146,9 @@ pub(super) fn parse_counter_reset_property(
 /// Grammar (legacy CSS2 §12.3.1 subset; see [`PropertyValue::Quotes`] docs):
 ///   `quotes = none | [ <string> <string> ]+`
 ///
+/// `auto`, the other keyword of the CSS Content 3 grammar, has no list to
+/// return; the caller in `parse/mod.rs` takes it before this function.
+///
 /// Handle `none` as a top-level alternative first. Then peel off `<string>`
 /// tokens in pairs using LL(1).
 ///

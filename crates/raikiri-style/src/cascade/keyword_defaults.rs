@@ -162,6 +162,11 @@ keyword_defaults! {
     CounterReset, false => PropertyValue::CounterReset(dup(&source.counter_reset));
     CounterIncrement, false => PropertyValue::CounterIncrement(dup(&source.counter_increment));
     CounterSet, false => PropertyValue::CounterSet(dup(&source.counter_set));
+    Quotes, true => if source.quotes_auto {
+        PropertyValue::QuotesAuto
+    } else {
+        PropertyValue::Quotes(dup(&source.quotes))
+    };
     JustifyContent, false => PropertyValue::JustifyContent(dup(&source.justify_content));
     AlignContent, false => PropertyValue::AlignContent(dup(&source.align_content));
     AlignItems, false => PropertyValue::AlignItems(dup(&source.align_items));

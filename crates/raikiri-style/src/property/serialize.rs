@@ -623,6 +623,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TabSize(..)
         | PropertyValue::TextAlignAll(..)
         | PropertyValue::Quotes(..)
+        | PropertyValue::QuotesAuto
         | PropertyValue::TextShadow(..)
         | PropertyValue::BorderRadius(..)
         | PropertyValue::BorderRadiusInherit
