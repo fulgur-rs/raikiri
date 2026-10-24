@@ -182,7 +182,10 @@ impl FontCollectionBuilder {
                     family: font.family.trim().to_owned(),
                 }
             })?;
-        Ok(RenderFonts { collection })
+        Ok(RenderFonts {
+            collection,
+            svg_faces: Arc::default(),
+        })
     }
 }
 
@@ -192,6 +195,8 @@ impl FontCollectionBuilder {
 #[derive(Clone)]
 pub struct RenderFonts {
     collection: shodo::font::FontCollection,
+    /// The faces SVG text was set in, shared by the clones of the set.
+    svg_faces: Arc<crate::svg_fonts::FaceCache>,
 }
 
 impl RenderFonts {
@@ -205,6 +210,11 @@ impl RenderFonts {
     /// The font layer of the inline layout engine.
     pub fn collection(&self) -> &shodo::font::FontCollection {
         &self.collection
+    }
+
+    /// The faces handed out to SVG text.
+    pub(crate) fn svg_faces(&self) -> &crate::svg_fonts::FaceCache {
+        &self.svg_faces
     }
 
     /// The font layer of the inline layout engine, by value.

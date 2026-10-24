@@ -22,6 +22,7 @@ rustc-hash     = { workspace = true }
 smol_str       = { workspace = true }
 url            = { workspace = true }
 data-url       = { workspace = true }
+unicode-script = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

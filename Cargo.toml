@@ -69,6 +69,9 @@ taffy = { version = "=0.15.0", default-features = false, features = [
 # Exact pin: the 0.0.x line may change its public API in any release.
 shodo  = { version = "=0.0.38", default-features = false, features = ["system-fonts"] }
 skrifa = "0.44"
+# Script of a character, for choosing a fallback face for SVG text. Already
+# in the build graph through usvg's text support.
+unicode-script = "0.5"
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
 anyrender = "0.13"
@@ -114,10 +117,13 @@ data-url = "0.3"
 png = "0.18"
 
 # ── Static SVG parse + raster (Pure Rust, WASM-forward) ────────────────
-# Keep SVG text/font, SVGZ, system-font, and nested raster-image support off.
-# The renderer installs its own no-I/O image href resolvers.
-resvg = { version = "=0.48.1", default-features = false }
-usvg = { version = "=0.48.1", default-features = false }
+# SVG text is on so usvg parses and positions it, but the fonts are not usvg's:
+# its database stays empty and a `FontResolver` asks the caller's font
+# collection for every face (docs/svg-vector-contract.md, D9). Keep SVGZ,
+# system-font and nested raster-image support off. The renderer installs its
+# own no-I/O image href resolvers.
+resvg = { version = "=0.48.1", default-features = false, features = ["text"] }
+usvg = { version = "=0.48.1", default-features = false, features = ["text"] }
 roxmltree = "0.21.1"
 svgtypes = "=0.16.1"
 

@@ -3,6 +3,8 @@ use crate::{SvgElementStyle, SvgRootFont};
 use raikiri_traits::vector::Node;
 use resvg::tiny_skia;
 
+mod text_tests;
+
 const VIEWPORT: SvgViewport = SvgViewport {
     width: 40.0,
     height: 20.0,
@@ -266,6 +268,7 @@ fn draw_group(pixmap: &mut tiny_skia::Pixmap, group: &Group, parent: tiny_skia::
         match child {
             Node::Group(group) => draw_group(target, group, transform),
             Node::Path(path) => draw_path(target, path, transform),
+            Node::Text(run) => text_tests::draw_text(target, run, transform),
             _ => unreachable!(),
         }
     }
@@ -1109,7 +1112,13 @@ fn raw_tree(body: &str) -> usvg::Tree {
 }
 
 fn scene_of(tree: &usvg::Tree, host_opacity: f32) -> Result<VectorImage, SvgSceneError> {
-    scene_from_tree(tree, VIEWPORT, host_opacity, SceneLimits::default())
+    scene_from_tree(
+        tree,
+        &FaceMap::default(),
+        VIEWPORT,
+        host_opacity,
+        SceneLimits::default(),
+    )
 }
 
 #[test]
@@ -1213,7 +1222,7 @@ fn a_hidden_root_keeps_an_empty_scene_where_a_visible_one_is_rejected() {
 // ── Limits and invalid requests ─────────────────────────────
 
 fn limited(document: &SvgDocument, limits: SceneLimits) -> Result<VectorImage, SvgSceneError> {
-    document.build_scene(VIEWPORT, style(1.0), None, limits)
+    document.build_scene(VIEWPORT, style(1.0), None, limits, None)
 }
 
 #[test]

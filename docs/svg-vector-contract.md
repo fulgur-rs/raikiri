@@ -190,23 +190,56 @@ be added the same way later if a use appears.
   font. No page stylesheet reaches an image document.
 - `currentColor` resolves to the host `color`. A root that is not visible still
   lets descendants with `visibility: visible` paint.
+- Text inherits through the SVG's own tree. The host resolves the root's
+  `font-family`, `font-size`, `font-weight` and `font-style`, which reach the
+  text like attributes written on the root. `font-stretch`, `font-variant`,
+  `font-kerning` and `font-variation-settings` come only from the SVG's own
+  attributes and styles. Declarations that the page's stylesheets make on
+  elements of an inline SVG reach its text through the same prepared source as
+  they reach shapes. External stylesheets and fonts named by the SVG's own CSS
+  stay rejected (see D10).
 
 ### D9. Text and fonts
 
-SVG text uses the same fonts as the HTML around it. The builder is given the
-document's font collection (the registered faces, with the same generic-family
-mapping HTML text uses) instead of building a second font database in the
-consumer. Whether system fonts take part is decided once, for HTML and SVG
-alike, by the library option that already governs HTML text.
+SVG text uses the same fonts as the HTML around it. The parser shapes and
+positions the text but holds no fonts of its own: its font database stays
+empty, and every face it needs is requested from a font source that the caller
+supplies (`SvgFontSource` in `raikiri-svg`). The source answers from the
+document's font collection, with the same registered faces and the same
+generic-family mapping HTML text uses, so SVG and HTML select a face by the
+same rules and no second font database exists. Whether system fonts take part
+is decided once, for HTML and SVG alike, by the library option that already
+governs HTML text.
 
-- Text is emitted as glyph runs when the backend exposes glyph positions, so
-  the consumer can keep it selectable and embed the font once. Where it cannot,
-  text is emitted as outlines. Both are valid scene content.
-- A glyph run carries a reference to the font data (shared, not copied per
-  glyph), the size, the glyph ids and their positions, the fill and the stroke.
-- `@font-face` fonts declared by the page are visible to inline SVG. An SVG
-  used as an image sees only the bundled and system faces, never fonts it
-  fetches itself.
+- The parser resolves the text's own style and lays it out: chunks, `x`, `y`,
+  `dx`, `dy` and `rotate` lists, `text-anchor`, `letter-spacing`,
+  `word-spacing`, `textLength`, decorations, `textPath`, writing mode, bidi and
+  baselines. The collection chooses faces. A request carries the family list
+  (with the generic `serif` family appended last, as the parser does), the
+  weight, the width and the slant. A character that the selected face lacks is
+  asked for again, with that character and the request, and the face the
+  collection answers with joins the shaping unless it was used already.
+- Text is emitted as glyph runs, so the consumer can keep it selectable and
+  embed the font once. Inside a clip path, where only geometry counts, it is
+  emitted as outlines. Both are valid scene content.
+- A glyph run carries, for each glyph, a reference to the font face (shared,
+  not copied per glyph), the glyph id, the characters it stands for and the
+  transform that places its outline. The run carries the size, the variation
+  settings, the fill and the stroke. It is painted as one shape: the fill
+  covers all its glyphs, then the stroke does, or the other way round.
+  Underlines, overlines and strike-throughs are paths around the run.
+- Faces are selected, never synthesized: there is no synthetic bold or slant,
+  and a variable font gets only the axes that `font-variation-settings` sets,
+  not an axis derived from the weight or the width. SVG fonts (`font` elements),
+  `tref` and `altGlyph` are not supported. A `pattern` paint on text keeps the
+  document on the raster, like a pattern anywhere else.
+- Text that no face can set is left out, as the raster path leaves it out, and
+  a document that is built without a font source has no text in its scene.
+- `@font-face` fonts declared by the page become visible to inline SVG when
+  the source is built on the document's own collection, which is the step that
+  moves the page over to scenes. Until then the source built on the shared
+  bundle sees the bundled and, if enabled, the system faces. An SVG used as an
+  image sees only those, never fonts it fetches itself.
 
 ### D10. External resources and security
 

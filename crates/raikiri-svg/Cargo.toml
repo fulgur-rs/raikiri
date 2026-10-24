@@ -16,5 +16,8 @@ roxmltree = { workspace = true }
 svgtypes = { workspace = true }
 usvg = { workspace = true }
 
+[dev-dependencies]
+skrifa = { workspace = true }
+
 [lints]
 workspace = true

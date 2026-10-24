@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 
 fn black() -> Paint {
@@ -156,4 +158,58 @@ fn gradients_and_clips_are_charged_to_the_scene() {
     };
     group.clip = None;
     assert!(with_clip.estimated_heap_bytes() > without_clip.estimated_heap_bytes());
+}
+
+fn face(bytes: &[u8]) -> FontFace {
+    let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(bytes.to_vec());
+    FontFace::new(data, 0)
+}
+
+fn glyph(font: &FontFace) -> Glyph {
+    Glyph::new(font.clone(), 7, "a", PaintTransform::IDENTITY)
+}
+
+#[test]
+fn a_font_face_is_the_same_face_by_the_identity_of_its_bytes() {
+    let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(b"font bytes".to_vec());
+    let font = FontFace::new(data.clone(), 0);
+    assert!(font.is_same_face(&font.clone()));
+    assert_eq!(font.bytes(), b"font bytes");
+    assert_eq!(font.index(), 0);
+    // A copy of the same bytes is an equal face but not the same one.
+    let copy = face(b"font bytes");
+    assert!(!font.is_same_face(&copy));
+    assert_eq!(font, copy);
+    assert_ne!(font, face(b"other bytes"));
+    // The same bytes with another face index are another face.
+    let second = FontFace::new(data, 1);
+    assert!(!font.is_same_face(&second));
+    assert_ne!(font, second);
+}
+
+#[test]
+fn a_text_run_counts_as_one_node_and_charges_its_glyphs() {
+    let font = face(&[0; 64]);
+    let empty = VectorImage::new((10.0, 10.0));
+    let mut image = VectorImage::new((10.0, 10.0));
+    let mut run = TextRun::new(16.0, vec![glyph(&font), glyph(&font), glyph(&font)]);
+    run.variations.push(FontVariation::new(*b"wght", 700.0));
+    run.fill = Some(Fill::new(black()));
+    image.root.children.push(Node::Text(run));
+    assert_eq!(image.node_count(), 2);
+    // The glyphs and the strings they hold are counted; the font bytes are
+    // shared and are not.
+    let glyphs = 3 * std::mem::size_of::<Glyph>();
+    assert!(image.estimated_heap_bytes() >= empty.estimated_heap_bytes() + glyphs);
+    assert!(image.estimated_heap_bytes() < empty.estimated_heap_bytes() + glyphs + 64 * 1024);
+}
+
+#[test]
+fn a_text_run_starts_unpainted_and_smoothed() {
+    let run = TextRun::new(12.0, Vec::new());
+    assert_eq!(run.font_size, 12.0);
+    assert!(run.fill.is_none() && run.stroke.is_none());
+    assert_eq!(run.paint_order, PaintOrder::FillThenStroke);
+    assert!(run.anti_alias);
+    assert!(format!("{:?}", glyph(&face(b"abc"))).contains("byte_len: 3"));
 }
