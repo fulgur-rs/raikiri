@@ -1586,7 +1586,7 @@ fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Edges<
 
 /// Lay a child of the root out the way taffy's block algorithm lays out a
 /// float: no known size but `known_width`, the root's content width as the
-/// percentage basis, and `available` as the width it may take. It is also how
+/// percentage basis, and `available` as the room it may take. It is also how
 /// an atomic inline is sized: shrink-to-fit within the line's content width.
 /// Percentage heights resolve against `height_basis`, the root's definite
 /// content height, and behave as `auto` without one. A vertical root passes
@@ -1599,7 +1599,7 @@ fn perform_box_layout(
     basis: f32,
     height_basis: Option<f32>,
     known_width: Option<f32>,
-    available: f32,
+    available: Size<AvailableSpace>,
 ) -> LayoutOutput {
     // What taffy's `perform_child_layout` does; that helper is private to
     // taffy.
@@ -1621,10 +1621,7 @@ fn perform_box_layout(
                 width: Some(basis),
                 height: height_basis,
             },
-            available_space: Size {
-                width: AvailableSpace::Definite(available),
-                height: AvailableSpace::MaxContent,
-            },
+            available_space: available,
             // The box establishes a new block formatting context: its margins
             // do not collapse with its children's.
             vertical_margins_are_collapsible: Line::FALSE,
@@ -1653,7 +1650,10 @@ fn measure_float(
         geometry.width,
         geometry.definite_height,
         None,
-        available,
+        Size {
+            width: AvailableSpace::Definite(available),
+            height: AvailableSpace::MaxContent,
+        },
     );
     let style = tree.physical_style(node);
     let output_size = shodo::geometry::PhysicalSize {
@@ -1722,7 +1722,17 @@ pub(crate) fn measure_atomics(
         // A child's margins and padding resolve their percentages against the
         // paragraph's inline extent (CSS 2.1 8.3).
         let margin = resolved_margins(tree, node, geometry.width);
-        let available = (geometry.width - margin.left - margin.right).max(0.0);
+        // Only an atomic that lays out on the axes of a vertical paragraph is
+        // offered the paragraph's inline extent as its height; an orthogonal
+        // one keeps taking it as its width.
+        let along_height =
+            vertical && crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
+        let inline_margins = if along_height {
+            margin.top + margin.bottom
+        } else {
+            margin.left + margin.right
+        };
+        let available = (geometry.width - inline_margins).max(0.0);
         // A vertical paragraph's inline extent is the box's height, so its
         // percentages of the width resolve against the containing block's
         // physical width, while the edges' percentages stay with the inline
@@ -1743,13 +1753,26 @@ pub(crate) fn measure_atomics(
                     },
                 )
             });
+        // The room along the line is the room along the paragraph's inline
+        // axis, the physical height of a vertical one.
+        let room = AvailableSpace::Definite(available);
         let output = perform_box_layout(
             tree,
             node,
             geometry.width,
             geometry.definite_height,
             known_width,
-            available,
+            if along_height {
+                Size {
+                    width: AvailableSpace::MaxContent,
+                    height: room,
+                }
+            } else {
+                Size {
+                    width: room,
+                    height: AvailableSpace::MaxContent,
+                }
+            },
         );
         let id = shodo::node::NodeId(node as u64);
         // Only the alphabetic baseline is supplied (horizontal lines). shodo

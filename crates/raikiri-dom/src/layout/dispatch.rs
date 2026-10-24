@@ -2870,6 +2870,12 @@ fn flex_layout_sized(
                 // The container runs its algorithm on the axes of its own
                 // writing mode.
                 tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                    let inputs = vertical_block::with_atomic_fit_content(
+                        tree,
+                        node_id,
+                        inputs,
+                        compute_flexbox_layout,
+                    );
                     compute_flexbox_layout(tree, node_id, inputs)
                 })
             } else if tree.context.flex_intrinsic_probe == Some(idx) {
@@ -3054,6 +3060,12 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
                 // The container runs its algorithm on the axes of its own
                 // writing mode.
                 tree.compute_on_own_axes(node_id, inputs, |tree, node_id, inputs| {
+                    let inputs = vertical_block::with_atomic_fit_content(
+                        tree,
+                        node_id,
+                        inputs,
+                        compute_grid_layout,
+                    );
                     compute_grid_layout(tree, node_id, inputs)
                 })
             } else {
