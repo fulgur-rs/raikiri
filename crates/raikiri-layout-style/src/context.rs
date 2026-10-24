@@ -161,10 +161,6 @@ pub struct StyleMetadata {
     pub used_writing_mode: WritingMode,
     /// Explicit containing-block policy; None uses positioning.
     pub claims: Option<taffy::ContainingBlockClaims>,
-    /// Adapter-supplied scrollbar thickness, independent of CSS computed values.
-    pub scrollbar_width: f32,
-    /// Adapter-supplied legacy alignment, independent of CSS text alignment.
-    pub legacy_text_align: taffy::TextAlign,
 }
 impl Default for StyleMetadata {
     fn default() -> Self {
@@ -172,8 +168,6 @@ impl Default for StyleMetadata {
             flags: StyleFlags::default(),
             used_writing_mode: WritingMode::HorizontalTb,
             claims: None,
-            scrollbar_width: 0.0,
-            legacy_text_align: taffy::TextAlign::Auto,
         }
     }
 }

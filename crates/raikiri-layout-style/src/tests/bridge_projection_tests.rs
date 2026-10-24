@@ -78,6 +78,67 @@ fn bridge_projection_changes_only_geometry() {
 }
 
 #[test]
+fn block_transpose_reads_sizing_overrides_on_the_swapped_axes() {
+    use taffy::{LengthPercentage as Lp, LengthPercentageAuto as Lpa};
+    let cv = ComputedValues::initial();
+    let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let length = |property, px| OwnedPropertyOverride::length(property, L::Px(px), true).unwrap();
+    let entries = [
+        length(LengthProperty::Width, 11.0),
+        length(LengthProperty::Height, 12.0),
+        length(LengthProperty::MinWidth, 13.0),
+        length(LengthProperty::MinHeight, 14.0),
+        length(LengthProperty::MaxWidth, 15.0),
+        length(LengthProperty::MaxHeight, 16.0),
+        length(LengthProperty::BorderTop, 21.0),
+        length(LengthProperty::BorderRight, 22.0),
+        length(LengthProperty::BorderBottom, 23.0),
+        length(LengthProperty::BorderLeft, 24.0),
+        OwnedPropertyOverride::aspect_ratio(Some(4.0)),
+        OwnedPropertyOverride::flex_shrink(0.5),
+    ];
+    for right_to_left in [false, true] {
+        let context = ViewContext {
+            bridge_projection: BridgeProjection::BlockTranspose { right_to_left },
+            ..ViewContext::default()
+        };
+        let view = LayoutStyleView::with_owned_overrides(&prepared, context, &entries, &[]);
+        assert_eq!(
+            view.size(),
+            taffy::Size {
+                width: taffy::Dimension::length(12.0),
+                height: taffy::Dimension::length(11.0)
+            }
+        );
+        assert_eq!(
+            view.min_size(),
+            taffy::Size {
+                width: Lpa::length(14.0),
+                height: Lpa::length(13.0)
+            }
+        );
+        assert_eq!(
+            view.max_size(),
+            taffy::Size {
+                width: Lpa::length(16.0),
+                height: Lpa::length(15.0)
+            }
+        );
+        assert_eq!(
+            view.border(),
+            taffy::Rect {
+                left: Lp::length(21.0),
+                right: Lp::length(23.0),
+                top: Lp::length(if right_to_left { 22.0 } else { 24.0 }),
+                bottom: Lp::length(if right_to_left { 24.0 } else { 22.0 }),
+            }
+        );
+        assert_eq!(view.aspect_ratio(), Some(0.25));
+        assert_eq!(view.flex_shrink(), 0.5);
+    }
+}
+
+#[test]
 fn block_item_basis_resolves_only_output_vertical_edges() {
     let mut cv = ComputedValues::initial();
     cv.padding = Sides::all(raikiri_style::ComputedLengthPercentageOrCalc::Percent(10.0));

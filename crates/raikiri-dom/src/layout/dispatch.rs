@@ -44,8 +44,8 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
 /// Callers keep calc owners alive for every read of the clone.
 fn apply_local_sizing(style: &mut Style, entries: &[OwnedPropertyOverride]) {
     for entry in entries {
-        let _previous = entry
-            .apply_legacy_sizing(style)
+        entry
+            .apply_physical_sizing(style)
             .expect("local physical sizing override");
     }
 }
@@ -1335,16 +1335,9 @@ fn compute_ifc_root(
     // block's height only when that height does not depend on content. A
     // height fixed by the parent is border-box; one from the box's own
     // `height` follows `box-sizing`.
-    // A horizontal scrollbar reserves its gutter from the block axis.
-    let horizontal_gutter = if style.overflow.x == taffy::Overflow::Scroll {
-        style.scrollbar_width
-    } else {
-        0.0
-    };
     let border_box_insets = top_inset
         + ifc_edge(style.padding.bottom, parent_inline_size)
-        + ifc_edge(style.border.bottom, parent_inline_size)
-        + horizontal_gutter;
+        + ifc_edge(style.border.bottom, parent_inline_size);
     let border_box = style.box_sizing == taffy::BoxSizing::BorderBox;
     measure.definite_height = inputs
         .known_dimensions
@@ -1364,15 +1357,7 @@ fn compute_ifc_root(
                 inputs.parent_size.height,
             )
             // A `height` of its own follows `box-sizing`.
-            .map(|height| {
-                (height
-                    - if border_box {
-                        border_box_insets
-                    } else {
-                        horizontal_gutter
-                    })
-                .max(0.0)
-            })
+            .map(|height| (height - if border_box { border_box_insets } else { 0.0 }).max(0.0))
         })
         // `min-height` and `max-height` clamp the used height; a percentage
         // bound against an indefinite containing block does not apply.
@@ -2741,47 +2726,24 @@ fn center_absolute_children_in_block_axis(
     size: Size<f32>,
     grid: Option<&grid_oof::GridAreas<'_>>,
 ) {
-    use taffy::Overflow;
-
     if inputs.run_mode != RunMode::PerformLayout {
         return;
     }
     let block_is_height = !used_writing_mode(tree, idx).is_vertical();
-    let (border, direction, scrollbar_width, overflow) = {
+    let (border, direction) = {
         let style = tree.physical_style(idx);
         (
             style
                 .border()
                 .resolve_or_zero(inputs.parent_size.width, resolve_calc),
             style.direction(),
-            style.scrollbar_width(),
-            style.overflow(),
         )
     };
-    // A scrollbar takes its gutter from the absolute positioning area: a
-    // horizontal one from the bottom, a vertical one from the inline end.
-    let gutter = |overflow: Overflow| {
-        if overflow == Overflow::Scroll {
-            scrollbar_width
-        } else {
-            0.0
-        }
-    };
-    let (gutter_x, gutter_y) = (gutter(overflow.y), gutter(overflow.x));
-    let padding_box = if direction == taffy::Direction::Rtl {
-        Edges {
-            left: border.left + gutter_x,
-            right: size.width - border.right,
-            top: border.top,
-            bottom: size.height - border.bottom - gutter_y,
-        }
-    } else {
-        Edges {
-            left: border.left,
-            right: size.width - border.right - gutter_x,
-            top: border.top,
-            bottom: size.height - border.bottom - gutter_y,
-        }
+    let padding_box = Edges {
+        left: border.left,
+        right: size.width - border.right,
+        top: border.top,
+        bottom: size.height - border.bottom,
     };
     let children = hoisted_children(tree, idx);
     for child in children.iter().copied() {
@@ -3430,8 +3392,8 @@ impl LayoutSession<'_> {
     /// The border-box width of block container `idx` that taffy's block
     /// algorithm derives from `inputs` before it lists the container's
     /// children (the definite size the container is given or styled with,
-    /// `None` when there is none yet), and the padding, border and vertical
-    /// scrollbar gutter that separate it from the content box.
+    /// `None` when there is none yet), and the padding and border that
+    /// separate it from the content box.
     fn block_definite_width(&self, idx: usize, inputs: &LayoutInput) -> (Option<f32>, f32) {
         let (size, inset, _) = self.block_definite_size(idx, inputs);
         (size.width, inset.width)
@@ -3451,9 +3413,9 @@ impl LayoutSession<'_> {
 
     /// The border-box size of block container `idx` that taffy's block
     /// algorithm derives from `inputs` before it lists the container's
-    /// children, the padding, border and scrollbar gutters that separate it
-    /// from the content box along each axis, and the border-box height its
-    /// own `height` and `min-height` give it.
+    /// children, the padding and border that separate it from the content
+    /// box along each axis, and the border-box height its own `height` and
+    /// `min-height` give it.
     ///
     /// Mirrors [`taffy::compute_block_layout`] and its `compute_inner`.
     fn block_definite_size(
@@ -3462,7 +3424,7 @@ impl LayoutSession<'_> {
         inputs: &LayoutInput,
     ) -> (Size<Option<f32>>, Size<f32>, Option<f32>) {
         use crate::layout::protocol::SizingMode;
-        use taffy::{BoxSizing, Overflow};
+        use taffy::BoxSizing;
 
         let style = self.physical_style(idx);
         let parent_size = inputs.parent_size;
@@ -3511,29 +3473,14 @@ impl LayoutSession<'_> {
         let derived = known
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_clamp(min_size, max_size);
-        // A vertical scrollbar takes its gutter from the inline axis, and a
-        // horizontal one from the block axis.
-        let scrollbar_width = style.scrollbar_width();
-        let overflow = style.overflow();
-        let gutter = |overflow| {
-            if overflow == Overflow::Scroll {
-                scrollbar_width
-            } else {
-                0.0
-            }
-        };
         (
             Size {
                 width: known.width.or(derived.width),
                 height: known.height.or(derived.height),
             },
             Size {
-                width: padding.horizontal_axis_sum()
-                    + border.horizontal_axis_sum()
-                    + gutter(overflow.y),
-                height: padding.vertical_axis_sum()
-                    + border.vertical_axis_sum()
-                    + gutter(overflow.x),
+                width: padding.horizontal_axis_sum() + border.horizontal_axis_sum(),
+                height: padding.vertical_axis_sum() + border.vertical_axis_sum(),
             },
             style_size.height.maybe_max(min_size.height),
         )

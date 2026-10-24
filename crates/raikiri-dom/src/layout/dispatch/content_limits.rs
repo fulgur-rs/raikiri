@@ -596,8 +596,8 @@ pub(super) fn resolve_width_in_style(
     });
     let adjustment = box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
     for entry in bounds.overrides(true, adjustment) {
-        let _previous = entry
-            .apply_legacy_sizing(style)
+        entry
+            .apply_physical_sizing(style)
             .expect("local sizing bound");
     }
 }

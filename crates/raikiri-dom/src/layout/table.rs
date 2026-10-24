@@ -1297,30 +1297,14 @@ fn table_layout_output(
     let border = style
         .border()
         .resolve_or_zero(Some(size.width), crate::layout::dispatch::resolve_calc);
-    let overflow = style.overflow();
-    let gutter_x = if overflow.y.is_scroll_container() {
-        style.scrollbar_width()
-    } else {
-        0.0
-    };
-    let gutter_y = if overflow.x.is_scroll_container() {
-        style.scrollbar_width()
-    } else {
-        0.0
-    };
-    let rtl_gutter = if style.direction() == taffy::Direction::Rtl {
-        gutter_x
-    } else {
-        0.0
-    };
     output.oof_candidates = candidates;
     output.oof_positioning_area = Some(OofPositioningArea {
         size: Size {
-            width: (size.width - border.left - border.right - gutter_x).max(0.0),
-            height: (size.height - border.top - border.bottom - gutter_y).max(0.0),
+            width: (size.width - border.left - border.right).max(0.0),
+            height: (size.height - border.top - border.bottom).max(0.0),
         },
         offset: Point {
-            x: border.left + rtl_gutter,
+            x: border.left,
             y: border.top,
         },
     });
@@ -3434,11 +3418,6 @@ fn reposition_cells_for_vertical_writing(
         let border = style
             .border()
             .resolve_or_zero(Some(cell_width), crate::layout::dispatch::resolve_calc);
-        let scrollbar_width = if style.overflow().y == taffy::Overflow::Scroll {
-            style.scrollbar_width()
-        } else {
-            0.0
-        };
         let direction = style.direction();
         let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
         let has_lines = lines.is_some_and(|lines| !lines.lines.is_empty());
@@ -3459,12 +3438,8 @@ fn reposition_cells_for_vertical_writing(
                     // floated boxes at their normal positions, so their
                     // paint-side offsets are not removed here.
                     let offset = if child_style.float() == taffy::Float::None {
-                        let inner_width = cell_width
-                            - padding.left
-                            - padding.right
-                            - border.left
-                            - border.right
-                            - scrollbar_width;
+                        let inner_width =
+                            cell_width - padding.left - padding.right - border.left - border.right;
                         let inset = child_style.inset();
                         let left = inset.left.maybe_resolve(
                             Some(inner_width),

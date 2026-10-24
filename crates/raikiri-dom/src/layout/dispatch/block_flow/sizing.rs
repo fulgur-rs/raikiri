@@ -13,7 +13,6 @@ pub(crate) struct Metrics {
     pub padding: Edges<f32>,
     pub border: Edges<f32>,
     pub inset: Edges<f32>,
-    pub scrollbar: Size<f32>,
     pub preferred: Size<Option<f32>>,
     pub min: Size<Option<f32>>,
     pub max: Size<Option<f32>>,
@@ -187,20 +186,6 @@ impl Metrics {
         let ratio_height = height_eligible
             && inputs.known_dimensions.height.is_none()
             && preferred.height.is_some();
-        let gutter = |overflow| {
-            if overflow == Overflow::Scroll {
-                style.scrollbar_width()
-            } else {
-                0.0
-            }
-        };
-        let scrollbar = Size {
-            width: gutter(style.overflow().y),
-            height: gutter(style.overflow().x),
-        };
-        let mut inset = padding_border;
-        inset.right += scrollbar.width;
-        inset.bottom += scrollbar.height;
         let percent_height = inputs
             .known_dimensions
             .height
@@ -211,13 +196,13 @@ impl Metrics {
                     .flatten()
             })
             .map(|height| {
-                (height.maybe_clamp(min.height, max.height) - inset.vertical_axis_sum()).max(0.0)
+                (height.maybe_clamp(min.height, max.height) - padding_border.vertical_axis_sum())
+                    .max(0.0)
             });
         Self {
             padding,
             border,
-            inset,
-            scrollbar,
+            inset: padding_border,
             preferred,
             min,
             max,

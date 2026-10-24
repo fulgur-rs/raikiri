@@ -414,10 +414,10 @@ fn layout_context(
         } else {
             metrics.padding.right
         };
-        overflow.right = (overflow.right + end_padding)
-            .max(width - metrics.border.horizontal_axis_sum() - metrics.scrollbar.width);
+        overflow.right =
+            (overflow.right + end_padding).max(width - metrics.border.horizontal_axis_sum());
         overflow.bottom = (overflow.bottom + metrics.padding.bottom)
-            .max(height - metrics.border.vertical_axis_sum() - metrics.scrollbar.height);
+            .max(height - metrics.border.vertical_axis_sum());
     }
     LayoutOutput {
         oof_candidates: flow.oof_candidates,
@@ -460,7 +460,7 @@ fn commit(
             location,
             size: output.size,
             scrollable_overflow_rect: output.scrollable_overflow_rect,
-            scrollbar_size: metrics.scrollbar,
+            scrollbar_size: Size::ZERO,
             border: metrics.border,
             padding: metrics.padding,
             margin,
