@@ -4,9 +4,9 @@ use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::node::{FormattingContext, Node};
 use clamp_warnings::{report_non_finite_rest, report_non_finite_sizes};
+use raikiri_layout_geometry::{Edges, Size};
 use raikiri_layout_style::values::{
-    AlignItems, Dimension, Direction as LayoutDirection, Display, LengthPercentage, StyleRect,
-    StyleSize,
+    AlignItems, Dimension, Direction as LayoutDirection, Display, LengthPercentage,
 };
 use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
@@ -1007,8 +1007,8 @@ fn lays_out_without_columns(display: DisplayValue) -> bool {
 pub(super) fn taffy_border_widths(
     border: &raikiri_style::property::Sides<raikiri_style::ComputedBorder>,
     diag: &mut Vec<LayoutWarn>,
-) -> StyleRect<LengthPercentage> {
-    StyleRect {
+) -> Edges<LengthPercentage> {
+    Edges {
         top: computed_length_to_taffy_length_percentage(border.top.width(), diag),
         right: computed_length_to_taffy_length_percentage(border.right.width(), diag),
         bottom: computed_length_to_taffy_length_percentage(border.bottom.width(), diag),
@@ -1182,11 +1182,11 @@ fn bridge_content_limits(
         }
     };
     ContentLimits {
-        min: StyleSize {
+        min: Size {
             width: keyword(cv.min_width, "min-width"),
             height: keyword(cv.min_height, "min-height"),
         },
-        max: StyleSize {
+        max: Size {
             width: keyword(cv.max_width, "max-width"),
             height: keyword(cv.max_height, "max-height"),
         },

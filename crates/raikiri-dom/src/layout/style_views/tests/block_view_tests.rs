@@ -1,5 +1,6 @@
 use super::*;
 use raikiri_layout_geometry::Point;
+use raikiri_layout_geometry::Size;
 use raikiri_layout_style::values::{
     AlignContent, AlignSelf, Clear, Dimension, Float, LengthPercentage, Position,
 };
@@ -14,10 +15,11 @@ fn block_view_prepares_normal_source_and_text_keys() {
         assert!(tree.has_style_view(idx), "missing all-key view for {idx}");
     }
     assert_eq!(tree.style_view(child).size().width, Dimension::length(31.0));
-    assert_eq!(tree.style_view(text).size(), LayoutStyle::default().size());
+    assert_eq!(tree.style_view(text).size(), BoxStyle::default().size);
 }
 
 use crate::layout::style_views::ReadRole;
+use raikiri_layout_style::values::ToTaffy;
 use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
 use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, OofItemStyle as OI};
 
@@ -81,7 +83,10 @@ fn block_view_reads_each_new_role_and_bridge_alignment() {
                 assert!(!query.is_containing_block().fixed);
                 assert_eq!(BI::align_self(&projected), None);
                 assert_eq!(BI::justify_self(&projected), None);
-                assert_eq!(BI::align_content(&projected), AlignContent::NORMAL);
+                assert_eq!(
+                    BI::align_content(&projected),
+                    AlignContent::NORMAL.to_taffy()
+                );
                 let _ = (
                     BI::is_table(&projected),
                     BI::float(&projected),
@@ -200,7 +205,7 @@ fn block_view_materialized_input_reads_real_getters_and_bridge_alignment() {
     let input = style_input::child(&tree, child);
     assert_eq!(
         input.size,
-        StyleSize {
+        Size {
             width: Dimension::length(31.0),
             height: Dimension::length(7.0)
         }

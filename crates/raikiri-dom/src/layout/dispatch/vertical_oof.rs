@@ -24,7 +24,7 @@
 
 use crate::layout::protocol::{AvailableSpace, LayoutInput};
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::{LengthExt, MaybeResolve, Position, ResolveOrZero};
+use raikiri_layout_style::values::{MaybeResolve, Position, ResolveOrZero};
 
 use crate::document::Document;
 use crate::layout::context::LayoutSession;

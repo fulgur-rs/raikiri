@@ -8,7 +8,6 @@ pub(crate) mod style_input;
 
 pub(crate) use positioned::aligned_static_position;
 
-use crate::LayoutStyle as Style;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::layout::dispatch::measure_against_parent_height;
 use crate::layout::protocol::{
@@ -18,18 +17,18 @@ use crate::layout::protocol::{
 use context::{BlockContext, BlockFormattingContext};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
+use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, BoxGenerationMode, Direction, ExpandedDimension, Float, LengthExt,
-    Position, ResolveOrZero,
+    AlignContentKeyword, BoxGenerationMode, Direction, ExpandedDimension, Float, Position,
+    ResolveOrZero,
 };
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
-use taffy::{BlockItemStyle, CoreStyle};
 
 /// Whether a block child's normal flow shares its parent's float context.
 fn shares_context(style: &Style) -> bool {
     style.is_block()
-        && !style.is_table()
+        && !style.item_is_table
         && style.float == Float::None
         && style.position != Position::Absolute
         && !style.overflow.x.is_scroll_container()

@@ -1,13 +1,13 @@
 use super::super::*;
 use crate::layout::style_views::tests::fixture_with_styles;
 use raikiri_layout_geometry::Edges;
-use raikiri_layout_style::values::{Dimension, IntoEdges, LengthPercentage, StyleRect};
+use raikiri_layout_style::values::{Dimension, LengthPercentage};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
 /// The same values on the same sides, as the style vocabulary's rectangle.
-fn style_rect<T>(edges: Edges<T>) -> StyleRect<T> {
-    StyleRect {
+fn style_rect<T>(edges: Edges<T>) -> Edges<T> {
+    Edges {
         left: edges.left,
         right: edges.right,
         top: edges.top,
@@ -35,7 +35,7 @@ fn frame(tree: &mut LayoutSession<'_>, container: usize, child: usize) -> Transp
 }
 
 /// The transposed padding of `child` in every pushed frame.
-fn frame_paddings(tree: &LayoutSession<'_>, child: usize) -> Vec<StyleRect<LengthPercentage>> {
+fn frame_paddings(tree: &LayoutSession<'_>, child: usize) -> Vec<Edges<LengthPercentage>> {
     tree.context
         .transposed_blocks
         .iter()
@@ -54,7 +54,7 @@ fn scoped_override_updates_existing_transposed_snapshots_and_preserves_padding()
     push_transposed_frame(&mut tree, inner);
     let paddings = frame_paddings(&tree, child);
     let zero = LengthPercentage::length(0.0);
-    let unpadded = StyleRect {
+    let unpadded = Edges {
         left: zero,
         right: zero,
         top: zero,
@@ -319,7 +319,7 @@ fn border_scope_transposes_opposite_frames() {
             let physical = tree.style_view(child).border();
             assert_eq!(
                 physical,
-                StyleRect {
+                Edges {
                     top: LengthPercentage::length(11.0),
                     right: LengthPercentage::length(12.0),
                     bottom: LengthPercentage::length(13.0),
@@ -335,7 +335,7 @@ fn border_scope_transposes_opposite_frames() {
                 let view = block.child_views[&child].view();
                 assert_eq!(
                     view.border(),
-                    StyleRect {
+                    Edges {
                         left: LengthPercentage::length(11.0),
                         right: LengthPercentage::length(13.0),
                         top: LengthPercentage::length(top),
@@ -352,8 +352,7 @@ fn border_scope_transposes_opposite_frames() {
                     .view()
                     .border(),
                 style_rect(crate::layout::dispatch::transposed_axes::transpose_rect(
-                    physical.into_edges(),
-                    false
+                    physical, false
                 ))
             );
         },

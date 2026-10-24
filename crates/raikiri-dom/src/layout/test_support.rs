@@ -3,9 +3,11 @@
 use crate::Document;
 use crate::layout::ifc::test_support::{Fixture, block_fixture};
 use raikiri_layout_geometry::Point;
-use raikiri_layout_style::values::Display;
+use raikiri_layout_style::BoxStyle;
+use raikiri_layout_style::values::{Display, ToTaffy};
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
+use taffy::Style as LegacyStyle; // taffy-boundary-lint:ignore: the Taffy style is the reference the style views are compared with
 
 thread_local! {
     pub(crate) static TEXT_LINE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -131,6 +133,37 @@ pub(crate) fn restyle(doc: &mut Document, node: usize, declarations: &str) {
     doc.set_element_inline_style(node, Some(css.into()));
 }
 
+/// The Taffy style that has the fields of `style` and Taffy's defaults for the
+/// rest, to compare the getters of a style view with Taffy's own.
+pub(crate) fn taffy_style(style: &BoxStyle) -> LegacyStyle<raikiri_style::SmolStr> {
+    LegacyStyle {
+        display: style.display.to_taffy(),
+        item_is_table: style.item_is_table,
+        item_is_replaced: style.item_is_replaced,
+        item_is_compressible_replaced: style.item_is_compressible_replaced,
+        box_sizing: style.box_sizing.to_taffy(),
+        direction: style.direction.to_taffy(),
+        overflow: style.overflow.to_taffy(),
+        contain: style.contain.to_taffy(),
+        float: style.float.to_taffy(),
+        clear: style.clear.to_taffy(),
+        position: style.position.to_taffy(),
+        inset: style.inset.to_taffy(),
+        size: style.size.to_taffy(),
+        min_size: style.min_size.to_taffy(),
+        max_size: style.max_size.to_taffy(),
+        aspect_ratio: style.aspect_ratio,
+        margin: style.margin.to_taffy(),
+        padding: style.padding.to_taffy(),
+        border: style.border.to_taffy(),
+        justify_items: style.justify_items.to_taffy(),
+        align_content: style.align_content.to_taffy(),
+        align_self: style.align_self.to_taffy(),
+        justify_self: style.justify_self.to_taffy(),
+        ..LegacyStyle::default()
+    }
+}
+
 /// The physical style input of `node` once `cascade` is bridged into `doc`.
 ///
 /// The bridge runs in a session of its own, so the style reflects the
@@ -139,7 +172,7 @@ pub(crate) fn bridged_style(
     doc: &mut Document,
     cascade: &CascadeResult,
     node: usize,
-) -> crate::LayoutStyle {
+) -> raikiri_layout_style::BoxStyle {
     let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
     crate::layout::dispatch::block_flow::style_input::physical(&session, node)
 }

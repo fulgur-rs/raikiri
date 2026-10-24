@@ -34,7 +34,7 @@ use std::sync::Arc;
 use taffy::{GenericGridTemplateComponent as T, GenericRepetition, GridContainerStyle};
 
 fn resolve(pointer: *const (), basis: f32) -> f32 {
-    CalcHandle::resolve(pointer, basis)
+    CalcRef::from_handle(pointer).resolve(basis)
 }
 
 #[test]

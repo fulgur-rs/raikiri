@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_layout_style::values::StylePoint;
+use raikiri_layout_geometry::Point;
 
 /// A box in a positioning area that spans 10..110 of its container.
 fn axis_box(
@@ -234,7 +234,7 @@ fn contribution(overflow: Overflow, contain: Contain, container_scrolls: bool) -
             top: -5.0,
             bottom: 90.0,
         },
-        StylePoint {
+        Point {
             x: overflow,
             y: overflow,
         },
@@ -290,7 +290,7 @@ fn a_box_without_extent_contributes_nothing() {
             height: 50.0,
         },
         Edges::ZERO,
-        StylePoint {
+        Point {
             x: Overflow::Visible,
             y: Overflow::Visible,
         },
@@ -310,7 +310,7 @@ fn a_scroll_container_cannot_reach_a_box_before_its_origin() {
                 height: 50.0,
             },
             Edges::ZERO,
-            StylePoint {
+            Point {
                 x: Overflow::Visible,
                 y: Overflow::Visible,
             },

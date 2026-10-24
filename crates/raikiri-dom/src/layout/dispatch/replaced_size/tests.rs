@@ -1,9 +1,9 @@
 use super::auto_sides_size;
-use crate::LayoutStyle as Style;
 use crate::layout::dispatch::push_calc;
 use crate::layout::protocol::{AvailableSpace, LayoutInput, RequestedAxis, RunMode, SizingMode};
 use raikiri_layout_geometry::{Line, Size};
-use raikiri_layout_style::values::{Dimension, StyleSize};
+use raikiri_layout_style::BoxStyle as Style;
+use raikiri_layout_style::values::Dimension;
 use raikiri_style::property::CalcLengthPercentage;
 
 mod intrinsic_keyword_tests;
@@ -22,7 +22,7 @@ fn a_percentage_calc_on_a_replaced_min_content_width_uses_zero_basis() {
     ));
     let style = Style {
         aspect_ratio: Some(2.0),
-        size: StyleSize {
+        size: Size {
             width,
             height: Dimension::auto(),
         },

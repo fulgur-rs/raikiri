@@ -9,12 +9,11 @@
 //! `min_size` and `max_size` then reads the sizes the keywords stand for.
 
 use raikiri_layout_style::values::{
-    BoxSizing, Dimension, Display, ExpandedDimension, LengthExt, LengthIdentity,
-    LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero, StyleSize,
+    BoxSizing, Dimension, Display, ExpandedDimension, LengthIdentity, LengthPercentage,
+    LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
 };
 use std::collections::HashMap;
 
-use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::fit_content_room;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
@@ -24,6 +23,7 @@ use crate::layout::protocol::{
 use crate::layout::taffy_adapter::LayoutCache;
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
 
@@ -33,14 +33,14 @@ use raikiri_style::property::PositionValue;
 /// such keyword is `auto` here; Taffy's style carries every other size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ContentLimits {
-    pub min: StyleSize<Dimension>,
-    pub max: StyleSize<Dimension>,
+    pub min: Size<Dimension>,
+    pub max: Size<Dimension>,
 }
 
 impl ContentLimits {
     pub(crate) const NONE: Self = Self {
-        min: StyleSize::auto(),
-        max: StyleSize::auto(),
+        min: Size::splat(Dimension::auto()),
+        max: Size::splat(Dimension::auto()),
     };
 
     fn has_width(&self) -> bool {
@@ -991,7 +991,7 @@ impl MeasureKey {
                 border.bottom,
                 border.left,
             ]
-            .map(LengthExt::identity),
+            .map(LengthPercentage::identity),
             cross_sizes,
             empty: tree.context.size_contained_measure.last() == Some(&node),
             orthogonal_guard: tree.context.orthogonal_block_in_layout == Some(node),

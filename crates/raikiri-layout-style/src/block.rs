@@ -1,3 +1,4 @@
+use crate::values;
 use crate::{LayoutStyleView, StyleFlags};
 use raikiri_style::property::{AlignSelfValue, FloatValue, SelfAlignmentValue};
 
@@ -15,26 +16,26 @@ pub enum BaselineSet {
 impl LayoutStyleView<'_> {
     /// Alignment read by project block primitives, independent of trait defaults.
     #[inline]
-    pub fn bridge_align_self(&self) -> Option<taffy::AlignSelf> {
+    pub fn bridge_align_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(false)
     }
     /// Inline alignment read by project block primitives.
     #[inline]
-    pub fn bridge_justify_self(&self) -> Option<taffy::AlignSelf> {
+    pub fn bridge_justify_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(true)
     }
     /// Content alignment read by project block primitives.
     #[inline]
-    pub fn bridge_align_content(&self) -> taffy::AlignContent {
+    pub fn bridge_align_content(&self) -> values::AlignContent {
         crate::flex::content(self.prepared.values.align_content)
     }
     /// The content alignment of a container.
     #[inline]
-    pub fn align_content(&self) -> taffy::AlignContent {
+    pub fn align_content(&self) -> values::AlignContent {
         self.bridge_align_content()
     }
     /// The default inline alignment of the items of a container.
-    pub fn justify_items(&self) -> taffy::AlignItems {
+    pub fn justify_items(&self) -> values::AlignItems {
         crate::flex::items(self.prepared.values.justify_items)
     }
     /// The set of baselines the in-flow box aligns to along an axis of its
@@ -72,11 +73,11 @@ impl LayoutStyleView<'_> {
             || self.flags().contains(StyleFlags::OOF_TABLE)
     }
     /// The physical float side.
-    pub fn float(&self) -> taffy::Float {
+    pub fn float(&self) -> values::Float {
         match self.prepared.values.float {
-            FloatValue::Left => taffy::Float::Left,
-            FloatValue::Right => taffy::Float::Right,
-            _ => taffy::Float::None,
+            FloatValue::Left => values::Float::Left,
+            FloatValue::Right => values::Float::Right,
+            _ => values::Float::None,
         }
     }
 }

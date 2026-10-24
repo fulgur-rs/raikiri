@@ -23,7 +23,6 @@ use crate::layout::protocol::{NodeId, OofPositioningArea};
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_layout_style::values::{
     AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, Direction, MaybeResolve, Overflow,
-    StylePoint,
 };
 
 use super::super::grid_oof::GridAreas;
@@ -222,7 +221,7 @@ fn hoisted_overflow(
     tree: &LayoutSession<'_>,
     children: &[usize],
     area: OofPositioningArea,
-    container_overflow: StylePoint<Overflow>,
+    container_overflow: Point<Overflow>,
 ) -> Edges<f32> {
     let container_scrolls =
         container_overflow.x.is_scroll_container() || container_overflow.y.is_scroll_container();
@@ -254,7 +253,7 @@ fn overflow_contribution(
     location: Point<f32>,
     size: Size<f32>,
     overflow_rect: Edges<f32>,
-    overflow: StylePoint<Overflow>,
+    overflow: Point<Overflow>,
     contain: Contain,
     container_scrolls: bool,
 ) -> Edges<f32> {

@@ -9,7 +9,7 @@ fn explicit_normal_alignment_does_not_inherit_like_auto() {
     cv.justify_self = cv.align_self;
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-    assert_eq!(v.align_self(), Some(taffy::AlignItems::NORMAL));
+    assert_eq!(v.align_self(), Some(values::AlignItems::NORMAL));
     let projected = TaffyStyle::new(v);
     assert_eq!(
         FlexboxItemStyle::align_self(&projected),
@@ -58,7 +58,7 @@ fn ratio_uses_logical_sizes_before_pass_overrides() {
     )
     .unwrap()];
     let v = LayoutStyleView::new(&p, ViewContext::default(), &pass, &[]);
-    assert_eq!(v.size().width, taffy::Dimension::auto());
+    assert_eq!(v.size().width, values::Dimension::auto());
     assert_eq!(v.aspect_ratio(), None);
 }
 
@@ -80,7 +80,7 @@ fn box_sizing_uses_logical_sizes_and_keyword_filtering_before_overrides() {
     )
     .unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-    assert_eq!(v.box_sizing(), taffy::BoxSizing::ContentBox);
+    assert_eq!(v.box_sizing(), values::BoxSizing::ContentBox);
     cv.width = L::MaxContent;
     cv.vertical_logical_size = None;
     let p = PreparedStyle::new(
@@ -98,7 +98,7 @@ fn box_sizing_uses_logical_sizes_and_keyword_filtering_before_overrides() {
     )
     .unwrap()];
     let v = LayoutStyleView::new(&p, ViewContext::default(), &pass, &[]);
-    assert_eq!(v.box_sizing(), taffy::BoxSizing::BorderBox);
+    assert_eq!(v.box_sizing(), values::BoxSizing::BorderBox);
 }
 
 #[test]

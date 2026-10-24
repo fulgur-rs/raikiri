@@ -1,5 +1,6 @@
 use crate::overrides::OverrideKind;
 use crate::*;
+use raikiri_layout_geometry::Size;
 use raikiri_style::{
     ComputedFlexBasis,
     property::{
@@ -8,34 +9,34 @@ use raikiri_style::{
     },
 };
 
-pub(crate) fn content(value: C) -> taffy::AlignContent {
+pub(crate) fn content(value: C) -> values::AlignContent {
     match value {
-        C::Stretch => taffy::AlignContent::STRETCH,
-        C::SpaceBetween => taffy::AlignContent::SPACE_BETWEEN,
-        C::SpaceEvenly => taffy::AlignContent::SPACE_EVENLY,
-        C::SpaceAround => taffy::AlignContent::SPACE_AROUND,
-        C::Center => taffy::AlignContent::CENTER,
-        C::Start => taffy::AlignContent::START,
-        C::End => taffy::AlignContent::END,
-        C::FlexStart => taffy::AlignContent::FLEX_START,
-        C::FlexEnd => taffy::AlignContent::FLEX_END,
-        _ => taffy::AlignContent::NORMAL,
+        C::Stretch => values::AlignContent::STRETCH,
+        C::SpaceBetween => values::AlignContent::SPACE_BETWEEN,
+        C::SpaceEvenly => values::AlignContent::SPACE_EVENLY,
+        C::SpaceAround => values::AlignContent::SPACE_AROUND,
+        C::Center => values::AlignContent::CENTER,
+        C::Start => values::AlignContent::START,
+        C::End => values::AlignContent::END,
+        C::FlexStart => values::AlignContent::FLEX_START,
+        C::FlexEnd => values::AlignContent::FLEX_END,
+        _ => values::AlignContent::NORMAL,
     }
 }
-pub(crate) fn items(value: A) -> taffy::AlignItems {
+pub(crate) fn items(value: A) -> values::AlignItems {
     match value {
-        A::Stretch => taffy::AlignItems::STRETCH,
-        A::Center => taffy::AlignItems::CENTER,
-        A::Start => taffy::AlignItems::START,
-        A::End => taffy::AlignItems::END,
-        A::FlexStart => taffy::AlignItems::FLEX_START,
-        A::FlexEnd => taffy::AlignItems::FLEX_END,
-        A::Baseline | A::LastBaseline => taffy::AlignItems::BASELINE,
-        _ => taffy::AlignItems::NORMAL,
+        A::Stretch => values::AlignItems::STRETCH,
+        A::Center => values::AlignItems::CENTER,
+        A::Start => values::AlignItems::START,
+        A::End => values::AlignItems::END,
+        A::FlexStart => values::AlignItems::FLEX_START,
+        A::FlexEnd => values::AlignItems::FLEX_END,
+        A::Baseline | A::LastBaseline => values::AlignItems::BASELINE,
+        _ => values::AlignItems::NORMAL,
     }
 }
 impl LayoutStyleView<'_> {
-    pub(crate) fn self_alignment(&self, inline: bool) -> Option<taffy::AlignSelf> {
+    pub(crate) fn self_alignment(&self, inline: bool) -> Option<values::AlignSelf> {
         if let Some(value) = self.overrides().find_map(|o| match o {
             OverrideKind::AlignSelf(v) if !inline => Some(v),
             OverrideKind::JustifySelf(v) if inline => Some(v),
@@ -49,26 +50,26 @@ impl LayoutStyleView<'_> {
             AlignSelfValue::Value(A::LastBaseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>
             {
-                Some(taffy::AlignItems::SAFE_SELF_END)
+                Some(values::AlignItems::SAFE_SELF_END)
             }
             AlignSelfValue::Value(A::Baseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>
             {
-                Some(taffy::AlignItems {
-                    keyword: taffy::AlignItemsKeyword::Baseline,
-                    safety: taffy::AlignmentSafety::Safe,
+                Some(values::AlignItems {
+                    keyword: values::AlignItemsKeyword::Baseline,
+                    safety: values::AlignmentSafety::Safe,
                 })
             }
-            AlignSelfValue::Value(A::Normal) => Some(taffy::AlignItems::NORMAL),
+            AlignSelfValue::Value(A::Normal) => Some(values::AlignItems::NORMAL),
             AlignSelfValue::Value(value) => Some(items(value)),
             _ => None,
         }
     }
     /// The row and column gaps.
     #[inline]
-    pub fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
+    pub fn gap(&self) -> Size<values::LengthPercentage> {
         // Grid columns/rows and gaps keep their CSS inline/block semantics.
-        taffy::Size {
+        Size {
             width: self
                 .length(LengthProperty::ColumnGap)
                 .lp(PercentBasis::Taffy),
@@ -111,17 +112,17 @@ impl LayoutStyleView<'_> {
     }
     /// How a container distributes free space along its main axis.
     #[inline]
-    pub fn justify_content(&self) -> taffy::JustifyContent {
+    pub fn justify_content(&self) -> values::AlignContent {
         content(self.prepared.values.justify_content)
     }
     /// The default cross-axis alignment of the items of a container.
     #[inline]
-    pub fn align_items(&self) -> taffy::AlignItems {
+    pub fn align_items(&self) -> values::AlignItems {
         items(self.prepared.values.align_items)
     }
     /// The flex basis of a flex item.
     #[inline]
-    pub fn flex_basis(&self) -> taffy::Dimension {
+    pub fn flex_basis(&self) -> values::Dimension {
         if matches!(self.prepared.values.flex_basis, ComputedFlexBasis::Content) {
             if self
                 .overrides()
@@ -129,7 +130,7 @@ impl LayoutStyleView<'_> {
             {
                 self.length(LengthProperty::FlexBasis).dimension()
             } else {
-                taffy::Dimension::content()
+                values::Dimension::content()
             }
         } else {
             self.length(LengthProperty::FlexBasis).dimension()
@@ -155,7 +156,7 @@ impl LayoutStyleView<'_> {
     /// Grid and out-of-flow items read [`Self::bridge_align_self`] and
     /// [`Self::bridge_justify_self`] instead.
     #[inline]
-    pub fn align_self(&self) -> Option<taffy::AlignSelf> {
+    pub fn align_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(self.context.align_axis_is_inline)
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::values::{AlignSelf, Clear, Overflow};
 use raikiri_style::property::ClearValue;
 
 #[test]
@@ -9,17 +10,17 @@ fn clear_override_has_pass_and_scope_precedence() {
     let pass = [OwnedPropertyOverride::clear(ClearValue::Both)];
     let scoped = [OwnedPropertyOverride::clear(ClearValue::None)];
     let base = LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(base.clear(), taffy::Clear::Left);
+    assert_eq!(base.clear(), Clear::Left);
     let view = LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
-    assert_eq!(view.clear(), taffy::Clear::Both);
+    assert_eq!(view.clear(), Clear::Both);
     let view =
         LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &scoped);
-    assert_eq!(view.clear(), taffy::Clear::None);
+    assert_eq!(view.clear(), Clear::None);
 }
 
 #[test]
 fn every_physical_override_reaches_its_getter() {
-    use taffy::{Dimension, LengthPercentage as Lp, LengthPercentageAuto as Lpa};
+    use crate::values::{Dimension, LengthPercentage as Lp, LengthPercentageAuto as Lpa};
     let values = ComputedValues::initial();
     let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
     let mut entries = Vec::new();
@@ -35,8 +36,8 @@ fn every_physical_override_reaches_its_getter() {
         OwnedPropertyOverride::overflow(Axis::Y, raikiri_style::property::OverflowValue::Scroll),
         OwnedPropertyOverride::clear(ClearValue::Both),
         OwnedPropertyOverride::flex_shrink(0.5),
-        OwnedPropertyOverride::align_self(Some(taffy::AlignSelf::START)),
-        OwnedPropertyOverride::justify_self(Some(taffy::AlignSelf::END)),
+        OwnedPropertyOverride::align_self(Some(AlignSelf::START)),
+        OwnedPropertyOverride::justify_self(Some(AlignSelf::END)),
     ]);
     let mut pass = Vec::new();
     for entry in entries {
@@ -50,27 +51,27 @@ fn every_physical_override_reaches_its_getter() {
     let length_or_auto = Lpa::length(17.0);
     assert_eq!(
         view.size(),
-        taffy::Size {
+        Size {
             width: dimension,
             height: dimension
         }
     );
     assert_eq!(
         view.min_size(),
-        taffy::Size {
+        Size {
             width: length_or_auto,
             height: length_or_auto
         }
     );
     assert_eq!(
         view.max_size(),
-        taffy::Size {
+        Size {
             width: length_or_auto,
             height: length_or_auto
         }
     );
-    fn sides<T: Copy>(side: T) -> taffy::Rect<T> {
-        taffy::Rect {
+    fn sides<T: Copy>(side: T) -> Edges<T> {
+        Edges {
             left: side,
             right: side,
             top: side,
@@ -84,7 +85,7 @@ fn every_physical_override_reaches_its_getter() {
     assert_eq!(view.flex_basis(), dimension);
     assert_eq!(
         view.gap(),
-        taffy::Size {
+        Size {
             width: length,
             height: length
         }
@@ -92,15 +93,15 @@ fn every_physical_override_reaches_its_getter() {
     assert_eq!(view.aspect_ratio(), None);
     assert_eq!(
         view.overflow(),
-        taffy::Point {
-            x: taffy::Overflow::Hidden,
-            y: taffy::Overflow::Scroll
+        Point {
+            x: Overflow::Hidden,
+            y: Overflow::Scroll
         }
     );
-    assert_eq!(view.clear(), taffy::Clear::Both);
+    assert_eq!(view.clear(), Clear::Both);
     assert_eq!(view.flex_shrink(), 0.5);
-    assert_eq!(view.align_self(), Some(taffy::AlignSelf::START));
-    assert_eq!(view.bridge_justify_self(), Some(taffy::AlignSelf::END));
+    assert_eq!(view.align_self(), Some(AlignSelf::START));
+    assert_eq!(view.bridge_justify_self(), Some(AlignSelf::END));
 }
 
 #[test]
@@ -118,10 +119,10 @@ fn flex_shrink_getter_preserves_the_override_value() {
 #[test]
 fn clearance_covers_each_authored_side() {
     for (value, expected) in [
-        (ClearValue::None, taffy::Clear::None),
-        (ClearValue::Left, taffy::Clear::Left),
-        (ClearValue::Right, taffy::Clear::Right),
-        (ClearValue::Both, taffy::Clear::Both),
+        (ClearValue::None, Clear::None),
+        (ClearValue::Left, Clear::Left),
+        (ClearValue::Right, Clear::Right),
+        (ClearValue::Both, Clear::Both),
     ] {
         let mut values = ComputedValues::initial();
         values.clear = value;

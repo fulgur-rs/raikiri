@@ -362,17 +362,17 @@ class RatchetTests(unittest.TestCase):
         self.assertIn("output-side names        : 3", out)
 
     def test_new_input_side_name_in_a_pinned_file_fails(self) -> None:
-        _write(self.root, "crates/dom/src/b.rs", "use taffy::{Dimension, LengthPercentage};\n")
+        _write(self.root, "crates/dom/src/b.rs", "use taffy::{Dimension, CompactLength};\n")
         code, out = _run(self.root)
         self.assertEqual(code, 1, out)
         self.assertIn("crates/dom/src/b.rs: 2 occurrence(s), baseline 1 (+1)", out)
-        self.assertIn("1: use taffy::LengthPercentage  -> no owned name yet (length)", out)
+        self.assertIn("1: use taffy::CompactLength  -> no owned name yet (length)", out)
 
     def test_new_input_side_names_in_a_new_file_fail_with_their_kind(self) -> None:
         _write(
             self.root,
             "crates/dom/src/c.rs",
-            "use taffy::{CoreStyle, Display, FloatContext, TrackSizingFunction, LayoutPartialTree};\n"
+            "use taffy::{CoreStyle, FlexDirection, FloatContext, TrackSizingFunction, LayoutPartialTree};\n"
             "fn f(s: &taffy::Style) { taffy::compute_leaf_layout(a, b, c); }\n",
         )
         code, out = _run(self.root)
@@ -384,10 +384,10 @@ class RatchetTests(unittest.TestCase):
             "no owned name yet (float or block state)",
             "no owned name yet (grid vocabulary)",
             "no owned name yet (tree trait)",
-            "no owned name yet (Style struct)",
             "no owned name yet (algorithm entry point)",
         ):
             self.assertIn(hint, out)
+        self.assertIn("-> raikiri_layout_style::BoxStyle", out)
         self.assertIn("read the", out)
 
     def test_style_input_alias_of_a_generic_name_fails_and_says_it_has_no_owned_name_yet(self) -> None:
@@ -429,6 +429,18 @@ class RatchetTests(unittest.TestCase):
         self.assertIn("-> raikiri_layout_style::values::MaybeResolve", out)
         self.assertIn("-> raikiri_layout_style::values::ResolveOrZero", out)
         self.assertIn("-> raikiri_layout_geometry::MaybeMath", out)
+
+    def test_owned_lengths_keywords_and_style_are_named_in_the_hint(self) -> None:
+        _write(
+            self.root,
+            "crates/raikiri-dom/src/c.rs",
+            "use taffy::{Dimension, Display, Style};\n",
+        )
+        code, out = _run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("-> raikiri_layout_style::values::Dimension", out)
+        self.assertIn("-> raikiri_layout_style::values::Display", out)
+        self.assertIn("-> raikiri_layout_style::BoxStyle", out)
 
     def test_crate_private_helper_traits_are_not_named_outside_raikiri_dom(self) -> None:
         _write(self.root, "crates/other/src/lib.rs", "use taffy::{AvailableSpace, MaybeMath};\n")
@@ -566,6 +578,9 @@ class NameTableTests(unittest.TestCase):
         for name, hint in OWNED_INPUT_NAMES.items():
             if hint.startswith("raikiri_layout_geometry::"):
                 self.assertIn(hint.removeprefix("raikiri_layout_geometry::"), geometry, name)
+            elif name == "Style":
+                self.assertTrue(hint.startswith("raikiri_layout_style::BoxStyle"), hint)
+                self.assertIn("pub use box_style::BoxStyle;", self._source("crates/raikiri-layout-style/src/lib.rs"))
             else:
                 self.assertEqual(hint, f"raikiri_layout_style::values::{name}")
                 self.assertIn(name, values, f"{name} is not re-exported by the view crate's values module")

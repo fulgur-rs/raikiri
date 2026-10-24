@@ -1,5 +1,7 @@
 use crate::overrides::OverrideKind;
+use crate::values::LengthPercentage;
 use crate::*;
+use raikiri_layout_geometry::{Edges, Size};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P};
 
 /// A lightweight query over borrowed computed values and prepared context.
@@ -99,8 +101,8 @@ impl<'a> LayoutStyleView<'a> {
     /// A handle is the address of a calc payload the view reads: one prepared
     /// with the computed values, or one an override brought. Any other address
     /// gives `None` and is never dereferenced, so a tool that compares getter
-    /// results can resolve what it was handed without the unsafe contract of
-    /// `resolve_calc`.
+    /// results can resolve what it was handed without the owner contract of
+    /// `resolve_projected_calc`.
     #[doc(hidden)]
     pub fn resolve_calc_handle(&self, handle: *const (), basis: f32) -> Option<f32> {
         let from_overrides = self.overrides().find_map(|entry| match entry {
@@ -221,32 +223,32 @@ impl<'a> LayoutStyleView<'a> {
                 BridgeProjection::BlockTranspose { .. }
             )
     }
-    pub(crate) fn size_axes<T>(&self, width: T, height: T) -> taffy::Size<T> {
+    pub(crate) fn size_axes<T>(&self, width: T, height: T) -> Size<T> {
         if self.geometry_transposed() {
-            taffy::Size {
+            Size {
                 width: height,
                 height: width,
             }
         } else {
-            taffy::Size { width, height }
+            Size { width, height }
         }
     }
-    pub(crate) fn edges<T>(&self, top: T, right: T, bottom: T, left: T) -> taffy::Rect<T> {
+    pub(crate) fn edges<T>(&self, top: T, right: T, bottom: T, left: T) -> Edges<T> {
         use raikiri_style::property::WritingMode::*;
         let rect = match self.context.layout_wm {
-            VerticalRl | SidewaysRl => taffy::Rect {
+            VerticalRl | SidewaysRl => Edges {
                 left: top,
                 right: bottom,
                 top: right,
                 bottom: left,
             },
-            VerticalLr | SidewaysLr => taffy::Rect {
+            VerticalLr | SidewaysLr => Edges {
                 left: top,
                 right: bottom,
                 top: left,
                 bottom: right,
             },
-            _ => taffy::Rect {
+            _ => Edges {
                 top,
                 right,
                 bottom,
@@ -261,7 +263,7 @@ impl<'a> LayoutStyleView<'a> {
                 } else {
                     (rect.left, rect.right)
                 };
-                taffy::Rect {
+                Edges {
                     left: rect.top,
                     right: rect.bottom,
                     top,
@@ -274,7 +276,7 @@ impl<'a> LayoutStyleView<'a> {
     pub(crate) fn percentage_edges(
         &self,
         properties: [LengthProperty; 4],
-    ) -> taffy::Rect<taffy::LengthPercentage> {
+    ) -> Edges<LengthPercentage> {
         // Place the input positions first so each length is read straight into
         // the side it ends up on.
         let from = self.edges(0usize, 1, 2, 3);
@@ -282,7 +284,7 @@ impl<'a> LayoutStyleView<'a> {
             (PercentBasis::Taffy, Some(basis)) => PercentBasis::Definite(basis),
             (basis, _) => basis,
         };
-        taffy::Rect {
+        Edges {
             top: self.length(properties[from.top]).lp(vertical_basis),
             bottom: self.length(properties[from.bottom]).lp(vertical_basis),
             left: self

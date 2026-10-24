@@ -6,15 +6,18 @@ mod preparation_tests;
 pub(super) mod scoped_override_tests;
 pub(crate) use scoped_override_tests::with_setup_inspector;
 
+use crate::Document;
 use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession};
-use crate::{Document, LayoutStyle};
+use raikiri_layout_geometry::Size;
+use raikiri_layout_style::BoxStyle;
 use raikiri_layout_style::{AlignedCalc, LengthProperty, OwnedPropertyOverride};
 use raikiri_style::{ComputedLengthPercentageOrAuto as L, build_rule_tree, cascade};
 
 use raikiri_layout_style::TaffyStyle;
 use raikiri_layout_style::values::{
-    AlignItems, BoxGenerationMode, ContainingBlockClaims, Dimension, Direction as LayoutDirection,
-    Display, LengthExt, LengthIdentity, LengthPercentage, Overflow, Position, StyleSize,
+    AlignItems, BoxGenerationMode, CalcRef, ContainingBlockClaims, Dimension,
+    Direction as LayoutDirection, Display, LengthIdentity, LengthPercentage, Overflow, Position,
+    ToTaffy,
 };
 use std::sync::Arc;
 use taffy::CoreStyle;
@@ -22,12 +25,11 @@ use taffy::NodeId as TaffyNodeId; // taffy-boundary-lint:ignore: the Taffy tree 
 
 /// The identity a calc length has when it points at `owner`.
 fn calc_identity(owner: &Arc<AlignedCalc>) -> LengthIdentity {
-    Dimension::calc(Arc::as_ptr(owner).cast()).identity()
+    Dimension::calc(CalcRef::retained(owner)).identity()
 }
 
 /// The payload in `owners` that the calc `length` points at.
-fn owner_of(owners: &[Arc<AlignedCalc>], length: impl LengthExt) -> Option<&Arc<AlignedCalc>> {
-    let identity = length.identity();
+fn owner_of(owners: &[Arc<AlignedCalc>], identity: LengthIdentity) -> Option<&Arc<AlignedCalc>> {
     owners.iter().find(|owner| calc_identity(owner) == identity)
 }
 
@@ -56,13 +58,13 @@ fn synthetic_recipe_matches_the_default_taffy_style() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let view = session.style_view(text);
-    let expected = LayoutStyle::default();
-    assert_eq!(view.size(), expected.size());
-    assert_eq!(view.margin(), expected.margin());
-    assert_eq!(view.padding(), expected.padding());
+    let expected = BoxStyle::default();
+    assert_eq!(view.size(), expected.size);
+    assert_eq!(view.margin(), expected.margin);
+    assert_eq!(view.padding(), expected.padding);
     assert_eq!(view.is_block(), expected.is_block());
-    assert_eq!(view.direction(), expected.direction());
-    assert_eq!(view.box_sizing(), expected.box_sizing());
+    assert_eq!(view.direction(), expected.direction);
+    assert_eq!(view.box_sizing(), expected.box_sizing);
 }
 
 fn width(value: f32) -> Vec<OwnedPropertyOverride> {
@@ -194,7 +196,8 @@ fn prepared_grid_alignment_preserves_the_semantic_bridge_overrides() {
     }
 }
 
-fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, expected: &LayoutStyle) {
+fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, expected: &BoxStyle) {
+    let expected = &crate::layout::test_support::taffy_style(expected);
     use taffy::{
         FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GridContainerStyle as GC,
         GridItemStyle as GI,
@@ -244,9 +247,9 @@ fn contents_recipe_keeps_only_explicit_inherited_direction() {
     prepare_for_inspection(&mut tree);
     assert_neutral_getters(
         tree.style_view(child),
-        &LayoutStyle {
+        &BoxStyle {
             direction: LayoutDirection::Rtl,
-            ..LayoutStyle::default()
+            ..BoxStyle::default()
         },
     );
     block_view_tests::assert_all_new_roles(&tree, child);
@@ -261,13 +264,13 @@ fn initial_containing_block_recipe_uses_page_dimensions() {
     prepare_for_inspection(&mut tree);
     assert_neutral_getters(
         tree.style_view(icb),
-        &LayoutStyle {
+        &BoxStyle {
             display: Display::Block,
-            size: StyleSize {
+            size: Size {
                 width: Dimension::length(123.0),
                 height: Dimension::length(456.0),
             },
-            ..LayoutStyle::default()
+            ..BoxStyle::default()
         },
     );
     block_view_tests::assert_all_new_roles(&tree, icb);
@@ -308,10 +311,10 @@ fn anonymous_table_and_cell_recipes_inherit_only_selected_facts() {
     for idx in [table, cell] {
         assert_neutral_getters(
             tree.style_view(idx),
-            &LayoutStyle {
+            &BoxStyle {
                 display: Display::Block,
                 direction: LayoutDirection::Rtl,
-                ..LayoutStyle::default()
+                ..BoxStyle::default()
             },
         );
         block_view_tests::assert_all_new_roles(&tree, idx);
@@ -390,7 +393,7 @@ fn fixed_and_vertical_direction_are_physical() {
         assert_eq!(view.direction(), direction, "{css}");
         assert_eq!(
             view.size(),
-            LayoutStyle::default().size(),
+            BoxStyle::default().size,
             "physical sizes stay unprojected: {css}"
         );
     }
@@ -652,7 +655,7 @@ fn flex_grid_queries_preserve_legacy_claims_and_prepared_facts() {
                     tree.get_grid_container_style(id).is_containing_block(),
                     tree.get_grid_child_style(id).is_containing_block(),
                 ] {
-                    assert_eq!(actual, expected);
+                    assert_eq!(actual, expected.to_taffy());
                 }
             }
         }

@@ -1,5 +1,9 @@
 use super::*;
-use crate::resolve::CalcHandle;
+use crate::values::{
+    CalcRef, Dimension, ExpandedDimension, ExpandedLengthPercentage, ExpandedLengthPercentageAuto,
+    LengthPercentage, LengthPercentageAuto,
+};
+use raikiri_layout_geometry::{Edges, Point, Size};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 use taffy::{CoreStyle, FlexboxContainerStyle, FlexboxItemStyle};
@@ -7,6 +11,7 @@ mod calc_handle_tests;
 mod core_tests;
 mod grid_tests;
 mod owned_tests;
+mod parity_tests;
 mod physical_sizing_tests;
 mod policy_tests;
 mod pr_review_tests;
@@ -15,16 +20,54 @@ mod resolve_tests;
 mod resolved_length_tests;
 mod review_tests;
 
+/// The calc reference of a length that holds one.
+trait CalcOf: Copy {
+    fn calc_ref(self) -> CalcRef;
+}
+
+impl CalcOf for Dimension {
+    fn calc_ref(self) -> CalcRef {
+        match self.expand() {
+            ExpandedDimension::Calc(calc) | ExpandedDimension::FitContentCalc(calc) => calc,
+            other => panic!("not a calc: {other:?}"),
+        }
+    }
+}
+
+impl CalcOf for LengthPercentage {
+    fn calc_ref(self) -> CalcRef {
+        match self.expand() {
+            ExpandedLengthPercentage::Calc(calc) => calc,
+            other => panic!("not a calc: {other:?}"),
+        }
+    }
+}
+
+impl CalcOf for LengthPercentageAuto {
+    fn calc_ref(self) -> CalcRef {
+        match self.expand() {
+            ExpandedLengthPercentageAuto::Calc(calc) => calc,
+            other => panic!("not a calc: {other:?}"),
+        }
+    }
+}
+
 #[test]
 fn initial_values_match_bridge() {
     let cv = ComputedValues::initial();
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-    assert_eq!(v.box_sizing(), taffy::BoxSizing::ContentBox);
+    assert_eq!(v.box_sizing(), values::BoxSizing::ContentBox);
     assert_eq!(v.flex_grow(), 0.0);
     assert_eq!(v.flex_shrink(), 1.0);
-    assert_eq!(v.flex_basis(), taffy::Dimension::auto());
-    assert_eq!(v.gap(), taffy::Size::zero());
+    assert_eq!(v.flex_basis(), Dimension::auto());
+    assert_eq!(
+        v.gap(),
+        Size {
+            width: LengthPercentage::ZERO,
+            height: LengthPercentage::ZERO,
+        }
+    );
 }
 
 #[test]
@@ -39,14 +82,14 @@ fn scoped_overrides_distinguish_absence_and_last_wins() {
         PropertyOverride::aspect_ratio(Some(2.0)),
     ];
     let plain = LayoutStyleView::new(&p, ViewContext::default(), &pass, &[]);
-    assert_eq!(plain.size().width, taffy::Dimension::length(30.0));
+    assert_eq!(plain.size().width, Dimension::length(30.0));
     assert_eq!(plain.aspect_ratio(), Some(2.0));
     let scoped = [
         PropertyOverride::length(LengthProperty::Width, length(L::Auto)).unwrap(),
         PropertyOverride::aspect_ratio(None),
     ];
     let v = LayoutStyleView::new(&p, ViewContext::default(), &pass, &scoped);
-    assert_eq!(v.size().width, taffy::Dimension::auto());
+    assert_eq!(v.size().width, Dimension::auto());
     assert_eq!(v.aspect_ratio(), None);
 }
 
@@ -67,8 +110,8 @@ fn edge_resolution_is_not_repeated_and_axes_are_projected() {
         ..ViewContext::default()
     };
     let v = LayoutStyleView::new(&p, context, &overrides, &[]);
-    assert_eq!(v.padding().top, taffy::LengthPercentage::length(20.0));
-    assert_eq!(v.padding().bottom, taffy::LengthPercentage::length(7.0));
+    assert_eq!(v.padding().top, LengthPercentage::length(20.0));
+    assert_eq!(v.padding().bottom, LengthPercentage::length(7.0));
     let context = ViewContext {
         layout_wm: raikiri_style::property::WritingMode::VerticalRl,
         ..context
@@ -76,13 +119,13 @@ fn edge_resolution_is_not_repeated_and_axes_are_projected() {
     let v = LayoutStyleView::new(&p, context, &overrides, &[]);
     assert_eq!(
         v.size(),
-        taffy::Size {
-            width: taffy::Dimension::length(40.0),
-            height: taffy::Dimension::length(20.0)
+        Size {
+            width: Dimension::length(40.0),
+            height: Dimension::length(20.0)
         }
     );
-    assert_eq!(v.padding().left, taffy::LengthPercentage::length(20.0));
-    assert_eq!(v.padding().right, taffy::LengthPercentage::length(7.0));
+    assert_eq!(v.padding().left, LengthPercentage::length(20.0));
+    assert_eq!(v.padding().right, LengthPercentage::length(7.0));
 }
 
 #[test]

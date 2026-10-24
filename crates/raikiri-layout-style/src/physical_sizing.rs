@@ -1,7 +1,5 @@
 use crate::overrides::OverrideKind;
-use crate::{LengthProperty, OverrideError, OwnedPropertyOverride};
-use raikiri_style::SmolStr;
-use taffy::Style;
+use crate::{BoxStyle, LengthProperty, OverrideError, OwnedPropertyOverride};
 
 impl OwnedPropertyOverride {
     /// Whether [`Self::apply_physical_sizing`] accepts this entry.
@@ -26,7 +24,7 @@ impl OwnedPropertyOverride {
         }
     }
 
-    /// Write one physical sizing override into a local `Style` snapshot.
+    /// Write one physical sizing override into a [`BoxStyle`] snapshot.
     ///
     /// Only the affected field is replaced, and the previous value is not
     /// kept: apply entries to a clone the caller owns for one measurement, so
@@ -37,7 +35,7 @@ impl OwnedPropertyOverride {
     ///
     /// # Errors
     /// Rejects properties outside the physical sizing set.
-    pub fn apply_physical_sizing(&self, style: &mut Style<SmolStr>) -> Result<(), OverrideError> {
+    pub fn apply_physical_sizing(&self, style: &mut BoxStyle) -> Result<(), OverrideError> {
         match self.as_borrowed().0 {
             OverrideKind::Length(LengthProperty::Width, value) => {
                 style.size.width = value.dimension();
@@ -57,7 +55,9 @@ impl OwnedPropertyOverride {
             OverrideKind::Length(LengthProperty::MaxHeight, value) => {
                 style.max_size.height = value.auto(false);
             }
-            OverrideKind::FlexShrink(value) => style.flex_shrink = value,
+            // A box style holds no flex properties, so the probe's shrink factor
+            // is accepted and changes nothing.
+            OverrideKind::FlexShrink(_) => {}
             OverrideKind::Length(LengthProperty::BorderTop, value) => {
                 style.border.top = value.lp(crate::PercentBasis::Taffy);
             }

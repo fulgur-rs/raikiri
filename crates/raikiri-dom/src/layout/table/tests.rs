@@ -11,7 +11,7 @@ use raikiri_style::property::{
 use raikiri_style::{ComputedLength, ResolveContext, build_rule_tree, cascade, resolve_border};
 use raikiri_traits::PageBox;
 
-use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentageAuto, StyleRect};
+use raikiri_layout_style::values::{Dimension, LengthPercentage, LengthPercentageAuto};
 
 mod ancestor_walk_tests;
 mod anonymous_table_tests;
@@ -64,10 +64,7 @@ fn margin_left_override(
 
 /// The border widths each of `boxes` has right now, read the way table layout
 /// reads them: through the style view with scoped overrides.
-fn borders_in_document(
-    document: &mut Document,
-    boxes: &[usize],
-) -> Vec<StyleRect<LengthPercentage>> {
+fn borders_in_document(document: &mut Document, boxes: &[usize]) -> Vec<Edges<LengthPercentage>> {
     with_layout_session(document, |session| {
         boxes
             .iter()
@@ -76,7 +73,7 @@ fn borders_in_document(
     })
 }
 
-fn border_in_document(document: &mut Document, idx: usize) -> StyleRect<LengthPercentage> {
+fn border_in_document(document: &mut Document, idx: usize) -> Edges<LengthPercentage> {
     borders_in_document(document, &[idx])[0]
 }
 
@@ -3801,7 +3798,7 @@ fn with_retained_border_state_in(
 }
 
 /// The border widths boxes have once a resolution has been published.
-type UsedBorders = std::collections::HashMap<usize, StyleRect<LengthPercentage>>;
+type UsedBorders = std::collections::HashMap<usize, Edges<LengthPercentage>>;
 
 /// The border widths the cells and rows of `grid`, and `extra`, have in
 /// `session`.

@@ -1,5 +1,7 @@
 //! Allocation measurements exclude preparation, assertions and payload destruction.
 #![allow(unsafe_code)]
+use raikiri_layout_geometry::Edges;
+use raikiri_layout_style::values::AlignItems;
 use raikiri_layout_style::*;
 use raikiri_style::{
     ComputedGridTemplateTracks, ComputedGridTrackBreadth as B, ComputedGridTrackList,
@@ -245,7 +247,7 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
         OwnedPropertyOverride::length(LengthProperty::MarginLeft, L::Calc(expr), false).unwrap(),
     ];
     let owned_scoped = [
-        OwnedPropertyOverride::align_self(Some(taffy::AlignItems::CENTER)),
+        OwnedPropertyOverride::align_self(Some(AlignItems::CENTER)),
         OwnedPropertyOverride::justify_self(None),
         OwnedPropertyOverride::length(LengthProperty::PaddingBottom, L::Px(7.0), true).unwrap(),
     ];
@@ -255,7 +257,7 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
         PropertyOverride::flex_shrink(0.5),
     ];
     let scoped = [
-        PropertyOverride::align_self(Some(taffy::AlignItems::CENTER)),
+        PropertyOverride::align_self(Some(AlignItems::CENTER)),
         PropertyOverride::justify_self(None),
         PropertyOverride::length(LengthProperty::PaddingBottom, LengthValue::resolved(7.0))
             .unwrap(),
@@ -295,7 +297,7 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
                         read_all(black_box(&v.with_context(ViewContext {
                             bridge_projection: BridgeProjection::BlockTranspose { right_to_left },
                             block_item_basis: Some(123.0),
-                            resolved_padding: Some(taffy::Rect {
+                            resolved_padding: Some(Edges {
                                 top: 1.0,
                                 right: 2.0,
                                 bottom: 3.0,

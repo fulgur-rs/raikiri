@@ -3,8 +3,9 @@ use crate::layout::{
     context::LayoutSession,
     style_views::{ReadRole, tests::fixture_with_styles},
 };
+use raikiri_layout_geometry::Size;
 use raikiri_layout_style::values::{
-    Dimension, ExpandedDimension, LengthPercentage, LengthPercentageAuto, StyleSize,
+    Dimension, ExpandedDimension, LengthPercentage, LengthPercentageAuto,
 };
 
 fn frame(
@@ -39,7 +40,7 @@ fn opposite_frames_keep_independent_view_geometry() {
         let query = tree.query_style(child, ReadRole::BlockItem);
         assert_eq!(
             query.size(),
-            StyleSize {
+            Size {
                 width: Dimension::length(7.0),
                 height: Dimension::length(31.0)
             }
@@ -100,7 +101,7 @@ fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
     with_transposed_frame(&mut tree, block, |tree| {
         assert_eq!(
             tree.query_style(child, ReadRole::BlockItem).size(),
-            StyleSize {
+            Size {
                 width: Dimension::length(7.0),
                 height: Dimension::length(31.0)
             }
@@ -109,7 +110,7 @@ fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
         assert_eq!(physical.size(), physical_before);
         assert_eq!(
             physical.size(),
-            StyleSize {
+            Size {
                 width: Dimension::length(31.0),
                 height: Dimension::length(7.0)
             }
@@ -187,7 +188,7 @@ fn late_override_preserves_unrelated_frame_property() {
         let query = tree.query_style(child, ReadRole::BlockItem);
         assert_eq!(
             query.size(),
-            StyleSize {
+            Size {
                 width: Dimension::length(91.0),
                 height: Dimension::length(31.0)
             }
@@ -391,7 +392,7 @@ fn materialized_calc_survives_frame_and_bridge_retirement() {
             tree.box_style_data
                 .calc_values
                 .iter()
-                .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+                .find(|owner| raikiri_layout_style::values::CalcRef::retained(owner) == handle)
                 .unwrap(),
         );
         let block = frame(&mut tree, parent, child, true);
@@ -415,7 +416,7 @@ fn materialized_calc_survives_frame_and_bridge_retirement() {
             tree.box_style_data
                 .calc_values
                 .iter()
-                .any(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+                .any(|owner| raikiri_layout_style::values::CalcRef::retained(owner) == handle)
         );
 
         let _retained = owner
@@ -546,7 +547,7 @@ fn a_physical_read_of_a_vertical_box_keeps_the_physical_axes() {
     let physical = tree.physical_style(child);
     assert_eq!(
         physical.size(),
-        StyleSize {
+        Size {
             width: Dimension::length(31.0),
             height: Dimension::length(7.0)
         }

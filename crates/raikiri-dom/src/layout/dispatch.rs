@@ -11,7 +11,6 @@
 //! - `compute_child_layout`: the dispatch on the display of the node
 //! - `set_unrounded_layout` / `set_detailed_grid_info`: where results are stored
 
-use crate::LayoutStyle as Style;
 use crate::layout::protocol::{
     AvailableSpace, Baselines, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId,
     OofCandidates, RequestedAxis, RunMode, SizingMode,
@@ -21,11 +20,11 @@ use crate::layout::taffy_adapter::algorithms::{
 };
 use crate::layout::taffy_adapter::{GridInfo, RowSizing};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
+use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, AlignItems, AlignSelf, BoxGenerationMode, BoxSizing, CalcHandle,
-    Direction, Display, ExpandedDimension, ExpandedLengthPercentageAuto, Float, LengthExt,
-    LengthPercentage, LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
-    StylePoint,
+    AlignContentKeyword, AlignItems, AlignSelf, BoxGenerationMode, BoxSizing, CalcRef, Direction,
+    Display, ExpandedDimension, ExpandedLengthPercentageAuto, Float, LengthPercentage,
+    LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -33,7 +32,7 @@ use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
-use raikiri_layout_style::{LayoutStyleView, TaffyStyle};
+use raikiri_layout_style::{LayoutStyleView, LeafStyle, TaffyStyle, resolve_projected_calc};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::DisplayValue;
 
@@ -75,25 +74,28 @@ pub(crate) fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
         })
 }
 
-/// Keep `value` in the document arena and return its Taffy handle.
+/// Keep `value` in the document arena and return a reference to it.
 pub(crate) fn push_calc(
     arena: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     value: raikiri_style::property::CalcLengthPercentage,
     non_negative: bool,
-) -> *const () {
+) -> CalcRef {
     let payload = std::sync::Arc::new(raikiri_layout_style::AlignedCalc::new(value, non_negative));
-    let pointer = std::sync::Arc::as_ptr(&payload).cast();
+    let calc = CalcRef::retained(&payload);
     arena.push(payload);
-    pointer
+    calc
 }
 
 /// Resolve a `calc()` payload handle against `basis`.
 ///
 /// The handle does not depend on the document, so leaf measure callbacks that
 /// cannot borrow the tree call this directly.
+#[allow(unsafe_code)]
 pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
-    // The document retains the common payload before publishing any raw handle.
-    val.resolve(basis)
+    // SAFETY: Taffy hands back only handles of the lengths that the style views
+    // and the bridge made from `CalcRef`s, and the document retains every
+    // payload before it publishes a length that refers to it.
+    unsafe { resolve_projected_calc(val, basis) }
 }
 
 /// The limit of a `fit-content(<length-percentage>)` size, resolved against
@@ -931,51 +933,57 @@ impl LayoutSession<'_> {
                     replaced_size::padding_and_border(&resolver_style, inputs.parent_size.width),
                     content_box_ratio,
                 );
-                return compute_leaf_layout(inputs, &style, resolve_calc, |known, available| {
-                    // Taffy's known dimensions include padding and border;
-                    // its available space has already removed those insets.
-                    let known = Size {
-                        width: known.width.and(available.width.into_option()),
-                        height: known.height.and(available.height.into_option()),
-                    };
-                    let authored_height = available
-                        .height
-                        .into_option()
-                        .filter(|_| height_is_authored);
-                    let width_for = |height| replaced_size::width_for_height(height, ratio, insets);
-                    let width = known
-                        .width
-                        .or(known.height.map(width_for))
-                        .or(authored_height.map(width_for))
-                        .unwrap_or(match available.width {
-                            AvailableSpace::Definite(width) => width,
-                            AvailableSpace::MinContent => 0.0,
-                            AvailableSpace::MaxContent => intrinsic.width,
-                        });
-                    let natural = Size {
-                        width,
-                        height: known.height.unwrap_or_else(|| {
-                            replaced_size::height_for_width(width, ratio, insets)
-                        }),
-                    };
-                    let resolver_inputs = LayoutInput {
-                        known_dimensions: known,
-                        available_space: available,
-                        ..inputs
-                    };
-                    let resolved = replaced_size::auto_sides_size(
-                        &resolver_style,
-                        &resolver_inputs,
-                        natural,
-                        limits,
-                        content_box_ratio,
-                    )
-                    .unwrap_or(natural);
-                    Size {
-                        width: resolved.width,
-                        height: resolved.height,
-                    }
-                });
+                return compute_leaf_layout(
+                    inputs,
+                    &LeafStyle::new(&style),
+                    resolve_calc,
+                    |known, available| {
+                        // Taffy's known dimensions include padding and border;
+                        // its available space has already removed those insets.
+                        let known = Size {
+                            width: known.width.and(available.width.into_option()),
+                            height: known.height.and(available.height.into_option()),
+                        };
+                        let authored_height = available
+                            .height
+                            .into_option()
+                            .filter(|_| height_is_authored);
+                        let width_for =
+                            |height| replaced_size::width_for_height(height, ratio, insets);
+                        let width = known
+                            .width
+                            .or(known.height.map(width_for))
+                            .or(authored_height.map(width_for))
+                            .unwrap_or(match available.width {
+                                AvailableSpace::Definite(width) => width,
+                                AvailableSpace::MinContent => 0.0,
+                                AvailableSpace::MaxContent => intrinsic.width,
+                            });
+                        let natural = Size {
+                            width,
+                            height: known.height.unwrap_or_else(|| {
+                                replaced_size::height_for_width(width, ratio, insets)
+                            }),
+                        };
+                        let resolver_inputs = LayoutInput {
+                            known_dimensions: known,
+                            available_space: available,
+                            ..inputs
+                        };
+                        let resolved = replaced_size::auto_sides_size(
+                            &resolver_style,
+                            &resolver_inputs,
+                            natural,
+                            limits,
+                            content_box_ratio,
+                        )
+                        .unwrap_or(natural);
+                        Size {
+                            width: resolved.width,
+                            height: resolved.height,
+                        }
+                    },
+                );
             }
             // A paragraph measured as if empty is a block container with no
             // lines.
@@ -1016,16 +1024,21 @@ impl LayoutSession<'_> {
                 if constrained.is_some() {
                     apply_local_sizing(&mut style, &[OwnedPropertyOverride::aspect_ratio(None)]);
                 }
-                compute_leaf_layout(inputs, &style, resolve_calc, |known, _available| {
-                    // An explicit size from the style wins; otherwise an
-                    // image's intrinsic size; a text node outside every
-                    // paragraph and any other leaf measure zero.
-                    let natural = constrained.or(leaf_intrinsic);
-                    Size {
-                        width: known.width.or(natural.map(|s| s.width)).unwrap_or(0.0),
-                        height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
-                    }
-                })
+                compute_leaf_layout(
+                    inputs,
+                    &LeafStyle::new(&style),
+                    resolve_calc,
+                    |known, _available| {
+                        // An explicit size from the style wins; otherwise an
+                        // image's intrinsic size; a text node outside every
+                        // paragraph and any other leaf measure zero.
+                        let natural = constrained.or(leaf_intrinsic);
+                        Size {
+                            width: known.width.or(natural.map(|s| s.width)).unwrap_or(0.0),
+                            height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
+                        }
+                    },
+                )
             } else {
                 match formatting_context {
                     FormattingContext::Flex => flex_layout(tree, node_id, inputs),
@@ -1366,8 +1379,11 @@ fn compute_ifc_root(
             };
             height.min(max).max(min)
         });
-    let mut output =
-        compute_leaf_layout(inputs, &layout_style, resolve_calc, |known, available| {
+    let mut output = compute_leaf_layout(
+        inputs,
+        &LeafStyle::new(&layout_style),
+        resolve_calc,
+        |known, available| {
             let measured = measure_ifc_root(
                 tree,
                 idx,
@@ -1383,7 +1399,8 @@ fn compute_ifc_root(
             escaping_margin = measured.bottom_margin;
             nested_oof_candidates = measured.oof_candidates;
             measured.size
-        });
+        },
+    );
     if ratio_height_follows {
         apply_local_sizing(
             &mut layout_style,
@@ -2160,7 +2177,7 @@ fn fragmentation_context_for_ifc(
 }
 
 /// Whether `overflow` makes a box a scroll container on either axis.
-fn is_scroll_container(overflow: StylePoint<Overflow>) -> bool {
+fn is_scroll_container(overflow: Point<Overflow>) -> bool {
     overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
 }
 
@@ -2441,7 +2458,7 @@ fn compute_inline_block_shrink_wrap(
                     },
                     ..inputs
                 },
-                &ratio_free_style,
+                &LeafStyle::new(&ratio_free_style),
                 resolve_calc,
                 |known, _avail| Size {
                     width: known
@@ -2544,12 +2561,15 @@ fn compute_inline_block_shrink_wrap(
             );
         }
         let natural = fixed_width.or(leaf_intrinsic);
-        compute_leaf_layout(final_inputs, &leaf_style, resolve_calc, |known, _avail| {
-            Size {
+        compute_leaf_layout(
+            final_inputs,
+            &LeafStyle::new(&leaf_style),
+            resolve_calc,
+            |known, _avail| Size {
                 width: known.width.or(natural.map(|s| s.width)).unwrap_or(0.0),
                 height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
-            }
-        })
+            },
+        )
     } else {
         match display {
             DisplayValue::Flex | DisplayValue::InlineFlex => {

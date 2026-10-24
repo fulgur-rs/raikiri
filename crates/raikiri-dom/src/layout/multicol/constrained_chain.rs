@@ -1,7 +1,8 @@
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
 use crate::layout::context::LayoutSession;
-use raikiri_layout_style::values::{IntoEdges, MaybeResolve};
+use raikiri_layout_geometry::Edges;
+use raikiri_layout_style::values::MaybeResolve;
 
 pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<usize>> {
     if tree.nodes[parent].ifc.is_some() {
@@ -34,8 +35,8 @@ pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<u
             || style.float().is_floated()
             || style.clear() != Clear::None
             || !super::insets_are_a_relative_inline_offset(tree, child)
-            || style.padding() != StyleRect::zero()
-            || style.border() != StyleRect::zero()
+            || style.padding() != Edges::splat(LengthPercentage::ZERO)
+            || style.border() != Edges::splat(LengthPercentage::ZERO)
             || overflow.x == Overflow::Scroll
             || overflow.y == Overflow::Scroll
             || !style.size().height.is_auto()
@@ -49,7 +50,7 @@ pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<u
         {
             return None;
         }
-        constrained |= style.margin() != StyleRect::zero()
+        constrained |= style.margin() != Edges::splat(LengthPercentageAuto::ZERO)
             || !node.multicol_auto_width
             || !style.min_size().width.is_auto()
             || !style.max_size().width.is_auto();
@@ -193,9 +194,8 @@ pub(super) fn layout(
     // Parent-owned used margins can still refer to the unfragmented width.
     // Resolve the outer margins against the column before placing this box.
     let margin_style = style_of(tree, first).margin();
-    first_layout.margin = margin_style
-        .into_edges()
-        .map(|margin| margin.maybe_resolve(context.column_width).unwrap_or(0.0));
+    first_layout.margin =
+        margin_style.map(|margin| margin.maybe_resolve(context.column_width).unwrap_or(0.0));
     let left_auto = margin_style.left.is_auto();
     let right_auto = margin_style.right.is_auto();
     let room = context.column_width

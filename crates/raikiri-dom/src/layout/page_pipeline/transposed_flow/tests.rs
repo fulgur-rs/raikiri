@@ -2,7 +2,7 @@ use super::*;
 use crate::layout::protocol::{LayoutInput, RequestedAxis, RunMode, SizingMode};
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
 use raikiri_layout_geometry::Line;
-use raikiri_layout_style::values::{Dimension, IntoEdges, LengthPercentageAuto};
+use raikiri_layout_style::values::{Dimension, LengthPercentageAuto};
 
 /// Paginate an 800x600 page holding a root styled `html_css` and a body
 /// styled `body_css` (Ahem text, 10px lines) with one block child per entry
@@ -770,7 +770,7 @@ fn physical_facts(session: &LayoutSession<'_>, key: usize) -> Facts {
 /// exchanged onto transposed axes.
 fn swapped_facts(axes: FlowAxes, session: &LayoutSession<'_>, key: usize) -> Facts {
     let view = session.style_view(key);
-    let margin = axes.rect(view.margin().into_edges());
+    let margin = axes.rect(view.margin());
     (
         view.size().width,
         view.min_size().width,

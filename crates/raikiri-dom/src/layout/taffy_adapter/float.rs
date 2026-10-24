@@ -1,7 +1,7 @@
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::protocol::{AvailableSpace, BfcSlot, FloatDirection};
 use raikiri_layout_geometry::{Point, Size};
-use raikiri_layout_style::values::{Clear, Direction};
+use raikiri_layout_style::values::{Clear, Direction, ToTaffy};
 
 /// Where the floats of one block formatting context are.
 ///
@@ -61,7 +61,7 @@ impl FloatContext {
             min_y,
             containing_block_insets,
             direction.into_taffy(),
-            clear,
+            clear.to_taffy(),
         ))
     }
 
@@ -84,8 +84,8 @@ impl FloatContext {
             min_y,
             containing_block_insets,
             margins,
-            direction,
-            clear,
+            direction.to_taffy(),
+            clear.to_taffy(),
             after,
         ))
     }
@@ -93,7 +93,7 @@ impl FloatContext {
     /// How low the floats that `clear` clears reach, if there are any.
     #[inline]
     pub(crate) fn cleared_threshold(&self, clear: Clear) -> Option<f32> {
-        self.0.cleared_threshold(clear)
+        self.0.cleared_threshold(clear.to_taffy())
     }
 }
 
@@ -117,7 +117,8 @@ impl FloatIntrinsicWidthCalculator {
     /// and clearing the floats that `clear` names.
     #[inline]
     pub(crate) fn add_float(&mut self, width: f32, direction: FloatDirection, clear: Clear) {
-        self.0.add_float(width, direction.into_taffy(), clear);
+        self.0
+            .add_float(width, direction.into_taffy(), clear.to_taffy());
     }
 
     /// The width the floats added so far contribute.

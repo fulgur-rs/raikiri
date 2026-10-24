@@ -1,5 +1,6 @@
 use super::*;
 use crate::node::arena::BoxKey;
+use raikiri_layout_geometry::Edges;
 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use std::collections::HashMap;
@@ -7,7 +8,7 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct CellBorderState {
     pub(super) node_id: usize,
-    pub(super) widths: StyleRect<LengthPercentage>,
+    pub(super) widths: Edges<LengthPercentage>,
     pub(super) paint: Option<Sides<ComputedBorder>>,
     authored: Option<Sides<ComputedBorder>>,
 }
@@ -18,7 +19,7 @@ pub(super) struct BorderState {
     pub(super) rows: Vec<(usize, Option<Sides<ComputedBorder>>)>,
     slots: HashMap<usize, usize>,
     row_slots: HashMap<usize, usize>,
-    row_widths: HashMap<usize, StyleRect<LengthPercentage>>,
+    row_widths: HashMap<usize, Edges<LengthPercentage>>,
 }
 
 impl BorderState {

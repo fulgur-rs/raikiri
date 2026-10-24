@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_layout_style::values::{Dimension, LengthExt, LengthIdentity};
+use raikiri_layout_style::values::{Dimension, LengthIdentity};
 use raikiri_layout_style::{
     AlignedCalc, LayoutStyleView, PreparedStyle, StyleMetadata, ViewContext,
 };
@@ -7,7 +7,6 @@ use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 use std::sync::Arc;
 
 #[test]
-#[allow(unsafe_code)]
 fn legacy_and_view_calc_handles_share_the_resolver() {
     for expression in [
         CalcLengthPercentage {
@@ -26,6 +25,7 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
         for non_negative in [true, false] {
             let mut owners: Vec<Arc<AlignedCalc>> = Vec::new();
             let legacy = crate::layout::dispatch::push_calc(&mut owners, expression, non_negative);
+            let raw: *const () = Arc::as_ptr(&owners[0]).cast();
             assert_eq!(owners[0].expression().px.to_bits(), expression.px.to_bits());
             assert_eq!(owners[0].non_negative(), non_negative);
             let mut values = ComputedValues::initial();
@@ -45,15 +45,9 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
             };
             for basis in [0.0, 1.0, 37.0, 100.0, f32::INFINITY, f32::NAN] {
                 let expected = owners[0].resolve(basis);
-                assert_eq!(
-                    crate::layout::dispatch::resolve_calc(legacy, basis),
-                    expected
-                );
+                assert_eq!(crate::layout::dispatch::resolve_calc(raw, basis), expected);
                 assert_eq!(resolve_view(basis), Some(expected));
-                assert_eq!(
-                    raikiri_layout_style::values::CalcHandle::resolve(legacy, basis),
-                    expected
-                );
+                assert_eq!(legacy.resolve(basis), expected);
             }
         }
     }
@@ -67,9 +61,12 @@ fn session_drop_preserves_retained_handle_owner() {
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
         let width = session.style_view(child).size().width;
-        let owner = owner_of(&session.document.box_style_data.calc_values, width)
-            .map(Arc::downgrade)
-            .expect("the document retains the exact payload before the handle escapes");
+        let owner = owner_of(
+            &session.document.box_style_data.calc_values,
+            width.identity(),
+        )
+        .map(Arc::downgrade)
+        .expect("the document retains the exact payload before the handle escapes");
         (width, owner)
     };
     let retained = owner.upgrade().expect("the document outlives its session");
@@ -91,9 +88,12 @@ fn rebridge_failure_keeps_old_handle_alive() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let width = session.style_view(child).size().width;
-    let owner = owner_of(&session.document.box_style_data.calc_values, width)
-        .map(Arc::downgrade)
-        .expect("the published view has a document owner");
+    let owner = owner_of(
+        &session.document.box_style_data.calc_values,
+        width.identity(),
+    )
+    .map(Arc::downgrade)
+    .expect("the published view has a document owner");
     session.document.set_font_collection_with_limits(
         ahem_fonts(),
         Limits {
@@ -136,9 +136,12 @@ fn popped_override_handle_outlives_the_session() {
             ],
         );
         let width = session.style_view(child).size().width;
-        let owner = owner_of(&session.document.box_style_data.calc_values, width)
-            .map(Arc::downgrade)
-            .expect("the document retains a scoped payload before publication");
+        let owner = owner_of(
+            &session.document.box_style_data.calc_values,
+            width.identity(),
+        )
+        .map(Arc::downgrade)
+        .expect("the document retains a scoped payload before publication");
         session.restore_style_overrides(token);
         assert_eq!(
             session.style_view(child).size().width,
@@ -162,9 +165,12 @@ fn rebridge_unwind_keeps_old_handle_alive() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let width = session.style_view(child).size().width;
-    let owner = owner_of(&session.document.box_style_data.calc_values, width)
-        .map(Arc::downgrade)
-        .unwrap();
+    let owner = owner_of(
+        &session.document.box_style_data.calc_values,
+        width.identity(),
+    )
+    .map(Arc::downgrade)
+    .unwrap();
     session.nodes[child].children.push(usize::MAX - 1);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
@@ -203,9 +209,12 @@ fn pass_and_recorded_scope_calcs_get_document_owners() {
                 None
             };
             let width = session.style_view(child).size().width;
-            let owner = owner_of(&session.document.box_style_data.calc_values, width)
-                .map(Arc::downgrade)
-                .expect("each override writer retains its payload before publication");
+            let owner = owner_of(
+                &session.document.box_style_data.calc_values,
+                width.identity(),
+            )
+            .map(Arc::downgrade)
+            .expect("each override writer retains its payload before publication");
             session.restore_style_overrides(token);
             (width, owner)
         };

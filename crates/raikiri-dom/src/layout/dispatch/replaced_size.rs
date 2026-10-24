@@ -1,13 +1,13 @@
 //! The size of a replaced leaf with an intrinsic ratio and an `auto` side.
 
-use crate::LayoutStyle as Style;
 use crate::image_geometry::constrain_with_ratio;
 use crate::layout::dispatch::content_limits::ContentLimits;
 use crate::layout::protocol::{AvailableSpace, LayoutInput, SizingMode};
 use raikiri_layout_geometry::Size;
+use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    BoxSizing, CalcHandle, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto,
-    LengthPercentageAuto, MaybeResolve, ResolveOrZero,
+    BoxSizing, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto, LengthPercentageAuto,
+    MaybeResolve, ResolveOrZero,
 };
 
 /// The content-box size a replaced leaf takes when `width`, `height` or both

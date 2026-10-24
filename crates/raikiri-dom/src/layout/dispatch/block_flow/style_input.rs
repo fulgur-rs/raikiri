@@ -1,28 +1,24 @@
 //! Capture the fields project block primitives read through real style queries.
 
-use crate::{
-    LayoutStyle,
-    layout::{context::LayoutSession, style_views::ReadRole},
-};
-use raikiri_layout_style::LayoutStyleView;
+use crate::layout::{context::LayoutSession, style_views::ReadRole};
 use raikiri_layout_style::values::{BoxGenerationMode, Display};
+use raikiri_layout_style::{BoxStyle, LayoutStyleView};
 
-pub(crate) fn container(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
+pub(crate) fn container(tree: &LayoutSession<'_>, idx: usize) -> BoxStyle {
     materialize(tree.query_style(idx, ReadRole::BlockContainer))
 }
-pub(crate) fn child(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
+pub(crate) fn child(tree: &LayoutSession<'_>, idx: usize) -> BoxStyle {
     materialize(tree.query_style(idx, ReadRole::BlockItem))
 }
 
 /// The box's own style with no role context, reduced to the fields that
 /// block primitives and leaf sizing read, for callers that adjust a local copy
-/// before sizing a leaf. Flex and grid container and item fields keep their
-/// defaults.
-pub(crate) fn physical(tree: &LayoutSession<'_>, idx: usize) -> LayoutStyle {
+/// before sizing a leaf.
+pub(crate) fn physical(tree: &LayoutSession<'_>, idx: usize) -> BoxStyle {
     tree.reduced_physical_style(idx, materialize)
 }
 
-fn materialize(query: LayoutStyleView<'_>) -> LayoutStyle {
+fn materialize(query: LayoutStyleView<'_>) -> BoxStyle {
     // Primitives distinguish only hidden, block and non-block display here.
     let display = if query.box_generation_mode() == BoxGenerationMode::None {
         Display::None
@@ -31,7 +27,7 @@ fn materialize(query: LayoutStyleView<'_>) -> LayoutStyle {
     } else {
         Display::Flex
     };
-    LayoutStyle {
+    BoxStyle {
         display,
         item_is_table: query.is_table(),
         item_is_replaced: query.is_replaced(),
@@ -55,6 +51,5 @@ fn materialize(query: LayoutStyleView<'_>) -> LayoutStyle {
         align_content: query.bridge_align_content(),
         align_self: query.bridge_align_self(),
         justify_self: query.bridge_justify_self(),
-        ..LayoutStyle::default()
     }
 }

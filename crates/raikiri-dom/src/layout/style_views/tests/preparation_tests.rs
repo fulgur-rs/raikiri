@@ -1,6 +1,6 @@
 use super::*;
 use crate::node::arena::BoxKey;
-use raikiri_layout_style::values::{BoxGenerationMode, Dimension, LengthExt, LengthPercentage};
+use raikiri_layout_style::values::{BoxGenerationMode, Dimension, LengthPercentage};
 
 #[test]
 fn all_key_preparation_includes_hidden_oof_flattened_and_unrelated_boxes() {
@@ -345,7 +345,9 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
         let width = session.style_view(child).size().width;
-        let owner = Arc::downgrade(owner_of(&session.box_style_data.calc_values, width).unwrap());
+        let owner = Arc::downgrade(
+            owner_of(&session.box_style_data.calc_values, width.identity()).unwrap(),
+        );
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             session.with_style_preparation_batch(|session| {
                 apply_computed_to_style_in_session(session, &cascade).unwrap();

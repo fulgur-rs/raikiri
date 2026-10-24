@@ -1206,7 +1206,7 @@ fn aligns_by_baseline(
 ) -> bool {
     let align = item.bridge_align_self().or(Some(container.align_items()));
     let margin = item.margin();
-    align.is_some_and(|align| align.keyword() == AlignItemsKeyword::Baseline)
+    align.is_some_and(|align| align.keyword == AlignItemsKeyword::Baseline)
         && !margin.top.is_auto()
         && !margin.bottom.is_auto()
 }

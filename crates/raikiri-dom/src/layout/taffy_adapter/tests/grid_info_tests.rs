@@ -9,10 +9,10 @@ use crate::layout::taffy_adapter::algorithms::compute_grid_layout;
 use crate::layout::taffy_adapter::grid_info::GridItemLines;
 use crate::layout::taffy_adapter::{GridInfo, GridRowCounts};
 use crate::layout::test_support::cascaded;
+use raikiri_layout_style::values::Direction;
 use raikiri_layout_style::{LayoutStyleView, PreparedStyle, StyleMetadata, ViewContext};
 use raikiri_style::ComputedValues;
 use raikiri_style::property::GridLineValue;
-use taffy::Direction;
 
 /// A grid of two columns (50px, 70px) and one explicit row (20px), with three
 /// children of 10px height: the third one lands in an implicit row.

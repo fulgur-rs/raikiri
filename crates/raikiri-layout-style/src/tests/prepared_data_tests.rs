@@ -1,4 +1,5 @@
 use super::*;
+use crate::values::BoxGenerationMode;
 use std::sync::Arc;
 
 fn width_values(px: f32) -> ComputedValues {
@@ -38,10 +39,7 @@ fn from_data_keeps_calc_owners() {
     let prepared =
         PreparedStyle::from_data(&values, StyleMetadata::default(), data.clone()).unwrap();
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(
-        view.size().width.into_raw().calc_value(),
-        Arc::as_ptr(&owner).cast()
-    );
+    assert_eq!(view.size().width.calc_ref(), CalcRef::new(&owner));
     drop(owner);
     drop(data);
     let retained = weak.upgrade().unwrap();
@@ -197,13 +195,10 @@ fn shared_data_does_not_share_box_metadata() {
     .unwrap();
     let visible = LayoutStyleView::new(&visible, ViewContext::default(), &[], &[]);
     let hidden = LayoutStyleView::new(&hidden, ViewContext::default(), &[], &[]);
+    assert_eq!(visible.box_generation_mode(), BoxGenerationMode::Normal);
+    assert_eq!(hidden.box_generation_mode(), BoxGenerationMode::None);
     assert_eq!(
-        visible.box_generation_mode(),
-        taffy::BoxGenerationMode::Normal
-    );
-    assert_eq!(hidden.box_generation_mode(), taffy::BoxGenerationMode::None);
-    assert_eq!(
-        visible.size().width.into_raw().calc_value(),
-        hidden.size().width.into_raw().calc_value()
+        visible.size().width.calc_ref(),
+        hidden.size().width.calc_ref()
     );
 }

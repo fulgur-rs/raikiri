@@ -5,7 +5,9 @@ use super::*;
 use crate::layout::protocol::{BfcSlot, FloatDirection};
 use crate::layout::taffy_adapter::algorithms::compute_block_align_content_offset;
 use crate::layout::taffy_adapter::{FloatContext, FloatIntrinsicWidthCalculator};
-use raikiri_layout_style::values::{AlignContent, Clear, Direction};
+use raikiri_layout_style::values::{
+    AlignContent, AlignContentKeyword, AlignmentSafety, Clear, Direction, Float, ToTaffy,
+};
 
 const CLEARS: [Clear; 4] = [Clear::None, Clear::Left, Clear::Right, Clear::Both];
 const DIRECTIONS: [Direction; 2] = [Direction::Ltr, Direction::Rtl];
@@ -66,14 +68,15 @@ fn a_float_direction_indexes_the_per_side_state_left_first() {
 
 #[test]
 fn a_float_keyword_names_the_side_the_library_names() {
-    for float in [taffy::Float::Left, taffy::Float::Right, taffy::Float::None] {
+    for float in [Float::Left, Float::Right, Float::None] {
+        let theirs = float.to_taffy();
         assert_eq!(
             FloatDirection::from_float(float),
-            expected_from_float(float)
+            expected_from_float(theirs)
         );
         assert_eq!(
             FloatDirection::from_float(float),
-            float.float_direction().map(expected_float_direction),
+            theirs.float_direction().map(expected_float_direction),
         );
     }
 }
@@ -205,8 +208,14 @@ fn assert_same_answers(ours: &FloatContext, theirs: &taffy::FloatContext) {
                         for _ in 0..8 {
                             let slot =
                                 ours.find_bfc_slot(min_y, insets, margins, direction, clear, after);
-                            let expected = theirs
-                                .find_bfc_slot(min_y, insets, margins, direction, clear, after);
+                            let expected = theirs.find_bfc_slot(
+                                min_y,
+                                insets,
+                                margins,
+                                direction.to_taffy(),
+                                clear.to_taffy(),
+                                after,
+                            );
                             assert_eq!(bits_of(&slot), bits_of(&BfcSlot::from_taffy(expected)));
                             let Some(segment) = slot.segment_id else {
                                 break;
@@ -221,7 +230,7 @@ fn assert_same_answers(ours: &FloatContext, theirs: &taffy::FloatContext) {
     for clear in CLEARS {
         assert_eq!(
             bits_of(&ours.cleared_threshold(clear)),
-            bits_of(&theirs.cleared_threshold(clear)),
+            bits_of(&theirs.cleared_threshold(clear.to_taffy())),
         );
     }
 }
@@ -248,7 +257,7 @@ fn a_float_context_places_and_answers_like_the_library() {
             min_y,
             insets,
             float_direction_in_taffy(direction),
-            clear,
+            clear.to_taffy(),
         );
         assert_eq!(
             bits_of(&placed),
@@ -299,7 +308,7 @@ fn the_width_calculator_adds_floats_like_the_library() {
         assert_eq!(ours.result().to_bits(), theirs.result().to_bits());
         for (width, direction, clear) in floats {
             ours.add_float(width, direction, clear);
-            theirs.add_float(width, float_direction_in_taffy(direction), clear);
+            theirs.add_float(width, float_direction_in_taffy(direction), clear.to_taffy());
             assert_eq!(
                 ours.result().to_bits(),
                 theirs.result().to_bits(),
@@ -313,20 +322,20 @@ fn the_width_calculator_adds_floats_like_the_library() {
 fn block_alignment_offsets_content_like_the_library() {
     // `normal` is left out: the library asks for it to be resolved first.
     let keywords = [
-        taffy::AlignContentKeyword::Start,
-        taffy::AlignContentKeyword::End,
-        taffy::AlignContentKeyword::FlexStart,
-        taffy::AlignContentKeyword::FlexEnd,
-        taffy::AlignContentKeyword::Center,
-        taffy::AlignContentKeyword::Stretch,
-        taffy::AlignContentKeyword::SpaceBetween,
-        taffy::AlignContentKeyword::SpaceEvenly,
-        taffy::AlignContentKeyword::SpaceAround,
+        AlignContentKeyword::Start,
+        AlignContentKeyword::End,
+        AlignContentKeyword::FlexStart,
+        AlignContentKeyword::FlexEnd,
+        AlignContentKeyword::Center,
+        AlignContentKeyword::Stretch,
+        AlignContentKeyword::SpaceBetween,
+        AlignContentKeyword::SpaceEvenly,
+        AlignContentKeyword::SpaceAround,
     ];
     let safeties = [
-        taffy::AlignmentSafety::Default,
-        taffy::AlignmentSafety::Unsafe,
-        taffy::AlignmentSafety::Safe,
+        AlignmentSafety::Default,
+        AlignmentSafety::Unsafe,
+        AlignmentSafety::Safe,
     ];
     for keyword in keywords {
         for safety in safeties {
@@ -334,7 +343,8 @@ fn block_alignment_offsets_content_like_the_library() {
             for free in [-20.0, 0.0, 35.5] {
                 assert_eq!(
                     compute_block_align_content_offset(align_content, free).to_bits(),
-                    taffy::compute_block_align_content_offset(align_content, free).to_bits(),
+                    taffy::compute_block_align_content_offset(align_content.to_taffy(), free)
+                        .to_bits(),
                     "{align_content:?} with {free} free"
                 );
             }

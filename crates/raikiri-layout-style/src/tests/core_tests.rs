@@ -25,7 +25,7 @@ fn flex_basis_override_can_replace_content() {
     )
     .unwrap()];
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &overrides);
-    assert_eq!(v.flex_basis(), taffy::Dimension::length(33.0));
+    assert_eq!(v.flex_basis(), values::Dimension::length(33.0));
 }
 
 #[test]
@@ -42,10 +42,10 @@ fn sizing_keywords_and_non_finite_numbers_follow_bridge_policy() {
         cv.width = L::Px(input);
         cv.margin.left = L::Percent(input * 100.0);
         query(&cv, StyleFlags::default(), |v| {
-            assert_eq!(v.size().width, taffy::Dimension::length(expected));
+            assert_eq!(v.size().width, values::Dimension::length(expected));
             assert_eq!(
                 v.margin().left,
-                taffy::LengthPercentageAuto::percent(expected)
+                values::LengthPercentageAuto::percent(expected)
             );
         });
     }
@@ -61,14 +61,14 @@ fn sizing_keywords_and_non_finite_numbers_follow_bridge_policy() {
         cv.max_height = value;
         cv.margin.left = value;
         query(&cv, StyleFlags::default(), |v| {
-            assert_ne!(v.size().width, taffy::Dimension::auto());
-            assert_eq!(v.min_size().width, taffy::LengthPercentageAuto::auto());
-            assert_eq!(v.max_size().height, taffy::LengthPercentageAuto::auto());
+            assert_ne!(v.size().width, values::Dimension::auto());
+            assert_eq!(v.min_size().width, values::LengthPercentageAuto::auto());
+            assert_eq!(v.max_size().height, values::LengthPercentageAuto::auto());
             // A margin never computes to a keyword; one that gets here is no margin.
-            assert_eq!(v.margin().left, taffy::LengthPercentageAuto::length(0.0));
+            assert_eq!(v.margin().left, values::LengthPercentageAuto::length(0.0));
         });
         query(&cv, StyleFlags::IGNORE_WIDTH_KEYWORD, |v| {
-            assert_eq!(v.size().width, taffy::Dimension::auto())
+            assert_eq!(v.size().width, values::Dimension::auto())
         });
     }
 }
@@ -122,30 +122,33 @@ fn all_flex_and_alignment_keywords_have_explicit_results() {
         });
     }
     for (input, expected) in [
-        (ContentAlignmentValue::Normal, taffy::AlignContent::NORMAL),
-        (ContentAlignmentValue::Stretch, taffy::AlignContent::STRETCH),
+        (ContentAlignmentValue::Normal, values::AlignContent::NORMAL),
+        (
+            ContentAlignmentValue::Stretch,
+            values::AlignContent::STRETCH,
+        ),
         (
             ContentAlignmentValue::SpaceBetween,
-            taffy::AlignContent::SPACE_BETWEEN,
+            values::AlignContent::SPACE_BETWEEN,
         ),
         (
             ContentAlignmentValue::SpaceAround,
-            taffy::AlignContent::SPACE_AROUND,
+            values::AlignContent::SPACE_AROUND,
         ),
         (
             ContentAlignmentValue::SpaceEvenly,
-            taffy::AlignContent::SPACE_EVENLY,
+            values::AlignContent::SPACE_EVENLY,
         ),
-        (ContentAlignmentValue::Center, taffy::AlignContent::CENTER),
-        (ContentAlignmentValue::Start, taffy::AlignContent::START),
-        (ContentAlignmentValue::End, taffy::AlignContent::END),
+        (ContentAlignmentValue::Center, values::AlignContent::CENTER),
+        (ContentAlignmentValue::Start, values::AlignContent::START),
+        (ContentAlignmentValue::End, values::AlignContent::END),
         (
             ContentAlignmentValue::FlexStart,
-            taffy::AlignContent::FLEX_START,
+            values::AlignContent::FLEX_START,
         ),
         (
             ContentAlignmentValue::FlexEnd,
-            taffy::AlignContent::FLEX_END,
+            values::AlignContent::FLEX_END,
         ),
     ] {
         let mut cv = ComputedValues::initial();
@@ -157,17 +160,20 @@ fn all_flex_and_alignment_keywords_have_explicit_results() {
         });
     }
     for (input, expected) in [
-        (SelfAlignmentValue::Normal, taffy::AlignItems::NORMAL),
-        (SelfAlignmentValue::Stretch, taffy::AlignItems::STRETCH),
-        (SelfAlignmentValue::Center, taffy::AlignItems::CENTER),
-        (SelfAlignmentValue::Start, taffy::AlignItems::START),
-        (SelfAlignmentValue::End, taffy::AlignItems::END),
-        (SelfAlignmentValue::FlexStart, taffy::AlignItems::FLEX_START),
-        (SelfAlignmentValue::FlexEnd, taffy::AlignItems::FLEX_END),
-        (SelfAlignmentValue::Baseline, taffy::AlignItems::BASELINE),
+        (SelfAlignmentValue::Normal, values::AlignItems::NORMAL),
+        (SelfAlignmentValue::Stretch, values::AlignItems::STRETCH),
+        (SelfAlignmentValue::Center, values::AlignItems::CENTER),
+        (SelfAlignmentValue::Start, values::AlignItems::START),
+        (SelfAlignmentValue::End, values::AlignItems::END),
+        (
+            SelfAlignmentValue::FlexStart,
+            values::AlignItems::FLEX_START,
+        ),
+        (SelfAlignmentValue::FlexEnd, values::AlignItems::FLEX_END),
+        (SelfAlignmentValue::Baseline, values::AlignItems::BASELINE),
         (
             SelfAlignmentValue::LastBaseline,
-            taffy::AlignItems::BASELINE,
+            values::AlignItems::BASELINE,
         ),
     ] {
         let mut cv = ComputedValues::initial();
@@ -211,9 +217,9 @@ fn direction_uses_layout_axes_and_preserves_upright_sideways_rules() {
                 assert_eq!(
                     v.direction(),
                     if expected_rtl {
-                        taffy::Direction::Rtl
+                        values::Direction::Rtl
                     } else {
-                        taffy::Direction::Ltr
+                        values::Direction::Ltr
                     }
                 );
             }
@@ -228,7 +234,7 @@ fn explicit_auto_alignment_and_wrong_range_calc_are_distinct() {
     cv.position = PositionValue::Absolute;
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-    assert_eq!(v.align_self(), Some(taffy::AlignItems::SAFE_SELF_END));
+    assert_eq!(v.align_self(), Some(values::AlignItems::SAFE_SELF_END));
     let overrides = [PropertyOverride::align_self(None)];
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &overrides);
     assert_eq!(v.align_self(), None);
@@ -260,11 +266,11 @@ fn physical_edges_and_logical_minimum_are_not_confused() {
     let physical = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
     assert_eq!(
         physical.min_size().height,
-        taffy::LengthPercentageAuto::length(17.0)
+        values::LengthPercentageAuto::length(17.0)
     );
     assert_eq!(
         physical.margin().left,
-        taffy::LengthPercentageAuto::length(4.0)
+        values::LengthPercentageAuto::length(4.0)
     );
     let v = LayoutStyleView::new(
         &p,
@@ -277,11 +283,11 @@ fn physical_edges_and_logical_minimum_are_not_confused() {
     );
     assert_eq!(
         v.margin(),
-        taffy::Rect {
-            left: taffy::LengthPercentageAuto::length(1.0),
-            right: taffy::LengthPercentageAuto::length(3.0),
-            top: taffy::LengthPercentageAuto::length(2.0),
-            bottom: taffy::LengthPercentageAuto::length(4.0)
+        Edges {
+            left: values::LengthPercentageAuto::length(1.0),
+            right: values::LengthPercentageAuto::length(3.0),
+            top: values::LengthPercentageAuto::length(2.0),
+            bottom: values::LengthPercentageAuto::length(4.0)
         }
     );
 }

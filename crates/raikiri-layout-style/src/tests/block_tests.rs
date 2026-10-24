@@ -1,4 +1,5 @@
 use super::*;
+use crate::values::ToTaffy;
 use raikiri_style::property::{
     AlignSelfValue, ContentAlignmentValue, FloatValue, SelfAlignmentValue,
 };
@@ -12,7 +13,7 @@ fn core_claims_and_block_defaults_stay_distinct() {
     cv.align_content = ContentAlignmentValue::SpaceBetween;
     cv.float = FloatValue::Left;
     let metadata = StyleMetadata {
-        claims: Some(taffy::ContainingBlockClaims {
+        claims: Some(values::ContainingBlockClaims {
             absolute: true,
             fixed: true,
         }),
@@ -31,11 +32,11 @@ fn core_claims_and_block_defaults_stay_distinct() {
     assert_eq!(BI::align_self(&projected), None);
     assert_eq!(BI::justify_self(&projected), None);
     assert_eq!(BI::align_content(&projected), taffy::AlignContent::NORMAL);
-    assert_eq!(block.bridge_align_self(), Some(taffy::AlignSelf::CENTER));
-    assert_eq!(block.bridge_justify_self(), Some(taffy::AlignSelf::END));
+    assert_eq!(block.bridge_align_self(), Some(values::AlignSelf::CENTER));
+    assert_eq!(block.bridge_justify_self(), Some(values::AlignSelf::END));
     assert_eq!(
         block.bridge_align_content(),
-        taffy::AlignContent::SPACE_BETWEEN
+        values::AlignContent::SPACE_BETWEEN
     );
     assert_eq!(
         BC::align_content(&projected),
@@ -82,9 +83,9 @@ fn block_and_oof_table_facts_are_separate_from_formatting_context() {
 fn block_float_and_clear_keep_authored_and_override_values() {
     use raikiri_style::property::ClearValue;
     for (float, expected) in [
-        (FloatValue::None, taffy::Float::None),
-        (FloatValue::Left, taffy::Float::Left),
-        (FloatValue::Right, taffy::Float::Right),
+        (FloatValue::None, values::Float::None),
+        (FloatValue::Left, values::Float::Left),
+        (FloatValue::Right, values::Float::Right),
     ] {
         let mut cv = ComputedValues::initial();
         cv.float = float;
@@ -94,8 +95,8 @@ fn block_float_and_clear_keep_authored_and_override_values() {
         let view =
             LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &pass, &[]);
         assert_eq!(view.float(), expected);
-        assert_eq!(view.clear(), taffy::Clear::Both);
-        assert_eq!(BI::float(&TaffyStyle::new(view)), expected);
+        assert_eq!(view.clear(), values::Clear::Both);
+        assert_eq!(BI::float(&TaffyStyle::new(view)), expected.to_taffy());
         assert_eq!(BI::clear(&TaffyStyle::new(view)), taffy::Clear::Both);
     }
 }
@@ -108,15 +109,18 @@ fn sticky_position_and_source_vertical_minimum_preserve_bridge_policy() {
     cv.position = PositionValue::Sticky;
     let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
-    assert_eq!(view.position(), taffy::Position::Sticky);
+    assert_eq!(view.position(), values::Position::Sticky);
     cv.cssom_writing_mode = WritingMode::VerticalRl;
     cv.min_height = L::Auto;
     cv.min_block_size = Some(L::Px(64.0));
     for (flags, expected) in [
-        (StyleFlags::BLOCK, taffy::LengthPercentageAuto::length(64.0)),
+        (
+            StyleFlags::BLOCK,
+            values::LengthPercentageAuto::length(64.0),
+        ),
         (
             StyleFlags::BLOCK.union(StyleFlags::SOURCE_VERTICAL_DIRECTION),
-            taffy::LengthPercentageAuto::auto(),
+            values::LengthPercentageAuto::auto(),
         ),
     ] {
         let prepared = PreparedStyle::prepare(

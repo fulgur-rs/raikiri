@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_layout_style::values::ExpandedDimension;
 
 #[test]
 fn a_finished_box_is_read_after_its_session_ends() {
@@ -10,15 +11,17 @@ fn a_finished_box_is_read_after_its_session_ends() {
     }
     let (height, width_at_100) = doc
         .read_finished_style(&cascade, child, |view| {
-            let handle = view.size().width.into_raw().calc_value();
-            (
-                view.size().height.into_raw().value(),
-                view.resolve_calc_handle(handle, 100.0),
-            )
+            let ExpandedDimension::Calc(calc) = view.size().width.expand() else {
+                panic!("the width is a calc()");
+            };
+            let ExpandedDimension::Length(height) = view.size().height.expand() else {
+                panic!("the height is a length");
+            };
+            (height, calc.resolve(100.0))
         })
         .expect("the box has a style record");
     assert_eq!(height, 7.0);
-    assert_eq!(width_at_100, Some(60.0));
+    assert_eq!(width_at_100, 60.0);
 }
 
 #[test]
