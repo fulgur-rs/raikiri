@@ -94,6 +94,26 @@ impl<'a> LayoutStyleView<'a> {
         self
     }
 
+    /// Resolve a calc handle that a getter of this view returned.
+    ///
+    /// A handle is the address of a calc payload the view reads: one prepared
+    /// with the computed values, or one an override brought. Any other address
+    /// gives `None` and is never dereferenced, so a tool that compares getter
+    /// results can resolve what it was handed without the unsafe contract of
+    /// `resolve_calc`.
+    #[doc(hidden)]
+    pub fn resolve_calc_handle(&self, handle: *const (), basis: f32) -> Option<f32> {
+        let from_overrides = self.overrides().find_map(|entry| match entry {
+            OverrideKind::Length(_, value) => {
+                value.payload.filter(|payload| payload.pointer() == handle)
+            }
+            _ => None,
+        });
+        from_overrides
+            .or_else(|| self.prepared.payload_at(handle))
+            .map(|payload| payload.resolve(basis))
+    }
+
     pub(crate) fn overrides(&self) -> impl Iterator<Item = OverrideKind<'a>> {
         self.has_overrides
             .then(|| {

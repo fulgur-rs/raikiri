@@ -32,12 +32,13 @@
 # the merge-base and against the current tree — runs both builds on the same
 # cases, and reports every case whose canonical layout output differs. The
 # output holds the page API surface (fragments, text runs, paint order, margin
-# boxes, links, root box) and the layout of every node as f32 bits, so a box
-# that moves by a thousandth of a pixel is reported. A change that is meant to
-# preserve layout must report none. Cases that panic are compared like any
-# other output, so a new panic is reported as a difference. Both builds enable
-# debug assertions and overflow checks, so a broken internal invariant shows
-# up as a panic as well.
+# boxes, links, root box), the layout of every node as f32 bits and what the
+# style getters of every box return, so a box that moves by a thousandth of a
+# pixel, or a getter that reads a value differently, is reported. A change
+# that is meant to preserve layout must report none. Cases that panic are
+# compared like any other output, so a new panic is reported as a difference.
+# Both builds enable debug assertions and overflow checks, so a broken
+# internal invariant shows up as a panic as well.
 #
 # Not part of scripts/gate.sh: a run takes minutes and is for changes that
 # claim to preserve layout. See crates/raikiri-layout-diff/README.md.
@@ -146,7 +147,9 @@ echo "cache     : $CACHE_ROOT"
 echo
 
 # Prints the manifest the tool is built with against the crates of tree $1.
-# Its dependencies mirror crates/raikiri-layout-diff/Cargo.toml.
+# Its dependencies mirror crates/raikiri-layout-diff/Cargo.toml. The tree's
+# lockfile pins the version of taffy; the features listed are those the tool's
+# own code needs, and the features of the tree's crates are added to them.
 tool_manifest() {
   local tree="$1"
   cat <<EOF
@@ -159,7 +162,10 @@ publish = false
 [dependencies]
 raikiri-dom = { path = "$tree/crates/raikiri-dom" }
 raikiri-html = { path = "$tree/crates/raikiri-html" }
+raikiri-layout-style = { path = "$tree/crates/raikiri-layout-style" }
+raikiri-style = { path = "$tree/crates/raikiri-style" }
 raikiri-traits = { path = "$tree/crates/raikiri-traits" }
+taffy = { version = ">=0.15", default-features = false, features = ["std", "flexbox", "grid", "block_layout", "content_size", "calc", "float_layout", "detailed_layout_info"] }
 url = "2.5"
 
 [profile.release]

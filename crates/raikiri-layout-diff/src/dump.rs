@@ -12,9 +12,10 @@
 //!   page. The paint events of list-marker images and of images of `content`
 //!   are written with the place the page gave them;
 //! - the laid-out box of every node of each distinct laid-out document, read
-//!   through [`crate::node_layout::NodeBox`], and the lines of every
-//!   paragraph, with the pieces of the lines in a vertical writing mode,
-//!   whose text the page API gives no runs for.
+//!   through [`crate::node_layout::NodeBox`], the style getters of the box,
+//!   written by [`crate::style_view`], and the lines of every paragraph, with
+//!   the pieces of the lines in a vertical writing mode, whose text the page
+//!   API gives no runs for.
 //!
 //! Numbers are written by [`number`], which keeps every `f32` apart from every
 //! other: the shortest decimal text that parses back to the same value, so
@@ -29,7 +30,6 @@
 
 use std::fmt::Write as _;
 
-use raikiri_dom::Document;
 use raikiri_html::{DocumentLayout, Fragment, MarginBox, Page, PaintEvent, PositionedGlyphRun};
 use raikiri_traits::PaintRect;
 
@@ -80,21 +80,26 @@ pub(crate) fn document(out: &mut String, layout: &DocumentLayout) {
         let _ = writeln!(out, "  {warning:?}");
     }
     // Pages after a change of content width are laid out again, in a
-    // document of their own; pages that share a document are listed once.
-    let mut documents: Vec<(&Document, u32)> = Vec::new();
+    // document of their own; pages that share a document are listed once, by
+    // the first of them.
+    let mut firsts: Vec<Page<'_>> = Vec::new();
     for page in layout.pages() {
         self::page(out, &page);
         let document = page.paint_inputs().0;
-        if !documents
+        if !firsts
             .iter()
-            .any(|(seen, _)| std::ptr::eq(*seen, document))
+            .any(|seen| std::ptr::eq(seen.paint_inputs().0, document))
         {
-            documents.push((document, page.index()));
+            firsts.push(page);
         }
     }
-    for (index, (document, first_page)) in documents.into_iter().enumerate() {
-        let _ = writeln!(out, "document {index} (first used by page {first_page})");
-        nodes(out, document);
+    for (index, page) in firsts.iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "document {index} (first used by page {})",
+            page.index()
+        );
+        nodes(out, page);
     }
 }
 
@@ -350,8 +355,10 @@ fn paint_event(out: &mut String, event: &PaintEvent<'_>, page: &Page<'_>) {
     }
 }
 
-/// Writes the box of every node of `document`, in arena order.
-fn nodes(out: &mut String, document: &Document) {
+/// Writes the box of every node of the document `page` was laid out in, in
+/// arena order.
+fn nodes(out: &mut String, page: &Page<'_>) {
+    let (document, cascade, ..) = page.paint_inputs();
     let _ = writeln!(out, "nodes: {}", document.node_count());
     let present =
         (0..document.node_count()).filter_map(|index| Some((index, document.get_node(index)?)));
@@ -383,6 +390,7 @@ fn nodes(out: &mut String, document: &Document) {
             numbers(&layout.padding),
             numbers(&layout.margin),
         );
+        crate::style_view::write(out, document, cascade, index);
         // The lines of a paragraph. Text in a vertical writing mode has no
         // runs on the page, so the pieces of its lines are written here.
         for (line_index, line) in node.ifc_lines().unwrap_or_default().iter().enumerate() {

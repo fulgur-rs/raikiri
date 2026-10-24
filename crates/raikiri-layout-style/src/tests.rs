@@ -3,6 +3,7 @@ use crate::resolve::CalcHandle;
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 use taffy::{CoreStyle, FlexboxContainerStyle, FlexboxItemStyle};
+mod calc_handle_tests;
 mod core_tests;
 mod grid_tests;
 mod owned_tests;

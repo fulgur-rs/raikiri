@@ -1,6 +1,7 @@
 //! Records the version of the compiler cargo builds this tool with, which
 //! `raikiri-layout-diff compiler` prints, and finds out how the DOM crate it is
-//! built against lets a reader get at the laid-out box of a node.
+//! built against lets a reader get at the laid-out box of a node and at the
+//! style getters of a box.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -42,6 +43,20 @@ fn main() {
         .any(|line| line.trim_start().starts_with("pub fn layout(&self)"))
     {
         println!("cargo::rustc-cfg=node_layout_accessor");
+    }
+
+    // `src/style_view.rs` reads the style getters of a box through a reader of
+    // the DOM crate that the trees before it do not have. A tree without the
+    // file has none either.
+    println!("cargo::rustc-check-cfg=cfg(style_view_reader)");
+    let style_source = dom_source_dir().join("src/layout/style_views/finished.rs");
+    println!("cargo::rerun-if-changed={}", style_source.display());
+    let source = std::fs::read_to_string(&style_source).unwrap_or_default();
+    if source
+        .lines()
+        .any(|line| line.trim_start().starts_with("pub fn read_finished_style<"))
+    {
+        println!("cargo::rustc-cfg=style_view_reader");
     }
 }
 

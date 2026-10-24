@@ -48,6 +48,7 @@ mod dump;
 mod files;
 mod generate;
 mod node_layout;
+mod style_view;
 
 use std::cell::Cell;
 use std::io::{BufWriter, Write};
