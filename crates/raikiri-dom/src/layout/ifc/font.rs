@@ -30,10 +30,29 @@ pub(crate) mod face;
 /// One font file registered under an authored family name.
 #[derive(Clone, Debug)]
 pub struct BundledFace {
-    /// CSS family name the face is registered under.
+    /// CSS family name the face is registered under. Empty (or blank) for a
+    /// font whose faces are registered under the family names they record,
+    /// which is how a TrueType/OpenType collection is bundled; see
+    /// `build_bundled_font_collection`.
     pub family: String,
-    /// Encoded sfnt bytes.
+    /// Encoded sfnt bytes: a font file, or a collection when `family` is
+    /// empty.
     pub bytes: Vec<u8>,
+}
+
+/// One font source of a bundle.
+///
+/// A face is registered under the family name its supplier chose. A
+/// collection is registered under the family names its faces record, which is
+/// how a TrueType/OpenType collection (`.ttc` / `.otc`) is bundled: its faces
+/// belong to different families and only the font knows them.
+enum BundledSource {
+    /// One font file registered under an authored family name.
+    Face(BundledFace),
+    /// A font file or collection whose every face is registered under the
+    /// primary family name its name table records. A face without a name is
+    /// kept as a last resort only, and takes no part in the generic families.
+    Collection(Vec<u8>),
 }
 
 /// The CSS descriptor of the first face of `bytes`, registered under
@@ -85,7 +104,12 @@ fn finite_or(value: f32, fallback: f32) -> f32 {
 /// The primary family name in a font's name table, preferring the typographic
 /// family. Only the first face of a collection is read.
 pub(crate) fn family_name(bytes: &[u8]) -> Option<String> {
-    let font = FontRef::from_index(bytes, 0).ok()?;
+    face_family_name(bytes, 0)
+}
+
+/// [`family_name`] of the face at `index` of a font file or collection.
+fn face_family_name(bytes: &[u8], index: u32) -> Option<String> {
+    let font = FontRef::from_index(bytes, index).ok()?;
     [StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME]
         .into_iter()
         .find_map(|id| {
@@ -93,6 +117,39 @@ pub(crate) fn family_name(bytes: &[u8]) -> Option<String> {
                 .english_or_first()
                 .map(|name| name.to_string())
         })
+}
+
+/// The number of faces `bytes` declares: the header count of a collection,
+/// one for any other font.
+fn declared_face_count(bytes: &[u8]) -> u32 {
+    if bytes.get(..4) != Some(b"ttcf".as_slice()) {
+        return 1;
+    }
+    bytes
+        .get(8..12)
+        .and_then(|count| count.try_into().ok())
+        .map_or(0, u32::from_be_bytes)
+}
+
+/// The primary family name of each face of a font file or collection, in face
+/// order, without the faces that have none.
+///
+/// A face whose preferred name is present but empty has none, even when the
+/// legacy family name is set: the font library does not register it under
+/// either name.
+///
+/// A header can declare more faces than the file can hold, so the walk is
+/// bounded by the collection face limit and by the offsets that fit in the
+/// file.
+fn recorded_families(bytes: &[u8], limits: &Limits) -> Vec<String> {
+    let fitting = u64::try_from(bytes.len() / 4).unwrap_or(u64::MAX);
+    let count = u64::from(declared_face_count(bytes))
+        .min(limits.max_ttc_faces.unwrap_or(u64::MAX))
+        .min(fitting);
+    (0..count)
+        .filter_map(|index| face_family_name(bytes, u32::try_from(index).ok()?))
+        .filter(|name| !name.is_empty())
+        .collect()
 }
 
 fn map_generics(collection: &FontCollection, families: &[String]) {
@@ -108,10 +165,14 @@ fn map_generics(collection: &FontCollection, families: &[String]) {
 ///
 /// Each face is registered with a CSS descriptor under the given family name,
 /// carrying the face's own weight, width and style, so the faces of one
-/// family are told apart by weight and style.
+/// family are told apart by weight and style. A face with an empty family is a
+/// font file or collection registered under the names it records (see
+/// `bundled_sources`).
 /// `local()` only resolves installed faces (by full or PostScript name), so a
-/// face registered here is not visible to a `local()` source. [`wpt_collection`]
-/// registers installed faces and is visible to `local()`.
+/// face registered here under a chosen name is not visible to a `local()`
+/// source. The faces of a font registered under its recorded names are
+/// registered as installed faces, and are visible to it, as are those of
+/// [`wpt_collection`].
 ///
 /// # Errors
 /// An empty list, a face shodo rejects, or a resource limit.
@@ -120,7 +181,36 @@ pub(crate) fn bundled_collection(
     faces: Vec<BundledFace>,
     system_fonts: bool,
 ) -> Result<FontCollection, shodo::font::FontError> {
-    if faces.is_empty() {
+    let sources = faces
+        .into_iter()
+        .map(|face| {
+            if face.family.trim().is_empty() {
+                BundledSource::Collection(face.bytes)
+            } else {
+                BundledSource::Face(face)
+            }
+        })
+        .collect();
+    bundled_sources(limits, sources, system_fonts)
+}
+
+/// [`bundled_collection`] for sources that are not all one face under a chosen
+/// name.
+///
+/// A [`BundledSource::Collection`] is registered once, so shodo checks and
+/// budgets its bytes once however many faces it holds, and each face is
+/// registered under the family name its name table records, with the weight,
+/// width and style the font states. Its families join the generic families in
+/// face order, after the families registered before it.
+///
+/// # Errors
+/// An empty list, a source shodo rejects, or a resource limit.
+fn bundled_sources(
+    limits: &Limits,
+    sources: Vec<BundledSource>,
+    system_fonts: bool,
+) -> Result<FontCollection, shodo::font::FontError> {
+    if sources.is_empty() {
         return Err(shodo::font::FontError::Malformed(
             "no bundled fonts were supplied",
         ));
@@ -134,12 +224,27 @@ pub(crate) fn bundled_collection(
         },
     );
     let mut families: Vec<String> = Vec::new();
-    for face in faces {
-        let family = face.family.trim().to_owned();
-        let descriptor = bundled_descriptor(family.clone(), &face.bytes);
-        collection.register_face(face.bytes, 0, descriptor)?;
-        if !families.contains(&family) {
-            families.push(family);
+    for source in sources {
+        let registered = match source {
+            BundledSource::Face(face) => {
+                let family = face.family.trim().to_owned();
+                let descriptor = bundled_descriptor(family.clone(), &face.bytes);
+                collection.register_face(face.bytes, 0, descriptor)?;
+                vec![family]
+            }
+            BundledSource::Collection(bytes) => {
+                let first = collection.register(bytes)?;
+                // Read the names from the registered blob, so that bytes the
+                // font library refuses are never walked.
+                collection.font_data(first).map_or_else(Vec::new, |data| {
+                    recorded_families(data.data.as_ref(), limits)
+                })
+            }
+        };
+        for family in registered {
+            if !families.contains(&family) {
+                families.push(family);
+            }
         }
     }
     map_generics(&collection, &families);
