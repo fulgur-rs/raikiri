@@ -139,10 +139,12 @@ impl<'a> LayoutStyleView<'a> {
     }
     #[inline]
     pub(crate) fn length(&self, property: LengthProperty) -> LengthValue<'a> {
-        if let Some(value) = self.overrides().find_map(|entry| match entry {
-            OverrideKind::Length(p, v) if p == property => Some(v),
-            _ => None,
-        }) {
+        if self.has_overrides
+            && let Some(value) = self.overrides().find_map(|entry| match entry {
+                OverrideKind::Length(p, v) if p == property => Some(v),
+                _ => None,
+            })
+        {
             return value;
         }
         self.base_length(property)
@@ -150,6 +152,10 @@ impl<'a> LayoutStyleView<'a> {
     #[inline]
     pub(crate) fn base_length(&self, property: LengthProperty) -> LengthValue<'a> {
         use LengthProperty::*;
+        if property.reads_scalar_directly() {
+            let value = self.prepared.scalar(property);
+            return self.with_payload(value, property);
+        }
         let flags = self.flags();
         let mut source = property;
         if flags.contains(StyleFlags::VERTICAL_LOGICAL_SIZE)
@@ -191,9 +197,14 @@ impl<'a> LayoutStyleView<'a> {
         if ignore {
             value = L::Auto;
         }
+        self.with_payload(value, source)
+    }
+    /// `value` with the calc owner prepared for `slot`, when it is a calc.
+    #[inline]
+    fn with_payload(&self, value: L, slot: LengthProperty) -> LengthValue<'a> {
         let payload = match value {
             L::Calc(_) | L::FitContentOf(P::Calc(_)) => {
-                Some(self.prepared.payload(CalcSlot::Property(source)))
+                Some(self.prepared.payload(CalcSlot::Property(slot)))
             }
             _ => None,
         };
@@ -264,17 +275,22 @@ impl<'a> LayoutStyleView<'a> {
         &self,
         properties: [LengthProperty; 4],
     ) -> taffy::Rect<taffy::LengthPercentage> {
-        let [top, right, bottom, left] = properties.map(|property| self.length(property));
-        let edges = self.edges(top, right, bottom, left);
+        // Place the input positions first so each length is read straight into
+        // the side it ends up on.
+        let from = self.edges(0usize, 1, 2, 3);
         let vertical_basis = match (self.context.percent_basis, self.context.block_item_basis) {
             (PercentBasis::Taffy, Some(basis)) => PercentBasis::Definite(basis),
             (basis, _) => basis,
         };
         taffy::Rect {
-            top: edges.top.lp(vertical_basis),
-            bottom: edges.bottom.lp(vertical_basis),
-            left: edges.left.lp(self.context.percent_basis),
-            right: edges.right.lp(self.context.percent_basis),
+            top: self.length(properties[from.top]).lp(vertical_basis),
+            bottom: self.length(properties[from.bottom]).lp(vertical_basis),
+            left: self
+                .length(properties[from.left])
+                .lp(self.context.percent_basis),
+            right: self
+                .length(properties[from.right])
+                .lp(self.context.percent_basis),
         }
     }
 }

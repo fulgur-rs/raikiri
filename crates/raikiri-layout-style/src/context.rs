@@ -70,6 +70,21 @@ pub enum LengthProperty {
     MinBlock,
 }
 impl LengthProperty {
+    /// Whether the property is read from its scalar as is: no logical alias,
+    /// no keyword policy and no source substitution applies to it.
+    #[inline]
+    pub(crate) fn reads_scalar_directly(self) -> bool {
+        !matches!(
+            self,
+            Self::Width
+                | Self::Height
+                | Self::MinWidth
+                | Self::MinHeight
+                | Self::MaxWidth
+                | Self::MaxHeight
+                | Self::MinBlock
+        )
+    }
     pub(crate) fn non_negative(self) -> bool {
         !matches!(
             self,

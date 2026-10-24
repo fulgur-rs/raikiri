@@ -135,6 +135,49 @@ fn logical_sources_keyword_policy_and_flex_basis_keep_their_meaning() {
 }
 
 #[test]
+fn properties_read_as_is_ignore_every_keyword_and_logical_size_policy() {
+    let mut cv = ComputedValues::initial();
+    cv.width = L::MinContent;
+    cv.height = L::MaxContent;
+    cv.min_width = L::FitContent;
+    cv.max_height = L::MinContent;
+    cv.margin.top = L::MaxContent;
+    cv.top = L::FitContent;
+    cv.flex_basis = F::MinContent;
+    cv.vertical_logical_size = Some(raikiri_style::VerticalLogicalSize {
+        width: L::Px(30.0),
+        height: L::Px(50.0),
+    });
+    cv.min_block_size = Some(L::MinContent);
+    let policies = StyleFlags::IGNORE_WIDTH_KEYWORD
+        .union(StyleFlags::IGNORE_HEIGHT_KEYWORD)
+        .union(StyleFlags::IGNORE_LIMIT_KEYWORDS)
+        .union(StyleFlags::MIN_CONTENT_WIDTH_AUTO)
+        .union(StyleFlags::IGNORE_LOGICAL_MIN_BLOCK)
+        .union(StyleFlags::VERTICAL_LOGICAL_SIZE);
+    for flags in [StyleFlags::EMPTY, policies] {
+        let p = PreparedStyle::new(
+            &cv,
+            StyleMetadata {
+                flags,
+                ..StyleMetadata::default()
+            },
+            &[],
+        )
+        .unwrap();
+        let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+        for &property in LengthProperty::ALL {
+            if property.reads_scalar_directly() {
+                assert!(
+                    v.base_length(property).value == p.scalar(property),
+                    "{property:?} keeps its own scalar under {flags:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 #[allow(unsafe_code)]
 fn scalar_calc_slots_resolve_values_with_the_right_range() {
     let expr = CalcLengthPercentage {
