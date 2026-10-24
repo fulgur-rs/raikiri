@@ -7913,6 +7913,8 @@ impl PropertyKey {
                 | PropertyKey::GridArea
                 | PropertyKey::GridRow
                 | PropertyKey::GridColumn
+                | PropertyKey::GridTemplate
+                | PropertyKey::Grid
                 | PropertyKey::Overflow
                 | PropertyKey::Columns
                 | PropertyKey::Outline

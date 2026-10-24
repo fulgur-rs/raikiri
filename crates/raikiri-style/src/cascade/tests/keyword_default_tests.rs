@@ -83,7 +83,47 @@ const CASES: &[(&str, bool, &[&str])] = &[
         false,
         &["column", "row dense", "column dense"],
     ),
+    (
+        "grid-template-columns",
+        false,
+        &[
+            "100px 1fr",
+            "[a] 2fr [b] auto",
+            "repeat(2, minmax(10px, 1fr)) fit-content(20%)",
+            "calc(10% + 4px) minmax(min-content, 2em) repeat(auto-fill, 30px)",
+        ],
+    ),
+    (
+        "grid-template-rows",
+        false,
+        &[
+            "50% auto",
+            "max-content [x] 1fr",
+            "repeat(3, 20px)",
+            "minmax(5%, max-content) calc(2em + 10%)",
+        ],
+    ),
     ("grid-template-areas", false, &["\"a b\"", "\"c d\""]),
+    (
+        "grid-auto-columns",
+        false,
+        &[
+            "100px",
+            "minmax(10px, 1fr) auto",
+            "fit-content(30%) 2fr",
+            "calc(10% + 2px) min-content",
+        ],
+    ),
+    (
+        "grid-auto-rows",
+        false,
+        &[
+            "50px 1fr",
+            "min-content",
+            "calc(10% + 2px) max-content",
+            "minmax(auto, 3em)",
+        ],
+    ),
     ("grid-row-start", false, &["2", "3", "span 2"]),
     ("grid-row-end", false, &["2", "3", "span 2"]),
     ("grid-column-start", false, &["2", "3", "span 2"]),
@@ -369,6 +409,24 @@ const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         "place-self",
         false,
         &["center end", "start center", "flex-end baseline"],
+    ),
+    (
+        "grid-template",
+        false,
+        &[
+            "100px 1fr / 50px 2fr",
+            "\"a b\" 40px \"c d\" 1fr / auto 1fr",
+            "20% auto / repeat(2, 10px)",
+        ],
+    ),
+    (
+        "grid",
+        false,
+        &[
+            "100px 1fr / 50px 2fr",
+            "\"a b\" 40px \"c d\" 1fr / auto 1fr",
+            "auto-flow dense 30px / 1fr 2fr",
+        ],
     ),
     ("grid-row", false, &["2 / 4", "span 2 / 5", "3 / span 2"]),
     ("grid-column", false, &["2 / 4", "span 2 / 5", "3 / span 2"]),

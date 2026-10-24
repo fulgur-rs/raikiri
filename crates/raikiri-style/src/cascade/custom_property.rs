@@ -399,8 +399,8 @@ fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
 /// The property name of a longhand key of a shorthand that takes a CSS-wide
 /// keyword as a whole: the margin, padding and offset sides, and the longhands
 /// of `font`, `flex`, `flex-flow`, `gap`, `place-*`, `grid-row`,
-/// `grid-column`, `overflow`, `columns`, `outline`, `text-decoration`,
-/// `text-emphasis` and `background`.
+/// `grid-column`, `grid-template`, `grid`, `overflow`, `columns`, `outline`,
+/// `text-decoration`, `text-emphasis` and `background`.
 pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
     Some(match key {
         PropertyKey::MarginTop => "margin-top",
@@ -448,6 +448,12 @@ pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
         PropertyKey::GridRowEnd => "grid-row-end",
         PropertyKey::GridColumnStart => "grid-column-start",
         PropertyKey::GridColumnEnd => "grid-column-end",
+        PropertyKey::GridTemplateRows => "grid-template-rows",
+        PropertyKey::GridTemplateColumns => "grid-template-columns",
+        PropertyKey::GridTemplateAreas => "grid-template-areas",
+        PropertyKey::GridAutoRows => "grid-auto-rows",
+        PropertyKey::GridAutoColumns => "grid-auto-columns",
+        PropertyKey::GridAutoFlow => "grid-auto-flow",
         PropertyKey::OverflowX => "overflow-x",
         PropertyKey::OverflowY => "overflow-y",
         PropertyKey::ColumnWidth => "column-width",

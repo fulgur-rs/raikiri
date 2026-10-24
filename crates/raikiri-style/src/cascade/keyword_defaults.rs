@@ -24,9 +24,10 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedColumnWidth, lift_background_size, lift_border_spacing, lift_box_shadow,
-    lift_css_position, lift_flex_basis, lift_length_percentage_or_normal, lift_letter_spacing,
-    lift_line_height, lift_tab_size, lift_text_decoration_inset, lift_text_decoration_thickness,
-    lift_text_indent, lift_text_underline_offset, lift_transform, lift_word_spacing,
+    lift_css_position, lift_flex_basis, lift_grid_auto_track_list, lift_grid_template_tracks,
+    lift_length_percentage_or_normal, lift_letter_spacing, lift_line_height, lift_tab_size,
+    lift_text_decoration_inset, lift_text_decoration_thickness, lift_text_indent,
+    lift_text_underline_offset, lift_transform, lift_word_spacing,
 };
 
 static INITIAL: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
@@ -172,7 +173,11 @@ keyword_defaults! {
     TextCombineUpright, true => PropertyValue::TextCombineUpright(dup(&source.text_combine_upright));
     UnicodeBidi, false => PropertyValue::UnicodeBidi(dup(&source.unicode_bidi));
     FontVariantCaps, true => PropertyValue::FontVariantCaps(dup(&source.font_variant_caps));
+    GridTemplateColumns, false => PropertyValue::GridTemplateColumns(lift_grid_template_tracks(&source.grid_template_columns));
+    GridTemplateRows, false => PropertyValue::GridTemplateRows(lift_grid_template_tracks(&source.grid_template_rows));
     GridTemplateAreas, false => PropertyValue::GridTemplateAreas(dup(&source.grid_template_areas));
+    GridAutoColumns, false => PropertyValue::GridAutoColumns(lift_grid_auto_track_list(&source.grid_auto_columns));
+    GridAutoRows, false => PropertyValue::GridAutoRows(lift_grid_auto_track_list(&source.grid_auto_rows));
     GridAutoFlow, false => PropertyValue::GridAutoFlow(dup(&source.grid_auto_flow));
     GridRowStart, false => PropertyValue::GridRowStart(dup(&source.grid_row_start));
     GridRowEnd, false => PropertyValue::GridRowEnd(dup(&source.grid_row_end));

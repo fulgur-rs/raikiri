@@ -7,27 +7,26 @@ use crate::cascade::{ResolvedAgainstInherited, resolve_relative_font_size};
 use crate::property::{
     BackgroundSize, Border, BorderColor, BorderImageOutsetSide, BorderImageWidthSide, BorderRadius,
     BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, FlexBasisValue,
-    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth,
-    GridShorthand, GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
-    GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
+    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridShorthand,
+    GridTemplateTracks, GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
     LengthPercentageOrCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
     TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
     TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
     resolve_overflow,
 };
 use crate::resolve::{
-    ComputedBackgroundSize, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
-    ComputedGridTrackList, ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTextIndent, ResolveContext,
-    lift_border_spacing, lift_flex_basis, lift_length_percentage_or_calc,
-    lift_length_percentage_or_normal, lift_letter_spacing, lift_line_height, lift_tab_size,
-    lift_text_indent, lift_word_spacing, resolve_background_size, resolve_border_radius,
-    resolve_border_spacing, resolve_border_with_width_provenance, resolve_box_shadow_item,
-    resolve_css_position, resolve_flex_basis, resolve_grid_auto_track_list,
-    resolve_grid_template_tracks, resolve_length, resolve_length_percentage,
-    resolve_length_percentage_or_auto, resolve_length_percentage_or_calc,
-    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    ComputedBackgroundSize, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedTextIndent, ResolveContext, lift_border_spacing,
+    lift_flex_basis, lift_grid_auto_track_list, lift_grid_template_tracks,
+    lift_length_percentage_or_calc, lift_length_percentage_or_normal, lift_letter_spacing,
+    lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing, resolve_background_size,
+    resolve_border_radius, resolve_border_spacing, resolve_border_with_width_provenance,
+    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_calc, resolve_length_percentage_or_normal, resolve_letter_spacing,
+    resolve_line_height, resolve_margin_length_or_auto,
+    resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_indent_calc,
     resolve_text_shadow_item, resolve_vertical_align, resolve_word_spacing,
 };
@@ -165,17 +164,12 @@ impl PageLengthBasis<'_> {
     /// types back to the specified-layer shape (`none` preserved as a
     /// keyword, same as [`Self::fb`]'s `Auto`/`Content` handling).
     fn gtt(self, specified: GridTemplateTracks) -> GridTemplateTracks {
-        match resolve_grid_template_tracks(
+        lift_grid_template_tracks(&resolve_grid_template_tracks(
             specified,
             self.font_size,
             self.own_line_height,
             self.ctx,
-        ) {
-            ComputedGridTemplateTracks::None => GridTemplateTracks::None,
-            ComputedGridTemplateTracks::List(list) => {
-                GridTemplateTracks::List(Arc::new(grid_track_list_from_computed(&list)))
-            }
-        }
+        ))
     }
 
     /// Resolves the track lists of a `grid` / `grid-template` value with
@@ -191,15 +185,12 @@ impl PageLengthBasis<'_> {
     /// [`Self::gtt`], for the `<track-size>+` (no `none`, no `<line-names>`)
     /// grammar.
     fn gatl(self, specified: &[GridTrackSize]) -> Arc<Vec<GridTrackSize>> {
-        let computed =
-            resolve_grid_auto_track_list(specified, self.font_size, self.own_line_height, self.ctx);
-        Arc::new(
-            computed
-                .iter()
-                .cloned()
-                .map(grid_track_size_from_computed)
-                .collect(),
-        )
+        lift_grid_auto_track_list(&resolve_grid_auto_track_list(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ))
     }
     /// One `border-*` side: absolutize the width and apply the style gate.
     ///
@@ -361,93 +352,6 @@ fn lift_length_percentage_or_auto(computed: ComputedLengthPercentageOrAuto) -> L
         ComputedLengthPercentageOrAuto::FitContentOf(limit) => {
             LengthOrAuto::FitContentOf(lift_length_percentage_or_calc(limit))
         }
-    }
-}
-
-/// [`ComputedGridTrackBreadth`] → specified [`GridTrackBreadth`] —
-/// round-trip half of [`PageLengthBasis::gtt`]/[`PageLengthBasis::gatl`], same "computed-equivalent
-/// specified representation" convention as [`PageLengthBasis::fb`]/[`PageLengthBasis::lpn`] (`Px`/
-/// `Percent` only, no other unit ever appears post-absolutization).
-fn grid_track_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridTrackBreadth {
-    match b {
-        ComputedGridTrackBreadth::Px(v) => GridTrackBreadth::Length(Length::Px(v)),
-        ComputedGridTrackBreadth::Percent(p) => GridTrackBreadth::Length(Length::Percent(p)),
-        ComputedGridTrackBreadth::Calc(calc) => {
-            GridTrackBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
-        }
-        ComputedGridTrackBreadth::Flex(f) => GridTrackBreadth::Flex(f),
-        ComputedGridTrackBreadth::MinContent => GridTrackBreadth::MinContent,
-        ComputedGridTrackBreadth::MaxContent => GridTrackBreadth::MaxContent,
-        ComputedGridTrackBreadth::Auto => GridTrackBreadth::Auto,
-    }
-}
-/// [`ComputedGridTrackBreadth`] → specified [`GridInflexibleBreadth`] —
-/// sibling of [`grid_track_breadth_from_computed`] for `minmax()`'s min
-/// side. `ComputedGridTrackBreadth::Flex` never reaches
-/// here (`ComputedGridTrackBreadth`'s doc "collapse" note: the min side
-/// is only ever produced by [`crate::resolve::resolve_grid_inflexible_breadth`],
-/// which has no `Flex` variant to produce it from) — the arm is a
-/// defensive fallback to keep the match exhaustive, not a reachable case.
-fn grid_inflexible_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridInflexibleBreadth {
-    match b {
-        ComputedGridTrackBreadth::Px(v) => GridInflexibleBreadth::Length(Length::Px(v)),
-        ComputedGridTrackBreadth::Percent(p) => GridInflexibleBreadth::Length(Length::Percent(p)),
-        ComputedGridTrackBreadth::Calc(calc) => {
-            GridInflexibleBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
-        }
-        ComputedGridTrackBreadth::MinContent => GridInflexibleBreadth::MinContent,
-        ComputedGridTrackBreadth::MaxContent => GridInflexibleBreadth::MaxContent,
-        // cov:ignore: unreachable per this fn's doc; kept for match
-        // exhaustiveness.
-        ComputedGridTrackBreadth::Flex(_) | ComputedGridTrackBreadth::Auto => {
-            GridInflexibleBreadth::Auto
-        }
-    }
-}
-/// [`ComputedGridTrackSize`] → specified [`GridTrackSize`] — round-trip
-/// half of [`PageLengthBasis::gtt`]/[`PageLengthBasis::gatl`].
-fn grid_track_size_from_computed(s: ComputedGridTrackSize) -> GridTrackSize {
-    match s {
-        ComputedGridTrackSize::Breadth(b) => {
-            GridTrackSize::Breadth(grid_track_breadth_from_computed(b))
-        }
-        ComputedGridTrackSize::MinMax(min, max) => GridTrackSize::MinMax(
-            grid_inflexible_breadth_from_computed(min),
-            grid_track_breadth_from_computed(max),
-        ),
-        ComputedGridTrackSize::FitContent(lp) => GridTrackSize::FitContent(match lp {
-            ComputedLengthPercentage::Px(v) => Length::Px(v),
-            ComputedLengthPercentage::Percent(p) => Length::Percent(p),
-        }),
-    }
-}
-/// [`ComputedGridTrackList`] → specified [`GridTrackList`] — round-trip
-/// half of [`PageLengthBasis::gtt`]. `line_names` carry no length so they clone through
-/// unchanged.
-fn grid_track_list_from_computed(list: &ComputedGridTrackList) -> GridTrackList {
-    GridTrackList {
-        line_names: list.line_names.clone(),
-        components: list
-            .components
-            .iter()
-            .cloned()
-            .map(|c| match c {
-                ComputedGridTrackListComponent::Size(s) => {
-                    GridTrackListComponent::Size(grid_track_size_from_computed(s))
-                }
-                ComputedGridTrackListComponent::Repeat(r) => {
-                    GridTrackListComponent::Repeat(GridTrackRepeat {
-                        count: r.count,
-                        line_names: r.line_names,
-                        tracks: r
-                            .tracks
-                            .into_iter()
-                            .map(grid_track_size_from_computed)
-                            .collect(),
-                    })
-                }
-            })
-            .collect(),
     }
 }
 
