@@ -9,17 +9,21 @@
 //! the library ([`crate::layout::taffy_adapter`]), which converts to and from these.
 //!
 //! The types have the shape of the library's types of the same name: the same
-//! fields and the same variants. Two parts of the library's types are opaque
-//! and stay behind the adapter: the margin sets and the list of out-of-flow
-//! candidates are re-exported from it ([`CollapsibleMarginSet`],
-//! [`OofCandidates`]).
+//! fields and the same variants. Some parts of the library's types are opaque
+//! and stay behind the adapter: the margin sets, the list of out-of-flow
+//! candidates and the state of the floats of a block formatting context are
+//! re-exported from it ([`CollapsibleMarginSet`], [`OofCandidates`],
+//! [`FloatContext`], [`FloatIntrinsicWidthCalculator`]).
 //!
 //! These types are internal to raikiri-dom: no other crate reads a
 //! [`LayoutInput`] or a [`LayoutOutput`], so they are deliberately not exported.
 
 use raikiri_layout_geometry::{Edges, Line, MaybeMath, Point, Size};
+use raikiri_layout_style::values::Float;
 
-pub(crate) use super::taffy_adapter::{CollapsibleMarginSet, OofCandidates};
+pub(crate) use super::taffy_adapter::{
+    CollapsibleMarginSet, FloatContext, FloatIntrinsicWidthCalculator, OofCandidates,
+};
 
 /// The identity of a node in the layout: its index in the document arena.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -403,6 +407,72 @@ impl AxisStaticPosition {
             align: AxisStaticAlign::from_keyword(edge),
         }
     }
+}
+
+/// The side of a block formatting context a floated box is placed against.
+///
+/// The discriminants are the indexes of the per-side state that tracks the
+/// floats of a flow: left is first, right is second.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum FloatDirection {
+    /// The box floats against the left edge.
+    Left = 0,
+    /// The box floats against the right edge.
+    Right = 1,
+}
+
+impl FloatDirection {
+    /// The side that `float` puts a box on; `None` for a box that does not
+    /// float.
+    #[inline]
+    pub(crate) fn from_float(float: Float) -> Option<Self> {
+        match float {
+            Float::Left => Some(Self::Left),
+            Float::Right => Some(Self::Right),
+            Float::None => None,
+        }
+    }
+}
+
+/// The room beside the floats that content which does not establish a
+/// formatting context is laid out in.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct ContentSlot {
+    /// The segment of the floats the room starts in, if floats reach it.
+    pub(crate) segment_id: Option<usize>,
+    /// Where the room starts, from the left.
+    pub(crate) x: f32,
+    /// Where the room starts, from the top.
+    pub(crate) y: f32,
+    /// How wide the room is.
+    pub(crate) width: f32,
+    /// How high the room is.
+    pub(crate) height: f32,
+}
+
+/// The room beside the floats for a box that establishes a formatting context
+/// and so must not overlap them.
+///
+/// Unlike [`ContentSlot`] it accounts for the margins of the box, which are
+/// resolved against the edges of the containing block and not against the
+/// edges of the floats, and may therefore reach under a float.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct BfcSlot {
+    /// The segment of the floats the room starts in, if floats reach it.
+    pub(crate) segment_id: Option<usize>,
+    /// Where the room starts, from the left: the edge of the border box.
+    pub(crate) x: f32,
+    /// Where the room starts, from the top.
+    pub(crate) y: f32,
+    /// The room for the border box, between the edges of the floats and the
+    /// edges of the containing block moved in by the margins. The box fits
+    /// when its border box is no wider.
+    pub(crate) border_width: f32,
+    /// The width an `auto` width resolves to, before the minimum and maximum
+    /// width apply. It differs from `border_width` by the trailing margin,
+    /// except for the part of it that lies under a float.
+    pub(crate) stretch_width: f32,
 }
 
 /// The position of an out-of-flow box.

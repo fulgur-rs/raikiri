@@ -7,15 +7,14 @@ use crate::layout::context::LayoutSession;
 use crate::layout::dispatch::resolve_calc;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
-    LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RunMode,
+    FloatDirection, LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RunMode,
 };
+use crate::layout::taffy_adapter::algorithms::compute_block_align_content_offset;
 use crate::layout::taffy_adapter::{IntoEdges, MaybeResolve};
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
-use taffy::{
-    BlockItemStyle, BoxGenerationMode, Clear, CoreStyle, Direction, Float, FloatDirection, Position,
-};
+use taffy::{BlockItemStyle, BoxGenerationMode, Clear, CoreStyle, Direction, Float, Position};
 
 pub(super) struct Flow {
     pub end: f32,
@@ -718,7 +717,7 @@ pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow
     if style.align_content.keyword == taffy::AlignContentKeyword::Normal {
         return;
     }
-    let offset = taffy::compute_block_align_content_offset(style.align_content, free);
+    let offset = compute_block_align_content_offset(style.align_content, free);
     if offset == 0.0 {
         return;
     }

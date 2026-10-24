@@ -12,11 +12,10 @@ use crate::LayoutStyle as Style;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::layout::dispatch::{measure_against_parent_height, resolve_calc};
 use crate::layout::protocol::{
-    AvailableSpace, CollapsibleMarginSet, LayoutInput, LayoutOutput, NodeId, RequestedAxis,
-    RunMode, SizingMode,
+    AvailableSpace, CollapsibleMarginSet, FloatDirection, FloatIntrinsicWidthCalculator,
+    LayoutInput, LayoutOutput, NodeId, RequestedAxis, RunMode, SizingMode,
 };
 use crate::layout::taffy_adapter::ResolveOrZero;
-use crate::layout::taffy_adapter::algorithms::float_intrinsic_width_calculator;
 use context::{BlockContext, BlockFormattingContext};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
@@ -111,7 +110,7 @@ fn intrinsic_widths(
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut width = 0.0_f32;
     let mut spanning = 0.0_f32;
-    let mut floats = float_intrinsic_width_calculator(space);
+    let mut floats = FloatIntrinsicWidthCalculator::new(space);
     for child in children {
         let style = child_style(tree, child);
         if style.box_generation_mode() == BoxGenerationMode::None
@@ -164,10 +163,8 @@ fn intrinsic_widths(
             percent_height,
         );
         match style.float {
-            Float::Left => floats.add_float(child_width, taffy::FloatDirection::Left, style.clear),
-            Float::Right => {
-                floats.add_float(child_width, taffy::FloatDirection::Right, style.clear)
-            }
+            Float::Left => floats.add_float(child_width, FloatDirection::Left, style.clear),
+            Float::Right => floats.add_float(child_width, FloatDirection::Right, style.clear),
             Float::None if spans && crate::layout::is_spanner(tree, usize::from(child)) => {
                 spanning = spanning.max(child_width);
             }
