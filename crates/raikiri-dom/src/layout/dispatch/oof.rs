@@ -74,6 +74,13 @@ impl LayoutSession<'_> {
         }
     }
 
+    /// Whether the container that holds `node` in its own layout is on vertical
+    /// axes.
+    pub(crate) fn container_is_vertical(&self, node: usize) -> bool {
+        self.taffy_parent_of(node)
+            .is_some_and(|parent| super::block_right_to_left(self, parent).is_some())
+    }
+
     /// The tracks and areas a grid container reported, which the library
     /// positions its out-of-flow children in.
     pub(crate) fn oof_grid_info(&self, node: NodeId) -> &GridInfo {

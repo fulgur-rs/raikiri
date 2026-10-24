@@ -21,7 +21,7 @@ pub(crate) struct LayoutContext {
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// Whether the out-of-flow boxes being positioned have a containing block
     /// on vertical axes, whose alignment properties name the other physical
-    /// axes than the library assumes (see `dispatch::oof`).
+    /// axes than the library assumes (see `with_oof_axes` in [`crate::layout::dispatch`]).
     pub(crate) oof_axes_vertical: bool,
     pub(crate) orthogonal_block_in_layout: Option<usize>,
     pub(crate) transposed_style_index: crate::layout::dispatch::TransposedStyleIndex,

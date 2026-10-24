@@ -959,3 +959,81 @@ fn a_vertical_box_in_a_horizontal_root_leaves_the_boxes_around_it_on_their_own_a
     assert_eq!(absolute_rect(&doc, inside).2, 0.0);
     assert_eq!(absolute_rect(&doc, outside).2, 0.0);
 }
+
+/// The page rect of `a`, an empty absolutely positioned child styled
+/// `child_css` of `parent`, itself a static child of a 100px positioned square
+/// that is styled `container_css`.
+fn rect_in_other_axes(
+    container_css: &str,
+    parent_css: &str,
+    child_css: &str,
+) -> (f32, f32, f32, f32) {
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!(
+            "display:block;position:relative;width:100px;height:100px;{container_css}"
+        )),
+    );
+    let parent = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!(
+            "display:block;width:100px;height:100px;{parent_css}"
+        )),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Some(format!(
+            "display:block;position:absolute;width:auto;height:auto;{child_css}"
+        )),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    absolute_rect(&doc, child)
+}
+
+#[test]
+fn a_last_baseline_container_on_other_axes_than_the_containing_block_leaves_the_sizing_alone() {
+    for display in ["display:block", "display:flex", "display:grid"] {
+        // A vertical container in a horizontal containing block: the box fills
+        // the height between its insets, as it does without `last baseline`.
+        let parent_css = format!("{display};writing-mode:vertical-rl;align-items:last baseline");
+        let rect = rect_in_other_axes("", &parent_css, "top:0;bottom:0");
+        assert_eq!(rect.3, 100.0, "{parent_css}");
+        // And the other way round.
+        let parent_css = format!("{display};align-items:last baseline;justify-items:last baseline");
+        let rect = rect_in_other_axes("writing-mode:vertical-rl", &parent_css, "left:0;right:0");
+        assert_eq!(rect.2, 100.0, "{parent_css}");
+    }
+}
+
+#[test]
+fn a_box_in_a_container_on_other_axes_than_its_containing_block_keeps_the_assumed_axes() {
+    // The container of the box is horizontal inside a vertical containing block:
+    // `align-self` is not read along the horizontal axis there, which is what
+    // the swap would do, but `justify-self` is, as for any horizontal box.
+    let rect = rect_in_other_axes(
+        "writing-mode:vertical-rl",
+        "writing-mode:horizontal-tb",
+        "left:0;right:0;align-self:start",
+    );
+    assert_eq!(rect.2, 100.0);
+    let rect = rect_in_other_axes(
+        "writing-mode:vertical-rl",
+        "writing-mode:horizontal-tb",
+        "left:0;right:0;justify-self:start",
+    );
+    assert_eq!(rect.2, 0.0);
+    // With the container on the axes of the containing block, the swap applies.
+    let rect = rect_in_other_axes(
+        "writing-mode:vertical-rl",
+        "writing-mode:vertical-rl",
+        "left:0;right:0;align-self:start",
+    );
+    assert_eq!(rect.2, 0.0);
+}

@@ -71,18 +71,29 @@ fn container_alignment(value: SelfAlignmentValue) -> AlignItems {
 /// container's plain baseline. With an inset specified, `auto` behaves as
 /// `normal` and the box stays at the start.
 ///
-/// `align-self` aligns the block axis of the container and `justify-self` its
-/// inline axis, which are the physical vertical and horizontal ones of a
-/// container on horizontal axes (`parent_vertical` false) and the other way
-/// round on vertical axes.
+/// Layout reads `align-self` along the physical vertical axis and
+/// `justify-self` along the horizontal one, except for a box in a container on
+/// vertical axes whose containing block is on vertical axes as well: it reads
+/// them the other way round there, so `align-self` is the block axis of the
+/// container, the physical horizontal one. `containing_block_vertical` says
+/// whether the containing block is on vertical axes, and is only asked for when
+/// the container is and an alignment would be replaced.
 // spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-auto
 pub(super) fn inherited_last_baseline(
     cv: &ComputedValues,
     parent: &ComputedValues,
     parent_vertical: bool,
+    containing_block_vertical: impl FnOnce() -> bool,
 ) -> (Option<AlignItems>, Option<AlignItems>) {
     let mut overrides = (None, None);
     if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
+        return overrides;
+    }
+    let block = matches!(cv.align_self, AlignSelfValue::Auto)
+        && parent.align_items == SelfAlignmentValue::LastBaseline;
+    let inline = matches!(cv.justify_self, AlignSelfValue::Auto)
+        && parent.justify_items == SelfAlignmentValue::LastBaseline;
+    if !(block || inline) {
         return overrides;
     }
     let auto = |value: ComputedLengthPercentageOrAuto| {
@@ -92,21 +103,16 @@ pub(super) fn inherited_last_baseline(
         auto(cv.top) && auto(cv.bottom),
         auto(cv.left) && auto(cv.right),
     );
-    let (block_insets_auto, inline_insets_auto) = if parent_vertical {
+    let (block_insets_auto, inline_insets_auto) = if parent_vertical && containing_block_vertical()
+    {
         (horizontal_insets_auto, vertical_insets_auto)
     } else {
         (vertical_insets_auto, horizontal_insets_auto)
     };
-    if matches!(cv.align_self, AlignSelfValue::Auto)
-        && parent.align_items == SelfAlignmentValue::LastBaseline
-        && block_insets_auto
-    {
+    if block && block_insets_auto {
         overrides.0 = Some(AlignItems::SAFE_SELF_END);
     }
-    if matches!(cv.justify_self, AlignSelfValue::Auto)
-        && parent.justify_items == SelfAlignmentValue::LastBaseline
-        && inline_insets_auto
-    {
+    if inline && inline_insets_auto {
         overrides.1 = Some(AlignItems::SAFE_SELF_END);
     }
     overrides
@@ -256,6 +262,28 @@ pub(super) fn unstretched_keyword_height_alignment(
     .then_some(fallback)
 }
 
+/// The containing block of the absolutely (`fixed` false) or fixed positioned
+/// box `idx`: the nearest ancestor that holds this kind of box. The root element
+/// stands in for the initial containing block, and for itself when it is the
+/// box.
+pub(super) fn positioning_container(doc: &LayoutSession<'_>, idx: usize, fixed: bool) -> usize {
+    doc.ancestors(idx)
+        .find(|&ancestor| {
+            let node = &doc.nodes[ancestor];
+            if fixed {
+                node.claims_fixed_oof
+            } else {
+                node.claims_absolute_oof
+            }
+        })
+        .or_else(|| {
+            doc.ancestors(idx)
+                .filter(|&ancestor| doc.nodes[ancestor].kind() == NodeKind::Element)
+                .last()
+        })
+        .unwrap_or(idx)
+}
+
 /// The vertical inset that out-of-flow box `idx` ignores because its `height`
 /// is `min-content`, `max-content` or `fit-content`, which the cascade computes
 /// to `auto` ([`ComputedValues::height_keyword`] is what is left of it).
@@ -297,25 +325,7 @@ pub(super) fn ignored_vertical_inset(
     {
         return None;
     }
-    // The containing block is the nearest ancestor that holds this kind of
-    // box. The root element stands in for the initial containing block, and
-    // for itself when it is the box.
-    let containing_block = doc
-        .ancestors(idx)
-        .find(|&ancestor| {
-            let node = &doc.nodes[ancestor];
-            if fixed {
-                node.claims_fixed_oof
-            } else {
-                node.claims_absolute_oof
-            }
-        })
-        .or_else(|| {
-            doc.ancestors(idx)
-                .filter(|&ancestor| doc.nodes[ancestor].kind() == NodeKind::Element)
-                .last()
-        })
-        .unwrap_or(idx);
+    let containing_block = positioning_container(doc, idx, fixed);
     // `sideways-lr` runs its inline axis from bottom to top, `direction: rtl`
     // reverses it, and `text-orientation: upright` does not change either.
     let block = &cascade.computed[containing_block];

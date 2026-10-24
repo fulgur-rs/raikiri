@@ -416,6 +416,10 @@ fn apply_computed_to_style_in_session_inner(
                 cv,
                 &cascade.computed[container],
                 uses_vertical_axes(cascade, container),
+                || {
+                    let fixed = cv.position == PositionValue::Fixed;
+                    uses_vertical_axes(cascade, settled::positioning_container(doc, idx, fixed))
+                },
             );
             if let Some(value) = align_self {
                 settled.align_self = Some(value);
