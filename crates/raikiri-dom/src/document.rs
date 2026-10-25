@@ -413,6 +413,12 @@ impl Document {
         self.ifc.is_some()
     }
 
+    /// The fonts the document lays text out with, `@font-face` faces
+    /// included, once it has them (see [`Self::has_font_collection`]).
+    pub fn font_collection(&self) -> Option<&shodo::font::FontCollection> {
+        self.ifc.as_ref().map(|state| &state.fonts)
+    }
+
     /// Width of the page area the most recent layout was made in, or `None`
     /// before any layout.
     #[doc(hidden)]

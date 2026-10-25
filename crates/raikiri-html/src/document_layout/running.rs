@@ -8,12 +8,14 @@
 //! painter draws it with the code it already has.
 
 use std::cell::OnceCell;
+use std::sync::Arc;
 
 use raikiri_dom::{Document, RunningElementPage, RunningIndex};
 use raikiri_style::CascadeResult;
 use raikiri_traits::{NodeId, RenderError};
 
 use super::Page;
+use crate::svg_fonts::FaceCache;
 
 /// Running-element layouts already made, kept as long as the document layout
 /// so that later requests borrow them instead of laying the element out
@@ -22,10 +24,13 @@ use super::Page;
 /// Each running element has an append-only chain of layouts, one per width
 /// it was laid out at. A link is never removed or replaced once set, so a
 /// layout handed out stays valid while the cache lives.
-#[derive(Default)]
 pub(crate) struct LayoutCache {
-    /// One chain per running element, sorted by node.
-    chains: Vec<(NodeId, OnceCell<Box<CachedLayout>>)>,
+    /// One chain per running element, sorted by node. A boxed slice keeps
+    /// the document layout, which is returned by value, under the size
+    /// clippy allows for the variant of [`crate::LayoutStatus`] holding it.
+    chains: Box<[(NodeId, OnceCell<Box<CachedLayout>>)]>,
+    /// The faces handed out to the SVG text of the document's layouts.
+    faces: Arc<FaceCache>,
 }
 
 struct CachedLayout {
@@ -35,8 +40,9 @@ struct CachedLayout {
 }
 
 impl LayoutCache {
-    /// An empty cache for the running elements of `index`.
-    pub(crate) fn new(index: &RunningIndex) -> Self {
+    /// An empty cache for the running elements of `index`. The layouts it
+    /// makes hand out SVG text faces from `faces`.
+    pub(crate) fn new(index: &RunningIndex, faces: Arc<FaceCache>) -> Self {
         let mut nodes: Vec<NodeId> = index.nodes().collect();
         nodes.sort_unstable_by_key(|node| node.0);
         Self {
@@ -44,7 +50,13 @@ impl LayoutCache {
                 .into_iter()
                 .map(|node| (node, OnceCell::new()))
                 .collect(),
+            faces,
         }
+    }
+
+    /// The faces handed out to the SVG text of the document's layouts.
+    pub(crate) fn faces(&self) -> &Arc<FaceCache> {
+        &self.faces
     }
 
     /// The layout of running element `node` at `width`, made with `make` the
@@ -104,7 +116,13 @@ impl<'a> RunningSource<'a> {
     ) -> Result<Option<&'a RunningElementLayout>, RenderError> {
         let width = used_width(width);
         self.layouts.get_or_try_make(node, width, || {
-            layout_running_element(self.document, self.cascade, node, width)
+            layout_running_element(
+                self.document,
+                self.cascade,
+                node,
+                width,
+                self.layouts.faces().clone(),
+            )
         })
     }
 }
@@ -195,17 +213,19 @@ pub(crate) use raikiri_dom::used_running_element_width as used_width;
 
 /// Lay running element `node` out at `width` CSS px, a width
 /// [`used_width`] returned. See [`raikiri_dom::layout_running_element`].
+/// The layout hands out SVG text faces from `faces`.
 pub(crate) fn layout_running_element(
     source: &Document,
     cascade: &CascadeResult,
     node: NodeId,
     width: f32,
+    faces: Arc<FaceCache>,
 ) -> Result<Option<RunningElementLayout>, RenderError> {
     let laid_out = raikiri_dom::layout_running_element(source, cascade, node, width)?;
     Ok(laid_out.map(|laid_out| RunningElementLayout {
         node,
         laid_out,
-        svg_sources: super::page::InlineSvgCache::default(),
+        svg_sources: super::page::InlineSvgCache::new(faces),
         margin_values: raikiri_dom::MarginBoxNamedValues::new(),
     }))
 }

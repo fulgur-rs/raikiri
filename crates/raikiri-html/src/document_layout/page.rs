@@ -53,13 +53,33 @@ pub struct InlineSvg {
 /// styles and its viewport size, so a root painted on several pages (a
 /// running header, or an SVG split across a page break) is serialized,
 /// parsed and restyled once. Placement is taken from each fragment.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct InlineSvgCache {
     sources: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32, u32), PreparedSvg>>,
+    /// The faces handed out to the SVG text of the document. The prepared
+    /// sources belong to one laid-out document, but the faces belong to the
+    /// whole [`super::DocumentLayout`]: its pages laid out at another width
+    /// and its running elements share them, so a face is one allocation
+    /// wherever its text is.
+    faces: std::sync::Arc<crate::svg_fonts::FaceCache>,
+}
+
+impl InlineSvgCache {
+    /// An empty cache that hands out its SVG text faces from `faces`.
+    pub(super) fn new(faces: std::sync::Arc<crate::svg_fonts::FaceCache>) -> Self {
+        Self {
+            sources: std::cell::RefCell::default(),
+            faces,
+        }
+    }
 }
 
 #[cfg(test)]
 impl InlineSvgCache {
+    pub(super) fn faces(&self) -> &std::sync::Arc<crate::svg_fonts::FaceCache> {
+        &self.faces
+    }
+
     pub(super) fn len(&self) -> usize {
         self.sources.borrow().len()
     }
@@ -430,6 +450,20 @@ impl<'a> Page<'a> {
         };
         self.svg_sources.sources.borrow_mut().insert(key, prepared);
         Ok(Some(svg))
+    }
+
+    /// The fonts that the SVG text of this page is set in: those the page's
+    /// document was laid out with.
+    ///
+    /// Pass it to [`raikiri_svg::SvgResources::with_fonts`] when building the
+    /// scene of an [`InlineSvg`].
+    pub fn svg_fonts(&self) -> crate::PageSvgFonts<'a> {
+        crate::PageSvgFonts::new(
+            self.document
+                .font_collection()
+                .expect("a laid-out document has fonts"),
+            &self.svg_sources.faces,
+        )
     }
 
     /// Serializes, parses and restyles the SVG root `id`.
@@ -842,6 +876,7 @@ impl<'a> Page<'a> {
             source.cascade,
             node,
             super::running::used_width(content.width),
+            source.layouts.faces().clone(),
         )?
         else {
             return Ok(None); // cov:ignore: a selected node is always a running element.

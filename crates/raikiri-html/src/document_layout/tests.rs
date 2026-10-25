@@ -644,6 +644,53 @@ fn inline_svg_in_a_running_element_is_prepared_once() {
 }
 
 #[test]
+fn the_faces_of_svg_text_belong_to_the_whole_layout() {
+    // The first page has a wide left margin, so the later pages are wider and
+    // are laid out again in a continuation, and the header is a running
+    // element.
+    let words = (0..60)
+        .map(|index| format!("w{index:03}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let document = dom(&format!(
+        "<style>@page {{size:300px 100px;margin:30px 10px;@top-left{{content:element(hdr)}}}} @page :first {{margin-left:120px}} body {{margin:0}} .hdr {{position:running(hdr)}}</style><div class='hdr'><svg width='20' height='10'><text>A</text></svg></div><p>{words}</p>"
+    ));
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert!(layout.caches.len() >= 2, "a continuation was laid out");
+    let faces = layout.running_layouts.faces();
+    for caches in &layout.caches {
+        assert!(std::sync::Arc::ptr_eq(caches.svg_sources.faces(), faces));
+    }
+    let page = layout.pages().last().unwrap();
+    let margin_box = page.margin_boxes().into_iter().next().unwrap();
+    let placed = page
+        .margin_box_running_element(&margin_box)
+        .unwrap()
+        .unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        placed.layout.svg_sources.faces(),
+        faces
+    ));
+    // A layout made for a consumer that outlives the document layout.
+    let owned = page
+        .owned_margin_box_running_element(&margin_box)
+        .unwrap()
+        .unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        owned.layout.svg_sources.faces(),
+        faces
+    ));
+}
+
+#[test]
 fn inline_svg_payload_uses_the_resolved_content_box_and_host_style() {
     let document = dom(
         "<style>@page {size:300px 200px;margin:10px} body {margin:0} svg {box-sizing:border-box;width:200px;height:120px;border:2px solid black;padding:10%;color:blue;opacity:.5}</style><svg xmlns='http://www.w3.org/2000/svg' width='200' height='120' style='display:block'><rect width='10' height='10' fill='currentColor' opacity='inherit'/></svg>",
