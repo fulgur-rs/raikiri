@@ -352,6 +352,28 @@ fn filters_of_one_group_all_work_on_the_union_of_their_regions() {
 }
 
 #[test]
+fn an_fe_image_draws_its_picture_at_the_scale_of_the_filtered_element_only() {
+    // resvg keeps the scale of the filtered element's transform and drops the
+    // rest of it, so a skew there does not cancel one inside the picture.
+    let picture = |outer: &str, inner: &str| {
+        format!(
+            "<filter id='f'><feMorphology operator='dilate' radius='3'/></filter>\
+             <defs><g id='g' {inner}><rect width='1000' height='1000' filter='url(#f)'/></g></defs>\
+             <filter id='h'><feImage href='#g' width='1000' height='1000'/></filter>\
+             <rect width='1000' height='1000' {outer} filter='url(#h)'/>"
+        )
+    };
+    rasterize(&document(1000, 1000, &picture("", "")), 1000, 1000).unwrap();
+    assert_over_the_work_budget(
+        1000,
+        &picture(
+            "transform='matrix(1 0 100 1 0 0)'",
+            "transform='matrix(1 0 -100 1 0 0)'",
+        ),
+    );
+}
+
+#[test]
 fn a_document_with_a_filter_and_a_picture_has_no_picture() {
     // Only a scene draws pictures and only the raster draws filters.
     let source = format!(

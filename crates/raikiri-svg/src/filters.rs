@@ -82,7 +82,7 @@ impl Meter {
                 for filter in inner.filters() {
                     for primitive in filter.primitives() {
                         if let Kind::Image(image) = primitive.kind() {
-                            self.group(image.root(), to_canvas)?;
+                            self.at_scale(image.root(), to_canvas)?;
                         }
                     }
                 }
@@ -94,7 +94,7 @@ impl Meter {
                 ];
                 for paint in paints.into_iter().flatten() {
                     if let usvg::Paint::Pattern(pattern) = paint {
-                        self.pattern(pattern, to_canvas)?;
+                        self.at_scale(pattern.root(), to_canvas.pre_concat(pattern.transform()))?;
                     }
                 }
             }
@@ -105,19 +105,12 @@ impl Meter {
         Ok(())
     }
 
-    /// Charges the filters in the tile of `pattern`, which resvg draws at the
-    /// scale that the pattern's own transform gives it, and at no other part
-    /// of the transform.
-    fn pattern(
-        &mut self,
-        pattern: &usvg::Pattern,
-        to_canvas: usvg::Transform,
-    ) -> Result<(), SvgError> {
-        let (scale_x, scale_y) = to_canvas.pre_concat(pattern.transform()).get_scale();
-        self.group(
-            pattern.root(),
-            usvg::Transform::from_scale(scale_x, scale_y),
-        )
+    /// Charges the filters in `root`, which resvg draws at the scale of
+    /// `to_canvas` and at no other part of it: the tile of a pattern and the
+    /// picture of an `feImage` are drawn that way.
+    fn at_scale(&mut self, root: &usvg::Group, to_canvas: usvg::Transform) -> Result<(), SvgError> {
+        let (scale_x, scale_y) = to_canvas.get_scale();
+        self.group(root, usvg::Transform::from_scale(scale_x, scale_y))
     }
 
     /// The layer that resvg draws for `rect`, the area of a group in its own
