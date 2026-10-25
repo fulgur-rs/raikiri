@@ -106,8 +106,9 @@ impl SvgFontSource for crate::RenderFonts {
 ///
 /// Get it from [`crate::Page::svg_fonts`] and pass it to
 /// [`raikiri_svg::SvgResources::with_fonts`]. Every scene built for the pages
-/// of one document shares the faces it hands out, so a consumer that embeds
-/// fonts embeds each once.
+/// of one [`crate::DocumentLayout`] shares the faces it hands out, whether the
+/// text is on a page, on a page laid out at another width, or in a running
+/// element, so a consumer that embeds fonts embeds each once.
 #[derive(Clone, Copy)]
 pub struct PageSvgFonts<'a> {
     collection: &'a FontCollection,

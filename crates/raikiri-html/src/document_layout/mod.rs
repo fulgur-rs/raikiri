@@ -225,9 +225,12 @@ pub(crate) fn layout_resumed<'r>(
     let rendered = navigation::build_rendered(&out);
     let anchors = navigation::build_anchors(DomView::new(&out.document), &out);
     let running = build_running_index(&out);
-    let running_layouts = running::LayoutCache::new(&running);
+    // One set of SVG text faces for the whole layout: its continuations and
+    // running elements hand out the faces of the pages around them.
+    let svg_faces = std::sync::Arc::<crate::svg_fonts::FaceCache>::default();
+    let running_layouts = running::LayoutCache::new(&running, svg_faces.clone());
     let caches = (0..=out.continuations.len())
-        .map(|_| DocumentCaches::default())
+        .map(|_| DocumentCaches::new(svg_faces.clone()))
         .collect();
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(Some(LayoutStatus::Aborted)); // cov:ignore: needs the abort signal to fire while the running elements are indexed
@@ -255,12 +258,22 @@ pub struct DocumentLayout {
 }
 
 /// What the pages of one laid-out document share.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct DocumentCaches {
     /// Prepared inline SVG sources.
     svg_sources: page::InlineSvgCache,
     /// The values of page-margin `element()` and `string()` references.
     margin_values: raikiri_dom::MarginBoxNamedValues,
+}
+
+impl DocumentCaches {
+    /// Empty caches whose SVG text takes its faces from `svg_faces`.
+    fn new(svg_faces: std::sync::Arc<crate::svg_fonts::FaceCache>) -> Self {
+        Self {
+            svg_sources: page::InlineSvgCache::new(svg_faces),
+            margin_values: raikiri_dom::MarginBoxNamedValues::default(),
+        }
+    }
 }
 
 /// Index the running elements by the pages the rendered content around them
