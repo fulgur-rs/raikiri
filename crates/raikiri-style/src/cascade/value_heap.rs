@@ -18,7 +18,8 @@ use smol_str::SmolStr;
 
 use crate::ComputedValues;
 use crate::computed::{
-    ComputedBackgroundLayer, CustomPropertyEnvironment, initial_background_layers,
+    ComputedBackgroundLayer, ComputedBackgroundLists, CustomPropertyEnvironment,
+    initial_background_layers,
 };
 use crate::property::{
     BackgroundImage, BasicShape, ClipPath, ContentComponent, ContentList, CounterStyle,
@@ -182,6 +183,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         orphans: _,
         widows: _,
         background_layers,
+        background_lists,
         border_image,
         object_fit: _,
         object_position: _,
@@ -254,6 +256,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         + str_of(line_str(grid_column_start), line_str(&parent.grid_column_start))
         + str_of(line_str(grid_column_end), line_str(&parent.grid_column_end))
         + background_layers_heap(background_layers, &parent.background_layers)
+        + background_lists_heap(background_lists, &parent.background_lists)
         + image(&border_image.source, &parent.border_image.source)
         + image(mask_image, &parent.mask_image)
         + clip_path_heap(clip_path)
@@ -365,6 +368,42 @@ fn background_layers_heap(
         return 0;
     }
     slice_heap(value, |layer| image(&layer.image, &BackgroundImage::None))
+}
+
+/// The heap of the background lists a node keeps whole, unless they are the
+/// parent's: the lists hold no heap beyond their items.
+fn background_lists_heap(
+    value: &Option<Arc<ComputedBackgroundLists>>,
+    parent: &Option<Arc<ComputedBackgroundLists>>,
+) -> u64 {
+    let Some(lists) = value else { return 0 };
+    if parent
+        .as_ref()
+        .is_some_and(|parent| Arc::ptr_eq(lists, parent))
+    {
+        return 0;
+    }
+    let ComputedBackgroundLists {
+        position_x,
+        position_y,
+        size,
+        repeat,
+        attachment,
+        origin,
+        clip,
+    } = &**lists;
+    fn kept<T>(list: &Option<Arc<[T]>>) -> u64 {
+        list.as_deref()
+            .map_or(0, |items| std::mem::size_of_val(items) as u64)
+    }
+    size_of::<ComputedBackgroundLists>() as u64
+        + kept(position_x)
+        + kept(position_y)
+        + kept(size)
+        + kept(repeat)
+        + kept(attachment)
+        + kept(origin)
+        + kept(clip)
 }
 
 fn image(value: &BackgroundImage, parent: &BackgroundImage) -> u64 {

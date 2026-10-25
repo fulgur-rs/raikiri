@@ -756,6 +756,101 @@ fn a_background_keyword_takes_one_item_per_layer_of_the_parent() {
 }
 
 #[test]
+fn a_background_keyword_takes_the_whole_list_of_the_parent() {
+    // The lists of the parent are not cut to its three images: the child's
+    // five images repeat the parent's short lists from their start, and the
+    // list that is longer than the parent's images keeps its last items.
+    let lists = "background-repeat: no-repeat, repeat-x; \
+                 background-attachment: fixed; \
+                 background-position-x: 1px, 2px, 3px, 4px, 5px; \
+                 background-position-y: 10%, 20%; \
+                 background-size: 6px, 7px auto; \
+                 background-clip: padding-box, content-box; \
+                 background-origin: content-box, border-box, padding-box, content-box";
+    let parent = format!("background-image: url(a.png), url(b.png), url(c.png); {lists}");
+    let images = "background-image: url(d.png), url(e.png), url(f.png), url(g.png), url(h.png)";
+    let inherited = child(
+        &parent,
+        &[],
+        &format!(
+            "#target {{ {images}; background-repeat: inherit; background-attachment: inherit; \
+             background-position-x: inherit; background-position-y: inherit; \
+             background-size: inherit; background-clip: inherit; background-origin: inherit }}"
+        ),
+    );
+    let authored = child("", &[], &format!("#target {{ {images}; {lists} }}"));
+    assert_eq!(inherited.background_layers().len(), 5);
+    assert_eq!(inherited.background_layers(), authored.background_layers());
+}
+
+#[test]
+fn a_background_list_survives_a_node_with_another_number_of_images() {
+    // The middle node has three images and the lists of the outer one, which
+    // are two items long; the node below it, with four images, repeats the
+    // original two items rather than the three layers the middle node shows.
+    let mut doc = TestDoc::new();
+    let outer = doc.push_element(
+        0,
+        "div",
+        Some("background-image: url(a.png), url(b.png); background-repeat: no-repeat, repeat-x"),
+    );
+    let middle = doc.push_element(
+        outer,
+        "div",
+        Some(
+            "background-image: url(c.png), url(d.png), url(e.png); \
+             background-repeat: inherit",
+        ),
+    );
+    let inner = doc.push_element(
+        middle,
+        "div",
+        Some(
+            "background-image: url(f.png), url(g.png), url(h.png), url(i.png); \
+             background-repeat: inherit",
+        ),
+    );
+    let computed = cascade(&doc, &RuleTree::empty()).unwrap().computed;
+    let repeats = |id: usize| -> Vec<_> {
+        computed[id]
+            .background_layers()
+            .iter()
+            .map(|layer| layer.repeat)
+            .collect()
+    };
+    let (no_repeat, repeat_x) = (repeats(outer)[0], repeats(outer)[1]);
+    assert_ne!(no_repeat, repeat_x);
+    assert_eq!(repeats(middle), [no_repeat, repeat_x, no_repeat]);
+    assert_eq!(repeats(inner), [no_repeat, repeat_x, no_repeat, repeat_x]);
+}
+
+#[test]
+fn a_background_list_is_kept_only_where_the_layers_do_not_say_it_all() {
+    let images = |count: usize| {
+        let urls: Vec<String> = (0..count)
+            .map(|index| format!("url({index}.png)"))
+            .collect();
+        format!("background-image: {}", urls.join(", "))
+    };
+    let kept = |count: usize, repeat: &str| {
+        let css = format!(
+            "#target {{ {}; background-repeat: {repeat} }}",
+            images(count)
+        );
+        child("", &[], &css).background_lists.is_some()
+    };
+    // One value throughout, one item per layer, and a list that repeats
+    // evenly over the layers read the same from the layers as from the list.
+    assert!(!kept(3, "no-repeat"));
+    assert!(!kept(3, "no-repeat, repeat-x, repeat-y"));
+    assert!(!kept(4, "no-repeat, repeat-x"));
+    assert!(!kept(3, "no-repeat, no-repeat"));
+    // A list that the layers cut short, or fill unevenly, is read back whole.
+    assert!(kept(3, "no-repeat, repeat-x"));
+    assert!(kept(2, "no-repeat, repeat-x, repeat-y"));
+}
+
+#[test]
 fn an_initial_background_keyword_is_one_initial_layer() {
     let parent = "background-image: url(a.png), url(b.png); background-repeat: no-repeat";
     let values = child(

@@ -503,6 +503,28 @@ pub(crate) fn initial_background_layers() -> Arc<[ComputedBackgroundLayer]> {
         .clone()
 }
 
+/// The computed per-layer lists that a node keeps whole because their item
+/// count is not the node's number of background layers (see
+/// [`ComputedValues::background_lists`]). A list that is `None` has one item
+/// per layer, or is the property's initial value, and is read from the layers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct ComputedBackgroundLists {
+    /// `background-position-x`.
+    pub(crate) position_x: Option<Arc<[ComputedCssPositionOffset]>>,
+    /// `background-position-y`.
+    pub(crate) position_y: Option<Arc<[ComputedCssPositionOffset]>>,
+    /// `background-size`.
+    pub(crate) size: Option<Arc<[ComputedBackgroundSize]>>,
+    /// `background-repeat`.
+    pub(crate) repeat: Option<Arc<[BackgroundRepeat]>>,
+    /// `background-attachment`.
+    pub(crate) attachment: Option<Arc<[BackgroundAttachment]>>,
+    /// `background-origin`.
+    pub(crate) origin: Option<Arc<[VisualBox]>>,
+    /// `background-clip`.
+    pub(crate) clip: Option<Arc<[VisualBox]>>,
+}
+
 /// Computed `border-image-*` longhands (CSS Backgrounds 3 §6
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-images>).
 ///
@@ -1801,6 +1823,14 @@ pub struct ComputedValues {
     /// with too few values is repeated as needed (§2.1). See
     /// [`ComputedBackgroundLayer`] for each field.
     pub background_layers: Arc<[ComputedBackgroundLayer]>,
+    /// The per-layer lists whose item count differs from the number of
+    /// [`Self::background_layers`], whole. The computed value of such a list
+    /// keeps every item it was given, and the layers show only the part that
+    /// applies to the images; a CSS-wide keyword on the longhand takes the
+    /// whole list (CSS Backgrounds and Borders 3 §2.1 reconciles the lists
+    /// when the layers are used, not when values are inherited). `None` when
+    /// every list has one item per layer, which the layers then hold.
+    pub(crate) background_lists: Option<Arc<ComputedBackgroundLists>>,
     /// `border-image-source`, `-slice`, `-width`, `-outset` and `-repeat`
     /// (CSS Backgrounds 3 §6). **non-inherited**; see
     /// [`ComputedBorderImage`].
@@ -2377,6 +2407,7 @@ impl ComputedValues {
             // CSS Backgrounds and Borders 3 §2.3–§2.9: one layer holding
             // every per-layer longhand's initial value, shared by all nodes.
             background_layers: initial_background_layers(),
+            background_lists: None,
             border_image: ComputedBorderImage::initial(),
             // CSS Images 3 §5.1: initial object-fit is `fill`.
             object_fit: ObjectFit::Fill,

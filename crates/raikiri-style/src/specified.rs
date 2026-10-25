@@ -27,8 +27,9 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{
-    ChFontKey, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues, ContentSizeKeyword,
-    FontSizeKeywordInfo, RunningTemplate, VerticalLogicalSize, initial_background_layers,
+    ChFontKey, ComputedBackgroundLayer, ComputedBackgroundLists, ComputedBorderImage,
+    ComputedValues, ContentSizeKeyword, FontSizeKeywordInfo, RunningTemplate, VerticalLogicalSize,
+    initial_background_layers,
 };
 use crate::property::{
     AlignSelfValue, AspectRatioValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
@@ -2332,6 +2333,26 @@ impl SpecifiedValues {
             self.writing_mode
         };
         let mut running_templates = std::mem::take(&mut self.running_templates);
+        // CSS Backgrounds and Borders 3 §2.1: one layer per `background-image` item, the
+        // other per-layer lists repeated or truncated to that length. Lengths in sizes,
+        // positions and gradients are absolutized against this node's font_size /
+        // own_line_height; percentages and angles pass through (see the
+        // `resolve_background_image` docs).
+        let (background_layers, background_lists) = computed_background_layers(
+            &BackgroundLists {
+                image: self.background_image.as_deref(),
+                position_x: self.background_position_x.as_deref(),
+                position_y: self.background_position_y.as_deref(),
+                size: self.background_size.as_deref(),
+                repeat: self.background_repeat.as_deref(),
+                attachment: self.background_attachment.as_deref(),
+                origin: self.background_origin.as_deref(),
+                clip: self.background_clip.as_deref(),
+            },
+            font_size,
+            own_line_height,
+            ctx,
+        );
         ComputedValues {
             color: self.color,
             background_color: self
@@ -2492,26 +2513,8 @@ impl SpecifiedValues {
             bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),
             left: resolve_length_percentage_or_auto(self.left, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
-            // CSS Backgrounds and Borders 3 §2.1: one layer per `background-image` item, the
-            // other per-layer lists repeated or truncated to that length. Lengths in sizes,
-            // positions and gradients are absolutized against this node's font_size /
-            // own_line_height; percentages and angles pass through (see the
-            // `resolve_background_image` docs).
-            background_layers: computed_background_layers(
-                &BackgroundLists {
-                    image: self.background_image.as_deref(),
-                    position_x: self.background_position_x.as_deref(),
-                    position_y: self.background_position_y.as_deref(),
-                    size: self.background_size.as_deref(),
-                    repeat: self.background_repeat.as_deref(),
-                    attachment: self.background_attachment.as_deref(),
-                    origin: self.background_origin.as_deref(),
-                    clip: self.background_clip.as_deref(),
-                },
-                font_size,
-                own_line_height,
-                ctx,
-            ),
+            background_layers,
+            background_lists,
             border_image: ComputedBorderImage {
                 source: resolve_background_image(
                     self.border_image_source,
@@ -3057,12 +3060,19 @@ pub(crate) fn is_inter_character_annotation(
 /// it has too few items, and its excess items are unused. With every list
 /// at its initial value, or with a result equal to the initial single
 /// layer, the shared initial list is returned without allocating.
+///
+/// The second result holds each list whose item count is not the number of
+/// layers, resolved but not cut or repeated, for a CSS-wide keyword to take
+/// whole; it is `None` when every list has one item per layer.
 pub(crate) fn computed_background_layers(
     lists: &BackgroundLists<'_>,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
-) -> Arc<[ComputedBackgroundLayer]> {
+) -> (
+    Arc<[ComputedBackgroundLayer]>,
+    Option<Arc<ComputedBackgroundLists>>,
+) {
     if lists.image.is_none()
         && lists.position_x.is_none()
         && lists.position_y.is_none()
@@ -3072,7 +3082,7 @@ pub(crate) fn computed_background_layers(
         && lists.origin.is_none()
         && lists.clip.is_none()
     {
-        return initial_background_layers();
+        return (initial_background_layers(), None);
     }
     fn item<T: Clone>(list: Option<&[T]>, index: usize, initial: T) -> T {
         match list {
@@ -3080,11 +3090,23 @@ pub(crate) fn computed_background_layers(
             _ => initial,
         }
     }
+    fn resolved<T, U>(list: Option<&[T]>, resolve: impl Fn(&T) -> U) -> Option<Arc<[U]>> {
+        list.map(|list| list.iter().map(resolve).collect())
+    }
     let initial = BackgroundLayerSpec::initial();
     let count = lists.image.map_or(1, |images| images.len().max(1));
+    let offset = |offset: &CssPositionOffset| {
+        resolve_css_position_offset(*offset, font_size, own_line_height, ctx)
+    };
+    let position_x = resolved(lists.position_x, offset);
+    let position_y = resolved(lists.position_y, offset);
+    let size = resolved(lists.size, |size| {
+        resolve_background_size(*size, font_size, own_line_height, ctx)
+    });
+    let initial_layer = ComputedBackgroundLayer::initial();
     let layers: Arc<[ComputedBackgroundLayer]> = (0..count)
         .map(|index| {
-            let mut layer = ComputedBackgroundLayer::initial();
+            let mut layer = initial_layer.clone();
             layer.image = resolve_background_image(
                 item(lists.image, index, BackgroundImage::None),
                 font_size,
@@ -3092,25 +3114,18 @@ pub(crate) fn computed_background_layers(
                 ctx,
             );
             layer.position = ComputedCssPosition {
-                horizontal: resolve_css_position_offset(
-                    item(lists.position_x, index, initial.position.horizontal),
-                    font_size,
-                    own_line_height,
-                    ctx,
+                horizontal: item(
+                    position_x.as_deref(),
+                    index,
+                    initial_layer.position.horizontal,
                 ),
-                vertical: resolve_css_position_offset(
-                    item(lists.position_y, index, initial.position.vertical),
-                    font_size,
-                    own_line_height,
-                    ctx,
+                vertical: item(
+                    position_y.as_deref(),
+                    index,
+                    initial_layer.position.vertical,
                 ),
             };
-            layer.size = resolve_background_size(
-                item(lists.size, index, initial.size),
-                font_size,
-                own_line_height,
-                ctx,
-            );
+            layer.size = item(size.as_deref(), index, initial_layer.size);
             layer.repeat = item(lists.repeat, index, initial.repeat);
             layer.attachment = item(lists.attachment, index, initial.attachment);
             layer.origin = item(lists.origin, index, initial.origin);
@@ -3118,8 +3133,33 @@ pub(crate) fn computed_background_layers(
             layer
         })
         .collect();
+    // A list outlives the layers made from it only when a node with another
+    // number of images would read it differently from the layers: not when it
+    // has one item per layer, one value throughout, or repeats evenly over
+    // the layers.
+    fn whole<T: Clone + PartialEq>(list: Option<&[T]>, count: usize) -> Option<Arc<[T]>> {
+        list.filter(|list| {
+            let len = list.len();
+            len != 0
+                && len != count
+                && !(len < count && count.is_multiple_of(len))
+                && list.windows(2).any(|pair| pair[0] != pair[1])
+        })
+        .map(Arc::from)
+    }
+    let kept = ComputedBackgroundLists {
+        position_x: whole(position_x.as_deref(), count),
+        position_y: whole(position_y.as_deref(), count),
+        size: whole(size.as_deref(), count),
+        repeat: whole(lists.repeat, count),
+        attachment: whole(lists.attachment, count),
+        origin: whole(lists.origin, count),
+        clip: whole(lists.clip, count),
+    };
+    let kept = (kept != ComputedBackgroundLists::default()).then(|| Arc::new(kept));
     let shared = initial_background_layers();
-    if *layers == *shared { shared } else { layers }
+    let layers = if *layers == *shared { shared } else { layers };
+    (layers, kept)
 }
 
 #[cfg(test)]

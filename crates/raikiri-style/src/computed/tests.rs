@@ -631,6 +631,16 @@ fn non_initial_parent() -> ComputedValues {
             // different from the initial `None` (as required for non_initial_parent).
             image: BackgroundImage::Url("fixture.png".into()),
         }]),
+        // A list that does not have one item per layer; non-inherited too.
+        background_lists: Some(Arc::new(crate::computed::ComputedBackgroundLists {
+            repeat: Some(Arc::from(
+                [BackgroundRepeat {
+                    x: BackgroundRepeatKeyword::Round,
+                    y: BackgroundRepeatKeyword::Space,
+                }; 2],
+            )),
+            ..Default::default()
+        })),
         // CSS Backgrounds 3 §6: non-inherited; use a non-initial value.
         border_image: {
             let mut image = crate::computed::ComputedBorderImage::initial();
@@ -936,6 +946,7 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.justify_self, initial.justify_self);
     // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: all
     // are non-inherited.
+    assert_eq!(child.background_lists, initial.background_lists);
     assert_eq!(
         child.background_layers()[0].repeat,
         initial.background_layers()[0].repeat

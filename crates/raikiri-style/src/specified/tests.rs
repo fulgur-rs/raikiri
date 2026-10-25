@@ -444,6 +444,16 @@ fn parent_fixture() -> ComputedValues {
                 ),
             },
         }]),
+        // A list that does not have one item per layer; non-inherited too.
+        background_lists: Some(Arc::new(crate::computed::ComputedBackgroundLists {
+            repeat: Some(Arc::from(
+                [BackgroundRepeat {
+                    x: crate::property::BackgroundRepeatKeyword::Round,
+                    y: crate::property::BackgroundRepeatKeyword::Space,
+                }; 2],
+            )),
+            ..Default::default()
+        })),
         // CSS Backgrounds 3 §6: non-inherited; use a non-initial value.
         border_image: {
             let mut image = crate::computed::ComputedBorderImage::initial();

@@ -16,7 +16,7 @@
 
 use std::sync::{Arc, LazyLock};
 
-use crate::computed::{ComputedBackgroundLayer, ComputedValues};
+use crate::computed::{ComputedBackgroundLayer, ComputedBackgroundLists, ComputedValues};
 use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue,
     PropertyKey, PropertyValue, TextIndentValue, TextSpacingShorthand, TextWrapShorthand,
@@ -78,13 +78,23 @@ fn lift_column_width(computed: ComputedColumnWidth) -> ColumnWidthValue {
     }
 }
 
-/// The per-layer list of one background longhand, read from the layers the
-/// computed style holds. The computed style cuts every list to the number of
-/// images, so an item the source listed beyond its last image is not kept; a
-/// property that takes this list and has more images repeats it from its
-/// start, as any list does (CSS Backgrounds and Borders 3 section 2.1).
-fn layers<T>(source: &ComputedValues, item: impl Fn(&ComputedBackgroundLayer) -> T) -> Arc<[T]> {
-    source.background_layers().iter().map(item).collect()
+/// The computed per-layer list of one background longhand, in the form a
+/// CSS-wide keyword hands to the declaring node. A computed value is the list
+/// as it was given, whatever its length: the layers show only the part that
+/// applies to the node's images, so a list of another length is read from the
+/// lists the computed style keeps whole, and one with an item per layer from
+/// the layers. A node with more or fewer images than the source then repeats
+/// or cuts the list when its own layers are made (CSS Backgrounds and Borders
+/// 3 section 2.1).
+fn layer_items<T: Copy>(
+    source: &ComputedValues,
+    whole: impl Fn(&ComputedBackgroundLists) -> Option<&Arc<[T]>>,
+    from_layer: impl Fn(&ComputedBackgroundLayer) -> T,
+) -> Vec<T> {
+    match source.background_lists.as_deref().and_then(whole) {
+        Some(list) => list.to_vec(),
+        None => source.background_layers().iter().map(from_layer).collect(),
+    }
 }
 
 macro_rules! keyword_defaults {
@@ -273,24 +283,51 @@ keyword_defaults! {
             Length::Px(source.transform_origin_z.0),
         )
     };
-    BackgroundImage, false => {
-        PropertyValue::BackgroundImage(layers(source, |layer| layer.image.clone()))
-    };
-    BackgroundRepeat, false => PropertyValue::BackgroundRepeat(layers(source, |layer| layer.repeat));
-    BackgroundAttachment, false => {
-        PropertyValue::BackgroundAttachment(layers(source, |layer| layer.attachment))
-    };
-    BackgroundClip, false => PropertyValue::BackgroundClip(layers(source, |layer| layer.clip));
-    BackgroundOrigin, false => PropertyValue::BackgroundOrigin(layers(source, |layer| layer.origin));
-    BackgroundPositionX, false => PropertyValue::BackgroundPositionX(layers(source, |layer| {
-        lift_css_position_offset(layer.position.horizontal)
-    }));
-    BackgroundPositionY, false => PropertyValue::BackgroundPositionY(layers(source, |layer| {
-        lift_css_position_offset(layer.position.vertical)
-    }));
-    BackgroundSize, false => {
-        PropertyValue::BackgroundSize(layers(source, |layer| lift_background_size(layer.size)))
-    };
+    BackgroundImage, false => PropertyValue::BackgroundImage(
+        source
+            .background_layers()
+            .iter()
+            .map(|layer| layer.image.clone())
+            .collect()
+    );
+    BackgroundRepeat, false => PropertyValue::BackgroundRepeat(
+        layer_items(source, |lists| lists.repeat.as_ref(), |layer| layer.repeat).into()
+    );
+    BackgroundAttachment, false => PropertyValue::BackgroundAttachment(
+        layer_items(source, |lists| lists.attachment.as_ref(), |layer| layer.attachment).into()
+    );
+    BackgroundClip, false => PropertyValue::BackgroundClip(
+        layer_items(source, |lists| lists.clip.as_ref(), |layer| layer.clip).into()
+    );
+    BackgroundOrigin, false => PropertyValue::BackgroundOrigin(
+        layer_items(source, |lists| lists.origin.as_ref(), |layer| layer.origin).into()
+    );
+    BackgroundPositionX, false => PropertyValue::BackgroundPositionX(
+        layer_items(
+            source,
+            |lists| lists.position_x.as_ref(),
+            |layer| layer.position.horizontal,
+        )
+        .into_iter()
+        .map(lift_css_position_offset)
+        .collect()
+    );
+    BackgroundPositionY, false => PropertyValue::BackgroundPositionY(
+        layer_items(
+            source,
+            |lists| lists.position_y.as_ref(),
+            |layer| layer.position.vertical,
+        )
+        .into_iter()
+        .map(lift_css_position_offset)
+        .collect()
+    );
+    BackgroundSize, false => PropertyValue::BackgroundSize(
+        layer_items(source, |lists| lists.size.as_ref(), |layer| layer.size)
+            .into_iter()
+            .map(lift_background_size)
+            .collect()
+    );
     OutlineWidth, false => PropertyValue::OutlineWidth(Length::Px(source.outline.width().0)),
         initial => PropertyValue::OutlineWidth(Length::Px(BORDER_WIDTH_MEDIUM_PX));
     OutlineStyle, false => PropertyValue::OutlineStyle(source.outline.style());
