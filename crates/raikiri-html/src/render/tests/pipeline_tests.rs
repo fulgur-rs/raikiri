@@ -1535,9 +1535,11 @@ fn pipeline_caps_a_border_box_auto_body_by_max_height() {
 }
 
 #[test]
-fn pipeline_keeps_the_last_margin_of_a_body_with_min_height() {
-    // A `min-height` keeps the child's block-end margin inside the body.
-    for (min_height, pages) in [("80px", 2), ("0", 1)] {
+fn pipeline_leaves_the_last_margin_outside_a_body_with_min_height() {
+    // Without block-end edges the child's block-end margin adds no page,
+    // whether or not the body has a `min-height`; only a minimum that reaches
+    // past the page does.
+    for (min_height, pages) in [("80px", 1), ("0", 1), ("130px", 2)] {
         let doc = parse(&format!(
             "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;min-height:{min_height}}}</style>\
              <div style='height:20px;margin-bottom:100px'>x</div>"
