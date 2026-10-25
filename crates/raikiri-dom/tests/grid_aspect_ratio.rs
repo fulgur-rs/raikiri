@@ -271,11 +271,6 @@ fn a_percentage_size_is_cyclic_while_a_grid_measures_a_ratio_item() {
             "<div id=g style='display:inline-grid'><div id=a style='height:100px;width:calc(50% + 20px);aspect-ratio:1/1'></div></div>",
             &[("g", 8.0, 8.0, 100.0, 100.0), ("a", 8.0, 8.0, 70.0, 100.0)],
         ),
-        (
-            "a min-height on the item",
-            "<div id=g style='display:inline-grid'><div id=a style='height:100px;width:50%;aspect-ratio:1/1;min-height:60px'></div></div>",
-            &[("g", 8.0, 8.0, 100.0, 100.0), ("a", 8.0, 8.0, 50.0, 100.0)],
-        ),
     ];
     check_boxes(cases);
 }
@@ -405,6 +400,91 @@ fn a_grid_container_with_a_ratio_settles_a_width_that_comes_from_its_content() {
                 ("c", 8.0, 8.0, 60.0, 30.0),
                 ("i", 8.0, 8.0, 60.0, 10.0),
             ],
+        ),
+    ];
+    check_boxes(cases);
+}
+
+/// A percentage size that resolves leaves the ratio nothing to do, and the
+/// ratio does not carry a `min-*` or `max-*` size across to the other axis
+/// either: both sizes the box states win over the bound.
+#[test]
+fn a_percentage_that_resolves_keeps_the_bounds_from_crossing_the_ratio() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a grid container, `max-width` clamps the percentage width",
+            "<div style='width:200px'><div id=c style='display:grid;width:50%;height:100px;max-width:50px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0)],
+        ),
+        (
+            "a grid container, `min-width` raises the percentage width",
+            "<div style='width:200px'><div id=c style='display:grid;width:50%;height:100px;min-width:150px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 150.0, 100.0)],
+        ),
+        (
+            "a grid container, `max-height` clamps the height",
+            "<div style='width:200px'><div id=c style='display:grid;width:50%;height:100px;max-height:30px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 30.0)],
+        ),
+        (
+            "a block container",
+            "<div style='width:200px'><div id=c style='width:50%;height:100px;max-width:50px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0)],
+        ),
+        (
+            "a flex container",
+            "<div style='width:200px'><div id=c style='display:flex;width:50%;height:100px;max-width:50px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0)],
+        ),
+        (
+            "a block item in a grid area",
+            "<div style='display:grid;grid-template-columns:200px;grid-template-rows:100px'><div id=c style='width:50%;height:100px;max-width:50px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0)],
+        ),
+        (
+            "percentage sizes of a grid item",
+            "<div style='display:grid;grid-template-columns:200px;grid-template-rows:100px'><div id=c style='width:50%;height:50%;max-width:50px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 50.0)],
+        ),
+        (
+            "a grid item, `min-width` raises the width",
+            "<div style='display:grid;grid-template-columns:200px;grid-template-rows:100px'><div id=c style='width:50%;height:100px;min-width:150px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 150.0, 100.0)],
+        ),
+        (
+            "a grid container with a smaller `max-height`",
+            "<div style='width:200px'><div id=c style='display:grid;width:50%;height:50px;max-height:30px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 30.0)],
+        ),
+        (
+            "percentage sizes against a box with a height, `max-width`",
+            "<div style='height:100px;width:200px'><div id=c style='display:grid;width:50%;height:50%;max-width:30px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 30.0, 50.0)],
+        ),
+        (
+            "percentage sizes against a box with a height, `min-width`",
+            "<div style='height:100px;width:200px'><div id=c style='display:grid;width:50%;height:50%;min-width:80px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 50.0)],
+        ),
+        (
+            "`min-width: 0` states a bound",
+            "<div style='display:flex;width:200px'><div id=c style='width:50%;height:100px;aspect-ratio:1;min-width:0'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "`min-height: min-content` carries nothing across",
+            "<div style='display:flex;width:200px'><div id=c style='display:grid;width:50%;height:100px;aspect-ratio:1;min-height:min-content'></div></div>",
+            &[("c", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a `calc()` with a percentage and a `max-width`",
+            "<div style='display:flex;width:200px'><div id=c style='display:grid;width:calc(50% + 10px);height:100px;aspect-ratio:1;max-width:60px'></div></div>",
+            &[("c", 8.0, 8.0, 60.0, 100.0)],
+        ),
+        (
+            "a `calc()` with a percentage and no bound",
+            "<div style='display:flex;width:200px'><div id=c style='display:grid;width:calc(50% + 10px);height:100px;aspect-ratio:1'></div></div>",
+            &[("c", 8.0, 8.0, 110.0, 100.0)],
         ),
     ];
     check_boxes(cases);

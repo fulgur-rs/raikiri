@@ -152,19 +152,40 @@ impl LayoutStyleView<'_> {
         }) {
             value
         } else {
-            preferred_aspect_ratio(
-                c.aspect_ratio,
-                self.base_length(LengthProperty::Width).value,
-                self.base_length(LengthProperty::Height).value,
-                None,
-                self.flags().contains(StyleFlags::CONTAIN_WIDTH),
-            )
+            let width = self.base_length(LengthProperty::Width).value;
+            let height = self.base_length(LengthProperty::Height).value;
+            let contained = self.flags().contains(StyleFlags::CONTAIN_WIDTH);
+            preferred_aspect_ratio_with(c.aspect_ratio, width, height, None, contained, false)
+                .or_else(|| {
+                    // A percentage size that resolves leaves the ratio nothing
+                    // to do, except that the ratio carries a `min-*` or `max-*`
+                    // size across to the other axis and clamps the size stated
+                    // there. Only a box without those keeps the ratio for the
+                    // measures in which the percentage is cyclic.
+                    preferred_aspect_ratio_with(
+                        c.aspect_ratio,
+                        width,
+                        height,
+                        None,
+                        contained,
+                        true,
+                    )
+                    .filter(|_| !self.states_min_or_max_size())
+                })
         };
         if self.geometry_transposed() {
             ratio.map(|r| 1.0 / r)
         } else {
             ratio
         }
+    }
+    /// Whether the box states a minimum or maximum size in either axis.
+    fn states_min_or_max_size(&self) -> bool {
+        let (min, max) = (self.min_size(), self.max_size());
+        !(min.width.is_auto()
+            && min.height.is_auto()
+            && max.width.is_auto()
+            && max.height.is_auto())
     }
     /// The margin edges; `auto` is preserved.
     #[inline]
@@ -256,13 +277,25 @@ pub fn preferred_aspect_ratio(
     natural: Option<f32>,
     size_contained: bool,
 ) -> Option<f32> {
-    // A percentage size is cyclic while an intrinsic size is measured and
-    // then behaves as `auto` (CSS Sizing 3 §5.2.1), so the ratio is kept for
-    // it; a definite basis resolves both sizes and leaves the ratio nothing
-    // to do.
+    preferred_aspect_ratio_with(ratio, width, height, natural, size_contained, true)
+}
+
+/// [`preferred_aspect_ratio`], where `cyclic_percentage` says whether a
+/// percentage size counts as `auto`: it is cyclic while an intrinsic size is
+/// measured and then behaves as `auto` (CSS Sizing 3 §5.2.1). A definite basis
+/// resolves both sizes and leaves the ratio nothing to do.
+fn preferred_aspect_ratio_with(
+    ratio: raikiri_style::property::AspectRatioValue,
+    width: L,
+    height: L,
+    natural: Option<f32>,
+    size_contained: bool,
+    cyclic_percentage: bool,
+) -> Option<f32> {
     let cyclic = |size: L| match size {
-        L::Auto | L::Percent(_) => true,
-        L::Calc(calc) => calc.percent != 0.0,
+        L::Auto => true,
+        L::Percent(_) => cyclic_percentage,
+        L::Calc(calc) => cyclic_percentage && calc.percent != 0.0,
         _ => false,
     };
     if cyclic(width)
