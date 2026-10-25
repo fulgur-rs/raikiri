@@ -3657,35 +3657,3 @@ impl LayoutSession<'_> {
         )
     }
 }
-
-// SAFETY: with taffy calc support enabled, taffy length types hold a raw
-// pointer through a compact tagged representation. Raw pointers are not Send,
-// making the length types that a node's content limits and the block-axis
-// snapshots of a transposed pagination store not Send, and thus `Document` not
-// Send without this impl.
-//
-// The pointer of a calc length is never dereferenced. It is an opaque handle
-// that names a slot of the calc table shared by the whole process, and
-// resolving it reads that table from any thread. The table is the only state a
-// length shares with other threads, and it synchronizes its own accesses. A
-// handle that outlives its payload resolves to nothing instead of dangling.
-//
-// What keeps the handles resolving to their values is the bridge: it retains
-// new payloads in the document's `BoxStyleStore` before publishing their
-// handles, keeps old payloads through errors and unwinds, and drains the
-// previous prefix only after a complete successful rebuild. No public API takes
-// a style that carries calc handles, and cross-document copies rebuild their
-// handles on the next pass.
-//
-// Do not implement Sync: the planned parallel layout path uses an owned
-// deep copy or a read-only borrow of style data. No path reads a shared
-// Document reference concurrently across threads, so Sync is unnecessary.
-// blitz-dom added an unsafe Sync impl for its node type to serve a parallel
-// style traversal that raikiri does not have.
-//
-// Precedent: blitz-dom Node has a similar unsafe Send impl without
-// annotation, an established taffy plus calc pattern. blitz uses an external
-// arena model where a separate computed-values chain owns calc data;
-// raikiri uses a self-contained arena model with different invariants.
-#[allow(unsafe_code)]
-unsafe impl Send for Document {}

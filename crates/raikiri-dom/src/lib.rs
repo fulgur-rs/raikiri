@@ -3,6 +3,7 @@
 //! Implements the node arena, the layout dispatch over taffy, and raikiri_traits::Dom co-design.
 //! For details, see §4, raikiri-dom scope, in the original design.
 
+#![forbid(unsafe_code)]
 // Public module rustdoc cross-links some crate-private helpers (e.g.
 // `Document::flags_dirty`) which resolve fine
 // under `--document-private-items` but trip the strict public build.  Preserve

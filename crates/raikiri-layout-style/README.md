@@ -91,6 +91,18 @@ could have freed, so no safe code can read freed memory through a length:
   assert that a handle still names a payload, and
   `AlignedCalc::resolve_expression` resolves an expression without making one.
 
+The layout library stores a `calc()` handle as a raw pointer, which would make
+every length, and every style store and document that holds one, `!Send`.
+`Dimension`, `LengthPercentage` and `LengthPercentageAuto` therefore implement
+`Send`, in `projection/length.rs`, and these are the only `unsafe` code of the
+crate. The claim is local to the length: its pointer is a table handle that
+any thread resolves against the same synchronized table, so moving a length
+cannot dangle. Because nothing else is asserted, a type that holds a length is
+`Send` only if the rest of it is, which the compiler checks (a `Document` that
+gained an `Rc` field would stop being `Send`). The safe `CalcRef`, which the
+expanded forms (`ExpandedDimension` and the like) carry, stores the handle as a
+plain `usize` and is `Send` without any claim. `Sync` is not claimed.
+
 What stays the adapter's job is the value, not the memory: keep every payload
 owner alive until all consumers of the returned lengths have finished resolving
 them, or a saved length resolves to `0.0` instead of its expression. The

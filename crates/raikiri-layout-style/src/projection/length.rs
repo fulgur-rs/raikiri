@@ -287,3 +287,27 @@ macro_rules! resolve_length {
 }
 
 resolve_length!(Dimension, LengthPercentage, LengthPercentageAuto);
+
+// The layout library keeps a `calc()` length as a raw pointer in its compact
+// form, which makes the three length types `!Send`, and with them every style
+// store and document that holds one. The pointer is never dereferenced: it is
+// the handle of a slot of the calc table (see `calc_slab`), and resolving it
+// reads only that table, which synchronizes its own accesses. A length handed
+// to another thread therefore names the same slot there, and a handle whose
+// payload is gone resolves to nothing. These impls are the one place that says
+// so, and a type that holds a length is `Send` only when everything else it
+// holds is, which the compiler checks.
+//
+// The claim depends on the table staying one process-wide, synchronized
+// structure whose readers reject a slot that was freed or reused. If a table
+// ever became thread-local or per document, or a reader skipped the state
+// check, these impls would have to go. `tests/stale_calc.rs` moves each length
+// to another thread and fails in the first case.
+//
+// `Sync` is not claimed; nothing shares a length across threads by reference.
+#[allow(unsafe_code)]
+unsafe impl Send for Dimension {}
+#[allow(unsafe_code)]
+unsafe impl Send for LengthPercentage {}
+#[allow(unsafe_code)]
+unsafe impl Send for LengthPercentageAuto {}

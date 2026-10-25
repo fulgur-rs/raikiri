@@ -13,6 +13,8 @@
 //! not accept a document with pictures. A document may carry `<image>`
 //! references only when it is parsed with [`SvgDocument::parse_with_images`].
 
+#![forbid(unsafe_code)]
+
 use raikiri_traits::DecodedImage;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

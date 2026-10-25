@@ -14,6 +14,8 @@
 //!   the installed fonts, or with a font set built by
 //!   [`FontCollectionBuilder`] and passed with [`RenderResources::fonts`].
 
+#![forbid(unsafe_code)]
+
 mod cascade;
 mod css_urls;
 mod document;

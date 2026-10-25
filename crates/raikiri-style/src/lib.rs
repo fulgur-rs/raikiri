@@ -17,6 +17,7 @@
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
 //! comment on `Cargo.toml`.
 
+#![forbid(unsafe_code)]
 // This crate's doc comments link `crate::…` pointers to crate-internal targets
 // (`apply_value`, `expand_shorthand_into`, `INITIAL_BORDER`, …), so the
 // "links to private item" lint is allowed — same convention as `raikiri-dom`
