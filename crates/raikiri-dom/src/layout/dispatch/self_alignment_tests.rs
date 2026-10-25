@@ -287,30 +287,30 @@ const ABSOLUTE: &str = "position:absolute;width:50px;height:50px";
 #[test]
 fn anchor_center_aligns_an_in_flow_item_like_center() {
     for container in [ROW, GRID] {
-        for item in [
-            "align-self:anchor-center",
-            "align-self:safe anchor-center",
-            "align-self:unsafe anchor-center",
-        ] {
-            let (_, top, _, _) = item_rect(container, &format!("{FITS};{item}"));
-            assert_eq!(top, 20.0, "{container} | {item}");
-        }
-        for (anchor, center) in [
-            ("anchor-center", "center"),
-            ("safe anchor-center", "safe center"),
-            ("unsafe anchor-center", "unsafe center"),
-        ] {
-            assert_eq!(
-                item_rect(container, &format!("{TALL};align-self:{anchor}")),
-                item_rect(container, &format!("{TALL};align-self:{center}")),
-                "{container} | {anchor}"
-            );
-        }
+        let (_, top, _, _) = item_rect(container, &format!("{FITS};align-self:anchor-center"));
+        assert_eq!(top, 20.0, "{container}");
+        assert_eq!(
+            item_rect(container, &format!("{TALL};align-self:anchor-center")),
+            item_rect(container, &format!("{TALL};align-self:center")),
+            "{container}"
+        );
     }
     let (left, _, _, _) = item_rect(GRID, &format!("{FITS};justify-self:anchor-center"));
     assert_eq!(left, 40.0);
+}
+
+#[test]
+fn anchor_center_is_ignored_where_it_is_not_a_value() {
+    // `align-items` does not take it, so the declaration is dropped and the
+    // container keeps its `flex-start` default; `safe anchor-center` is
+    // invalid as well and leaves the earlier `align-self` alone.
     let (_, top, _, _) = item_rect(&format!("{ROW};align-items:anchor-center"), FITS);
-    assert_eq!(top, 20.0, "align-items");
+    assert_eq!(top, 0.0);
+    let (_, top, _, _) = item_rect(
+        ROW,
+        &format!("{FITS};align-self:end;align-self:safe anchor-center"),
+    );
+    assert_eq!(top, 40.0);
 }
 
 #[test]

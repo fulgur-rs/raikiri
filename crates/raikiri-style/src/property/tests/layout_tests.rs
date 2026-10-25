@@ -1375,7 +1375,6 @@ fn an_overflow_position_stays_with_the_position_it_qualifies() {
         SelfPosition::SelfEnd,
         SelfPosition::FlexStart,
         SelfPosition::FlexEnd,
-        SelfPosition::AnchorCenter,
     ] {
         let name = match position {
             SelfPosition::Center => "center",
@@ -1384,7 +1383,6 @@ fn an_overflow_position_stays_with_the_position_it_qualifies() {
             SelfPosition::SelfStart => "self-start",
             SelfPosition::SelfEnd => "self-end",
             SelfPosition::FlexStart => "flex-start",
-            SelfPosition::AnchorCenter => "anchor-center",
             _ => "flex-end",
         };
         for (prefix, expected) in [
@@ -1401,36 +1399,45 @@ fn an_overflow_position_stays_with_the_position_it_qualifies() {
 }
 
 #[test]
-fn anchor_center_is_a_self_position_of_all_four_properties() {
+fn anchor_center_is_a_value_of_align_self_and_justify_self_only() {
     for css in ["anchor-center", "ANCHOR-Center"] {
         assert_eq!(
             self_alignments(css),
-            [Some(SelfAlignmentValue::AnchorCenter); 4],
+            [
+                None,
+                None,
+                Some(SelfAlignmentValue::AnchorCenter),
+                Some(SelfAlignmentValue::AnchorCenter)
+            ],
             "{css:?}"
         );
     }
+    assert_eq!(SelfAlignmentValue::AnchorCenter.position(), None);
     assert_eq!(
-        parse_entire("anchor-center", "align-self"),
-        Some(PropertyValue::AlignSelf(AlignSelfValue::Value(
-            SelfAlignmentValue::AnchorCenter
-        )))
-    );
-    assert_eq!(
-        SelfAlignmentValue::AnchorCenter.position(),
-        Some(SelfPosition::AnchorCenter)
-    );
-    assert_eq!(
-        parse_entire("anchor-center unsafe anchor-center", "place-self"),
+        parse_entire("anchor-center", "place-self"),
         Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
             align: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
-            justify: AlignSelfValue::Value(SelfAlignmentValue::Unsafe(SelfPosition::AnchorCenter)),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
         }))
     );
+    assert_eq!(
+        parse_entire("center anchor-center", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Value(SelfAlignmentValue::Center),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+        }))
+    );
+    assert_eq!(parse_entire("anchor-center", "place-items"), None);
+    assert_eq!(parse_entire("center anchor-center", "place-items"), None);
 }
 
 #[test]
-fn anchor_center_takes_no_second_position() {
+fn anchor_center_is_not_a_self_position() {
+    // It takes no overflow position, and no second position follows it.
     for css in [
+        "safe anchor-center",
+        "unsafe anchor-center",
+        "anchor-center safe",
         "anchor-center center",
         "anchor-center start",
         "anchor-centre",

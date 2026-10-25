@@ -346,7 +346,6 @@ fn parse_axis_self_alignment(
         "self-end" => SelfPosition::SelfEnd,
         "flex-start" => SelfPosition::FlexStart,
         "flex-end" => SelfPosition::FlexEnd,
-        "anchor-center" => SelfPosition::AnchorCenter,
         "left" if inline_axis => SelfPosition::Start,
         "right" if inline_axis => SelfPosition::End,
         _ if overflow.is_some() => return None,
@@ -380,24 +379,33 @@ fn parse_axis_self_alignment(
     })
 }
 
-/// Parser for `align-self: auto | …`. It tries the `auto` branch first
-/// using a `try_parse` checkpoint (as explained under "Order of alternatives"
-/// in the [`parse_width`](super::box_model::parse_width) docs). Other values delegate to
-/// [`parse_self_alignment`], which uses the same keyword set as `align-items`.
-pub(super) fn parse_align_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
+/// The `auto` and `anchor-center` values that `align-self` and `justify-self`
+/// have besides the keywords they share with `align-items`. `anchor-center` is
+/// a value of its own that CSS Anchor Positioning adds to those two properties,
+/// so no `<overflow-position>` qualifies it and the items properties lack it.
+fn parse_own_alignment(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(AlignSelfValue::Auto);
     }
-    parse_self_alignment(input).map(AlignSelfValue::Value)
+    input
+        .try_parse(|i| i.expect_ident_matching("anchor-center"))
+        .is_ok()
+        .then_some(AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter))
+}
+
+/// Parser for `align-self: auto | anchor-center | …`. It tries the `auto` and
+/// `anchor-center` branches first using a `try_parse` checkpoint (as explained
+/// under "Order of alternatives" in the [`parse_width`](super::box_model::parse_width) docs).
+/// Other values delegate to [`parse_self_alignment`], which uses the same
+/// keyword set as `align-items`.
+pub(super) fn parse_align_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
+    parse_own_alignment(input).or_else(|| parse_self_alignment(input).map(AlignSelfValue::Value))
 }
 
 /// Parser for `justify-self: auto | …`, the inline-axis counterpart of
 /// [`parse_align_self`] that delegates to [`parse_justify_alignment`].
 pub(super) fn parse_justify_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
-    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
-        return Some(AlignSelfValue::Auto);
-    }
-    parse_justify_alignment(input).map(AlignSelfValue::Value)
+    parse_own_alignment(input).or_else(|| parse_justify_alignment(input).map(AlignSelfValue::Value))
 }
 
 /// The `Result` form of [`parse_justify_alignment`], for the second

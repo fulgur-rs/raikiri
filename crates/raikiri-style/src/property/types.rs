@@ -4005,9 +4005,6 @@ pub enum SelfPosition {
     FlexStart,
     /// `flex-end`.
     FlexEnd,
-    /// `anchor-center`, which centers the box on its default anchor box. See
-    /// [`SelfAlignmentValue::AnchorCenter`].
-    AnchorCenter,
 }
 
 impl SelfPosition {
@@ -4023,7 +4020,6 @@ impl SelfPosition {
             Self::SelfEnd => SelfAlignmentValue::SelfEnd,
             Self::FlexStart => SelfAlignmentValue::FlexStart,
             Self::FlexEnd => SelfAlignmentValue::FlexEnd,
-            Self::AnchorCenter => SelfAlignmentValue::AnchorCenter,
         }
     }
 }
@@ -4081,11 +4077,15 @@ pub enum SelfAlignmentValue {
     SelfStart,
     /// `self-end` — `<self-position>`; see [`Self::SelfStart`].
     SelfEnd,
-    /// `anchor-center` — the `<self-position>` that CSS Anchor Positioning 1
-    /// adds: an absolutely positioned box aligns to the center of its default
-    /// anchor box. Without a default anchor box, and for a box that is not
-    /// absolutely positioned, it behaves as `center`; layout has no anchor
-    /// positioning, so it always does.
+    /// `anchor-center`, the value that CSS Anchor Positioning 1 adds to
+    /// `align-self` and `justify-self`: an absolutely positioned box aligns to
+    /// the center of its default anchor box. Without a default anchor box, and
+    /// for a box that is not absolutely positioned, it behaves as `center`;
+    /// layout has no anchor positioning, so it always does.
+    ///
+    /// It is a value of its own, not a `<self-position>`: neither `safe` nor
+    /// `unsafe` qualifies it, and `align-items` and `justify-items` do not
+    /// take it.
     AnchorCenter,
     /// `safe <self-position>`: an overflowing box falls back to `start`
     /// instead of overflowing at the start side (CSS Box Alignment 3,
@@ -4117,7 +4117,6 @@ impl SelfAlignmentValue {
             Self::FlexEnd => Some(SelfPosition::FlexEnd),
             Self::SelfStart => Some(SelfPosition::SelfStart),
             Self::SelfEnd => Some(SelfPosition::SelfEnd),
-            Self::AnchorCenter => Some(SelfPosition::AnchorCenter),
             Self::Safe(position) | Self::Unsafe(position) => Some(position),
             _ => None,
         }
