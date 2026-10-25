@@ -18822,6 +18822,33 @@ fn a_fixed_height_block_whose_first_line_straddles_a_page_end_moves_whole() {
 }
 
 #[test]
+fn a_tall_block_whose_first_line_holds_no_text_is_not_judged_by_a_later_line() {
+    // The 60px line of the atomic inline fits the page below the block's top
+    // at 30; the text line after it, from 90 to 120, straddles the page end
+    // but is not the first line.
+    let ys = paginated_ys(
+        |doc, body| {
+            let spacer = doc.append_element(Some(body), "div", Some("display:block;height:30px"));
+            let block = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:300px;orphans:1;widows:1"),
+            );
+            doc.append_element(
+                Some(block),
+                "span",
+                Some("display:inline-block;width:10px;height:60px"),
+            );
+            doc.append_element(Some(block), "br", Some(""));
+            doc.append_text(block, "X");
+            vec![spacer, block]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 30.0]);
+}
+
+#[test]
 fn what_follows_a_tall_block_moved_whole_moves_with_it() {
     let ys = paginated_ys(
         |doc, body| {

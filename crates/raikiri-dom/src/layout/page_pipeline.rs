@@ -1841,8 +1841,9 @@ fn paragraph_line_bounds(
     )
 }
 
-/// The height of the first line the text node `node_id` owns, or `None` when
-/// the node owns no positioned line.
+/// The height of the first line of the paragraph the text node `node_id`
+/// belongs to, or `None` when the node does not own that line (a line of an
+/// image comes before its first text, say) or it has no position.
 fn first_owned_line_height(
     document: &Document,
     node_id: usize,
@@ -1852,7 +1853,7 @@ fn first_owned_line_height(
     let first_line = IfcTextLines {
         root: owned.root,
         width: owned.width,
-        lines: vec![*owned.lines.first()?],
+        lines: vec![*owned.lines.first().filter(|line| line.line == 0)?],
     };
     positioned_owned_text_line_bounds(document, &first_line)?
         .first()
