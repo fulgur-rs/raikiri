@@ -192,6 +192,27 @@ fn the_elements_of_an_inline_svg_add_no_quotes() {
 }
 
 #[test]
+fn table_columns_and_column_groups_add_no_quotes() {
+    // A column only describes a track; layout draws no generated content.
+    let css = "col::before,colgroup::before{content:open-quote}";
+    assert_eq!(
+        paired(
+            "<table><colgroup><col></colgroup><tr><td>a</td></tr></table><q>x</q>",
+            css
+        ),
+        "a<x>"
+    );
+    // The subtree of a box displayed as a column is left out as well.
+    assert_eq!(
+        paired(
+            "<div style='display:table-column'><p class=o>z</p></div><q>y</q>",
+            ".o::before{content:open-quote}"
+        ),
+        "<y>"
+    );
+}
+
+#[test]
 fn the_pseudo_elements_of_a_display_contents_element_count() {
     assert_eq!(
         paired("<div style='display:contents'><q>a<q>b</q></q></div>", ""),

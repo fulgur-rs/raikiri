@@ -715,13 +715,20 @@ fn content_reads_counters(cv: &raikiri_style::ComputedValues) -> bool {
         })
 }
 
-/// Whether layout draws no CSS box for anything in the subtree of `node`: a
-/// non-rendered HTML element (see
+/// Whether layout draws no CSS box for anything in the subtree of `node`,
+/// whose computed values are `cv`: a non-rendered HTML element (see
 /// [`crate::Node::is_non_rendered_html_element`]) is left out with its
-/// subtree, and an inline SVG is drawn as a unit, its elements without
-/// generated content.
-fn draws_no_boxes_below(node: &crate::Node) -> bool {
-    node.is_non_rendered_html_element() || node.is_inline_svg_root()
+/// subtree, an inline SVG is drawn as a unit, its elements without generated
+/// content, and a table column or column group only describes tracks.
+fn draws_no_boxes_below(node: &crate::Node, cv: Option<&raikiri_style::ComputedValues>) -> bool {
+    node.is_non_rendered_html_element()
+        || node.is_inline_svg_root()
+        || cv.is_some_and(|cv| {
+            matches!(
+                cv.display,
+                DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+            )
+        })
 }
 
 /// Whether the generated text of the element `idx` takes part in the quote
@@ -945,7 +952,7 @@ fn walk_counter_scopes(
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
-                if draws_no_boxes_below(node) {
+                if draws_no_boxes_below(node, cv) {
                     unrendered += 1;
                 }
                 if display == Some(DisplayValue::ListItem)
@@ -1006,7 +1013,7 @@ fn walk_counter_scopes(
                         )?;
                     }
                 }
-                if draws_no_boxes_below(&doc.nodes[idx]) {
+                if draws_no_boxes_below(&doc.nodes[idx], cascade.computed.get(idx)) {
                     unrendered -= 1;
                 }
                 if let Some(names) = pending_pops.pop() {
