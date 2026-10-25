@@ -212,6 +212,30 @@ class NamesTests(unittest.TestCase):
         self.assertEqual((found["x::A"].kind, found["x::A"].item_id, found["x::A"].hidden), ("variant", 3, False))
         self.assertTrue(found["x::B"].hidden)
 
+    def test_a_variant_and_a_module_of_the_same_name_are_both_listed(self) -> None:
+        doc = Doc()
+        enum = doc.enum_with(2, "E", [3], ["x", "private", "E"])
+        doc.variant(3, "V")
+        doc.set_items(0, [doc.use(1, "E", enum, glob=True), doc.module(4, "V", [])])
+        self.assertEqual(
+            [(name.path, name.kind) for name in surface.names(doc.json())],
+            [("x::V", "module"), ("x::V", "variant")],
+        )
+
+    def test_a_doc_attribute_with_more_options_can_still_hide(self) -> None:
+        def hidden(*attrs: str) -> bool:
+            return surface.is_hidden({"attrs": [{"other": attr} for attr in attrs]})
+
+        self.assertTrue(hidden("#[doc(hidden)]"))
+        self.assertTrue(hidden('#[doc(hidden, alias = "secret")]'))
+        self.assertTrue(hidden('#[doc(alias = "secret", hidden)]'))
+        self.assertTrue(hidden("#[inline]", "#[doc(hidden)]"))
+        self.assertFalse(hidden('#[doc(alias = "hidden")]'))
+        self.assertFalse(hidden('#[doc(alias = "a, hidden, b")]'))
+        self.assertFalse(hidden("#[doc(hidden_thing)]"))
+        self.assertFalse(hidden("#[must_use]"))
+        self.assertFalse(surface.is_hidden({"attrs": ["non_exhaustive"]}))
+
     def test_a_public_extern_crate_publishes_the_crate_under_its_local_name(self) -> None:
         doc = Doc()
         doc.set_items(0, [doc.extern_crate(1, "dep"), doc.extern_crate(2, "other", rename="renamed")])

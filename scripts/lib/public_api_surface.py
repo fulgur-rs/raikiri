@@ -92,8 +92,21 @@ def item_kind(item: dict) -> str:
     return next(iter(item["inner"]))
 
 
+# `hidden` as one option of a `#[doc(..)]` list, as in `#[doc(hidden)]` and
+# `#[doc(alias = "x", hidden)]`; string literals are blanked first.
+DOC_ATTRIBUTE_RE = re.compile(r"#\[doc\((.*)\)\]", re.DOTALL)
+STRING_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+HIDDEN_OPTION_RE = re.compile(r"(?:^|,)\s*hidden\s*(?:,|$)")
+
+
 def is_hidden(item: dict) -> bool:
-    return any(isinstance(attr, dict) and "doc(hidden)" in attr.get("other", "") for attr in item.get("attrs", []))
+    for attr in item.get("attrs", []):
+        if not isinstance(attr, dict):
+            continue
+        found = DOC_ATTRIBUTE_RE.fullmatch(attr.get("other", "").strip())
+        if found is not None and HIDDEN_OPTION_RE.search(STRING_LITERAL_RE.sub('""', found.group(1))):
+            return True
+    return False
 
 
 def canonical_path(doc: dict, key: object) -> str | None:
@@ -101,26 +114,22 @@ def canonical_path(doc: dict, key: object) -> str | None:
     return "::".join(summary["path"]) if summary is not None else None
 
 
-def namespace(kind: str) -> str:
-    """The Rust namespace a name lives in: a module and a function may share a path."""
-    if kind in ("function", "constant", "static"):
-        return "value"
-    return "macro" if kind == "macro" else "type"
-
-
 def names(doc: dict) -> list[Name]:
     """The names the root module of `doc` publishes, sorted by path.
 
     A path can name more than one thing: a module and a function of the same
-    name, or globs of different crates under one prefix. Each is listed.
+    name (they live in different namespaces), a module and an enum variant, or
+    globs of different crates under one prefix. Each is listed, so a name
+    that a glob exports and an explicit item shadows stays in the list: the
+    scan reads too much rather than too little.
     """
     index = doc["index"]
     root = index[str(doc["root"])]
-    found: dict[tuple[str, str, str | None], Name] = {}
+    found: dict[tuple[str, int | None, str | None], Name] = {}
 
     def add(path: str, kind: str, hidden: bool, canonical: str | None, item_id: int | None = None) -> None:
         # The first way a name is reached wins; a visible one beats a hidden one.
-        slot = (path, namespace(kind), canonical if kind == "glob" else None)
+        slot = (path, item_id, canonical)
         known = found.get(slot)
         if known is None or (known.hidden and not hidden):
             found[slot] = Name(path, kind, hidden, canonical, item_id)
@@ -236,13 +245,42 @@ def referenced_ids(node: object) -> Iterator[int]:
             yield from referenced_ids(child)
 
 
+def public_roots(doc: dict) -> list[int]:
+    """The ids of the items of the crate that are `pub` and that no `#[doc(hidden)]` covers.
+
+    rustdoc keeps in the JSON the items that the API reaches, so this is a
+    second way to the visible items that does not depend on how the names are
+    worked out: a name the surface reads wrongly cannot hide an item. An item
+    is covered when it is hidden itself or belongs to a hidden type, or when
+    only hidden names lead to it (everything below a hidden module).
+    """
+    index = doc["index"]
+    covered: set[int] = set()
+    stack = [int(key) for key, item in index.items() if is_hidden(item)]
+    stack.extend(name.item_id for name in names(doc) if name.hidden and name.item_id is not None)
+    while stack:
+        key = stack.pop()
+        if key in covered:
+            continue
+        covered.add(key)
+        item = index.get(str(key))
+        if item is not None:
+            stack.extend(members(item))
+    return [
+        int(key)
+        for key, item in index.items()
+        if int(key) not in covered and item.get("crate_id") == 0 and item.get("visibility") == "public"
+    ]
+
+
 def visible_items(doc: dict) -> Iterator[tuple[int, dict]]:
     """Every item of the crate that the visible names reach, with the members of its types.
 
-    That is the items the names stand for, their fields, variants and impls (a
-    trait's impls included), and the types of the crate that their signatures
-    mention, nameable or not: a public function that returns a type of a
-    private module hands its fields and methods to the caller.
+    That is the items the names stand for and the other `pub` items that are
+    not hidden (`public_roots`), their fields, variants and impls (a trait's
+    impls included), and the types of the crate that their signatures mention,
+    nameable or not: a public function that returns a type of a private module
+    hands its fields and methods to the caller.
 
     Blanket and synthetic impls are skipped: they come from the traits that
     other crates implement for every type, not from the API of this crate.
@@ -250,6 +288,7 @@ def visible_items(doc: dict) -> Iterator[tuple[int, dict]]:
     index = doc["index"]
     seen: set[int] = set()
     stack = [name.item_id for name in names(doc) if not name.hidden and name.item_id is not None]
+    stack.extend(public_roots(doc))
     while stack:
         key = stack.pop()
         if key in seen:

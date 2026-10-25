@@ -29,6 +29,7 @@ TRAITS_CRATE_ID = 8
 SERDE_CRATE_ID = 9
 ROOT_KINDS = ("function", "struct", "enum", "trait", "constant", "type_alias", "module", "use", "extern_crate")
 CORE_CRATE_ID = 10
+HIDDEN = [{"other": "#[doc(hidden)]"}]
 
 
 def resolved(item_id: int, path: str, args: list | None = None) -> dict:
@@ -439,6 +440,49 @@ class ReachTests(unittest.TestCase):
         doc = b.doc(root="raikiri_x")
         doc["index"]["0"]["inner"]["module"]["items"].remove(enum)  # in a private module
         self.assertEqual(lint.third_party_crates(doc), {"serde": ["serde::Serialize"]})
+
+    def test_a_variant_survives_a_module_of_the_same_name(self) -> None:
+        b = DocBuilder()
+        field = b.add(7, "0", {"struct_field": resolved(b.serde_type, "Serialize")})
+        variant = b.add(6, "V", {"variant": {"kind": {"tuple": [field]}, "discriminant": None}})
+        enum = b.add(5, "E", {"enum": {"variants": [variant], "impls": []}}, path=["raikiri_x", "private", "E"])
+        # The module comes first: it must not take the place of the variant.
+        b.add(2, "V", {"module": {"is_crate": False, "items": [], "is_stripped": False}})
+        b.add(1, "E", {"use": {"source": "private::E", "name": "E", "id": enum, "is_glob": True}})
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"].remove(enum)
+        self.assertEqual(lint.third_party_crates(doc), {"serde": ["serde::Serialize"]})
+
+    def test_an_item_hidden_with_other_doc_options_is_not_scanned(self) -> None:
+        b = DocBuilder()
+        b.function(
+            1,
+            "secret",
+            [],
+            resolved(b.serde_type, "Serialize"),
+            attrs=[{"other": '#[doc(hidden, alias = "secret")]'}],
+        )
+        self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {})
+
+    def test_a_public_item_counts_even_when_no_name_leads_to_it(self) -> None:
+        b = DocBuilder()
+        stray = b.function(1, "stray", [], resolved(b.serde_type, "Serialize"))
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"].remove(stray)  # as if the surface had missed it
+        self.assertEqual(lint.third_party_crates(doc), {"serde": ["serde::Serialize"]})
+
+    def test_what_sits_below_a_hidden_module_is_not_a_root(self) -> None:
+        b = DocBuilder()
+        field = b.add(4, "field", {"struct_field": resolved(b.serde_type, "Serialize")})
+        record = b.add(
+            3, "Record", {"struct": {"kind": {"plain": {"fields": [field], "has_stripped_fields": False}}, "impls": []}}
+        )
+        function = b.function(2, "make", [], resolved(b.serde_type, "Serialize"))
+        b.add(1, "internals", {"module": {"is_crate": False, "items": [function, record], "is_stripped": False}}, attrs=HIDDEN)
+        doc = b.doc(root="raikiri_x")
+        # Only the module is declared at the top level.
+        doc["index"]["0"]["inner"]["module"]["items"] = [1]
+        self.assertEqual(lint.third_party_crates(doc), {})
 
     def test_a_public_extern_crate_counts_as_naming_the_crate(self) -> None:
         b = DocBuilder()

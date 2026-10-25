@@ -193,10 +193,12 @@ and so does a `pub use` of one. `THIRD_PARTY_ALLOWED` in
 name in a signature, a field, a bound, a trait impl or a re-export (a glob of a
 module of another crate counts as naming that crate), and why. It reads the
 items the names stand for, their fields, variants, methods and impls, the
-impls of their traits, and the types of the crate that their signatures
-mention even when no name leads to them. The lint fails for a crate that is
-not listed, and it counts the other published crates of this workspace as
-listed but not the unpublished ones such as `raikiri-paint`. Today:
+impls of their traits, the types of the crate that their signatures mention
+even when no name leads to them, and every other `pub` item that no
+`#[doc(hidden)]` covers, so a name the list misses cannot hide an item. The
+lint fails for a crate that is not listed, and it counts the other published
+crates of this workspace as listed but not the unpublished ones such as
+`raikiri-paint`. Today:
 
 | crate | names types of |
 | --- | --- |

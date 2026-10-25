@@ -419,11 +419,7 @@ def api_lines(doc: dict) -> list[str]:
     names = Names(doc)
     lines = []
     for key, item in local_items(doc):
-        hidden = any(
-            isinstance(attr, dict) and "doc(hidden)" in attr.get("other", "")
-            for attr in item.get("attrs", [])
-        )
-        flags = " hidden" if hidden else ""
+        flags = " hidden" if surface.is_hidden(item) else ""
         lines.append(
             f"{names.path_of(key)} [{item_kind(item)}{flags}] {canonical(names, item['inner'])}"
         )
