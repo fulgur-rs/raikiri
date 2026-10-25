@@ -3708,6 +3708,17 @@ impl LayoutSession<'_> {
             .map(|(&child, _)| child)
             .collect::<Vec<_>>()
             .into_boxed_slice();
+        // The areas are on the layout axes of the grid, which are the physical
+        // ones swapped in a vertical writing mode.
+        self.nodes[parent].grid_item_areas = children
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &child)| {
+                let area = info.item_area_size(index)?;
+                Some((child, if vertical { area.transpose() } else { area }))
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         self.nodes[parent].grid_item_column_starts = children
             .into_iter()
             .zip(info.items())
