@@ -6,8 +6,9 @@ use crate::Atom;
 use crate::cascade::keyword_defaults::KEYS;
 use crate::computed::ComputedBackgroundLayer;
 use crate::property::{
-    BoxSizing, FloatValue, PageValue, TextAutospace, TextSpacingTrim, TextTransform, TextWrapMode,
-    TextWrapStyle, WhiteSpaceCollapse, WordBreak, property_key_for_name,
+    BoxSizing, DisplayValue, FloatValue, PageValue, PositionValue, TextAutospace, TextSpacingTrim,
+    TextTransform, TextWrapMode, TextWrapStyle, WhiteSpaceCollapse, WordBreak,
+    property_key_for_name,
 };
 use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal};
 
@@ -1118,6 +1119,96 @@ fn float_takes_the_computed_none_of_an_absolutely_positioned_parent() {
         let values = child(parent, &[], "#target { float: inherit }");
         assert_eq!(values.float, expected, "{parent}");
     }
+}
+
+/// The names of the running templates of `values`.
+fn running_names(values: &ComputedValues) -> Vec<&str> {
+    values
+        .running_templates
+        .iter()
+        .map(|template| template.name.as_str())
+        .collect()
+}
+
+#[test]
+fn position_inherit_takes_the_running_name_of_the_parent() {
+    // CSS GCPM 3 §1.2.1: `running()` is a value of `position`, so the child
+    // becomes a running element of the same name, with the display it would
+    // have had on its own.
+    let parent = "position: running(hdr); display: flex";
+    let inherited = child(parent, &[], "#target { display: block; position: inherit }");
+    assert_eq!(running_names(&inherited), ["hdr"]);
+    assert_eq!(inherited.display, DisplayValue::None);
+    assert_eq!(inherited.running_templates[0].display, DisplayValue::Block);
+    let written = child(
+        parent,
+        &[],
+        "#target { display: block; position: running(hdr) }",
+    );
+    assert!(same(&inherited, &written));
+    // The declaration that wins is the only one that counts, and it is not
+    // added to a template the element already has.
+    let over_own = child(
+        parent,
+        &[],
+        "#target { position: running(own); position: inherit }",
+    );
+    assert_eq!(running_names(&over_own), ["hdr"]);
+    let static_wins = child(
+        parent,
+        &[],
+        "#target { display: block; position: inherit; position: static }",
+    );
+    assert!(static_wins.running_templates.is_empty());
+    assert_eq!(static_wins.display, DisplayValue::Block);
+}
+
+#[test]
+fn position_initial_and_unset_are_not_running() {
+    // `position` is not inherited: both keywords are `static`, whatever the
+    // parent is.
+    for keyword in ["initial", "unset"] {
+        let values = child(
+            "position: running(hdr)",
+            &[],
+            &format!("#target {{ display: block; position: running(own); position: {keyword} }}"),
+        );
+        assert!(values.running_templates.is_empty(), "{keyword}");
+        assert_eq!(values.position, PositionValue::Static, "{keyword}");
+        assert_eq!(values.display, DisplayValue::Block, "{keyword}");
+    }
+}
+
+#[test]
+fn position_revert_returns_the_running_name_of_the_user_agent() {
+    let user_agent = [("p { position: running(ua) }", Origin::UserAgent)];
+    for keyword in ["revert", "revert-layer"] {
+        let values = child(
+            "position: running(hdr)",
+            &user_agent,
+            &format!("#target {{ position: running(own); position: {keyword} }}"),
+        );
+        assert_eq!(running_names(&values), ["ua"], "{keyword}");
+    }
+}
+
+#[test]
+fn position_inherit_passes_the_running_name_down_a_chain() {
+    // Each level inherits the computed value of the one above, which for a
+    // running element is its `running()` name. The names stay apart where a
+    // level declares its own.
+    let mut doc = TestDoc::new();
+    let outer = doc.push_element(0, "div", Some("position: running(a)"));
+    let middle = doc.push_element(outer, "div", Some("position: inherit"));
+    let renamed = doc.push_element(middle, "div", Some("position: running(b)"));
+    let inner = doc.push_element(renamed, "div", Some("position: inherit"));
+    let plain = doc.push_element(inner, "div", None);
+    let computed = cascade(&doc, &RuleTree::empty()).unwrap().computed;
+    assert_eq!(running_names(&computed[outer]), ["a"]);
+    assert_eq!(running_names(&computed[middle]), ["a"]);
+    assert_eq!(running_names(&computed[renamed]), ["b"]);
+    assert_eq!(running_names(&computed[inner]), ["b"]);
+    assert!(computed[plain].running_templates.is_empty());
 }
 
 #[test]
