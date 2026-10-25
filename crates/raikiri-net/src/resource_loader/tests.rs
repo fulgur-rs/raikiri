@@ -308,6 +308,21 @@ fn svg_source_does_not_keep_a_scene_the_budget_has_no_room_for() {
 }
 
 #[test]
+fn svg_source_scene_keeps_the_root_opacity_of_the_document() {
+    let dimmed: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"2\" opacity=\"0.5\"><rect width=\"4\" height=\"2\" fill=\"red\"/></svg>";
+    let source = ImageSource::svg(
+        SvgDocument::parse(dimmed).unwrap(),
+        dimmed.into(),
+        test_budget(MAX_CACHE_BYTES),
+    );
+    let scene = source.scene(box_of(4.0)).expect("a scene");
+    let dimmed = scene.root.children.iter().any(
+        |node| matches!(node, raikiri_traits::vector::Node::Group(group) if group.opacity == 0.5),
+    );
+    assert!(dimmed, "the picture is half transparent: {scene:?}");
+}
+
+#[test]
 fn a_raster_source_has_no_scene() {
     let source = ImageSource::raster(Arc::new(tiny_decoded()), test_budget(MAX_CACHE_BYTES));
     assert!(source.scene(box_of(8.0)).is_none());

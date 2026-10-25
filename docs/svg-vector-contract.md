@@ -77,7 +77,9 @@ Rules of the boundary:
   applied. A consumer places the scene with one affine transform and a clip.
 - The scene carries SVG-internal opacity only. The opacity and visibility of
   the host element belong to the page's paint events, so the consumer
-  composites them once, around the host box and the scene together.
+  composites them once, around the host box and the scene together. A
+  document with no host, such as an SVG image, is the whole picture: its own
+  root `opacity` is part of its scene, as it is part of its raster.
 - Paths are already flattened to move, line, quadratic, cubic and close
   segments; arcs, basic shapes, `use`, `symbol`, `switch` and markers are
   resolved by the builder.
@@ -171,8 +173,10 @@ document, or for the cases D4 forces.
    `--raikiri-svg-rendering: vector | raster`. It follows the cascade and
    inherits like any custom property, so one declaration can cover a subtree
    or the whole page. The owner is the `<img>` element, the element (or
-   pseudo-element, or margin box) that has the `background-image`, or the
-   `<svg>` root.
+   pseudo-element, or margin box) that has the `background-image`, the
+   `<svg>` root, or the `::before` or `::after` pseudo-element whose `content`
+   is the image (what that pseudo-element names itself wins over its
+   element).
 2. Without a valid value there, the library default applies. The library
    exposes it as `SvgRendering { Vector, Raster }` in the layout options. A
    consumer wrapper, such as `fulgur-raikiri`'s `RenderOptions`, forwards it.

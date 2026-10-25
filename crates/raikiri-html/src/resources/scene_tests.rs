@@ -136,6 +136,23 @@ fn an_svg_image_is_a_scene_built_for_the_box_it_is_asked_for() {
 }
 
 #[test]
+fn an_svg_image_keeps_the_root_opacity_of_its_document() {
+    let url = svg_url(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='2' height='1' opacity='0.5'><rect width='1' height='1' fill='red'/></svg>",
+    );
+    let resources = RenderResources::new();
+    preload(&resources, std::slice::from_ref(&url));
+
+    let scene = resources.get_vector(&url, &request(8.0, 4.0)).unwrap();
+    let dimmed = scene
+        .root
+        .children
+        .iter()
+        .any(|node| matches!(node, Node::Group(group) if group.opacity == 0.5));
+    assert!(dimmed, "the picture is half transparent: {scene:?}");
+}
+
+#[test]
 fn a_box_gets_one_scene_however_often_it_is_asked_for() {
     let url = svg_url(RED_SQUARE);
     let resources = RenderResources::new();

@@ -246,6 +246,10 @@ impl SvgDocument {
     /// around the host box and the scene together. `root_style.opacity` still
     /// feeds inherited `opacity` declarations, as if
     /// `root_style.neutralize_root_opacity` were set, whatever its value.
+    /// The exception is a document with no host, which is the whole picture:
+    /// with `root_style.opacity` one, `neutralize_root_opacity` unset and no
+    /// resolved styles, the root's own `opacity` stays part of the scene, as
+    /// it stays part of [`Self::rasterize`]'s output.
     /// `root_style.visible` hides the root like it does for the raster, so a
     /// descendant that sets `visibility: visible` itself still paints.
     ///
@@ -334,9 +338,15 @@ impl SvgDocument {
         }
         check_viewport(viewport)?;
         let size = (viewport.width, viewport.height);
-        // The host opacity is composited outside the scene.
+        // The host opacity is composited outside the scene. A document that
+        // has no host (opacity one, no host styles, nothing asked to be
+        // neutralized) is the whole picture, and its own root opacity is part
+        // of it, as it is of its raster.
+        let has_host = source_style.is_some()
+            || root_style.neutralize_root_opacity
+            || (root_style.opacity < 1.0 && !within_four_ulps_of_one(root_style.opacity));
         let root_style = SvgRootStyle {
-            neutralize_root_opacity: true,
+            neutralize_root_opacity: has_host,
             ..root_style
         };
         // Malformed descendant styles are rejected whatever the root's
