@@ -715,12 +715,20 @@ fn content_reads_counters(cv: &raikiri_style::ComputedValues) -> bool {
         })
 }
 
+/// Whether layout draws no CSS box for anything in the subtree of `node`: a
+/// non-rendered HTML element (see
+/// [`crate::Node::is_non_rendered_html_element`]) is left out with its
+/// subtree, and an inline SVG is drawn as a unit, its elements without
+/// generated content.
+fn draws_no_boxes_below(node: &crate::Node) -> bool {
+    node.is_non_rendered_html_element() || node.is_inline_svg_root()
+}
+
 /// Whether the generated text of the element `idx` takes part in the quote
-/// depth. `unrendered` counts the elements that layout leaves out, with their
-/// subtrees, around and including `idx` (see
-/// [`crate::Node::is_non_rendered_html_element`]). A replaced element has no
-/// `::before` or `::after` box, its content being outside CSS, and neither
-/// has a line break; layout draws no generated content for them.
+/// depth. `unrendered` counts the elements around and including `idx` that
+/// [`draws_no_boxes_below`] holds for. A replaced element has no `::before`
+/// or `::after` box, its content being outside CSS, and neither has a line
+/// break; layout draws no generated content for them.
 fn counts_quotes(doc: &Document, idx: usize, unrendered: usize) -> bool {
     unrendered == 0
         && !crate::paint_rules::is_replaced_element(doc, idx)
@@ -902,7 +910,7 @@ fn walk_counter_scopes(
     let mut stack = vec![WalkStep::Enter(doc.root)];
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     let mut quote_depth = QuoteDepth::default();
-    // How many elements that layout leaves out the walk is inside.
+    // How many elements the walk is inside that draw no boxes below them.
     let mut unrendered = 0_usize;
     while let Some(step) = stack.pop() {
         match step {
@@ -937,7 +945,7 @@ fn walk_counter_scopes(
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
-                if node.is_non_rendered_html_element() {
+                if draws_no_boxes_below(node) {
                     unrendered += 1;
                 }
                 if display == Some(DisplayValue::ListItem)
@@ -998,7 +1006,7 @@ fn walk_counter_scopes(
                         )?;
                     }
                 }
-                if doc.nodes[idx].is_non_rendered_html_element() {
+                if draws_no_boxes_below(&doc.nodes[idx]) {
                     unrendered -= 1;
                 }
                 if let Some(names) = pending_pops.pop() {

@@ -181,6 +181,17 @@ fn an_element_that_layout_leaves_out_adds_no_quotes_even_when_displayed() {
 }
 
 #[test]
+fn the_elements_of_an_inline_svg_add_no_quotes() {
+    // The vector path draws an inline SVG as a unit, with no generated
+    // content on its elements.
+    let css = ".o::before{content:open-quote}";
+    assert_eq!(
+        paired("<svg width=4 height=4><g class=o></g></svg><q>x</q>", css),
+        "<x>"
+    );
+}
+
+#[test]
 fn the_pseudo_elements_of_a_display_contents_element_count() {
     assert_eq!(
         paired("<div style='display:contents'><q>a<q>b</q></q></div>", ""),
