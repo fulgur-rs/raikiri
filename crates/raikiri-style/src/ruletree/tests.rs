@@ -3380,6 +3380,106 @@ fn an_initial_highlight_background_does_not_create_a_rollback_marker() {
 }
 
 #[test]
+fn a_later_css_wide_keyword_clears_the_highlight_background() {
+    // `initial`, `unset` and `inherit` all give the initial paint: a highlight
+    // has no parent paint to inherit, as in Chromium.
+    for keyword in ["initial", "unset", "inherit"] {
+        for declaration in [
+            format!("background-color:{keyword}"),
+            format!("all:{keyword}"),
+        ] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet(
+                &format!("::highlight(mark){{background-color:red;{declaration}}}"),
+                Origin::Author,
+            );
+            assert!(
+                !tree.custom_highlight_styles().contains_key("mark"),
+                "{declaration}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_css_wide_keyword_keeps_the_declaration_order_and_importance_of_the_rule() {
+    let red = crate::CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    for css in [
+        "::highlight(mark){all:unset;background-color:red}",
+        "::highlight(mark){background-color:initial;background-color:red}",
+        "::highlight(mark){background-color:red!important;background-color:initial}",
+        "::highlight(mark){background-color:red!important;all:unset}",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        assert_eq!(
+            tree.custom_highlight_styles().get("mark"),
+            Some(&red),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_css_wide_keyword_replaces_the_highlight_background_of_a_lower_layer() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@layer a,b; @layer a{::highlight(mark){background-color:blue}} \
+         @layer b{::highlight(mark){background-color:initial}}",
+        Origin::Author,
+    );
+    assert!(!tree.custom_highlight_styles().contains_key("mark"));
+    // `revert-layer` hands the paint back to the layer below instead.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@layer a,b; @layer a{::highlight(mark){background-color:blue}} \
+         @layer b{::highlight(mark){background-color:revert-layer}}",
+        Origin::Author,
+    );
+    assert_eq!(
+        tree.custom_highlight_styles().get("mark"),
+        Some(&crate::CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255
+        })
+    );
+}
+
+#[test]
+fn revert_hands_the_highlight_background_to_the_origin_below() {
+    let blue = crate::CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    for css in [
+        "::highlight(mark){background-color:red;background-color:revert}",
+        "::highlight(mark){background-color:red;all:revert}",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        assert!(
+            !tree.custom_highlight_styles().contains_key("mark"),
+            "{css}"
+        );
+        tree.add_stylesheet("::highlight(mark){background-color:blue}", Origin::User);
+        assert_eq!(
+            tree.custom_highlight_styles().get("mark"),
+            Some(&blue),
+            "{css}"
+        );
+    }
+}
+
+#[test]
 fn contextual_highlight_sources_follow_literal_layer_and_important_precedence() {
     let blue = crate::CssColor {
         r: 0,
