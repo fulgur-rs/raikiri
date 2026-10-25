@@ -819,3 +819,119 @@ fn pseudo_snapshot_entries_count_against_the_budget() {
             .expect("a budget for the table");
     assert_eq!(snapshots.pseudos.len(), 4);
 }
+
+#[test]
+fn quote_depth_follows_the_generated_text_in_document_order() {
+    use raikiri_style::PseudoElem::{After, Before, Marker};
+    let mut doc = styled_document(
+        "div::before { content: open-quote } div::after { content: close-quote } \
+         p::before { content: 'x' } p::after { content: 'y' } \
+         li { display: list-item } li::marker { content: open-quote }",
+    );
+    let outer = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+    let plain = doc.append_element(Some(outer), "p", None::<&str>);
+    let item = doc.append_element(Some(outer), "li", None::<&str>);
+    let inner = doc.append_element(Some(outer), "div", None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    let depth = |element, pseudo| snapshots.quote_depth(element, pseudo);
+    // The outer `::before` opens the first quote. The paragraph's
+    // pseudo-elements hold no quote, so the table keeps no start for them.
+    assert_eq!(depth(outer, Before), 0);
+    assert_eq!(depth(plain, Before), 0);
+    assert_eq!(depth(plain, After), 0);
+    // The item's marker opens a quote before the inner `div` does.
+    assert_eq!(depth(item, Marker), 1);
+    assert_eq!(depth(inner, Before), 2);
+    assert_eq!(depth(inner, After), 3);
+    assert_eq!(depth(outer, After), 2);
+    // A depth of zero is not stored.
+    assert_eq!(snapshots.quote_starts.len(), 4);
+}
+
+#[test]
+fn quotes_of_a_box_that_is_not_generated_do_not_count() {
+    use raikiri_style::PseudoElem::{Before, Marker};
+    let mut doc = styled_document(
+        "section::before { content: open-quote } \
+         aside::before { content: none } \
+         nav::before { content: open-quote; display: none } \
+         p::marker { content: open-quote }",
+    );
+    let gone = doc.append_element(Some(doc.root_index()), "div", Some("display: none"));
+    let inside = doc.append_element(Some(gone), "section", None::<&str>);
+    doc.append_element(Some(doc.root_index()), "aside", None::<&str>);
+    doc.append_element(Some(doc.root_index()), "nav", None::<&str>);
+    // Only a list item has a marker.
+    doc.append_element(Some(doc.root_index()), "p", None::<&str>);
+    let probe = doc.append_element(Some(doc.root_index()), "section", None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    // Nothing before `probe` opens a quote, so every start is zero, which the
+    // table does not store.
+    assert_eq!(snapshots.quote_depth(inside, Before), 0);
+    assert_eq!(snapshots.quote_depth(probe, Before), 0);
+    assert_eq!(snapshots.quote_depth(probe, Marker), 0);
+    assert_eq!(snapshots.quote_starts.len(), 0);
+}
+
+#[test]
+fn quote_start_entries_count_against_the_budget() {
+    let mut doc = styled_document("div::before { content: open-quote }");
+    let mut parent = doc.root_index();
+    for _ in 0..4 {
+        parent = doc.append_element(Some(parent), "div", None::<&str>);
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    // No counter is live, so every snapshot map is empty and costs nothing:
+    // only the per-node vector and the quote-depth table are charged. The
+    // outermost `::before` starts at depth zero and takes no entry.
+    let base = (doc.node_count() * size_of::<CounterSnapshot>()) as u64;
+    let error = counter_snapshots_with_budget(&doc, &cr, &mut CounterSnapshotBudget::new(base))
+        .expect_err("the quote-depth table exceeds the per-node budget");
+    assert_eq!(error.limit, base);
+    let snapshots =
+        counter_snapshots_with_budget(&doc, &cr, &mut CounterSnapshotBudget::new(error.actual * 4))
+            .expect("a budget for the table");
+    assert_eq!(snapshots.quote_starts.len(), 3);
+}
+
+#[test]
+fn quote_starts_of_a_marker_and_an_after_count_against_the_budget() {
+    // The first element opens a quote at depth zero, which the table does not
+    // store, so the second one's entry is the only one, and the last charge
+    // of the walk. A budget one byte short of the whole walk stops there.
+    let stops_at_the_quote_entry = |css: &str, second: &str| {
+        let mut doc = styled_document(css);
+        doc.append_element(Some(doc.root_index()), "section", None::<&str>);
+        doc.append_element(Some(doc.root_index()), second, None::<&str>);
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut whole = CounterSnapshotBudget::default();
+        let snapshots = counter_snapshots_with_budget(&doc, &cr, &mut whole).expect("walk");
+        assert_eq!(snapshots.quote_starts.len(), 1);
+        let error = counter_snapshots_with_budget(
+            &doc,
+            &cr,
+            &mut CounterSnapshotBudget::new(whole.estimated_bytes - 1),
+        )
+        .expect_err("the quote-depth entry exceeds the budget");
+        assert_eq!(error.actual, whole.estimated_bytes);
+    };
+    stops_at_the_quote_entry(
+        "section::before { content: open-quote } \
+         li { display: list-item } li::marker { content: open-quote }",
+        "li",
+    );
+    stops_at_the_quote_entry(
+        "section::before { content: open-quote } aside::after { content: close-quote }",
+        "aside",
+    );
+}

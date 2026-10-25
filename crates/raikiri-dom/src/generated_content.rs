@@ -439,7 +439,8 @@ pub fn generated_alt_text(
 /// The counters that the content of the `pseudo` of `element` reads: the
 /// walk's snapshot after the pseudo-element's own directives, or, when the
 /// walk took none for it, the element's snapshot with the pseudo-element's
-/// directives applied locally.
+/// directives applied locally. The view also carries the quote depth at which
+/// the content starts.
 fn pseudo_counters<'a>(
     snapshots: &'a CounterSnapshots,
     element: usize,
@@ -453,6 +454,7 @@ fn pseudo_counters<'a>(
             Some(computed),
         ),
     }
+    .starting_quotes_at(snapshots.quote_depth(element, pseudo))
 }
 
 static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =
@@ -464,6 +466,13 @@ pub trait CounterSnapshotLookup {
     /// Return the effective values for `name`, including pseudo-element
     /// directives when this lookup is a `CounterSnapshotView`.
     fn values_for(&self, name: &str) -> CounterValues<'_>;
+
+    /// How many quotes are open where the content read through this lookup
+    /// starts (CSS Content 3 §2.4.2). A lookup that knows no document
+    /// position starts outside every quote.
+    fn open_quotes(&self) -> usize {
+        0
+    }
 }
 
 /// A counter stack view that can replace or append its innermost value
@@ -565,6 +574,7 @@ pub struct CounterSnapshotView<'a> {
     snapshot: &'a CounterSnapshot,
     computed: Option<&'a ComputedValues>,
     list_item_fallback: Option<&'a [i32]>,
+    open_quotes: usize,
 }
 
 impl<'a> CounterSnapshotView<'a> {
@@ -575,6 +585,7 @@ impl<'a> CounterSnapshotView<'a> {
             snapshot,
             computed,
             list_item_fallback: None,
+            open_quotes: 0,
         }
     }
 
@@ -587,7 +598,15 @@ impl<'a> CounterSnapshotView<'a> {
             snapshot,
             computed,
             list_item_fallback,
+            open_quotes: 0,
         }
+    }
+
+    /// Start the content read through this view with `open_quotes` quotes
+    /// open.
+    pub(crate) fn starting_quotes_at(mut self, open_quotes: usize) -> Self {
+        self.open_quotes = open_quotes;
+        self
     }
 }
 
@@ -604,6 +623,10 @@ impl CounterSnapshotLookup for CounterSnapshotView<'_> {
             snapshot_values
         };
         CounterValues::with_directives(base, self.computed, name)
+    }
+
+    fn open_quotes(&self) -> usize {
+        self.open_quotes
     }
 }
 
@@ -722,18 +745,54 @@ fn fallback_quote(depth: usize, open: bool) -> &'static str {
     }
 }
 
-/// The quote nesting depth of one `content` value, shared by normal content,
-/// list markers and page-margin boxes so the three resolve quotes alike.
+/// The quote nesting depth that generated text has reached, shared by normal
+/// content, list markers and page-margin boxes so the three resolve quotes
+/// alike.
+///
+/// The depth counts the `open-quote`s of the generated text before a quote,
+/// less its `close-quote`s (CSS Content 3 §2.4.2). The document walk of
+/// [`crate::counter_snapshots`] carries it across pseudo-elements; a margin
+/// box is outside the document's text and starts at zero.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct QuoteDepth(usize);
 
 impl QuoteDepth {
+    /// A depth that starts at `depth` open quotes.
+    pub(crate) fn starting_at(depth: usize) -> Self {
+        Self(depth)
+    }
+
+    /// How many quotes are open.
+    pub(crate) fn open_quotes(self) -> usize {
+        self.0
+    }
+
+    /// Move the depth as `keyword` says and return the nesting level whose
+    /// pair the keyword inserts, or `None` when it inserts nothing.
+    ///
+    /// `open-quote` and `no-open-quote` deepen the nesting. `close-quote` and
+    /// `no-close-quote` make it shallower, and where no quote is open they do
+    /// nothing at all: a stray close inserts no mark and leaves the depth at
+    /// zero (CSS 2 §12.3.2). The `no-` forms insert nothing.
+    pub(crate) fn advance(&mut self, keyword: QuoteKeyword) -> Option<usize> {
+        let opens = matches!(keyword, QuoteKeyword::OpenQuote | QuoteKeyword::NoOpenQuote);
+        let closes = matches!(
+            keyword,
+            QuoteKeyword::CloseQuote | QuoteKeyword::NoCloseQuote
+        );
+        let inserts = matches!(keyword, QuoteKeyword::OpenQuote | QuoteKeyword::CloseQuote);
+        if closes {
+            self.0 = self.0.checked_sub(1)?;
+        }
+        let level = self.0;
+        if opens {
+            self.0 = level.saturating_add(1);
+        }
+        inserts.then_some(level)
+    }
+
     /// The text `keyword` inserts at the current depth, moving the depth as
-    /// the keyword says (CSS Content 3 §2.4.2). `open-quote` and
-    /// `no-open-quote` deepen the nesting; `close-quote` and `no-close-quote`
-    /// first make it shallower, never below zero. The `no-` forms insert
-    /// nothing. The depth counts within one `content` value, so a lone
-    /// `close-quote`, as in `::after`, uses the outermost pair.
+    /// [`Self::advance`] says (CSS Content 3 §2.4.2).
     ///
     /// A depth past the last pair of an explicit `quotes` list repeats that
     /// pair. An empty list is `auto` when `quotes_auto` is set and `none`
@@ -744,26 +803,14 @@ impl QuoteDepth {
         quotes: &'q [(T, T)],
         quotes_auto: bool,
     ) -> &'q str {
-        let opens = matches!(keyword, QuoteKeyword::OpenQuote | QuoteKeyword::NoOpenQuote);
-        let closes = matches!(
-            keyword,
-            QuoteKeyword::CloseQuote | QuoteKeyword::NoCloseQuote
-        );
-        let inserts = matches!(keyword, QuoteKeyword::OpenQuote | QuoteKeyword::CloseQuote);
-        if closes {
-            self.0 = self.0.saturating_sub(1);
-        }
-        let depth = self.0;
-        if opens {
-            self.0 = depth.saturating_add(1);
-        }
-        if !inserts {
+        let Some(level) = self.advance(keyword) else {
             return "";
-        }
-        match quotes.get(depth).or_else(|| quotes.last()) {
+        };
+        let opens = keyword == QuoteKeyword::OpenQuote;
+        match quotes.get(level).or_else(|| quotes.last()) {
             Some((open, _)) if opens => open.as_ref(),
             Some((_, close)) => close.as_ref(),
-            None if quotes_auto => fallback_quote(depth, opens),
+            None if quotes_auto => fallback_quote(level, opens),
             None => "",
         }
     }
@@ -813,7 +860,7 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
         return None;
     }
     let mut text = String::new();
-    let mut depth = QuoteDepth::default();
+    let mut depth = QuoteDepth::starting_at(counters.open_quotes());
     let mut images = 0_usize;
     for component in components {
         match component {
