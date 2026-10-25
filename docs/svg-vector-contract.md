@@ -168,7 +168,10 @@ output does not change). It is not a CSS property in the first version; it can
 be added the same way later if a use appears. A scale that is not finite and
 greater than zero is ignored. It applies to the pictures that are drawn as
 pixels: those whose rendering is `raster`, and those that D4 sends to the
-raster path. A vector scene has no resolution.
+raster path. A vector scene has no resolution. `SvgDocument::rasterize_with_fonts`
+draws that raster: the picture of the CSS pixel grid with every CSS pixel
+`svg_raster_scale` pixels wide, text set in the caller's faces. A document with
+pictures cannot be rasterized, so it stays a scene whatever its rendering says.
 
 The library reports the choice and does not draw. `LayoutOptions` (and
 `StreamingLayout`) take `svg_rendering` and `svg_raster_scale`; a page answers
