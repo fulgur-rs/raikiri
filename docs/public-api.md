@@ -15,14 +15,15 @@ A *name* is something an outside user can write: a type, function, constant or
 module that the crate root reaches. `scripts/public-api-lint.sh --surface
 CRATE` prints the names of a crate, with the item each re-export comes from, and
 `--with-hidden` adds the hidden ones. Methods, fields and trait impls belong to
-their type and are not listed.
+their type and are not listed. A module and a function can share a path
+(`raikiri_style::cascade` is both), and each counts as a name.
 
 | crate | visible names | `#[doc(hidden)]` |
 | --- | ---: | ---: |
 | `raikiri-html` | 146 | 3 |
 | `raikiri-dom` | 204 | 105 |
 | `raikiri-traits` | 247 | 0 |
-| `raikiri-style` | 776 | 0 |
+| `raikiri-style` | 777 | 0 |
 | `raikiri-svg` | 18 | 0 |
 | `raikiri-net` (default features) | 7 | 0 |
 | `raikiri-layout-geometry` | 6 | 0 |

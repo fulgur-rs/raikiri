@@ -88,17 +88,29 @@ def canonical_path(doc: dict, key: object) -> str | None:
     return "::".join(summary["path"]) if summary is not None else None
 
 
+def namespace(kind: str) -> str:
+    """The Rust namespace a name lives in: a module and a function may share a path."""
+    if kind in ("function", "constant", "static"):
+        return "value"
+    return "macro" if kind == "macro" else "type"
+
+
 def names(doc: dict) -> list[Name]:
-    """The names the root module of `doc` publishes, sorted by path."""
+    """The names the root module of `doc` publishes, sorted by path.
+
+    A path can name more than one thing: a module and a function of the same
+    name, or globs of different crates under one prefix. Each is listed.
+    """
     index = doc["index"]
     root = index[str(doc["root"])]
-    found: dict[str, Name] = {}
+    found: dict[tuple[str, str, str | None], Name] = {}
 
     def add(path: str, kind: str, hidden: bool, canonical: str | None, item_id: int | None = None) -> None:
         # The first way a name is reached wins; a visible one beats a hidden one.
-        known = found.get(path)
+        slot = (path, namespace(kind), canonical if kind == "glob" else None)
+        known = found.get(slot)
         if known is None or (known.hidden and not hidden):
-            found[path] = Name(path, kind, hidden, canonical, item_id)
+            found[slot] = Name(path, kind, hidden, canonical, item_id)
 
     def module(item: dict, prefix: str, hidden: bool, active: tuple[int, ...]) -> None:
         key = item["id"]
@@ -147,7 +159,7 @@ def names(doc: dict) -> list[Name]:
             add(path, item_kind(target), hidden or is_hidden(target), canonical_path(doc, target_id), target_id)
 
     module(root, root["name"], False, ())
-    return sorted(found.values(), key=lambda name: name.path)
+    return sorted(found.values(), key=lambda name: (name.path, name.kind, name.canonical or ""))
 
 
 def members(item: dict) -> list[int]:

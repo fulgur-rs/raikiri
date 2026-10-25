@@ -169,6 +169,33 @@ class NamesTests(unittest.TestCase):
         doc.set_items(0, [module])
         self.assertEqual(sorted(listed(doc)), ["x::m", "x::m::A"])
 
+    def test_a_module_and_a_function_of_the_same_name_are_both_listed(self) -> None:
+        doc = Doc()
+        module = doc.module(1, "cascade", [])
+        function = doc.function(2, "cascade", ["x", "cascade"])
+        doc.set_items(0, [module, function])
+        self.assertEqual(
+            [(name.path, name.kind) for name in surface.names(doc.json())],
+            [("x::cascade", "function"), ("x::cascade", "module")],
+        )
+
+    def test_globs_of_two_foreign_modules_under_one_prefix_are_both_listed(self) -> None:
+        doc = Doc()
+        first = doc.foreign(8, ["alpha", "api"], kind="module")
+        second = doc.foreign(9, ["beta", "api"], kind="module")
+        module = doc.module(
+            2, "computed", [doc.use(3, "api", first, glob=True), doc.use(4, "api", second, glob=True)]
+        )
+        doc.set_items(0, [module])
+        globs = [name.canonical for name in surface.names(doc.json()) if name.kind == "glob"]
+        self.assertEqual(globs, ["alpha::api", "beta::api"])
+
+    def test_the_same_name_reached_twice_is_listed_once(self) -> None:
+        doc = Doc()
+        item = doc.struct(4, "Same", ["x", "p", "Same"])
+        doc.set_items(0, [doc.use(1, "Same", item), doc.use(2, "Same", item)])
+        self.assertEqual([name.path for name in surface.names(doc.json())], ["x::Same"])
+
     def test_the_text_form_has_one_line_per_name_and_shows_where_a_reexport_comes_from(self) -> None:
         doc = Doc()
         foreign = doc.foreign(9, ["other", "Thing"])

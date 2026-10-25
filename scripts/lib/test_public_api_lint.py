@@ -410,6 +410,26 @@ class ReachTests(unittest.TestCase):
         )
         self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {"serde": ["serde::Serialize"]})
 
+    def test_a_function_is_scanned_though_a_module_has_the_same_path(self) -> None:
+        b = DocBuilder()
+        b.add(1, "collision", {"module": {"is_crate": False, "items": [], "is_stripped": False}})
+        b.function(2, "collision", [], resolved(b.serde_type, "Serialize"))
+        self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {"serde": ["serde::Serialize"]})
+
+    def test_globs_of_two_third_party_modules_under_one_prefix_are_both_reported(self) -> None:
+        b = DocBuilder()
+        b.foreign(60, SERDE_CRATE_ID, ["serde", "de"])
+        b.foreign(61, TAFFY_CRATE_ID, ["taffy", "tree"])
+        for key in (60, 61):
+            b.paths[str(key)]["kind"] = "module"
+        globs = [
+            b.add(10 + i, None, {"use": {"source": "api", "name": "api", "id": target, "is_glob": True}})
+            for i, target in enumerate((60, 61))
+        ]
+        b.add(2, "computed", {"module": {"is_crate": False, "items": globs, "is_stripped": False}})
+        found = lint.third_party_crates(b.doc(root="raikiri_x"))
+        self.assertEqual(sorted(found), ["serde", "taffy"])
+
     def test_a_blanket_impl_listed_by_a_trait_does_not(self) -> None:
         b = DocBuilder()
         blanket = b.add(
