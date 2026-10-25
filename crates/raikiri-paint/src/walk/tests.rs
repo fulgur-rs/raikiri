@@ -2963,13 +2963,13 @@ fn background_page_image_position_follows_each_axis_list() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
                     255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
                 ],
-            }))
+            )))
         }
     }
     let paper = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
