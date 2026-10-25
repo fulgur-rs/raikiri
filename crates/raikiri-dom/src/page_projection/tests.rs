@@ -17,11 +17,11 @@ fn decoration_preparation_checks_budget_and_cancellation_before_publication() {
     struct Pixels;
     impl ImagePixelSource for Pixels {
         fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
-            Some(Arc::new(DecodedImage {
-                width: 4,
-                height: 4,
-                rgba: [255, 0, 0, 255].repeat(16),
-            }))
+            Some(Arc::new(DecodedImage::new(
+                4,
+                4,
+                [255, 0, 0, 255].repeat(16),
+            )))
         }
     }
     for kind in ["before", "inside", "outside", "image"] {
@@ -569,11 +569,11 @@ fn generated_image_projection_work_stays_linear_in_page_count() {
     struct Pixels;
     impl ImagePixelSource for Pixels {
         fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
-            Some(Arc::new(DecodedImage {
-                width: 4,
-                height: 4,
-                rgba: [255, 0, 0, 255].repeat(16),
-            }))
+            Some(Arc::new(DecodedImage::new(
+                4,
+                4,
+                [255, 0, 0, 255].repeat(16),
+            )))
         }
     }
     let spent = |count: usize| {

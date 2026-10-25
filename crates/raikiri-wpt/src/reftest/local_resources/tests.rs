@@ -1,16 +1,8 @@
 use super::*;
-use raikiri_traits::{Body, Method, Request, ResourceKind};
+use raikiri_traits::{Request, ResourceKind};
 
 fn get(url: raikiri::Url) -> Request {
-    Request {
-        url,
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    }
+    Request::new(url, ResourceKind::Image)
 }
 
 fn checkout() -> tempfile::TempDir {
@@ -104,10 +96,10 @@ struct Sized;
 
 impl ReplacedResolver for Sized {
     fn resolve(&self, _: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(4.0, 2.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(4.0, 2.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 

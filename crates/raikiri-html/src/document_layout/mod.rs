@@ -234,20 +234,21 @@ pub(crate) fn layout_resumed<'r>(
         }
     }
     out.warnings
-        .extend(omitted.into_iter().map(|(node, reason)| RenderWarning {
-            kind: WarningKind::TextRunsOmitted,
-            node_id: Some(node),
-            details: format!("text runs are not reported for this paragraph: {reason}"),
+        .extend(omitted.into_iter().map(|(node, reason)| {
+            RenderWarning::new(
+                WarningKind::TextRunsOmitted,
+                format!("text runs are not reported for this paragraph: {reason}"),
+            )
+            .node_id(Some(node))
         }));
-    out.warnings.extend(
-        approximated
-            .into_iter()
-            .map(|(node, reason)| RenderWarning {
-                kind: WarningKind::PaintOrderApproximated,
-                node_id: Some(node),
-                details: format!("paint order is approximated for this subtree: {reason}"),
-            }),
-    );
+    out.warnings
+        .extend(approximated.into_iter().map(|(node, reason)| {
+            RenderWarning::new(
+                WarningKind::PaintOrderApproximated,
+                format!("paint order is approximated for this subtree: {reason}"),
+            )
+            .node_id(Some(node))
+        }));
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(Some(LayoutStatus::Aborted));
     }

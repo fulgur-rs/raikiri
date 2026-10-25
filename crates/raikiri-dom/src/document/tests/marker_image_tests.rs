@@ -8,11 +8,11 @@ struct VectorMarker {
 
 impl ImagePixelSource for VectorMarker {
     fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
-        Some(Arc::new(DecodedImage {
-            width: 300,
-            height: 150,
-            rgba: vec![0; 300 * 150 * 4],
-        }))
+        Some(Arc::new(DecodedImage::new(
+            300,
+            150,
+            vec![0; 300 * 150 * 4],
+        )))
     }
     fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
         Some(self.intrinsic)
@@ -25,79 +25,32 @@ impl ImagePixelSource for VectorMarker {
     ) -> Option<Arc<DecodedImage>> {
         let width = size.width.ceil() as u32;
         let height = size.height.ceil() as u32;
-        Some(Arc::new(DecodedImage {
+        Some(Arc::new(DecodedImage::new(
             width,
             height,
-            rgba: vec![0; (width * height * 4) as usize],
-        }))
+            vec![0; (width * height * 4) as usize],
+        )))
     }
 }
 
 #[test]
 fn image_marker_resolves_missing_natural_dimensions_against_one_em() {
     for (intrinsic, expected) in [
+        (ImageIntrinsicSize::new(None, None, Some(2.0)), (16, 8)),
+        (ImageIntrinsicSize::new(None, None, Some(0.5)), (8, 16)),
+        (ImageIntrinsicSize::new(None, None, None), (16, 16)),
         (
-            ImageIntrinsicSize {
-                width: None,
-                height: None,
-                aspect_ratio: Some(2.0),
-            },
-            (16, 8),
-        ),
-        (
-            ImageIntrinsicSize {
-                width: None,
-                height: None,
-                aspect_ratio: Some(0.5),
-            },
-            (8, 16),
-        ),
-        (
-            ImageIntrinsicSize {
-                width: None,
-                height: None,
-                aspect_ratio: None,
-            },
-            (16, 16),
-        ),
-        (
-            ImageIntrinsicSize {
-                width: Some(12.0),
-                height: None,
-                aspect_ratio: Some(2.0),
-            },
+            ImageIntrinsicSize::new(Some(12.0), None, Some(2.0)),
             (12, 6),
         ),
         (
-            ImageIntrinsicSize {
-                width: None,
-                height: Some(12.0),
-                aspect_ratio: Some(2.0),
-            },
+            ImageIntrinsicSize::new(None, Some(12.0), Some(2.0)),
             (24, 12),
         ),
+        (ImageIntrinsicSize::new(Some(12.0), None, None), (12, 16)),
+        (ImageIntrinsicSize::new(None, Some(12.0), None), (16, 12)),
         (
-            ImageIntrinsicSize {
-                width: Some(12.0),
-                height: None,
-                aspect_ratio: None,
-            },
-            (12, 16),
-        ),
-        (
-            ImageIntrinsicSize {
-                width: None,
-                height: Some(12.0),
-                aspect_ratio: None,
-            },
-            (16, 12),
-        ),
-        (
-            ImageIntrinsicSize {
-                width: Some(12.0),
-                height: Some(10.0),
-                aspect_ratio: Some(2.0),
-            },
+            ImageIntrinsicSize::new(Some(12.0), Some(10.0), Some(2.0)),
             (12, 10),
         ),
     ] {
@@ -155,11 +108,7 @@ fn marker_raster_variants_share_one_document_retained_byte_budget() {
             None
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: None,
-                height: None,
-                aspect_ratio: Some(1.0),
-            })
+            Some(ImageIntrinsicSize::new(None, None, Some(1.0)))
         }
         fn get_decoded_at_size(
             &self,
@@ -171,11 +120,7 @@ fn marker_raster_variants_share_one_document_retained_byte_budget() {
             // Reserve storage without touching the unused pages.
             let mut rgba = Vec::with_capacity(64 * 1024 * 1024 + 4);
             rgba.resize((edge * edge * 4) as usize, 0);
-            Some(Arc::new(DecodedImage {
-                width: edge,
-                height: edge,
-                rgba,
-            }))
+            Some(Arc::new(DecodedImage::new(edge, edge, rgba)))
         }
     }
     let mut doc = Document::new();
@@ -232,11 +177,7 @@ fn sized_marker_decodes_receive_remaining_budget_and_reuse_variants_after_exhaus
             None
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: None,
-                height: None,
-                aspect_ratio: Some(1.0),
-            })
+            Some(ImageIntrinsicSize::new(None, None, Some(1.0)))
         }
         fn get_decoded_at_size(
             &self,
@@ -250,11 +191,11 @@ fn sized_marker_decodes_receive_remaining_budget_and_reuse_variants_after_exhaus
             if limit.is_some_and(|limit| bytes > limit) {
                 return None;
             }
-            Some(Arc::new(DecodedImage {
-                width: edge,
-                height: edge,
-                rgba: vec![0; bytes as usize],
-            }))
+            Some(Arc::new(DecodedImage::new(
+                edge,
+                edge,
+                vec![0; bytes as usize],
+            )))
         }
     }
     let url = "https://images.test/dimensionless.svg";
@@ -296,11 +237,7 @@ fn marker_budget_counts_shared_pixel_allocation_once_across_urls() {
     impl ImagePixelSource for SharedRaster {
         fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
             Some(if url.path() == "/unique" {
-                Arc::new(DecodedImage {
-                    width: 2,
-                    height: 2,
-                    rgba: vec![0; 16],
-                })
+                Arc::new(DecodedImage::new(2, 2, vec![0; 16]))
             } else {
                 Arc::clone(&self.shared)
             })
@@ -312,11 +249,7 @@ fn marker_budget_counts_shared_pixel_allocation_once_across_urls() {
         (16, "https://images.test/unique"),
     ]);
     let source = SharedRaster {
-        shared: Arc::new(DecodedImage {
-            width: 2,
-            height: 2,
-            rgba: vec![0; 16],
-        }),
+        shared: Arc::new(DecodedImage::new(2, 2, vec![0; 16])),
     };
     doc.prepare_list_marker_images_with_budget(&cascade, &source, None, 32);
     assert_eq!(doc.list_marker_images.len(), 3);
@@ -338,11 +271,7 @@ fn invalid_marker_rasters_do_not_consume_the_document_budget() {
             None
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: Some(1.0),
-                height: Some(1.0),
-                aspect_ratio: Some(1.0),
-            })
+            Some(ImageIntrinsicSize::new(Some(1.0), Some(1.0), Some(1.0)))
         }
         fn get_decoded_at_size(
             &self,
@@ -356,11 +285,7 @@ fn invalid_marker_rasters_do_not_consume_the_document_budget() {
                 "/zero-height" => (1, 0),
                 _ => (1, 1),
             };
-            Some(Arc::new(DecodedImage {
-                width,
-                height,
-                rgba: vec![0; 4],
-            }))
+            Some(Arc::new(DecodedImage::new(width, height, vec![0; 4])))
         }
     }
     let (mut doc, cascade, items) = marker_budget_document(&[
@@ -376,12 +301,9 @@ fn invalid_marker_rasters_do_not_consume_the_document_budget() {
 #[test]
 fn content_image_size_follows_the_default_sizing_algorithm() {
     use raikiri_style::ComputedLengthPercentageOrAuto as Length;
-    let natural =
-        |width: Option<f32>, height: Option<f32>, ratio: Option<f32>| ImageIntrinsicSize {
-            width,
-            height,
-            aspect_ratio: ratio,
-        };
+    let natural = |width: Option<f32>, height: Option<f32>, ratio: Option<f32>| {
+        ImageIntrinsicSize::new(width, height, ratio)
+    };
     let sized = |width: Length, height: Length| {
         let mut style = raikiri_style::ComputedValues::initial();
         style.width = width;
@@ -480,20 +402,15 @@ fn content_images_that_cannot_be_sized_represent_nothing() {
     struct PartialSizes;
     impl ImagePixelSource for PartialSizes {
         fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
-            (!url.path().ends_with("broken.png")).then(|| {
-                Arc::new(DecodedImage {
-                    width: 2,
-                    height: 2,
-                    rgba: vec![0; 16],
-                })
-            })
+            (!url.path().ends_with("broken.png"))
+                .then(|| Arc::new(DecodedImage::new(2, 2, vec![0; 16])))
         }
         fn intrinsic_size(&self, url: &url::Url) -> Option<ImageIntrinsicSize> {
-            (!url.path().ends_with("unsized.png")).then_some(ImageIntrinsicSize {
-                width: Some(2.0),
-                height: Some(2.0),
-                aspect_ratio: Some(1.0),
-            })
+            (!url.path().ends_with("unsized.png")).then_some(ImageIntrinsicSize::new(
+                Some(2.0),
+                Some(2.0),
+                Some(1.0),
+            ))
         }
     }
     let (mut doc, cascade, p) = content_image_document(
@@ -544,11 +461,7 @@ fn extracted_documents_keep_the_content_images_of_listed_elements() {
     doc.prepare_list_marker_images(
         &cascade,
         &VectorMarker {
-            intrinsic: ImageIntrinsicSize {
-                width: Some(4.0),
-                height: Some(2.0),
-                aspect_ratio: Some(2.0),
-            },
+            intrinsic: ImageIntrinsicSize::new(Some(4.0), Some(2.0), Some(2.0)),
         },
         None,
     );
@@ -573,12 +486,9 @@ fn extracted_documents_keep_the_content_images_of_listed_elements() {
 #[test]
 fn replacing_content_images_obey_min_and_max_sizes() {
     use raikiri_style::ComputedLengthPercentageOrAuto as Length;
-    let natural =
-        |width: Option<f32>, height: Option<f32>, ratio: Option<f32>| ImageIntrinsicSize {
-            width,
-            height,
-            aspect_ratio: ratio,
-        };
+    let natural = |width: Option<f32>, height: Option<f32>, ratio: Option<f32>| {
+        ImageIntrinsicSize::new(width, height, ratio)
+    };
     let wide = natural(Some(100.0), Some(50.0), None);
     let px = Length::Px;
     let auto = Length::Auto;
@@ -714,11 +624,7 @@ fn prepared_replacing_content_images_use_the_pseudo_elements_max_width() {
     doc.prepare_list_marker_images(
         &cascade,
         &VectorMarker {
-            intrinsic: ImageIntrinsicSize {
-                width: Some(4.0),
-                height: Some(2.0),
-                aspect_ratio: Some(2.0),
-            },
+            intrinsic: ImageIntrinsicSize::new(Some(4.0), Some(2.0), Some(2.0)),
         },
         None,
     );
@@ -762,11 +668,7 @@ fn content_images_of_unrendered_owners_are_not_decoded_or_charged() {
     doc.prepare_list_marker_images_with_budget(
         &cascade,
         &VectorMarker {
-            intrinsic: ImageIntrinsicSize {
-                width: Some(4.0),
-                height: Some(2.0),
-                aspect_ratio: Some(2.0),
-            },
+            intrinsic: ImageIntrinsicSize::new(Some(4.0), Some(2.0), Some(2.0)),
         },
         None,
         32,
@@ -789,11 +691,7 @@ fn a_covering_content_image_too_large_for_the_budget_is_rastered_at_its_box_area
             None
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: Some(1.0),
-                height: Some(1.0),
-                aspect_ratio: Some(1.0),
-            })
+            Some(ImageIntrinsicSize::new(Some(1.0), Some(1.0), Some(1.0)))
         }
         fn get_decoded_at_size(
             &self,
@@ -807,11 +705,11 @@ fn a_covering_content_image_too_large_for_the_budget_is_rastered_at_its_box_area
             if limit.is_some_and(|limit| bytes > limit) {
                 return None;
             }
-            Some(Arc::new(DecodedImage {
+            Some(Arc::new(DecodedImage::new(
                 width,
                 height,
-                rgba: vec![0; bytes as usize],
-            }))
+                vec![0; bytes as usize],
+            )))
         }
     }
     // The 40x4 box covered by a square image holds a 40x40 object, which
@@ -845,11 +743,11 @@ fn a_content_image_clipped_on_one_axis_is_rastered_at_its_visible_area() {
             None
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: Some(1000.0),
-                height: Some(1.0),
-                aspect_ratio: Some(1000.0),
-            })
+            Some(ImageIntrinsicSize::new(
+                Some(1000.0),
+                Some(1.0),
+                Some(1000.0),
+            ))
         }
         fn get_decoded_at_size(
             &self,
@@ -863,11 +761,11 @@ fn a_content_image_clipped_on_one_axis_is_rastered_at_its_visible_area() {
             if limit.is_some_and(|limit| bytes > limit) {
                 return None;
             }
-            Some(Arc::new(DecodedImage {
+            Some(Arc::new(DecodedImage::new(
                 width,
                 height,
-                rgba: vec![0; bytes as usize],
-            }))
+                vec![0; bytes as usize],
+            )))
         }
     }
     // The 1000x1 object protrudes from its 100x100 box only sideways, so it
@@ -891,11 +789,7 @@ fn a_content_image_moved_out_of_its_box_is_rastered_at_its_visible_area() {
             None
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: Some(50.0),
-                height: Some(50.0),
-                aspect_ratio: Some(1.0),
-            })
+            Some(ImageIntrinsicSize::new(Some(50.0), Some(50.0), Some(1.0)))
         }
         fn get_decoded_at_size(
             &self,
@@ -909,11 +803,11 @@ fn a_content_image_moved_out_of_its_box_is_rastered_at_its_visible_area() {
             if limit.is_some_and(|limit| bytes > limit) {
                 return None;
             }
-            Some(Arc::new(DecodedImage {
+            Some(Arc::new(DecodedImage::new(
                 width,
                 height,
-                rgba: vec![0; bytes as usize],
-            }))
+                vec![0; bytes as usize],
+            )))
         }
     }
     // The 50x50 object fits its 100x100 box, but `object-position` leaves
@@ -939,11 +833,11 @@ fn a_content_image_of_extreme_ratio_falls_back_to_its_visible_area() {
             None
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: Some(100_000_000.0),
-                height: Some(1.0),
-                aspect_ratio: Some(100_000_000.0),
-            })
+            Some(ImageIntrinsicSize::new(
+                Some(100_000_000.0),
+                Some(1.0),
+                Some(100_000_000.0),
+            ))
         }
         fn get_decoded_at_size(
             &self,
@@ -957,11 +851,11 @@ fn a_content_image_of_extreme_ratio_falls_back_to_its_visible_area() {
             if limit.is_some_and(|limit| bytes > limit) {
                 return None;
             }
-            Some(Arc::new(DecodedImage {
-                width: width as u32,
-                height: height as u32,
-                rgba: vec![0; bytes as usize],
-            }))
+            Some(Arc::new(DecodedImage::new(
+                width as u32,
+                height as u32,
+                vec![0; bytes as usize],
+            )))
         }
     }
     // Only 100 pixels of the object show in its 100x100 box; scaling it by

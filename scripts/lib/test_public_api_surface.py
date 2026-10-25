@@ -588,6 +588,19 @@ class FirstTierTests(unittest.TestCase):
         )
         self.assertEqual(surface.read_first_tier_names(text), ["lib::A"])
 
+    def test_the_value_types_are_read_from_their_own_markers(self) -> None:
+        text = (
+            f"{surface.FIRST_TIER_BEGIN}\n```text\nlib::A\n```\n{surface.FIRST_TIER_END}\n"
+            f"{surface.VALUE_TYPES_BEGIN}\n```text\nlib::Id\nlib::m::Color\n```\n{surface.VALUE_TYPES_END}\n"
+        )
+        self.assertEqual(surface.read_value_types(text), ["lib::Id", "lib::m::Color"])
+        self.assertEqual(surface.read_first_tier_names(text), ["lib::A"])
+
+    def test_a_value_type_line_that_is_not_a_path_is_refused_with_its_own_name_for_the_list(self) -> None:
+        text = f"{surface.VALUE_TYPES_BEGIN}\nlib::A,\n{surface.VALUE_TYPES_END}\n"
+        with self.assertRaisesRegex(ValueError, "value-type markers"):
+            surface.read_value_types(text)
+
     def test_a_line_between_the_markers_that_is_not_a_path_is_refused(self) -> None:
         text = f"{surface.FIRST_TIER_BEGIN}\n```text\nlib::A\nlib::B,\n```\n{surface.FIRST_TIER_END}\n"
         with self.assertRaisesRegex(ValueError, "lib::B,"):

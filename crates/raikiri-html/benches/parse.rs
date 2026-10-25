@@ -76,21 +76,13 @@ fn bench_parse(c: &mut Criterion) {
             4,
         ),
     ] {
-        let opts = ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
+        let opts = ParseOptions::new(); // cov:ignore: bench harness — bench target never built under `cargo llvm-cov --workspace`
         let doc = parse(html.as_slice(), &opts).expect("parse sanity");
         assert!(doc.dom.node_count() > min_nodes);
         group.throughput(Throughput::Elements(n_elems));
         group.bench_function(name, |b| {
             b.iter(|| {
-                let opts = ParseOptions {
-                    extra_stylesheets: &[],
-                    network: None,
-                    base_url: None,
-                };
+                let opts = ParseOptions::new(); // cov:ignore: bench harness — bench target never built under `cargo llvm-cov --workspace`
                 let doc = parse(html.as_slice(), &opts).expect("parse");
                 std::hint::black_box(doc);
             });

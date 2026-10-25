@@ -226,15 +226,8 @@ fn animation_style_sidecar_survives_adjacent_text_node_serialization() {
     let prepared = prepare(html, &path, "", crate::reftest::ReftestConfig::default())
         .expect("animated document should prepare");
 
-    let parsed = raikiri_html::parse(
-        prepared.html.as_bytes(),
-        &raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let parsed =
+        raikiri_html::parse(prepared.html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
     let mut document = parsed.dom;
     super::super::restore_animation_styles(&mut document, &prepared.animation_styles).unwrap();
     let target = (0..document.node_count())
@@ -266,15 +259,8 @@ fn focus_sidecar_survives_adjacent_text_node_serialization() {
     assert_eq!(focused.path, [0, 1, 0]);
     assert!(!focused.visible);
 
-    let parsed = raikiri_html::parse(
-        prepared.html.as_bytes(),
-        &raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let parsed =
+        raikiri_html::parse(prepared.html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
     let mut document = parsed.dom;
     super::super::restore_focus(&mut document, focused);
     let target = (0..document.node_count())
@@ -303,15 +289,8 @@ fn focus_sidecar_is_dropped_when_reparsing_restructures_the_path() {
     let names = focused.tags.iter().map(|(_, tag)| tag.as_str());
     assert!(names.eq(["html", "body", "table", "tr"]));
 
-    let parsed = raikiri_html::parse(
-        prepared.html.as_bytes(),
-        &raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let parsed =
+        raikiri_html::parse(prepared.html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
     let mut document = parsed.dom;
     super::super::restore_focus(&mut document, focused);
 
@@ -334,15 +313,8 @@ fn focus_sidecar_is_dropped_when_reparsing_changes_a_namespace() {
         .expect("focus should be recorded");
     assert_eq!(focused.path, [0, 1, 0]);
 
-    let parsed = raikiri_html::parse(
-        prepared.html.as_bytes(),
-        &raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let parsed =
+        raikiri_html::parse(prepared.html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
     let mut document = parsed.dom;
     super::super::restore_focus(&mut document, focused);
 

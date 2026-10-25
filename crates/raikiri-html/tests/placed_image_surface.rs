@@ -27,11 +27,7 @@ struct Source {
 impl Source {
     fn new(scenes: bool) -> Self {
         Self {
-            pixels: Arc::new(DecodedImage {
-                width: 4,
-                height: 2,
-                rgba: [255, 0, 0, 255].repeat(8),
-            }),
+            pixels: Arc::new(DecodedImage::new(4, 2, [255, 0, 0, 255].repeat(8))),
             scenes,
             pixel_requests: Mutex::new(Vec::new()),
             scene_requests: Mutex::new(Vec::new()),
@@ -53,11 +49,7 @@ impl ImagePixelSource for Source {
     }
 
     fn intrinsic_size(&self, _url: &Url) -> Option<ImageIntrinsicSize> {
-        Some(ImageIntrinsicSize {
-            width: Some(4.0),
-            height: Some(2.0),
-            aspect_ratio: Some(2.0),
-        })
+        Some(ImageIntrinsicSize::new(Some(4.0), Some(2.0), Some(2.0)))
     }
 
     fn get_decoded_at_size(
@@ -79,10 +71,10 @@ impl ImagePixelSource for Source {
 
 impl ReplacedResolver for Source {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(4.0, 2.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(4.0, 2.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 
@@ -448,11 +440,7 @@ fn an_image_without_a_source_answer_is_not_placed() {
             None
         }
         fn intrinsic_size(&self, _url: &Url) -> Option<ImageIntrinsicSize> {
-            Some(ImageIntrinsicSize {
-                width: Some(4.0),
-                height: Some(2.0),
-                aspect_ratio: Some(2.0),
-            })
+            Some(ImageIntrinsicSize::new(Some(4.0), Some(2.0), Some(2.0)))
         }
     }
     assert!(page.placed_image(&fragment, &SizedOnly).is_none());

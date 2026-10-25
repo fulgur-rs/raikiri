@@ -131,11 +131,7 @@ impl ImageDto {
         }
         Ok(ImagePixels {
             size: self.size,
-            image: std::sync::Arc::new(DecodedImage {
-                width: self.width,
-                height: self.height,
-                rgba: self.rgba,
-            }),
+            image: std::sync::Arc::new(DecodedImage::new(self.width, self.height, self.rgba)),
         })
     }
 }

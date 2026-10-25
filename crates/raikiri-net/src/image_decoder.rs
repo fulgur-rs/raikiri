@@ -76,11 +76,7 @@ impl ImageDecoder {
                 pixels.len()
             ));
         }
-        Ok(DecodedImage {
-            width,
-            height,
-            rgba: pixels,
-        })
+        Ok(DecodedImage::new(width, height, pixels))
     }
 }
 

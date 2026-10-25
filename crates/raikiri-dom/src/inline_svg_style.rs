@@ -178,15 +178,12 @@ fn inherit_from_instantiating_use<'a>(
         properties
             .iter()
             .map(|property| {
-                if outside(property) {
-                    SvgStyleProperty {
-                        inherited: true,
-                        inherited_from: None,
-                        ..property.clone()
-                    }
-                } else {
-                    property.clone()
+                let mut property = property.clone();
+                if outside(&property) {
+                    property.inherited = true;
+                    property.inherited_from = None;
                 }
+                property
             })
             .collect(),
     )

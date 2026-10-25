@@ -385,10 +385,7 @@ fn resolve_overflow_clip_edges(
             overflow
         }
     };
-    let overflow = OverflowXY {
-        x: used(overflow.x),
-        y: used(overflow.y),
-    };
+    let overflow = OverflowXY::new(used(overflow.x), used(overflow.y));
     // An omitted box is the content box on a replaced element and the
     // padding box otherwise (CSS Overflow 4 §3.2).
     let visual_box = margin.visual_box.unwrap_or(if replaced {

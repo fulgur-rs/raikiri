@@ -14,11 +14,7 @@ use raikiri_style::{MediaContext, cascade_with_media_context};
 
 // cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn bench_prepare(c: &mut Criterion) {
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     for stage in ["parse_document", "rule_tree_document"] {
         let mut group = c.benchmark_group(stage);
         group.sample_size(20);

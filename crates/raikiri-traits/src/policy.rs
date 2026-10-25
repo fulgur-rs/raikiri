@@ -88,6 +88,7 @@ impl std::fmt::Display for ResourceKind {
 
 /// Details of a policy violation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PolicyViolation {
     /// Resource kind for which the violation occurred.
     pub kind: ResourceKind,
@@ -97,6 +98,23 @@ pub struct PolicyViolation {
     pub violation_type: ViolationType,
     /// Human-readable details.
     pub details: String,
+}
+
+impl PolicyViolation {
+    /// A violation of `violation_type` by a `kind` resource at `url`.
+    pub fn new(
+        kind: ResourceKind,
+        url: Url,
+        violation_type: ViolationType,
+        details: String,
+    ) -> Self {
+        Self {
+            kind,
+            url,
+            violation_type,
+            details,
+        }
+    }
 }
 
 impl std::fmt::Display for PolicyViolation {

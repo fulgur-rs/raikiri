@@ -8,13 +8,13 @@ fn measures_are_kept_apart_per_optical_sizing() {
         measured: Mutex::default(),
         ch_measured: Mutex::default(),
     };
-    let mut font = ChFontKey {
-        family: Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
-        size: ComputedLength(20.0),
-        weight: 400.0,
-        style: FontStyle::Normal,
-        optical_sizing: FontOpticalSizing::Auto,
-    };
+    let mut font = ChFontKey::new(
+        Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        ComputedLength(20.0),
+        400.0,
+        FontStyle::Normal,
+        FontOpticalSizing::Auto,
+    );
     for optical_sizing in [FontOpticalSizing::Auto, FontOpticalSizing::None] {
         font.optical_sizing = optical_sizing;
         // The second lookup of each key is served from the cache.
@@ -37,13 +37,13 @@ fn ch_advances_are_cached_independently_of_normal_line_height() {
         measured: Mutex::default(),
         ch_measured: Mutex::default(),
     };
-    let font = ChFontKey {
-        family: Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
-        size: ComputedLength(20.0),
-        weight: 400.0,
-        style: FontStyle::Normal,
-        optical_sizing: FontOpticalSizing::Auto,
-    };
+    let font = ChFontKey::new(
+        Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        ComputedLength(20.0),
+        400.0,
+        FontStyle::Normal,
+        FontOpticalSizing::Auto,
+    );
 
     assert_eq!(measurer.ch_advance(&font), Some(ComputedLength(20.0)));
     assert_eq!(measurer.ch_advance(&font), Some(ComputedLength(20.0)));

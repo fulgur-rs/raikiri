@@ -2388,6 +2388,7 @@ pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextSh
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum FontShorthandSize {
     /// `<length-percentage>`: [`parse_font_size`] returns the
     /// [`PropertyValue::FontSize`] variant, into which this component expands.
@@ -2483,6 +2484,7 @@ pub enum FontShorthandSize {
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct FontShorthand {
     /// `font-style` component: defaults to [`FontStyle::Normal`] (initial value in the specification).
     pub style: FontStyle,

@@ -47,10 +47,7 @@ impl<N: NetworkProvider> ReplacedResolver for ImageResolver<N> {
         let size = default_object_size(source.intrinsic);
         let mut intrinsic = IntrinsicBox::new(size.width, size.height);
         intrinsic.aspect_ratio = source.intrinsic.aspect_ratio;
-        Ok(ResolvedIntrinsic {
-            intrinsic,
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(intrinsic, ResolveDisposition::Ok))
     }
 }
 

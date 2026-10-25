@@ -538,11 +538,11 @@ fn draw_rt_sized(size: Option<(f64, f64)>) -> (DomRuntime, usize) {
             IMAGE.to_owned(),
             ImagePixels {
                 size,
-                image: std::sync::Arc::new(raikiri_traits::DecodedImage {
-                    width: 2,
-                    height: 2,
-                    rgba: [RED, GREEN, BLUE, HALF_WHITE].concat(),
-                }),
+                image: std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                    2,
+                    2,
+                    [RED, GREEN, BLUE, HALF_WHITE].concat(),
+                )),
             },
         );
     }

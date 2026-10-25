@@ -2,8 +2,8 @@
 //! (stylesheets, `@import`, images, fonts, and replaced resources).
 
 use raikiri_traits::{
-    AbortSignal, Body, Method, NetworkError, PolicyViolation, Request, ResourceKind,
-    ResourcePolicy, ViolationType, WarningKind,
+    AbortSignal, NetworkError, PolicyViolation, Request, ResourceKind, ResourcePolicy,
+    ViolationType, WarningKind,
 };
 use url::Url;
 
@@ -41,15 +41,7 @@ pub(crate) fn mime_essence(content_type: &str) -> &str {
 /// front; a signal that fires mid-fetch does not interrupt bytes already in
 /// flight.
 pub(crate) fn get_request(url: Url, kind: ResourceKind, signal: Option<&AbortSignal>) -> Request {
-    Request {
-        url,
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: signal.cloned(),
-        kind,
-    }
+    Request::new(url, kind).signal(signal.cloned())
 }
 
 /// The scheme or host rule of `policy` that denies `url` for `kind`, if any.

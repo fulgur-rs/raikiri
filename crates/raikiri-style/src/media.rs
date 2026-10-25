@@ -13,6 +13,7 @@ use crate::resolve::{ComputedLength, ResolveContext, resolve_length};
 
 /// The media type selected for a cascade evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MediaType {
     /// Paged output.
     Print,

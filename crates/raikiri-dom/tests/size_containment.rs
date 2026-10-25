@@ -35,10 +35,10 @@ impl ImagePixelSource for Pixels {
 
 impl ReplacedResolver for Pixels {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(8.0, 4.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(8.0, 4.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 
@@ -52,11 +52,11 @@ fn fragments(body: &str, id: &str) -> (Vec<Fragment>, u32) {
         .font_bytes("Ahem", AHEM.to_vec())
         .build()
         .expect("fonts");
-    let pixels = Pixels(Arc::new(DecodedImage {
-        width: 8,
-        height: 4,
-        rgba: [0, 0, 255, 255].repeat(32),
-    }));
+    let pixels = Pixels(Arc::new(DecodedImage::new(
+        8,
+        4,
+        [0, 0, 255, 255].repeat(32),
+    )));
     let resources = RenderResources::new()
         .fonts(fonts)
         .base_url(Url::parse("https://size.test/document.html").expect("url"))

@@ -3,7 +3,7 @@ use super::image_cache::{
 };
 use super::*;
 use raikiri_traits::{
-    Body, FetchOutcome, FetchedResource, ImagePixelSource, ImageRasterSize, Method, NetworkError,
+    FetchOutcome, FetchedResource, ImagePixelSource, ImageRasterSize, NetworkError,
     NetworkProvider, Request, ResourceKind,
 };
 use std::sync::Mutex;
@@ -24,12 +24,10 @@ impl NetworkProvider for BoundedRedirectProbe {
             return Err(NetworkError::Other("probe safety stop".to_owned()));
         }
         if self.redirects == Some(index) {
-            return Ok(FetchOutcome::Body(FetchedResource {
-                bytes: b"body".as_slice().into(),
-                content_type: None,
-                final_url: request.url,
-                encoding: None,
-            }));
+            return Ok(FetchOutcome::Body(FetchedResource::new(
+                b"body".as_slice().into(),
+                request.url,
+            )));
         }
         let location = if self.self_loop {
             request.url
@@ -54,15 +52,10 @@ fn fetch_redirect_probe(
         limits: ResourceLimits::default(),
         budget: Arc::new(Mutex::new(0)),
     }
-    .fetch(Request {
-        url: Url::parse("https://redirect.test/0").unwrap(),
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
+    .fetch(Request::new(
+        Url::parse("https://redirect.test/0").unwrap(),
         kind,
-    })
+    ))
 }
 
 #[test]
@@ -199,12 +192,10 @@ impl NetworkProvider for SvgNetworkProvider {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((request.url, request.kind));
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: TWO_COLOR_SVG.into(),
-            content_type: Some("image/svg+xml".into()),
-            final_url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(TWO_COLOR_SVG.into(), final_url)
+                .content_type(Some("image/svg+xml".into())),
+        ))
     }
 }
 
@@ -307,12 +298,9 @@ impl NetworkProvider for StylesheetAndSvgProvider {
         } else {
             (TWO_COLOR_SVG.to_vec(), "image/svg+xml")
         };
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: bytes.into(),
-            content_type: Some(content_type.into()),
-            final_url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(bytes.into(), final_url).content_type(Some(content_type.into())),
+        ))
     }
 }
 
@@ -851,10 +839,10 @@ impl raikiri_traits::ReplacedResolver for StubImageProvider {
         &self,
         _req: raikiri_traits::ResolverRequest<'_>,
     ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
-        Ok(raikiri_traits::ResolvedIntrinsic {
-            intrinsic: raikiri_traits::IntrinsicBox::new(2.0, 1.0),
-            disposition: raikiri_traits::ResolveDisposition::Ok,
-        })
+        Ok(raikiri_traits::ResolvedIntrinsic::new(
+            raikiri_traits::IntrinsicBox::new(2.0, 1.0),
+            raikiri_traits::ResolveDisposition::Ok,
+        ))
     }
 }
 
@@ -961,12 +949,10 @@ impl NetworkProvider for CountingPngProvider {
             return Err(NetworkError::Aborted);
         }
         let final_url = request.url.clone();
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: self.bytes.clone().into(),
-            content_type: Some("image/png".into()),
-            final_url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(self.bytes.clone().into(), final_url)
+                .content_type(Some("image/png".into())),
+        ))
     }
 }
 
@@ -1229,11 +1215,7 @@ fn cache_insert_paths_cover_per_context_and_replace_branches() {
     let url = Url::parse("https://images.test/cache.png").unwrap();
     assert_eq!(cache.prior_bytes(&url), 0);
     assert_eq!(cache.remaining_for(&url), 128 * 1024 * 1024);
-    let small = Arc::new(DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![0, 0, 0, 0],
-    });
+    let small = Arc::new(DecodedImage::new(1, 1, vec![0, 0, 0, 0]));
     cache
         .insert_raster(
             url.clone(),
@@ -1247,11 +1229,7 @@ fn cache_insert_paths_cover_per_context_and_replace_branches() {
         .expect("small insert fits");
     assert_eq!(cache.prior_bytes(&url), 4);
     assert_eq!(budget.retained(), 4);
-    let tiny = Arc::new(DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![1, 2, 3, 4],
-    });
+    let tiny = Arc::new(DecodedImage::new(1, 1, vec![1, 2, 3, 4]));
     cache
         .insert_raster(
             url.clone(),
@@ -1281,11 +1259,7 @@ fn cache_insert_paths_cover_per_context_and_replace_branches() {
     assert_eq!(budget.retained(), 0);
     let mut tight = DecodedImageCache::new(Arc::new(ProcessImageBudget::new(1024 * 1024, 4)));
     tight.max_bytes = 10;
-    let big = Arc::new(DecodedImage {
-        width: 4,
-        height: 4,
-        rgba: vec![0; 64],
-    });
+    let big = Arc::new(DecodedImage::new(4, 4, vec![0; 64]));
     assert!(
         tight
             .insert_raster(
@@ -1909,11 +1883,7 @@ fn cache_smaller_replace_releases_process_bytes() {
     let budget = Arc::new(ProcessImageBudget::new(1024 * 1024, 4));
     let mut cache = DecodedImageCache::new(Arc::clone(&budget));
     let url = Url::parse("https://images.test/shrink.png").unwrap();
-    let big = Arc::new(DecodedImage {
-        width: 4,
-        height: 4,
-        rgba: vec![0; 64],
-    });
+    let big = Arc::new(DecodedImage::new(4, 4, vec![0; 64]));
     cache
         .insert_raster(
             url.clone(),
@@ -1926,11 +1896,7 @@ fn cache_smaller_replace_releases_process_bytes() {
         )
         .expect("big insert fits");
     assert_eq!(budget.retained(), 64);
-    let small = Arc::new(DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![0; 4],
-    });
+    let small = Arc::new(DecodedImage::new(1, 1, vec![0; 4]));
     cache
         .insert_raster(
             url.clone(),
@@ -2198,11 +2164,11 @@ fn cache_keeps_svg_rasters_of_several_sizes_within_the_budget() {
                 width: side as f32,
                 height: side as f32,
             },
-            Arc::new(DecodedImage {
-                width: side,
-                height: side,
-                rgba: vec![0; (side * side * 4) as usize],
-            }),
+            Arc::new(DecodedImage::new(
+                side,
+                side,
+                vec![0; (side * side * 4) as usize],
+            )),
         )
     };
     let insert = |cache: &mut DecodedImageCache, side: u32| {
@@ -2254,11 +2220,11 @@ fn cache_evicts_svg_rasters_for_the_process_budget() {
                 width: side as f32,
                 height: side as f32,
             },
-            Arc::new(DecodedImage {
-                width: side,
-                height: side,
-                rgba: vec![0; (side * side * 4) as usize],
-            }),
+            Arc::new(DecodedImage::new(
+                side,
+                side,
+                vec![0; (side * side * 4) as usize],
+            )),
         )
     };
     insert(&mut cache, 3).unwrap();
@@ -2276,11 +2242,7 @@ fn cache_evicts_svg_rasters_for_the_process_budget() {
     assert_eq!(budget.retained(), 100);
     // Replacing the only raster with a smaller one releases the difference.
     let small = |cache: &mut DecodedImageCache| {
-        let image = Arc::new(DecodedImage {
-            width: 1,
-            height: 1,
-            rgba: vec![0; 4],
-        });
+        let image = Arc::new(DecodedImage::new(1, 1, vec![0; 4]));
         cache.insert_raster(
             url.clone(),
             CachedBackgroundSource::Svg(Arc::clone(&document)),
@@ -2433,11 +2395,7 @@ fn cached_raster_backgrounds_answer_the_pixel_source_queries() {
     assert_eq!((decoded.width, decoded.height), (4, 2));
     assert_eq!(
         resources.intrinsic_size(&url),
-        Some(ImageIntrinsicSize {
-            width: Some(4.0),
-            height: Some(2.0),
-            aspect_ratio: Some(2.0),
-        })
+        Some(ImageIntrinsicSize::new(Some(4.0), Some(2.0), Some(2.0)))
     );
     assert_eq!(resources.decoded_byte_len(&url), Some(4 * 2 * 4));
     let size = ImageRasterSize {
@@ -2477,11 +2435,8 @@ fn default_background_raster_size_fills_missing_dimensions() {
     use super::decode::default_background_raster_size;
 
     let size = |width: Option<f32>, height: Option<f32>, aspect_ratio: Option<f32>| {
-        let size = default_background_raster_size(ImageIntrinsicSize {
-            width,
-            height,
-            aspect_ratio,
-        });
+        let size =
+            default_background_raster_size(ImageIntrinsicSize::new(width, height, aspect_ratio));
         (size.width, size.height)
     };
     assert_eq!(size(Some(10.0), Some(20.0), Some(4.0)), (10.0, 20.0));
@@ -2531,12 +2486,10 @@ struct TypedProvider {
 
 impl NetworkProvider for TypedProvider {
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: bytes::Bytes::from_static(b"p {}"),
-            content_type: self.content_type.map(str::to_owned),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(bytes::Bytes::from_static(b"p {}"), request.url)
+                .content_type(self.content_type.map(str::to_owned)),
+        ))
     }
 }
 

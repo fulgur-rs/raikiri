@@ -1,11 +1,7 @@
 use super::*;
 
 fn natural(width: f32, height: f32) -> Option<ImageIntrinsicSize> {
-    Some(ImageIntrinsicSize {
-        width: Some(width),
-        height: Some(height),
-        aspect_ratio: None,
-    })
+    Some(ImageIntrinsicSize::new(Some(width), Some(height), None))
 }
 
 /// `border-image: <81×81 image> <slice> / <width> / <outset> <repeat>` with
@@ -300,11 +296,7 @@ fn auto_widths_use_each_natural_dimension_on_its_own() {
     let mut image = image(10.0, BorderImageRepeatKeyword::Stretch);
     image.width = Sides::all(BorderImageWidthSide::Auto);
     // A natural width but no natural height, as some SVG images have.
-    let natural = Some(ImageIntrinsicSize {
-        width: Some(40.0),
-        height: None,
-        aspect_ratio: None,
-    });
+    let natural = Some(ImageIntrinsicSize::new(Some(40.0), None, None));
     let geometry = border_image_geometry((0.0, 0.0, 100.0, 80.0), Sides::all(4.0), &image, natural)
         .expect("geometry");
     // Left and right use the 10px slice; top and bottom fall back to the
@@ -344,11 +336,7 @@ fn degenerate_boxes_and_tiles_have_no_geometry() {
 fn missing_natural_dimensions_fall_back_on_the_area() {
     let size = |width: Option<f32>, height: Option<f32>, aspect_ratio: Option<f32>| {
         default_sized(
-            Some(ImageIntrinsicSize {
-                width,
-                height,
-                aspect_ratio,
-            }),
+            Some(ImageIntrinsicSize::new(width, height, aspect_ratio)),
             200.0,
             100.0,
         )

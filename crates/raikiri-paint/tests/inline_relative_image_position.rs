@@ -76,14 +76,7 @@ fn inline_relative_image_uses_taffy_inset_once_when_painted() {
     );
 
     let url = Url::parse("file:///inline.png").unwrap();
-    let source = OneImageSource(
-        url,
-        Arc::new(DecodedImage {
-            width: 1,
-            height: 1,
-            rgba: vec![0, 0, 0, 255],
-        }),
-    );
+    let source = OneImageSource(url, Arc::new(DecodedImage::new(1, 1, vec![0, 0, 0, 255])));
     let mut scene = Scene::new();
     paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &source)
         .expect("paint succeeds");

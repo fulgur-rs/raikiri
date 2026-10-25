@@ -92,6 +92,7 @@ pub enum FetchOutcome {
 
 /// Complete fetch request information.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Request {
     /// Target URL (before redirects).
     pub url: Url,
@@ -109,8 +110,54 @@ pub struct Request {
     pub kind: ResourceKind,
 }
 
+impl Request {
+    /// A `GET` for `url` with no body, headers or abort signal.
+    pub fn new(url: Url, kind: ResourceKind) -> Self {
+        Self {
+            url,
+            method: Method::Get,
+            content_type: None,
+            headers: HeaderMap::new(),
+            body: Body::Empty,
+            signal: None,
+            kind,
+        }
+    }
+
+    /// Set the HTTP method.
+    pub fn method(mut self, method: Method) -> Self {
+        self.method = method;
+        self
+    }
+
+    /// Set the `Content-Type` of the body.
+    pub fn content_type(mut self, content_type: Option<String>) -> Self {
+        self.content_type = content_type;
+        self
+    }
+
+    /// Set the additional headers.
+    pub fn headers(mut self, headers: HeaderMap) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// Set the request body.
+    pub fn body(mut self, body: Body) -> Self {
+        self.body = body;
+        self
+    }
+
+    /// Set the abort signal.
+    pub fn signal(mut self, signal: Option<AbortSignal>) -> Self {
+        self.signal = signal;
+        self
+    }
+}
+
 /// Successful fetch response.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct FetchedResource {
     /// Raw response-body bytes.
     pub bytes: Bytes,
@@ -120,6 +167,31 @@ pub struct FetchedResource {
     pub final_url: Url,
     /// Explicit character encoding (otherwise inferred from MIME or BOM).
     pub encoding: Option<String>,
+}
+
+impl FetchedResource {
+    /// A response of `bytes` served from `final_url`, with no declared type or
+    /// encoding.
+    pub fn new(bytes: Bytes, final_url: Url) -> Self {
+        Self {
+            bytes,
+            content_type: None,
+            final_url,
+            encoding: None,
+        }
+    }
+
+    /// Set the `Content-Type` (parsed MIME type).
+    pub fn content_type(mut self, content_type: Option<String>) -> Self {
+        self.content_type = content_type;
+        self
+    }
+
+    /// Set the explicit character encoding.
+    pub fn encoding(mut self, encoding: Option<String>) -> Self {
+        self.encoding = encoding;
+        self
+    }
 }
 
 /// Representation of a request body.
@@ -176,6 +248,7 @@ impl AbortSignal {
 /// spawns a timer thread. Consumers manage timeouts in their own async
 /// runtime.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct AbortController {
     /// Signal managed by this controller.
     pub signal: AbortSignal,
@@ -242,3 +315,6 @@ impl std::error::Error for NetworkError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

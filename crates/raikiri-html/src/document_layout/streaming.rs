@@ -465,11 +465,8 @@ fn open_text_event_sources(
 }
 
 fn ignored_warning(id: usize, details: &str) -> RenderWarning {
-    RenderWarning {
-        kind: WarningKind::StreamingContentIgnored,
-        node_id: Some(NodeId(id as u64)),
-        details: details.to_owned(),
-    }
+    RenderWarning::new(WarningKind::StreamingContentIgnored, details.to_owned())
+        .node_id(Some(NodeId(id as u64)))
 }
 
 const LATE_FIXED: &str = "a position: fixed element arrived after pages were delivered";
@@ -530,10 +527,12 @@ impl Settings<'_, '_> {
         let body_sheets = collect_body_inline_stylesheet_ids(&parsed.dom);
         let kept = parsed.stylesheet_sources.len() - body_sheets.len();
         parsed.stylesheet_sources.truncate(kept);
-        ignored.extend(body_sheets.into_iter().map(|id| RenderWarning {
-            kind: WarningKind::StreamingContentIgnored,
-            node_id: Some(id),
-            details: "a <style> element inside <body> is not applied while streaming".to_owned(),
+        ignored.extend(body_sheets.into_iter().map(|id| {
+            RenderWarning::new(
+                WarningKind::StreamingContentIgnored,
+                "a <style> element inside <body> is not applied while streaming".to_owned(),
+            )
+            .node_id(Some(id))
         }));
 
         let network_ref = self

@@ -84,14 +84,19 @@ for.
 and exits 1 if there is anything. The first tier is what the `raikiri-html`
 names reach through their signatures, plus the names that the document lists
 between its `first-tier-names` markers (what fulgur uses from the other
-crates, and the network providers that a consumer hands to the API). Three
+crates, and the network providers that a consumer hands to the API). Five
 kinds of finding: a visible name that the first tier does not reach; a listed
-name that no crate publishes any more; and a link in the docs of a visible item
+name that no crate publishes any more; a link in the docs of a visible item
 to a hidden item, which the rendered docs show as a dead link (the fix is the
 bare name in a code span, not a `crate::…` path, which AGENTS.md keeps for
-intra-doc links). It is a report,
+intra-doc links); a visible type that `--exhaustive` lists and that the
+document does not list between its `value-types` markers; and a listed value
+type that `--exhaustive` does not list (it has `#[non_exhaustive]` now, or is
+hidden or gone). The value types are the ones that stay exhaustive on purpose,
+so the report says whether every other type has the attribute. It is a report,
 not part of the gate: a name it lists is either hidden with `#[doc(hidden)]` or
-added to the list because the consumer needs it.
+added to the list because the consumer needs it, and a type is given
+`#[non_exhaustive]` or listed as a value type.
 
 `--json-dir DIR` reads the JSON files from DIR (named `<crate with _>.json`)
 instead of running cargo.
@@ -591,13 +596,17 @@ FIRST_TIER_DOC = Path("docs") / "public-api.md"
 def run_first_tier(repo_root: Path, json_dir: Path) -> int:
     """Print what falls outside the first tier; 1 if there is anything.
 
-    Three kinds of finding: a visible name that the consumer API does not
+    Six kinds of finding: a visible name that the consumer API does not
     reach, a name in the list of docs/public-api.md that no crate publishes (or
-    publishes only as hidden), and a link in the docs of a visible item to a
-    hidden item.
+    publishes only as hidden), a link in the docs of a visible item to a hidden
+    item, a visible type that a user can still match or build completely
+    without the docs listing it as a value type, a listed value type that
+    is not exhaustive (any more), and a value type that the list names twice.
     """
     try:
-        listed = surface.read_first_tier_names((repo_root / FIRST_TIER_DOC).read_text(encoding="utf-8"))
+        markdown = (repo_root / FIRST_TIER_DOC).read_text(encoding="utf-8")
+        listed = surface.read_first_tier_names(markdown)
+        value_types = surface.read_value_types(markdown)
     except (OSError, ValueError) as error:
         raise ToolError(f"{FIRST_TIER_DOC}: {error}") from error
     docs = {crate.replace("-", "_"): load_doc(json_dir / json_file_name(crate)) for crate in PUBLISHED_CRATES}
@@ -618,16 +627,34 @@ def run_first_tier(repo_root: Path, json_dir: Path) -> int:
     dead = surface.hidden_doc_links(docs)
     for crate, item, text, target in dead:
         print(f"{crate}: the docs of {item} link {text} to the hidden {target}")
-    total = len(stale) + sum(len(found) for found in outside.values()) + len(dead)
+    exhaustive = {
+        name.path: (crate, name, detail)
+        for crate, doc in docs.items()
+        for name, detail in surface.exhaustive_types(doc)
+    }
+    unlisted = [entry for path, entry in sorted(exhaustive.items()) if path not in value_types]
+    for crate, name, detail in unlisted:
+        print(f"{crate}: {name.kind:10s} {name.path}  ({detail}) is exhaustive and not a listed value type")
+    kept = [path for path in value_types if path not in exhaustive]
+    for path in kept:
+        print(f"{FIRST_TIER_DOC}: listed value type {path} is not exhaustive (renamed, hidden, removed or #[non_exhaustive])")
+    twice = sorted({path for path in value_types if value_types.count(path) > 1})
+    for path in twice:
+        print(f"{FIRST_TIER_DOC}: value type {path} is listed more than once")
+    total = (
+        len(stale) + sum(len(found) for found in outside.values()) + len(dead) + len(unlisted) + len(kept) + len(twice)
+    )
     if total:
         print(
             f"FAIL: {total} finding(s). Hide each name outside the first tier with #[doc(hidden)] "
             f"(or make it crate-private), or list it in {FIRST_TIER_DOC} if fulgur uses it; drop a stale "
-            "listed name; write a link to a hidden item as the bare name in a code span (not a crate:: path).",
+            "listed name; write a link to a hidden item as the bare name in a code span (not a crate:: path); "
+            "put #[non_exhaustive] on each exhaustive type, or list it as a value type; drop a listed value "
+            "type that is not exhaustive or is listed twice.",
             file=sys.stderr,
         )
         return 1
-    print("PASS: every visible name of the published crates is in the first tier")
+    print("PASS: every visible name of the published crates is in the first tier and every exhaustive type is a listed value type")
     return 0
 
 

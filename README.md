@@ -45,11 +45,7 @@ Within the repository, the `raikiri` umbrella crate provides a single entry poin
 use raikiri::{build_cascaded, parse, ParseOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let document = parse(&b"<p style=\"color: red\">Hello, raikiri!</p>"[..], &options)?;
     let cascade = build_cascaded(&document);
 

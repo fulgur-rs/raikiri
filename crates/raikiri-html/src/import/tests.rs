@@ -203,12 +203,10 @@ impl NetworkProvider for MapProvider {
         else {
             return Err(NetworkError::Other("not found".to_owned()));
         };
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: Bytes::from(css),
-            content_type: self.content_type.clone(),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(Bytes::from(css), request.url)
+                .content_type(self.content_type.clone()),
+        ))
     }
 
     fn max_import_depth(&self) -> Option<u32> {
@@ -398,12 +396,14 @@ fn policy_failures_remain_opaque_and_are_reported_as_policy_warnings() {
 
     impl NetworkProvider for PolicyProvider {
         fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-            Err(NetworkError::PolicyViolation(Box::new(PolicyViolation {
-                kind: ResourceKind::StylesheetImport,
-                url: request.url,
-                violation_type: ViolationType::HostNotAllowed,
-                details: "blocked https://user:secret@example.test/token".to_owned(),
-            })))
+            Err(NetworkError::PolicyViolation(Box::new(
+                PolicyViolation::new(
+                    ResourceKind::StylesheetImport,
+                    request.url,
+                    ViolationType::HostNotAllowed,
+                    "blocked https://user:secret@example.test/token".to_owned(),
+                ),
+            )))
         }
     }
 
@@ -484,20 +484,20 @@ fn nested_imports_use_redirected_final_url_as_their_base() {
             let requested = request.url.to_string();
             self.requests.lock().unwrap().push(requested.clone());
             match requested.as_str() {
-                "https://origin.test/styles/nested.css" => {
-                    Ok(FetchOutcome::Body(FetchedResource {
-                        bytes: Bytes::from_static(b"@import \"grand.css\"; .nested { color: red }"),
-                        content_type: Some("text/css".to_owned()),
-                        final_url: Url::parse("https://cdn.test/assets/nested.css").unwrap(),
-                        encoding: None,
-                    }))
-                }
-                "https://cdn.test/assets/grand.css" => Ok(FetchOutcome::Body(FetchedResource {
-                    bytes: Bytes::from_static(b".grand { color: blue }"),
-                    content_type: Some("text/css".to_owned()),
-                    final_url: Url::parse("https://cdn.test/assets/grand.css").unwrap(),
-                    encoding: None,
-                })),
+                "https://origin.test/styles/nested.css" => Ok(FetchOutcome::Body(
+                    FetchedResource::new(
+                        Bytes::from_static(b"@import \"grand.css\"; .nested { color: red }"),
+                        Url::parse("https://cdn.test/assets/nested.css").unwrap(),
+                    )
+                    .content_type(Some("text/css".to_owned())),
+                )),
+                "https://cdn.test/assets/grand.css" => Ok(FetchOutcome::Body(
+                    FetchedResource::new(
+                        Bytes::from_static(b".grand { color: blue }"),
+                        Url::parse("https://cdn.test/assets/grand.css").unwrap(),
+                    )
+                    .content_type(Some("text/css".to_owned())),
+                )),
                 _ => Err(NetworkError::Other("not found".to_owned())),
             }
         }
@@ -613,12 +613,10 @@ fn shared_budget_stops_fetching_after_cumulative_response_limit() {
     impl NetworkProvider for LargeProvider {
         fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
             *self.requests.lock().unwrap() += 1;
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: self.response.clone(),
-                content_type: Some("text/css".to_owned()),
-                final_url: request.url,
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(self.response.clone(), request.url)
+                    .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 
@@ -1160,15 +1158,17 @@ fn import_byte_limit_violations_are_reported_as_resource_limits() {
 
     impl NetworkProvider for TooLargeProvider {
         fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-            Err(NetworkError::PolicyViolation(Box::new(PolicyViolation {
-                kind: ResourceKind::StylesheetImport,
-                url: request.url,
-                violation_type: ViolationType::FetchTooLarge {
-                    limit: 4,
-                    actual: 8,
-                },
-                details: "too large".to_owned(),
-            })))
+            Err(NetworkError::PolicyViolation(Box::new(
+                PolicyViolation::new(
+                    ResourceKind::StylesheetImport,
+                    request.url,
+                    ViolationType::FetchTooLarge {
+                        limit: 4,
+                        actual: 8,
+                    },
+                    "too large".to_owned(),
+                ),
+            )))
         }
     }
 
@@ -1219,12 +1219,13 @@ fn imports_redirected_to_credential_bearing_urls_are_not_applied() {
 
     impl NetworkProvider for CredentialRedirectProvider {
         fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from_static(b"p { color: red }"),
-                content_type: Some("text/css".to_owned()),
-                final_url: Url::parse("https://user:secret@cdn.test/a.css").unwrap(),
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(
+                    Bytes::from_static(b"p { color: red }"),
+                    Url::parse("https://user:secret@cdn.test/a.css").unwrap(),
+                )
+                .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 
@@ -1251,12 +1252,13 @@ fn imports_redirected_to_overlong_urls_are_not_applied() {
     impl NetworkProvider for LongRedirectProvider {
         fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
             let long = format!("https://cdn.test/{}.css", "a".repeat(MAX_IMPORT_URL_LENGTH));
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from_static(b"p { color: red }"),
-                content_type: Some("text/css".to_owned()),
-                final_url: Url::parse(&long).unwrap(),
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(
+                    Bytes::from_static(b"p { color: red }"),
+                    Url::parse(&long).unwrap(),
+                )
+                .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 

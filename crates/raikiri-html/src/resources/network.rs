@@ -36,12 +36,12 @@ impl ResourceNetworkProvider<'_> {
         violation_type: ViolationType,
         details: impl Into<String>,
     ) -> NetworkError {
-        NetworkError::PolicyViolation(Box::new(PolicyViolation {
-            kind: request.kind,
-            url: url.clone(),
+        NetworkError::PolicyViolation(Box::new(PolicyViolation::new(
+            request.kind,
+            url.clone(),
             violation_type,
-            details: details.into(),
-        }))
+            details.into(),
+        )))
     }
 
     fn check_url_policy(&self, request: &Request, url: &Url) -> Result<(), NetworkError> {
@@ -262,15 +262,13 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
         let Some(url) = resolve_url(source, self.base_url) else {
             push_resource_warning(
                 &self.warnings,
-                RenderWarning {
-                    kind: WarningKind::ResourceFallback {
+                RenderWarning::new(
+                    WarningKind::ResourceFallback {
                         kind: ResourceKind::Font,
                         url: None,
                     },
-                    node_id: None,
-                    details: "font-face source could not be resolved against the document base"
-                        .into(),
-                },
+                    "font-face source could not be resolved against the document base".into(),
+                ),
             );
             return None;
         };
@@ -292,15 +290,13 @@ impl NetworkFontFaceLoader<'_> {
         let Some(network) = self.network else {
             push_resource_warning(
                 &self.warnings,
-                RenderWarning {
-                    kind: WarningKind::ResourceFallback {
+                RenderWarning::new(
+                    WarningKind::ResourceFallback {
                         kind: ResourceKind::Font,
                         url: Some(redacted_url(url)),
                     },
-                    node_id: None,
-                    details: "font-face source skipped because no network provider is configured"
-                        .into(),
-                },
+                    "font-face source skipped because no network provider is configured".into(),
+                ),
             );
             return None;
         };
@@ -310,25 +306,22 @@ impl NetworkFontFaceLoader<'_> {
             Err(NetworkError::PolicyViolation(violation)) => {
                 push_resource_warning(
                     &self.warnings,
-                    RenderWarning {
-                        kind: policy_violation_warning_kind(&violation, ResourceKind::Font),
-                        node_id: None,
-                        details: "font-face source was denied by the resource policy".into(),
-                    },
+                    RenderWarning::new(
+                        policy_violation_warning_kind(&violation, ResourceKind::Font),
+                        "font-face source was denied by the resource policy".into(),
+                    ),
                 );
                 None
             }
             Err(_) => {
                 push_resource_warning(
                     &self.warnings,
-                    RenderWarning {
-                        kind: WarningKind::NetworkFallback {
+                    RenderWarning::new(
+                        WarningKind::NetworkFallback {
                             url: redacted_url(url),
                         },
-                        node_id: None,
-                        details: "font-face fetch failed; the family will use fallback fonts"
-                            .into(),
-                    },
+                        "font-face fetch failed; the family will use fallback fonts".into(),
+                    ),
                 );
                 None
             }

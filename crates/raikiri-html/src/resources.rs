@@ -523,30 +523,28 @@ impl<'a> RenderResources<'a> {
     }
 
     fn abort_warning(&self, url: &Url) -> RenderWarning {
-        RenderWarning {
-            kind: WarningKind::ResourceFallback {
+        RenderWarning::new(
+            WarningKind::ResourceFallback {
                 kind: ResourceKind::Image,
                 url: Some(redacted_url(url)),
             },
-            node_id: None,
-            details: "CSS background image decode was aborted; the image was skipped".into(),
-        }
+            "CSS background image decode was aborted; the image was skipped".into(),
+        )
     }
 
     fn timeout_warning(&self, url: &Url) -> RenderWarning {
-        let violation = PolicyViolation {
-            kind: ResourceKind::Image,
-            url: url.clone(),
-            violation_type: ViolationType::Timeout,
-            details: "CSS background image decode exceeded its time budget".to_owned(),
-        };
-        RenderWarning {
-            kind: WarningKind::PolicyWarning {
+        let violation = PolicyViolation::new(
+            ResourceKind::Image,
+            url.clone(),
+            ViolationType::Timeout,
+            "CSS background image decode exceeded its time budget".to_owned(),
+        );
+        RenderWarning::new(
+            WarningKind::PolicyWarning {
                 violation: sanitize_policy_violation(violation),
             },
-            node_id: None,
-            details: "CSS background image decode timed out; the image was skipped".into(),
-        }
+            "CSS background image decode timed out; the image was skipped".into(),
+        )
     }
 
     /// Preload the element and page-context background images of one full
@@ -805,21 +803,20 @@ impl<'a> RenderResources<'a> {
                 .policy
                 .and_then(|policy| url_policy_violation(policy, &original_url, ResourceKind::Image))
             {
-                let violation = PolicyViolation {
-                    kind: ResourceKind::Image,
-                    url: original_url.clone(),
+                let violation = PolicyViolation::new(
+                    ResourceKind::Image,
+                    original_url.clone(),
                     violation_type,
-                    details: "CSS background image URL denied by resource policy".to_owned(),
-                };
+                    "CSS background image URL denied by resource policy".to_owned(),
+                );
                 push_resource_warning(
                     warnings,
-                    RenderWarning {
-                        kind: WarningKind::PolicyWarning {
+                    RenderWarning::new(
+                        WarningKind::PolicyWarning {
                             violation: sanitize_policy_violation(violation),
                         },
-                        node_id: None,
-                        details: "CSS background image was denied by the resource policy".into(),
-                    },
+                        "CSS background image was denied by the resource policy".into(),
+                    ),
                 );
                 continue;
             }
@@ -836,15 +833,14 @@ impl<'a> RenderResources<'a> {
                 if *attempts == MAX_BACKGROUND_IMAGE_ATTEMPTS {
                     push_resource_warning(
                         warnings,
-                        RenderWarning {
-                            kind: WarningKind::ResourceLimitExceeded {
+                        RenderWarning::new(
+                            WarningKind::ResourceLimitExceeded {
                                 kind: ResourceKind::Image,
                                 limit: MAX_BACKGROUND_IMAGE_ATTEMPTS as u64,
                                 actual: (*attempts + 1) as u64,
                             },
-                            node_id: None,
-                            details: "CSS background image request limit was reached".into(),
-                        },
+                            "CSS background image request limit was reached".into(),
+                        ),
                     );
                     *attempts += 1;
                 }
@@ -901,42 +897,36 @@ impl<'a> RenderResources<'a> {
             return Some(self.abort_warning(&url));
         }
         let Some(network) = self.network_adapter() else {
-            return Some(RenderWarning {
-                kind: WarningKind::NetworkFallback {
+            return Some(RenderWarning::new(
+                WarningKind::NetworkFallback {
                     url: redacted_url(&url),
                 },
-                node_id: None,
-                details:
-                    "CSS background image was skipped because no network provider is configured"
-                        .into(),
-            });
+                "CSS background image was skipped because no network provider is configured".into(),
+            ));
         };
         let fetched = match network.fetch(get_request(url.clone(), ResourceKind::Image, signal)) {
             Ok(fetched) => fetched,
             Err(NetworkError::PolicyViolation(violation)) => {
-                return Some(RenderWarning {
-                    kind: policy_violation_warning_kind(&violation, ResourceKind::Image),
-                    node_id: None,
-                    details: "CSS background image was denied by the resource policy".into(),
-                });
+                return Some(RenderWarning::new(
+                    policy_violation_warning_kind(&violation, ResourceKind::Image),
+                    "CSS background image was denied by the resource policy".into(),
+                ));
             }
             Err(NetworkError::Aborted) => {
-                return Some(RenderWarning {
-                    kind: WarningKind::NetworkFallback {
+                return Some(RenderWarning::new(
+                    WarningKind::NetworkFallback {
                         url: redacted_url(&url),
                     },
-                    node_id: None,
-                    details: "CSS background image fetch was aborted; the image was skipped".into(),
-                });
+                    "CSS background image fetch was aborted; the image was skipped".into(),
+                ));
             }
             Err(_) => {
-                return Some(RenderWarning {
-                    kind: WarningKind::NetworkFallback {
+                return Some(RenderWarning::new(
+                    WarningKind::NetworkFallback {
                         url: redacted_url(&url),
                     },
-                    node_id: None,
-                    details: "CSS background image fetch failed; the image was skipped".into(),
-                });
+                    "CSS background image fetch failed; the image was skipped".into(),
+                ));
             }
         };
         self.decode_and_cache_bytes(url, fetched.bytes.to_vec(), fetched.content_type, signal)
@@ -976,15 +966,14 @@ impl<'a> RenderResources<'a> {
         start: Instant,
     ) -> Option<RenderWarning> {
         if bytes.len() > MAX_SVG_IMAGE_BYTES {
-            return Some(RenderWarning {
-                kind: WarningKind::ResourceLimitExceeded {
+            return Some(RenderWarning::new(
+                WarningKind::ResourceLimitExceeded {
                     kind: ResourceKind::Image,
                     limit: MAX_SVG_IMAGE_BYTES as u64,
                     actual: bytes.len() as u64,
                 },
-                node_id: None,
-                details: "SVG background image exceeded its input byte limit".into(),
-            });
+                "SVG background image exceeded its input byte limit".into(),
+            ));
         }
         match SvgDocument::parse(bytes) {
             Ok(document) => {
@@ -994,14 +983,13 @@ impl<'a> RenderResources<'a> {
                 self.cache_image_source(url, CachedBackgroundSource::Svg(Arc::new(document)));
                 None
             }
-            Err(_) => Some(RenderWarning {
-                kind: WarningKind::ResourceFallback {
+            Err(_) => Some(RenderWarning::new(
+                WarningKind::ResourceFallback {
                     kind: ResourceKind::Image,
                     url: Some(redacted_url(&url)),
                 },
-                node_id: None,
-                details: "CSS background SVG could not be parsed; the image was skipped".into(),
-            }),
+                "CSS background SVG could not be parsed; the image was skipped".into(),
+            )),
         }
     }
 
@@ -1030,16 +1018,14 @@ impl<'a> RenderResources<'a> {
                     ImageRasterSize { width, height },
                     image,
                 ) {
-                    return Some(RenderWarning {
-                        kind: WarningKind::ResourceLimitExceeded {
+                    return Some(RenderWarning::new(
+                        WarningKind::ResourceLimitExceeded {
                             kind: ResourceKind::Image,
                             limit,
                             actual,
                         },
-                        node_id: None,
-                        details: "decoded CSS background image exceeded its cache byte limit"
-                            .into(),
-                    });
+                        "decoded CSS background image exceeded its cache byte limit".into(),
+                    ));
                 }
                 None
             }
@@ -1056,29 +1042,25 @@ impl<'a> RenderResources<'a> {
         start: Instant,
     ) -> RenderWarning {
         match error {
-            BackgroundImageDecodeError::DecodedTooLarge { limit, actual } => RenderWarning {
-                kind: WarningKind::ResourceLimitExceeded {
+            BackgroundImageDecodeError::DecodedTooLarge { limit, actual } => RenderWarning::new(
+                WarningKind::ResourceLimitExceeded {
                     kind: ResourceKind::Image,
                     limit,
                     actual,
                 },
-                node_id: None,
-                details: "decoded CSS background image exceeded its per-image or cache byte limit"
-                    .into(),
-            },
+                "decoded CSS background image exceeded its per-image or cache byte limit".into(),
+            ),
             BackgroundImageDecodeError::Decode => {
                 if self.decode_timed_out(start.elapsed()) {
                     return self.timeout_warning(url);
                 }
-                RenderWarning {
-                    kind: WarningKind::ResourceFallback {
+                RenderWarning::new(
+                    WarningKind::ResourceFallback {
                         kind: ResourceKind::Image,
                         url: Some(redacted_url(url)),
                     },
-                    node_id: None,
-                    details: "CSS background image could not be decoded; the image was skipped"
-                        .into(),
-                }
+                    "CSS background image could not be decoded; the image was skipped".into(),
+                )
             }
         }
     }
@@ -1125,21 +1107,20 @@ impl<'a> RenderResources<'a> {
             .policy
             .and_then(|policy| url_policy_violation(policy, url, ResourceKind::Image));
         if let Some(violation_type) = violation_type {
-            let violation = PolicyViolation {
-                kind: ResourceKind::Image,
-                url: url.clone(),
+            let violation = PolicyViolation::new(
+                ResourceKind::Image,
+                url.clone(),
                 violation_type,
-                details: "inline image URL denied by resource policy".to_owned(),
-            };
+                "inline image URL denied by resource policy".to_owned(),
+            );
             push_resource_warning(
                 warnings,
-                RenderWarning {
-                    kind: WarningKind::PolicyWarning {
+                RenderWarning::new(
+                    WarningKind::PolicyWarning {
                         violation: sanitize_policy_violation(violation),
                     },
-                    node_id: None,
-                    details: "CSS background image was denied by the resource policy".into(),
-                },
+                    "CSS background image was denied by the resource policy".into(),
+                ),
             );
             return None;
         }
@@ -1184,24 +1165,22 @@ impl<'a> RenderResources<'a> {
                     .any(|allowed| allowed.eq_ignore_ascii_case(mime))
         });
         if mime_denied {
-            let violation = PolicyViolation {
-                kind: ResourceKind::Image,
-                url: url.clone(),
-                violation_type: ViolationType::MimeNotAllowed {
+            let violation = PolicyViolation::new(
+                ResourceKind::Image,
+                url.clone(),
+                ViolationType::MimeNotAllowed {
                     mime: mime.to_owned(),
                 },
-                details: "inline image MIME type denied by resource policy".to_owned(),
-            };
+                "inline image MIME type denied by resource policy".to_owned(),
+            );
             push_resource_warning(
                 warnings,
-                RenderWarning {
-                    kind: WarningKind::PolicyWarning {
+                RenderWarning::new(
+                    WarningKind::PolicyWarning {
                         violation: sanitize_policy_violation(violation),
                     },
-                    node_id: None,
-                    details: "CSS background image MIME type was denied by the resource policy"
-                        .into(),
-                },
+                    "CSS background image MIME type was denied by the resource policy".into(),
+                ),
             );
             return None;
         }

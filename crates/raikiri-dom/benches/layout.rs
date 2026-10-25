@@ -26,11 +26,7 @@ fn build_flat_html(n_divs: usize) -> Vec<u8> {
 
 fn prepare(n_divs: usize) -> (Vec<u8>, PageBox) {
     let html = build_flat_html(n_divs);
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new(); // cov:ignore: bench harness — bench target never built under `cargo llvm-cov --workspace`
     let uncascaded = parse(html.as_slice(), &opts).expect("parse sanity");
     assert!(uncascaded.dom.node_count() > n_divs);
     (html, PageBox::A4)
@@ -44,11 +40,7 @@ fn bench_layout(c: &mut Criterion) {
         group.bench_function(name, |b| {
             b.iter_batched(
                 || {
-                    let opts = ParseOptions {
-                        extra_stylesheets: &[],
-                        network: None,
-                        base_url: None,
-                    };
+                    let opts = ParseOptions::new(); // cov:ignore: bench harness — bench target never built under `cargo llvm-cov --workspace`
                     let uncascaded = parse(html.as_slice(), &opts).expect("parse");
                     let rule_tree = build_rule_tree(&uncascaded.dom);
                     let cascade_result = cascade(&uncascaded.dom, &rule_tree).expect("cascade");
@@ -103,11 +95,7 @@ fn bench_layout_ifc(c: &mut Criterion) {
         group.bench_function(name, |b| {
             b.iter_batched(
                 || {
-                    let opts = ParseOptions {
-                        extra_stylesheets: &[],
-                        network: None,
-                        base_url: None,
-                    };
+                    let opts = ParseOptions::new(); // cov:ignore: bench harness — bench target never built under `cargo llvm-cov --workspace`
                     let uncascaded = parse(html.as_slice(), &opts).expect("parse");
                     let rule_tree = build_rule_tree(&uncascaded.dom);
                     let cascade_result = cascade(&uncascaded.dom, &rule_tree).expect("cascade");

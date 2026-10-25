@@ -370,11 +370,11 @@ struct PlaceholderImages(Arc<DecodedImage>);
 impl PlaceholderImages {
     fn new() -> Self {
         let (width, height) = PLACEHOLDER_IMAGE;
-        Self(Arc::new(DecodedImage {
+        Self(Arc::new(DecodedImage::new(
             width,
             height,
-            rgba: [0, 0, 255, 255].repeat((width * height) as usize),
-        }))
+            [0, 0, 255, 255].repeat((width * height) as usize),
+        )))
     }
 }
 

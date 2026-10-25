@@ -8,12 +8,11 @@ impl raikiri_traits::NetworkProvider for StaticBytesProvider {
         _request: raikiri_traits::Request,
     ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
         Ok(raikiri_traits::FetchOutcome::Body(
-            raikiri_traits::FetchedResource {
-                bytes: self.0.to_vec().into(),
-                content_type: Some("image/png".into()),
-                final_url: url::Url::parse("file:///fixture.png").unwrap(),
-                encoding: None,
-            },
+            raikiri_traits::FetchedResource::new(
+                self.0.to_vec().into(),
+                url::Url::parse("file:///fixture.png").unwrap(),
+            )
+            .content_type(Some("image/png".into())),
         ))
     }
 }
@@ -37,12 +36,8 @@ impl raikiri_traits::NetworkProvider for StaticSvgProvider {
         request: raikiri_traits::Request,
     ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
         Ok(raikiri_traits::FetchOutcome::Body(
-            raikiri_traits::FetchedResource {
-                bytes: self.0.to_vec().into(),
-                content_type: Some("image/svg+xml".into()),
-                final_url: request.url,
-                encoding: None,
-            },
+            raikiri_traits::FetchedResource::new(self.0.to_vec().into(), request.url)
+                .content_type(Some("image/svg+xml".into())),
         ))
     }
 }

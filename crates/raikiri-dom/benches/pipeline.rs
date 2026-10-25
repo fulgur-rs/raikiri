@@ -26,11 +26,7 @@ use raikiri_style::{
 
 // cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
 fn parse_options() -> ParseOptions<'static> {
-    ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    }
+    ParseOptions::new()
 }
 
 /// Flat real HTML: `n_divs` `div`s under `body`, each carrying an `id`, a

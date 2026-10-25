@@ -21,6 +21,7 @@ use url::Url;
 /// failures as [`raikiri_traits::WarningKind::NetworkFallback`] or
 /// [`raikiri_traits::WarningKind::PolicyWarning`].
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct UncascadedDocument {
     /// DOM tree (raikiri-dom arena).
     pub dom: Document,
@@ -45,12 +46,33 @@ pub struct UncascadedDocument {
     pub quirks_mode: raikiri_traits::QuirksMode,
 }
 
+impl UncascadedDocument {
+    /// A parsed document with no warnings.
+    pub fn new(
+        dom: Document,
+        stylesheet_sources: Vec<StylesheetSource>,
+        user_stylesheet_sources: Vec<StylesheetSource>,
+        user_stylesheet_insertion_index: usize,
+        quirks_mode: raikiri_traits::QuirksMode,
+    ) -> Self {
+        Self {
+            dom,
+            stylesheet_sources,
+            user_stylesheet_sources,
+            user_stylesheet_insertion_index,
+            warnings: Vec::new(),
+            quirks_mode,
+        }
+    }
+}
+
 /// One stylesheet root with imports resolved into source-ordered parts.
 ///
 /// A part remains a top-level stylesheet, so its namespace declarations and
 /// descriptor rules retain their original scope. The element media attribute
 /// applies to every part, in conjunction with the part's import conditions.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct StylesheetSource {
     /// Parts in the order they enter the cascade.
     pub parts: Vec<StylesheetPart>,
@@ -73,6 +95,7 @@ impl StylesheetSource {
 
 /// Top-level CSS text guarded by the media lists of its importing ancestors.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct StylesheetPart {
     /// CSS text parsed in its own stylesheet namespace scope.
     pub source: String,
@@ -92,6 +115,11 @@ pub struct StylesheetPart {
 /// or which hit cycle, depth, or resource limits, remain opaque at-rules while
 /// parsing continues. Fetching external resources for replaced elements
 /// (such as `<img>`) remains outside this task's scope and is not yet implemented.
+///
+/// The default adds no stylesheet, fetches nothing and has no base URL.
+/// Start from [`ParseOptions::new`] and set what the document needs.
+#[derive(Default)]
+#[non_exhaustive]
 pub struct ParseOptions<'a> {
     /// CSS strings supplied by the consumer for cascading (such as fulgur's internal UA CSS).
     pub extra_stylesheets: &'a [&'a str],
@@ -105,4 +133,29 @@ pub struct ParseOptions<'a> {
     /// URLs are resolved with `Url::join`. If `base_url` is `None` and `href` is
     /// relative, the link cannot be resolved and is not fetched.
     pub base_url: Option<Url>,
+}
+
+impl<'a> ParseOptions<'a> {
+    /// Options with no extra stylesheet, no network provider and no base URL.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the consumer stylesheets cascaded with User origin.
+    pub fn extra_stylesheets(mut self, sheets: &'a [&'a str]) -> Self {
+        self.extra_stylesheets = sheets;
+        self
+    }
+
+    /// Set the provider that fetches `<link rel="stylesheet">` and `@import`.
+    pub fn network(mut self, provider: Option<&'a dyn NetworkProvider>) -> Self {
+        self.network = provider;
+        self
+    }
+
+    /// Set the base URL relative links resolve against.
+    pub fn base_url(mut self, base_url: Option<Url>) -> Self {
+        self.base_url = base_url;
+        self
+    }
 }

@@ -114,14 +114,7 @@ impl RenderSvgImages<'_, '_> {
     }
 
     fn warn(&self, kind: WarningKind, details: &str) {
-        push_resource_warning(
-            &self.warnings,
-            RenderWarning {
-                kind,
-                node_id: None,
-                details: details.into(),
-            },
-        );
+        push_resource_warning(&self.warnings, RenderWarning::new(kind, details.into()));
     }
 
     /// The picture of an `<image>` that the request left in the page's

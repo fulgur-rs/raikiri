@@ -18,16 +18,12 @@ struct TwoColor;
 impl ImagePixelSource for TwoColor {
     fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
         match url.as_str() {
-            "file:///two-color.png" => Some(Arc::new(DecodedImage {
-                width: 2,
-                height: 1,
-                rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
-            })),
-            "file:///clear.png" => Some(Arc::new(DecodedImage {
-                width: 1,
-                height: 1,
-                rgba: vec![0, 0, 0, 0],
-            })),
+            "file:///two-color.png" => Some(Arc::new(DecodedImage::new(
+                2,
+                1,
+                vec![255, 0, 0, 255, 0, 0, 255, 255],
+            ))),
+            "file:///clear.png" => Some(Arc::new(DecodedImage::new(1, 1, vec![0, 0, 0, 0]))),
             _ => None,
         }
     }

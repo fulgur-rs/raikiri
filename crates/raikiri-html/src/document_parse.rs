@@ -66,7 +66,7 @@ use crate::cascade::{build_rule_tree_with_limits, first_page_query};
 /// ```
 /// use raikiri_html::{parse_html, ParseOptions};
 ///
-/// let opts = ParseOptions { extra_stylesheets: &[], network: None, base_url: None };
+/// let opts = ParseOptions::new();
 /// let doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse");
 /// assert!(!doc.cascade().computed.is_empty());
 /// ```

@@ -234,39 +234,104 @@ the API unless it is hidden, so a change that adds one says why it is needed.
 
 ### `#[non_exhaustive]`
 
-It decides whether adding a variant or a field breaks a consumer. Most of the
-first tier has it already, and the rule below is the one the existing code
-follows:
+It decides whether adding a variant or a field breaks a consumer. The rule is:
 
 1. **An enum is `#[non_exhaustive]`.** A consumer that matches it writes a
-   wildcard arm, so a new variant is a compatible change. This holds for every
-   enum `raikiri-html` declares, 39 of the 40 of `raikiri-traits` and 11 of the
-   16 of `raikiri-dom`.
+   wildcard arm, so a new variant is a compatible change.
 2. **A struct whose fields are all public is `#[non_exhaustive]`**, so a field
    can be added; a consumer reads the fields it needs and destructures with
-   `..`. A struct that the consumer builds also has `new()` (or a builder) and
-   `Default`, and keeps its fields public, so `let mut limits =
-   ResourceLimits::new(); limits.max_resource_bytes = None;` works from outside
-   the crate. `ResourceLimits` and `LayoutConfig` with its builder are the
-   models.
-3. **A plain value type is exempt**: the identifiers, geometry and colors whose
-   fields are their meaning (`NodeId`, `Tag`, `Point`, `Size`, `Edges`,
-   `Sides`, `CssColor`, `ComputedLength` and the like). Nobody adds a field to
-   them without changing what they are, and a literal such as `Size { width,
-   height }` is the natural way to write one. Changing one is a breaking
-   release, which the semver report shows.
+   `..`. A consumer cannot write a struct literal or a `..base` update for such
+   a type, so a struct that the consumer builds has `new()`, which takes the
+   fields that have no sensible default, and one setter for each other field,
+   named after the field and taking its type
+   (`Request::new(url, kind).headers(headers)`), and `Default` where an empty
+   value exists (`ParseOptions`, `ImageIntrinsicSize`). The fields stay public,
+   so `let mut options = ParseOptions::new(); options.base_url = Some(url);`
+   works from outside the crate. `ResourceLimits` and `LayoutConfig` with its
+   builder are the models.
+3. **A value type is exempt**, because its fields or variants are its meaning
+   and nobody adds one without changing what the type is. Changing one is a
+   breaking release, which the semver report shows. The value types are:
+   - identifiers and wrapped names: `NodeId`, `StyleNodeId`, `Tag`,
+     `TargetSlotId`, `Symbol`, `Atom`, `AttrValue`, `CounterSymbol`,
+     `FontFaceStretch` and `FontFamilyName`;
+   - geometry: `Point`, `Size`, `Edges`, `BoxLayout`, `ImageRasterSize`,
+     `Sides`, `CornerRadius` and `StartEnd`;
+   - colors: `CssColor`;
+   - sets that a specification closes, which a source matches without a
+     catch-all arm: `Direction`, `DomMutationError` (DOM §4.2.3 names a
+     `HierarchyRequestError` and a `NotFoundError` and no other failure),
+     `FontFamilyKind`, `SvgFontFamily` and `SvgFontStyle`;
+   - the computed values of `raikiri-style`: `ComputedLength`, every other
+     `Computed…` type, `VerticalLogicalSize` and the calc helpers
+     (`CalcLengthPercentage`, `ComparedPercentage`). The engine converts them
+     with exhaustive `match` expressions on purpose: a CSS value that is new
+     is then a compile error at each place that has to say what it means for
+     layout, where a wildcard arm would make it a silent default. A consumer
+     outside the engine reads them far less than the engine does.
 
 `scripts/public-api-lint.sh --exhaustive CRATE` lists the types a crate declares
-that a user can still match or build completely, so the rules can be checked
-against the code. At the time of writing it lists 4 types for `raikiri-html`
-(`ParseOptions`, `StylesheetPart`, `StylesheetSource` and `UncascadedDocument`),
-12 for `raikiri-dom`, 12 for `raikiri-traits`, 80 for `raikiri-style`, 2 for
-`raikiri-svg`, 4 for `raikiri-layout-geometry` and none for `raikiri-net`. Each
-list mixes the value types of rule 3 with the types that should get the
-attribute; sorting them is part of narrowing the first tier. The types that
-get it are changed once, before the first publication, together with the
-matching change in fulgur-raikiri (a struct literal becomes a constructor). A
-new public type is added with the attribute from the start.
+that a user can still match or build completely, and after this step it lists
+the value types and nothing else. `--first-tier` compares that output with the
+list below and reports a type that is exhaustive without being listed, and a
+listed type that has the attribute now or is gone. A new public type is added
+with the attribute from the start; a new value type is added to the list, with
+a line above that says which kind it is.
+
+<!-- value-types:begin -->
+```text
+raikiri_dom::DomMutationError
+raikiri_dom::Tag
+raikiri_layout_geometry::BoxLayout
+raikiri_layout_geometry::Edges
+raikiri_layout_geometry::Point
+raikiri_layout_geometry::Size
+raikiri_style::Atom
+raikiri_style::AttrValue
+raikiri_style::ComputedBorderSpacing
+raikiri_style::ComputedColumnWidth
+raikiri_style::ComputedFlexBasis
+raikiri_style::ComputedGridTemplateTracks
+raikiri_style::ComputedGridTrackBreadth
+raikiri_style::ComputedGridTrackList
+raikiri_style::ComputedGridTrackListComponent
+raikiri_style::ComputedGridTrackRepeat
+raikiri_style::ComputedGridTrackSize
+raikiri_style::ComputedLength
+raikiri_style::ComputedLengthPercentage
+raikiri_style::ComputedLengthPercentageOrAuto
+raikiri_style::ComputedLengthPercentageOrCalc
+raikiri_style::ComputedLengthPercentageOrNormal
+raikiri_style::ComputedLetterSpacing
+raikiri_style::ComputedLineHeight
+raikiri_style::ComputedTabSize
+raikiri_style::ComputedTextDecorationInset
+raikiri_style::ComputedTextDecorationThickness
+raikiri_style::ComputedTextIndent
+raikiri_style::ComputedTextUnderlineOffset
+raikiri_style::ComputedTransformFunction
+raikiri_style::CounterSymbol
+raikiri_style::CssColor
+raikiri_style::Direction
+raikiri_style::FontFaceStretch
+raikiri_style::FontFamilyKind
+raikiri_style::FontFamilyName
+raikiri_style::Sides
+raikiri_style::StyleNodeId
+raikiri_style::VerticalLogicalSize
+raikiri_style::computed_api::CalcLengthPercentage
+raikiri_style::computed_api::ComparedPercentage
+raikiri_style::computed_api::CornerRadius
+raikiri_style::property::StartEnd
+raikiri_style::resolve::ComputedOverflowClipMargin
+raikiri_svg::SvgFontFamily
+raikiri_svg::SvgFontStyle
+raikiri_traits::ImageRasterSize
+raikiri_traits::NodeId
+raikiri_traits::Symbol
+raikiri_traits::TargetSlotId
+```
+<!-- value-types:end -->
 
 ### Features
 
@@ -432,7 +497,7 @@ or remove them, and so that fulgur-raikiri is adapted once per step.
 | 3 | XHTML joins `StreamingLayout` | RAIKIRI-798 | done | `StreamingLayout::new_xhtml` is added; the caller picks the syntax and nothing is sniffed from the markup |
 | 4 | `Page::inline_svg` returns a scene | RAIKIRI-830 | done | `InlineSvg::source` is replaced by `InlineSvg::content`, an `ImageContent` that raikiri chooses (a scene, or pixels where the contract calls for them), and `Page::inline_svg` fails with `SvgSceneError`; the usvg tree path of the painter goes away |
 | 5 | Narrow the first tier to what fulgur uses | RAIKIRI-834 | done | 310 items and 10 modules that no consumer reaches are `#[doc(hidden)]` (`raikiri-layout-style` entirely), and `--first-tier` reports nothing |
-| 6 | `#[non_exhaustive]` and constructors | RAIKIRI-835 | open | struct literals of the option and result types become constructors and builders, and diagnostic enums need a wildcard arm |
+| 6 | `#[non_exhaustive]` and constructors | RAIKIRI-835 | done | the option and result types (`ParseOptions`, `Request`, `FetchedResource`, `DecodedImage`, `ResolvedIntrinsic`, `RenderWarning`, `PolicyViolation`, `ImageIntrinsicSize` and a few small ones) are built with `new()` and setters instead of a struct literal, and `ParseOptions` has `Default`; the diagnostic and keyword enums need a wildcard arm |
 | 7 | First publication | RAIKIRI-795 | open | from here a breaking change is a version bump, and the semver report is strict |
 
 Reasons for the order:
@@ -444,10 +509,10 @@ Reasons for the order:
 - Step 5 starts from the output of `scripts/public-api-lint.sh --usage` on
   fulgur-raikiri (the first run is recorded on RAIKIRI-834) and removes names.
   It comes before step 6 so that step 6 annotates only the types that remain.
-- Step 6 adds the attribute to the types that `--exhaustive` lists and that are
-  not plain value types, which changes how a consumer builds them. It is last
-  so that it runs once, over the final set of types, with one matching change
-  in fulgur-raikiri.
+- Step 6 added the attribute to the types that `--exhaustive` listed and that
+  are not value types, which changed how a consumer builds them. It is last so
+  that it ran once, over the final set of types, with one matching change in
+  fulgur-raikiri.
 - The `shodo` re-export (`FontCollection`) is not a step: a shodo release that
   changes it is a breaking release of `raikiri-html` and goes through this
   table when it happens.

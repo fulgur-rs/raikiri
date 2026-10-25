@@ -159,11 +159,7 @@ fn guest_envelope_version_mismatch_is_detectable() {
 fn image_dto_roundtrips_and_rejects_mismatched_bytes() {
     let pixels = ImagePixels {
         size: (1.0, 0.5),
-        image: std::sync::Arc::new(DecodedImage {
-            width: 1,
-            height: 1,
-            rgba: vec![1, 2, 3, 255],
-        }),
+        image: std::sync::Arc::new(DecodedImage::new(1, 1, vec![1, 2, 3, 255])),
     };
     let bytes = encode(&ImageDto::from(&pixels)).unwrap();
     assert!(
@@ -185,11 +181,7 @@ fn image_dto_roundtrips_and_rejects_mismatched_bytes() {
 
 #[test]
 fn image_dto_fits_a_large_image_in_one_message() {
-    let image = DecodedImage {
-        width: 1024,
-        height: 1024,
-        rgba: vec![255; 1024 * 1024 * 4],
-    };
+    let image = DecodedImage::new(1024, 1024, vec![255; 1024 * 1024 * 4]);
     let pixels = ImagePixels {
         size: (1024.0, 1024.0),
         image: std::sync::Arc::new(image),

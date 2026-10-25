@@ -212,12 +212,10 @@ struct PageBreakSheet;
 
 impl NetworkProvider for PageBreakSheet {
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: bytes::Bytes::from("div { break-after: page }"),
-            content_type: Some("text/css".to_owned()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(bytes::Bytes::from("div { break-after: page }"), request.url)
+                .content_type(Some("text/css".to_owned())),
+        ))
     }
 }
 

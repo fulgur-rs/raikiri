@@ -21,11 +21,11 @@ impl ImagePixelSource for TwoColor {
             "file:///two-color-tall.png" => (1, 2),
             _ => return None,
         };
-        Some(Arc::new(DecodedImage {
+        Some(Arc::new(DecodedImage::new(
             width,
             height,
-            rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
-        }))
+            vec![255, 0, 0, 255, 0, 0, 255, 255],
+        )))
     }
 }
 

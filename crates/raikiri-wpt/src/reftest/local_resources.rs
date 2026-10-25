@@ -119,12 +119,12 @@ impl ReplacedResolver for BrokenImageFallback<'_> {
             Err(ResolverError::Decode(message)) if message == CACHE_LIMIT_MESSAGE => {
                 Err(ResolverError::Decode(message))
             }
-            Err(error) => Ok(ResolvedIntrinsic {
-                intrinsic: IntrinsicBox::default(),
-                disposition: ResolveDisposition::Fallback {
+            Err(error) => Ok(ResolvedIntrinsic::new(
+                IntrinsicBox::default(),
+                ResolveDisposition::Fallback {
                     reason: error.to_string(),
                 },
-            }),
+            )),
         }
     }
 }

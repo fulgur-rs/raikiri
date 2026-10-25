@@ -56,12 +56,10 @@ impl NetworkProvider for RootedFiles {
         } else {
             "application/octet-stream"
         };
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: bytes.into(),
-            content_type: Some(content_type.to_owned()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(bytes.into(), request.url)
+                .content_type(Some(content_type.to_owned())),
+        ))
     }
 }
 

@@ -15,19 +15,19 @@ use std::sync::Arc;
 struct Pixels;
 impl ImagePixelSource for Pixels {
     fn get_decoded(&self, _url: &url::Url) -> Option<Arc<DecodedImage>> {
-        Some(Arc::new(DecodedImage {
-            width: 4,
-            height: 2,
-            rgba: [255, 0, 0, 255].repeat(8),
-        }))
+        Some(Arc::new(DecodedImage::new(
+            4,
+            2,
+            [255, 0, 0, 255].repeat(8),
+        )))
     }
 }
 impl ReplacedResolver for Pixels {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(4.0, 2.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(4.0, 2.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 

@@ -164,11 +164,7 @@ fn fixture(elements: usize, shape: Shape) -> Fixture {
     }
     html.push_str("</body></html>");
 
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new(); // cov:ignore: bench harness — bench target never built under `cargo llvm-cov --workspace`
     let document = raikiri_html::parse(html.as_bytes(), &options).expect("the fixture parses");
     let tree = raikiri_html::build_rule_tree(&document);
     let mut span_ids = Vec::with_capacity(elements);

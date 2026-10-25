@@ -169,29 +169,29 @@ fn map_ureq_error(url: &Url, kind: ResourceKind, err: ureq::Error) -> NetworkErr
         // Falls back to `url` only if the rejected URI is somehow not a
         // valid absolute URL.
         let blocked_url = Url::parse(&blocked.uri.to_string()).unwrap_or_else(|_| url.clone());
-        return NetworkError::PolicyViolation(Box::new(PolicyViolation {
+        return NetworkError::PolicyViolation(Box::new(PolicyViolation::new(
             kind,
-            url: blocked_url,
-            violation_type: ViolationType::PrivateNetworkBlocked,
-            details: "resolved IP is not globally routable".to_owned(),
-        }));
+            blocked_url,
+            ViolationType::PrivateNetworkBlocked,
+            "resolved IP is not globally routable".to_owned(),
+        )));
     }
     match err {
         ureq::Error::StatusCode(code) => NetworkError::Http(code),
         ureq::Error::Io(io_err) => NetworkError::Io(io_err),
         ureq::Error::BodyExceedsLimit(limit) => {
-            NetworkError::PolicyViolation(Box::new(PolicyViolation {
+            NetworkError::PolicyViolation(Box::new(PolicyViolation::new(
                 kind,
-                url: url.clone(),
+                url.clone(),
                 // A limit trips mid-stream, before the full size is known, so
                 // `actual` is only a lower bound: the body was at least `limit`
                 // bytes long.
-                violation_type: ViolationType::FetchTooLarge {
+                ViolationType::FetchTooLarge {
                     limit,
                     actual: limit,
                 },
-                details: format!("response body exceeds the {limit}-byte limit"),
-            }))
+                format!("response body exceeds the {limit}-byte limit"),
+            )))
         }
         timeout @ ureq::Error::Timeout(_) => {
             NetworkError::Io(io::Error::new(io::ErrorKind::TimedOut, timeout))
@@ -409,12 +409,11 @@ fn read_body_outcome(
     let bytes = read_body_capped(response.body_mut(), MAX_RESPONSE_BYTES)
         .map_err(|e| map_ureq_error(&final_url, kind, e))?;
 
-    Ok(FetchOutcome::Body(FetchedResource {
-        bytes: bytes.into(),
-        content_type,
-        final_url,
-        encoding,
-    }))
+    Ok(FetchOutcome::Body(
+        FetchedResource::new(bytes.into(), final_url)
+            .content_type(content_type)
+            .encoding(encoding),
+    ))
 }
 
 impl NetworkProvider for UreqHttpProvider {

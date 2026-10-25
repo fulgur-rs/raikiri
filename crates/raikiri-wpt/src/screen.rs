@@ -7,8 +7,8 @@ use crate::document_syntax::DocumentSyntax;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri::{
-    Body, CascadeOptions, MediaContext, Method, NetworkProvider, PageBox, PageContextQuery,
-    ParseOptions, RasterBufferBudget, Request, ResourceKind, Url, build_cascaded_with_options,
+    CascadeOptions, MediaContext, NetworkProvider, PageBox, PageContextQuery, ParseOptions,
+    RasterBufferBudget, Request, ResourceKind, Url, build_cascaded_with_options,
 };
 use raikiri_html::effective_document_base_url;
 use raikiri_net::{ImageResolver, SystemHttpProvider};
@@ -29,26 +29,16 @@ pub fn render_screen_url(
         .reserve_pixels(width, height)
         .map_err(ScreenRenderError::from_raster_error)?;
     let resource = provider
-        .fetch(Request {
-            url,
-            method: Method::Get,
-            content_type: None,
-            headers: Vec::new(),
-            body: Body::Empty,
-            signal: None,
-            kind: ResourceKind::Other,
-        })
+        .fetch(Request::new(url, ResourceKind::Other))
         .map_err(|error| ScreenRenderError::new(format!("document fetch failed: {error:?}")))?;
 
     let syntax = DocumentSyntax::for_content_type(resource.content_type.as_deref());
     let fallback_base_url = resource.final_url;
     let encoding = resource.encoding.as_deref().unwrap_or("unspecified");
     let stylesheet_provider = StylesheetUrlProvider { provider };
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: Some(&stylesheet_provider),
-        base_url: Some(fallback_base_url.clone()),
-    };
+    let options = ParseOptions::new()
+        .network(Some(&stylesheet_provider))
+        .base_url(Some(fallback_base_url.clone()));
     let mut uncascaded = syntax.parse(resource.bytes.as_ref(), &options).map_err(|error| {
         ScreenRenderError::new(format!(
             "HTML parse failed for {fallback_base_url} (declared encoding: {encoding}): {error:?}"

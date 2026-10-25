@@ -43,11 +43,7 @@ fn defaults() -> PageDefaults {
 }
 
 fn options() -> raikiri::ParseOptions<'static> {
-    raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    }
+    raikiri::ParseOptions::new()
 }
 
 #[test]
@@ -193,11 +189,7 @@ fn registrations_use_var_resolution_media_and_explicit_inheritance() {
                 <p class="via-var">invalid var</p>
             </section>
         </body></html>"#[..],
-        &raikiri::ParseOptions {
-            extra_stylesheets: &extra,
-            network: None,
-            base_url: None,
-        },
+        &raikiri::ParseOptions::new().extra_stylesheets(&extra),
     )
     .expect("parse");
     let registrations = [

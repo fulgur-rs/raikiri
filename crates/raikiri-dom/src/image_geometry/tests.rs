@@ -20,11 +20,7 @@ fn absent_natural_dimensions_use_the_default_object_size_and_known_ratio() {
     ] {
         let rect = object_image_rect(
             (0.0, 0.0, 400.0, 300.0),
-            ImageIntrinsicSize {
-                width,
-                height,
-                aspect_ratio: ratio,
-            },
+            ImageIntrinsicSize::new(width, height, ratio),
             ObjectFit::None,
             &position,
         )
@@ -37,11 +33,8 @@ fn absent_natural_dimensions_use_the_default_object_size_and_known_ratio() {
 
 #[test]
 fn default_sized_objects_fall_back_to_the_given_default_size() {
-    let natural = |width, height, aspect_ratio| ImageIntrinsicSize {
-        width,
-        height,
-        aspect_ratio,
-    };
+    let natural =
+        |width, height, aspect_ratio| ImageIntrinsicSize::new(width, height, aspect_ratio);
     let canvas = (100.0, 100.0);
     assert_eq!(
         default_sized_object(natural(None, None, Some(2.0)), canvas),
@@ -60,11 +53,7 @@ fn default_sized_objects_fall_back_to_the_given_default_size() {
 #[test]
 fn empty_and_non_finite_content_boxes_have_no_object_rectangle() {
     let position = raikiri_style::ComputedValues::initial().object_position;
-    let natural = ImageIntrinsicSize {
-        width: Some(4.0),
-        height: Some(2.0),
-        aspect_ratio: None,
-    };
+    let natural = ImageIntrinsicSize::new(Some(4.0), Some(2.0), None);
     for content in [
         (0.0, 0.0, 0.0, 10.0),
         (0.0, 0.0, 10.0, -1.0),
@@ -136,11 +125,7 @@ fn calc_background_sizes_resolve_against_the_area_and_clamp_at_zero() {
             px,
         })
     };
-    let natural = ImageIntrinsicSize {
-        width: Some(10.0),
-        height: Some(10.0),
-        aspect_ratio: Some(1.0),
-    };
+    let natural = ImageIntrinsicSize::new(Some(10.0), Some(10.0), Some(1.0));
     let size = ComputedBackgroundSize::Explicit {
         width: calc(50.0, -10.0),
         height: calc(25.0, 5.0),
@@ -230,11 +215,7 @@ fn background_dimensions_fill_missing_natural_sizes() {
             &auto,
             area.0,
             area.1,
-            ImageIntrinsicSize {
-                width,
-                height,
-                aspect_ratio: ratio,
-            },
+            ImageIntrinsicSize::new(width, height, ratio),
         )
     };
     let area = (400.0, 300.0);

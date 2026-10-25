@@ -246,11 +246,7 @@ fn build_page_html(n_tables: usize) -> String {
 /// - **Raster side**: the actual timed function's own output must be a
 ///   well-formed, non-trivial PNG (magic bytes present).
 fn probe(html: &str, n_tables: usize) {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new(); // cov:ignore: bench harness — bench target never built under `cargo llvm-cov --workspace`
     let doc = parse_html(html.as_bytes(), &opts).expect("parse_html for probe");
     let node_floor = n_tables * ROWS * COLS * 2;
     let node_count = doc.cascade().computed.len();

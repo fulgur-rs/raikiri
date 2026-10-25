@@ -50,6 +50,7 @@ static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// An explicitly cascaded SVG property prepared for a vector consumer.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SvgStyleProperty {
     /// Property whose winning declaration participates in SVG painting.
     pub property: PropertyKey,
@@ -67,6 +68,24 @@ pub struct SvgStyleProperty {
     /// consumer that knows the instance falls back to the literal `inherit`
     /// when this ancestor is not part of the instantiated subtree.
     pub inherited_from: Option<StyleNodeId>,
+}
+
+impl SvgStyleProperty {
+    /// A property prepared for a vector consumer; see the fields for what each
+    /// of the other arguments means.
+    pub fn new(
+        property: PropertyKey,
+        inherited: bool,
+        expression: Option<String>,
+        inherited_from: Option<StyleNodeId>,
+    ) -> Self {
+        Self {
+            property,
+            inherited,
+            expression,
+            inherited_from,
+        }
+    }
 }
 
 /// Cascade result.

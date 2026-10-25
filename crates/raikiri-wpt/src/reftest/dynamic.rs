@@ -244,14 +244,7 @@ pub(super) fn prepare(
 ) -> Result<PreparedDynamic, ReftestError> {
     let syntax = DocumentSyntax::for_path(path);
     let parsed = syntax
-        .parse(
-            html.as_bytes(),
-            &raikiri::ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            },
-        )
+        .parse(html.as_bytes(), &raikiri::ParseOptions::new())
         .map_err(|e| ReftestError::RaikiriRender(format!("parse readiness: {e:?}")))?;
     // Static fast path: no scripts and no reftest-wait means no JS, no
     // canvas, no URL needed. Returns the original source verbatim so static

@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
 use raikiri_traits::vector::VectorImage;
 use raikiri_traits::{
-    Body, DecodedImage, FetchedResource, ImageIntrinsicSize, ImageRasterSize, Method,
-    NetworkProvider, Request, ResolverError, policy::ResourceKind,
+    DecodedImage, FetchedResource, ImageIntrinsicSize, ImageRasterSize, NetworkProvider, Request,
+    ResolverError, policy::ResourceKind,
 };
 use url::Url;
 
@@ -81,11 +81,11 @@ impl ImageSource {
         let height = image.height as f32;
         Self {
             kind: ImageSourceKind::Raster(image),
-            intrinsic: ImageIntrinsicSize {
-                width: Some(width),
-                height: Some(height),
-                aspect_ratio: (height > 0.0).then_some(width / height),
-            },
+            intrinsic: ImageIntrinsicSize::new(
+                Some(width),
+                Some(height),
+                (height > 0.0).then_some(width / height),
+            ),
             raster_cache: Mutex::new(Vec::new()),
             scene_cache: Mutex::new(Vec::new()),
             raster_only: AtomicBool::new(false),
@@ -99,11 +99,11 @@ impl ImageSource {
             // Retain only charged source bytes. SVG use references can expand a
             // small input into a much larger parsed tree.
             kind: ImageSourceKind::Svg(bytes),
-            intrinsic: ImageIntrinsicSize {
-                width: intrinsic.width,
-                height: intrinsic.height,
-                aspect_ratio: intrinsic.aspect_ratio,
-            },
+            intrinsic: ImageIntrinsicSize::new(
+                intrinsic.width,
+                intrinsic.height,
+                intrinsic.aspect_ratio,
+            ),
             raster_cache: Mutex::new(Vec::new()),
             scene_cache: Mutex::new(Vec::new()),
             raster_only: AtomicBool::new(false),
@@ -386,15 +386,7 @@ impl<N: NetworkProvider> ResourceLoader<N> {
 
     fn fetch(&self, url: &Url) -> Result<FetchedResource, ResolverError> {
         self.network
-            .fetch(Request {
-                url: url.clone(),
-                method: Method::Get,
-                content_type: None,
-                headers: Vec::new(),
-                body: Body::Empty,
-                signal: None,
-                kind: ResourceKind::Image,
-            })
+            .fetch(Request::new(url.clone(), ResourceKind::Image))
             .map_err(ResolverError::Network)
     }
 }

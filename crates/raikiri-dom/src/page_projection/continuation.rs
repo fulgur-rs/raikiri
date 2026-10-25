@@ -16,6 +16,7 @@ use raikiri_traits::{NodeId, NodeKind};
 
 /// A box that crosses the start of a page: it began on an earlier page.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct CrossingBox {
     /// The box's node.
     pub node: NodeId,

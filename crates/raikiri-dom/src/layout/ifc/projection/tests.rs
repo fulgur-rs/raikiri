@@ -990,11 +990,11 @@ fn suppressed_inside_image_marker_consumes_no_inline_space() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 16,
-                height: 8,
-                rgba: [0, 128, 0, 255].repeat(16 * 8),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                16,
+                8,
+                [0, 128, 0, 255].repeat(16 * 8),
+            )))
         }
     }
     let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
@@ -1020,11 +1020,11 @@ fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rt
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 16,
-                height: 8,
-                rgba: [0, 128, 0, 255].repeat(16 * 8),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                16,
+                8,
+                [0, 128, 0, 255].repeat(16 * 8),
+            )))
         }
     }
     for (extra, expected) in [

@@ -17,11 +17,11 @@ raikiri-paint  = { workspace = true }
 # Physical axes of the retained IFC layout exposed by raikiri-dom.
 shodo         = { workspace = true }
 # Re-export `Url` so Consumers can name `raikiri::Url` when constructing
-# `raikiri::ParseOptions { base_url: Some(Url::parse(...)), ... }` without
+# `raikiri::ParseOptions::new().base_url(Some(Url::parse(...)))` without
 # adding `url` as a direct dep.
 url            = { workspace = true }
-# Re-export `Bytes` so `NetworkProvider` implementations can construct
-# `FetchedResource.bytes` and `Body::Bytes(Bytes)`.
+# Re-export `Bytes` so `NetworkProvider` implementations can pass the body to
+# `FetchedResource::new` and construct `Body::Bytes(Bytes)`.
 bytes          = { workspace = true }
 # Raster pipeline for html_to_png (`render_to_buffer` in anyrender_vello_cpu).
 anyrender           = { workspace = true }

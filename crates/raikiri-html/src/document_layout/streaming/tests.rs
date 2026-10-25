@@ -1003,12 +1003,10 @@ impl NetworkProvider for SheetProvider {
             "/nested.css" => "p { margin: 4px 0 }",
             _ => return Err(NetworkError::Other("not found".to_owned())),
         };
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: bytes::Bytes::from(css),
-            content_type: Some("text/css".to_owned()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(bytes::Bytes::from(css), request.url)
+                .content_type(Some("text/css".to_owned())),
+        ))
     }
 }
 

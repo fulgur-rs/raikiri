@@ -22,12 +22,10 @@ impl NetworkProvider for Fonts {
         if request.url.as_str() != "https://fonts.test/webby.ttf" {
             return Err(NetworkError::Http(404));
         }
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: AHEM.to_vec().into(),
-            content_type: Some("font/ttf".into()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(AHEM.to_vec().into(), request.url)
+                .content_type(Some("font/ttf".into())),
+        ))
     }
 }
 

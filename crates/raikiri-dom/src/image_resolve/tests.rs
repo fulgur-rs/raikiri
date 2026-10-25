@@ -5,10 +5,10 @@ use std::cell::Cell;
 struct FixedSizeResolver(f32, f32);
 impl ReplacedResolver for FixedSizeResolver {
     fn resolve(&self, _req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(self.0, self.1),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(self.0, self.1),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 
@@ -19,12 +19,12 @@ impl ReplacedResolver for FixedSizeResolver {
 struct FallbackResolver(f32, f32);
 impl ReplacedResolver for FallbackResolver {
     fn resolve(&self, _req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(self.0, self.1),
-            disposition: ResolveDisposition::Fallback {
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(self.0, self.1),
+            ResolveDisposition::Fallback {
                 reason: "placeholder".into(),
             },
-        })
+        ))
     }
 }
 
@@ -156,10 +156,10 @@ fn resolves_relative_img_src_against_document_base() {
     impl ReplacedResolver for Capture {
         fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
             *self.0.borrow_mut() = Some(req.url().clone());
-            Ok(ResolvedIntrinsic {
-                intrinsic: IntrinsicBox::new(10.0, 20.0),
-                disposition: ResolveDisposition::Ok,
-            })
+            Ok(ResolvedIntrinsic::new(
+                IntrinsicBox::new(10.0, 20.0),
+                ResolveDisposition::Ok,
+            ))
         }
     }
 
