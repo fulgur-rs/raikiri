@@ -284,9 +284,39 @@ pub(super) fn positioning_container(doc: &LayoutSession<'_>, idx: usize, fixed: 
         .unwrap_or(idx)
 }
 
-/// The vertical inset that out-of-flow box `idx` ignores because its `height`
-/// is `min-content`, `max-content` or `fit-content`, which the cascade computes
-/// to `auto` ([`ComputedValues::height_keyword`] is what is left of it).
+/// What an out-of-flow box with a content keyword `height` needs of its
+/// vertical insets, which Taffy would otherwise stretch it between; see
+/// [`keyword_height_insets`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum KeywordHeightInsets {
+    /// The box is overconstrained: this inset is dropped, and the box takes the
+    /// height of its content from the inset on the opposite side. Its alignment
+    /// stays as it is.
+    Ignore(LengthProperty),
+    /// An `auto` margin takes the free space between the insets, so both stay.
+    /// An alignment of the vertical axis that would stretch the box
+    /// ([`stretches_between_insets`]) becomes `start`, so that Taffy sizes the
+    /// box by its content. `justify` names `justify-self` as the property of
+    /// that axis, and `align-self` otherwise.
+    FitContent { justify: bool },
+}
+
+/// Whether Taffy stretches an out-of-flow box between its insets on the axis
+/// that `alignment`, the settled `align-self` or `justify-self` of the box, is
+/// for: `normal` and `stretch`, and the `auto` that is left of an unsettled one.
+pub(super) fn stretches_between_insets(alignment: Option<AlignItems>) -> bool {
+    alignment.is_none_or(|alignment| {
+        matches!(
+            alignment.keyword,
+            AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+        )
+    })
+}
+
+/// How out-of-flow box `idx`, whose `height` is `min-content`, `max-content` or
+/// `fit-content`, sits between its `top` and `bottom`. The cascade computes
+/// the keyword to `auto` ([`ComputedValues::height_keyword`] is what is left of
+/// it).
 ///
 /// A box with a `top`, a `bottom` and a `height` that are all not `auto` is
 /// overconstrained, and the inset at the end of the inline axis of its
@@ -298,21 +328,24 @@ pub(super) fn positioning_container(doc: &LayoutSession<'_>, idx: usize, fixed: 
 /// out, as browsers treat it like `auto`, and so does a replaced box, whose
 /// natural size Taffy does not stretch.
 ///
-/// An `auto` margin on the side of the inset that is kept takes the free space
-/// of the box instead (centered with both margins `auto`), which needs that
-/// inset, so such a box keeps both and stays stretched. So does a box that
-/// aligns itself to the middle or to the end of the vertical axis, which places
-/// it within the area between both insets: `align-self` for a containing block
-/// on horizontal axes and `justify-self` for one on vertical axes, whose inline
-/// axis is the vertical one. `last baseline` falls back to the end for a box
-/// that is out of flow. The other alignments put the box at the start edge, and
-/// the alignment of the container does not apply to it.
+/// A box that aligns itself to the middle or to the end of the vertical axis
+/// is placed within the area between both insets, so it keeps them, and it is
+/// not stretched: `align-self` for a containing block on horizontal axes and
+/// `justify-self` for one on vertical axes, whose inline axis is the vertical
+/// one. `last baseline` falls back to the end for a box that is out of flow. The
+/// other alignments put the box at the start edge, and the alignment of the
+/// container does not apply to it.
+///
+/// An `auto` margin on either side takes the free space between the insets
+/// instead (centered with both margins `auto`), which the box is not
+/// overconstrained by: it keeps both insets and is sized by its content, with
+/// the alignment of the vertical axis replaced by one that is no stretch.
 // spec: https://www.w3.org/TR/CSS21/visudet.html#abs-non-replaced-height
-pub(super) fn ignored_vertical_inset(
+pub(super) fn keyword_height_insets(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
     idx: usize,
-) -> Option<LengthProperty> {
+) -> Option<KeywordHeightInsets> {
     use crate::layout::page::inset_is_auto;
     let values = &cascade.computed[idx];
     let fixed = values.position == PositionValue::Fixed;
@@ -351,15 +384,20 @@ pub(super) fn ignored_vertical_inset(
     {
         return None;
     }
+    let auto = |margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto);
+    if auto(values.margin.top) || auto(values.margin.bottom) {
+        return Some(KeywordHeightInsets::FitContent {
+            justify: vertical_axis_is_inline,
+        });
+    }
     let inline_starts_at_bottom = vertical_axis_is_inline
         && (block.direction == Direction::Rtl)
             != (block.cssom_writing_mode == WritingMode::SidewaysLr);
-    let (ignored, kept_margin) = if inline_starts_at_bottom {
-        (LengthProperty::Top, values.margin.bottom)
+    Some(KeywordHeightInsets::Ignore(if inline_starts_at_bottom {
+        LengthProperty::Top
     } else {
-        (LengthProperty::Bottom, values.margin.top)
-    };
-    (!matches!(kept_margin, ComputedLengthPercentageOrAuto::Auto)).then_some(ignored)
+        LengthProperty::Bottom
+    }))
 }
 
 /// The alignment taffy gets for in-flow item `idx` of a vertical flex row or
