@@ -9,7 +9,7 @@ mod streaming;
 pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::PlacedRunningElement;
-pub use page::{InlineSvg, Page, PageGeometry, PageMode, RasterImage};
+pub use page::{ImageContent, InlineSvg, Page, PageGeometry, PageMode, PlacedImage, RasterImage};
 pub use running::RunningElementLayout;
 pub use streaming::{
     PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,

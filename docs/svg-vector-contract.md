@@ -152,7 +152,15 @@ with either pixels or a scene, chosen by D6.
 - Inline `<svg>` goes through `Page::inline_svg`, which returns the scene
   instead of (and in addition to, until D12 completes) the prepared source.
 - A page exposes the choice, not the mechanism: a replaced fragment is either
-  `Raster(pixels)` or `Vector(scene)`.
+  `Raster(pixels)` or `Vector(scene)`. `Page::placed_image`, `placed_marker`
+  and `placed_generated_image` return a `PlacedImage` whose `content` is an
+  `ImageContent` of one of the two, with the placement of the pixel-only
+  `raster_*` methods (which stay as they are). For an image the consumer
+  places itself, such as a background layer, `Page::image_content` takes the
+  owner element, the URL and the box. The content is a scene when the source
+  has one for the box and the owner's rendering (D6) is `vector`; otherwise it
+  is pixels asked for at the box times `svg_raster_scale`. The scale applies to
+  the pixel-only methods too, where it changes only what a source rasterizes.
 
 ### D6. Choosing vector or raster
 

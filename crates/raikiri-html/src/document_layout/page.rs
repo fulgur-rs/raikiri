@@ -159,6 +159,64 @@ pub struct RasterImage {
     pub clip_owner: Option<NodeId>,
 }
 
+/// What an image is drawn with.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum ImageContent {
+    /// Shared straight RGBA8 pixels from the configured source.
+    Raster(std::sync::Arc<raikiri_traits::DecodedImage>),
+    /// A scene built for the box the image is placed in, in CSS px, with its
+    /// origin at the top-left corner of that box.
+    Vector(std::sync::Arc<raikiri_traits::vector::VectorImage>),
+}
+
+/// An image and its complete object placement on a page, drawn as pixels or
+/// as a scene.
+///
+/// The fields other than [`Self::content`] are those of [`RasterImage`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PlacedImage {
+    /// Source element.
+    pub node: NodeId,
+    /// Absolute URL resolved by layout, without changing source attributes.
+    pub url: url::Url,
+    /// What to draw: pixels, or a scene of the size of [`Self::rect`].
+    pub content: ImageContent,
+    /// Object rectangle, as for [`RasterImage::rect`].
+    pub rect: PaintRect,
+    /// Whole content-edge clip or marker rectangle, before pagination cuts.
+    pub clip: raikiri_traits::PaintClip,
+    /// Innermost node whose overflow clip applies, as for
+    /// [`RasterImage::clip_owner`].
+    pub clip_owner: Option<NodeId>,
+}
+
+/// Where an image sits, before its pixels or scene are asked for.
+struct Placement {
+    node: NodeId,
+    url: url::Url,
+    rect: PaintRect,
+    clip: raikiri_traits::PaintClip,
+    clip_owner: Option<NodeId>,
+    /// The size to ask pixels for, which already follows the raster scale.
+    raster: raikiri_traits::ImageRasterSize,
+}
+
+impl Placement {
+    fn into_raster(self, source: &dyn raikiri_traits::ImagePixelSource) -> Option<RasterImage> {
+        let pixels = checked_pixels(source, &self.url, self.raster)?;
+        Some(RasterImage {
+            node: self.node,
+            url: self.url,
+            pixels,
+            rect: self.rect,
+            clip: self.clip,
+            clip_owner: self.clip_owner,
+        })
+    }
+}
+
 impl<'a> Page<'a> {
     /// This page with `placeholder` standing in for the number of pages.
     pub(super) fn with_deferred_page_count(mut self, placeholder: u32) -> Self {
@@ -215,6 +273,32 @@ impl<'a> Page<'a> {
         fragment: &Fragment<'a>,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
+        self.image_placement(fragment, source)?.into_raster(source)
+    }
+
+    /// Like [`Self::raster_image`], but the image is a scene when its source
+    /// has one and the element is not asked to draw it as pixels.
+    ///
+    /// An SVG image is drawn as a scene unless the element that owns it says
+    /// `--raikiri-svg-rendering: raster` or the layout was asked for
+    /// [`SvgRendering::Raster`], and unless the source has no scene for it
+    /// (see [`raikiri_traits::ImagePixelSource::get_vector`]); then it is
+    /// pixels, at [`Self::svg_raster_scale`]. Every other image is pixels.
+    pub fn placed_image(
+        &self,
+        fragment: &Fragment<'a>,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<PlacedImage> {
+        let placement = self.image_placement(fragment, source)?;
+        self.place(placement, source)
+    }
+
+    /// Everything about the image of an `<img>` fragment but its pixels.
+    fn image_placement(
+        &self,
+        fragment: &Fragment<'a>,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<Placement> {
         let node = usize::try_from(fragment.node().0).ok()?;
         let url = self.document.resolved_image_url(node)?;
         let computed = self.computed(fragment.node())?;
@@ -238,15 +322,85 @@ impl<'a> Page<'a> {
         if !is_finite_rect(&rect) {
             return None;
         }
-        let pixels = checked_pixels(source, &url, raster_size(&rect))?;
-        Some(RasterImage {
+        Some(Placement {
             node: fragment.node(),
             url,
-            pixels,
+            raster: self.raster_size_for(raster_size(&rect)),
             rect,
             clip: raikiri_traits::PaintClip::new(content),
             clip_owner: Some(fragment.node()),
         })
+    }
+
+    /// `size` times the raster scale of the layout.
+    fn raster_size_for(
+        &self,
+        size: raikiri_traits::ImageRasterSize,
+    ) -> raikiri_traits::ImageRasterSize {
+        let scale = self.svg_raster_scale();
+        raikiri_traits::ImageRasterSize {
+            width: size.width * scale,
+            height: size.height * scale,
+        }
+    }
+
+    /// The pixels or the scene of `placement`.
+    fn place(
+        &self,
+        placement: Placement,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<PlacedImage> {
+        let content = self.content_in(
+            placement.node,
+            &placement.url,
+            raster_size(&placement.rect),
+            placement.raster,
+            source,
+        )?;
+        Some(PlacedImage {
+            node: placement.node,
+            url: placement.url,
+            content,
+            rect: placement.rect,
+            clip: placement.clip,
+            clip_owner: placement.clip_owner,
+        })
+    }
+
+    /// What to draw for the image at `url` in a box of `size` CSS px, for
+    /// an element `owner` that decides how SVG is drawn. Use it for the
+    /// images the consumer places itself, such as the layers of a
+    /// `background-image`.
+    ///
+    /// The image is a scene when `source` has one and the rendering of
+    /// `owner` is [`SvgRendering::Vector`] (see [`Self::svg_rendering`]);
+    /// otherwise it is pixels asked for at `size` times
+    /// [`Self::svg_raster_scale`]. `None` when the source has neither.
+    pub fn image_content(
+        &self,
+        owner: NodeId,
+        url: &url::Url,
+        size: raikiri_traits::ImageRasterSize,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<ImageContent> {
+        self.content_in(owner, url, size, self.raster_size_for(size), source)
+    }
+
+    fn content_in(
+        &self,
+        owner: NodeId,
+        url: &url::Url,
+        size: raikiri_traits::ImageRasterSize,
+        raster: raikiri_traits::ImageRasterSize,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<ImageContent> {
+        if self.svg_rendering(owner) == SvgRendering::Vector
+            && let Some(scene) =
+                source.get_vector(url, &raikiri_traits::ImageVectorRequest::new(size))
+        {
+            return Some(ImageContent::Vector(scene));
+        }
+        checked_pixels(source, url, raster).map(ImageContent::Raster)
     }
 
     /// Cached raster pixels of a prepared image marker from [`PaintEvent::MarkerImage`].
@@ -259,11 +413,25 @@ impl<'a> Page<'a> {
         owner: NodeId,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
+        self.marker_placement(owner)?.into_raster(source)
+    }
+
+    /// Like [`Self::raster_marker`], but the image is a scene under the
+    /// conditions of [`Self::placed_image`].
+    pub fn placed_marker(
+        &self,
+        owner: NodeId,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<PlacedImage> {
+        let placement = self.marker_placement(owner)?;
+        self.place(placement, source)
+    }
+
+    fn marker_placement(&self, owner: NodeId) -> Option<Placement> {
         let (url, rect) = self.document.page_marker_image(self.index(), owner)?;
         if !is_drawable_rect(&rect) {
             return None;
         }
-        let pixels = checked_pixels(source, url, raster_size(&rect))?;
         let element = usize::try_from(owner.0).ok()?;
         let clip_owner =
             if raikiri_dom::generated_content::inside_marker_in_flow(self.cascade, element)
@@ -276,10 +444,10 @@ impl<'a> Page<'a> {
             } else {
                 self.dom().parent(owner)
             };
-        Some(RasterImage {
+        Some(Placement {
             node: owner,
             url: url.clone(),
-            pixels,
+            raster: self.raster_size_for(raster_size(&rect)),
             rect,
             clip: raikiri_traits::PaintClip::new(rect),
             clip_owner,
@@ -343,6 +511,21 @@ impl<'a> Page<'a> {
         image: GeneratedImageId,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
+        self.generated_image_placement(image)?.into_raster(source)
+    }
+
+    /// Like [`Self::raster_generated_image`], but the image is a scene under
+    /// the conditions of [`Self::placed_image`].
+    pub fn placed_generated_image(
+        &self,
+        image: GeneratedImageId,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<PlacedImage> {
+        let placement = self.generated_image_placement(image)?;
+        self.place(placement, source)
+    }
+
+    fn generated_image_placement(&self, image: GeneratedImageId) -> Option<Placement> {
         let (url, content) = self.document.page_generated_image(self.index(), image)?;
         let owner = usize::try_from(image.owner.0).ok();
         let pseudo = match image.kind {
@@ -374,11 +557,10 @@ impl<'a> Page<'a> {
                     .content_image_raster_size(owner, pseudo, image.index)
             })
             .unwrap_or_else(|| raster_size(&rect));
-        let pixels = checked_pixels(source, url, raster)?;
-        Some(RasterImage {
+        Some(Placement {
             node: image.owner,
             url: url.clone(),
-            pixels,
+            raster: self.raster_size_for(raster),
             rect,
             clip: raikiri_traits::PaintClip::new(content),
             clip_owner: Some(image.owner),
