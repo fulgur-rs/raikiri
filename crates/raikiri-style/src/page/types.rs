@@ -537,7 +537,7 @@ pub enum PageMarginBoxSlot {
 /// parsed as an ordinary declaration list, via the same
 /// [`crate::rule::parse_declaration_block_within`] inline styles use (see
 /// the `AtRuleParser` impl for [`PageDeclParser`](super::PageDeclParser)), so `declarations` can
-/// carry any property `crate::property::parse_value` recognizes, whether
+/// carry any property `parse_value` recognizes, whether
 /// or not it is spec-applicable to a margin context. This mirrors
 /// [`PageRule::declarations`], which likewise applies no `@page`-context
 /// applicable-property filter — deciding which declarations are
@@ -591,7 +591,7 @@ pub struct PageRule {
     /// Which pages this rule applies to.
     pub selector: PageSelector,
     /// Declarations from the block body — parsed with the same
-    /// `crate::property::parse_value` dispatch qualified rules use (via
+    /// `parse_value` dispatch qualified rules use (via
     /// [`parse_page_declaration_block`](super::parse_page_declaration_block)), so unsupported properties are
     /// silently dropped (matching this crate's general unsupported-property
     /// policy).
@@ -620,7 +620,7 @@ pub struct PageRule {
     /// ([`parse_page_size_value`](super::parse_page_size_value)), since `size` is an `@page` descriptor
     /// (CSS Paged Media Level 3 §7.1 "Page size: the size property",
     /// <https://www.w3.org/TR/css-page-3/#page-size-prop>), not a
-    /// [`PropertyValue`](crate::property::PropertyValue) the general `crate::property::parse_value`
+    /// [`PropertyValue`](crate::property::PropertyValue) the general `parse_value`
     /// dispatch recognizes. Empty when the block declares no `size`.
     ///
     /// Consumed by `cascade_page` / [`PageCascadeResult`](super::PageCascadeResult) using the same
@@ -650,7 +650,7 @@ pub struct PageRule {
     /// ([`parse_page_marks_value`](super::parse_page_marks_value)), since `marks` is an `@page` descriptor
     /// (CSS Paged Media Level 3 §7.2 "Crop and Registration Marks: the marks
     /// property", <https://www.w3.org/TR/css-page-3/#marks>), not a
-    /// [`PropertyValue`](crate::property::PropertyValue) the general `crate::property::parse_value`
+    /// [`PropertyValue`](crate::property::PropertyValue) the general `parse_value`
     /// dispatch recognizes. Empty when the block declares no `marks`.
     ///
     /// Consumed by `cascade_page` / [`PageCascadeResult`](super::PageCascadeResult) with the same
@@ -669,7 +669,7 @@ pub struct PageRule {
     /// ([`parse_page_bleed_value`](super::parse_page_bleed_value)), since `bleed` is an `@page` descriptor
     /// (CSS Paged Media Level 3 §7.3 "Bleed Area: the bleed property",
     /// <https://www.w3.org/TR/css-page-3/#bleed>), not a [`PropertyValue`](crate::property::PropertyValue)
-    /// the general `crate::property::parse_value` dispatch recognizes.
+    /// the general `parse_value` dispatch recognizes.
     /// Empty when the block declares no `bleed`.
     ///
     /// Consumed by `cascade_page` / [`PageCascadeResult`](super::PageCascadeResult) with the same

@@ -87,7 +87,9 @@ between its `first-tier-names` markers (what fulgur uses from the other
 crates, and the network providers that a consumer hands to the API). Three
 kinds of finding: a visible name that the first tier does not reach; a listed
 name that no crate publishes any more; and a link in the docs of a visible item
-to a hidden item, which the rendered docs show as a dead link. It is a report,
+to a hidden item, which the rendered docs show as a dead link (the fix is the
+bare name in a code span, not a `crate::…` path, which AGENTS.md keeps for
+intra-doc links). It is a report,
 not part of the gate: a name it lists is either hidden with `#[doc(hidden)]` or
 added to the list because the consumer needs it.
 
@@ -621,7 +623,7 @@ def run_first_tier(repo_root: Path, json_dir: Path) -> int:
         print(
             f"FAIL: {total} finding(s). Hide each name outside the first tier with #[doc(hidden)] "
             f"(or make it crate-private), or list it in {FIRST_TIER_DOC} if fulgur uses it; drop a stale "
-            "listed name; write a link to a hidden item as a plain code span.",
+            "listed name; write a link to a hidden item as the bare name in a code span (not a crate:: path).",
             file=sys.stderr,
         )
         return 1

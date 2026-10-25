@@ -295,7 +295,7 @@ pub struct SpecifiedValues {
     pub padding: Sides<LengthPercentageOrCalc>,
     /// **Specified** `margin`; phase 3 (`resolve_margin_length_or_auto`) absolutizes its lengths.
     pub margin: Sides<LengthOrAuto>,
-    /// **Specified** `border`; phase 3 (`crate::resolve::resolve_border`) absolutizes its width and applies
+    /// **Specified** `border`; phase 3 (`resolve_border`) absolutizes its width and applies
     /// style gating for `none` and `hidden`.
     pub border: Sides<Border>,
     /// Whether each border and column-rule width was lifted from a computed value.
@@ -419,7 +419,7 @@ pub struct SpecifiedValues {
     /// on the variant. The six keywords `baseline`, `sub`, `super`, `middle`, `text-top`, and
     /// `text-bottom` are computed-equivalent (no lengths); [`VerticalAlign::Length`] and
     /// [`VerticalAlign::Calc`] remain specified and retain `em`/`rem` or mixed px/% until
-    /// [`Self::absolutize_with`] calls `crate::resolve::resolve_vertical_align`. See that
+    /// [`Self::absolutize_with`] calls `resolve_vertical_align`. See that
     /// function's docs for why the types are not split.
     pub vertical_align: VerticalAlign,
     /// Staging value for [`ComputedValues::font_style`]; computed-equivalent because `FontStyle`
@@ -480,7 +480,7 @@ pub struct SpecifiedValues {
     /// `OverflowWrap` carries no lengths. The legacy `word-wrap` alias also maps to this field
     /// (see the [`ComputedValues::overflow_wrap`] docs).
     pub overflow_wrap: OverflowWrap,
-    /// **Specified** `letter-spacing`; phase 3 (`crate::resolve::resolve_letter_spacing`)
+    /// **Specified** `letter-spacing`; phase 3 (`resolve_letter_spacing`)
     /// resolves it into a computed CSS value and a renderer-facing absolute fallback.
     pub letter_spacing: LetterSpacingValue,
     /// **Specified** `word-spacing`; its CSS Text 4 length-percentage grammar remains available
@@ -695,7 +695,7 @@ pub struct SpecifiedValues {
     /// specified", requiring no absolutization), phase 3 ([`Self::absolutize_with`]) absolutizes
     /// the non-percentage `Length` payload of `translate()`, `translateX()`, and `translateY()`
     /// against font size / root font size into `Px`. Percentages remain symbolic `Percent`, as
-    /// with `crate::resolve::resolve_length_percentage` (see
+    /// with `resolve_length_percentage` (see
     /// [`crate::property::TransformFunction`]). `none` is represented by an empty list
     /// ([`empty_transform_list`]).
     pub transform: Arc<Vec<TransformFunction>>,
@@ -1236,12 +1236,12 @@ impl SpecifiedValues {
     /// - Seed **inherited** properties from the parent's computed values.
     ///   Length-bearing `font_size`, `line_height`, `text_indent`,
     ///   `letter_spacing`, `word_spacing`, and `tab_size` are lifted to
-    ///   specified representations by `crate::resolve::lift_font_size`,
-    ///   `crate::resolve::lift_line_height`,
-    ///   `crate::resolve::lift_text_indent`,
-    ///   `crate::resolve::lift_letter_spacing`,
-    ///   `crate::resolve::lift_word_spacing`, and
-    ///   `crate::resolve::lift_tab_size`. Since `Px` and `Percent` are fixed
+    ///   specified representations by `lift_font_size`,
+    ///   `lift_line_height`,
+    ///   `lift_text_indent`,
+    ///   `lift_letter_spacing`,
+    ///   `lift_word_spacing`, and
+    ///   `lift_tab_size`. Since `Px` and `Percent` are fixed
     ///   points of absolutization, passing through phase 2/3 does not apply
     ///   the conversion twice (see each function's docs).
     /// - Set **non-inherited** properties to the values in [`Self::initial`].

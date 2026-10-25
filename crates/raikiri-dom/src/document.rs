@@ -360,8 +360,8 @@ impl Document {
     /// `fonts` is the font layer the inline engine looks families up in, for
     /// example one built from bundled fonts, or a document layer of
     /// `@font-face` faces over a shared layer
-    /// (`crate::build_inline_document_fonts`). Without this call, the first
-    /// layout uses the installed fonts (`crate::system_font_collection`).
+    /// (`build_inline_document_fonts`). Without this call, the first
+    /// layout uses the installed fonts (`system_font_collection`).
     pub fn set_font_collection(&mut self, fonts: shodo::font::FontCollection) {
         self.set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
     }

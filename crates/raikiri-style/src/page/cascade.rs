@@ -588,7 +588,7 @@ impl PageCascadeResult {
     ///   end is interpreted against the parent's direction value and results
     ///   in a computed value of either left or right." Implementation:
     ///   [`crate::property::resolve_text_align_match_parent`], shared with the
-    ///   element path's `crate::specified::SpecifiedValues::finalize`.
+    ///   element path's `SpecifiedValues::finalize`.
     ///
     ///   ⚠️ **Trap avoided here, stated for anyone touching this arm again**:
     ///   the same value definition's second sentence — "Computes to `start`
@@ -599,7 +599,7 @@ impl PageCascadeResult {
     ///   is always resolved via the parent-direction table, never
     ///   short-circuited to `start`. (The element path's analogous
     ///   short-circuit lives in
-    ///   `crate::specified::SpecifiedValues::finalize_as_root`, which is a
+    ///   `SpecifiedValues::finalize_as_root`, which is a
     ///   different entry point entirely — `cascade_page` never calls it.)
     ///
     /// **Phase 3** — absolutization against the page context's *own*
@@ -678,7 +678,7 @@ impl PageCascadeResult {
     ///   so do not attribute those two to the margin/padding sentence). Either
     ///   way that is the computed value, not an unresolved one; the element
     ///   path resolves it the same way
-    ///   (`crate::resolve::resolve_length_percentage`).
+    ///   (`resolve_length_percentage`).
     ///
     ///   ⚠️ **`font-size` and `line-height` are the opposite case** — their
     ///   `<percentage>` does *not* survive into the computed layer (§5.5.1's

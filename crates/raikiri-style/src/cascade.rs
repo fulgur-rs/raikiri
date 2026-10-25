@@ -12,18 +12,18 @@
 //! Resolving a node's winners has four stages (named phases 1 / 2 / 2.5 / 3,
 //! in order):
 //!
-//! - **phase 1: stage winners** — seed `crate::specified::SpecifiedValues` from
+//! - **phase 1: stage winners** — seed `SpecifiedValues` from
 //!   the parent's [`ComputedValues`] and apply all the node's winners with
 //!   `apply_value`. Lengths remain in specified form here.
 //! - **phase 2: absolutize font-size** — relative to the **parent's** computed font-size.
 //! - **phase 2.5: absolutize line-height** — relative to the node's **own**
-//!   (now determined) font-size. See the canonical `crate::resolve::resolve_line_height`
+//!   (now determined) font-size. See the canonical `resolve_line_height`
 //!   documentation for the asymmetry of the `lh`/`rlh` self-reference basis.
 //! - **phase 3: absolutize all remaining lengths** — relative to the node's
 //!   **own** computed font-size / line-height.
 //!
-//! Phases 2 / 2.5 / 3 are encapsulated in `crate::specified::SpecifiedValues::finalize`.
-//! See the `crate::specified` module docs for why these stages must be separate:
+//! Phases 2 / 2.5 / 3 are encapsulated in `SpecifiedValues::finalize`.
+//! See the `specified` module docs for why these stages must be separate:
 //! the `font-size` that serves as the basis for `padding: 2em` is not known until
 //! **all** the node's winners have been applied, so lengths cannot be absolutized
 //! while winners are being applied.

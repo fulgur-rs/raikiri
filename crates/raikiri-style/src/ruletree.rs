@@ -234,7 +234,7 @@ pub struct RuleTree {
     pub(crate) style_rules: Vec<StyleRule>,
     highlight_log: Vec<Registration<(Arc<str>, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
-    /// `crate::page::cascade_page` applies the cascade; per-page `PageBox`
+    /// `cascade_page` applies the cascade; per-page `PageBox`
     /// derivation and margin-box slot layout are not implemented.
     ///
     /// Unlike `style_rules`, page declarations are exposed for page-context
@@ -372,7 +372,7 @@ impl RuleTree {
     /// [`CounterStyleRegistry::is_empty`] equal to `true`. `raikiri-paint` handles
     /// generating counters (resolving `counter()`/`counters()`) from the cascade
     /// result. Wiring this registry into
-    /// `crate::counter_style::resolve_custom_counter` for markers/generated content
+    /// `resolve_custom_counter` for markers/generated content
     /// is a consumer-side boundary.
     ///
     /// # Inaccessibility of the `counter_styles` field itself
@@ -538,10 +538,10 @@ impl RuleTree {
     /// passed the limit, the tree kept the top-level rules before the one
     /// that passed it; when [`RuleTree::with_limits`] set limits below what
     /// the tree already held, it keeps all of that. Every element cascade of it
-    /// (`crate::cascade_with_options` and the entry points built on it)
+    /// (`cascade_with_options` and the entry points built on it)
     /// fails with this error. [`RuleTree::style_rules`], [`RuleTree::rules`],
     /// the registries and the `@page` cascade
-    /// (`crate::cascade_page_with_media_context`) read the retained prefix,
+    /// (`cascade_page_with_media_context`) read the retained prefix,
     /// so a caller that reads them checks this first.
     pub fn limit_exceeded(&self) -> Option<CascadeError> {
         self.budget.error()

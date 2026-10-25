@@ -2459,7 +2459,7 @@ pub enum FontShorthandSize {
 /// `variant` with [`FontVariantCaps::Normal`], `weight` with `400`, and
 /// `line-height` with [`LineHeight::Normal`]. `size` and `family` cannot be
 /// omitted. The fill values equal the standalone longhands' initial values
-/// (the matching fields of `crate::specified::SpecifiedValues::initial` are canonical).
+/// (the matching fields of `SpecifiedValues::initial` are canonical).
 ///
 /// [`crate::rule::expand_shorthand_into`] expands [`PropertyValue::Font`] into
 /// [`PropertyValue::FontStyle`] / [`PropertyValue::FontVariantCaps`] /

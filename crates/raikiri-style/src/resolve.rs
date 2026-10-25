@@ -10,7 +10,7 @@
 //! **The reverse does not hold: [`Length`] and similar types do not identify
 //! themselves as specified-layer values.** They are specified-layer values when
 //! passed to this module, but a value's **origin determines its layer**, not its
-//! type. The page path (`crate::page::cascade_page`) carries a bag of
+//! type. The page path (`cascade_page`) carries a bag of
 //! `PropertyValue`s, so it carries **computed values in [`Length`] too**.
 //! The canonical explanation is in the [`Length`] documentation (the section
 //! explaining that its layer depends on origin, not its type). The documentation

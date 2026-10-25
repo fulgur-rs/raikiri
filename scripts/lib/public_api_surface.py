@@ -559,7 +559,8 @@ def hidden_doc_links(docs: dict[str, dict]) -> list[tuple[str, str, str, str]]:
 
     Each is (crate, item name, link text, target path). The rendered docs of
     the visible item show such a link as a dead one: the page of a hidden item
-    is not generated. Write the name as a plain code span instead.
+    is not generated. Write the bare name in a code span instead: a `crate::…` path
+    in a plain span is what AGENTS.md reserves for intra-doc links.
     """
     canon = {crate: canonical_items(doc) for crate, doc in docs.items()}
     covers: dict[str, set[int]] = {}

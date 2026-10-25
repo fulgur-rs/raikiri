@@ -110,8 +110,9 @@ is outside the promise, so a hidden method cannot make a type part of the API.
 names outside it, one per line, with exit status 1 if there are any. It reports
 two more things with the same exit status: a name in the list below that no
 crate publishes any more, and a link in the docs of a visible item to a hidden
-item, which the rendered docs would show as a dead link (write the name as a
-plain code span instead). The report is empty at this point and must be empty
+item, which the rendered docs would show as a dead link (write the bare name
+in a code span instead; a `crate::…` path in a plain span is what the
+documentation rule keeps for intra-doc links). The report is empty at this point and must be empty
 at the first publication. Adding a name that fulgur-raikiri
 starts to use means adding it below; a new `pub` item that no consumer reaches
 is hidden.
