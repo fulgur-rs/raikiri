@@ -463,6 +463,55 @@ pub(super) fn stretches_on_both_grid_axes(
     horizontal && vertical && has_only_fixed_rows(doc, cascade, parent, container)
 }
 
+/// Whether in-flow grid item `idx` has a preferred aspect ratio and `auto`
+/// sizes, and its `align-self` is an explicit `stretch` where its
+/// `justify-self` is `normal`.
+///
+/// Both alignments would stretch the box, but with a preferred aspect ratio
+/// the `normal` one yields to the explicit one: the box takes the height of
+/// its grid area and the width the ratio gives for it, where `normal` alone
+/// stretches the width and takes the height from the ratio (CSS Grid 1 §6.2,
+/// csswg-drafts#5713). Taffy stretches the width of every box whose
+/// `justify-self` is `normal`, so such an item is aligned at the start of the
+/// row axis, which leaves the width to the ratio. A top or bottom margin that is
+/// `auto` turns that stretch off, as does a height keyword that
+/// computes to `auto` ([`ComputedValues::height_keyword`]). An item on
+/// vertical axes, or in a grid on them, is left alone.
+pub(super) fn is_sized_through_block_stretch(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+    cv: &ComputedValues,
+    settled: &[Settled],
+) -> bool {
+    if !settled[idx].has_aspect_ratio
+        || doc.nodes[idx].layout_position() == Position::Absolute
+        || !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+        || !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        || cv.height_keyword.is_some()
+        || uses_vertical_axes(cascade, idx)
+    {
+        return false;
+    }
+    let Some((parent, container)) = doc.taffy_parent_of(idx).and_then(|parent| {
+        container_laid_out_as(doc, cascade, parent, Display::Grid)
+            .map(|container| (parent, container))
+    }) else {
+        return false;
+    };
+    let keyword = |value: Option<AlignItems>, fallback: SelfAlignmentValue| {
+        value
+            .unwrap_or_else(|| container_alignment(fallback))
+            .keyword
+    };
+    keyword(settled[idx].justify_self, container.justify_items) == AlignItemsKeyword::Normal
+        && keyword(settled[idx].align_self, container.align_items) == AlignItemsKeyword::Stretch
+        && ![cv.margin.top, cv.margin.bottom]
+            .iter()
+            .any(|margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto))
+        && !uses_vertical_axes(cascade, parent)
+}
+
 /// Whether every row an item of `grid` can land in has a fixed length, so
 /// no item contributes to a row's size: the explicit rows are fixed, and so
 /// are the implicit ones unless the grid has a single in-flow item with an
