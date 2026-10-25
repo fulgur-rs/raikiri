@@ -15,8 +15,12 @@ pub(super) fn truncate_flow(
     let root_margin = document.nodes[root].layout.margin.top;
     let root_margin_page = pages.page_index_for_y(root_margin);
     if root_margin_page > 0 {
-        control.check_discovery_page_index(root_margin_page)?;
-        document.nodes[root].layout.location.y -= root_margin - pages.origin(root_margin_page);
+        // The margin starts at the top of the first page and breaks at the
+        // first page edge inside it; the rest of it is truncated together
+        // with the blank pages it would fill.
+        let edge = pages.first_edge_in_margin(0.0, true, root_margin_page);
+        control.check_discovery_page_index(edge)?;
+        document.nodes[root].layout.location.y -= root_margin - pages.origin(edge);
     }
 
     Ok(truncate(document, cascade, root, pages, control)? || root_margin_page > 0)
@@ -79,15 +83,19 @@ pub(super) fn truncate(
             let mut child_y = flow_y + node.layout.location.y - relative;
             let page = pages.page_index_for_y(child_y);
             let leading_child = leading_flow && first_in_flow && !preceding_float;
-            if block_flow
+            // The margin starts at the parent's content edge and breaks at
+            // the first page edge inside it. A break at the content edge
+            // itself sits before the margin.
+            let target = (block_flow
                 && leading_child
                 && style.clear() == Clear::None
                 && child_y > content_y
-                && page > pages.page_index_for_y(content_y)
-                && child_y > pages.origin(page) + 0.001
-            {
-                control.check_discovery_page_index(page)?;
-                let delta = pages.origin(page) - child_y;
+                && page > pages.page_index_for_y(content_y))
+            .then(|| pages.first_edge_in_margin(content_y, true, page))
+            .filter(|&edge| child_y > pages.origin(edge) + 0.001);
+            if let Some(edge) = target {
+                control.check_discovery_page_index(edge)?;
+                let delta = pages.origin(edge) - child_y;
                 document.nodes[child].layout.location.y += delta;
                 let followed_ifc_boxes = follow_moved_ifc_block(document, child, delta);
                 shrink_ancestors_after_margin_truncation(
