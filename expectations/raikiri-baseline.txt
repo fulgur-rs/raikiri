@@ -276,6 +276,7 @@ css/css-backgrounds/background-margin-transformed-root.html
 css/css-backgrounds/background-margin-will-change-root.html
 css/css-backgrounds/background-multiple-layers-table-cell.html
 css/css-backgrounds/background-paint-order-001.html
+css/css-backgrounds/background-position-negative-percentage-comparison.html
 css/css-backgrounds/background-position-subpixel-at-border.tentative.html
 css/css-backgrounds/background-position-three-four-values.html
 css/css-backgrounds/background-position-xy-three-four-values-passthru.html

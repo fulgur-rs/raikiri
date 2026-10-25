@@ -40,12 +40,12 @@ pub use crate::resolve::{
 pub use crate::property::{
     Angle, AnglePercentage, AngularColorStop, BorderColor, BorderImageOutsetSide,
     BorderImageRepeat, BorderImageRepeatKeyword, BorderImageSlice, BorderImageSliceOffset,
-    BorderImageWidthSide, BorderStyle, CalcLengthPercentage, ConicGradient, CssPosition,
-    CssPositionOffset, GradientColorInterpolation, GradientColorStop, GradientStopColor,
-    HorizontalSide, Length, LengthPercentageOrCalc, LinearGradient, LinearGradientDirection,
-    OutlineColor, OutlineStyle, OverflowValue, RadialExtent, RadialGradient, RadialShape,
-    RadialSize, SideOrCorner, TextShadowColor, TextShadowItem, TextShadowLength, UnboundedColor,
-    VerticalSide,
+    BorderImageWidthSide, BorderStyle, CalcLengthPercentage, ComparedPercentage, ConicGradient,
+    CssPosition, CssPositionOffset, GradientColorInterpolation, GradientColorStop,
+    GradientStopColor, HorizontalSide, Length, LengthPercentageOrCalc, LinearGradient,
+    LinearGradientDirection, OutlineColor, OutlineStyle, OverflowValue, RadialExtent,
+    RadialGradient, RadialShape, RadialSize, SideOrCorner, TextShadowColor, TextShadowItem,
+    TextShadowLength, UnboundedColor, VerticalSide,
 };
 
 use crate::property;

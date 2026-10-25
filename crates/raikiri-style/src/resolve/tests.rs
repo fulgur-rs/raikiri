@@ -1427,6 +1427,27 @@ fn resolve_css_position_absolutizes_each_offset() {
     );
 }
 
+/// A percentage comparison has no length to absolutize, so it passes through
+/// with both of its results until the free space is known.
+#[test]
+fn resolve_css_position_keeps_a_percentage_comparison() {
+    let compared = ComparedPercentage {
+        non_negative: 0.0,
+        negative: 100.0,
+    };
+    let specified = CssPosition {
+        horizontal: CssPositionOffset::Compared(compared),
+        vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+    };
+    assert_eq!(
+        resolve_css_position(specified, ComputedLength(16.0), None, &CTX),
+        ComputedCssPosition {
+            horizontal: ComputedCssPositionOffset::Compared(compared),
+            vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+        }
+    );
+}
+
 /// An end-edge `calc()` offset was folded to `100% - offset` when parsed.
 /// Without an `lh` basis, only the `lh` term falls back to zero, so the
 /// offset stays on the end edge as a plain `right 1lh` does.
@@ -2596,6 +2617,20 @@ fn lifting_a_computed_position_keeps_each_edge_and_calc() {
                 percent: 50.0,
                 px: -4.0,
             }),
+        }
+    );
+    let compared = ComparedPercentage {
+        non_negative: 10.0,
+        negative: 90.0,
+    };
+    assert_eq!(
+        lift_css_position(ComputedCssPosition {
+            horizontal: ComputedCssPositionOffset::Compared(compared),
+            vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)),
+        }),
+        CssPosition {
+            horizontal: CssPositionOffset::Compared(compared),
+            vertical: CssPositionOffset::Start(Length::Px(0.0)),
         }
     );
     let percent = ComputedCssPosition {

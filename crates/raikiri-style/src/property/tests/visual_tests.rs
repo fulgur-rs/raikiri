@@ -910,6 +910,229 @@ fn background_position_is_case_insensitive() {
     );
 }
 
+/// A position offset that picks `non_negative` for a free space of zero or
+/// more and `negative` for a negative free space.
+fn compared(non_negative: f32, negative: f32) -> CssPositionOffset {
+    CssPositionOffset::Compared(ComparedPercentage {
+        non_negative,
+        negative,
+    })
+}
+
+/// The one position of a parsed `background-position`.
+fn only_background_position(source: &str) -> Option<CssPosition> {
+    match parse(source, "background-position")? {
+        PropertyValue::BackgroundPosition(positions) => {
+            assert_eq!(positions.len(), 1, "{source}");
+            Some(positions[0])
+        }
+        other => panic!("{source}: {other:?}"),
+    }
+}
+
+#[test]
+fn background_position_keeps_a_percentage_comparison_until_the_free_space_is_known() {
+    // The two positions of css-backgrounds/background-position-negative-
+    // percentage-comparison.html. A 100px image in a 50px area leaves -50px
+    // of free space, where `100%` is the smaller position, so `min(0%, 100%)`
+    // is `100%` there and `max(0%, 100%)` is `0%`.
+    assert_eq!(
+        only_background_position("min(0%, 100%) max(0%, 100%)"),
+        Some(CssPosition {
+            horizontal: compared(0.0, 100.0),
+            vertical: compared(100.0, 0.0),
+        })
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_nests_and_ignores_case() {
+    // `max(10%, 20%)` is 20% for a free space of zero or more and 10%
+    // below it; `min` then flips them again.
+    assert_eq!(
+        only_background_position("MIN(0%, Max(10%, 20%)) 0%"),
+        Some(CssPosition {
+            horizontal: compared(0.0, 10.0),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        })
+    );
+}
+
+#[test]
+fn background_position_clamp_of_percentages_is_max_of_min_and_value() {
+    // `clamp(10%, 50%, 90%)` is `max(10%, min(50%, 90%))`. For a negative
+    // free space the bounds swap sides: 10% is the larger length and wins
+    // over the smaller 90%, as a lower bound above the upper bound does.
+    assert_eq!(
+        only_background_position("clamp(10%, 50%, 90%) 0%"),
+        Some(CssPosition {
+            horizontal: compared(50.0, 10.0),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        })
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_sums_inside_and_around_functions() {
+    // Both signs add the same terms around a comparison.
+    assert_eq!(
+        only_background_position("calc(min(0%, 100%) + 10%) calc((max(0%, 100%)) - 10%)"),
+        Some(CssPosition {
+            horizontal: compared(10.0, 110.0),
+            vertical: compared(90.0, -10.0),
+        })
+    );
+    // A sum inside the function, without `calc()`.
+    assert_eq!(
+        only_background_position("min(5% + 5%, 100% - 50%) 0%"),
+        Some(CssPosition {
+            horizontal: compared(10.0, 50.0),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        })
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_after_an_edge_is_measured_from_that_edge() {
+    // `right min(0%, 100%)` is `100% - min(0%, 100%)` from the left edge.
+    assert_eq!(
+        only_background_position("right min(0%, 100%) top"),
+        Some(CssPosition {
+            horizontal: compared(100.0, 0.0),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        })
+    );
+    assert_eq!(
+        only_background_position("left bottom max(10%, 20%)"),
+        Some(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+            vertical: compared(80.0, 90.0),
+        })
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_with_one_result_is_a_plain_percentage() {
+    // The same winner for both signs of the free space needs no comparison.
+    assert_eq!(
+        only_background_position("min(25%, 25%) calc(min(25%, 25%) + 50%)"),
+        Some(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(25.0)),
+            vertical: CssPositionOffset::Start(Length::Percent(75.0)),
+        })
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_in_each_layer() {
+    let Some(PropertyValue::BackgroundPosition(positions)) =
+        parse("0% 0%, min(0%, 100%) 50%", "background-position")
+    else {
+        panic!("expected two layers");
+    };
+    assert_eq!(positions.len(), 2);
+    assert_eq!(
+        positions[0],
+        CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        }
+    );
+    assert_eq!(positions[1].horizontal, compared(0.0, 100.0));
+}
+
+#[test]
+fn background_shorthand_keeps_a_percentage_comparison_in_its_position() {
+    let Some(PropertyValue::Background(shorthand)) = parse(
+        "url(a.png) min(0%, 100%) max(0%, 100%) no-repeat",
+        "background",
+    ) else {
+        panic!("expected the shorthand");
+    };
+    assert_eq!(shorthand.layers.len(), 1);
+    assert_eq!(
+        shorthand.layers[0].position,
+        CssPosition {
+            horizontal: compared(0.0, 100.0),
+            vertical: compared(100.0, 0.0),
+        }
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_rejects_what_it_cannot_read() {
+    // A missing, extra or empty operand makes the declaration invalid.
+    for invalid in [
+        "min() 0%",
+        "clamp(0%, 50%) 0%",
+        "clamp(0%, 50%, 90%, 100%) 0%",
+        "min(0% 100%) 0%",
+        "max(0%,, 100%) 0%",
+        // `+` and `-` need whitespace around them.
+        "calc(10%+5%) 0%",
+        "calc(10% -5%) 0%",
+    ] {
+        assert_eq!(parse(invalid, "background-position"), None, "{invalid}");
+    }
+}
+
+#[test]
+fn background_position_percentage_comparison_leaves_other_math_to_the_generic_path() {
+    // Neither the lengths nor a product are read here, so the position is
+    // parsed after the math simplifier folds them as before.
+    assert_eq!(
+        only_background_position("min(10px, 20px) 5%"),
+        only_background_position("10px 5%")
+    );
+    assert_eq!(
+        only_background_position("calc(2 * 10%) 0%"),
+        only_background_position("20% 0%")
+    );
+    assert_eq!(parse("min(0%, 10) 0%", "background-position"), None);
+}
+
+#[test]
+fn background_position_percentage_comparison_ignores_values_without_a_position() {
+    // A property whose grammar yields neither a position list nor the
+    // `background` shorthand never carries a comparison.
+    assert_eq!(
+        parse_background_position_comparison("background-color", "red"),
+        None
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_stops_at_the_nesting_limit() {
+    let depth = crate::MAX_CSS_NESTING_DEPTH + 2;
+    let nested = format!("{}0%{} 0%", "min(".repeat(depth), ")".repeat(depth));
+    assert_eq!(
+        parse_background_position_comparison("background-position", &nested),
+        None
+    );
+    let parenthesised = format!("calc({}0%{}) 0%", "(".repeat(depth), ")".repeat(depth));
+    assert_eq!(
+        parse_background_position_comparison("background-position", &parenthesised),
+        None
+    );
+}
+
+#[test]
+fn background_position_percentage_comparison_stops_at_a_sum_that_overflows() {
+    // The sum leaves the finite range for both signs, as does a token that
+    // is already out of range.
+    for overflow in [
+        "calc(min(0%, 3e38%) + 3e38%) 0%",
+        "calc(3e38% + 3e38%) 0%",
+        "min(0%, 1e40%) 0%",
+    ] {
+        assert_eq!(
+            parse_background_position_comparison("background-position", overflow),
+            None,
+            "{overflow}"
+        );
+    }
+}
+
 #[test]
 fn background_position_keeps_css_wide_keyword() {
     assert_css_wide_keywords_deferred("background-position");

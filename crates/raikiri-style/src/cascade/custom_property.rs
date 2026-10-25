@@ -9,8 +9,8 @@ use crate::property::{
     CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings, FontVariationSettings,
     LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey,
     PropertyValue, RelativeCalcLengthPercentage, RelativeCalcUnit, VerticalAlign,
-    is_custom_property_name, parse_property_grammar, parse_value, product_operator,
-    property_key_for_name, sum_operator,
+    is_custom_property_name, parse_background_position_comparison, parse_property_grammar,
+    parse_value, product_operator, property_key_for_name, sum_operator,
 };
 
 use super::candidate::CustomCandidates;
@@ -154,6 +154,17 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
         let mut parser = Parser::new(&mut input);
         let value = parse_value(&deferred.property, &mut parser)?;
         parser.expect_exhausted().ok()?;
+        return Some(ResolvedValue::Parsed(value));
+    }
+    // The `background` shorthand resolves once under one of its longhand keys,
+    // so the property name tells which value this is.
+    let property = deferred.property.to_ascii_lowercase();
+    if matches!(property.as_str(), "background-position" | "background")
+        && let Some(value) = parse_background_position_comparison(&property, substituted)
+    {
+        // Folding a percentage comparison here would compare the percentages
+        // themselves, which is wrong when the free space of the position is
+        // negative.
         return Some(ResolvedValue::Parsed(value));
     }
     if let Some(simplified) = simplify_math_functions(substituted) {

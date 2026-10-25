@@ -3918,6 +3918,10 @@ fn conic_axis_center(offset: &CssPositionOffset, start: f64, end: f64) -> f64 {
         CssPositionOffset::Calc(calc) => {
             start + (end - start) * f64::from(calc.percent) / 100.0 + f64::from(calc.px)
         }
+        CssPositionOffset::Compared(compared) => {
+            let size = end - start;
+            start + size * f64::from(compared.percent_for_basis(size)) / 100.0
+        }
         // cov:ignore: only Px and Percent survive resolution, other lengths are unreachable
         _ => (start + end) / 2.0,
     }

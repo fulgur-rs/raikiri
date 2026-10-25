@@ -177,8 +177,8 @@ use smol_str::SmolStr;
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
-    BorderSpacingValue, BorderStyle, BoxShadowItem, CalcLengthPercentage, ConicGradient,
-    CssPosition, CssPositionOffset, FlexBasisValue, Gradient, GradientColorStop,
+    BorderSpacingValue, BorderStyle, BoxShadowItem, CalcLengthPercentage, ComparedPercentage,
+    ConicGradient, CssPosition, CssPositionOffset, FlexBasisValue, Gradient, GradientColorStop,
     GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     LengthPercentageCalc, LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient,
@@ -548,6 +548,11 @@ pub enum ComputedCssPositionOffset {
     /// A percentage with an absolute-length offset, measured from the start
     /// edge (see [`crate::property::CssPositionOffset::Calc`]).
     Calc(CalcLengthPercentage),
+    /// A comparison of percentages whose winner depends on the sign of the
+    /// free space, measured from the start edge (see
+    /// [`crate::property::CssPositionOffset::Compared`]). The used value picks
+    /// the percentage with [`ComparedPercentage::percent_for_basis`].
+    Compared(ComparedPercentage),
 }
 
 /// Computed `<position>` (counterpart of [`crate::property::CssPosition`]).
@@ -2936,6 +2941,7 @@ fn resolve_css_position_offset(
             ctx,
         )),
         CssPositionOffset::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
+        CssPositionOffset::Compared(compared) => ComputedCssPositionOffset::Compared(compared),
         // An `lh` term without a basis falls back to zero, as for a plain
         // `lh` offset. Only that term is dropped: an end-edge offset was
         // folded to `100% - offset` at parse time, and its percentage keeps
@@ -3966,6 +3972,7 @@ pub(crate) fn lift_css_position(computed: ComputedCssPosition) -> CssPosition {
             }
             ComputedCssPositionOffset::End(v) => CssPositionOffset::End(lift_length_percentage(v)),
             ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
+            ComputedCssPositionOffset::Compared(compared) => CssPositionOffset::Compared(compared),
         }
     }
     CssPosition {

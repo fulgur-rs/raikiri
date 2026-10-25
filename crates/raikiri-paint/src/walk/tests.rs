@@ -5461,6 +5461,16 @@ fn conic_axis_center_covers_start_end_px_and_percent() {
         conic_axis_center(&CssPositionOffset::Calc(calc), 100.0, 300.0),
         190.0
     );
+    // A percentage comparison reads the percentage for a positioning area
+    // that is never negative, whichever way the other sign would go.
+    let compared = raikiri_style::property::ComparedPercentage {
+        non_negative: 25.0,
+        negative: 75.0,
+    };
+    assert_eq!(
+        conic_axis_center(&CssPositionOffset::Compared(compared), 100.0, 300.0),
+        150.0
+    );
 }
 
 #[test]

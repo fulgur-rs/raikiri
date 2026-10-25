@@ -595,6 +595,11 @@ pub fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f6
         ComputedCssPositionOffset::Calc(calc) => {
             free_space * calc.percent as f64 / 100.0 + calc.px as f64
         }
+        // The free space is negative when the image is larger than its area,
+        // and a negative basis reverses the order a comparison saw.
+        ComputedCssPositionOffset::Compared(compared) => {
+            free_space * compared.percent_for_basis(free_space) as f64 / 100.0
+        }
         _ => free_space / 2.0, // cov:ignore: defensive fallback for future position variants
     }
 }
