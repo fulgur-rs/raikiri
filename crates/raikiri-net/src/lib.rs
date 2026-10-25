@@ -11,6 +11,8 @@
 //! alternative for browser clients that must reach loopback or private
 //! addresses.
 
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "http-ureq")] // cov:ignore: attribute line has no executable code
 mod deadline_transport;
 mod file_provider;

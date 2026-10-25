@@ -25,6 +25,8 @@
 //! The authoritative source for these type definitions is the design doc (from the
 //! Workspace Layout scope and spec drift protocol design).
 
+#![forbid(unsafe_code)]
+
 pub mod config;
 pub mod consumer;
 pub mod dom;

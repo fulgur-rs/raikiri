@@ -26,6 +26,8 @@
 //! library uses, so code that reads or builds these values by field does not
 //! change when it moves between the two.
 
+#![forbid(unsafe_code)]
+
 mod box_layout;
 mod geometry;
 mod math;

@@ -3,7 +3,8 @@
 //! payloads were checked, each of them read freed memory.
 
 use raikiri_layout_style::values::{
-    CalcRef, Dimension, ExpandedDimension, LengthPercentage, MaybeResolve, resolve_projected_calc,
+    CalcRef, Dimension, ExpandedDimension, LengthPercentage, LengthPercentageAuto, MaybeResolve,
+    resolve_projected_calc,
 };
 use raikiri_layout_style::{
     AlignedCalc, CalcSlot, LayoutStyleView, LengthProperty, LengthValue, PreparedCalc,
@@ -235,4 +236,29 @@ fn payloads_made_and_dropped_on_many_threads_never_resolve_each_other() {
     for thread in threads {
         thread.join().unwrap();
     }
+}
+
+#[test]
+fn lengths_move_to_other_threads_and_go_stale_there() {
+    fn assert_send<T: Send>() {}
+    assert_send::<Dimension>();
+    assert_send::<LengthPercentage>();
+    assert_send::<LengthPercentageAuto>();
+
+    let owner = Arc::new(AlignedCalc::new(EXPRESSION, true));
+    let dimension = Dimension::calc(CalcRef::retained(&owner));
+    let length_percentage = LengthPercentage::calc(CalcRef::retained(&owner));
+    let length_percentage_auto = LengthPercentageAuto::calc(CalcRef::retained(&owner));
+    // Each length moves to a thread of its own, and all three name the one slot.
+    let resolve_elsewhere = move || {
+        let threads = [
+            std::thread::spawn(move || dimension.maybe_resolve(Some(100.0))),
+            std::thread::spawn(move || length_percentage.maybe_resolve(Some(100.0))),
+            std::thread::spawn(move || length_percentage_auto.maybe_resolve(Some(100.0))),
+        ];
+        threads.map(|thread| thread.join().unwrap())
+    };
+    assert_eq!(resolve_elsewhere(), [Some(30.0); 3]);
+    drop(owner);
+    assert_eq!(resolve_elsewhere(), [Some(0.0); 3]);
 }
