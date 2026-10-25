@@ -1,6 +1,6 @@
 //! Numeric, length and identifier helpers shared by several property parser domains.
 
-use cssparser::{BasicParseError, ParseError, Parser, ParserInput, Token};
+use cssparser::{BasicParseError, Delimiter, ParseError, Parser, ParserInput, Token};
 use smol_str::SmolStr;
 
 use crate::property::types::*;
@@ -670,5 +670,29 @@ pub(super) fn parse_non_negative_length_percentage_res<'i>(
         Ok(length)
     } else {
         Err(input.new_custom_error(()))
+    }
+}
+
+/// Parses a comma-separated list like
+/// [`Parser::parse_comma_separated`], except that the last item ends before a
+/// `!` instead of consuming it. A declaration value is followed by an optional
+/// `!important` that the caller reads once the value is parsed, so the `!`
+/// must stay in the input; whatever follows it is still rejected by the
+/// caller's exhaustion check. Each item must consume its whole segment and an
+/// empty segment is an error.
+pub(crate) fn parse_comma_list_before_important<'i, T, E>(
+    input: &mut Parser<'i, '_>,
+    mut item: impl FnMut(&mut Parser<'i, '_>) -> Result<T, ParseError<'i, E>>,
+) -> Result<Vec<T>, ParseError<'i, E>> {
+    let mut values = Vec::with_capacity(1);
+    loop {
+        input.skip_whitespace();
+        values.push(input.parse_until_before(Delimiter::Comma | Delimiter::Bang, &mut item)?);
+        let before_separator = input.state();
+        if matches!(input.next(), Ok(Token::Comma)) {
+            continue;
+        }
+        input.reset(&before_separator);
+        return Ok(values);
     }
 }

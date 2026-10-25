@@ -1310,11 +1310,10 @@ pub(super) fn parse_box_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<BoxShad
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
     }
-    input
-        .parse_comma_separated(|i| -> Result<BoxShadowItem, ParseError<'_, ()>> {
-            parse_box_shadow_item(i).ok_or_else(|| i.new_custom_error(()))
-        })
-        .ok()
+    parse_comma_list_before_important(input, |i| -> Result<BoxShadowItem, ParseError<'_, ()>> {
+        parse_box_shadow_item(i).ok_or_else(|| i.new_custom_error(()))
+    })
+    .ok()
 }
 
 /// Parse the width/style/color components of `outline` shorthand in any-order.

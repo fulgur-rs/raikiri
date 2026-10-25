@@ -9698,6 +9698,40 @@ fn background_position_axis_lists_repeat_to_the_image_count() {
 }
 
 #[test]
+fn important_applies_to_per_layer_background_lists() {
+    use crate::property::{BackgroundRepeat, BackgroundRepeatKeyword};
+    // An `!important` axis longhand beats a later shorthand, on that axis only.
+    assert_eq!(
+        background_layer_positions(
+            "background-position-y: 5px !important; background-position: 10px 20px"
+        ),
+        [px_position(10.0, 5.0)]
+    );
+    // The flag on a list longhand wins over a later normal declaration.
+    let no_repeat = BackgroundRepeat {
+        x: BackgroundRepeatKeyword::NoRepeat,
+        y: BackgroundRepeatKeyword::NoRepeat,
+    };
+    let cv = cascade_doc(
+        "div { background-repeat: no-repeat !important } div { background-repeat: repeat-x }",
+        "div",
+        None,
+    );
+    assert_eq!(cv.background_layers()[0].repeat, no_repeat);
+    // The `background` shorthand and its image list carry the flag as well.
+    for style in [
+        "background-image: url(a.png) !important",
+        "background: url(a.png) !important",
+        "background: url(a.png), red !important",
+    ] {
+        assert!(
+            cascade_doc("", "div", Some(style)).has_background_image(),
+            "{style}"
+        );
+    }
+}
+
+#[test]
 fn background_position_axis_reads_edges_and_substituted_values() {
     use crate::property::ComparedPercentage;
     use crate::resolve::{
