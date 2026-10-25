@@ -26,7 +26,7 @@ use raikiri_style::property::{
     AlignSelfValue, BreakBetween, CalcLengthPercentage, ClearValue, ColumnCountValue,
     ColumnFillValue, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue,
     GridLineValue, Length, LengthOrAuto, LengthPercentageOrCalc, OverflowValue, PositionValue,
-    PropertyKey, PropertyValue, SelfAlignmentValue, WritingMode,
+    PropertyKey, PropertyValue, SelfAlignmentValue, SelfPosition, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedColumnWidth, ComputedFlexBasis, ComputedGridTemplateTracks,

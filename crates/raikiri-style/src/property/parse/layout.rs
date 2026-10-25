@@ -315,57 +315,68 @@ pub(super) fn parse_justify_alignment(input: &mut Parser<'_, '_>) -> Option<Self
     parse_axis_self_alignment(input, true)
 }
 
+/// The `<overflow-position>` keyword that opens a self alignment, if any:
+/// `Some(true)` for `safe` and `Some(false)` for `unsafe`.
+fn parse_overflow_position(input: &mut Parser<'_, '_>) -> Option<bool> {
+    if input.try_parse(|i| i.expect_ident_matching("safe")).is_ok() {
+        return Some(true);
+    }
+    input
+        .try_parse(|i| i.expect_ident_matching("unsafe"))
+        .is_ok()
+        .then_some(false)
+}
+
+/// Shared grammar of `align-items`, `justify-items` and the self-alignment
+/// properties: `normal | stretch | <baseline-position> |
+/// <overflow-position>? <self-position>`, where the inline axis adds `left` and
+/// `right` to `<self-position>`. An `<overflow-position>` qualifies a position
+/// only, so `safe baseline`, `safe normal` and `safe stretch` are invalid.
 fn parse_axis_self_alignment(
     input: &mut Parser<'_, '_>,
     inline_axis: bool,
 ) -> Option<SelfAlignmentValue> {
-    let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
-    let _unsafe = !safe
-        && input
-            .try_parse(|i| i.expect_ident_matching("unsafe"))
-            .is_ok();
-    let ident = input.expect_ident().ok()?.clone();
-    if ident.eq_ignore_ascii_case("last") {
-        input.expect_ident_matching("baseline").ok()?;
-        return Some(SelfAlignmentValue::LastBaseline);
-    }
-    if ident.eq_ignore_ascii_case("first") {
-        input.expect_ident_matching("baseline").ok()?;
-        return Some(SelfAlignmentValue::Baseline);
-    }
-    let value = match ident.to_ascii_lowercase().as_str() {
-        "normal" => SelfAlignmentValue::Normal,
-        "stretch" => SelfAlignmentValue::Stretch,
-        "center" => SelfAlignmentValue::Center,
-        "start" | "self-start" => SelfAlignmentValue::Start,
-        "end" | "self-end" => SelfAlignmentValue::End,
-        "left" if inline_axis => SelfAlignmentValue::Start,
-        "right" if inline_axis => SelfAlignmentValue::End,
-        "flex-start" => SelfAlignmentValue::FlexStart,
-        "flex-end" => SelfAlignmentValue::FlexEnd,
+    let overflow = parse_overflow_position(input);
+    let ident = input.expect_ident().ok()?.to_ascii_lowercase();
+    let position = match ident.as_str() {
+        "center" => SelfPosition::Center,
+        "start" => SelfPosition::Start,
+        "end" => SelfPosition::End,
+        "self-start" => SelfPosition::SelfStart,
+        "self-end" => SelfPosition::SelfEnd,
+        "flex-start" => SelfPosition::FlexStart,
+        "flex-end" => SelfPosition::FlexEnd,
+        "left" if inline_axis => SelfPosition::Start,
+        "right" if inline_axis => SelfPosition::End,
+        _ if overflow.is_some() => return None,
+        "normal" => return Some(SelfAlignmentValue::Normal),
+        "stretch" => return Some(SelfAlignmentValue::Stretch),
+        "first" => {
+            input.expect_ident_matching("baseline").ok()?;
+            return Some(SelfAlignmentValue::Baseline);
+        }
+        "last" => {
+            input.expect_ident_matching("baseline").ok()?;
+            return Some(SelfAlignmentValue::LastBaseline);
+        }
         // `<baseline-position>` joins its keywords with `&&`, so `last` may
         // follow `baseline` as well as precede it.
         "baseline" => {
-            if input.try_parse(|i| i.expect_ident_matching("last")).is_ok() {
-                SelfAlignmentValue::LastBaseline
-            } else {
-                SelfAlignmentValue::Baseline
-            }
+            return Some(
+                if input.try_parse(|i| i.expect_ident_matching("last")).is_ok() {
+                    SelfAlignmentValue::LastBaseline
+                } else {
+                    SelfAlignmentValue::Baseline
+                },
+            );
         }
         _ => return None,
     };
-    Some(
-        if safe
-            && matches!(
-                value,
-                SelfAlignmentValue::Center | SelfAlignmentValue::End | SelfAlignmentValue::FlexEnd
-            )
-        {
-            SelfAlignmentValue::Start
-        } else {
-            value
-        },
-    )
+    Some(match overflow {
+        Some(true) => SelfAlignmentValue::Safe(position),
+        Some(false) => SelfAlignmentValue::Unsafe(position),
+        None => position.alignment(),
+    })
 }
 
 /// Parser for `align-self: auto | …`. It tries the `auto` branch first
@@ -376,45 +387,16 @@ pub(super) fn parse_align_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfVa
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(AlignSelfValue::Auto);
     }
-    let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
-    let _unsafe = !safe
-        && input
-            .try_parse(|i| i.expect_ident_matching("unsafe"))
-            .is_ok();
-    parse_self_alignment(input).map(|value| {
-        AlignSelfValue::Value(if safe && matches!(value, SelfAlignmentValue::Center) {
-            SelfAlignmentValue::Start
-        } else {
-            value
-        })
-    })
+    parse_self_alignment(input).map(AlignSelfValue::Value)
 }
 
+/// Parser for `justify-self: auto | …`, the inline-axis counterpart of
+/// [`parse_align_self`] that delegates to [`parse_justify_alignment`].
 pub(super) fn parse_justify_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(AlignSelfValue::Auto);
     }
-    let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
-    let _unsafe = !safe
-        && input
-            .try_parse(|i| i.expect_ident_matching("unsafe"))
-            .is_ok();
-    parse_justify_alignment(input).map(|value| {
-        AlignSelfValue::Value(
-            if safe
-                && matches!(
-                    value,
-                    SelfAlignmentValue::Center
-                        | SelfAlignmentValue::End
-                        | SelfAlignmentValue::FlexEnd
-                )
-            {
-                SelfAlignmentValue::Start
-            } else {
-                value
-            },
-        )
-    })
+    parse_justify_alignment(input).map(AlignSelfValue::Value)
 }
 
 /// The `Result` form of [`parse_justify_alignment`], for the second

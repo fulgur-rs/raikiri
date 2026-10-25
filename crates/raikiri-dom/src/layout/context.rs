@@ -8,7 +8,7 @@ use crate::layout::LayoutWarn;
 use crate::layout::protocol::{self, LayoutInput};
 use crate::layout::taffy_adapter::GridInfo;
 use crate::node::arena::BoxKey;
-use raikiri_layout_geometry::Size;
+use raikiri_layout_geometry::{Point, Size};
 
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
@@ -58,6 +58,11 @@ pub(crate) struct LayoutContext {
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
+    /// The static positions of the boxes hoisted to a containing block on
+    /// vertical axes that align `safe` in an axis, which that block aligns
+    /// again once the library has positioned them (see
+    /// `dispatch::vertical_oof::alignment`).
+    pub(crate) safe_static_positions: HashMap<usize, Point<protocol::AxisStaticPosition>>,
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) text_group: TextGroupScope,
     /// The least space a line leaves unfilled so far in the group being
@@ -137,6 +142,7 @@ impl<'doc> LayoutSession<'doc> {
             self.document.layout_cache_context.publish_metadata();
             self.context.grid_layout_info.clear();
             self.context.taffy_hoisted_children.clear();
+            self.context.safe_static_positions.clear();
             self.document.layout_dirty = false;
         }
     }

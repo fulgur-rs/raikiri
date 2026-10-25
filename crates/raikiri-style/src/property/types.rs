@@ -3985,6 +3985,45 @@ css_keywords!(ContentAlignmentValue {
     FlexEnd => "flex-end",
 });
 
+/// A `<self-position>` keyword (CSS Box Alignment 3 §4.1
+/// <https://www.w3.org/TR/css-align-3/#typedef-self-position>), the position
+/// that an `<overflow-position>` prefix qualifies in [`SelfAlignmentValue`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfPosition {
+    /// `center`.
+    Center,
+    /// `start`.
+    Start,
+    /// `end`.
+    End,
+    /// `self-start`.
+    SelfStart,
+    /// `self-end`.
+    SelfEnd,
+    /// `flex-start`.
+    FlexStart,
+    /// `flex-end`.
+    FlexEnd,
+}
+
+impl SelfPosition {
+    /// The alignment that is just this position, with no `<overflow-position>`
+    /// keyword before it.
+    #[must_use]
+    pub fn alignment(self) -> SelfAlignmentValue {
+        match self {
+            Self::Center => SelfAlignmentValue::Center,
+            Self::Start => SelfAlignmentValue::Start,
+            Self::End => SelfAlignmentValue::End,
+            Self::SelfStart => SelfAlignmentValue::SelfStart,
+            Self::SelfEnd => SelfAlignmentValue::SelfEnd,
+            Self::FlexStart => SelfAlignmentValue::FlexStart,
+            Self::FlexEnd => SelfAlignmentValue::FlexEnd,
+        }
+    }
+}
+
 /// `align-items` value (a "self-alignment" keyword set based on CSS Box
 /// Alignment 3 §4.1 `<self-position>`).
 ///
@@ -4001,17 +4040,20 @@ css_keywords!(ContentAlignmentValue {
 /// [`FlexBasisValue`] its own enum rather than reuse `LengthOrAuto`, but both
 /// apply the rule of extracting only the shared grammar into one type.
 ///
+/// A `<self-position>` written without an `<overflow-position>` keyword is
+/// one of the plain variants ([`Self::Center`], [`Self::Start`], …); one
+/// written with `safe` or `unsafe` is [`Self::Safe`] or [`Self::Unsafe`] around
+/// the same position. The computed value keeps the keywords as written, so
+/// `safe start` stays apart from `start`.
+///
 /// # Scope carving
 ///
-/// - **(b) unsupported**: `<overflow-position>` (`safe`/`unsafe` prefix) is
-///   not implemented, as with [`ContentAlignmentValue`].
-/// - **(b) unsupported**: `self-start`/`self-end` (part of `<self-position>`,
-///   keywords relative to writing mode) are not implemented because taffy's
-///   `AlignItemsKeyword` has no matching variants.
 /// - **(b) unsupported**: `last baseline` is kept apart from `baseline` only
 ///   for its fallback alignment (spec §9 "Fallback Alignment"); taffy aligns
 ///   both to the first baseline. `first baseline` is the same value as
 ///   `baseline`.
+/// - **(b) unsupported**: `left` and `right` of `justify-items` and
+///   `justify-self` are read as `start` and `end`, whatever the direction.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelfAlignmentValue {
@@ -4029,6 +4071,19 @@ pub enum SelfAlignmentValue {
     FlexStart,
     /// `flex-end` — `<self-position>`.
     FlexEnd,
+    /// `self-start` — `<self-position>`: the start edge of the aligned box
+    /// itself, which differs from `start` when its writing mode or direction
+    /// differs from the container's.
+    SelfStart,
+    /// `self-end` — `<self-position>`; see [`Self::SelfStart`].
+    SelfEnd,
+    /// `safe <self-position>`: an overflowing box falls back to `start`
+    /// instead of overflowing at the start side (CSS Box Alignment 3,
+    /// "Overflow Alignment").
+    Safe(SelfPosition),
+    /// `unsafe <self-position>`: the box is aligned as asked whatever it
+    /// overflows.
+    Unsafe(SelfPosition),
     /// `baseline` — `<baseline-position>`.
     Baseline,
     /// `last baseline` — `<baseline-position>`. Taffy has no last-baseline
@@ -4036,6 +4091,26 @@ pub enum SelfAlignmentValue {
     /// not take part in baseline alignment: its fallback alignment is then
     /// `safe self-end` (CSS Box Alignment 3 §9.1) rather than `safe start`.
     LastBaseline,
+}
+
+impl SelfAlignmentValue {
+    /// The `<self-position>` of the value, whether or not an
+    /// `<overflow-position>` keyword qualifies it. `None` for `normal`,
+    /// `stretch` and the baseline values.
+    #[must_use]
+    pub fn position(self) -> Option<SelfPosition> {
+        match self {
+            Self::Center => Some(SelfPosition::Center),
+            Self::Start => Some(SelfPosition::Start),
+            Self::End => Some(SelfPosition::End),
+            Self::FlexStart => Some(SelfPosition::FlexStart),
+            Self::FlexEnd => Some(SelfPosition::FlexEnd),
+            Self::SelfStart => Some(SelfPosition::SelfStart),
+            Self::SelfEnd => Some(SelfPosition::SelfEnd),
+            Self::Safe(position) | Self::Unsafe(position) => Some(position),
+            _ => None,
+        }
+    }
 }
 
 /// The value of the `align-self` property.

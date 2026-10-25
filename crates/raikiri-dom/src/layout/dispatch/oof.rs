@@ -8,8 +8,8 @@ use super::grid_oof;
 use crate::document::OofCoordinate;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
-    AvailableSpace, LayoutOutput, NodeId, OofCandidate, OofCandidates, OofLayoutResult,
-    OofPosition, OofPositioningArea,
+    AvailableSpace, AxisStaticPosition, LayoutOutput, NodeId, OofCandidate, OofCandidates,
+    OofLayoutResult, OofPosition, OofPositioningArea, StaticAlignSafety,
 };
 use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::algorithms::{
@@ -17,7 +17,7 @@ use crate::layout::taffy_adapter::algorithms::{
 };
 use crate::layout::taffy_adapter::{GridInfo, OofBatch, OofSpan};
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::{ContainingBlockClaims, Direction};
+use raikiri_layout_style::values::{BaselineSet, ContainingBlockClaims, Direction};
 
 impl LayoutSession<'_> {
     /// Forget the hoisted children recorded for `node` by an earlier layout.
@@ -25,6 +25,7 @@ impl LayoutSession<'_> {
         let owner = usize::from(node);
         if let Some(previous) = self.context.taffy_hoisted_children.remove(&owner) {
             for child in previous.into_iter().map(usize::from) {
+                self.context.safe_static_positions.remove(&child);
                 if self
                     .oof_coordinates
                     .get(&child)
@@ -211,5 +212,43 @@ pub(super) fn layout_candidates(
     });
     tree.clear_hoisted_children(owner);
     tree.add_hoisted_children(owner, result.hoisted.iter().copied());
+    if super::block_right_to_left(tree, usize::from(owner)).is_some() {
+        record_safe_static_positions(tree, candidates, &result.hoisted);
+    }
     result
+}
+
+/// Remember the static positions of the `hoisted` boxes among `candidates`
+/// that align `safe` in an axis, for the vertical containing block that
+/// positioned them to align them again.
+///
+/// A box that aligns to the last baseline is left out. Its `safe self-end`
+/// fallback keeps the box at the end edge when it overflows in the
+/// web-platform-tests (`grid-abspos-staticpos-align-self-vertWM-last-baseline-*`),
+/// which Taffy's fallback to the left or top edge matches.
+fn record_safe_static_positions(
+    tree: &mut LayoutSession<'_>,
+    candidates: &OofBatch,
+    hoisted: &[NodeId],
+) {
+    let last_baseline = |tree: &LayoutSession<'_>, node: usize| {
+        tree.taffy_parent_of(node).is_some_and(|parent| {
+            let (style, parent) = (tree.physical_style(node), tree.physical_style(parent));
+            [false, true]
+                .into_iter()
+                .any(|justify| style.self_baseline_set(&parent, justify) == Some(BaselineSet::Last))
+        })
+    };
+    for candidate in candidates.iter() {
+        let safe = |axis: AxisStaticPosition| axis.align.safety == StaticAlignSafety::Safe;
+        let node = usize::from(candidate.node);
+        if (safe(candidate.static_position.x) || safe(candidate.static_position.y))
+            && hoisted.contains(&candidate.node)
+            && !last_baseline(tree, node)
+        {
+            tree.context
+                .safe_static_positions
+                .insert(node, candidate.static_position);
+        }
+    }
 }

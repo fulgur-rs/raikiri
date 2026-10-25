@@ -1200,6 +1200,8 @@ mod float_container_tests;
 #[cfg(test)]
 mod item_width_tests;
 #[cfg(test)]
+mod self_alignment_tests;
+#[cfg(test)]
 mod tests;
 
 mod axis_adapter;
