@@ -1,6 +1,5 @@
 use super::*;
-use crate::document_parse::assemble_document;
-use crate::xhtml::parse_with_limits;
+use crate::parse_xhtml_with_resources;
 
 const NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
@@ -54,24 +53,17 @@ fn long_xhtml() -> String {
 
 /// The pages of a batch layout of `xhtml`.
 fn batch_xhtml(xhtml: &str) -> (PageLog, Vec<RenderWarning>) {
-    let resources = RenderResources::new();
-    let extra_stylesheets = resources.extra_stylesheets();
-    let options = resources.parse_options(&extra_stylesheets, None);
-    let limits = resources.parse_limits();
-    let uncascaded = parse_with_limits(xhtml.as_bytes(), &options, &limits).expect("parse");
-    let document = assemble_document(
-        uncascaded,
-        &options,
-        &limits,
-        resources.configured_fonts(),
-        resources.configured_border_width_device_scale(),
-    )
-    .expect("cascade");
+    batch_xhtml_with(xhtml, &RenderResources::new())
+}
+
+/// The pages of a batch layout of `xhtml` under `resources`.
+fn batch_xhtml_with(xhtml: &str, resources: &RenderResources<'_>) -> (PageLog, Vec<RenderWarning>) {
+    let document = parse_xhtml_with_resources(xhtml.as_bytes(), resources).expect("parse");
     let LayoutStatus::Completed(laid_out) = layout(
         &document,
         PageDefaults::default(),
         LayoutConfig::default(),
-        LayoutOptions::new().resources(&resources),
+        LayoutOptions::new().resources(resources),
     )
     .expect("layout") else {
         panic!("aborted");
@@ -213,6 +205,45 @@ fn repaired_xhtml_streams_like_the_batch_layout() {
     let streamed = parse_error_messages(&summary.warnings);
     assert!(!streamed.is_empty(), "the repairs are reported");
     assert_eq!(streamed, parse_error_messages(&batch_warnings));
+}
+
+/// Serves a style sheet that breaks the page after each `div`.
+struct PageBreakSheet;
+
+impl NetworkProvider for PageBreakSheet {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        Ok(FetchOutcome::Body(FetchedResource {
+            bytes: bytes::Bytes::from("div { break-after: page }"),
+            content_type: Some("text/css".to_owned()),
+            final_url: request.url,
+            encoding: None,
+        }))
+    }
+}
+
+#[test]
+fn xhtml_linked_style_sheet_gives_the_batch_pages_when_streamed() {
+    let xhtml = format!(
+        "<html xmlns=\"{NAMESPACE}\"><head><link rel=\"stylesheet\" href=\"breaks.css\"/></head>\
+         <body><div>one</div><div>two</div><div>three</div></body></html>"
+    );
+    let provider = PageBreakSheet;
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .base_url(url::Url::parse("https://page.example/doc.xhtml").unwrap());
+    let (expected, _) = batch_xhtml_with(&xhtml, &resources);
+    assert_eq!(expected.len(), 3, "the linked style sheet breaks the pages");
+    let (unlinked, _) = batch_xhtml(&xhtml);
+    assert_eq!(
+        unlinked.len(),
+        1,
+        "without a network provider it is ignored"
+    );
+    for chunk in [1, 32, xhtml.len()] {
+        let (pages, _, summary) = stream_xhtml(&xhtml, &resources, chunk, 1);
+        assert_eq!(pages, expected, "chunk {chunk}");
+        assert_eq!(summary.page_count, 3);
+    }
 }
 
 #[test]
