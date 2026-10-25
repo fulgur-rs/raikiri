@@ -484,6 +484,26 @@ class ReachTests(unittest.TestCase):
         doc["index"]["0"]["inner"]["module"]["items"] = [1]
         self.assertEqual(lint.third_party_crates(doc), {})
 
+    def test_a_reexport_in_a_hidden_module_is_not_a_root(self) -> None:
+        b = DocBuilder()
+        reexport = b.add(3, "Serialize", {"use": {"source": "serde::Serialize", "name": "Serialize", "id": b.serde_type, "is_glob": False}})
+        nested = b.add(4, "nested", {"module": {"is_crate": False, "items": [], "is_stripped": False}})
+        b.function(5, "deep", [], resolved(b.serde_type, "Serialize"))
+        b.index[str(nested)]["inner"]["module"]["items"] = [5]
+        b.add(1, "hidden", {"module": {"is_crate": False, "items": [reexport, nested], "is_stripped": False}}, attrs=HIDDEN)
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"] = [1]
+        self.assertEqual(lint.third_party_crates(doc), {})
+
+    def test_a_reexport_below_a_hidden_alias_of_a_private_module_is_not_a_root(self) -> None:
+        b = DocBuilder()
+        reexport = b.add(3, "Serialize", {"use": {"source": "serde::Serialize", "name": "Serialize", "id": b.serde_type, "is_glob": False}})
+        inner = b.add(2, "inner", {"module": {"is_crate": False, "items": [reexport], "is_stripped": False}})
+        b.add(1, "alias", {"use": {"source": "inner", "name": "alias", "id": inner, "is_glob": False}}, attrs=HIDDEN)
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"] = [1]  # `inner` is private
+        self.assertEqual(lint.third_party_crates(doc), {})
+
     def test_a_public_extern_crate_counts_as_naming_the_crate(self) -> None:
         b = DocBuilder()
         b.add(1, "renamed", {"extern_crate": {"name": "serde", "rename": "renamed"}})

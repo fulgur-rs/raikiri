@@ -251,8 +251,9 @@ def public_roots(doc: dict) -> list[int]:
     rustdoc keeps in the JSON the items that the API reaches, so this is a
     second way to the visible items that does not depend on how the names are
     worked out: a name the surface reads wrongly cannot hide an item. An item
-    is covered when it is hidden itself or belongs to a hidden type, or when
-    only hidden names lead to it (everything below a hidden module).
+    is covered when it is hidden itself, belongs to a hidden type or module (a
+    re-export in a hidden module included), or is what a hidden `pub use`
+    points at, or when only hidden names lead to it.
     """
     index = doc["index"]
     covered: set[int] = set()
@@ -264,7 +265,16 @@ def public_roots(doc: dict) -> list[int]:
             continue
         covered.add(key)
         item = index.get(str(key))
-        if item is not None:
+        if item is None:
+            continue
+        kind = item_kind(item)
+        if kind == "module":
+            stack.extend(item["inner"]["module"]["items"])
+        elif kind == "use":
+            target = item["inner"]["use"].get("id")
+            if isinstance(target, int):
+                stack.append(target)
+        else:
             stack.extend(members(item))
     return [
         int(key)
