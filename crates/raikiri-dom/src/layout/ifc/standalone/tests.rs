@@ -765,36 +765,126 @@ fn images_stand_across_the_lines_of_vertical_text() {
     assert_eq!(rect.y, 20.0);
 }
 
+fn shared_with_images(
+    doc: &Document,
+    text: &str,
+    images: &[StandaloneImage],
+    style: &StandaloneStyle,
+) -> Arc<StandaloneText> {
+    doc.shape_standalone_text_shared_with_images(text, images, style, None, StandaloneAlign::Start)
+        .expect("shaped")
+}
+
 #[test]
-fn a_run_with_images_is_not_remembered() {
+fn a_shared_run_with_images_is_shaped_once_for_the_same_images() {
     let doc = enabled();
     let style = ahem(10.0);
     let images = [image(2, 30.0, 20.0)];
-    let first = doc
-        .shape_standalone_text_shared_with_images(
+    let first = shared_with_images(&doc, "ab", &images, &style);
+    assert_eq!(first.images().len(), 1);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    let again = shared_with_images(&doc, "ab", &images, &style);
+    assert!(Arc::ptr_eq(&first, &again));
+    assert_eq!(doc.standalone_text_calls(), 1);
+    // The same images, given as a separate list, name the same run.
+    let copy = [image(2, 30.0, 20.0)];
+    assert!(Arc::ptr_eq(
+        &first,
+        &shared_with_images(&doc, "ab", &copy, &style)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 1);
+}
+
+#[test]
+fn a_shared_run_is_told_apart_by_where_and_how_big_its_images_are() {
+    let doc = enabled();
+    let style = ahem(10.0);
+    let first = shared_with_images(&doc, "ab", &[image(2, 30.0, 20.0)], &style);
+    let calls = doc.standalone_text_calls();
+    // Each of these differs from the first run in one thing about its images.
+    let differing = [
+        shared_with_images(&doc, "ab", &[image(1, 30.0, 20.0)], &style),
+        shared_with_images(&doc, "ab", &[image(2, 31.0, 20.0)], &style),
+        shared_with_images(&doc, "ab", &[image(2, 30.0, 21.0)], &style),
+        shared_with_images(
+            &doc,
             "ab",
-            &images,
+            &[image(2, 30.0, 20.0), image(2, 30.0, 20.0)],
             &style,
-            None,
-            StandaloneAlign::Start,
-        )
-        .expect("shaped");
-    let second = doc
-        .shape_standalone_text_shared_with_images(
-            "ab",
-            &images,
-            &style,
-            None,
-            StandaloneAlign::Start,
-        )
-        .expect("shaped");
-    assert!(!std::sync::Arc::ptr_eq(&first, &second));
-    // The same text without images is a different run.
-    let plain = doc
-        .shape_standalone_text_shared("ab", &style, None, StandaloneAlign::Start)
-        .expect("shaped");
+        ),
+        shared_with_images(&doc, "ab", &[], &style),
+    ];
+    assert_eq!(doc.standalone_text_calls(), calls + differing.len());
+    for run in &differing {
+        assert!(!Arc::ptr_eq(&first, run));
+    }
+    // What a run was shaped from is what it holds.
+    assert_eq!(differing[0].images()[0].1.x, 10.0);
+    assert_eq!(differing[1].images()[0].1.width, 31.0);
+    assert_eq!(differing[2].images()[0].1.height, 21.0);
+    assert_eq!(differing[3].images().len(), 2);
+    assert_eq!(differing[4].images(), []);
+    assert_eq!(differing[4].width(), 20.0);
+    // None of them displaced the first run.
+    assert!(Arc::ptr_eq(
+        &first,
+        &shared_with_images(&doc, "ab", &[image(2, 30.0, 20.0)], &style)
+    ));
+    assert_eq!(doc.standalone_text_calls(), calls + differing.len());
+}
+
+#[test]
+fn a_shared_run_of_images_alone_is_remembered() {
+    let doc = enabled();
+    let style = ahem(10.0);
+    let images = [image(0, 30.0, 20.0)];
+    let first = shared_with_images(&doc, "", &images, &style);
+    assert_eq!(first.width(), 30.0);
+    assert!(Arc::ptr_eq(
+        &first,
+        &shared_with_images(&doc, "", &images, &style)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 1);
+}
+
+#[test]
+fn a_shared_run_with_many_images_is_not_remembered() {
+    // Each remembered run holds a copy of its image list.
+    let doc = enabled();
+    let style = ahem(10.0);
+    let images = |count: usize| vec![image(0, 5.0, 5.0); count];
+    let longest = images(MEMO_MAX_IMAGES);
+    let kept = shared_with_images(&doc, "a", &longest, &style);
+    assert_eq!(kept.images().len(), MEMO_MAX_IMAGES);
+    assert!(Arc::ptr_eq(
+        &kept,
+        &shared_with_images(&doc, "a", &longest, &style)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 1);
+    let too_long = images(MEMO_MAX_IMAGES + 1);
+    let first = shared_with_images(&doc, "a", &too_long, &style);
+    let second = shared_with_images(&doc, "a", &too_long, &style);
+    assert_eq!(first.images().len(), MEMO_MAX_IMAGES + 1);
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert_eq!(first.width(), second.width());
+    assert_eq!(doc.standalone_text_calls(), 3);
+}
+
+#[test]
+fn the_same_text_with_and_without_images_are_different_runs() {
+    let doc = enabled();
+    let style = ahem(10.0);
+    let with = shared_with_images(&doc, "ab", &[image(2, 30.0, 20.0)], &style);
+    let plain = shared(&doc, "ab", &style, None, StandaloneAlign::Start);
+    assert!(!Arc::ptr_eq(&with, &plain));
     assert_eq!(plain.images(), []);
     assert_eq!(plain.width(), 20.0);
+    assert_eq!(with.width(), 50.0);
+    // And the plain entry point is the images entry point with no images.
+    assert!(Arc::ptr_eq(
+        &plain,
+        &shared_with_images(&doc, "ab", &[], &style)
+    ));
 }
 
 #[test]
