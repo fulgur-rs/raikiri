@@ -2,7 +2,8 @@
 //!
 //! A [`VectorImage`] is what a producer such as an SVG builder hands to a
 //! consumer that draws it. It is plain data: no parser, rasterizer or output
-//! format type appears here, and the scene never names a file, a URL or a font.
+//! format type appears here, and the scene never names a file or a URL. Text
+//! carries the bytes of the fonts it uses, shared, and not a font name.
 //!
 //! ## Space and size
 //!
@@ -25,10 +26,18 @@
 //! Gradients and clip paths are resolved to the user space of the path or
 //! group that uses them, so a consumer needs no bounding box of its own.
 //!
+//! Text is already shaped and positioned: a [`TextRun`] lists glyphs of
+//! [`FontFace`]s with the transform that places each one. A consumer never
+//! selects a font, wraps a line or applies a script's rules.
+//!
 //! Every public enum and struct is `#[non_exhaustive]`. Producers build the
 //! structs with their `new` constructors and set the public fields.
 
 use crate::paint::{PaintColor, PaintTransform};
+
+mod text;
+
+pub use text::{FontFace, FontVariation, Glyph, TextRun};
 
 /// A vector drawing of a fixed size.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,8 +64,9 @@ impl VectorImage {
     }
 
     /// An estimate of the heap memory the scene holds, in bytes, for charging
-    /// it to a cache budget. It counts the storage of nodes, path segments and
-    /// dash arrays, not allocator overhead.
+    /// it to a cache budget. It counts the storage of nodes, path segments,
+    /// dash arrays and glyphs, not allocator overhead. The bytes of a font are
+    /// shared with the producer and not counted.
     pub fn estimated_heap_bytes(&self) -> usize {
         std::mem::size_of::<Self>() + self.root.heap_bytes()
     }
@@ -70,6 +80,8 @@ pub enum Node {
     Group(Group),
     /// A filled and/or stroked path.
     Path(Path),
+    /// Shaped text.
+    Text(TextRun),
 }
 
 /// A set of nodes drawn together.
@@ -110,7 +122,7 @@ impl Group {
             .iter()
             .map(|child| match child {
                 Node::Group(group) => 1 + group.descendant_count(),
-                Node::Path(_) => 1,
+                Node::Path(_) | Node::Text(_) => 1,
             })
             .sum::<usize>()
     }
@@ -125,6 +137,7 @@ impl Group {
                 .map(|child| match child {
                     Node::Group(group) => group.heap_bytes(),
                     Node::Path(path) => path.heap_bytes(),
+                    Node::Text(run) => run.heap_bytes(),
                 })
                 .sum::<usize>()
     }

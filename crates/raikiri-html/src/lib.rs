@@ -28,6 +28,7 @@ mod parse;
 mod render;
 mod resources;
 mod sink;
+mod svg_fonts;
 mod types;
 pub mod ua;
 mod xhtml;

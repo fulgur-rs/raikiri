@@ -4,17 +4,29 @@
 //! paths in the coordinates of nested groups, with the document's `viewBox`,
 //! `preserveAspectRatio` and `transform` attributes folded into group
 //! transforms. It covers shapes and paths with solid and gradient fills and
-//! strokes, clip paths, group opacity and visibility. Patterns, masks, blend
-//! modes and images are reported as [`SvgSceneError::Unsupported`], so the
-//! caller draws the raster of the whole image instead.
+//! strokes, clip paths, group opacity and visibility, and text when the caller
+//! supplies fonts. Patterns, masks, blend modes and images are reported as
+//! [`SvgSceneError::Unsupported`], so the caller draws the raster of the whole
+//! image instead.
+//!
+//! ## Text
+//!
+//! The parser shapes and positions text; the faces come from the caller's
+//! [`SvgFontSource`], so SVG text is set in the fonts of the HTML around it.
+//! Each styled span becomes a [`TextRun`] of glyphs, with its decorations as
+//! paths around it. Text inside a clip path is flattened to outlines, because
+//! a clip is geometry. Without fonts the text is left out, as the raster path
+//! leaves it out.
 
+use crate::fonts::FaceMap;
 use crate::{
-    SourceRootStyle, SvgDocument, SvgError, SvgResolvedStyles, SvgRootStyle, SvgViewport,
-    resolved_source_style, within_four_ulps_of_one,
+    SourceRootStyle, SvgDocument, SvgError, SvgFontSource, SvgResolvedStyles, SvgRootStyle,
+    SvgViewport, resolved_source_style, within_four_ulps_of_one,
 };
 use raikiri_traits::vector::{
-    ClipPath, Dash, Fill, FillRule, GradientStop, Group, LineCap, LineJoin, LinearGradient, Node,
-    Paint, PaintOrder, Path, PathSegment, RadialGradient, SpreadMethod, Stroke, VectorImage,
+    ClipPath, Dash, Fill, FillRule, FontVariation, Glyph, GradientStop, Group, LineCap, LineJoin,
+    LinearGradient, Node, Paint, PaintOrder, Path, PathSegment, RadialGradient, SpreadMethod,
+    Stroke, TextRun, VectorImage,
 };
 use raikiri_traits::{PaintColor, PaintTransform};
 use usvg::tiny_skia_path;
@@ -35,6 +47,8 @@ const MAX_SCENE_CLIP_DEPTH: usize = 64;
 const MAX_GRADIENT_STOPS: usize = 1_024;
 /// Most gradient stops in one scene, over all its gradients.
 const MAX_SCENE_GRADIENT_STOPS: usize = 1_000_000;
+/// Most glyphs in one scene.
+const MAX_SCENE_GLYPHS: usize = 1_000_000;
 /// The length below which the two points of a gradient count as one, as the
 /// raster path counts them.
 const DEGENERATE_GRADIENT_LENGTH: f32 = 1.0 / 32_768.0;
@@ -59,7 +73,7 @@ pub enum SvgSceneFeature {
     Mask,
     /// A blend mode other than normal.
     BlendMode,
-    /// An embedded image, or text, which the builder does not draw yet.
+    /// An embedded image, which the builder does not draw yet.
     Image,
     /// The group of the root `<svg>` element could not be told from the
     /// groups of its content, so the host opacity could not be left out.
@@ -72,7 +86,7 @@ impl SvgSceneFeature {
             Self::Pattern => "patterns",
             Self::Mask => "masks",
             Self::BlendMode => "blend modes",
-            Self::Image => "images and text",
+            Self::Image => "images",
             Self::RootOpacity => "separating the root opacity",
         }
     }
@@ -94,6 +108,8 @@ pub enum SvgSceneLimit {
     GradientStops,
     /// Stops in all the gradients of the scene together.
     SceneGradientStops,
+    /// Glyphs in the text of the scene.
+    Glyphs,
 }
 
 impl SvgSceneLimit {
@@ -105,6 +121,7 @@ impl SvgSceneLimit {
             Self::ClipDepth => "clip path nesting levels",
             Self::GradientStops => "stops in one gradient",
             Self::SceneGradientStops => "gradient stops",
+            Self::Glyphs => "glyphs",
         }
     }
 }
@@ -174,6 +191,7 @@ pub(crate) struct SceneLimits {
     pub(crate) clip_depth: usize,
     pub(crate) gradient_stops: usize,
     pub(crate) scene_gradient_stops: usize,
+    pub(crate) glyphs: usize,
 }
 
 impl Default for SceneLimits {
@@ -185,6 +203,7 @@ impl Default for SceneLimits {
             clip_depth: MAX_SCENE_CLIP_DEPTH,
             gradient_stops: MAX_GRADIENT_STOPS,
             scene_gradient_stops: MAX_SCENE_GRADIENT_STOPS,
+            glyphs: MAX_SCENE_GLYPHS,
         }
     }
 }
@@ -212,7 +231,7 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
     ) -> Result<VectorImage, SvgSceneError> {
-        self.build_scene(viewport, root_style, None, SceneLimits::default())
+        self.build_scene(viewport, root_style, None, SceneLimits::default(), None)
     }
 
     /// Builds the vector scene like [`Self::scene`] from the source that
@@ -231,6 +250,35 @@ impl SvgDocument {
             root_style,
             Some(source_style),
             SceneLimits::default(),
+            None,
+        )
+    }
+
+    /// Builds the vector scene like [`Self::scene`], or like
+    /// [`Self::scene_with_resolved_styles`] when `resolved` is given, with
+    /// the document's text set in the faces of `fonts`.
+    ///
+    /// The scene holds the text as glyphs of those faces, so the faces must
+    /// outlive whatever shows the scene; the scene shares their bytes and
+    /// does not copy them. Text that no face can set is left out, like it is
+    /// for [`Self::scene`], and a character that the selected face lacks is
+    /// set in the face that `fonts` gives as its fallback.
+    pub fn scene_with_fonts(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        resolved: Option<SvgResolvedStyles<'_>>,
+        fonts: &dyn SvgFontSource,
+    ) -> Result<VectorImage, SvgSceneError> {
+        let source_style = resolved
+            .map(|resolved| resolved_source_style(root_style, resolved))
+            .transpose()?;
+        self.build_scene(
+            viewport,
+            root_style,
+            source_style,
+            SceneLimits::default(),
+            Some(fonts),
         )
     }
 
@@ -240,6 +288,7 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         source_style: Option<SourceRootStyle<'_>>,
         limits: SceneLimits,
+        fonts: Option<&dyn SvgFontSource>,
     ) -> Result<VectorImage, SvgSceneError> {
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity.into());
@@ -260,15 +309,18 @@ impl SvgDocument {
         if root_style.opacity <= 0.0 {
             return Ok(VectorImage::new(size));
         }
-        let parsed = match self.prepared_tree(viewport, root_style, prepared) {
+        let parsed = match self.prepared_tree_with_fonts(viewport, root_style, prepared, fonts) {
             Ok(parsed) => parsed,
             // A root that is not visible keeps the empty picture it always
             // had when its descendants cannot be drawn.
             Err(_) if !root_style.visible => return Ok(VectorImage::new(size)),
             Err(error) => return Err(error.into()),
         };
-        let tree = parsed.as_ref().unwrap_or(&self.tree);
-        scene_from_tree(tree, viewport, root_style.opacity, limits)
+        let no_faces = FaceMap::default();
+        let (tree, faces) = parsed
+            .as_ref()
+            .map_or((&self.tree, &no_faces), |(tree, faces)| (tree, faces));
+        scene_from_tree(tree, faces, viewport, root_style.opacity, limits)
     }
 }
 
@@ -277,6 +329,7 @@ impl SvgDocument {
 /// opacity out.
 fn scene_from_tree(
     tree: &usvg::Tree,
+    faces: &FaceMap,
     viewport: SvgViewport,
     host_opacity: f32,
     limits: SceneLimits,
@@ -296,7 +349,7 @@ fn scene_from_tree(
     } else {
         None
     };
-    let mut builder = Builder::new(limits);
+    let mut builder = Builder::new(limits, faces);
     // The root of the scene counts as a node.
     builder.charge_node()?;
     let mut root = Group::new(fit * transform(tree.root().transform()));
@@ -344,21 +397,26 @@ fn host_group_depth(root: &usvg::Group, host_opacity: f32) -> Option<usize> {
     None
 }
 
-struct Builder {
+struct Builder<'a> {
     limits: SceneLimits,
+    /// The face behind each font id of the tree's glyphs.
+    faces: &'a FaceMap,
     nodes: usize,
     segments: usize,
     stops: usize,
+    glyphs: usize,
     clip_depth: usize,
 }
 
-impl Builder {
-    fn new(limits: SceneLimits) -> Self {
+impl<'a> Builder<'a> {
+    fn new(limits: SceneLimits, faces: &'a FaceMap) -> Self {
         Self {
             limits,
+            faces,
             nodes: 0,
             segments: 0,
             stops: 0,
+            glyphs: 0,
             clip_depth: 0,
         }
     }
@@ -369,6 +427,17 @@ impl Builder {
             return Err(SvgSceneError::LimitExceeded {
                 limit: SvgSceneLimit::Nodes,
                 max: self.limits.nodes,
+            });
+        }
+        Ok(())
+    }
+
+    fn charge_glyphs(&mut self, count: usize) -> Result<(), SvgSceneError> {
+        self.glyphs = self.glyphs.saturating_add(count);
+        if self.glyphs > self.limits.glyphs {
+            return Err(SvgSceneError::LimitExceeded {
+                limit: SvgSceneLimit::Glyphs,
+                max: self.limits.glyphs,
             });
         }
         Ok(())
@@ -403,15 +472,111 @@ impl Builder {
                 usvg::Node::Path(path) => {
                     nodes.extend(self.path(path)?.map(Node::Path));
                 }
-                // The parser here resolves no image reference and reads no
-                // text, so these nodes appear only if that changes; until the
-                // builder draws them, they keep the document on the raster.
-                usvg::Node::Image(_) | usvg::Node::Text(_) => {
+                usvg::Node::Text(text) => {
+                    nodes.extend(self.text(text, depth)?);
+                }
+                // The parser here resolves no image reference, so this node
+                // appears only if that changes; until the builder draws it,
+                // it keeps the document on the raster.
+                usvg::Node::Image(_) => {
                     return unsupported(SvgSceneFeature::Image);
                 }
             }
         }
         Ok(nodes)
+    }
+
+    /// The nodes that stand for `text`: for each visible span its decorations
+    /// and a run of its glyphs. Text that no face could set has no spans.
+    fn text(&mut self, text: &usvg::Text, depth: usize) -> Result<Vec<Node>, SvgSceneError> {
+        // A clip is geometry, so the outlines the parser flattened the glyphs
+        // to take the place of the run.
+        if self.clip_depth > 0 {
+            return self.children(text.flattened(), depth, None);
+        }
+        // The parser draws `optimizeSpeed` text with crisp edges.
+        let anti_alias = text.rendering_mode() != usvg::TextRendering::OptimizeSpeed;
+        let mut nodes = Vec::new();
+        for span in text.layouted().iter().filter(|span| span.visible) {
+            for decoration in [&span.overline, &span.underline] {
+                nodes.extend(self.decoration(decoration.as_ref())?);
+            }
+            nodes.extend(self.run(span, anti_alias)?.map(Node::Text));
+            nodes.extend(self.decoration(span.line_through.as_ref())?);
+        }
+        Ok(nodes)
+    }
+
+    fn decoration(&mut self, line: Option<&usvg::Path>) -> Result<Option<Node>, SvgSceneError> {
+        line.map_or(Ok(None), |line| self.path(line))
+            .map(|path| path.map(Node::Path))
+    }
+
+    /// The run for the glyphs of `span`, or `None` when it has no paint. A
+    /// glyph of a face this scene does not know is left out.
+    fn run(
+        &mut self,
+        span: &usvg::layout::Span,
+        anti_alias: bool,
+    ) -> Result<Option<TextRun>, SvgSceneError> {
+        let fill = span
+            .fill
+            .as_ref()
+            .map(|fill| self.fill(fill))
+            .transpose()?
+            .flatten();
+        let stroke = span
+            .stroke
+            .as_ref()
+            .map(|stroke| self.stroke(stroke))
+            .transpose()?
+            .flatten();
+        if fill.is_none() && stroke.is_none() {
+            return Ok(None);
+        }
+        // Charge before the copy, which is as large as the parser's own.
+        self.charge_glyphs(span.positioned_glyphs.len())?;
+        let glyphs: Vec<Glyph> = span
+            .positioned_glyphs
+            .iter()
+            .filter_map(|glyph| {
+                let font = self.faces.get(glyph.font)?;
+                Some(Glyph::new(
+                    font.clone(),
+                    glyph.id.0,
+                    glyph.text.as_str(),
+                    transform(glyph.transform()),
+                ))
+            })
+            .collect();
+        self.charge_node()?;
+        let mut run = TextRun::new(span.font_size.get(), glyphs);
+        run.variations = span
+            .variations
+            .iter()
+            .map(|variation| FontVariation::new(variation.tag, variation.value))
+            .collect();
+        // The parser shaped and flattened the glyphs with the optical size set
+        // to the font size, unless the text turns that off or sets the axis
+        // itself. A face without the axis ignores the setting.
+        if span.font_optical_sizing == usvg::FontOpticalSizing::Auto
+            && !run
+                .variations
+                .iter()
+                .any(|variation| &variation.tag == b"opsz")
+            && span
+                .positioned_glyphs
+                .iter()
+                .any(|glyph| self.faces.has_opsz(glyph.font))
+        {
+            run.variations
+                .push(FontVariation::new(*b"opsz", span.font_size.get()));
+        }
+        run.fill = fill;
+        run.stroke = stroke;
+        run.paint_order = paint_order(span.paint_order);
+        run.anti_alias = anti_alias;
+        Ok(Some(run))
     }
 
     /// The nodes that stand for `group`: the group itself, or its children
@@ -512,10 +677,7 @@ impl Builder {
         node.fill = fill;
         node.stroke = stroke;
         node.anti_alias = path.rendering_mode().use_shape_antialiasing();
-        node.paint_order = match path.paint_order() {
-            usvg::PaintOrder::FillAndStroke => PaintOrder::FillThenStroke,
-            usvg::PaintOrder::StrokeAndFill => PaintOrder::StrokeThenFill,
-        };
+        node.paint_order = paint_order(path.paint_order());
         Ok(Some(node))
     }
 
@@ -643,6 +805,13 @@ impl Builder {
             .filter(|array| tiny_skia_path::StrokeDash::new(array.to_vec(), offset).is_some())
             .map(|array| Dash::new(array.to_vec(), offset));
         Ok(Some(node))
+    }
+}
+
+fn paint_order(order: usvg::PaintOrder) -> PaintOrder {
+    match order {
+        usvg::PaintOrder::FillAndStroke => PaintOrder::FillThenStroke,
+        usvg::PaintOrder::StrokeAndFill => PaintOrder::StrokeThenFill,
     }
 }
 

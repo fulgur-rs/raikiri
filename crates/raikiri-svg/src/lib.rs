@@ -5,14 +5,20 @@
 //! ([`raikiri_traits::vector`]). Backend types stay private to this crate. SVG
 //! references that could read local files, issue requests, or recursively load
 //! data URLs are rejected.
+//!
+//! The crate bundles no fonts. Text is drawn only by
+//! [`SvgDocument::scene_with_fonts`], in the faces of the [`SvgFontSource`]
+//! it is given; the raster path leaves text out.
 
 use raikiri_traits::DecodedImage;
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
+mod fonts;
 mod scene;
 
+pub use fonts::{SvgFontFamily, SvgFontRequest, SvgFontSource, SvgFontStyle};
 pub use scene::{SvgSceneError, SvgSceneFeature, SvgSceneLimit};
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
@@ -709,6 +715,20 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         prepared: Option<String>,
     ) -> Result<Option<usvg::Tree>, SvgError> {
+        Ok(self
+            .prepared_tree_with_fonts(viewport, root_style, prepared, None)?
+            .map(|(tree, _)| tree))
+    }
+
+    /// Like [`Self::prepared_tree`], drawing text in the faces of `fonts`
+    /// when there are any. The map says which face each glyph is taken from.
+    fn prepared_tree_with_fonts(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        prepared: Option<String>,
+        fonts: Option<&dyn SvgFontSource>,
+    ) -> Result<Option<(usvg::Tree, fonts::FaceMap)>, SvgError> {
         let source = match prepared {
             Some(source) => source,
             None => self.prepare_source(
@@ -721,8 +741,13 @@ impl SvgDocument {
                 false,
             )?,
         };
+        // The tree of the document itself was parsed without fonts, so text
+        // needs a parse of its own even when preparing changed nothing.
+        if let Some(fonts) = fonts.filter(|_| may_have_text(&source)) {
+            return parse_tree_with_fonts(&source, fonts).map(Some);
+        }
         (source != self.source)
-            .then(|| parse_tree(&source))
+            .then(|| parse_tree(&source).map(|tree| (tree, fonts::FaceMap::default())))
             .transpose()
     }
 }
@@ -755,11 +780,30 @@ fn resolved_source_style<'a>(
 }
 
 fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {
+    parse_tree_with(source, usvg::FontResolver::default())
+}
+
+/// Parses `source` with text drawn in the faces of `fonts`. The map says
+/// which face each glyph of the tree is taken from.
+fn parse_tree_with_fonts(
+    source: &str,
+    fonts: &dyn SvgFontSource,
+) -> Result<(usvg::Tree, fonts::FaceMap), SvgError> {
+    let faces = fonts::Faces::new(fonts);
+    let tree = parse_tree_with(source, faces.resolver())?;
+    Ok((tree, faces.into_map()))
+}
+
+fn parse_tree_with(
+    source: &str,
+    font_resolver: usvg::FontResolver<'_>,
+) -> Result<usvg::Tree, SvgError> {
     let options = usvg::Options {
         image_href_resolver: usvg::ImageHrefResolver {
             resolve_data: Box::new(|_, _, _| None),
             resolve_string: Box::new(|_, _| None),
         },
+        font_resolver,
         ..usvg::Options::default()
     };
     let tree = usvg::Tree::from_str(source, &options)
@@ -768,6 +812,14 @@ fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {
         return Err(SvgError::UnsupportedFilterEffects);
     }
     Ok(tree)
+}
+
+/// Whether `source` may hold text, which only a parse with fonts draws.
+///
+/// A cheap test on the source: a miss skips the second parse that fonts
+/// need, and a false hit only costs that parse.
+fn may_have_text(source: &str) -> bool {
+    source.contains("<text") || source.contains(":text")
 }
 
 #[derive(Default)]

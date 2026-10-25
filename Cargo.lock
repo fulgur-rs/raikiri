@@ -2662,6 +2662,7 @@ dependencies = [
  "rustc-hash",
  "shodo",
  "smol_str",
+ "unicode-script",
  "url",
 ]
 
@@ -2794,6 +2795,7 @@ dependencies = [
  "resvg",
  "roxmltree 0.21.1",
  "simplecss",
+ "skrifa 0.44.0",
  "svgtypes",
  "usvg",
 ]
