@@ -328,18 +328,19 @@ pub(super) fn stretches_between_insets(alignment: Option<AlignItems>) -> bool {
 /// out, as browsers treat it like `auto`, and so does a replaced box, whose
 /// natural size Taffy does not stretch.
 ///
-/// A box that aligns itself to the middle or to the end of the vertical axis
-/// is placed within the area between both insets, so it keeps them, and it is
-/// not stretched: `align-self` for a containing block on horizontal axes and
-/// `justify-self` for one on vertical axes, whose inline axis is the vertical
-/// one. `last baseline` falls back to the end for a box that is out of flow. The
-/// other alignments put the box at the start edge, and the alignment of the
-/// container does not apply to it.
-///
 /// An `auto` margin on either side takes the free space between the insets
 /// instead (centered with both margins `auto`), which the box is not
 /// overconstrained by: it keeps both insets and is sized by its content, with
-/// the alignment of the vertical axis replaced by one that is no stretch.
+/// the alignment of the vertical axis replaced by one that is no stretch. The
+/// alignment does not matter for where the box goes.
+///
+/// Without one, a box that aligns itself to the middle or to the end of the
+/// vertical axis is placed within the area between both insets, so it keeps them,
+/// and it is not stretched: `align-self` for a containing block on horizontal
+/// axes and `justify-self` for one on vertical axes, whose inline axis is the
+/// vertical one. `last baseline` falls back to the end for a box that is out of
+/// flow. The other alignments put the box at the start edge, and the alignment of
+/// the container does not apply to it.
 // spec: https://www.w3.org/TR/CSS21/visudet.html#abs-non-replaced-height
 pub(super) fn keyword_height_insets(
     doc: &LayoutSession<'_>,
@@ -363,6 +364,18 @@ pub(super) fn keyword_height_insets(
     // reverses it, and `text-orientation: upright` does not change either.
     let block = &cascade.computed[containing_block];
     let vertical_axis_is_inline = uses_vertical_axes(cascade, containing_block);
+    let auto = |margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto);
+    if auto(values.margin.top) || auto(values.margin.bottom) {
+        // Taffy swaps the two alignments only where the container that holds
+        // the box is on vertical axes as well (`get_oof_item_style`), which is
+        // the property that stretches the box here.
+        return Some(KeywordHeightInsets::FitContent {
+            justify: vertical_axis_is_inline
+                && doc
+                    .taffy_parent_of(idx)
+                    .is_some_and(|parent| uses_vertical_axes(cascade, parent)),
+        });
+    }
     let alignment = if vertical_axis_is_inline {
         values.justify_self
     } else {
@@ -383,12 +396,6 @@ pub(super) fn keyword_height_insets(
         ))
     {
         return None;
-    }
-    let auto = |margin| matches!(margin, ComputedLengthPercentageOrAuto::Auto);
-    if auto(values.margin.top) || auto(values.margin.bottom) {
-        return Some(KeywordHeightInsets::FitContent {
-            justify: vertical_axis_is_inline,
-        });
     }
     let inline_starts_at_bottom = vertical_axis_is_inline
         && (block.direction == Direction::Rtl)

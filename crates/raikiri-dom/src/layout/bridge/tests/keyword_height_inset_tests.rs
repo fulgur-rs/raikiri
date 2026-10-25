@@ -360,6 +360,47 @@ fn an_auto_margin_takes_the_free_space_between_the_insets_in_every_writing_mode(
 }
 
 #[test]
+fn an_auto_margin_takes_the_free_space_of_a_box_in_a_horizontal_wrapper_of_a_vertical_block() {
+    // The box is laid out by a horizontal container that sits in its vertical
+    // containing block, which Taffy aligns on the horizontal axes.
+    let root_css = format!("{CONTAINING_BLOCK};writing-mode:vertical-rl");
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content";
+    for alignment in ["", ";justify-self:center", ";align-self:center"] {
+        for (margin, y) in [
+            ("margin-top:auto", 80.0),
+            ("margin-bottom:auto", 0.0),
+            ("margin:auto 0", 40.0),
+        ] {
+            let mut positioned = 0;
+            let fixture = block_fixture(&root_css, |doc, root| {
+                let wrapper = doc.append_element(
+                    Some(root),
+                    "div",
+                    Some("display:block;writing-mode:horizontal-tb"),
+                );
+                positioned = doc.append_element(
+                    Some(wrapper),
+                    "div",
+                    Some(&format!("display:block;{child};{margin}{alignment}")),
+                );
+                doc.append_element(Some(positioned), "div", Some("display:block;height:20px"));
+            });
+            let root = fixture.root;
+            let mut doc = fixture.doc;
+            layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600())
+                .expect("layout");
+            let (root_x, root_y, ..) = absolute_rect(&doc, root);
+            let (x, top, width, height) = absolute_rect(&doc, positioned);
+            assert_eq!(
+                (x - root_x, top - root_y, width, height),
+                (0.0, y, 50.0, 20.0),
+                "{margin}{alignment}"
+            );
+        }
+    }
+}
+
+#[test]
 fn two_auto_margins_of_a_box_taller_than_the_insets_follow_the_axis_of_the_containing_block() {
     let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content;\
                  min-height:120px;margin:auto 0";
