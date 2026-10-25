@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -718,6 +719,22 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("note: raikiri-html no longer names a type of", out)
         self.assertIn("drop it from THIRD_PARTY_ALLOWED", out)
+
+    def test_the_semver_crates_are_the_published_ones_without_the_view_crate(self) -> None:
+        code, out, _ = self.run_main(Path("."), "--list-semver-crates")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.split(), [c for c in lint.PUBLISHED_CRATES if c not in lint.VIEW_CRATES])
+        self.assertNotIn("raikiri-layout-style", out)
+        self.assertIn("raikiri-html", out)
+
+    def test_the_semver_tool_is_pinned_to_the_same_version_everywhere(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        script = (root / "scripts" / "semver-checks.sh").read_text(encoding="utf-8")
+        workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        version = lint.SEMVER_CHECKS_VERSION
+        self.assertIn(f"cargo-semver-checks@{version}", workflow)
+        self.assertEqual(script.count(f"--version {version}"), 2)  # the header and the missing-tool hint
+        self.assertNotRegex(workflow + script, r"semver-checks(@| --version )(?!" + re.escape(version) + r")\d")
 
     def test_every_published_crate_has_an_entry_in_the_table(self) -> None:
         self.assertEqual(set(lint.THIRD_PARTY_ALLOWED), set(lint.PUBLISHED_CRATES))
