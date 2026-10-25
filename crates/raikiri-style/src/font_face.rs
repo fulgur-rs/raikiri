@@ -721,6 +721,7 @@ impl<'i> QualifiedRuleParser<'i> for FontFaceSheetParser {
 /// `source` (style rules, other at-rules) is silently ignored. A rule that
 /// fails [`FontFaceRule::is_valid`] is **not** included — matches
 /// `RuleTree`'s "invalid rule → dropped" convention for `@page`.
+#[doc(hidden)]
 pub fn parse_font_face_rules(source: &str) -> Vec<FontFaceRule> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
@@ -773,7 +774,7 @@ impl FontFaceRegistry {
     /// [`FontFaceRule::is_valid`] is silently dropped (does not replace an
     /// existing valid rule of the same family) — this is the one enforcement
     /// point for "only valid rules live in a registry", covering both the
-    /// [`parse_font_face_rules`] entry path and direct construction of a
+    /// `parse_font_face_rules` entry path and direct construction of a
     /// [`FontFaceRule`] via its `pub` fields.
     pub fn insert(&mut self, rule: FontFaceRule) {
         if rule.is_valid() {

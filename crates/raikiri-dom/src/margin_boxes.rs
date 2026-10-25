@@ -42,6 +42,7 @@ mod tests;
 /// The page a set of margin boxes belongs to, for page-based counters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct MarginBoxPageContext {
     /// Zero-based page index.
     pub page_index: u32,
@@ -208,7 +209,7 @@ pub enum DeferredValue {
 
 /// Part of a margin box's content that shows a placeholder for a value
 /// known only after the last page (see
-/// [`MarginBoxPageContext::with_deferred_page_count`]).
+/// `MarginBoxPageContext::with_deferred_page_count`).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct DeferredSlot {
@@ -966,6 +967,7 @@ fn margin_counter_value(
 /// the cascade, so documents whose margin boxes reference neither function
 /// never pay for it. Keep one per `(document, cascade)` pair.
 #[derive(Debug, Default)]
+#[doc(hidden)]
 pub struct MarginBoxNamedValues {
     table: std::sync::OnceLock<NamedValues>,
 }
@@ -1581,6 +1583,7 @@ fn margin_box_rule(
 /// `content`, in rule order, at most [`MAX_GENERATED_IMAGES`] per box.
 ///
 /// [`MAX_GENERATED_IMAGES`]: crate::generated_content::MAX_GENERATED_IMAGES
+#[doc(hidden)]
 pub fn margin_box_content_image_urls(rules: &[PageMarginBoxCascadeResult]) -> Vec<String> {
     let mut urls = Vec::new();
     for rule in rules {
@@ -1607,6 +1610,7 @@ pub fn margin_box_content_image_urls(rules: &[PageMarginBoxCascadeResult]) -> Ve
 }
 
 /// [`margin_box_content_image_urls`] for the margin boxes of `page`.
+#[doc(hidden)]
 pub fn page_margin_box_content_image_urls(page: &PageCascadeResult) -> Vec<String> {
     let mut slots = Vec::new();
     for rule in page.margin_boxes() {
@@ -1646,7 +1650,7 @@ impl Document {
     }
 
     /// [`Self::prepare_margin_box_images`] for the authored `urls` of the
-    /// images, as [`margin_box_content_image_urls`] lists them.
+    /// images, as `margin_box_content_image_urls` lists them.
     pub fn prepare_margin_box_image_urls(
         &mut self,
         urls: &[String],
@@ -2310,6 +2314,7 @@ fn layout_vertical_margin_boxes(
 /// (CSS Page 3 §3.1): by ascending [`MarginBox::z_index`], and among boxes of
 /// one level clockwise from the top-left corner. Boxes with `content: none`
 /// or no area are left out.
+#[doc(hidden)]
 pub fn page_margin_boxes(
     document: &Document,
     cascade: &CascadeResult,
@@ -2331,6 +2336,7 @@ pub fn page_margin_boxes(
 /// `values`, so that the pages of one document share a single scan of it.
 ///
 /// `values` must only ever be used with this `document` and `cascade`.
+#[doc(hidden)]
 pub fn page_margin_boxes_with_values(
     document: &Document,
     cascade: &CascadeResult,

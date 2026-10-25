@@ -71,7 +71,7 @@ pub enum PaintEvent<'a> {
     Text(Fragment<'a>),
     /// One paragraph line from the supplied positioned glyph runs, including
     /// generated content and ellipses: the runs of the line that no inline
-    /// opacity group holds (see [`Document::text_run_opacity_group`]).
+    /// opacity group holds (see `Document::text_run_opacity_group`).
     /// Emitted once per line.
     TextLine(TextLineId),
     /// The runs of one paragraph line held by the inline opacity group of
@@ -102,7 +102,7 @@ pub enum PaintEvent<'a> {
     LineBox(LineBox<'a>),
     /// One image of `::before` or `::after` content placed on this page,
     /// after the decoration of the pseudo-element that holds it. Its URL and
-    /// rectangle come from [`Document::page_generated_image`].
+    /// rectangle come from `Document::page_generated_image`.
     GeneratedImage(GeneratedImageId),
     /// A producer-computed column rule, above the owner's border and below content.
     ColumnRule(crate::ColumnRule),

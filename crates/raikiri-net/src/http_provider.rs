@@ -135,7 +135,7 @@ impl UreqHttpProvider {
     /// connection attempt (TCP connect plus TLS handshake) by a 10-second
     /// connect timeout, and bounds every hop (DNS lookup through the end of
     /// that hop's response body) by a 30-second timeout that holds even
-    /// against a server trickling bytes (see [`UreqHttpProvider`]'s doc). A
+    /// against a server trickling bytes (see `UreqHttpProvider`'s doc). A
     /// multi-hop redirect chain budgets this fresh per hop — see
     /// `FETCH_TIMEOUT`'s doc for what that means for the whole chain.
     pub fn new() -> Self {

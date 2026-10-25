@@ -34,6 +34,7 @@
 /// nesting retains its stricter limit of 32.
 pub(crate) const MAX_CSS_NESTING_DEPTH: usize = 75;
 
+#[doc(hidden)]
 pub mod easing;
 pub use easing::is_valid_easing_function;
 
@@ -142,6 +143,7 @@ pub use resolve::{
     used_line_height_length_or,
 };
 
+#[doc(hidden)]
 pub mod specified;
 pub use specified::SpecifiedValues;
 
@@ -466,6 +468,7 @@ impl SelectorImpl for RaikiriSelectorImpl {
 // Parser adapter — feeds a `cssparser::Parser` into `SelectorList::parse`.
 // ---------------------------------------------------------------------------
 
+#[doc(hidden)]
 pub struct RaikiriSelectorParser;
 
 impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
@@ -625,6 +628,7 @@ mod selector_depth;
 /// Seed helper — returns a `SelectorList<RaikiriSelectorImpl>` and stringifies
 /// errors for the feasibility prototype. A future pass will replace the `Result<_, String>` shape
 /// with a proper structured error type.
+#[doc(hidden)]
 pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorImpl>, String> {
     let mut parser_input = ParserInput::new(input);
     let mut css_parser = CssParser::new(&mut parser_input);

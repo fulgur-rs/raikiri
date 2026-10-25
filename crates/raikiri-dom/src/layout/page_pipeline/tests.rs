@@ -18505,3 +18505,249 @@ fn block_axis_insets_of_the_transposed_cascade_match_a_view_on_the_roots_axes() 
         });
     }
 }
+
+/// An item of the paragraphs below: a list item whose inside marker is the
+/// only thing on its line.
+const MARKER_ONLY_ITEM: &str =
+    "display:list-item;list-style-position:inside;list-style-type:'X';width:100px";
+
+fn append_marker_only_items(doc: &mut Document, parent: usize, count: usize) -> Vec<usize> {
+    (0..count)
+        .map(|_| doc.append_element(Some(parent), "div", Some(MARKER_ONLY_ITEM)))
+        .collect()
+}
+
+#[test]
+fn a_list_item_with_only_its_inside_marker_moves_past_the_page_edge() {
+    // The fourth line runs from 90 to 120 across the edge at 100. A line of
+    // text there moves to the next page, and so does a marker's.
+    let ys = paginated_ys(|doc, body| append_marker_only_items(doc, body, 5), &[]);
+    assert_eq!(ys, [0.0, 30.0, 60.0, 100.0, 130.0]);
+}
+
+#[test]
+fn a_marker_only_item_in_a_nested_block_moves_past_the_page_edge() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
+            append_marker_only_items(doc, wrapper, 5)
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 30.0, 60.0, 100.0, 130.0]);
+}
+
+#[test]
+fn white_space_after_the_marker_does_not_place_the_line() {
+    // `<li>` stays open until the next `<li>`, so the white space between two
+    // items is the earlier item's text node. It is not a page candidate.
+    let ys = paginated_ys(
+        |doc, body| {
+            let items = append_marker_only_items(doc, body, 5);
+            for &item in &items {
+                doc.append_text(item, "\n  ");
+            }
+            items
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 30.0, 60.0, 100.0, 130.0]);
+}
+
+#[test]
+fn a_marker_only_item_that_fits_the_page_stays() {
+    let ys = paginated_ys(
+        |doc, body| {
+            (0..5)
+                .map(|_| {
+                    doc.append_element(
+                        Some(body),
+                        "div",
+                        Some(&format!("{MARKER_ONLY_ITEM};line-height:25px")),
+                    )
+                })
+                .collect()
+        },
+        &[],
+    );
+    // The fourth line ends at 100, exactly at the edge.
+    assert_eq!(ys, [0.0, 25.0, 50.0, 75.0, 100.0]);
+}
+
+#[test]
+fn the_margin_after_a_marker_only_item_does_not_move_it() {
+    // The line of the third item ends at 95 and fits; only the margin after
+    // it crosses the edge, and a margin at a break is truncated.
+    let ys = paginated_ys(
+        |doc, body| {
+            (0..4)
+                .map(|_| {
+                    doc.append_element(
+                        Some(body),
+                        "div",
+                        Some(&format!(
+                            "{MARKER_ONLY_ITEM};line-height:25px;margin-bottom:10px"
+                        )),
+                    )
+                })
+                .collect()
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 35.0, 70.0, 100.0]);
+}
+
+#[test]
+fn generated_content_alone_moves_past_the_page_edge() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let style = doc.append_element(Some(0), "style", None::<&str>);
+            doc.append_text(style, "div::before { content: \"X\" }");
+            (0..5)
+                .map(|_| doc.append_element(Some(body), "div", Some("display:block")))
+                .collect()
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 30.0, 60.0, 100.0, 130.0]);
+}
+
+#[test]
+fn a_line_of_an_atomic_inline_alone_is_left_in_the_flow() {
+    // The line holds no text, generated or not, so the rule for lines of
+    // generated text does not reach it: the third line, from 78 to 117,
+    // stays across the edge.
+    let ys = paginated_ys(
+        |doc, body| {
+            (0..4)
+                .map(|_| {
+                    let block = doc.append_element(Some(body), "div", Some("display:block"));
+                    doc.append_element(
+                        Some(block),
+                        "span",
+                        Some("display:inline-block;width:10px;height:30px"),
+                    );
+                    block
+                })
+                .collect()
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 39.0, 78.0, 117.0]);
+}
+
+#[test]
+fn a_paragraph_of_several_lines_with_no_text_is_not_kept_whole() {
+    // Only a single line is kept whole: a break between the lines of this
+    // paragraph is allowed, and nothing moves its second line yet.
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+            let wide = doc.append_element(Some(body), "div", Some("display:block;width:100px"));
+            for _ in 0..3 {
+                doc.append_element(
+                    Some(wide),
+                    "span",
+                    Some("display:inline-block;width:60px;height:30px"),
+                );
+            }
+            vec![first, wide]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 60.0]);
+}
+
+#[test]
+fn a_marker_only_flex_item_follows_the_flex_rules() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let column = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:flex;flex-direction:column;width:100px"),
+            );
+            append_marker_only_items(doc, column, 5)
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 30.0, 60.0, 100.0, 130.0]);
+}
+
+#[test]
+fn a_marker_only_item_out_of_the_flow_keeps_its_own_placement() {
+    // A float and an absolutely positioned box are placed by their own rules,
+    // not kept whole by their line; a relatively positioned box is in flow.
+    for (style, expected) in [
+        ("float:left", 90.0),
+        ("position:absolute;top:90px", 90.0),
+        ("position:relative", 100.0),
+    ] {
+        let ys = paginated_ys(
+            |doc, body| {
+                let spacer =
+                    doc.append_element(Some(body), "div", Some("display:block;height:90px"));
+                let item = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some(&format!("{MARKER_ONLY_ITEM};{style}")),
+                );
+                vec![spacer, item]
+            },
+            &[],
+        );
+        assert_eq!(ys, [0.0, expected], "{style}");
+    }
+}
+
+#[test]
+fn a_marker_only_item_shorter_than_its_line_ends_where_the_box_does() {
+    // The box runs from 90 to 100 and clips its 30px line: it fits the page.
+    let ys = paginated_ys(
+        |doc, body| {
+            let spacer = doc.append_element(Some(body), "div", Some("display:block;height:90px"));
+            let item = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("{MARKER_ONLY_ITEM};height:10px;overflow:hidden")),
+            );
+            vec![spacer, item]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 90.0]);
+}
+
+#[test]
+fn a_vertical_marker_only_item_keeps_its_own_placement() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let spacer = doc.append_element(Some(body), "div", Some("display:block;height:90px"));
+            let item = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("{MARKER_ONLY_ITEM};writing-mode:vertical-rl")),
+            );
+            vec![spacer, item]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 90.0]);
+}
+
+#[test]
+fn a_marker_only_multicol_container_keeps_its_own_placement() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let spacer = doc.append_element(Some(body), "div", Some("display:block;height:90px"));
+            let item = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("{MARKER_ONLY_ITEM};column-count:2")),
+            );
+            vec![spacer, item]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 90.0]);
+}

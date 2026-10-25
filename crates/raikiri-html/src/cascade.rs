@@ -25,7 +25,7 @@ use crate::UncascadedDocument;
 /// Fails when the document and its stylesheets pass a cascade limit, the
 /// allocator refuses the cascade's result, or the stylesheets have more
 /// rules, selectors or declarations than the cascade can number; see
-/// [`raikiri_style::cascade_with_options`].
+/// `raikiri_style::cascade_with_options`.
 ///
 /// # Collection scope for DOM `<style>` elements
 ///
@@ -169,7 +169,7 @@ pub fn build_cascaded_with_media_context_for_page_and_consumer_properties(
 /// Fails when the document and its stylesheets pass one of `options.limits`,
 /// the allocator refuses the cascade's result, or the stylesheets have more
 /// rules, selectors or declarations than the cascade can number; see
-/// [`raikiri_style::cascade_with_options`].
+/// `raikiri_style::cascade_with_options`.
 pub fn build_cascaded_with_options(
     doc: &UncascadedDocument,
     media_context: &MediaContext,

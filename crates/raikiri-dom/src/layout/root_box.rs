@@ -52,6 +52,7 @@ pub struct RootBox {
 /// The pages run down the flow, or across it along x for a root whose
 /// blocks stack on vertical axes; there, `content_origin_y` is the distance
 /// along x, and a later page sees the box moved by it.
+#[doc(hidden)]
 pub fn root_box(
     document: &Document,
     cascade: &CascadeResult,

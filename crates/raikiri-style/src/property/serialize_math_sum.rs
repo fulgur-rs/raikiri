@@ -25,6 +25,7 @@ const MAX_SUM_NESTING: usize = 32;
 /// and percentages rewritten in its canonical form, including those inside other functions
 /// such as `translateX()`, or `None` when there is no
 /// such `calc()` (callers keep the source text).
+#[doc(hidden)]
 pub fn serialize_math_sums(raw_value: &str) -> Option<String> {
     if !css_component_values_are_bounded(raw_value) {
         return None;

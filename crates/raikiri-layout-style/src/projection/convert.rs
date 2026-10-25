@@ -18,6 +18,7 @@ use raikiri_layout_geometry::{Edges, Point, Size};
 /// The orphan rule keeps `From` from relating two types of other crates, and
 /// the library's types are never named by the code that reads these values, so
 /// the conversion lives in this trait.
+#[doc(hidden)]
 pub trait ToTaffy: Copy {
     /// The library's type.
     type Taffy;

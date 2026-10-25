@@ -5262,3 +5262,7 @@ css/css-sizing/aspect-ratio/grid-aspect-ratio-026.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-028.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-029.html
 css/css-sizing/aspect-ratio/grid-aspect-ratio-040.html
+
+# --- a line of only a marker is kept whole at a page edge (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# The empty list items of the additive counter styles hold only their inside marker, so no text places their line; the item whose line crosses the page edge moves to the second page, like the reference's div of text; KEEP in two audit-vacuous-passes runs.
+css/css-counter-styles/counter-style-at-rule/system-additive.html

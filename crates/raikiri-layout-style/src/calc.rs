@@ -61,6 +61,7 @@ impl CalcValue {
 /// resolved through the payload only while the payload is alive: the handle of
 /// a dropped payload resolves to nothing instead of dangling.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct AlignedCalc {
     value: CalcValue,
     slot: Slot,
@@ -108,6 +109,7 @@ impl AlignedCalc {
 
 /// Which Grid list contains a calc expression.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum GridList {
     /// Explicit template components and repeats.
     Template,
@@ -117,6 +119,7 @@ pub enum GridList {
 
 /// Which half of a track sizing function contains a calc expression.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum TrackPart {
     /// The minimum breadth.
     Min,
@@ -126,6 +129,7 @@ pub enum TrackPart {
 
 /// Stable property/component identity for a prepared payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum CalcSlot {
     /// A scalar property.
     Property(LengthProperty),
@@ -168,6 +172,7 @@ impl CalcSlot {
 
 /// A payload borrowed from an owner that outlives all uses of the view.
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct PreparedCalc<'a> {
     /// Property/component identity.
     pub slot: CalcSlot,

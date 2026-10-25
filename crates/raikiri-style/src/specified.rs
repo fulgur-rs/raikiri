@@ -84,6 +84,7 @@ use crate::resolve::{
 
 /// The `text-shadow` of a node's [`SpecifiedValues`].
 #[derive(Clone, Debug, PartialEq)]
+#[doc(hidden)]
 pub enum SpecifiedTextShadow {
     /// A declared list, whose lengths phase 3 absolutizes.
     Specified(Arc<Vec<TextShadowItem>>),
@@ -173,6 +174,7 @@ pub enum SpecifiedTextShadow {
 /// External callers should construct values via [`Self::initial`] or [`Self::inherit_from`].
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
+#[doc(hidden)]
 pub struct SpecifiedValues {
     /// Staging value for [`ComputedValues::color`]; computed-equivalent.
     pub color: CssColor,
@@ -187,7 +189,7 @@ pub struct SpecifiedValues {
     pub(crate) contextual_colors: Vec<crate::property::ContextualColor>,
     /// Staging value for [`ComputedValues::font_family`]; computed-equivalent.
     pub font_family: Arc<Vec<FontFamilyName>>,
-    /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
+    /// **Specified** `font-size`; phase 2 (`resolve_font_size`) absolutizes it
     /// against the **parent's** computed font size. Ignored while
     /// [`Self::font_size_calc`] is set.
     pub font_size: Length,
@@ -210,7 +212,7 @@ pub struct SpecifiedValues {
     /// computed-equivalent** (see the D5 invariant above). The `f32` type
     /// replaces `u16` to retain fractional weights.
     pub font_weight: f32,
-    /// **Specified** `line-height`; phase 3 ([`resolve_line_height`])
+    /// **Specified** `line-height`; phase 3 (`resolve_line_height`)
     /// absolutizes it against this node's computed font size.
     pub line_height: LineHeight,
     /// Staging value for [`ComputedValues::display`]; computed-equivalent.
@@ -238,7 +240,7 @@ pub struct SpecifiedValues {
     pub position: PositionValue,
     /// Staging value for [`ComputedValues::text_align`]; computed-equivalent.
     /// `match-parent` is **not resolved here**. See "`text_align: match-parent`
-    /// differs from D5" in the docs for [`Self`].
+    /// differs from D5" in the docs for `Self`.
     pub text_align: TextAlign,
     /// [`ComputedValues::hanging_punctuation`] staging. The inherited keyword
     /// set is preserved for the line-layout consumer.
@@ -272,7 +274,7 @@ pub struct SpecifiedValues {
     /// [`WritingMode::HorizontalTb`] via [`resolve_writing_mode`]. As with
     /// `text-align: match-parent`, resolution belongs to `finalize` /
     /// `absolutize_with`, not to staging (see the Non-goal section of the
-    /// [`WritingMode`] docs and the [`Self`] docs).
+    /// [`WritingMode`] docs and the `Self` docs).
     pub writing_mode: WritingMode,
     /// `ruby-position` — inherited annotation placement.
     pub ruby_position: RubyPosition,
@@ -288,12 +290,12 @@ pub struct SpecifiedValues {
     /// `text-indent`'s `each-line` flag staging. Inherited, initial `false`.
     pub text_indent_each_line: bool,
     /// **Specified** `padding`; phase 3
-    /// ([`resolve_non_negative_length_percentage_or_calc`]) absolutizes lengths but
+    /// (`resolve_non_negative_length_percentage_or_calc`) absolutizes lengths but
     /// leaves percentages, and calc() sums that contain one, unchanged.
     pub padding: Sides<LengthPercentageOrCalc>,
-    /// **Specified** `margin`; phase 3 ([`resolve_margin_length_or_auto`]) absolutizes its lengths.
+    /// **Specified** `margin`; phase 3 (`resolve_margin_length_or_auto`) absolutizes its lengths.
     pub margin: Sides<LengthOrAuto>,
-    /// **Specified** `border`; phase 3 ([`crate::resolve::resolve_border`]) absolutizes its width and applies
+    /// **Specified** `border`; phase 3 (`resolve_border`) absolutizes its width and applies
     /// style gating for `none` and `hidden`.
     pub border: Sides<Border>,
     /// Whether each border and column-rule width was lifted from a computed value.
@@ -372,7 +374,7 @@ pub struct SpecifiedValues {
     /// Staging value for [`ComputedValues::overflow`]. `OverflowValue` has no lengths, so the
     /// layer is computed-equivalent, but cross-axis computed-value coupling is **not resolved
     /// here**. For the same reason as "`text_align: match-parent` differs from D5" in the
-    /// [`Self`] docs, phase 3 ([`Self::absolutize_with`]) calls [`resolve_overflow`].
+    /// `Self` docs, phase 3 ([`Self::absolutize_with`]) calls [`resolve_overflow`].
     pub overflow: OverflowXY,
     /// Staging value for [`ComputedValues::text_decoration_line`]; computed-equivalent because
     /// `TextDecorationLine` has no lengths.
@@ -417,7 +419,7 @@ pub struct SpecifiedValues {
     /// on the variant. The six keywords `baseline`, `sub`, `super`, `middle`, `text-top`, and
     /// `text-bottom` are computed-equivalent (no lengths); [`VerticalAlign::Length`] and
     /// [`VerticalAlign::Calc`] remain specified and retain `em`/`rem` or mixed px/% until
-    /// [`Self::absolutize_with`] calls [`crate::resolve::resolve_vertical_align`]. See that
+    /// [`Self::absolutize_with`] calls `resolve_vertical_align`. See that
     /// function's docs for why the types are not split.
     pub vertical_align: VerticalAlign,
     /// Staging value for [`ComputedValues::font_style`]; computed-equivalent because `FontStyle`
@@ -478,13 +480,13 @@ pub struct SpecifiedValues {
     /// `OverflowWrap` carries no lengths. The legacy `word-wrap` alias also maps to this field
     /// (see the [`ComputedValues::overflow_wrap`] docs).
     pub overflow_wrap: OverflowWrap,
-    /// **Specified** `letter-spacing`; phase 3 ([`crate::resolve::resolve_letter_spacing`])
+    /// **Specified** `letter-spacing`; phase 3 (`resolve_letter_spacing`)
     /// resolves it into a computed CSS value and a renderer-facing absolute fallback.
     pub letter_spacing: LetterSpacingValue,
     /// **Specified** `word-spacing`; its CSS Text 4 length-percentage grammar remains available
     /// through phase 3 for CSSOM computed-value exposure.
     pub word_spacing: WordSpacingValue,
-    /// **Specified** `tab-size`; phase 3 ([`resolve_tab_size`]) absolutizes `<length>` against
+    /// **Specified** `tab-size`; phase 3 (`resolve_tab_size`) absolutizes `<length>` against
     /// this node's computed font size. `<number>` needs no absolutization, as with
     /// [`Self::flex_grow`].
     pub tab_size: TabSize,
@@ -542,7 +544,7 @@ pub struct SpecifiedValues {
     pub flex_grow: f32,
     /// Staging value for [`ComputedValues::flex_shrink`]; computed-equivalent.
     pub flex_shrink: f32,
-    /// **Specified** `flex-basis`; phase 3 ([`resolve_flex_basis`]) preserves `auto` and
+    /// **Specified** `flex-basis`; phase 3 (`resolve_flex_basis`) preserves `auto` and
     /// `content` but absolutizes `<length-percentage>`, as with [`Self::width`].
     pub flex_basis: FlexBasisValue,
     /// Staging value for [`ComputedValues::order`]; computed-equivalent because `<integer>` needs
@@ -558,7 +560,7 @@ pub struct SpecifiedValues {
     pub align_items: SelfAlignmentValue,
     /// Staging value for [`ComputedValues::align_self`]; computed-equivalent.
     pub align_self: AlignSelfValue,
-    /// **Specified** `row-gap`; phase 3 ([`resolve_length_percentage_or_normal`]) preserves
+    /// **Specified** `row-gap`; phase 3 (`resolve_length_percentage_or_normal`) preserves
     /// `normal` and absolutizes `<length-percentage>`. Like [`Self::letter_spacing`], it remains
     /// in the specified layer, but its representation of computed `normal` differs (see
     /// [`crate::resolve::ComputedLengthPercentageOrNormal`]).
@@ -572,7 +574,7 @@ pub struct SpecifiedValues {
     pub quotes_auto: bool,
     /// `text-shadow`, which is **inherited** and a variable-length list. A
     /// declared list is [`SpecifiedTextShadow::Specified`], and phase 3
-    /// ([`resolve_text_shadow_item`]) absolutizes three lengths in each item.
+    /// (`resolve_text_shadow_item`) absolutizes three lengths in each item.
     /// `Self::inherit_from` seeds it with the parent's computed list as
     /// [`SpecifiedTextShadow::Inherited`], which phase 3 keeps as it is, so a
     /// node that declares none shares its parent's list. See the
@@ -693,7 +695,7 @@ pub struct SpecifiedValues {
     /// specified", requiring no absolutization), phase 3 ([`Self::absolutize_with`]) absolutizes
     /// the non-percentage `Length` payload of `translate()`, `translateX()`, and `translateY()`
     /// against font size / root font size into `Px`. Percentages remain symbolic `Percent`, as
-    /// with [`crate::resolve::resolve_length_percentage`] (see
+    /// with `resolve_length_percentage` (see
     /// [`crate::property::TransformFunction`]). `none` is represented by an empty list
     /// ([`empty_transform_list`]).
     pub transform: Arc<Vec<TransformFunction>>,
@@ -728,7 +730,7 @@ pub struct SpecifiedValues {
     /// value has two absolute lengths, so phase 3 absolutizes staging for
     /// [`crate::computed::ComputedValues::border_spacing`], as for the length-bearing arm of
     /// [`Self::tab_size`]. Since it is inherited, `Self::inherit_from` seeds it by lifting the
-    /// parent's computed value with [`lift_border_spacing`], again like the `Length` arm of
+    /// parent's computed value with `lift_border_spacing`, again like the `Length` arm of
     /// [`Self::tab_size`].
     pub border_spacing: BorderSpacingValue,
     /// **Specified** `caption-side`; **inherited**, initially [`CaptionSideValue::Top`] (CSS
@@ -1234,12 +1236,12 @@ impl SpecifiedValues {
     /// - Seed **inherited** properties from the parent's computed values.
     ///   Length-bearing `font_size`, `line_height`, `text_indent`,
     ///   `letter_spacing`, `word_spacing`, and `tab_size` are lifted to
-    ///   specified representations by [`crate::resolve::lift_font_size`],
-    ///   [`crate::resolve::lift_line_height`],
-    ///   [`crate::resolve::lift_text_indent`],
-    ///   [`crate::resolve::lift_letter_spacing`],
-    ///   [`crate::resolve::lift_word_spacing`], and
-    ///   [`crate::resolve::lift_tab_size`]. Since `Px` and `Percent` are fixed
+    ///   specified representations by `lift_font_size`,
+    ///   `lift_line_height`,
+    ///   `lift_text_indent`,
+    ///   `lift_letter_spacing`,
+    ///   `lift_word_spacing`, and
+    ///   `lift_tab_size`. Since `Px` and `Percent` are fixed
     ///   points of absolutization, passing through phase 2/3 does not apply
     ///   the conversion twice (see each function's docs).
     /// - Set **non-inherited** properties to the values in [`Self::initial`].
@@ -1256,7 +1258,7 @@ impl SpecifiedValues {
     /// [`ComputedValues::inherit_from`]: crate::computed::ComputedValues::inherit_from
     ///
     /// **Do not seed inherited fields from [`Self::initial`].** See the D5
-    /// invariant in the [`Self`] docs.
+    /// invariant in the `Self` docs.
     pub fn inherit_from(parent: &ComputedValues) -> Self {
         // Initialize with an explicit struct literal. "Simplifying" this to `..Self::initial()`
         // would allocate and then drop a `font_family` Vec before cloning the parent's value
@@ -1803,7 +1805,7 @@ impl SpecifiedValues {
     /// font-relative lengths continue to resolve against the element's own
     /// metrics when used in line-height." Thus `em` and similar units still
     /// use its own font size in phase 2.5, as in `finalize`.
-    /// **`lh` / `rlh` are exceptions.** The [`resolve_line_height`] docs are
+    /// **`lh` / `rlh` are exceptions.** The `resolve_line_height` docs are
     /// canonical for the spec text and their differing behavior; we only
     /// summarize here because previous summaries have drifted. With no
     /// parent, `line-height: 1lh` / `1rlh` on the root always falls back to

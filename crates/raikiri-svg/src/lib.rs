@@ -1,17 +1,17 @@
 //! Static SVG parsing, bounded rasterization and vector scenes.
 //!
-//! [`SvgDocument::rasterize`] draws pixels; [`SvgDocument::scene`] builds the
+//! `SvgDocument::rasterize` draws pixels; `SvgDocument::scene` builds the
 //! same picture as resolution independent paint commands
 //! ([`raikiri_traits::vector`]). Backend types stay private to this crate. SVG
 //! references that could read local files, issue requests, or recursively load
 //! data URLs are rejected.
 //!
 //! The crate bundles no fonts and decodes no pictures. Text and `<image>`
-//! elements are drawn only by [`SvgDocument::scene_with_resources`], in the
+//! elements are drawn only by `SvgDocument::scene_with_resources`, in the
 //! faces of the [`SvgFontSource`] and with the pictures of the
 //! [`SvgImageSource`] it is given; the raster path leaves text out and does
 //! not accept a document with pictures. A document may carry `<image>`
-//! references only when it is parsed with [`SvgDocument::parse_with_images`].
+//! references only when it is parsed with `SvgDocument::parse_with_images`.
 
 #![forbid(unsafe_code)]
 
@@ -39,6 +39,7 @@ const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// Natural dimensions and ratio declared by an SVG source.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[doc(hidden)]
 pub struct SvgIntrinsicSize {
     /// Absolute natural width in CSS pixels, when present.
     pub width: Option<f32>,
@@ -50,6 +51,7 @@ pub struct SvgIntrinsicSize {
 
 /// The concrete CSS viewport used to prepare or rasterize an SVG.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[doc(hidden)]
 pub struct SvgViewport {
     /// CSS pixel width.
     pub width: f32,
@@ -59,6 +61,7 @@ pub struct SvgViewport {
 
 /// Host styles passed into an SVG image or inline SVG root.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[doc(hidden)]
 pub struct SvgRootStyle {
     /// The inherited CSS `color`, in straight RGBA8.
     pub inherited_color: [u8; 4],
@@ -97,6 +100,7 @@ impl Default for SvgRootStyle {
 
 /// Resolved font properties inherited by a standalone SVG root.
 #[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
 pub struct SvgRootFont<'a> {
     /// Finite non-negative font size in CSS pixels.
     pub size: f32,
@@ -110,6 +114,7 @@ pub struct SvgRootFont<'a> {
 
 /// Resolved declarations for one element of the original SVG source.
 #[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
 pub struct SvgElementStyle<'a> {
     /// Zero-based element preorder index, counting the root as index zero.
     /// The root is styled separately, so it may be included here only with
@@ -132,6 +137,7 @@ pub struct SvgElementStyle<'a> {
 /// see [`SvgDocument::styled_source_with_resolved_styles`] for how each part
 /// is applied.
 #[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
 pub struct SvgResolvedStyles<'a> {
     /// The root's resolved `color`, in straight RGBA8.
     pub root_color: [u8; 4],
@@ -169,6 +175,7 @@ struct RasterRequest<'a> {
 /// Without a source the matching content is left out, as a broken picture or
 /// a font nobody has leaves it out of HTML.
 #[derive(Clone, Copy, Default)]
+#[doc(hidden)]
 pub struct SvgResources<'a> {
     fonts: Option<&'a dyn SvgFontSource>,
     images: Option<&'a dyn SvgImageSource>,
@@ -307,6 +314,7 @@ impl std::error::Error for SvgError {}
 
 /// Parsed SVG source whose raster backend remains private to this crate.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct SvgDocument {
     tree: usvg::Tree,
     source: String,

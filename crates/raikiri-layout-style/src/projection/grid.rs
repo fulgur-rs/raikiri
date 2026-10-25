@@ -17,6 +17,7 @@ use taffy::{
 
 /// Borrowed top-level Grid components; cloning preserves the current cursor.
 #[derive(Clone)]
+#[doc(hidden)]
 pub struct TemplateTracks<'a> {
     prepared: &'a PreparedStyle<'a>,
     axis: Axis,
@@ -54,6 +55,7 @@ impl ExactSizeIterator for TemplateTracks<'_> {}
 
 /// Borrowed implicit tracks or tracks inside one repeat.
 #[derive(Clone)]
+#[doc(hidden)]
 pub struct Tracks<'a> {
     prepared: &'a PreparedStyle<'a>,
     axis: Axis,
@@ -85,6 +87,7 @@ impl ExactSizeIterator for Tracks<'_> {}
 
 /// The line-name sets of a template or repeat, borrowed without a Vec clone.
 #[derive(Clone)]
+#[doc(hidden)]
 pub struct LineNames<'a>(std::slice::Iter<'a, Vec<SmolStr>>);
 impl<'a> Iterator for LineNames<'a> {
     type Item = std::slice::Iter<'a, SmolStr>;
@@ -105,6 +108,7 @@ impl<'a> taffy::TemplateLineNames<'a, SmolStr> for LineNames<'a> {
 
 /// A repeat whose tracks and names still belong to ComputedValues.
 #[derive(Clone, Copy)]
+#[doc(hidden)]
 pub struct GridRepetition<'a> {
     prepared: &'a PreparedStyle<'a>,
     axis: Axis,
@@ -147,6 +151,7 @@ impl GenericRepetition for GridRepetition<'_> {
 
 /// Grid areas with cheaply cloned shared identifiers.
 #[derive(Clone)]
+#[doc(hidden)]
 pub struct Areas<'a>(std::slice::Iter<'a, GridTemplateAreaEntry>);
 impl Iterator for Areas<'_> {
     type Item = taffy::GridTemplateArea<SmolStr>;

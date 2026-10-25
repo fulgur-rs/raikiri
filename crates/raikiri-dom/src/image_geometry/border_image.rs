@@ -49,6 +49,7 @@ pub struct BorderImagePart {
 /// not part of the geometry, so a box cut into fragments does not build the
 /// tiles of the other fragments.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub struct VisibleArea {
     /// The horizontal range, as its lowest and highest coordinate.
     pub x: (f64, f64),
@@ -181,6 +182,7 @@ pub fn border_image_geometry_on_device_pixels(
 /// image as painting all of them. Only the tile positions are limited: a
 /// part lists the tiles that cross `visible`, which is what a painter
 /// clipped to it would draw.
+#[doc(hidden)]
 pub fn border_image_geometry_within(
     border_box: Rect,
     border_widths: Sides<f64>,

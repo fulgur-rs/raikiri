@@ -127,7 +127,7 @@ impl ResourceLimits {
 /// # Fonts
 ///
 /// Text is laid out with the installed fonts
-/// ([`raikiri_dom::system_font_collection`]) unless a font set is given with
+/// (`raikiri_dom::system_font_collection`) unless a font set is given with
 /// [`fonts`](Self::fonts). Paragraphs are only built on several threads with
 /// a font set built from bundled fonts only. For deterministic rendering,
 /// build the fonts with [`crate::FontCollectionBuilder`], which disables
@@ -276,7 +276,7 @@ impl<'a> RenderResources<'a> {
 
     /// The font layer text is laid out with: the layer of the font set given
     /// to [`fonts`](Self::fonts), or the process-wide layer of the installed
-    /// fonts ([`raikiri_dom::system_font_collection`]).
+    /// fonts (`raikiri_dom::system_font_collection`).
     pub fn inline_engine_fonts(&self) -> shodo::font::FontCollection {
         self.font_collection
             .clone()

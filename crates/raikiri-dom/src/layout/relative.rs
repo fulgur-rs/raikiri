@@ -155,6 +155,7 @@ fn relative_insets_with_box_tree(
 /// painter applies instead: the body (`body`), a float outside a flex or
 /// grid container, and a table caption, cell, row or row group. Inline-level
 /// boxes are placed on their lines with the offset.
+#[doc(hidden)]
 pub fn placed_without_relative_offset(
     document: &Document,
     cascade: &CascadeResult,

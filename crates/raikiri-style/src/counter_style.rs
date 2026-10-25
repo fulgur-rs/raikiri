@@ -17,7 +17,7 @@
 //! into `raikiri-traits::TargetRegistry`'s target-resolution flow remains
 //! deferred; ordinary marker and generated-content paint consumes this module
 //! through the cascade result without adding a dependency on
-//! `raikiri-traits`. See [`resolve_custom_counter`]'s doc for the exact
+//! `raikiri-traits`. See `resolve_custom_counter`'s doc for the exact
 //! representation contract.
 //!
 //! What's implemented:
@@ -62,7 +62,7 @@
 //! CSS Counter Styles Level 3 §3 cascade ordering, with author rules taking
 //! precedence over user-agent rules. The cascade result exposes the registry
 //! to marker and generated-content counter resolution through
-//! [`resolve_custom_counter`].
+//! `resolve_custom_counter`.
 //!
 //! Target-counter resolution through `raikiri-traits::TargetRegistry` remains
 //! outside this module.
@@ -151,7 +151,7 @@ pub enum CounterStyleSystem {
     /// guidance to "start with whatever subset … widen from there"). A rule using
     /// `extends` parses successfully (round-trips through
     /// [`CounterStyleRegistry`] with the extended name stored here) but
-    /// [`resolve_custom_counter`] always falls through to the rule's
+    /// `resolve_custom_counter` always falls through to the rule's
     /// `fallback` for it — see that function's doc for exactly which step of
     /// the algorithm this is modeled as. Composing the extended style's
     /// descriptors (including transitively, with the spec's own cycle
@@ -621,16 +621,16 @@ pub struct CounterStyleRule {
     pub negative: NegativeDescriptor,
     /// Stored for completeness (parsed per CSS Counter Styles L3 §3.3
     /// <https://www.w3.org/TR/css-counter-styles-3/#counter-style-prefix>)
-    /// but **never applied by [`resolve_custom_counter`]**. §3.3 verbatim:
+    /// but **never applied by `resolve_custom_counter`**. §3.3 verbatim:
     /// "Prefixes are only added by the algorithm for constructing the
     /// default contents of the `::marker` pseudo-element; the prefix is not
     /// added automatically when the `counter()` or `counters()` functions
-    /// are used." [`resolve_custom_counter`] implements the `counter()`
+    /// are used." `resolve_custom_counter` implements the `counter()`
     /// -context `generate a counter` algorithm (§2), which has no
     /// prefix/suffix step at all — this is that omission's citation, not an
     /// oversight. The `raikiri-paint` default-marker consumer reads this field
     /// directly and applies it around the representation returned by
-    /// [`resolve_custom_counter`].
+    /// `resolve_custom_counter`.
     pub prefix: CounterSymbol,
     /// See [`Self::prefix`] — §3.4
     /// <https://www.w3.org/TR/css-counter-styles-3/#counter-style-suffix>
@@ -937,6 +937,7 @@ impl<'i> QualifiedRuleParser<'i> for CounterStyleSheetParser {
 /// `source` (style rules, other at-rules) is silently ignored. A rule that
 /// fails [`CounterStyleRule::is_valid`] is **not** included — matches
 /// `RuleTree`'s "invalid rule → dropped" convention for `@page`.
+#[doc(hidden)]
 pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
@@ -991,7 +992,7 @@ impl CounterStyleRegistry {
     /// [`CounterStyleRule::is_valid`] is silently dropped (does not replace
     /// an existing valid rule of the same name) — this is the one
     /// enforcement point for "only valid rules live in a registry", covering
-    /// both the [`parse_counter_style_rules`] entry path and direct
+    /// both the `parse_counter_style_rules` entry path and direct
     /// construction of a [`CounterStyleRule`] via its `pub` fields.
     pub fn insert(&mut self, rule: CounterStyleRule) {
         if rule.is_valid() {
@@ -1313,6 +1314,7 @@ fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> 
 /// is rendered as the custom style's representation. Prefix/suffix application
 /// for a default `::marker` stays at that consumer boundary because these
 /// descriptors do not apply to `counter()` / `counters()` themselves.
+#[doc(hidden)]
 pub fn resolve_custom_counter(
     registry: &CounterStyleRegistry,
     name: &str,

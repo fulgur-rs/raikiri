@@ -10,6 +10,7 @@ use raikiri_traits::{LayoutError, NodeKind};
 /// The stack-safety guarantee for accepted depths applies to native targets.
 /// WebAssembly hosts control the engine call-stack limit, so accepted-depth
 /// safety there depends on the embedding runtime's stack configuration.
+#[doc(hidden)]
 pub const MAX_LAYOUT_DEPTH: usize = 256;
 
 /// Reject a body subtree whose element depth exceeds [`MAX_LAYOUT_DEPTH`].
@@ -17,6 +18,7 @@ pub const MAX_LAYOUT_DEPTH: usize = 256;
 /// This check uses an explicit work stack so it remains safe for attacker-
 /// controlled nesting. It follows document-tree children regardless of
 /// computed display; detached template contents are outside the layout tree.
+#[doc(hidden)]
 pub fn validate_layout_depth(document: &Document) -> Result<(), LayoutError> {
     let Some(body_id) = super::find_body(document) else {
         return Ok(());

@@ -20,6 +20,7 @@ pub struct Point<T> {
 
 /// A start and an end value.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub struct Line<T> {
     /// The start value.
     pub start: T,

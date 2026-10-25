@@ -270,6 +270,7 @@ pub(crate) fn clear(value: raikiri_style::property::ClearValue) -> values::Clear
 }
 
 /// Preferred ratio after automatic-size and containment policy, before axis projection.
+#[doc(hidden)]
 pub fn preferred_aspect_ratio(
     ratio: raikiri_style::property::AspectRatioValue,
     width: L,

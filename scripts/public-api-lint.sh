@@ -19,6 +19,7 @@
 #   scripts/public-api-lint.sh --surface CRATE  # prints the names CRATE publishes (add --with-hidden for hidden ones)
 #   scripts/public-api-lint.sh --exhaustive CRATE  # prints the types of CRATE without #[non_exhaustive]
 #   scripts/public-api-lint.sh --usage DIR      # reports which published names the Rust sources under DIR reach
+#   scripts/public-api-lint.sh --first-tier     # lists the names outside the consumer API, stale list entries and links to hidden items
 #   scripts/public-api-lint.sh --json-dir DIR   # reads the rustdoc JSON from DIR instead of running cargo
 #
 # To check that a change left the public signatures of a crate alone, dump it

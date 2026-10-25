@@ -41,7 +41,7 @@ impl Document {
     /// `node`'s current parent, if any, is detached first (DOM's "adopt"
     /// step folded into `insert` implies this move semantics).
     /// [`Document::append_child`] is a thin `String`-erroring wrapper over
-    /// this method. A [`NodeData::DocumentFragment`] `node` is spliced open
+    /// this method. A `NodeData::DocumentFragment` `node` is spliced open
     /// in source order instead of being inserted as a single child, per
     /// [`Document::attach_child`] / [`Document::insert_child_before`]'s
     /// existing fragment-aware semantics.

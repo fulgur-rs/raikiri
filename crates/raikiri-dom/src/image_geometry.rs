@@ -23,6 +23,7 @@ pub(crate) const DEFAULT_OBJECT_SIZE: (f32, f32) = (300.0, 150.0);
 /// Input and output tuples contain x, y, width, and height. Double precision
 /// preserves the native painter's coordinates; page consumers can convert
 /// them to their neutral rectangle type. Empty or non-finite boxes are omitted.
+#[doc(hidden)]
 pub fn object_image_rect(
     content: (f64, f64, f64, f64),
     natural: ImageIntrinsicSize,
@@ -74,6 +75,7 @@ fn natural_object_size(natural: ImageIntrinsicSize) -> (f64, f64) {
 /// §5.3 "default sizing algorithm"): its natural dimensions, completed from
 /// its natural aspect ratio where only one is known, and otherwise taken
 /// from `default_size`, contain-fitting a ratio-only image into it.
+#[doc(hidden)]
 pub fn default_sized_object(natural: ImageIntrinsicSize, default_size: (f64, f64)) -> (f64, f64) {
     let (default_width, default_height) = default_size;
     let valid = |value: Option<f32>| {
@@ -580,6 +582,7 @@ fn covering_origins(origin: f64, pitch: f64, painting_min: f64, painting_max: f6
 }
 
 /// Resolve one position edge against the free space on its axis.
+#[doc(hidden)]
 pub fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f64 {
     match offset {
         ComputedCssPositionOffset::Start(value) => match value {
