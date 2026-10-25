@@ -2,6 +2,9 @@
 name = "raikiri-dom"
 version.workspace = true
 description = "DOM data model + taffy block layout and shodo inline layout engine + PageStream/LayoutBuffer + GCPM runtime side (PageContext, TargetRegistry, PageBoxCache) for raikiri"
+readme = "README.md"
+keywords = ["dom", "layout", "css", "gcpm", "paged-media"]
+categories = ["rendering", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -33,7 +36,10 @@ url            = { workspace = true }
 raikiri-net = { workspace = true }
 serde_json = "1"
 criterion = { workspace = true }
-raikiri-html = { workspace = true }
+# Path only, without a version: raikiri-html depends on this crate, so a
+# versioned dev-dependency would make the packages circular (cargo drops a
+# dev-dependency without a version from the published manifest).
+raikiri-html = { path = "../raikiri-html" }
 raikiri-style = { workspace = true }
 tempfile = { workspace = true }
 

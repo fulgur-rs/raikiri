@@ -5,6 +5,7 @@ description = "PageFragment → anyrender::PaintScene walker for raikiri (VRT an
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 cssparser      = { workspace = true }

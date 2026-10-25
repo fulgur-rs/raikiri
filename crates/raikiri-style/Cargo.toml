@@ -2,6 +2,9 @@
 name = "raikiri-style"
 version.workspace = true
 description = "CSS engine for raikiri: cssparser + selectors integration, unified RuleTree (@page / counter / running / target-*), cascade → ComputedValues, GCPM static-side directive emit"
+readme = "README.md"
+keywords = ["css", "cascade", "selectors", "paged-media"]
+categories = ["parser-implementations", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
