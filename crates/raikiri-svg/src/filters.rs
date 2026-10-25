@@ -49,41 +49,36 @@ impl Meter {
     fn group(&mut self, group: &usvg::Group, base: usvg::Transform) -> Result<(), SvgError> {
         for node in group.children() {
             let to_canvas = base.pre_concat(node.abs_transform());
-            match node {
-                usvg::Node::Group(inner) => {
-                    for filter in inner.filters() {
-                        self.filter(filter, to_canvas)?;
-                    }
-                    self.group(inner, base)?;
-                    // Clip paths, masks and the pictures of `feImage` hold
-                    // nodes of their own, placed by the group that refers to
-                    // them.
-                    let mut failed = None;
-                    node.subroots(|root| {
-                        if let Err(error) = self.group(root, to_canvas) {
-                            failed.get_or_insert(error);
-                        }
-                    });
-                    failed.map_or(Ok(()), Err)?;
+            // Only these kinds hold a filter on the raster path: it is given
+            // no picture, and resvg draws a text as the paths it flattens to.
+            if let usvg::Node::Group(inner) = node {
+                for filter in inner.filters() {
+                    self.filter(filter, to_canvas)?;
                 }
-                usvg::Node::Path(path) => {
-                    let paints = [
-                        path.fill().map(Fill::paint),
-                        path.stroke().map(Stroke::paint),
-                    ];
-                    for paint in paints.into_iter().flatten() {
-                        if let usvg::Paint::Pattern(pattern) = paint {
-                            self.pattern(pattern, to_canvas)?;
-                        }
+                self.group(inner, base)?;
+                // Clip paths, masks and the pictures of `feImage` hold nodes
+                // of their own, placed by the group that refers to them.
+                let mut failed = None;
+                node.subroots(|root| {
+                    if let Err(error) = self.group(root, to_canvas) {
+                        failed.get_or_insert(error);
                     }
-                }
-                // The raster path draws no picture, and resvg draws a text as
-                // the paths it flattens to.
-                _ => {
-                    if let usvg::Node::Text(text) = node {
-                        self.group(text.flattened(), base)?;
+                });
+                failed.map_or(Ok(()), Err)?;
+            }
+            if let usvg::Node::Path(path) = node {
+                let paints = [
+                    path.fill().map(Fill::paint),
+                    path.stroke().map(Stroke::paint),
+                ];
+                for paint in paints.into_iter().flatten() {
+                    if let usvg::Paint::Pattern(pattern) = paint {
+                        self.pattern(pattern, to_canvas)?;
                     }
                 }
+            }
+            if let usvg::Node::Text(text) = node {
+                self.group(text.flattened(), base)?;
             }
         }
         Ok(())
