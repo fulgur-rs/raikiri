@@ -22,47 +22,67 @@ const MAX_KEPT_RASTER_BYTES: usize = 64 * 1024 * 1024;
 /// The tolerance within which two linear transforms count as the same one.
 const LINEAR_EPSILON: f32 = 1e-4;
 
-/// An SVG root with its prepared source and, once asked for, its picture.
+/// An SVG root with its prepared source.
 #[derive(Debug, Clone)]
 pub(super) struct PreparedSvg {
     /// Standalone XML with the viewport, root color, and root font resolved.
     /// Shared, so a cache hit does not copy it.
     pub(super) source: Arc<str>,
     pub(super) host_opacity: Option<f32>,
-    /// The picture built from [`Self::source`], kept while the cache has room
-    /// for it.
-    content: Option<ImageContent>,
+    /// What the root asks to be drawn as, which its ancestors decide.
+    pub(super) rendering: SvgRendering,
 }
 
 impl PreparedSvg {
-    pub(super) fn new(source: String, host_opacity: Option<f32>) -> Self {
+    pub(super) fn new(source: String, host_opacity: Option<f32>, rendering: SvgRendering) -> Self {
         Self {
             source: source.into(),
             host_opacity,
-            content: None,
+            rendering,
         }
-    }
-
-    pub(super) fn content(&self) -> Option<&ImageContent> {
-        self.content.as_ref()
     }
 }
 
 /// The cache key of an SVG root: its node and the bits of its viewport size.
 pub(super) type SvgKey = (usize, u32, u32);
 
-/// Prepared inline SVG sources and pictures of one laid-out document, keyed
-/// by SVG root node and viewport size.
+/// What a picture is made of: the prepared source and what else decides how
+/// it is drawn. A layout fixes the fonts and the raster scale.
+///
+/// Roots with the same markup, style and size share a picture, so an icon
+/// repeated through a document is drawn once.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct PictureKey {
+    source: Arc<str>,
+    host_opacity: Option<u32>,
+    size: (u32, u32),
+    rendering: SvgRendering,
+}
+
+impl PictureKey {
+    pub(super) fn new(prepared: &PreparedSvg, viewport: PaintRect) -> Self {
+        Self {
+            source: Arc::clone(&prepared.source),
+            host_opacity: prepared.host_opacity.map(f32::to_bits),
+            size: (viewport.width.to_bits(), viewport.height.to_bits()),
+            rendering: prepared.rendering,
+        }
+    }
+}
+
+/// Prepared inline SVG sources and pictures of one laid-out document.
 ///
 /// The prepared source depends only on the root's subtree, its computed
-/// styles and its viewport size, and the picture only adds the document's
-/// fonts, the root's rendering and the raster scale, which a layout fixes. So
-/// a root painted on several pages (a running header, or an SVG split across
-/// a page break) is serialized, parsed, restyled and drawn once. Placement is
-/// taken from each fragment.
+/// styles and its viewport size, so it is kept for each SVG root and viewport
+/// size. The picture adds the root's rendering to that, and is kept for each
+/// source. So a root painted on several pages (a running header, or an SVG
+/// split across a page break) is serialized, parsed, restyled and drawn
+/// once, and roots with the same markup draw one picture. Placement is taken
+/// from each fragment.
 #[derive(Debug)]
 pub(crate) struct InlineSvgCache {
     entries: RefCell<FxHashMap<SvgKey, PreparedSvg>>,
+    pictures: RefCell<FxHashMap<PictureKey, ImageContent>>,
     /// The faces handed out to the SVG text of the document. The prepared
     /// sources belong to one laid-out document, but the faces belong to the
     /// whole [`super::DocumentLayout`]: its pages laid out at another width
@@ -78,6 +98,7 @@ impl InlineSvgCache {
     pub(super) fn new(faces: Arc<crate::svg_fonts::FaceCache>) -> Self {
         Self {
             entries: RefCell::default(),
+            pictures: RefCell::default(),
             faces,
             kept_scene_bytes: Cell::new(0),
             kept_raster_bytes: Cell::new(0),
@@ -96,9 +117,15 @@ impl InlineSvgCache {
         self.entries.borrow_mut().insert(key, prepared);
     }
 
-    /// Keeps `content` for the root `key`, when it fits the budget of its
-    /// kind. A picture that does not is built again each time it is asked for.
-    pub(super) fn keep(&self, key: &SvgKey, content: &ImageContent) {
+    /// The picture kept for `key`.
+    pub(super) fn picture(&self, key: &PictureKey) -> Option<ImageContent> {
+        self.pictures.borrow().get(key).cloned()
+    }
+
+    /// Keeps `content` as the picture for `key`, when it fits the budget of
+    /// its kind. A picture that does not is built again each time it is asked
+    /// for.
+    pub(super) fn keep(&self, key: PictureKey, content: &ImageContent) {
         let (kept, bytes, limit) = match content {
             ImageContent::Vector(scene) => (
                 &self.kept_scene_bytes,
@@ -111,13 +138,10 @@ impl InlineSvgCache {
                 MAX_KEPT_RASTER_BYTES,
             ),
         };
-        let mut entries = self.entries.borrow_mut();
-        let Some(entry) = entries.get_mut(key) else {
-            return;
-        };
-        if entry.content.is_none() && kept.get().saturating_add(bytes) <= limit {
+        let mut pictures = self.pictures.borrow_mut();
+        if !pictures.contains_key(&key) && kept.get().saturating_add(bytes) <= limit {
             kept.set(kept.get() + bytes);
-            entry.content = Some(content.clone());
+            pictures.insert(key, content.clone());
         }
     }
 
@@ -127,12 +151,8 @@ impl InlineSvgCache {
     }
 
     #[cfg(test)]
-    pub(super) fn kept_content(&self) -> usize {
-        self.entries
-            .borrow()
-            .values()
-            .filter(|entry| entry.content.is_some())
-            .count()
+    pub(super) fn kept_pictures(&self) -> usize {
+        self.pictures.borrow().len()
     }
 }
 

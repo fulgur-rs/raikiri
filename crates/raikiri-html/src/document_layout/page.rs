@@ -1,4 +1,4 @@
-use super::inline_svg::{InlineSvgCache, PictureRequest, PreparedSvg, SvgKey, build_picture};
+use super::inline_svg::{InlineSvgCache, PictureKey, PictureRequest, PreparedSvg, build_picture};
 use super::{
     DomView, Fragment, GeneratedImageId, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun,
     TextLineId,
@@ -564,8 +564,9 @@ impl<'a> Page<'a> {
     /// explicitly visible descendants can still be drawn. The host box is drawn
     /// separately; source admission, preparation and picture errors are
     /// returned. [`InlineSvg`] says when the picture is a scene and when it is
-    /// pixels. A picture is built once per root and viewport size and shared
-    /// by the pages that show it, as far as the cache has room for it.
+    /// pixels. A picture is built once for roots with the same markup, style and
+    /// viewport size, and shared by them and by the pages that show them, as
+    /// far as the cache has room for it.
     /// Fixed boxes placed through other insets than `top` and `left` lengths
     /// are rejected, including when the fixed box is an ancestor. Their paint
     /// placement is not represented by the fragment projection yet.
@@ -573,22 +574,23 @@ impl<'a> Page<'a> {
         &self,
         fragment: &Fragment<'a>,
     ) -> Result<Option<InlineSvg>, raikiri_svg::SvgSceneError> {
-        let Some((key, viewport, prepared)) = self.prepared_inline_svg(fragment)? else {
+        let Some((viewport, prepared)) = self.prepared_inline_svg(fragment)? else {
             return Ok(None);
         };
-        let content = match prepared.content() {
-            Some(content) => content.clone(),
+        let key = PictureKey::new(&prepared, viewport);
+        let content = match self.svg_sources.picture(&key) {
+            Some(content) => content,
             None => {
                 let fonts = self.svg_fonts();
                 let content = build_picture(&PictureRequest {
                     source: &prepared.source,
                     viewport,
                     host_opacity: prepared.host_opacity,
-                    rendering: self.svg_rendering(fragment.node()),
+                    rendering: prepared.rendering,
                     raster_scale: self.svg.raster_scale,
                     fonts: &fonts,
                 })?;
-                self.svg_sources.keep(&key, &content);
+                self.svg_sources.keep(key, &content);
                 content
             }
         };
@@ -599,13 +601,13 @@ impl<'a> Page<'a> {
         }))
     }
 
-    /// The prepared source of the SVG root of `fragment`, its viewport and
-    /// the key it is cached under. See [`Self::inline_svg`] for who gets
-    /// `None` and which roots are rejected.
+    /// The viewport and the prepared source of the SVG root of `fragment`.
+    /// See [`Self::inline_svg`] for who gets `None` and which roots are
+    /// rejected.
     pub(super) fn prepared_inline_svg(
         &self,
         fragment: &Fragment<'a>,
-    ) -> Result<Option<(SvgKey, PaintRect, PreparedSvg)>, raikiri_svg::SvgError> {
+    ) -> Result<Option<(PaintRect, PreparedSvg)>, raikiri_svg::SvgError> {
         let Some(id) = usize::try_from(fragment.node().0).ok() else {
             return Ok(None); // cov:ignore: Fragment node IDs originate from usize arena indices.
         };
@@ -646,13 +648,14 @@ impl<'a> Page<'a> {
         }
         let key = (id, viewport.width.to_bits(), viewport.height.to_bits());
         if let Some(prepared) = self.svg_sources.get(&key) {
-            return Ok(Some((key, viewport, prepared)));
+            return Ok(Some((viewport, prepared)));
         }
-        let Some(prepared) = self.prepare_inline_svg(id, viewport, computed)? else {
+        let rendering = self.svg_rendering(fragment.node());
+        let Some(prepared) = self.prepare_inline_svg(id, viewport, computed, rendering)? else {
             return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
         };
         self.svg_sources.insert(key, prepared.clone());
-        Ok(Some((key, viewport, prepared)))
+        Ok(Some((viewport, prepared)))
     }
 
     /// The fonts that the SVG text of this page is set in: those the page's
@@ -705,6 +708,7 @@ impl<'a> Page<'a> {
         id: usize,
         viewport: PaintRect,
         computed: &ComputedValues,
+        rendering: SvgRendering,
     ) -> Result<Option<PreparedSvg>, raikiri_svg::SvgError> {
         let Some(source) = self
             .document
@@ -761,7 +765,7 @@ impl<'a> Page<'a> {
             },
             &element_styles,
         )?;
-        Ok(Some(PreparedSvg::new(source, host_opacity)))
+        Ok(Some(PreparedSvg::new(source, host_opacity, rendering)))
     }
 
     /// Local overflow clips of this page's placements and their ancestors,
