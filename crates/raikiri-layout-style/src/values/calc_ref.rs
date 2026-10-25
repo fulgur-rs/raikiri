@@ -43,6 +43,7 @@ use std::sync::Arc;
 /// let _ = Dimension::calc(std::ptr::null());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub struct CalcRef(usize);
 
 impl CalcRef {
@@ -116,6 +117,7 @@ impl CalcRef {
 /// payload, because its payload was dropped or because it was never issued,
 /// resolves to `0.0`.
 #[inline]
+#[doc(hidden)]
 pub fn resolve_projected_calc(handle: *const (), basis: f32) -> f32 {
     CalcRef::from_handle(handle).resolve(basis)
 }
@@ -128,6 +130,7 @@ pub fn resolve_projected_calc(handle: *const (), basis: f32) -> f32 {
 /// [`resolve_projected_calc`] answers `0.0` for a handle that names nothing,
 /// and a dropped owner would otherwise go unnoticed.
 #[inline]
+#[doc(hidden)]
 pub fn projected_calc_is_live(handle: *const ()) -> bool {
     CalcRef::from_handle(handle).is_live()
 }

@@ -8,6 +8,7 @@ use std::sync::Arc;
 /// Slots come from the computed-property traversal, once per property or track
 /// component. Each slot lookup uses binary search during validation and getters.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct PreparedData {
     bindings: Box<[(CalcSlot, Arc<AlignedCalc>)]>,
 }

@@ -65,12 +65,14 @@ pub(super) fn generates_inline_box_with_properties(
 
 /// Whether the element's `transform` applies to it: layout makes it the
 /// containing block of its fixed descendants, and the painter moves it.
+#[doc(hidden)]
 pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     is_transformable_with_properties(document, id, cv, query_box_properties(document, id, cv))
 }
 
 /// Whether the element has a transform that applies to it: a non-empty
 /// `transform` on a transformable box.
+#[doc(hidden)]
 pub fn has_applied_transform(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     !cv.transform.is_empty() && is_transformable(document, id, cv)
 }
@@ -151,6 +153,7 @@ pub(super) fn is_page_fixed(document: &Document, cascade: &CascadeResult, id: us
 }
 
 /// Whether `id` is the containing block of its fixed-position descendants.
+#[doc(hidden)]
 pub fn establishes_fixed_containing_block(
     document: &Document,
     id: usize,

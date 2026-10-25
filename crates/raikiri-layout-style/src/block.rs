@@ -6,6 +6,7 @@ use raikiri_style::property::{AlignSelfValue, FloatValue, SelfAlignmentValue};
 /// (CSS Box Alignment 3 §9.1): `baseline` or `first baseline` aligns the first
 /// baselines of the boxes, `last baseline` the last ones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum BaselineSet {
     /// The first baseline of the box.
     First,
@@ -16,6 +17,7 @@ pub enum BaselineSet {
 /// The set of baselines a box aligns to when its `own` self-alignment, falling
 /// back to the `inherited` default alignment of its container for `auto`,
 /// asks for baseline alignment.
+#[doc(hidden)]
 pub fn baseline_set_of(own: AlignSelfValue, inherited: SelfAlignmentValue) -> Option<BaselineSet> {
     match match own {
         AlignSelfValue::Value(value) => value,

@@ -14,6 +14,7 @@ use super::visual::{
 
 /// The longhands of `background`, in the order of its grammar (CSS
 /// Backgrounds 3 §2.11), which CSSOM uses to list them.
+#[doc(hidden)]
 pub const BACKGROUND_LONGHANDS: [&str; 8] = [
     "background-image",
     "background-position",
@@ -40,6 +41,7 @@ struct LayerText {
 /// initial value. Image, position, and color keep their source text, for
 /// the caller to serialize as values of their own longhand; the rest are
 /// serialized here.
+#[doc(hidden)]
 pub fn background_longhand_texts(value: &str) -> Option<Vec<(&'static str, String)>> {
     let mut input = ParserInput::new(value);
     let shorthand = Parser::new(&mut input)

@@ -39,7 +39,7 @@ pub trait NetworkProvider: Send + Sync {
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError>;
 
     /// Fetches `request` to completion, automatically following up to
-    /// [`MAX_AUTO_REDIRECT_HOPS`] redirects via repeated calls to
+    /// `MAX_AUTO_REDIRECT_HOPS` redirects via repeated calls to
     /// [`NetworkProvider::fetch_one_hop`]. Applies no policy between hops —
     /// a caller that must enforce a [`crate::ResourcePolicy`] (host
     /// allow-list, redirect hop count, ...) drives `fetch_one_hop` itself

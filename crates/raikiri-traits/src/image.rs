@@ -135,6 +135,7 @@ pub trait ImagePixelSource {
 /// gray and single-channel ramps and a grid of mixed colors. That last case
 /// keeps the many images tagged with an sRGB profile byte for byte instead of
 /// adding rounding noise to them. Alpha is never touched.
+#[doc(hidden)]
 pub fn convert_rgba8_to_srgb(profile: &[u8], pixels: &mut [u8]) -> bool {
     use moxcms::{ColorProfile, DataColorSpace, Layout, RenderingIntent, TransformOptions};
 
@@ -226,6 +227,7 @@ const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 /// are not a PNG, or that need no change, are returned borrowed. A truncated
 /// trailing chunk is left as is for the decoder to report.
 #[must_use]
+#[doc(hidden)]
 pub fn png_with_repaired_crcs(bytes: &[u8]) -> Cow<'_, [u8]> {
     if !bytes.starts_with(PNG_SIGNATURE) {
         return Cow::Borrowed(bytes);

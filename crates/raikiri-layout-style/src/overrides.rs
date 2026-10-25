@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 /// A length override with an explicit calc owner or resolution tag.
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct LengthValue<'a> {
     pub(crate) value: L,
     pub(crate) payload: Option<&'a AlignedCalc>,
@@ -15,6 +16,7 @@ pub struct LengthValue<'a> {
 
 /// An invalid override rejected before it reaches a getter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum OverrideError {
     /// A preparation-only source is not a physical override target.
     PreparationOnly,
@@ -68,6 +70,7 @@ impl<'a> LengthValue<'a> {
 
 /// A sparse override entry; later entries win within each layer.
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct PropertyOverride<'a>(pub(crate) OverrideKind<'a>);
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum OverrideKind<'a> {
@@ -130,6 +133,7 @@ impl<'a> PropertyOverride<'a> {
 ///
 /// Borrowed projections never clone the Arc or allocate while querying.
 #[derive(Clone, Debug)]
+#[doc(hidden)]
 pub struct OwnedPropertyOverride(OwnedOverrideKind);
 #[derive(Clone, Debug)]
 enum OwnedOverrideKind {
@@ -145,6 +149,7 @@ enum OwnedOverrideKind {
 ///
 /// Restoring this token preserves changes to every other property.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct OwnedOverrideUndo {
     key: OwnedPropertyOverride,
     previous: Option<OwnedPropertyOverride>,

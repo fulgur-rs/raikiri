@@ -442,14 +442,14 @@ impl TargetRegistry {
     /// out.
     ///
     /// Same page-boundary role as the sibling
-    /// [`super::context::PageContext::begin_page`] hook, which now calls
+    /// `super::context::PageContext::begin_page` hook, which now calls
     /// this method directly on its own (already-owned) `targets` field. For
     /// a `TargetRegistry` already wired into a `PageContext`, calling
     /// `PageContext::begin_page` is sufficient — a driver does not need to
     /// reach in and call this method separately.
     ///
     /// **The bulk-replace path via
-    /// [`super::context::PageContext::set_targets`] still needs a direct
+    /// `super::context::PageContext::set_targets` still needs a direct
     /// call here.** A registry built externally (e.g. by a DOM register-site
     /// walker) is not yet owned by any `PageContext` — this method must be called
     /// on it directly, before it is wired in via `set_targets`, if its
@@ -482,7 +482,7 @@ impl TargetRegistry {
     /// gain a force-reset variant — tracked as a follow-up, not fixed here.
     ///
     /// No production driver calls this yet, directly or through
-    /// [`super::context::PageContext::begin_page`]. Until a
+    /// `super::context::PageContext::begin_page`. Until a
     /// production driver calls it, every slot is tagged to page 0 — correct
     /// for a single-page document, harmless (just uninformative) for a
     /// multi-page one.
@@ -522,6 +522,7 @@ impl TargetRegistry {
 ///
 /// The name conversion `SmolStr → Symbol` happens here so callers don't
 /// need to reach into `raikiri-traits::dom` themselves.
+#[doc(hidden)]
 pub fn resolve_content_component(
     registry: &mut TargetRegistry,
     cc: &ContentComponent,

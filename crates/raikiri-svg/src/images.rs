@@ -26,6 +26,7 @@ pub(crate) const MAX_SCENE_IMAGES: usize = 256;
 /// Fragment references (`#id`) name no resource and are always allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub enum SvgImageAccess {
     /// Nothing but fragment references. [`SvgDocument::parse`] uses this.
     ///

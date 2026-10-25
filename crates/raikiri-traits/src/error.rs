@@ -280,6 +280,7 @@ pub enum LimitKind {
 
 /// Render completion summary (Finding #4 completion protocol).
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct RenderSummary {
     /// Total number of pages.
     pub total_pages: u32,
@@ -411,6 +412,7 @@ pub enum WarningKind {
 /// APIs do not consume it (consumers use it in their own loops).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum ExhaustionPolicy {
     /// Return non-convergence upstream as an error (conservative default).
     #[default]
@@ -422,6 +424,7 @@ pub enum ExhaustionPolicy {
 
 /// Details of an unresolved target (Finding #4 completion protocol).
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct UnresolvedTarget {
     /// Unique slot identifier.
     pub slot_id: TargetSlotId,
@@ -434,6 +437,7 @@ pub struct UnresolvedTarget {
 /// Reason an UnresolvedTarget remains unresolved (Finding #4).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum UnresolvedReason {
     /// Fragment ID has no definition anywhere.
     NotFound,
@@ -444,6 +448,7 @@ pub enum UnresolvedReason {
 
 /// Details of an emitted target slot.
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct EmittedSlotInfo {
     /// Unique slot identifier.
     pub slot_id: TargetSlotId,
@@ -470,6 +475,7 @@ pub struct TargetSlotId {
 /// Populate variants as target-* support is implemented. Currently uninhabited.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum TargetKind {
     // Populate later:
     //   Counter,
@@ -480,6 +486,7 @@ pub enum TargetKind {
 
 /// Item whose hint differs from its actual value (consumer convergence; Finding #5).
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct TargetDiscrepancy {
     /// Target fragment ID.
     pub fragment_id: Symbol,

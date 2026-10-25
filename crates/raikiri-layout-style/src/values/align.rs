@@ -6,6 +6,7 @@
 
 /// The position keyword of an item alignment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum AlignItemsKeyword {
     /// `normal`.
     #[default]
@@ -32,6 +33,7 @@ pub enum AlignItemsKeyword {
 
 /// The position keyword of a content alignment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum AlignContentKeyword {
     /// `normal`.
     #[default]
@@ -58,6 +60,7 @@ pub enum AlignContentKeyword {
 
 /// What an alignment does when the aligned item overflows its alignment area.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum AlignmentSafety {
     /// No overflow-position keyword was written.
     #[default]
@@ -70,6 +73,7 @@ pub enum AlignmentSafety {
 
 /// An item alignment: `align-items`, `justify-items` or a self alignment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub struct AlignItems {
     /// The position keyword.
     pub keyword: AlignItemsKeyword,
@@ -78,6 +82,7 @@ pub struct AlignItems {
 }
 
 /// A self alignment, which is an item alignment of one item.
+#[doc(hidden)]
 pub type AlignSelf = AlignItems;
 
 impl AlignItems {
@@ -166,6 +171,7 @@ impl AlignItems {
 
 /// A content alignment: `align-content` or `justify-content`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub struct AlignContent {
     /// The position keyword.
     pub keyword: AlignContentKeyword,

@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use crate::page::PageContext;
 
 /// Strategy trait controlling the LayoutBuffer lookahead range.
+#[doc(hidden)]
 pub trait LookaheadPolicy {
     /// How many lines ahead to probe for widows / orphans (None = unbounded).
     fn max_widow_orphan_lines(&self) -> Option<usize>;
@@ -23,6 +24,7 @@ pub trait LookaheadPolicy {
 }
 
 /// Target-* resolution mode (placeholder emission / prior registry lookup).
+#[doc(hidden)]
 pub trait TargetResolver {
     /// Resolve one target reference.
     fn resolve(&mut self, req: TargetRequest<'_>, ctx: &PageContext) -> ResolvedTarget;
@@ -32,6 +34,7 @@ pub trait TargetResolver {
 ///
 /// Currently only `AggressiveCommit` is implemented; `DirtyDeferred` /
 /// `FullReflow` remain Future Work (see §4).
+#[doc(hidden)]
 pub trait ReflowPolicy {
     /// Whether to commit fallback immediately or defer with a dirty flag at the probe limit.
     fn on_probe_limit(&self, ctx: &ProbeContext) -> ReflowAction;
@@ -43,6 +46,7 @@ pub trait ReflowPolicy {
 /// Action returned by ReflowPolicy.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub enum ReflowAction {
     /// Commit fallback immediately; cannot be undone (Streaming preset default).
     CommitWithFallback(ContainerOverflowFallback),
@@ -56,6 +60,7 @@ pub enum ReflowAction {
 /// Commit fallback behavior at the probe limit.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum ContainerOverflowFallback {
     /// Force placement on the next page (recommended).
     ForceBreakBefore,
@@ -70,6 +75,7 @@ pub enum ContainerOverflowFallback {
 /// Deadline for DeferAsDirty.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum DirtyDeadline {
     /// Defer until the next page is finalized.
     NextPageBoundary,
@@ -85,6 +91,7 @@ pub enum DirtyDeadline {
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct ProbeContext {
     // To be populated later:
     //   pub node_id: NodeId,
@@ -108,6 +115,7 @@ impl ProbeContext {
 #[allow(missing_docs)]
 #[derive(Debug)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct TargetRequest<'a> {
     // To be populated later:
     //   pub fragment_id: Symbol,
@@ -138,6 +146,7 @@ impl<'a> Default for TargetRequest<'a> {
 /// Currently uninhabited.
 #[non_exhaustive]
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum ResolvedTarget {
     // To be populated later:
     //   Placeholder { slot_id: TargetSlotId },

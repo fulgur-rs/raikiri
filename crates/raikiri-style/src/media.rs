@@ -24,7 +24,7 @@ pub enum MediaType {
 ///
 /// The initial context is [`MediaContext::print`], matching the renderer's
 /// paged-output default. Callers rendering a screen context should pass
-/// [`MediaContext::screen`] to [`crate::cascade_with_media_context`].
+/// [`MediaContext::screen`] to `cascade_with_media_context`.
 ///
 /// Width and height describe the externally selected viewport for screen media
 /// and the page box, including margins, for print media (Media Queries 4 §4.1–4.2).

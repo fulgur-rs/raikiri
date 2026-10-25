@@ -5,6 +5,7 @@ use cssparser::{Parser, ParserInput, Token};
 type Result<T> = std::result::Result<T, ()>;
 
 /// Whether `source` is exactly one `<easing-function>`.
+#[doc(hidden)]
 pub fn is_valid_easing_function(source: &str) -> bool {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);

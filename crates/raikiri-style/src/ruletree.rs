@@ -234,7 +234,7 @@ pub struct RuleTree {
     pub(crate) style_rules: Vec<StyleRule>,
     highlight_log: Vec<Registration<(Arc<str>, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
-    /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
+    /// `cascade_page` applies the cascade; per-page `PageBox`
     /// derivation and margin-box slot layout are not implemented.
     ///
     /// Unlike `style_rules`, page declarations are exposed for page-context
@@ -372,7 +372,7 @@ impl RuleTree {
     /// [`CounterStyleRegistry::is_empty`] equal to `true`. `raikiri-paint` handles
     /// generating counters (resolving `counter()`/`counters()`) from the cascade
     /// result. Wiring this registry into
-    /// [`crate::counter_style::resolve_custom_counter`] for markers/generated content
+    /// `resolve_custom_counter` for markers/generated content
     /// is a consumer-side boundary.
     ///
     /// # Inaccessibility of the `counter_styles` field itself
@@ -538,10 +538,10 @@ impl RuleTree {
     /// passed the limit, the tree kept the top-level rules before the one
     /// that passed it; when [`RuleTree::with_limits`] set limits below what
     /// the tree already held, it keeps all of that. Every element cascade of it
-    /// ([`crate::cascade_with_options`] and the entry points built on it)
+    /// (`cascade_with_options` and the entry points built on it)
     /// fails with this error. [`RuleTree::style_rules`], [`RuleTree::rules`],
     /// the registries and the `@page` cascade
-    /// ([`crate::cascade_page_with_media_context`]) read the retained prefix,
+    /// (`cascade_page_with_media_context`) read the retained prefix,
     /// so a caller that reads them checks this first.
     pub fn limit_exceeded(&self) -> Option<CascadeError> {
         self.budget.error()
@@ -1100,6 +1100,7 @@ fn replay_layered<R: Clone, Registry>(
 /// stylesheets. Excludes UA CSS: `raikiri-html::parse` already injects it via
 /// Document.add_stylesheet, and the umbrella passes `Document.stylesheets()`
 /// to RuleTree.
+#[doc(hidden)]
 pub fn build_rule_tree<D: StyleDom>(dom: &D) -> RuleTree {
     let mut tree = RuleTree::empty();
     walk_and_collect(dom, dom.root_id(), &mut |source| {
@@ -1116,6 +1117,7 @@ pub fn build_rule_tree<D: StyleDom>(dom: &D) -> RuleTree {
 ///
 /// Call order follows document order under `walk_and_collect`'s iterative DFS.
 /// Shares `walk_and_collect`'s protection against stack overflow.
+#[doc(hidden)]
 pub fn walk_style_elements<D: StyleDom, F: FnMut(&str)>(dom: &D, mut on_style_text: F) {
     walk_and_collect(dom, dom.root_id(), &mut on_style_text);
 }
@@ -2389,6 +2391,7 @@ impl<'s> SupportsContext<'s> {
 /// Only the at-rules the cascade gives meaning to are valid; it keeps any
 /// other at-rule, or one whose prelude it cannot parse, as an opaque
 /// record without effect.
+#[doc(hidden)]
 pub fn is_valid_at_rule_prelude(name: &str, prelude: &str, has_block: bool) -> bool {
     let mut input = ParserInput::new(prelude);
     let mut parser = Parser::new(&mut input);

@@ -668,6 +668,7 @@ fn parse_position_branch1_res<'i>(
 ///
 /// Try three alternatives ([`parse_position_branch3`] / [`parse_position_branch2`] / [`parse_position_branch1`])
 /// in third → second → first order (see the alternative-order docs on [`parse_position_branch3_res`]).
+#[doc(hidden)]
 pub fn parse_bg_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let position = input
         .try_parse(parse_position_branch3_res)
@@ -693,6 +694,7 @@ fn parse_position_branch3_strict_res<'i>(
 /// The second and first alternatives ([`parse_position_branch2`]/[`parse_position_branch1`])
 /// are identical for both grammars; the two parsers share them.
 ///
+#[doc(hidden)]
 pub fn parse_position_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let position = input
         .try_parse(parse_position_branch3_strict_res)

@@ -263,6 +263,7 @@ impl PageDefaultsBuilder {
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct LayoutBuffer {
     // Populate later.
 }
@@ -284,6 +285,7 @@ impl LayoutBuffer {
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct RunningTemplate {
     // Populate later.
 }
@@ -323,6 +325,7 @@ impl FormData {
 /// provides a stable per-template key. The newtype avoids mixing
 /// `NodeId` values used for other purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[doc(hidden)]
 pub struct RunningTemplateId(pub NodeId);
 
 impl RunningTemplateId {
@@ -345,6 +348,7 @@ impl RunningTemplateId {
 /// construction with `..Default::default()` (as for sibling [`PageBox`]).
 #[non_exhaustive]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[doc(hidden)]
 pub struct ContentSource {
     /// Ordered resolved items making up the content-list.
     pub items: Vec<ContentValueItem>,
@@ -376,6 +380,7 @@ impl ContentSource {
 /// variants from design doc §7.1 lines 1913-1920.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum GcpmDirective {
     /// `counter-increment: name delta` — increment the specified counter `name` by `delta`
     /// (CSS Lists 3 §4.2 <https://www.w3.org/TR/css-lists-3/#propdef-counter-increment>).
@@ -407,12 +412,12 @@ pub enum GcpmDirective {
     StringSet {
         /// Named-string identifier.
         name: Symbol,
-        /// Resolved source content-list ([`ContentSource`]).
+        /// Resolved source content-list (`ContentSource`).
         source: ContentSource,
     },
     /// `position: running(name)` — register the current subtree as a running template
     /// under `name` and store `template_id` (subtree root wrapped in
-    /// [`RunningTemplateId`]) as the key in the [`RunningTemplate`] pool
+    /// `RunningTemplateId`) as the key in the `RunningTemplate` pool
     /// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>).
     RegisterRunning {
         /// Running-template name (custom-ident).
@@ -461,6 +466,7 @@ pub enum GcpmDirective {
 /// with its direct reuse of `style: CounterStyle`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum ContentValueItem {
     /// bare `<string>` literal (`content: "hello"`).
     Literal(String),
@@ -491,7 +497,7 @@ pub enum ContentValueItem {
     },
     /// `element(name)` (CSS GCPM 3 §1.2.2
     /// <https://www.w3.org/TR/css-gcpm-3/#element-syntax>). Runtime resolution
-    /// looks up raikiri-dom's [`RunningTemplate`] pool.
+    /// looks up raikiri-dom's `RunningTemplate` pool.
     ///
     /// **From-impl gap**: `ContentComponent::Element` is not implemented.
     /// See type-level docstring "Element variant" section.
@@ -591,6 +597,7 @@ pub enum ContentValueItem {
 /// raikiri-style for forward compatibility.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum ContentValueConvertError {
     /// Failed to parse the URL string of a target-* variant with [`Url::parse`].
     InvalidUrl(url::ParseError),
@@ -665,7 +672,7 @@ fn content_text_keyword_to_content_part(
 impl TryFrom<ContentComponent> for ContentValueItem {
     type Error = ContentValueConvertError;
 
-    /// [`raikiri_style::property::ContentComponent`] → [`ContentValueItem`]
+    /// [`raikiri_style::property::ContentComponent`] → `ContentValueItem`
     /// Convert to the canonical taxonomy.
     ///
     /// Convert 13 variants (`Element` is not yet implemented in raikiri-style;

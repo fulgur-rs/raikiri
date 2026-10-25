@@ -164,6 +164,7 @@ fn reject_into_io(reason: RejectReason) -> std::io::Error {
 /// observer never sees it.
 #[non_exhaustive]
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum FontWarn<'a> {
     /// Walker skipped a symlink entry under `fonts_dir` (cycle-safe policy).
     /// Mundane: pre-read filter to keep `Path::is_dir()`-cycle recursion off.
@@ -290,6 +291,7 @@ pub(crate) fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>
 ///
 /// # Errors
 /// See [`FontError`].
+#[doc(hidden)]
 pub fn build_wpt_font_collection(
     fonts_dir: &Path,
 ) -> Result<shodo::font::FontCollection, FontError> {
@@ -299,6 +301,7 @@ pub fn build_wpt_font_collection(
 /// Error type for [`build_wpt_font_collection`]. `std`-only, no `thiserror`
 /// dependency (per raikiri workspace convention).
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum FontError {
     /// `fonts_dir` does not exist (e.g. fetch was never run)
     DirNotFound(PathBuf),
@@ -547,6 +550,7 @@ fn collect_recursive(
 /// source", fail-closed). Size capping is enforced by [`build_inline_document_fonts`]
 /// itself ([`FONT_SIZE_CAP`]), not by implementations, so every loader gets
 /// the same bound.
+#[doc(hidden)]
 pub trait FontFaceLoader {
     /// Load the bytes behind `url` (the raw `src: url(...)` string as
     /// authored — server-absolute, relative, or `data:`; interpretation is
@@ -561,6 +565,7 @@ pub trait FontFaceLoader {
 /// first-resolvable-source-wins per rule, so a family is never both applied
 /// and skipped.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[doc(hidden)]
 pub struct FontFaceApplyReport {
     /// Families whose bytes were registered into the document layer under the
     /// `@font-face` name (a `url(...)` source resolved and the font library
@@ -734,6 +739,7 @@ pub use crate::layout::ifc::font::BundledFace;
 ///
 /// # Errors
 /// An empty list, a face shodo rejects, or a resource limit.
+#[doc(hidden)]
 pub fn build_bundled_font_collection(
     faces: Vec<BundledFace>,
     system_fonts: bool,
@@ -755,6 +761,7 @@ pub fn build_bundled_font_collection(
 /// limit after which lookups silently fall back to the last resort. Callers
 /// must not configure it (for example with `set_generic_families`): that
 /// changes the answers for every other user of the layer.
+#[doc(hidden)]
 pub fn system_font_collection() -> shodo::font::FontCollection {
     static SHARED: std::sync::OnceLock<shodo::font::FontCollection> = std::sync::OnceLock::new();
     SHARED
@@ -783,6 +790,7 @@ pub fn system_font_collection() -> shodo::font::FontCollection {
 /// visible to another, and computed `font-family` lists need no rewriting.
 /// `loader` fetches `url()` sources; a `local()` source resolves against
 /// `shared` by full name or PostScript name.
+#[doc(hidden)]
 pub fn build_inline_document_fonts(
     shared: &shodo::font::FontCollection,
     faces: &FontFaceRegistry,

@@ -2,6 +2,7 @@ use raikiri_style::property::WritingMode;
 
 /// A physical axis before projection into layout coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum Axis {
     /// Physical width or columns.
     X,
@@ -11,6 +12,7 @@ pub enum Axis {
 
 /// A scalar length property, including preparation-only logical sources.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum LengthProperty {
     /// The width value.
     Width,
@@ -102,6 +104,7 @@ impl LengthProperty {
 
 /// Node-dependent facts computed by the DOM adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub struct StyleFlags(u32);
 impl StyleFlags {
     /// Prepared block policy.
@@ -169,6 +172,7 @@ impl Default for StyleFlags {
 
 /// Box facts independent of a particular layout invocation.
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct StyleMetadata {
     /// Prepared identity and sizing policy.
     pub flags: StyleFlags,
@@ -189,6 +193,7 @@ impl Default for StyleMetadata {
 
 /// How percentage edges are resolved before reaching Taffy.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[doc(hidden)]
 pub enum PercentBasis {
     /// Leave resolution to Taffy.
     #[default]
@@ -201,6 +206,7 @@ pub enum PercentBasis {
 
 /// Geometry conversion applied after the existing bridge policy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum BridgeProjection {
     /// Preserve the bridge geometry.
     #[default]
@@ -214,6 +220,7 @@ pub enum BridgeProjection {
 
 /// Containing-block policy selected by the consuming algorithm.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum ClaimsPolicy {
     /// Use the node's prepared containing-block facts.
     #[default]
@@ -224,6 +231,7 @@ pub enum ClaimsPolicy {
 
 /// The context in which an algorithm reads a box's style.
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct ViewContext {
     /// Geometry conversion independent of writing-mode policy.
     pub bridge_projection: BridgeProjection,

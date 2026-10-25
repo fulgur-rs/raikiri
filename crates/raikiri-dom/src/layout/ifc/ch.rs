@@ -40,6 +40,7 @@ pub(crate) fn ch_advance(fonts: &FontCollection, key: &ChFontKey) -> f32 {
 
 /// Advance of U+0030 in the font `key` selects from `fonts`, in px: the
 /// `ch` unit as the inline engine measures it.
+#[doc(hidden)]
 pub fn measure_ch_advance(fonts: &FontCollection, key: &ChFontKey) -> f32 {
     ch_advance(fonts, key)
 }
@@ -52,6 +53,7 @@ pub fn measure_ch_advance(fonts: &FontCollection, key: &ChFontKey) -> f32 {
 /// at the variation instance the key's weight, size and optical sizing
 /// select. The key carries no `font-variation-settings`, so explicit axis
 /// settings are not applied. `None` when the family list does not map.
+#[doc(hidden)]
 pub fn measure_normal_line_height(fonts: &FontCollection, key: &ChFontKey) -> Option<f32> {
     let query = font_query(key)?;
     Some(fonts.normal_line_height(&InlineStyle {

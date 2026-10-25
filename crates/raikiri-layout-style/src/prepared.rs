@@ -101,6 +101,7 @@ scalar_properties! {
 
 /// A preparation error, detected before any getter runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum PrepareError {
     /// A required payload is absent.
     Missing(CalcSlot),
@@ -165,6 +166,7 @@ impl std::error::Error for PrepareError {}
 /// let _ = view.size();
 /// ```
 #[derive(Clone, Debug)]
+#[doc(hidden)]
 pub struct PreparedStyle<'a> {
     pub(crate) values: ComputedSource<'a>,
     pub(crate) metadata: StyleMetadata,

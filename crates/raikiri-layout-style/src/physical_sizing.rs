@@ -24,7 +24,7 @@ impl OwnedPropertyOverride {
         }
     }
 
-    /// Write one physical sizing override into a [`BoxStyle`] snapshot.
+    /// Write one physical sizing override into a `BoxStyle` snapshot.
     ///
     /// Only the affected field is replaced, and the previous value is not
     /// kept: apply entries to a clone the caller owns for one measurement, so

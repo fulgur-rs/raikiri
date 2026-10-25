@@ -8,7 +8,7 @@
 //!
 //! - [`Size`] is a `width` / `height` pair.
 //! - [`Point`] is an `x` / `y` pair.
-//! - [`Line`] is a `start` / `end` pair, for example the two edges of a grid
+//! - `Line` is a `start` / `end` pair, for example the two edges of a grid
 //!   placement or a pair of flags for the two axes.
 //! - [`Edges`] holds one value for each of `left`, `right`, `top` and `bottom`:
 //!   padding, border or margin widths, or the extent of scrollable overflow on

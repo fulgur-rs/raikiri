@@ -253,7 +253,7 @@ pub struct PositionedGlyphRun<'a> {
     pub text: &'a str,
     /// UTF-8 offset of [`Self::text`] in the processed text of its line.
     /// Within one line, runs and the images of generated content (see
-    /// [`crate::Document::page_generated_image_text_position`]) follow the logical (reading)
+    /// `Document::page_generated_image_text_position`) follow the logical (reading)
     /// order of these offsets, whatever their visual order.
     pub text_offset: usize,
     /// The glyphs, left to right.

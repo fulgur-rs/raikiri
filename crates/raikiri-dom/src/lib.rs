@@ -17,14 +17,14 @@
 //! - [`dom_impl`] — `raikiri_traits::{Dom, Node, Element}` +
 //!   `raikiri_style::{StyleDom, StyleNode, StyleElement}` impls + `NodeRef` /
 //!   `ElementRef` types (both trait families over one arena, see file header)
-//! - [`fonts`] — font collections for the inline engine: a cross-machine
+//! - `fonts` — font collections for the inline engine: a cross-machine
 //!   deterministic one from the WPT bundled font directory
 //!   (`build_wpt_font_collection`), bundled bytes, the installed fonts, and
 //!   the `@font-face` document layer
 //!
 //! # Flat tree membership
 //!
-//! The [`NodeFlags::IS_IN_DOCUMENT`] bit on [`Node`] indicates reachability from
+//! The `NodeFlags::IS_IN_DOCUMENT` bit on [`Node`] indicates reachability from
 //! the Document root through flat-tree-parent edges. It is clear for these subtrees:
 //!
 //! - Detached subtrees unreachable from the Document root, including a
@@ -47,6 +47,7 @@
 
 mod diag;
 mod fragment;
+#[doc(hidden)]
 pub mod generated_content;
 pub mod image_geometry;
 mod image_resolve;
@@ -67,6 +68,7 @@ mod target;
 mod column_rules;
 pub mod document;
 pub mod dom_impl;
+#[doc(hidden)]
 pub mod fonts;
 pub mod layout;
 #[doc(hidden)]

@@ -16,6 +16,7 @@ use super::css_component_values_are_bounded;
 /// for other properties or for text this canonicalizer does not recognize,
 /// in which case callers keep the source text. `url()`s are left to
 /// [`serialize_urls`](super::serialize_urls).
+#[doc(hidden)]
 pub fn serialize_position_value(name: &str, raw_value: &str) -> Option<String> {
     if !css_component_values_are_bounded(raw_value) {
         return None;

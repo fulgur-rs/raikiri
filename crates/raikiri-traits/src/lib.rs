@@ -12,12 +12,12 @@
 //! - [`policy`]   — ResourcePolicy trait + violation types
 //! - [`net`]      — NetworkProvider trait + Request / FetchedResource types
 //! - [`resolver`] — ReplacedResolver trait + intrinsic size types
-//! - [`script`]   — ScriptExecutor trait + ScriptExecution outcome
+//! - `script`   — ScriptExecutor trait + ScriptExecution outcome
 //! - [`error`]    — RenderError taxonomy + status / summary types
-//! - [`strategy`] — Strategy traits (LookaheadPolicy, TargetResolver, ReflowPolicy)
+//! - `strategy` — Strategy traits (LookaheadPolicy, TargetResolver, ReflowPolicy)
 //! - [`config`]   — Entry point configs (RenderLimits, LookaheadConfig, ...)
-//! - [`plan`]     — `plan()` output types (DocumentPlan, PageSummary)
-//! - [`io`]       — bounded regular-file read primitive
+//! - `plan`     — `plan()` output types (DocumentPlan, PageSummary)
+//! - `io`       — bounded regular-file read primitive
 //! - [`vector`]   — vector paint scenes (resolution independent drawing commands)
 //!
 //! ## Spec authority
@@ -32,14 +32,18 @@ pub mod consumer;
 pub mod dom;
 pub mod error;
 pub mod image;
+#[doc(hidden)]
 pub mod io;
 pub mod net;
 pub mod page;
 pub mod paint;
+#[doc(hidden)]
 pub mod plan;
 pub mod policy;
 pub mod resolver;
+#[doc(hidden)]
 pub mod script;
+#[doc(hidden)]
 pub mod strategy;
 pub mod vector;
 

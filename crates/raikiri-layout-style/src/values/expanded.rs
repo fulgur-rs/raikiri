@@ -4,6 +4,7 @@ use super::calc_ref::CalcRef;
 
 /// A [`Dimension`](super::Dimension) as a value to match on.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub enum ExpandedDimension {
     /// An absolute length.
     Length(f32),
@@ -33,6 +34,7 @@ pub enum ExpandedDimension {
 
 /// A [`LengthPercentage`](super::LengthPercentage) as a value to match on.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub enum ExpandedLengthPercentage {
     /// An absolute length.
     Length(f32),
@@ -44,6 +46,7 @@ pub enum ExpandedLengthPercentage {
 
 /// A [`LengthPercentageAuto`](super::LengthPercentageAuto) as a value to match on.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub enum ExpandedLengthPercentageAuto {
     /// An absolute length.
     Length(f32),
@@ -61,6 +64,7 @@ pub enum ExpandedLengthPercentageAuto {
 /// same value; a calc is identified by its payload, not by its value. A zero
 /// value has one identity whatever its sign, and every NaN has one identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[doc(hidden)]
 pub struct LengthIdentity {
     tag: usize,
     value: usize,

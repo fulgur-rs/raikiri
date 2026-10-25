@@ -38,6 +38,7 @@ bitflags::bitflags! {
     /// [`IS_IFC_ROOT`](Self::IS_IFC_ROOT) instead. `IS_TABLE_ROOT` keeps
     /// blitz's bit position.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    #[doc(hidden)]
     pub struct NodeFlags: u32 {
         /// Table formatting context root, reserved for future use at the same
         /// bit position as blitz.
@@ -64,7 +65,7 @@ bitflags::bitflags! {
         /// Node belongs to the source subtree of an inline SVG root.
         const IN_INLINE_SVG_SUBTREE = 1 << 4;
         /// Block root laid out by the shodo inline engine. Its DOM children
-        /// are hidden from taffy (see [`Node::layout_children`]): the root is
+        /// are hidden from taffy (see `Node::layout_children`): the root is
         /// measured as a leaf from its paragraph.
         const IS_IFC_ROOT = 1 << 5;
         /// Descendant of an [`IS_IFC_ROOT`](Self::IS_IFC_ROOT) node, laid out
@@ -96,6 +97,7 @@ pub(crate) struct Attr {
 /// the size of the Text and Document variants.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub enum NodeData {
     /// HTML / XML element (tag_name + attributes + namespace + inline_style +
     /// template_contents slot).
@@ -150,6 +152,7 @@ impl NodeData {
 /// sink observes `ElementFlags::template=true` in `create_element`.
 /// See the field's documentation for details.
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct ElementData {
     /// HTML / XML tag name (for example, `"p"` or `"div"`), copied from
     /// html5ever's QualName.local into a SmolStr.
@@ -380,6 +383,7 @@ pub struct MulticolTextFragment {
 
 /// Text-only data corresponding nominally to blitz `TextNodeData`.
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct TextData {
     /// Character data.
     pub(crate) text_content: SmolStr,
@@ -436,7 +440,7 @@ impl FormattingContext {
 /// Arena node implemented with a NodeData tagged union.
 ///
 /// Kind-independent fields needed by paint, cascade, and layout (children and
-/// the laid-out box) remain on Node; kind-specific fields reside in [`NodeData`]
+/// the laid-out box) remain on Node; kind-specific fields reside in `NodeData`
 /// variants. `kind` and `tag_name` are read through accessors
 /// (`node.kind()`, `node.tag_name()`), and so is the laid-out box
 /// ([`Node::layout`]); `children` remains public.

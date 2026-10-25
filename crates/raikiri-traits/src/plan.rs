@@ -11,6 +11,7 @@ use crate::page::{PageBox, TargetRegistry};
 ///
 /// Uses: fulgur pass-1 reconnaissance, cost estimates, and target convergence hints.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct DocumentPlan {
     /// Total number of pages.
     pub total_pages: u32,
@@ -26,6 +27,7 @@ pub struct DocumentPlan {
 
 /// Summary of one page (an element of `plan()` output).
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct PageSummary {
     /// Zero-indexed page number.
     pub page_index: u32,
@@ -51,6 +53,7 @@ pub struct PageSummary {
 ///   - `ExplicitBreakElement { node_id: NodeId }`
 #[non_exhaustive]
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum BreakReason {
     // To be populated in the future.
 }
@@ -61,6 +64,7 @@ pub enum BreakReason {
 #[allow(missing_docs)]
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct TargetDefinition {
     // To be populated in the future:
     //   pub fragment_id: Symbol,

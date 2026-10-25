@@ -15,6 +15,7 @@ mod placement;
 mod prepared;
 mod projection;
 mod resolve;
+#[doc(hidden)]
 pub mod values;
 mod view;
 pub use box_style::BoxStyle;

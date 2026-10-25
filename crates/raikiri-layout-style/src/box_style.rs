@@ -13,6 +13,7 @@ use raikiri_layout_geometry::{Edges, Point, Size};
 /// that needs to adjust a style for one measurement takes a copy and writes
 /// the copy.
 #[derive(Clone, Debug, PartialEq)]
+#[doc(hidden)]
 pub struct BoxStyle {
     /// The layout of the children. Block flow tells hidden, block and other
     /// apart, and a snapshot of a view holds `Flex` for every box that is none

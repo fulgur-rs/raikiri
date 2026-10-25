@@ -21,6 +21,7 @@ use super::serialize_position::contains_substitution;
 /// the text it was written with, since its URLs are only known after
 /// substitution. So does a `url()` with modifiers after its string, and a
 /// value this tokenizer bounds check rejects.
+#[doc(hidden)]
 pub fn serialize_urls(raw_value: &str) -> Option<String> {
     // Most values have no URL; skip tokenizing them. A backslash may spell
     // `url` with an escape (`u\72l(a.png)`), so it is tokenized too.

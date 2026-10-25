@@ -4,6 +4,7 @@
 //! their paragraphs, and the painter, which draws the rest as overlays.
 
 /// Marker resolution shared by inline layout and painting.
+#[doc(hidden)]
 pub mod markers;
 
 use crate::Document;
@@ -35,6 +36,7 @@ const IMAGE_INDEX_BITS: u32 = 5;
 
 /// The number of images of one `content` list that are laid out; later ones
 /// represent nothing.
+#[doc(hidden)]
 pub const MAX_GENERATED_IMAGES: usize = 1 << IMAGE_INDEX_BITS;
 
 /// Low bits of the id of an opacity group of a `::first-letter` other than
@@ -51,9 +53,11 @@ const LETTER_GROUP_BITS: u32 = 8;
 /// Every bit added to the limit halves the elements whose groups can be
 /// named: with 8 bits, ids reach elements below 2^21 on 32-bit targets, and
 /// with 16 bits only below 2^13.
+#[doc(hidden)]
 pub const MAX_LETTER_GROUPS: usize = 1 << LETTER_GROUP_BITS;
 
 /// The node id the inline engine gives the `pseudo` of `element`.
+#[doc(hidden)]
 pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
     GENERATED_ID_BIT
         | (element << 1)
@@ -70,6 +74,7 @@ pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
 /// `element`; `None` for another pseudo-element, an index of
 /// [`MAX_GENERATED_IMAGES`] or more, or an element too far into the arena to
 /// encode.
+#[doc(hidden)]
 pub fn generated_image_node_id(element: usize, pseudo: PseudoElem, index: usize) -> Option<usize> {
     let after = match pseudo {
         PseudoElem::Before => 0,
@@ -99,6 +104,7 @@ pub fn generated_image_node_id(element: usize, pseudo: PseudoElem, index: usize)
 /// the `::first-letter` of `element`. `None` for an index of
 /// [`MAX_LETTER_GROUPS`] or more, or an element too far into the arena to
 /// encode.
+#[doc(hidden)]
 pub fn first_letter_group_id(element: usize, index: usize) -> Option<usize> {
     if index == 0 {
         return Some(generated_node_id(element, PseudoElem::FirstLetter));
@@ -112,6 +118,7 @@ pub fn first_letter_group_id(element: usize, index: usize) -> Option<usize> {
 
 /// The element, pseudo-element and image index an id of
 /// [`generated_image_node_id`] stands for; `None` for any other id.
+#[doc(hidden)]
 pub fn generated_image_origin(id: usize) -> Option<(usize, PseudoElem, usize)> {
     let kind_bit = 1 << (usize::BITS - 1);
     if id & (kind_bit | GENERATED_ID_BIT | IMAGE_ID_BIT) != GENERATED_ID_BIT | IMAGE_ID_BIT {
@@ -130,6 +137,7 @@ pub fn generated_image_origin(id: usize) -> Option<(usize, PseudoElem, usize)> {
 /// The element and pseudo-element an id of [`generated_node_id`],
 /// [`generated_image_node_id`] or [`first_letter_group_id`] stands for;
 /// `None` for a document node id.
+#[doc(hidden)]
 pub fn generated_origin(id: usize) -> Option<(usize, PseudoElem)> {
     if id & GENERATED_ID_BIT == 0 {
         return None;
@@ -160,6 +168,7 @@ pub fn generated_origin(id: usize) -> Option<(usize, PseudoElem)> {
 
 /// The computed values of a document node, or of the pseudo-element an id of
 /// [`generated_node_id`] stands for.
+#[doc(hidden)]
 pub fn computed_for_id(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
     match generated_origin(id) {
         Some((element, pseudo)) => cascade
@@ -180,6 +189,7 @@ pub fn computed_for_id(cascade: &CascadeResult, id: usize) -> Option<&ComputedVa
 /// floated nor out of flow, and its `content` is neither `none` nor `normal`.
 /// The inline engine lays such content out in the paragraph of its element;
 /// the painter draws every other generated content as an overlay.
+#[doc(hidden)]
 pub fn is_in_flow_generated_text(
     cascade: &CascadeResult,
     element: usize,
@@ -291,6 +301,7 @@ pub(crate) fn is_line_making_generated_text(
 /// the document with neither itself nor an ancestor `display: none`
 /// (CSS Display 3 §2.5). Preparing or prefetching images that no box shows
 /// would only spend resources that visible images need.
+#[doc(hidden)]
 pub fn content_images_are_placed(
     document: &Document,
     cascade: &CascadeResult,
@@ -316,6 +327,7 @@ pub fn content_images_are_placed(
 /// of text, or an image given by its index among the images of the `content`
 /// list.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum GeneratedPiece {
     /// Text of literals, attributes, counters and quotes.
     Text(String),
@@ -327,6 +339,7 @@ pub enum GeneratedPiece {
 /// The computed values and the content of the `::before` or `::after` of
 /// `element` as text and images in order, with the counters resolved as in
 /// [`generated_text`]. Adjacent text is merged; empty text is dropped.
+#[doc(hidden)]
 pub fn generated_pieces<'a>(
     document: &Document,
     cascade: &'a CascadeResult,
@@ -367,6 +380,7 @@ pub fn generated_pieces<'a>(
 /// counters in effect at the element (`snapshots`, from
 /// [`crate::counter_snapshots`]) updated by the pseudo-element's own
 /// directives. Components that are not text (images) contribute nothing.
+#[doc(hidden)]
 pub fn generated_text<'a>(
     document: &Document,
     cascade: &'a CascadeResult,
@@ -398,6 +412,7 @@ pub fn generated_text<'a>(
 /// <https://www.w3.org/TR/css-content-3/#alt>), with `attr()` and the
 /// counters resolved as in [`generated_text`]. `None` when the value gives
 /// no alternative text; an empty string marks decorative content.
+#[doc(hidden)]
 pub fn generated_alt_text(
     document: &Document,
     cascade: &CascadeResult,
@@ -444,15 +459,17 @@ static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =
     std::sync::LazyLock::new(std::collections::HashMap::new);
 
 /// Read-only access to the effective stack for a counter name.
+#[doc(hidden)]
 pub trait CounterSnapshotLookup {
     /// Return the effective values for `name`, including pseudo-element
-    /// directives when this lookup is a [`CounterSnapshotView`].
+    /// directives when this lookup is a `CounterSnapshotView`.
     fn values_for(&self, name: &str) -> CounterValues<'_>;
 }
 
 /// A counter stack view that can replace or append its innermost value
 /// without copying the underlying snapshot map or stack.
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct CounterValues<'a> {
     base: &'a [i32],
     effective_last: Option<i32>,
@@ -543,6 +560,7 @@ impl<'a> CounterValues<'a> {
 /// A borrowed counter snapshot with one pseudo-element's directives applied
 /// lazily to each requested counter. Looking up generated content therefore
 /// copies neither the whole map nor unaffected counter stacks.
+#[doc(hidden)]
 pub struct CounterSnapshotView<'a> {
     snapshot: &'a CounterSnapshot,
     computed: Option<&'a ComputedValues>,
@@ -603,6 +621,7 @@ impl CounterSnapshotLookup for CounterSnapshot {
 /// `computed` (a pseudo-element) to a copy of the counters in effect at its
 /// element, with the implicit list-item increment of a `display: list-item`
 /// pseudo, as its [`CounterSnapshotView`] does.
+#[doc(hidden)]
 pub fn apply_counter_directives_to_snapshot(
     snapshot: &mut CounterSnapshot,
     computed: &raikiri_style::ComputedValues,
@@ -657,6 +676,7 @@ pub fn apply_counter_directives_to_snapshot(
 
 /// The innermost value of the counter `name` in `style`, `0` when the
 /// counter does not exist (`counter()`).
+#[doc(hidden)]
 pub fn format_counter_component<C: CounterSnapshotLookup + ?Sized>(
     snapshot: &C,
     name: &str,
@@ -669,6 +689,7 @@ pub fn format_counter_component<C: CounterSnapshotLookup + ?Sized>(
 
 /// Every value of the counter `name`, outermost first, in `style` and joined
 /// by `separator` (`counters()`).
+#[doc(hidden)]
 pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
     snapshot: &C,
     name: &str,
@@ -751,6 +772,7 @@ impl QuoteDepth {
 /// The text of a `content` value: literals, attributes of `node_id`,
 /// counters and quotes; other components (images) contribute nothing.
 /// `None` for an empty value.
+#[doc(hidden)]
 pub fn content_components_to_text_with_quotes<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
     document: &Document,
     node_id: usize,
@@ -846,6 +868,7 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
 
 /// `value` in the counter style `style`: the roman styles, a custom
 /// `@counter-style` of `registry`, else decimal.
+#[doc(hidden)]
 pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
     match style {
         CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("lower-roman") => {
@@ -890,12 +913,14 @@ pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleR
 mod tests;
 
 /// Whether this list item's marker belongs to its inline formatting context.
+#[doc(hidden)]
 pub fn inside_marker_in_flow(cascade: &CascadeResult, element: usize) -> bool {
     marker_is_enabled(cascade, element)
         && cascade.computed[element].list_style_position == raikiri_style::ListStylePosition::Inside
 }
 
 /// Whether a list item generates a marker, independently of its position.
+#[doc(hidden)]
 pub fn marker_is_enabled(cascade: &CascadeResult, element: usize) -> bool {
     cascade.computed.get(element).is_some_and(|cv| {
         cv.display == DisplayValue::ListItem
