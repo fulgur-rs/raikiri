@@ -217,6 +217,11 @@ impl RenderFonts {
         &self.svg_faces
     }
 
+    /// The faces handed out to SVG text, shared with the clones of the set.
+    pub(crate) fn svg_faces_shared(&self) -> Arc<crate::svg_fonts::FaceCache> {
+        Arc::clone(&self.svg_faces)
+    }
+
     /// The font layer of the inline layout engine, by value.
     pub fn into_collection(self) -> shodo::font::FontCollection {
         self.collection

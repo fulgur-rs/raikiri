@@ -1279,12 +1279,8 @@ fn cache_insert_paths_cover_per_context_and_replace_branches() {
         )),
     );
     assert_eq!(budget.retained(), 0);
-    let mut tight = DecodedImageCache {
-        entries: HashMap::new(),
-        decoded_bytes: 0,
-        max_bytes: 10,
-        process_budget: Arc::new(ProcessImageBudget::new(1024 * 1024, 4)),
-    };
+    let mut tight = DecodedImageCache::new(Arc::new(ProcessImageBudget::new(1024 * 1024, 4)));
+    tight.max_bytes = 10;
     let big = Arc::new(DecodedImage {
         width: 4,
         height: 4,

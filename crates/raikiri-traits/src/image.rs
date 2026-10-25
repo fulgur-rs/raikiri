@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use url::Url;
 
+use crate::vector::VectorImage;
+
 /// Natural image dimensions, independent of the concrete box used by layout.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ImageIntrinsicSize {
@@ -29,6 +31,22 @@ pub struct ImageRasterSize {
     pub width: f32,
     /// Raster height in CSS pixels.
     pub height: f32,
+}
+
+/// What the paint stage asks of [`ImagePixelSource::get_vector`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct ImageVectorRequest {
+    /// The box the image is drawn in, in CSS pixels. Percentage lengths and
+    /// `preserveAspectRatio` of the image resolve against it.
+    pub size: ImageRasterSize,
+}
+
+impl ImageVectorRequest {
+    /// A request for the image drawn in a box of `size`.
+    pub fn new(size: ImageRasterSize) -> Self {
+        Self { size }
+    }
 }
 
 /// Decoded raster image: straight (non-premultiplied) RGBA8 pixels.
@@ -91,6 +109,18 @@ pub trait ImagePixelSource {
             return None;
         }
         Some(image)
+    }
+
+    /// Returns the image as a vector drawing for the box of `request`.
+    ///
+    /// The default is `None`: the source has no vector form of `url`, or does
+    /// not support one. A caller then asks for pixels with
+    /// [`Self::get_decoded_at_size`], which keeps every existing source
+    /// working. A source also answers `None` for a picture it can draw only
+    /// as pixels, so the answer is a choice of the source, never a failure of
+    /// the image.
+    fn get_vector(&self, _url: &Url, _request: &ImageVectorRequest) -> Option<Arc<VectorImage>> {
+        None
     }
 }
 

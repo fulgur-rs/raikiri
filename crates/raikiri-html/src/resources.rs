@@ -10,11 +10,12 @@ use raikiri_style::{
     MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult,
     property::{BackgroundImage, DisplayValue, PropertyKey, PropertyValue, Visibility},
 };
-use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
+use raikiri_svg::{SvgDocument, SvgResources, SvgRootStyle, SvgViewport};
+use raikiri_traits::vector::VectorImage;
 use raikiri_traits::{
-    AbortSignal, DecodedImage, ImageIntrinsicSize, ImageRasterSize, NetworkError, NetworkProvider,
-    PolicyViolation, RenderLimits, RenderWarning, ResourceKind, ResourcePolicy, ViolationType,
-    WarningKind,
+    AbortSignal, DecodedImage, ImageIntrinsicSize, ImageRasterSize, ImageVectorRequest,
+    NetworkError, NetworkProvider, PolicyViolation, RenderLimits, RenderWarning, ResourceKind,
+    ResourcePolicy, ViolationType, WarningKind,
 };
 use url::Url;
 
@@ -24,6 +25,7 @@ use crate::fetch::{
     get_request, mime_essence, min_limit, policy_violation_warning_kind, redacted_url, resolve_url,
     sanitize_policy_violation, url_policy_violation, url_without_fragment,
 };
+use crate::svg_fonts::PageSvgFonts;
 use crate::{HtmlDocument, ParseOptions};
 
 mod decode;
@@ -138,6 +140,9 @@ pub struct RenderResources<'a> {
     policy: Option<&'a dyn ResourcePolicy>,
     base_url: Option<Url>,
     font_collection: Option<shodo::font::FontCollection>,
+    /// The faces the SVG images of this set were set in, shared with the font
+    /// set given to [`fonts`](Self::fonts).
+    svg_faces: Arc<crate::svg_fonts::FaceCache>,
     resolver: Option<&'a (dyn ReplacedResolver + Send + Sync)>,
     image_pixel_source: Option<&'a (dyn ImagePixelSource + Send + Sync)>,
     render_limits: RenderLimits,
@@ -183,6 +188,7 @@ impl<'a> RenderResources<'a> {
             policy: None,
             base_url: None,
             font_collection: None,
+            svg_faces: Arc::default(),
             resolver: None,
             image_pixel_source: None,
             render_limits: RenderLimits::default(),
@@ -257,7 +263,13 @@ impl<'a> RenderResources<'a> {
     }
 
     /// Use a font set built from bundled fonts for layout and paint.
+    ///
+    /// The images cached so far are dropped, because SVG images are set in
+    /// these fonts: a clone of a set that changes its fonts neither reuses the
+    /// scenes of the original nor lets the original reuse its own.
     pub fn fonts(mut self, fonts: crate::RenderFonts) -> Self {
+        self.reset_resource_state();
+        self.svg_faces = fonts.svg_faces_shared();
         self.font_collection = Some(fonts.into_collection());
         self
     }
@@ -430,6 +442,34 @@ impl<'a> RenderResources<'a> {
             (cache.remaining_for(url), cache.prior_bytes(url))
         };
         per_available.min(self.process_budget.available_for(prior))
+    }
+
+    fn cached_scene(&self, url: &Url, size: ImageRasterSize) -> Option<Arc<VectorImage>> {
+        self.image_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .scene(url, size)
+    }
+
+    fn is_raster_only(&self, url: &Url) -> bool {
+        self.image_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_raster_only(url)
+    }
+
+    fn mark_raster_only(&self, url: Url) {
+        self.image_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mark_raster_only(url);
+    }
+
+    fn cache_image_scene(&self, url: Url, size: ImageRasterSize, scene: Arc<VectorImage>) {
+        self.image_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert_scene(url, size, scene);
     }
 
     fn cached_background_image(&self, url: &Url) -> Option<CachedBackgroundImage> {
@@ -1378,9 +1418,76 @@ impl ImagePixelSource for RenderResources<'_> {
         }
         Some(image)
     }
+
+    fn get_vector(&self, url: &Url, request: &ImageVectorRequest) -> Option<Arc<VectorImage>> {
+        if !self.image_url_allowed(url) {
+            return None;
+        }
+        let canonical = url_without_fragment(url);
+        let Some(cached) = self.cached_background_image(&canonical) else {
+            return self.image_pixel_source?.get_vector(url, request);
+        };
+        match cached.source {
+            CachedBackgroundSource::Svg(document) => {
+                self.svg_image_scene(&canonical, &document, request.size)
+            }
+            CachedBackgroundSource::Raster(_) => None,
+        }
+    }
 }
 
 impl RenderResources<'_> {
+    /// The scene of the cached SVG image `document` for a box of `size`, built
+    /// once and kept while the cache has room for it.
+    ///
+    /// `None` when the document needs the raster path (the scene builder
+    /// signals that), cannot be drawn, or took longer to build than the
+    /// decode time budget allows.
+    fn svg_image_scene(
+        &self,
+        canonical: &Url,
+        document: &SvgDocument,
+        size: ImageRasterSize,
+    ) -> Option<Arc<VectorImage>> {
+        if let Some(scene) = self.cached_scene(canonical, size) {
+            return Some(scene);
+        }
+        if self.is_raster_only(canonical) {
+            return None;
+        }
+        let start = Instant::now();
+        let _permit = self.acquire_decode_permit();
+        // Another thread may have built it while this one waited for a slot.
+        if let Some(scene) = self.cached_scene(canonical, size) {
+            return Some(scene);
+        }
+        let collection = self.inline_engine_fonts();
+        let fonts = PageSvgFonts::new(&collection, &self.svg_faces);
+        let scene = match document.scene_with_resources(
+            SvgViewport {
+                width: size.width,
+                height: size.height,
+            },
+            SvgRootStyle::default(),
+            None,
+            SvgResources::new().with_fonts(&fonts),
+        ) {
+            Ok(scene) => scene,
+            Err(error) => {
+                if error.falls_back_to_raster() {
+                    self.mark_raster_only(canonical.clone());
+                }
+                return None;
+            }
+        };
+        if self.decode_timed_out(start.elapsed()) {
+            return None;
+        }
+        let scene = Arc::new(scene);
+        self.cache_image_scene(canonical.clone(), size, Arc::clone(&scene));
+        Some(scene)
+    }
+
     fn image_url_allowed(&self, url: &Url) -> bool {
         self.policy
             .is_none_or(|policy| url_policy_violation(policy, url, ResourceKind::Image).is_none())
@@ -1460,5 +1567,7 @@ fn background_url(image: &BackgroundImage) -> Option<&str> {
     }
 }
 
+#[cfg(test)]
+mod scene_tests;
 #[cfg(test)]
 mod tests;

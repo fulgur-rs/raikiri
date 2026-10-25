@@ -791,6 +791,43 @@ fn the_host_opacity_is_never_part_of_the_scene() {
 }
 
 #[test]
+fn a_document_with_no_host_keeps_its_own_root_opacity() {
+    let document = document_with_view_box(
+        r#"width="40" height="20" opacity="0.5""#,
+        r##"<rect width="10" height="10" fill="#e11"/>"##,
+    );
+    let own = SvgRootStyle::default();
+    let scene = document.scene(VIEWPORT, own).unwrap();
+    assert_eq!(
+        groups(&scene.root)
+            .iter()
+            .filter(|group| group.opacity == 0.5)
+            .count(),
+        1
+    );
+    let raster = document
+        .rasterize_at_css_pixel_scale(VIEWPORT, own, None)
+        .unwrap();
+    assert_close(&render(&scene), &raster.rgba, 3);
+
+    // A host that composites opacity of its own leaves nothing of the root's.
+    for host in [
+        SvgRootStyle {
+            neutralize_root_opacity: true,
+            ..own
+        },
+        style(0.5),
+    ] {
+        let hosted = document.scene(VIEWPORT, host).unwrap();
+        assert!(
+            groups(&hosted.root)
+                .iter()
+                .all(|group| group.opacity == 1.0)
+        );
+    }
+}
+
+#[test]
 fn inherited_opacity_sees_the_host_opacity() {
     let document = document(r##"<rect width="20" height="10" fill="#e11" opacity="inherit"/>"##);
     let scene = document.scene(VIEWPORT, style(0.5)).unwrap();

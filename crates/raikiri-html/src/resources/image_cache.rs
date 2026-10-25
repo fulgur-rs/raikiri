@@ -1,10 +1,11 @@
 //! Decoded background image caches and the process-wide decode budget
 //! shared by every resource set.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use raikiri_svg::SvgDocument;
+use raikiri_traits::vector::VectorImage;
 use raikiri_traits::{DecodedImage, ImageRasterSize, RenderWarning};
 use url::Url;
 
@@ -49,6 +50,17 @@ impl CachedBackgroundImage {
             .find(|(cached, _)| *cached == size)
             .map(|(_, image)| image.clone())
     }
+}
+
+/// Most scenes of SVG images that a resource set keeps at once.
+pub(super) const MAX_CACHED_SCENES: usize = 16;
+
+/// A scene of an SVG image, built for one box.
+struct CachedScene {
+    url: Url,
+    size: ImageRasterSize,
+    scene: Arc<VectorImage>,
+    bytes: u64,
 }
 
 fn image_bytes(image: &DecodedImage) -> u64 {
@@ -249,6 +261,13 @@ impl BackgroundInflight {
 pub(super) struct DecodedImageCache {
     pub(super) entries: HashMap<Url, CachedBackgroundImage>,
     pub(super) decoded_bytes: u64,
+    /// The scenes of SVG images, oldest first. They share the byte budgets of
+    /// the rasters, so an image kept as both pays for both.
+    scenes: Vec<CachedScene>,
+    scene_bytes: u64,
+    /// The SVG images whose scene builder asked for the raster path, which no
+    /// box changes: asking again would only repeat the work.
+    raster_only: HashSet<Url>,
     pub(super) max_bytes: u64,
     pub(super) process_budget: Arc<ProcessImageBudget>,
 }
@@ -258,6 +277,9 @@ impl DecodedImageCache {
         Self {
             entries: HashMap::new(),
             decoded_bytes: 0,
+            scenes: Vec::new(),
+            scene_bytes: 0,
+            raster_only: HashSet::new(),
             max_bytes: DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES,
             process_budget,
         }
@@ -270,7 +292,8 @@ impl DecodedImageCache {
 
 impl Drop for DecodedImageCache {
     fn drop(&mut self) {
-        self.process_budget.release(self.decoded_bytes);
+        self.process_budget
+            .release(self.decoded_bytes.saturating_add(self.scene_bytes));
     }
 }
 
@@ -289,11 +312,95 @@ impl DecodedImageCache {
 
     pub(super) fn remaining_for(&self, url: &Url) -> u64 {
         let existing = self.prior_bytes(url);
-        self.max_bytes
-            .saturating_sub(self.decoded_bytes.saturating_sub(existing))
+        self.max_bytes.saturating_sub(
+            self.decoded_bytes
+                .saturating_sub(existing)
+                .saturating_add(self.scene_bytes),
+        )
+    }
+
+    /// The scene of the SVG image at `url` that was built for `size`.
+    pub(super) fn scene(&self, url: &Url, size: ImageRasterSize) -> Option<Arc<VectorImage>> {
+        self.scenes
+            .iter()
+            .find(|cached| cached.size == size && &cached.url == url)
+            .map(|cached| Arc::clone(&cached.scene))
+    }
+
+    /// Whether the scene builder asked for the raster path for `url`.
+    pub(super) fn is_raster_only(&self, url: &Url) -> bool {
+        self.raster_only.contains(url)
+    }
+
+    /// Notes that `url` can only be drawn as pixels.
+    pub(super) fn mark_raster_only(&mut self, url: Url) {
+        self.raster_only.insert(url);
+    }
+
+    /// Keeps `scene` as the scene of `url` for `size`, when its heap bytes fit
+    /// the budgets once the oldest scenes make room. A scene that cannot be
+    /// kept is still good for the caller that built it; it is built again
+    /// when it is asked for again.
+    pub(super) fn insert_scene(
+        &mut self,
+        url: Url,
+        size: ImageRasterSize,
+        scene: Arc<VectorImage>,
+    ) {
+        let bytes = u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX);
+        self.remove_scene(&url, size);
+        // A scene the rasters leave no room for would only push the others out.
+        if self.decoded_bytes.saturating_add(bytes) > self.max_bytes {
+            return;
+        }
+        while self.scenes.len() >= MAX_CACHED_SCENES
+            || (!self.scene_fits(bytes) && !self.scenes.is_empty())
+        {
+            self.release_scene(0);
+        }
+        if !self.scene_fits(bytes) || !self.process_budget.try_reserve(bytes) {
+            return;
+        }
+        self.scene_bytes = self.scene_bytes.saturating_add(bytes);
+        self.scenes.push(CachedScene {
+            url,
+            size,
+            scene,
+            bytes,
+        });
+    }
+
+    /// Whether `bytes` more of scene fit this set's byte budget.
+    fn scene_fits(&self, bytes: u64) -> bool {
+        self.decoded_bytes
+            .saturating_add(self.scene_bytes)
+            .saturating_add(bytes)
+            <= self.max_bytes
+    }
+
+    fn remove_scene(&mut self, url: &Url, size: ImageRasterSize) {
+        if let Some(at) = self
+            .scenes
+            .iter()
+            .position(|cached| cached.size == size && &cached.url == url)
+        {
+            self.release_scene(at);
+        }
+    }
+
+    fn release_scene(&mut self, at: usize) {
+        let removed = self.scenes.remove(at);
+        self.scene_bytes = self.scene_bytes.saturating_sub(removed.bytes);
+        self.process_budget.release(removed.bytes);
     }
 
     pub(super) fn insert_source(&mut self, url: Url, source: CachedBackgroundSource) {
+        // What was learned of an image that was cached before belongs to its
+        // old source.
+        self.raster_only.remove(&url);
+        while let Some(at) = self.scenes.iter().position(|cached| cached.url == url) {
+            self.release_scene(at);
+        }
         let previous = self.entries.remove(&url);
         if let Some(previous) = previous {
             let prior = Self::raster_bytes(&previous);

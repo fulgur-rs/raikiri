@@ -77,7 +77,9 @@ Rules of the boundary:
   applied. A consumer places the scene with one affine transform and a clip.
 - The scene carries SVG-internal opacity only. The opacity and visibility of
   the host element belong to the page's paint events, so the consumer
-  composites them once, around the host box and the scene together.
+  composites them once, around the host box and the scene together. A
+  document with no host, such as an SVG image, is the whole picture: its own
+  root `opacity` is part of its scene, as it is part of its raster.
 - Paths are already flattened to move, line, quadratic, cubic and close
   segments; arcs, basic shapes, `use`, `symbol`, `switch` and markers are
   resolved by the builder.
@@ -135,15 +137,32 @@ All consumers of SVG go through one resolved-image abstraction that answers
 with either pixels or a scene, chosen by D6.
 
 - `ImagePixelSource` keeps `get_decoded_at_size` and gains a default method
-  that returns the scene for a URL, a size and the host style inputs of D8
-  (the inherited `color` and the root font). Sources without vector support
-  keep the default (`None`), so existing implementations do not break.
+  that returns the scene for a URL and a request (`get_vector`, with an
+  `ImageVectorRequest` that carries the size of the box). Sources without
+  vector support keep the default (`None`), so existing implementations do
+  not break. The request will carry the host style inputs of D8 (the
+  inherited `color` and the root font) when a consumer needs them; until then
+  an image document is built with the default style, as its raster is.
+  `RenderResources` answers for the SVG images in its cache. It builds the
+  scene once per URL and size with the fonts of the resource set (the same
+  faces for all of them), keeps it in the image cache under the same byte
+  budgets as the rasters, and remembers an image that the builder sent to the
+  raster path so no other box asks again. `None` is a choice of the source,
+  never a failure of the image: the caller asks for pixels next.
 - `<img>`, `background-image` (including pseudo-elements and margin boxes),
   `list-style-image` and `content: url()` use that method for SVG sources.
 - Inline `<svg>` goes through `Page::inline_svg`, which returns the scene
   instead of (and in addition to, until D12 completes) the prepared source.
 - A page exposes the choice, not the mechanism: a replaced fragment is either
-  `Raster(pixels)` or `Vector(scene)`.
+  `Raster(pixels)` or `Vector(scene)`. `Page::placed_image`, `placed_marker`
+  and `placed_generated_image` return a `PlacedImage` whose `content` is an
+  `ImageContent` of one of the two, with the placement of the pixel-only
+  `raster_*` methods (which stay as they are). For an image the consumer
+  places itself, such as a background layer, `Page::image_content` takes the
+  owner element, the URL and the box. The content is a scene when the source
+  has one for the box and the owner's rendering (D6) is `vector`; otherwise it
+  is pixels asked for at the box times `svg_raster_scale`. The scale applies to
+  the pixel-only methods too, where it changes only what a source rasterizes.
 
 ### D6. Choosing vector or raster
 
@@ -154,8 +173,10 @@ document, or for the cases D4 forces.
    `--raikiri-svg-rendering: vector | raster`. It follows the cascade and
    inherits like any custom property, so one declaration can cover a subtree
    or the whole page. The owner is the `<img>` element, the element (or
-   pseudo-element, or margin box) that has the `background-image`, or the
-   `<svg>` root.
+   pseudo-element, or margin box) that has the `background-image`, the
+   `<svg>` root, or the `::before` or `::after` pseudo-element whose `content`
+   is the image (what that pseudo-element names itself wins over its
+   element).
 2. Without a valid value there, the library default applies. The library
    exposes it as `SvgRendering { Vector, Raster }` in the layout options. A
    consumer wrapper, such as `fulgur-raikiri`'s `RenderOptions`, forwards it.

@@ -15,7 +15,8 @@ const PROPERTY: &str = "--raikiri-svg-rendering";
 /// `--raikiri-svg-rendering: vector | raster`. The property follows the
 /// cascade and inherits like any custom property, so one declaration covers a
 /// subtree or the whole page. The element that owns the picture decides: the
-/// `<img>`, the element that has the `background-image`, or the `<svg>` root.
+/// `<img>`, the element that has the `background-image`, the `<svg>` root, or
+/// the `::before` or `::after` pseudo-element whose `content` is the picture.
 /// Without a valid value there, the default of
 /// [`crate::LayoutOptions::svg_rendering`] applies. A value that is neither
 /// keyword is ignored, as if it were not declared on that element.
