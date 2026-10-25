@@ -2,8 +2,9 @@
 //! `placed_marker`, `placed_generated_image` and `image_content`.
 
 use raikiri_html::{
-    DocumentLayout, FontCollectionBuilder, ImageContent, LayoutOptions, LayoutStatus, PaintEvent,
-    PaintRect, RenderResources, SvgRendering, layout, parse_html_with_resources,
+    DocumentLayout, FontCollectionBuilder, GeneratedKind, ImageContent, LayoutOptions,
+    LayoutStatus, PaintEvent, PaintRect, RenderResources, SvgRendering, layout,
+    parse_html_with_resources,
 };
 use raikiri_traits::vector::VectorImage;
 use raikiri_traits::{
@@ -370,6 +371,51 @@ fn a_content_image_is_a_scene_in_its_object_box() {
         scene_size(&placed.content),
         Some((placed.rect.width, placed.rect.height))
     );
+}
+
+#[test]
+fn a_content_image_follows_the_rendering_its_pseudo_element_names() {
+    let source = Source::new(true);
+    let document = lay_out(
+        "<p id=a>A</p><p id=b>B</p><p id=c>C</p>",
+        "#a::before{content:url(a.svg);--raikiri-svg-rendering:raster}\
+         #b{--raikiri-svg-rendering:raster}#b::after{content:url(b.svg);--raikiri-svg-rendering:vector}\
+         #c{--raikiri-svg-rendering:raster}#c::before{content:url(c.svg)}",
+        &source,
+        |options| options,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let content = |id: &str, kind: GeneratedKind| {
+        let image = events
+            .iter()
+            .find_map(|event| match event {
+                PaintEvent::GeneratedImage(image)
+                    if image.kind == kind && page.dom().attr(image.owner, "id") == Some(id) =>
+                {
+                    Some(*image)
+                }
+                _ => None,
+            })
+            .expect("a generated image");
+        page.placed_generated_image(image, &source).unwrap().content
+    };
+    // The pseudo-element says raster where its element says nothing, ...
+    assert!(matches!(
+        content("a", GeneratedKind::Before),
+        ImageContent::Raster(_)
+    ));
+    // ... says vector where its element says raster, ...
+    assert!(matches!(
+        content("b", GeneratedKind::After),
+        ImageContent::Vector(_)
+    ));
+    // ... and inherits from its element where it says nothing.
+    assert!(matches!(
+        content("c", GeneratedKind::Before),
+        ImageContent::Raster(_)
+    ));
 }
 
 #[test]

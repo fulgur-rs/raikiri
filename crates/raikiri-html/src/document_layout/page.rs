@@ -201,6 +201,10 @@ struct Placement {
     clip_owner: Option<NodeId>,
     /// The size to ask pixels for, which already follows the raster scale.
     raster: raikiri_traits::ImageRasterSize,
+    /// The rendering the owner of the image names itself, when that owner is
+    /// not [`Self::node`]: the `::before` or `::after` pseudo-element whose
+    /// `content` is the image. `None` leaves it to the element of `node`.
+    rendering: Option<SvgRendering>,
 }
 
 impl Placement {
@@ -329,6 +333,7 @@ impl<'a> Page<'a> {
             rect,
             clip: raikiri_traits::PaintClip::new(content),
             clip_owner: Some(fragment.node()),
+            rendering: None,
         })
     }
 
@@ -350,8 +355,11 @@ impl<'a> Page<'a> {
         placement: Placement,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<PlacedImage> {
+        let rendering = placement
+            .rendering
+            .unwrap_or_else(|| self.svg_rendering(placement.node));
         let content = self.content_in(
-            placement.node,
+            rendering,
             &placement.url,
             raster_size(&placement.rect),
             placement.raster,
@@ -383,18 +391,19 @@ impl<'a> Page<'a> {
         size: raikiri_traits::ImageRasterSize,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<ImageContent> {
-        self.content_in(owner, url, size, self.raster_size_for(size), source)
+        let rendering = self.svg_rendering(owner);
+        self.content_in(rendering, url, size, self.raster_size_for(size), source)
     }
 
     fn content_in(
         &self,
-        owner: NodeId,
+        rendering: SvgRendering,
         url: &url::Url,
         size: raikiri_traits::ImageRasterSize,
         raster: raikiri_traits::ImageRasterSize,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<ImageContent> {
-        if self.svg_rendering(owner) == SvgRendering::Vector
+        if rendering == SvgRendering::Vector
             && let Some(scene) =
                 source.get_vector(url, &raikiri_traits::ImageVectorRequest::new(size))
         {
@@ -451,6 +460,7 @@ impl<'a> Page<'a> {
             rect,
             clip: raikiri_traits::PaintClip::new(rect),
             clip_owner,
+            rendering: None,
         })
     }
 
@@ -557,6 +567,15 @@ impl<'a> Page<'a> {
                     .content_image_raster_size(owner, pseudo, image.index)
             })
             .unwrap_or_else(|| raster_size(&rect));
+        // The pseudo-element owns the image, so what it names itself wins
+        // over what the element it was generated for names.
+        let rendering = owner
+            .and_then(|owner| {
+                self.cascade
+                    .pseudo
+                    .get(&(raikiri_style::StyleNodeId::new(owner as u64), pseudo))
+            })
+            .and_then(|style| SvgRendering::declared_by(style.as_ref()));
         Some(Placement {
             node: image.owner,
             url: url.clone(),
@@ -564,6 +583,7 @@ impl<'a> Page<'a> {
             rect,
             clip: raikiri_traits::PaintClip::new(content),
             clip_owner: Some(image.owner),
+            rendering,
         })
     }
 
@@ -655,7 +675,9 @@ impl<'a> Page<'a> {
     /// How the SVG picture that `node` owns is to be drawn.
     ///
     /// The owner is the `<img>`, the element that has the `background-image`,
-    /// or the `<svg>` root. Its `--raikiri-svg-rendering` decides, as
+    /// or the `<svg>` root. (For an image that is the `content` of `::before`
+    /// or `::after`, [`Self::placed_generated_image`] lets the pseudo-element
+    /// decide.) Its `--raikiri-svg-rendering` decides, as
     /// [`SvgRendering`] describes; a value that names no rendering is passed
     /// over for the one the element would inherit without it, and the default
     /// of [`crate::LayoutOptions::svg_rendering`] applies when no element up
