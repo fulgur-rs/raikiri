@@ -145,6 +145,28 @@ impl LayoutStyleView<'_> {
     /// The preferred aspect ratio after projection into the returned axes.
     #[inline]
     pub fn aspect_ratio(&self) -> Option<f32> {
+        // A percentage size that resolves leaves the ratio nothing to do,
+        // except that the ratio carries a `min-*` or `max-*` size across to the
+        // other axis and clamps the size stated there. Only a box without those
+        // keeps the ratio for the measures in which the percentage is cyclic.
+        self.projected_aspect_ratio(|| !self.states_min_or_max_size())
+    }
+    /// The preferred aspect ratio as block flow reads it.
+    ///
+    /// A percentage size keeps the ratio even when the box states a `min-*` or
+    /// `max-*` size. Block flow knows whether the percentage resolves, and it
+    /// carries a bound across the ratio only into an axis whose size is `auto`,
+    /// so a percentage that resolves leaves the ratio nothing to do, while one
+    /// that does not still gets the size the ratio gives and the bounds that
+    /// clamp it.
+    #[inline]
+    pub fn block_aspect_ratio(&self) -> Option<f32> {
+        self.projected_aspect_ratio(|| true)
+    }
+    /// [`Self::aspect_ratio`], where `keep_for_percentage` says whether a
+    /// percentage size keeps the ratio. It is asked only when a percentage
+    /// size is what makes the box keep it.
+    fn projected_aspect_ratio(&self, keep_for_percentage: impl FnOnce() -> bool) -> Option<f32> {
         let c = &*self.prepared.values;
         let ratio = if let Some(value) = self.overrides().find_map(|entry| match entry {
             OverrideKind::AspectRatio(value) => Some(value),
@@ -157,11 +179,6 @@ impl LayoutStyleView<'_> {
             let contained = self.flags().contains(StyleFlags::CONTAIN_WIDTH);
             preferred_aspect_ratio_with(c.aspect_ratio, width, height, None, contained, false)
                 .or_else(|| {
-                    // A percentage size that resolves leaves the ratio nothing
-                    // to do, except that the ratio carries a `min-*` or `max-*`
-                    // size across to the other axis and clamps the size stated
-                    // there. Only a box without those keeps the ratio for the
-                    // measures in which the percentage is cyclic.
                     preferred_aspect_ratio_with(
                         c.aspect_ratio,
                         width,
@@ -170,7 +187,7 @@ impl LayoutStyleView<'_> {
                         contained,
                         true,
                     )
-                    .filter(|_| !self.states_min_or_max_size())
+                    .filter(|_| keep_for_percentage())
                 })
         };
         if self.geometry_transposed() {
