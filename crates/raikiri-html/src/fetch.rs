@@ -16,6 +16,17 @@ pub(crate) fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
     }
 }
 
+/// The absolute URL that the authored `url()` text `raw` of an image names, or
+/// `None` when it names no external image. An empty or fragment-only URL
+/// would otherwise join against the base into the document itself.
+pub(crate) fn authored_image_url(raw: &str, base: Option<&Url>) -> Option<Url> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    resolve_url(raw, base)
+}
+
 /// `url` without its fragment, the identity used to deduplicate fetches.
 pub(crate) fn url_without_fragment(url: &Url) -> Url {
     let mut normalized = url.clone();

@@ -6,7 +6,7 @@ use raikiri_html::{
     DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, MarginBox, Page,
     PageMarginBoxSlot, RenderResources, layout, parse_html_with_resources,
 };
-use raikiri_traits::{LayoutConfig, PageDefaults};
+use raikiri_traits::{LayoutConfig, PageDefaults, RenderWarning, ResourceKind, WarningKind};
 
 const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -142,4 +142,123 @@ fn pages_laid_out_again_at_their_own_width_show_the_images_of_their_margin_boxes
             page.index()
         );
     }
+}
+
+/// The warnings that say a margin box has no image for one of its `content`
+/// images, as the URL they name and their text.
+fn unloaded_image_warnings(layout: &DocumentLayout) -> Vec<(Option<String>, String)> {
+    layout
+        .warnings()
+        .iter()
+        .filter(|warning| warning.details.starts_with("margin box content image"))
+        .map(|warning: &RenderWarning| {
+            let WarningKind::ResourceFallback {
+                kind: ResourceKind::Image,
+                url,
+            } = &warning.kind
+            else {
+                panic!("an image fallback, got {:?}", warning.kind);
+            };
+            (
+                url.as_ref().map(ToString::to_string),
+                warning.details.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn an_image_that_loads_is_not_reported() {
+    let layout = lay_out(
+        &format!(
+            "@page {{ @top-left {{ content: url({RED}) }} @top-right {{ content: url({BLUE}) }} }}"
+        ),
+        "<p>body</p>",
+    );
+    assert_eq!(unloaded_image_warnings(&layout), []);
+}
+
+#[test]
+fn an_image_that_cannot_be_decoded_is_reported_once_however_many_boxes_show_it() {
+    const BROKEN: &str = "data:image/png;base64,AAAA";
+    let layout = lay_out(
+        &format!(
+            "@page {{ @top-left {{ content: url({BROKEN}) }} @top-right {{ content: url({BROKEN}) }} \
+               @bottom-left {{ content: url({BROKEN}) 'x' }} }} \
+             @page :first {{ @top-left {{ content: url({BROKEN}) }} }}"
+        ),
+        "<p style='break-after: page'>one</p><p>two</p>",
+    );
+    // The payload of a data URL is not repeated in the warning.
+    assert_eq!(
+        unloaded_image_warnings(&layout),
+        [(
+            Some(BROKEN.to_owned()),
+            "margin box content image (a data: URL) could not be loaded or has no size; \
+             it represents nothing"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn an_image_that_cannot_be_fetched_is_named_by_its_url_without_the_query() {
+    // Without a network provider nothing can be fetched. The two spellings
+    // differ only in a query, which a warning does not show, so they are one
+    // image to the reader.
+    let layout = lay_out(
+        "@page { @top-left { content: url(https://images.test/dir/logo.png?token=secret) \
+           url(https://images.test/dir/logo.png?v=2) url(https://images.test/other.png) } }",
+        "<p>body</p>",
+    );
+    assert_eq!(
+        unloaded_image_warnings(&layout),
+        [
+            (
+                Some("https://images.test/dir/logo.png".to_owned()),
+                "margin box content image \"https://images.test/dir/logo.png\" could not be loaded \
+                 or has no size; it represents nothing"
+                    .to_owned()
+            ),
+            (
+                Some("https://images.test/other.png".to_owned()),
+                "margin box content image \"https://images.test/other.png\" could not be loaded \
+                 or has no size; it represents nothing"
+                    .to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn an_image_whose_url_cannot_be_resolved_is_named_by_its_authored_text() {
+    // The document has no base URL, so a relative URL names nothing.
+    let layout = lay_out(
+        "@page { @top-left { content: url(img/logo.png?token=secret#part) url('') \
+           url(//user:pw@images.test/logo.png) } }",
+        "<p>body</p>",
+    );
+    assert_eq!(
+        unloaded_image_warnings(&layout),
+        [
+            (
+                None,
+                "margin box content image \"img/logo.png\" has a URL that cannot be resolved; \
+                 it represents nothing"
+                    .to_owned()
+            ),
+            (
+                None,
+                "margin box content image \"\" has a URL that cannot be resolved; \
+                 it represents nothing"
+                    .to_owned()
+            ),
+            (
+                None,
+                "margin box content image \"(withheld: may carry credentials)\" has a URL that \
+                 cannot be resolved; it represents nothing"
+                    .to_owned()
+            ),
+        ]
+    );
 }
