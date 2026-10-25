@@ -11461,17 +11461,87 @@ fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     page.width = 100.0;
     page.height = 100.0;
     let pages = layout_pages(&mut doc, &cascade, page).unwrap();
-    // The root's margin is truncated at the break into the third page; the
-    // body's margin does not collapse with it and stays below the page top.
-    assert_eq!(pages.len(), 3);
+    // The root's margin is truncated at the first break inside it, which
+    // leaves the first page blank; the body's margin does not collapse with
+    // it and stays below the top of the second page.
+    assert_eq!(pages.len(), 2);
     assert_eq!(
         crate::layout::test_support::absolute_rect(&doc, child).1,
-        208.0
+        108.0
     );
 }
 
 #[test]
-fn a_root_margin_crossing_a_scheduled_page_uses_that_page_origin() {
+fn a_root_margin_many_pages_tall_leaves_one_blank_page() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin-top:1000px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let child = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    // Truncating at the first break drops the nine pages the margin would
+    // otherwise fill (CSS Fragmentation 3 §5.2).
+    assert_eq!(pages.len(), 2);
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, child).1,
+        100.0
+    );
+}
+
+#[test]
+fn a_nested_leading_margin_many_pages_tall_breaks_at_the_first_page_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // The first page is 100px tall in the fixed case and 150px in the
+    // scheduled one; the margin breaks at the end of that page either way.
+    for (page_steps, expected_y) in [(&[][..], 100.0), (&[150.0, 80.0][..], 150.0)] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        // The padding keeps the section's margin from collapsing through the
+        // body, so the margin is the section's own.
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Some("display:block;margin:0;padding-top:1px"),
+        );
+        let section = doc.append_element(Some(body), "div", Some("display:block;margin-top:250px"));
+        let child = doc.append_element(Some(section), "div", Some("display:block;height:10px"));
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let pages = layout_pages_with_options(
+            &mut doc,
+            &cascade,
+            page,
+            crate::PageLayoutOptions {
+                page_steps,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(pages.len(), 2, "{page_steps:?}");
+        assert_eq!(
+            crate::layout::test_support::absolute_rect(&doc, child).1,
+            expected_y,
+            "{page_steps:?}"
+        );
+    }
+}
+
+#[test]
+fn a_root_margin_crossing_scheduled_pages_breaks_at_the_first_page_origin() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -11497,9 +11567,10 @@ fn a_root_margin_crossing_a_scheduled_page_uses_that_page_origin() {
     )
     .unwrap();
 
+    // The first page is 150px tall, so the margin breaks there.
     assert_eq!(
         crate::layout::test_support::absolute_rect(&doc, child).1,
-        238.0
+        158.0
     );
 }
 
@@ -11545,14 +11616,15 @@ fn a_body_margin_crossing_a_later_break_is_truncated() {
     page.width = 100.0;
     page.height = 100.0;
     let pages = layout_pages(&mut doc, &cascade, page).unwrap();
-    // Both margins cross a break, so the content starts at the top of the
-    // fourth page.
-    assert_eq!(pages.len(), 4);
+    // Each margin is truncated at the first break inside it: the root's at
+    // the top of the second page, the body's at the top of the third, where
+    // the content starts.
+    assert_eq!(pages.len(), 3);
     let body_y = doc.get_node(body).unwrap().layout.location.y;
     let child_y = doc.get_node(child).unwrap().layout.location.y;
     assert_eq!(
         crate::layout::test_support::absolute_rect(&doc, child).1,
-        300.0,
+        200.0,
         "body {body_y}, child {child_y}"
     );
 }

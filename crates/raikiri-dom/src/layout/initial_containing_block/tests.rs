@@ -242,9 +242,9 @@ fn pagination_truncates_root_and_descendant_margins_from_used_boxes() {
     use crate::layout::test_support::absolute_rect;
     for (root_margin, body_margin, child_margin, expected_pages, expected_y) in [
         (10, 20, 40, 1, 50.0),
-        (250, 8, 0, 3, 208.0),
-        (250, 150, 0, 4, 300.0),
-        (0, 250, 0, 3, 200.0),
+        (250, 8, 0, 2, 108.0),
+        (250, 150, 0, 3, 200.0),
+        (0, 250, 0, 2, 100.0),
     ] {
         let mut doc = Document::new();
         let html = doc.append_element(

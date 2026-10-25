@@ -5249,3 +5249,7 @@ css/css-page/margin-boxes/dimensions-008-print.html
 # paint-order-003-print stacks the margin boxes with z-index (negative, zero and positive values) and matches a reference of plain green boxes; dynamic-001-print adds an @top-center rule and the page box properties from script and matches a reference with the same text and green square; both KEEP in two audit-vacuous-passes runs.
 css/css-page/margin-boxes/paint-order-003-print.html
 css/css-page/cssom/dynamic-001-print.html
+
+# --- a root margin taller than the page breaks at the first page edge (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# The root element's 10in block-start margin is truncated at the first unforced break, so the first page is blank and the text starts the second; the reference builds the same two pages with a forced break; KEEP in two audit-vacuous-passes runs.
+css/css-break/root-margin-001-print.html
