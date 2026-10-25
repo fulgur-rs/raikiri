@@ -335,15 +335,18 @@ pub(super) fn ignored_vertical_inset(
     } else {
         values.align_self
     };
-    if matches!(
-        alignment,
-        AlignSelfValue::Value(
-            SelfAlignmentValue::Center
-                | SelfAlignmentValue::End
-                | SelfAlignmentValue::FlexEnd
-                | SelfAlignmentValue::LastBaseline
-        )
-    ) {
+    if let AlignSelfValue::Value(value) = alignment
+        && (value == SelfAlignmentValue::LastBaseline
+            || matches!(
+                value.position(),
+                Some(
+                    SelfPosition::Center
+                        | SelfPosition::End
+                        | SelfPosition::FlexEnd
+                        | SelfPosition::SelfEnd
+                )
+            ))
+    {
         return None;
     }
     let inline_starts_at_bottom = vertical_axis_is_inline
