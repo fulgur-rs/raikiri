@@ -80,7 +80,14 @@ impl<'a> MarginBoxPaint<'a> {
         let borders = margin_box.border_widths();
         Some(Self {
             margin_box,
-            rect: Rect::new(x as f64, y as f64, (x + width) as f64, (y + height) as f64),
+            // The edges land on whole device pixels like an element's border
+            // box, so the borders and the background stay crisp.
+            rect: Rect::new(
+                (x as f64).round(),
+                (y as f64).round(),
+                ((x + width) as f64).round(),
+                ((y + height) as f64).round(),
+            ),
             border: (
                 borders.left as f64,
                 borders.top as f64,
@@ -221,43 +228,17 @@ impl<'a> MarginBoxPaint<'a> {
 
     /// Paint the solid borders, in the order top, right, bottom, left.
     fn paint_borders(&self, scene: &mut impl PaintScene) {
-        let PaintRect {
-            x,
-            y,
-            width,
-            height,
-            ..
-        } = self.margin_box.rect;
+        let Rect { x0, y0, x1, y1 } = self.rect;
         for (side, border) in self.margin_box.borders.iter().enumerate() {
             let Some(border) = border else {
                 continue;
             };
-            let border_width = border.width;
+            let border_width = border.width as f64;
             let border_rect = match side {
-                0 => Rect::new(
-                    x as f64,
-                    y as f64,
-                    (x + width) as f64,
-                    (y + border_width) as f64,
-                ),
-                1 => Rect::new(
-                    (x + width - border_width) as f64,
-                    y as f64,
-                    (x + width) as f64,
-                    (y + height) as f64,
-                ),
-                2 => Rect::new(
-                    x as f64,
-                    (y + height - border_width) as f64,
-                    (x + width) as f64,
-                    (y + height) as f64,
-                ),
-                _ => Rect::new(
-                    x as f64,
-                    y as f64,
-                    (x + border_width) as f64,
-                    (y + height) as f64,
-                ),
+                0 => Rect::new(x0, y0, x1, y0 + border_width),
+                1 => Rect::new(x1 - border_width, y0, x1, y1),
+                2 => Rect::new(x0, y1 - border_width, x1, y1),
+                _ => Rect::new(x0, y0, x0 + border_width, y1),
             };
             scene.fill(
                 Fill::NonZero,
