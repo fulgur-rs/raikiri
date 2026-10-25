@@ -546,6 +546,13 @@ fn apply_computed_to_style_in_session_inner(
                 raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(AlignItems::START)),
             );
         }
+        if settled::is_sized_through_block_stretch(doc, cascade, idx, cv, &settled_styles) {
+            settled_styles[idx].justify_self = Some(AlignItems::START);
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(AlignItems::START)),
+            );
+        }
         if settled::is_stretched_by_keyword_width(doc, cascade, idx, cv, &settled_styles) {
             settled_styles[idx].align_self = Some(AlignItems::FLEX_START);
             doc.record_pass_override(

@@ -256,9 +256,18 @@ pub fn preferred_aspect_ratio(
     natural: Option<f32>,
     size_contained: bool,
 ) -> Option<f32> {
-    if matches!(width, L::Auto)
+    // A percentage size is cyclic while an intrinsic size is measured and
+    // then behaves as `auto` (CSS Sizing 3 §5.2.1), so the ratio is kept for
+    // it; a definite basis resolves both sizes and leaves the ratio nothing
+    // to do.
+    let cyclic = |size: L| match size {
+        L::Auto | L::Percent(_) => true,
+        L::Calc(calc) => calc.percent != 0.0,
+        _ => false,
+    };
+    if cyclic(width)
         || (natural.is_none() && !size_contained && width.is_content_keyword())
-        || matches!(height, L::Auto)
+        || cyclic(height)
     {
         ratio.preferred(natural)
     } else {
