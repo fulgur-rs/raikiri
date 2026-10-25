@@ -247,15 +247,12 @@ def referenced_ids(node: object) -> Iterator[int]:
             yield from referenced_ids(child)
 
 
-def public_roots(doc: dict) -> list[int]:
-    """The ids of the items of the crate that are `pub` and that no `#[doc(hidden)]` covers.
+def hidden_cover(doc: dict) -> set[int]:
+    """The ids of the items that a `#[doc(hidden)]` covers.
 
-    rustdoc keeps in the JSON the items that the API reaches, so this is a
-    second way to the visible items that does not depend on how the names are
-    worked out: a name the surface reads wrongly cannot hide an item. An item
-    is covered when it is hidden itself, belongs to a hidden type or module (a
-    re-export in a hidden module included), or is what a hidden `pub use`
-    points at, or when only hidden names lead to it.
+    An item is covered when it is hidden itself, belongs to a hidden type or
+    module (a re-export in a hidden module included), is what a hidden
+    `pub use` points at, or when only hidden names lead to it.
     """
     index = doc["index"]
     covered: set[int] = set()
@@ -278,9 +275,19 @@ def public_roots(doc: dict) -> list[int]:
                 stack.append(target)
         else:
             stack.extend(members(item))
+    return covered
+
+
+def public_roots(doc: dict, covered: set[int]) -> list[int]:
+    """The ids of the items of the crate that are `pub` and that no `#[doc(hidden)]` covers.
+
+    rustdoc keeps in the JSON the items that the API reaches, so this is a
+    second way to the visible items that does not depend on how the names are
+    worked out: a name the surface reads wrongly cannot hide an item.
+    """
     return [
         int(key)
-        for key, item in index.items()
+        for key, item in doc["index"].items()
         if int(key) not in covered and item.get("crate_id") == 0 and item.get("visibility") == "public"
     ]
 
@@ -294,13 +301,19 @@ def visible_items(doc: dict) -> Iterator[tuple[int, dict]]:
     nameable or not: a public function that returns a type of a private module
     hands its fields and methods to the caller.
 
+    The walk enters what a `#[doc(hidden)]` covers only by a name or by a
+    signature, never through the members of an item outside it: a visible
+    trait lists its impls for a hidden type, and those belong to the hidden
+    type. Once inside, it reads the members as usual.
+
     Blanket and synthetic impls are skipped: they come from the traits that
     other crates implement for every type, not from the API of this crate.
     """
     index = doc["index"]
+    covered = hidden_cover(doc)
     seen: set[int] = set()
     stack = [name.item_id for name in names(doc) if not name.hidden and name.item_id is not None]
-    stack.extend(public_roots(doc))
+    stack.extend(public_roots(doc, covered))
     while stack:
         key = stack.pop()
         if key in seen:
@@ -313,7 +326,8 @@ def visible_items(doc: dict) -> Iterator[tuple[int, dict]]:
         if kind == "impl" and (item["inner"]["impl"].get("blanket_impl") or item["inner"]["impl"].get("is_synthetic")):
             continue
         yield key, item
-        stack.extend(members(item))
+        inside = key in covered
+        stack.extend(child for child in members(item) if inside or child not in covered)
         stack.extend(referenced_ids(item["inner"]))
 
 

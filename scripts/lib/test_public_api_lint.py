@@ -504,6 +504,48 @@ class ReachTests(unittest.TestCase):
         doc["index"]["0"]["inner"]["module"]["items"] = [1]  # `inner` is private
         self.assertEqual(lint.third_party_crates(doc), {})
 
+    def hidden_type(self, b: DocBuilder, impls: list[int]) -> int:
+        """A struct in a hidden module `hidden`, whose `impls` are given; returns the struct."""
+        record = b.add(5, "Hidden", {"struct": {"kind": "unit", "impls": impls}}, path=["raikiri_x", "hidden", "Hidden"])
+        b.add(6, "hidden", {"module": {"is_crate": False, "items": [record], "is_stripped": False}}, attrs=HIDDEN)
+        return record
+
+    def test_a_visible_trait_does_not_pull_in_the_impls_of_a_hidden_type(self) -> None:
+        b = DocBuilder()
+        record = self.hidden_type(b, [8, 9])
+        trait_impl = {"trait": {"path": "Local", "id": 7, "args": None}, "for": resolved(record, "Hidden"), "items": []}
+        b.add(8, None, {"impl": {**trait_impl, "blanket_impl": None, "is_synthetic": False}})
+        go = b.function(10, "go", [], resolved(b.serde_type, "Serialize"))
+        b.add(9, None, {"impl": {"trait": None, "for": resolved(record, "Hidden"), "items": [go], "blanket_impl": None}})
+        b.add(7, "Local", {"trait": {"items": [], "implementations": [8]}}, path=["raikiri_x", "Local"])
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"] = [7, 6]  # the trait and the hidden module
+        self.assertEqual(lint.third_party_crates(doc), {})
+
+    def test_a_hidden_type_that_a_signature_returns_is_read_with_its_members(self) -> None:
+        b = DocBuilder()
+        field = b.add(4, "field", {"struct_field": resolved(b.serde_type, "Serialize")})
+        record = b.add(
+            5,
+            "Hidden",
+            {"struct": {"kind": {"plain": {"fields": [field], "has_stripped_fields": False}}, "impls": []}},
+            path=["raikiri_x", "hidden", "Hidden"],
+        )
+        b.add(6, "hidden", {"module": {"is_crate": False, "items": [record], "is_stripped": False}}, attrs=HIDDEN)
+        b.function(1, "make", [], resolved(record, "Hidden"))
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"] = [1, 6]
+        self.assertEqual(lint.third_party_crates(doc), {"serde": ["serde::Serialize"]})
+
+    def test_an_impl_for_a_visible_type_written_in_a_hidden_module_still_counts(self) -> None:
+        b = DocBuilder()
+        leak = b.function(10, "leak", [], resolved(b.serde_type, "Serialize"))
+        block = b.add(9, None, {"impl": {"trait": None, "for": resolved(3, "Visible"), "items": [leak], "blanket_impl": None}})
+        b.add(3, "Visible", {"struct": {"kind": "unit", "impls": [block]}}, path=["raikiri_x", "Visible"])
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"] = [3]
+        self.assertEqual(lint.third_party_crates(doc), {"serde": ["serde::Serialize"]})
+
     def test_a_public_extern_crate_counts_as_naming_the_crate(self) -> None:
         b = DocBuilder()
         # rustdoc 1.91 writes the exported name to `name` and the crate to `rename`.
