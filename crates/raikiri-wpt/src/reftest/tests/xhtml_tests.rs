@@ -14,11 +14,23 @@ fn xhtml_self_closing_flex_items_match_an_html_reference() {
 }
 
 #[test]
-fn malformed_xhtml_is_an_error_instead_of_html_recovery() {
+fn malformed_xhtml_is_repaired_by_the_xml_parser() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("broken.xhtml");
-    std::fs::write(&path, "<html><body><div></body></html>").unwrap();
-    assert!(render_raikiri_file_pages(&path, 80, 60).is_err());
+    // The unclosed `<p>` is repaired at the end tag of its parent, and the
+    // self-closing `<div/>` elements stay siblings as they would in XML
+    // (HTML recovery would nest the second one inside the first).
+    std::fs::write(
+        &path,
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><style>@page{size:80px 60px;margin:0}html,body{margin:0}div{width:20px;height:20px;background:green}</style></head><body><div/><div/><p></body></html>"#,
+    )
+    .unwrap();
+    let document = render_raikiri_file_pages(&path, 80, 60).unwrap();
+    let page = &document.pages[0];
+    for top in [10, 30] {
+        let offset = (top * page.width as usize + 10) * 4;
+        assert_eq!(&page.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+    }
 }
 
 #[test]

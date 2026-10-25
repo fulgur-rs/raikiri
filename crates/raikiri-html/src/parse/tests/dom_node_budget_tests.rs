@@ -17,14 +17,9 @@ fn parse_fragment_with_limits(
     let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes);
     let node_limit_signal = sink.dom_node_limit_signal();
     let parser = parse_html_fragment(sink, ParseOpts::default(), context_name, Vec::new(), true);
-    parse_with_budgets_and_parser(
-        input,
-        parser,
-        &options,
-        limits.max_input_bytes,
-        limits.max_dom_nodes,
-        node_limit_signal,
-    )
+    parse_with_budgets_and_parser(input, parser, &options, limits.max_input_bytes, || {
+        dom_node_budget_error(limits.max_dom_nodes, &node_limit_signal)
+    })
 }
 
 #[test]
@@ -51,5 +46,26 @@ fn fragment_node_limit_accepts_the_boundary_and_rejects_the_next_node() {
             limit,
             actual,
         }) if limit == node_count - 1 && actual == node_count
+    ));
+}
+
+#[test]
+fn nodes_the_parser_adds_at_the_end_of_input_count_against_the_limit() {
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    // Empty input reads no chunk: the html, head, and body elements all come
+    // from finishing the parse.
+    let mut limits = RenderLimits::default();
+    limits.max_dom_nodes = Some(1);
+    assert!(matches!(
+        parse_with_budgets(&b""[..], &options, &limits),
+        Err(ParseError::LimitExceeded {
+            kind: LimitKind::DomNodes,
+            limit: 1,
+            actual: 2,
+        })
     ));
 }

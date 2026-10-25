@@ -51,6 +51,7 @@ simplecss = "=0.2.2"
 # ── HTML5ever ──────────────────────────────────────────────────────────
 html5ever   = "0.40"
 markup5ever = "0.40"
+xml5ever    = "0.40"
 
 # ── Layout (taffy) ─────────────────────────────────────────────────────
 # Block and inline flow share project-owned context over public Taffy APIs.

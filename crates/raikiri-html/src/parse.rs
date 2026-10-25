@@ -3,7 +3,6 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::io::Read;
-use std::rc::Rc;
 
 use html5ever::driver::{ParseOpts, parse_document, parse_fragment as parse_html_fragment};
 use html5ever::interface::QualName;
@@ -94,48 +93,48 @@ pub(crate) fn parse_with_budgets<R: Read>(
     let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes);
     let node_limit_signal = sink.dom_node_limit_signal();
     let parser = parse_document(sink, ParseOpts::default());
-    parse_with_budgets_and_parser(
-        input,
-        parser,
-        options,
-        limits.max_input_bytes,
-        limits.max_dom_nodes,
-        node_limit_signal,
-    )
+    parse_with_budgets_and_parser(input, parser, options, limits.max_input_bytes, || {
+        dom_node_budget_error(limits.max_dom_nodes, &node_limit_signal)
+    })
 }
 
-fn parse_with_budgets_and_parser<R, P>(
+/// Reads `input` through `parser` and finishes the document, stopping at the
+/// first input chunk after `budget_error` reports a tripped budget and
+/// returning that error. The input-byte budget is enforced while reading.
+/// Shared by the HTML and XHTML entry points.
+pub(crate) fn parse_with_budgets_and_parser<R, P>(
     input: R,
     parser: P,
     options: &ParseOptions<'_>,
     max_input_bytes: Option<u64>,
-    max_dom_nodes: Option<u64>,
-    node_limit_signal: Rc<Cell<Option<u64>>>,
+    budget_error: impl Fn() -> Option<ParseError>,
 ) -> Result<UncascadedDocument, ParseError>
 where
     R: Read,
     P: TendrilSink<UTF8, Output = UncascadedDocument>,
 {
     let mut feed = Utf8Feed::new(parser);
-    feed.feed_reader_limited(input, max_input_bytes, |_| {
-        node_limit_signal.get().is_none()
-    })?;
-    if let Some(actual) = node_limit_signal.get() {
-        return Err(dom_node_limit_error(max_dom_nodes, actual));
+    feed.feed_reader_limited(input, max_input_bytes, |_| budget_error().is_none())?;
+    if let Some(error) = budget_error() {
+        return Err(error);
     }
     let document = feed.finish()?;
-    if let Some(actual) = node_limit_signal.get() {
-        return Err(dom_node_limit_error(max_dom_nodes, actual));
+    if let Some(error) = budget_error() {
+        return Err(error);
     }
     finish_document(document, options)
 }
 
-fn dom_node_limit_error(limit: Option<u64>, actual: u64) -> ParseError {
-    ParseError::LimitExceeded {
+/// The DOM-node budget error once the sink's signal reports a node over it.
+pub(crate) fn dom_node_budget_error(
+    limit: Option<u64>,
+    signal: &Cell<Option<u64>>,
+) -> Option<ParseError> {
+    signal.get().map(|actual| ParseError::LimitExceeded {
         kind: LimitKind::DomNodes,
         limit: limit.unwrap_or_else(|| actual.saturating_sub(1)),
         actual,
-    }
+    })
 }
 
 /// Parse HTML markup using the browser's fragment algorithm for an element context.
@@ -166,14 +165,10 @@ pub fn parse_fragment<R: Read>(
         Vec::new(),
         context_element_allows_scripting,
     );
-    let mut doc = parse_with_budgets_and_parser(
-        input,
-        parser,
-        options,
-        limits.max_input_bytes,
-        limits.max_dom_nodes,
-        node_limit_signal,
-    )?;
+    let mut doc =
+        parse_with_budgets_and_parser(input, parser, options, limits.max_input_bytes, || {
+            dom_node_budget_error(limits.max_dom_nodes, &node_limit_signal)
+        })?;
     flatten_fragment_root(&mut doc.dom);
     Ok(doc)
 }

@@ -3,8 +3,8 @@
 //! - Parser layer: html5ever wrapper ([`RaikiriTreeSink`]) with the [`parse()`] /
 //!   [`parse_with_sink`] entry points that produce a pre-cascade
 //!   [`UncascadedDocument`].
-//! - XHTML: [`parse_xhtml`] builds the same document through XML parsing,
-//!   preserving self-closing elements and namespaces.
+//! - XHTML: [`parse_xhtml`] builds the same document by streaming the input
+//!   through an XML parser, preserving self-closing elements and namespaces.
 //! - Document layer: [`parse_html`] / [`parse_html_with_limits`] /
 //!   [`parse_html_with_resources`] assemble a cascaded [`HtmlDocument`];
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
@@ -77,7 +77,7 @@ pub use svg_fonts::PageSvgFonts;
 pub use svg_rendering::SvgRendering;
 pub use types::{ParseOptions, StylesheetPart, StylesheetSource, UncascadedDocument};
 pub use ua::MINIMAL_UA_CSS;
-pub use xhtml::{XhtmlParseError, parse_xhtml};
+pub use xhtml::parse_xhtml;
 
 // Types that appear in the signatures above, re-exported so a consumer that
 // depends only on this crate (plus `raikiri-dom` / `raikiri-traits`) can name
