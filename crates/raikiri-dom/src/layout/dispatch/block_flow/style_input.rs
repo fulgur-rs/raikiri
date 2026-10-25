@@ -41,7 +41,7 @@ fn materialize(query: LayoutStyleView<'_>) -> BoxStyle {
         size: query.size(),
         min_size: query.min_size(),
         max_size: query.max_size(),
-        aspect_ratio: query.aspect_ratio(),
+        aspect_ratio: query.block_aspect_ratio(),
         margin: query.margin(),
         padding: query.padding(),
         border: query.border(),
