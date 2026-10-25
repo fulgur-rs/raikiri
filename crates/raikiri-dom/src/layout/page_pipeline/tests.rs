@@ -9306,6 +9306,19 @@ fn the_margins_of_empty_children_after_a_moved_box_stay_inside_the_wrapper_once(
 }
 
 #[test]
+fn a_leading_margin_cut_at_the_page_edge_stays_cut_in_the_wrappers_height() {
+    // The 230px margin of the empty child starts at the top of the first page
+    // and runs past three page edges. Pagination keeps what fits the first
+    // page, so the wrapper does not hold the margin again.
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        wrapper = doc.append_element(Some(body), "div", Some("display:block;padding:10px 0"));
+        doc.append_element(Some(wrapper), "div", Some("display:block;margin-top:230px"));
+    });
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0);
+}
+
+#[test]
 fn a_wrappers_max_height_follows_its_box_sizing() {
     assert_eq!(
         nested_avoiding_block(

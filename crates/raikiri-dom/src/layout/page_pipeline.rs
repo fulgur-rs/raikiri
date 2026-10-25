@@ -509,6 +509,10 @@ fn block_border_box_end(
     let encloses_floats = holds_floats(document, cascade, flow_root);
     let mut content_end = top + edges_top;
     let mut last_flow_end = None;
+    // Where the margin box of the last child ends in the committed flow.
+    // Pagination may have cut a margin that crossed a page edge, which the
+    // margins themselves do not show.
+    let mut last_margin_end = f32::INFINITY;
     // The block-end margins that adjoin the end of the flow: the one of the
     // last child with a border box of its own and those of the empty children
     // after it, whose margins collapse through them (CSS 2 §8.3.1).
@@ -591,6 +595,7 @@ fn block_border_box_end(
             if root.formatting_context == FormattingContext::Flex {
                 content_end = content_end.max(end);
             }
+            last_margin_end = end;
             if block_children
                 && child_computed.clear == ClearValue::None
                 && collapses_through(document, cascade, child, layout.size.height)
@@ -612,13 +617,13 @@ fn block_border_box_end(
     let encloses_margins = edges_bottom > 0.0 || encloses_floats;
     if let Some(end) = last_flow_end {
         let end = if encloses_margins {
-            end + trailing.resolve()
+            (end + trailing.resolve()).min(last_margin_end)
         } else {
             end
         };
         content_end = content_end.max(end);
     } else if encloses_margins && (edges_top > 0.0 || encloses_floats) {
-        content_end = content_end.max(top + edges_top + trailing.resolve());
+        content_end = content_end.max((top + edges_top + trailing.resolve()).min(last_margin_end));
     }
     // `max-height` caps the auto height, measured as `box-sizing` says;
     // `min-height` still wins over it.
