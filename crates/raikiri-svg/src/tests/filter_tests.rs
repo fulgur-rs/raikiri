@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::MAX_FILTER_ELEMENTS;
 use crate::{
     SvgDocument, SvgError, SvgFilterBudget, SvgFontRequest, SvgFontSource, SvgImageAccess,
     SvgRootStyle, SvgSceneError, SvgSceneFeature, SvgViewport,
@@ -209,10 +210,11 @@ fn a_primitive_whose_time_grows_with_a_number_of_the_document_is_bounded() {
     );
     // A merge composites every one of its inputs over the result.
     let merge = format!(
-        "<feMerge>{}</feMerge>",
-        "<feMergeNode in='SourceGraphic'/>".repeat(5000)
+        "<filter id='f'><feMerge>{}</feMerge></filter>{}",
+        "<feMergeNode in='SourceGraphic'/>".repeat(100),
+        "<rect width='1000' height='1000' filter='url(#f)'/>".repeat(40),
     );
-    assert_over_the_work_budget(1000, &filtered(1000, &merge));
+    assert_over_the_work_budget(1000, &merge);
     // A region smaller than a pixel is still drawn as a whole pixel.
     assert_over_the_work_budget(
         100,
@@ -394,19 +396,35 @@ fn a_wrapped_convolution_pays_for_the_steps_that_bring_a_coordinate_back() {
 }
 
 #[test]
-fn a_long_run_of_primitives_that_name_an_early_result_is_bounded() {
-    // resvg looks a named result up from the last one, so each of these
-    // primitives walks back over all that came before it, on a single pixel.
+fn a_filter_with_too_many_elements_is_refused_before_usvg_reads_it() {
+    // usvg checks each name a primitive uses against all that came before it,
+    // so reading a long chain takes the square of its length. The parse stops
+    // it first, on the size alone.
     let chain = |count: usize| {
-        let offsets = "<feOffset in='first'/>".repeat(count);
+        let offsets: String = (0..count)
+            .map(|index| format!("<feOffset in='r{index}' result='r{}'/>", index + 1))
+            .collect();
         format!(
-            "<filter id='f' filterUnits='userSpaceOnUse' x='0' y='0' width='1' height='1'>\
-             <feFlood result='first'/>{offsets}</filter>\
-             <rect width='1' height='1' filter='url(#f)'/>"
+            "<svg xmlns='{SVG_NAMESPACE}' width='1' height='1'>\
+             <filter id='f'><feFlood result='r0'/>{offsets}</filter>\
+             <rect width='1' height='1' filter='url(#f)'/></svg>"
         )
     };
-    rasterize(&document(1, 1, &chain(100)), 1, 1).unwrap();
-    assert_over_the_work_budget(1, &chain(50_000));
+    SvgDocument::parse(chain(MAX_FILTER_ELEMENTS - 1).as_bytes()).unwrap();
+    for count in [MAX_FILTER_ELEMENTS, 200_000] {
+        let error = SvgDocument::parse(chain(count).as_bytes()).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                SvgError::FilterLimitExceeded {
+                    budget: SvgFilterBudget::Elements,
+                    requested,
+                    limit,
+                } if requested == count as u64 + 1 && limit == MAX_FILTER_ELEMENTS as u64
+            ),
+            "{count}: {error:?}"
+        );
+    }
 }
 
 #[test]

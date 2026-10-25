@@ -1638,6 +1638,10 @@ fn svg_error_display_pins_each_variant() {
             super::SvgFilterBudget::Pixels,
             "SVG filters ask for 9 pixels, exceeding the limit of 4",
         ),
+        (
+            super::SvgFilterBudget::Elements,
+            "SVG filters ask for 9 elements, exceeding the limit of 4",
+        ),
     ] {
         let error = SvgError::FilterLimitExceeded {
             budget,

@@ -154,10 +154,6 @@ impl Meter {
         // The results of the primitives have at least the size of the region
         // of the filter, which lies within the layer.
         let region = self.extent(filter.rect(), layer.to_canvas);
-        // resvg finds the result a primitive names by searching the earlier
-        // ones from the last, so each name costs a step for every primitive
-        // before it, whatever the size of the layer.
-        self.work += primitives.len() as f64 * references(primitives);
         for primitive in primitives {
             self.work +=
                 area * per_pixel_work(primitive.kind(), layer, (region.width, region.height));
@@ -171,18 +167,6 @@ impl Meter {
         }
         Ok(())
     }
-}
-
-/// The most names that `primitives` can refer to: every merge names each of its
-/// inputs, and any other primitive names at most two.
-fn references(primitives: &[usvg::filter::Primitive]) -> f64 {
-    primitives
-        .iter()
-        .map(|primitive| match primitive.kind() {
-            Kind::Merge(fe) => fe.inputs().len(),
-            _ => 2,
-        })
-        .sum::<usize>() as f64
 }
 
 /// Pixel operations `kind` spends on each pixel of `layer`, where the images

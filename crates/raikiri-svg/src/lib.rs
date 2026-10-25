@@ -209,6 +209,9 @@ pub enum SvgFilterBudget {
     Pixels,
     /// Pixel operations over all the filters of the picture.
     Work,
+    /// Elements one `<filter>` holds, which the parser reads in a time that
+    /// grows with their square.
+    Elements,
 }
 
 impl SvgFilterBudget {
@@ -216,6 +219,7 @@ impl SvgFilterBudget {
         match self {
             Self::Pixels => "pixels",
             Self::Work => "pixel operations",
+            Self::Elements => "elements",
         }
     }
 }
@@ -418,6 +422,7 @@ impl SvgDocument {
             ));
         }
         let has_images = check_image_references(root, access)?;
+        check_filter_sizes(root)?;
 
         let intrinsic = intrinsic_size(root);
         let has_view_box = root
@@ -2393,6 +2398,46 @@ fn check_image_references(
         has_images = true;
     }
     Ok(has_images)
+}
+
+/// Most elements, primitives and what they hold, a `<filter>` may have.
+/// `usvg` checks every name a primitive uses against all the primitives
+/// before it, so reading a filter takes time that grows with the square of its
+/// size, once for each element that uses it.
+const MAX_FILTER_ELEMENTS: usize = 128;
+
+/// Rejects a `<filter>` with more elements than [`MAX_FILTER_ELEMENTS`], before
+/// `usvg` reads it.
+fn check_filter_sizes(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
+    for filter in root.descendants().filter(|node| {
+        node.tag_name().name() == "filter"
+            && node
+                .tag_name()
+                .namespace()
+                .is_none_or(|namespace| namespace == SVG_NAMESPACE)
+    }) {
+        // Counting stops past the limit, so a chain of nested filters costs
+        // no more than the filters do.
+        let within_limit = filter
+            .descendants()
+            .skip(1)
+            .filter(roxmltree::Node::is_element)
+            .take(MAX_FILTER_ELEMENTS + 1)
+            .count();
+        if within_limit > MAX_FILTER_ELEMENTS {
+            let elements = filter
+                .descendants()
+                .skip(1)
+                .filter(roxmltree::Node::is_element)
+                .count();
+            return Err(SvgError::FilterLimitExceeded {
+                budget: SvgFilterBudget::Elements,
+                requested: elements as u64,
+                limit: MAX_FILTER_ELEMENTS as u64,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Whether `href` is a `data:` URL, whose scheme is case-insensitive.
