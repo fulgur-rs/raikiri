@@ -1,13 +1,32 @@
 //! Filter effects: drawn by the raster path, and bounded before resvg runs
 //! them.
 
+use std::sync::Arc;
+
 use crate::{
-    SvgDocument, SvgError, SvgFilterBudget, SvgImageAccess, SvgRootStyle, SvgSceneError,
-    SvgSceneFeature, SvgViewport,
+    SvgDocument, SvgError, SvgFilterBudget, SvgFontRequest, SvgFontSource, SvgImageAccess,
+    SvgRootStyle, SvgSceneError, SvgSceneFeature, SvgViewport,
 };
 use raikiri_traits::DecodedImage;
+use raikiri_traits::vector::FontFace;
+
+const AHEM: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/Ahem.ttf"));
 
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+
+/// Gives every request the Ahem face, in which each letter is a full square.
+struct Ahem;
+
+impl SvgFontSource for Ahem {
+    fn select(&self, _request: &SvgFontRequest) -> Option<FontFace> {
+        let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(AHEM);
+        Some(FontFace::new(data, 0))
+    }
+
+    fn fallback(&self, _request: &SvgFontRequest, _ch: char) -> Option<FontFace> {
+        None
+    }
+}
 
 /// A document of `width` by `height` whose content is `body`.
 fn document(width: u32, height: u32, body: &str) -> SvgDocument {
@@ -315,4 +334,41 @@ fn a_pattern_tile_is_drawn_at_the_scale_of_its_own_transform() {
     rasterize(&document(300, 300, &pattern("")), 300, 300).unwrap();
     // A hundred times the scale makes the radius three hundred pixels.
     assert_over_the_work_budget(300, &pattern("patternTransform='scale(100)'"));
+}
+
+#[test]
+fn filters_in_the_pattern_that_paints_a_text_are_bounded_too() {
+    // resvg draws a text as the paths it flattens to, and the pattern that
+    // fills them is drawn with its filter.
+    let body = |radius: u32| {
+        format!(
+            "<filter id='f'><feMorphology operator='dilate' radius='{radius}'/></filter>\
+             <pattern id='p' width='1000' height='1000' patternUnits='userSpaceOnUse'>\
+             <rect width='1000' height='1000' filter='url(#f)'/></pattern>\
+             <text x='0' y='8' font-family='Ahem' font-size='8' fill='url(#p)'>A</text>"
+        )
+    };
+    let draw = |radius: u32| {
+        document(1000, 1000, &body(radius)).rasterize_with_fonts(
+            SvgViewport {
+                width: 1000.0,
+                height: 1000.0,
+            },
+            SvgRootStyle::default(),
+            Some(&Ahem),
+            1.0,
+            None,
+        )
+    };
+    draw(1).unwrap();
+    assert!(
+        matches!(
+            draw(300),
+            Err(SvgError::FilterLimitExceeded {
+                budget: SvgFilterBudget::Work,
+                ..
+            })
+        ),
+        "a text filled by a heavy filter must be over the work budget"
+    );
 }
