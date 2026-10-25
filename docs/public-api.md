@@ -11,8 +11,9 @@ added when its decision is made.
 
 ## Which names are the API
 
-A *name* is something an outside user can write: a type, function, constant or
-module that the crate root reaches. `scripts/public-api-lint.sh --surface
+A *name* is something an outside user can write: a type, function, constant,
+module or `pub extern crate` that the crate root reaches, and the variants of an
+enum that a `pub use E::*` publishes. `scripts/public-api-lint.sh --surface
 CRATE` prints the names of a crate, with the item each re-export comes from, and
 `--with-hidden` adds the hidden ones. Methods, fields and trait impls belong to
 their type and are not listed. A module and a function can share a path

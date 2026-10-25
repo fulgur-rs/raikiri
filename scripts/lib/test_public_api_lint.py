@@ -27,7 +27,7 @@ import public_api_lint as lint
 TAFFY_CRATE_ID = 7
 TRAITS_CRATE_ID = 8
 SERDE_CRATE_ID = 9
-ROOT_KINDS = ("function", "struct", "enum", "trait", "constant", "type_alias", "module", "use")
+ROOT_KINDS = ("function", "struct", "enum", "trait", "constant", "type_alias", "module", "use", "extern_crate")
 CORE_CRATE_ID = 10
 
 
@@ -429,6 +429,22 @@ class ReachTests(unittest.TestCase):
         b.add(2, "computed", {"module": {"is_crate": False, "items": globs, "is_stripped": False}})
         found = lint.third_party_crates(b.doc(root="raikiri_x"))
         self.assertEqual(sorted(found), ["serde", "taffy"])
+
+    def test_variants_published_by_a_glob_of_a_local_enum_count(self) -> None:
+        b = DocBuilder()
+        field = b.add(7, "0", {"struct_field": resolved(b.serde_type, "Serialize")})
+        variant = b.add(6, "V", {"variant": {"kind": {"tuple": [field]}, "discriminant": None}})
+        enum = b.add(5, "E", {"enum": {"variants": [variant], "impls": []}}, path=["raikiri_x", "private", "E"])
+        b.add(1, "E", {"use": {"source": "private::E", "name": "E", "id": enum, "is_glob": True}})
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"].remove(enum)  # in a private module
+        self.assertEqual(lint.third_party_crates(doc), {"serde": ["serde::Serialize"]})
+
+    def test_a_public_extern_crate_counts_as_naming_the_crate(self) -> None:
+        b = DocBuilder()
+        b.add(1, "renamed", {"extern_crate": {"name": "serde", "rename": "renamed"}})
+        b.add(2, "raikiri_traits", {"extern_crate": {"name": "raikiri_traits", "rename": None}})
+        self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {"serde": ["serde"]})
 
     def test_a_blanket_impl_listed_by_a_trait_does_not(self) -> None:
         b = DocBuilder()

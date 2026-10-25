@@ -68,6 +68,17 @@ class Doc:
         inner = {"enum": {"variants": list(range(200, 200 + variants)), "impls": []}}
         return self._add(key, name, inner, attrs, ["x", name])
 
+    def enum_with(self, key: int, name: str, variants: list[int], path: list[str] | None = None) -> int:
+        return self._add(key, name, {"enum": {"variants": variants, "impls": []}}, None, path)
+
+    def variant(self, key: int, name: str, attrs: list | None = None) -> int:
+        return self._add(key, name, {"variant": {"kind": "plain", "discriminant": None}}, attrs, None)
+
+    def extern_crate(self, key: int, name: str, rename: str | None = None, visibility: str = "public") -> int:
+        self._add(key, rename or name, {"extern_crate": {"name": name, "rename": rename}}, None, None)
+        self.index[str(key)]["visibility"] = visibility
+        return key
+
     def function(self, key: int, name: str, path: list[str] | None = None) -> int:
         return self._add(key, name, {"function": {}}, None, path)
 
@@ -189,6 +200,30 @@ class NamesTests(unittest.TestCase):
         doc.set_items(0, [module])
         globs = [name.canonical for name in surface.names(doc.json()) if name.kind == "glob"]
         self.assertEqual(globs, ["alpha::api", "beta::api"])
+
+    def test_a_glob_of_a_local_enum_publishes_its_variants_at_the_use_site(self) -> None:
+        doc = Doc()
+        enum = doc.enum_with(2, "E", [3, 4], ["x", "private", "E"])
+        doc.variant(3, "A")
+        doc.variant(4, "B", attrs=HIDDEN)
+        doc.set_items(0, [doc.use(1, "E", enum, glob=True)])
+        found = listed(doc)
+        self.assertEqual(sorted(found), ["x::A", "x::B"])
+        self.assertEqual((found["x::A"].kind, found["x::A"].item_id, found["x::A"].hidden), ("variant", 3, False))
+        self.assertTrue(found["x::B"].hidden)
+
+    def test_a_public_extern_crate_publishes_the_crate_under_its_local_name(self) -> None:
+        doc = Doc()
+        doc.set_items(0, [doc.extern_crate(1, "dep"), doc.extern_crate(2, "other", rename="renamed")])
+        found = listed(doc)
+        self.assertEqual(sorted(found), ["x::dep", "x::renamed"])
+        self.assertEqual((found["x::dep"].kind, found["x::dep"].canonical), ("extern_crate", "dep"))
+        self.assertEqual(found["x::renamed"].canonical, "other")
+
+    def test_a_private_extern_crate_publishes_nothing(self) -> None:
+        doc = Doc()
+        doc.set_items(0, [doc.extern_crate(1, "dep", visibility="default")])
+        self.assertEqual(listed(doc), {})
 
     def test_the_same_name_reached_twice_is_listed_once(self) -> None:
         doc = Doc()

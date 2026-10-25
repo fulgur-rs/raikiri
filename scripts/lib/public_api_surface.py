@@ -56,7 +56,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DECLARED_KINDS = frozenset(
-    {"struct", "enum", "union", "trait", "function", "constant", "static", "type_alias", "macro", "trait_alias"}
+    {
+        "struct",
+        "enum",
+        "union",
+        "trait",
+        "function",
+        "constant",
+        "static",
+        "type_alias",
+        "macro",
+        "proc_macro",
+        "trait_alias",
+        "extern_type",
+    }
 )
 
 
@@ -130,6 +143,11 @@ def names(doc: dict) -> list[Name]:
             path = f"{prefix}::{entry['name']}"
             add(path, "module", hidden, None)
             module(entry, path, hidden, active)
+        elif kind == "extern_crate":
+            # `pub extern crate dep;` publishes the whole crate under this name.
+            if entry.get("visibility") == "public":
+                body = entry["inner"]["extern_crate"]
+                add(f"{prefix}::{body.get('rename') or body['name']}", kind, hidden, body["name"])
         elif kind in DECLARED_KINDS:
             add(f"{prefix}::{entry['name']}", kind, hidden, canonical_path(doc, entry["id"]), entry["id"])
 
@@ -142,6 +160,19 @@ def names(doc: dict) -> list[Name]:
         if body["is_glob"]:
             if target is not None and item_kind(target) == "module":
                 module(target, prefix, hidden or is_hidden(target), active)
+            elif target is not None and item_kind(target) == "enum":
+                # `pub use path::E::*;` publishes the variants at the use site.
+                hidden = hidden or is_hidden(target)
+                for variant_id in target["inner"]["enum"]["variants"]:
+                    variant = index.get(str(variant_id))
+                    if variant is not None:
+                        add(
+                            f"{prefix}::{variant['name']}",
+                            "variant",
+                            hidden or is_hidden(variant),
+                            canonical_path(doc, variant_id),
+                            variant_id,
+                        )
             else:
                 origin = canonical_path(doc, target_id) or body.get("source")
                 add(f"{prefix}::*", "glob", hidden, origin)
