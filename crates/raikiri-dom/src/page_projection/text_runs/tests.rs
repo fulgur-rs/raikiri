@@ -267,6 +267,25 @@ fn a_first_line_ignores_a_percentage_relative_offset() {
     assert_eq!(line.center, 7.0 + 10.0);
 }
 
+/// A percentage offset of a grid item resolves against its grid area, as
+/// layout resolves it, whether or not the grid has a height of its own, so
+/// taking it back out leaves the line in place.
+#[test]
+fn a_grid_first_line_ignores_a_percentage_relative_offset() {
+    for container in [
+        "height:100px;grid-template-rows:40px 60px",
+        "grid-template-rows:40px 60px",
+    ] {
+        let (document, cascade, grid) =
+            grid_items(container, &["position:relative;top:calc(50% + 1px)"]);
+        let line = first_line(&document, &cascade, grid).unwrap();
+        // Hand-computed: the 20px line of the X starts 7px down, with its
+        // baseline 5px of half-leading plus 8px of ascent below that.
+        assert_eq!(line.baseline, 7.0 + 5.0 + 8.0, "{container}");
+        assert_eq!(line.center, 7.0 + 10.0, "{container}");
+    }
+}
+
 /// Manual column placement leaves the block offset of a relative box to the
 /// painter, which resolves a percentage against the multicol container.
 #[test]

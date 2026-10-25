@@ -19,6 +19,17 @@ fn offset(container: &str, child: &str) -> (f32, f32) {
     used_relative_offset(&document, &cascade, &cascade.computed[child], child)
 }
 
+/// The offset that layout resolves for `child`, with `left` and `top` ahead of
+/// `right` and `bottom` as taffy applies them.
+fn layout_insets(
+    document: &Document,
+    cascade: &raikiri_style::CascadeResult,
+    child: usize,
+) -> (f32, f32) {
+    let (dx, dy) = layout_relative_insets(document, cascade, child, Precedence::LeftTop);
+    (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
+}
+
 #[test]
 fn percentages_resolve_against_the_containing_block_content_box() {
     // Hand-computed: the content box is 200px by 100px inside 10px of
@@ -53,6 +64,66 @@ fn a_percentage_of_an_indefinite_height_counts_as_auto() {
         ),
         (10.0, 0.0)
     );
+}
+
+/// How far layout moved the grid item `style` from where it places it without
+/// `offsets`, which layout applies to a grid item.
+fn layout_applied(container: &str, style: &str, offsets: &str) -> (f32, f32) {
+    let location = |style: String| {
+        let (document, _, child) = child_in(container, &style);
+        let location = document.nodes[child].layout.location;
+        (location.x, location.y)
+    };
+    let with = location(format!("position:relative;{style};{offsets}"));
+    let without = location(format!("position:relative;{style}"));
+    (with.0 - without.0, with.1 - without.1)
+}
+
+#[test]
+fn a_grid_item_resolves_percentages_against_its_grid_area() {
+    // Hand-computed: the item in the second row and column has an area of
+    // 120px by 60px, not the 200px by 100px of the content box.
+    let container = "display:grid;width:200px;height:100px;\
+                     grid-template-columns:80px 120px;grid-template-rows:40px 60px";
+    let item = "grid-area:2 / 2;position:relative;left:50%;top:calc(25% + 1px)";
+    assert_eq!(offset(container, item), (60.0, 16.0));
+    let first = "position:relative;left:50%;top:25%";
+    assert_eq!(offset(container, first), (40.0, 10.0));
+    // The area is definite even when the grid has no height of its own.
+    let auto = "display:grid;width:200px;\
+                grid-template-columns:80px 120px;grid-template-rows:40px 60px";
+    assert_eq!(offset(auto, item), (60.0, 16.0));
+    assert_eq!(offset(auto, first), (40.0, 10.0));
+    // `bottom` counts as `auto` for a block, but not for a grid area.
+    assert_eq!(
+        offset(auto, "grid-area:2 / 2;position:relative;bottom:50%"),
+        (0.0, -30.0)
+    );
+}
+
+#[test]
+fn a_grid_item_offset_is_the_one_layout_applied() {
+    for container in [
+        "display:grid;width:200px;height:100px;\
+         grid-template-columns:80px 120px;grid-template-rows:40px 60px",
+        "display:grid;width:200px;\
+         grid-template-columns:80px 120px;grid-template-rows:40px 60px",
+        "display:grid;width:100px;height:200px;writing-mode:vertical-rl;\
+         grid-template-columns:80px 120px;grid-template-rows:40px 60px",
+        "display:grid;width:200px;height:100px;direction:rtl;\
+         grid-template-columns:80px 120px;grid-template-rows:40px 60px",
+    ] {
+        for style in ["", "grid-area:2 / 2;"] {
+            let offsets = "left:50%;top:calc(25% + 1px)";
+            let (document, cascade, child) =
+                child_in(container, &format!("{style}position:relative;{offsets}"));
+            assert_eq!(
+                layout_insets(&document, &cascade, child),
+                layout_applied(container, style, offsets),
+                "{container} | {style}"
+            );
+        }
+    }
 }
 
 #[test]
