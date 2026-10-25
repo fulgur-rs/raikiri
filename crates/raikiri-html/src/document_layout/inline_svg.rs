@@ -171,14 +171,15 @@ pub(super) struct PictureRequest<'a> {
 /// subset and the root does not ask for pixels, pixels otherwise.
 ///
 /// Pixels also stand in for a scene that cannot be had or drawn faithfully: a
-/// document outside the vector subset (a `mask` or a `pattern`), one over a
-/// budget of the scene (the raster path has limits of its own, not these), and
-/// one with stroked glyphs placed by a transform that is not a rotation, a
-/// reflection and a uniform scale (`textLength` stretching them), which a
-/// backend strokes in glyph space and so distorts. When pixels cannot be had
-/// either, the scene is returned if there is one (a stroked glyph then comes
-/// out distorted) and the scene's error is otherwise. An invalid document has
-/// no picture.
+/// document outside the vector subset (a `filter`, a `mask` or a `pattern`),
+/// one over a budget of the scene (the raster path has limits of its own, not
+/// these), and one with stroked glyphs placed by a transform that is not a
+/// rotation, a reflection and a uniform scale (`textLength` stretching them),
+/// which a backend strokes in glyph space and so distorts. When pixels cannot
+/// be had either, the scene is returned if there is one (a stroked glyph then
+/// comes out distorted). Without one, the error is the raster's for a document
+/// outside the subset, whose only picture it is, and the scene's own for a
+/// scene over a budget. An invalid document has no picture.
 ///
 /// The host opacity is in neither: the caller composites it around the
 /// picture.
@@ -228,6 +229,9 @@ pub(super) fn build_picture(request: &PictureRequest<'_>) -> Result<ImageContent
         Ok(scene) => Ok(ImageContent::Vector(Arc::new(scene))),
         // The raster path fails on this document the same way.
         Err(error @ SvgSceneError::Svg(_)) => Err(error),
+        // The raster is the only picture of this document, so what stops it is
+        // the reason there is none.
+        Err(SvgSceneError::Unsupported(_)) => pixels().map_err(SvgSceneError::Svg),
         Err(error) => pixels().map_err(|_| error),
     }
 }

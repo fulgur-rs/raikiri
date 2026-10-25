@@ -20,6 +20,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
+mod filters;
 mod fonts;
 mod images;
 mod scene;
@@ -243,8 +244,17 @@ pub enum SvgError {
     /// The document has `<image>` references, which only a vector scene
     /// draws. The raster path would leave them out of the picture.
     UnsupportedImages,
-    /// Filter effects are outside the supported static SVG subset.
-    UnsupportedFilterEffects,
+    /// The filters of the document would ask for more memory or time than a
+    /// picture may use.
+    FilterLimitExceeded {
+        /// What the filters ask too much of: `"pixels"` held at once by one
+        /// filter, or `"work"` over all the filters of the document.
+        budget: &'static str,
+        /// The amount the filters ask for.
+        requested: u64,
+        /// The most that is permitted.
+        limit: u64,
+    },
     /// The requested viewport is zero, negative, non-finite, or out of range.
     InvalidViewport,
     /// The host opacity is not a finite CSS opacity value.
@@ -294,9 +304,14 @@ impl std::fmt::Display for SvgError {
             Self::UnsupportedImages => {
                 f.write_str("SVG images are drawn by vector scenes only, not by the raster path")
             }
-            Self::UnsupportedFilterEffects => {
-                f.write_str("SVG filter effects are outside the supported subset")
-            }
+            Self::FilterLimitExceeded {
+                budget,
+                requested,
+                limit,
+            } => write!(
+                f,
+                "SVG filters ask for {requested} {budget}, exceeding the limit of {limit}"
+            ),
             Self::InvalidViewport => f.write_str("invalid SVG raster viewport"),
             Self::InvalidOpacity => f.write_str("invalid SVG host opacity"),
             Self::OutputLimitExceeded { bytes, limit } => {
@@ -384,7 +399,6 @@ impl SvgDocument {
             ));
         }
         let has_images = check_image_references(root, access)?;
-        reject_filter_effects(root)?;
 
         let intrinsic = intrinsic_size(root);
         let has_view_box = root
@@ -999,12 +1013,8 @@ fn parse_tree_with(
         font_resolver,
         ..usvg::Options::default()
     };
-    let tree = usvg::Tree::from_str(source, &options)
-        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
-    if !tree.filters().is_empty() {
-        return Err(SvgError::UnsupportedFilterEffects);
-    }
-    Ok(tree)
+    usvg::Tree::from_str(source, &options)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))
 }
 
 /// Whether `source` may hold text, which only a parse with fonts draws.
@@ -2428,6 +2438,9 @@ fn reject_exported_external_references(source: &str) -> Result<(), SvgError> {
     Ok(())
 }
 
+/// Deepest nesting of CSS blocks and functions the resource-reference scan reads.
+const MAX_CSS_NESTING: usize = 64;
+
 fn reject_external_css_references(source: &str) -> Result<(), SvgError> {
     let mut input = cssparser::ParserInput::new(source);
     let mut parser = cssparser::Parser::new(&mut input);
@@ -2457,7 +2470,7 @@ fn reject_external_css_tokens<'i>(
     depth: usize,
     in_image_set: bool,
 ) -> Result<(), cssparser::ParseError<'i, SvgError>> {
-    if depth >= MAX_FILTER_CSS_NESTING {
+    if depth >= MAX_CSS_NESTING {
         return Err(input.new_custom_error(SvgError::InvalidDocument(
             "SVG CSS resource reference nesting limit exceeded".into(),
         )));
@@ -2519,169 +2532,6 @@ fn reject_external_css_tokens<'i>(
         }
     }
     Ok(())
-}
-
-fn reject_filter_effects(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
-    for node in root.descendants().filter(|node| node.is_element()) {
-        let is_svg = node
-            .tag_name()
-            .namespace()
-            .is_none_or(|namespace| namespace == SVG_NAMESPACE);
-        let is_style = node.tag_name().name() == "style" && svg_style_has_css_type(node);
-        if !is_svg && !is_style {
-            continue;
-        }
-
-        if (is_svg
-            && (node
-                .attribute("filter")
-                .is_some_and(|value| !value.trim().eq_ignore_ascii_case("none"))
-                || node
-                    .attribute("style")
-                    .is_some_and(css_declarations_use_filter_effects)))
-            || (is_style && node.text().is_some_and(css_stylesheet_uses_filter_effects))
-        {
-            return Err(SvgError::UnsupportedFilterEffects);
-        }
-    }
-    Ok(())
-}
-
-const MAX_FILTER_CSS_NESTING: usize = 64;
-
-struct FilterCssParser {
-    nesting: usize,
-}
-
-impl<'i> cssparser::DeclarationParser<'i> for FilterCssParser {
-    type Declaration = bool;
-    type Error = ();
-
-    fn parse_value<'t>(
-        &mut self,
-        name: cssparser::CowRcStr<'i>,
-        input: &mut cssparser::Parser<'i, 't>,
-        _declaration_start: &cssparser::ParserState,
-    ) -> Result<bool, cssparser::ParseError<'i, Self::Error>> {
-        if !name.eq_ignore_ascii_case("filter") {
-            while input.next_including_whitespace_and_comments().is_ok() {}
-            return Ok(false);
-        }
-
-        let is_none = input
-            .parse_until_before(cssparser::Delimiter::Bang, |value| {
-                let keyword = value.expect_ident_cloned()?;
-                value.expect_exhausted()?;
-                Ok::<_, cssparser::ParseError<'i, Self::Error>>(
-                    keyword.eq_ignore_ascii_case("none"),
-                )
-            })
-            .unwrap_or(false);
-        input.try_parse(cssparser::parse_important).ok();
-        input.expect_exhausted()?;
-        Ok(!is_none)
-    }
-}
-
-impl<'i> cssparser::AtRuleParser<'i> for FilterCssParser {
-    type Prelude = ();
-    type AtRule = bool;
-    type Error = ();
-
-    fn parse_prelude<'t>(
-        &mut self,
-        _name: cssparser::CowRcStr<'i>,
-        input: &mut cssparser::Parser<'i, 't>,
-    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        while input.next().is_ok() {}
-        Ok(())
-    }
-
-    fn parse_block<'t>(
-        &mut self,
-        _prelude: Self::Prelude,
-        _start: &cssparser::ParserState,
-        input: &mut cssparser::Parser<'i, 't>,
-    ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        Ok(css_stylesheet_uses_filter_effects_at_depth(
-            input,
-            self.nesting + 1,
-        ))
-    }
-}
-
-impl<'i> cssparser::QualifiedRuleParser<'i> for FilterCssParser {
-    type Prelude = ();
-    type QualifiedRule = bool;
-    type Error = ();
-
-    fn parse_prelude<'t>(
-        &mut self,
-        input: &mut cssparser::Parser<'i, 't>,
-    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        while input.next().is_ok() {}
-        Ok(())
-    }
-
-    fn parse_block<'t>(
-        &mut self,
-        _prelude: Self::Prelude,
-        _start: &cssparser::ParserState,
-        input: &mut cssparser::Parser<'i, 't>,
-    ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        Ok(css_declarations_use_filter_effects_at_depth(
-            input,
-            self.nesting + 1,
-        ))
-    }
-}
-
-impl<'i> cssparser::RuleBodyItemParser<'i, bool, ()> for FilterCssParser {
-    fn parse_qualified(&self) -> bool {
-        true
-    }
-
-    fn parse_declarations(&self) -> bool {
-        true
-    }
-}
-
-fn css_declarations_use_filter_effects(source: &str) -> bool {
-    let mut input = cssparser::ParserInput::new(source);
-    let mut parser = cssparser::Parser::new(&mut input);
-    css_declarations_use_filter_effects_at_depth(&mut parser, 0)
-}
-
-fn css_declarations_use_filter_effects_at_depth(
-    input: &mut cssparser::Parser<'_, '_>,
-    nesting: usize,
-) -> bool {
-    if nesting >= MAX_FILTER_CSS_NESTING {
-        return true;
-    }
-    let mut declaration_parser = FilterCssParser { nesting };
-    cssparser::RuleBodyParser::new(input, &mut declaration_parser)
-        .filter_map(Result::ok)
-        .any(|uses_filter| uses_filter)
-}
-
-fn css_stylesheet_uses_filter_effects(source: &str) -> bool {
-    let mut input = cssparser::ParserInput::new(source);
-    let mut parser = cssparser::Parser::new(&mut input);
-    css_stylesheet_uses_filter_effects_at_depth(&mut parser, 0)
-}
-
-fn css_stylesheet_uses_filter_effects_at_depth(
-    input: &mut cssparser::Parser<'_, '_>,
-    nesting: usize,
-) -> bool {
-    if nesting >= MAX_FILTER_CSS_NESTING {
-        return true;
-    }
-    let mut stylesheet_parser = FilterCssParser { nesting };
-    cssparser::StyleSheetParser::new(input, &mut stylesheet_parser)
-        .filter_map(Result::ok)
-        .any(|uses_filter| uses_filter)
 }
 
 fn intrinsic_size(root: roxmltree::Node<'_, '_>) -> SvgIntrinsicSize {
@@ -5299,6 +5149,7 @@ fn render_tree(
         viewport.width / svg_size.width(),
         viewport.height / svg_size.height(),
     );
+    filters::check(tree, transform, (width, height))?;
     resvg::render(tree, transform, &mut pixmap.as_mut());
 
     if let Some(root_opacity) = neutralized_root_opacity

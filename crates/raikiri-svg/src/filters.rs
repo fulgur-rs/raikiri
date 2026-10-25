@@ -1,0 +1,130 @@
+//! The cost of a tree's filters, checked before resvg runs them.
+//!
+//! resvg applies a filter on a layer as large as the filter region, which it
+//! lets grow to five canvases on each side, and keeps the result of every
+//! primitive until the filter is done. Some primitives also take time that
+//! grows with a number the document sets: the radius of a morphology, the size
+//! of a convolution matrix, the octaves of turbulence. The output byte limit
+//! bounds neither, so a small document could ask for gigabytes or hours. The
+//! check estimates both from the parsed tree and the transform it is drawn with,
+//! and fails the picture over a budget instead of starting.
+
+use crate::{DEFAULT_MAX_OUTPUT_BYTES, SvgError};
+use usvg::filter::{Filter, Kind};
+
+/// Most pixels one filter may hold at once: eight output-sized buffers.
+const MAX_FILTER_PIXELS: u64 = 8 * (DEFAULT_MAX_OUTPUT_BYTES / 4);
+/// Most work all the filters of one picture may do, in pixel operations. A
+/// blur or a flood over a layer is one operation per pixel.
+const MAX_FILTER_WORK: u64 = 1 << 32;
+/// Pixel operations of one octave of turbulence at one pixel.
+const OCTAVE_WORK: f64 = 16.0;
+/// How many canvases wide and high resvg lets a filter layer be.
+const LAYER_CANVASES: f64 = 5.0;
+
+/// Fails when the filters of `tree` drawn with `transform` on a canvas of
+/// `canvas` pixels would ask for more than their budgets.
+pub(crate) fn check(
+    tree: &usvg::Tree,
+    transform: usvg::Transform,
+    canvas: (u32, u32),
+) -> Result<(), SvgError> {
+    Meter {
+        canvas: (f64::from(canvas.0), f64::from(canvas.1)),
+        work: 0.0,
+    }
+    .group(tree.root(), transform)
+}
+
+struct Meter {
+    canvas: (f64, f64),
+    /// What the filters met so far ask for, in pixel operations.
+    work: f64,
+}
+
+impl Meter {
+    /// Charges the filters in `group` and in the subroots below it. `base`
+    /// takes the coordinates of the root that holds `group` to the canvas.
+    fn group(&mut self, group: &usvg::Group, base: usvg::Transform) -> Result<(), SvgError> {
+        for node in group.children() {
+            let to_canvas = base.pre_concat(node.abs_transform());
+            if let usvg::Node::Group(inner) = node {
+                for filter in inner.filters() {
+                    self.filter(filter, to_canvas)?;
+                }
+                self.group(inner, base)?;
+            }
+            // Masks, patterns and the pictures of `feImage` hold nodes of
+            // their own, placed by the node that refers to them.
+            let mut failed = None;
+            node.subroots(|root| {
+                if let Err(error) = self.group(root, to_canvas) {
+                    failed.get_or_insert(error);
+                }
+            });
+            if let Some(error) = failed {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    fn filter(&mut self, filter: &Filter, to_canvas: usvg::Transform) -> Result<(), SvgError> {
+        let (width, height) = filter
+            .rect()
+            .transform(to_canvas)
+            .map_or((0.0, 0.0), |region| {
+                (
+                    f64::from(region.width()).min(LAYER_CANVASES * self.canvas.0),
+                    f64::from(region.height()).min(LAYER_CANVASES * self.canvas.1),
+                )
+            });
+        let area = width * height;
+        let primitives = filter.primitives();
+        // One buffer for each result, and one for the source graphic.
+        let pixels = area * (primitives.len() + 1) as f64;
+        if pixels > MAX_FILTER_PIXELS as f64 {
+            return Err(SvgError::FilterLimitExceeded {
+                budget: "pixels",
+                requested: pixels as u64,
+                limit: MAX_FILTER_PIXELS,
+            });
+        }
+        let (scale_x, scale_y) = to_canvas.get_scale();
+        for primitive in primitives {
+            self.work += area
+                * per_pixel_work(
+                    primitive.kind(),
+                    (f64::from(scale_x), f64::from(scale_y)),
+                    (width, height),
+                );
+        }
+        if self.work > MAX_FILTER_WORK as f64 {
+            return Err(SvgError::FilterLimitExceeded {
+                budget: "work",
+                requested: self.work as u64,
+                limit: MAX_FILTER_WORK,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Pixel operations `kind` spends on each pixel of a `layer` drawn at
+/// `scale` canvas pixels per unit.
+fn per_pixel_work(kind: &Kind, (scale_x, scale_y): (f64, f64), layer: (f64, f64)) -> f64 {
+    let work = match kind {
+        // Every pixel is compared with a kernel of twice the radius on a
+        // side, which resvg keeps within the layer.
+        Kind::Morphology(fe) => {
+            (2.0 * (f64::from(fe.radius_x().get()) * scale_x).ceil()).min(layer.0)
+                * (2.0 * (f64::from(fe.radius_y().get()) * scale_y).ceil()).min(layer.1)
+        }
+        Kind::ConvolveMatrix(fe) => {
+            f64::from(fe.matrix().columns()) * f64::from(fe.matrix().rows())
+        }
+        Kind::Turbulence(fe) => f64::from(fe.num_octaves()) * OCTAVE_WORK,
+        _ => 1.0,
+    };
+    work.max(1.0)
+}

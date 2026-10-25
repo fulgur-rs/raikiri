@@ -11,7 +11,7 @@ conformance.
 | Piece | Today |
 | --- | --- |
 | `raikiri-svg` | Parses a bounded SVG (32 MiB input, 1,000,000 XML nodes, depth 128, 1,000,000 nodes after `use` expansion) into a private `usvg` tree, prepares styles (`styled_source*`), and rasterizes with `resvg` under an output byte limit (32 MiB by default). No backend type is public. |
-| Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, every filter effect, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
+| Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, a filter that asks for more memory or time than the budgets of D4 allow, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
 | `<img src=*.svg>`, `background-image`, list markers, `content: url()` | `raikiri-net` keeps the SVG bytes and rasterizes lazily at the size paint asks for (1 pixel per CSS pixel of the drawn box), with a per-source LRU of sizes under a shared byte budget. Consumers receive `DecodedImage` pixels through `ImagePixelSource`. |
 | Inline `<svg>` | `Page::inline_svg(fragment)` returns the picture of the root as an `ImageContent`: a vector scene, or pixels where D4 and D6 call for them. The scene is built from the standalone source (viewport, root color, root font and descendant declarations resolved by the cascade) with the fonts of the page. `fulgur-raikiri` draws what it is given. The built-in painter in `raikiri-paint` does not use it and rasterizes the subtree with `raikiri-svg`. |
 
@@ -112,7 +112,7 @@ a length paints the color of its last stop, one whose transform cannot be
 inverted paints nothing, and a clip path is the union of its shapes filled by
 their own rules, intersected with the clip it is chained to.
 
-Not in the initial subset: `filter` (still rejected as an error, as today),
+Not in the initial subset: `filter` (drawn by the raster path, see D4),
 `mask`, `pattern`, `foreignObject`, animation (SMIL and CSS animations are
 ignored), scripting and `a` navigation (an inline `<svg>` link is handled by the
 page's link list, not by the scene), and nested SVG documents loaded by
@@ -121,10 +121,28 @@ page's link list, not by the scene), and nested SVG documents loaded by
 ### D4. Fallback
 
 When the builder meets something outside the vector subset that changes the
-picture (`mask`, `pattern`), it reports that the document cannot be vector. The
-caller then uses the existing raster path for that image, so the output is
-still correct, only resolution dependent. Filters stay an error for both
-paths, as today.
+picture (`filter`, `mask`, `pattern`), it reports that the document cannot be
+vector. The caller then uses the existing raster path for that image, so the
+output is still correct, only resolution dependent.
+
+A filter is drawn by `resvg` on that path, with every effect it implements. A
+document that uses one is never rejected for it, because one filtered image
+would otherwise fail the whole render. `resvg` gives a filter a layer as large
+as its region (up to five canvases on each side) and keeps the result of every
+primitive until the filter is done; a morphology, a convolution or turbulence
+also take time that grows with a number the document sets. The output byte
+limit bounds neither, so the raster path checks the parsed tree before it
+draws, with the transform it draws with, and fails with
+`SvgError::FilterLimitExceeded` over a budget: at most eight output-sized
+buffers held by one filter, and 2^32 pixel operations over all the filters of
+the picture. Filters met in masks, patterns and `feImage` count too. The limit
+is of the document, not of the filter syntax, so the same filter can pass at one
+raster scale and fail at a larger one. When the raster cannot draw a document
+that fell back to it, its error is the one reported, not the scene's.
+
+A document that holds both a filter and an `<image>` has no picture: only a
+scene draws images (the raster path fails with `SvgError::UnsupportedImages`)
+and only the raster path draws filters.
 
 The fallback is per image, not per element, so one picture never mixes two
 renderings. It is also visible: the page keeps a diagnostic with the reason,
@@ -414,8 +432,9 @@ Each step is mergeable alone and leaves rendering unchanged unless noted.
 
 ## 4. Out of scope
 
-Filters, masks and patterns in vector form, SVG animation, SVG fonts,
-`foreignObject`, interactive features, and SVG as the document root of a page.
+Filters, masks and patterns in vector form (the raster fallback draws them),
+SVG animation, SVG fonts, `foreignObject`, interactive features, and SVG as the
+document root of a page.
 Each can extend the vocabulary later; the types are `#[non_exhaustive]` for
 that reason.
 

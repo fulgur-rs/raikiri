@@ -1602,56 +1602,6 @@ fn rejects_doctypes_and_non_fragment_image_references() {
 }
 
 #[test]
-fn rejects_filter_effects_before_rasterization() {
-    let sources: &[&[u8]] = &[
-        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><filter id="f"><feFlood flood-color="red"/></filter></defs><rect width="1" height="1" filter="url(#f)"/></svg>"##,
-        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" style="filter: drop-shadow(0 0 1px red)"/></svg>"##,
-        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>rect { filter: url(#f) }</style><rect width="1" height="1"/></svg>"##,
-        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><filter id="f"><feFlood flood-color="red"/></filter></defs><x:style xmlns:x="urn:foreign">rect { filter: url(#f) }</x:style><rect width="1" height="1"/></svg>"##,
-        br##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1" height="1"><defs><filter id="f"><feFlood flood-color="red"/></filter></defs><rect width="1" height="1" xlink:filter="url(#f)"/></svg>"##,
-    ];
-
-    for source in sources {
-        assert!(
-            SvgDocument::parse(source).is_err(),
-            "filter-bearing SVG must be rejected before resvg can execute effects"
-        );
-    }
-
-    let filter_none = SvgDocument::parse(
-        br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" style="filter:none"/></svg>"#,
-    );
-    assert!(filter_none.is_ok(), "filter:none has no pixel effect");
-
-    let non_css_style = SvgDocument::parse(
-        br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style type="application/json">rect { filter:url(#f) }</style><rect width="1" height="1"/></svg>"#,
-    );
-    assert!(non_css_style.is_ok(), "non-CSS style data is not active");
-}
-
-#[test]
-fn allows_unused_filter_definitions() {
-    let svg = SvgDocument::parse(
-        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><filter id="unused"><feFlood flood-color="red"/></filter></defs><rect width="1" height="1" fill="blue"/></svg>"##,
-    );
-
-    assert!(
-        svg.is_ok(),
-        "an unreferenced filter definition has no effect"
-    );
-}
-
-#[test]
-fn parse_tree_rejects_active_filter_effects_for_every_parse_path() {
-    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><filter id="f"><feFlood flood-color="red"/></filter></defs><rect width="1" height="1" filter="url(#f)"/></svg>"##;
-
-    assert!(matches!(
-        super::parse_tree(source),
-        Err(SvgError::UnsupportedFilterEffects)
-    ));
-}
-
-#[test]
 fn rejects_output_above_the_caller_byte_limit() {
     let svg = SvgDocument::parse(HALF_RED_RECT).expect("valid SVG");
     let error = svg
@@ -1679,7 +1629,15 @@ fn svg_error_display_pins_each_variant() {
     assert!(format!("{}", SvgError::InvalidDocument("bad".to_string())).contains("bad"));
     assert!(!format!("{}", SvgError::UnsupportedDoctype).is_empty());
     assert!(!format!("{}", SvgError::ExternalReference).is_empty());
-    assert!(!format!("{}", SvgError::UnsupportedFilterEffects).is_empty());
+    assert_eq!(
+        SvgError::FilterLimitExceeded {
+            budget: "work",
+            requested: 9,
+            limit: 4,
+        }
+        .to_string(),
+        "SVG filters ask for 9 work, exceeding the limit of 4"
+    );
     assert!(!format!("{}", SvgError::InvalidViewport).is_empty());
     assert!(!format!("{}", SvgError::InvalidOpacity).is_empty());
     let msg = format!(
@@ -1857,7 +1815,7 @@ fn styled_source_rejects_external_resources_before_exporting_xml() {
 
 #[test]
 fn exported_css_reference_validation_is_bounded_and_preserves_literal_strings() {
-    use super::{MAX_FILTER_CSS_NESTING, reject_external_css_references};
+    use super::{MAX_CSS_NESTING, reject_external_css_references};
     reject_external_css_references(
         "rect{fill:url(#paint);font-family:'url(https://example.com/)'}",
     )
@@ -1868,8 +1826,8 @@ fn exported_css_reference_validation_is_bounded_and_preserves_literal_strings() 
     ));
     let nested = format!(
         "{}url(#paint){}",
-        "fn(".repeat(MAX_FILTER_CSS_NESTING),
-        ")".repeat(MAX_FILTER_CSS_NESTING)
+        "fn(".repeat(MAX_CSS_NESTING),
+        ")".repeat(MAX_CSS_NESTING)
     );
     assert!(matches!(
         reject_external_css_references(&nested),
@@ -3177,6 +3135,7 @@ fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_r
     }
 }
 
+mod filter_tests;
 mod image_access_tests;
 mod raster_scale_tests;
 mod selector_freeze_performance_tests;

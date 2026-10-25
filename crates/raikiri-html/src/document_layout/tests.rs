@@ -873,6 +873,26 @@ fn inline_svg_falls_back_to_pixels_for_a_mask_and_reports_an_invalid_document() 
 }
 
 #[test]
+fn inline_svg_with_a_filter_is_pixels_that_carry_the_blur() {
+    // One filtered SVG used to fail the picture, and with it the render.
+    let html = "<style>@page{size:200px 100px;margin:0}body{margin:0}</style>\
+        <svg width='100' height='60'><filter id='f'><feGaussianBlur stdDeviation='3'/></filter>\
+        <rect x='10' y='10' width='60' height='30' fill='red' filter='url(#f)'/></svg>";
+    with_first_page(html, LayoutOptions::new(), |page| {
+        let ImageContent::Raster(pixels) = svg_picture(page).unwrap().unwrap().content else {
+            panic!("a filter is drawn as pixels");
+        };
+        assert_eq!((pixels.width, pixels.height), (100, 60));
+        let alpha = |x: usize, y: usize| pixels.rgba[(y * 100 + x) * 4 + 3];
+        // The rectangle is 60 by 30 pixels; the blur adds a soft rim to it.
+        let shown = pixels.rgba.chunks_exact(4).filter(|p| p[3] > 0).count();
+        assert!(shown > 60 * 30 + 400, "{shown} visible pixels");
+        assert_eq!(alpha(40, 25), 255);
+        assert!(alpha(10, 25) > 0 && alpha(10, 25) < 255);
+    });
+}
+
+#[test]
 fn inline_svg_split_across_pages_is_built_once() {
     let document = dom(
         "<style>@page {size:200px 100px;margin:10px} body {margin:0} svg {display:block}</style><svg width='40' height='180'><rect width='40' height='180' fill='red'/></svg>",

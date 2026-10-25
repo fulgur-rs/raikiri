@@ -87,6 +87,8 @@ pub enum SvgSceneFeature {
     Pattern,
     /// A mask.
     Mask,
+    /// A filter effect.
+    Filter,
     /// A blend mode other than normal.
     BlendMode,
     /// An image that is not a raster picture of the scene's source, such as a
@@ -102,6 +104,7 @@ impl SvgSceneFeature {
         match self {
             Self::Pattern => "patterns",
             Self::Mask => "masks",
+            Self::Filter => "filter effects",
             Self::BlendMode => "blend modes",
             Self::Image => "nested images",
             Self::RootOpacity => "separating the root opacity",
@@ -695,7 +698,7 @@ impl<'a> Builder<'a> {
             return unsupported(SvgSceneFeature::Mask);
         }
         if !group.filters().is_empty() {
-            return Err(SvgError::UnsupportedFilterEffects.into());
+            return unsupported(SvgSceneFeature::Filter);
         }
         if group.blend_mode() != usvg::BlendMode::Normal {
             return unsupported(SvgSceneFeature::BlendMode);
