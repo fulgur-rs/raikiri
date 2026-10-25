@@ -236,3 +236,23 @@ fn family_names_counter_styles_and_spare_capacity_count() {
         8 * size_of::<RunningTemplate>() as u64
     );
 }
+
+#[test]
+fn background_lists_kept_whole_count_once_and_are_free_when_shared() {
+    use crate::property::{BackgroundRepeat, BackgroundRepeatKeyword};
+    let parent = ComputedValues::initial();
+    let mut values = parent.clone();
+    let repeat = BackgroundRepeat {
+        x: BackgroundRepeatKeyword::Round,
+        y: BackgroundRepeatKeyword::Space,
+    };
+    values.background_lists = Some(Arc::new(ComputedBackgroundLists {
+        repeat: Some(Arc::from([repeat; 3])),
+        ..Default::default()
+    }));
+    assert_eq!(
+        own_heap_bytes(&values, &parent),
+        (size_of::<ComputedBackgroundLists>() + 3 * size_of::<BackgroundRepeat>()) as u64
+    );
+    assert_eq!(own_heap_bytes(&values, &values.clone()), 0);
+}
