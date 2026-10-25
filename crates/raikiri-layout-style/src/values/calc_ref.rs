@@ -1,31 +1,33 @@
 //! The reference a `calc()` length holds to its payload.
-//!
-//! This module is the one place of the crate that dereferences a payload.
-
-#![allow(unsafe_code)]
 
 use crate::AlignedCalc;
-use std::ptr::NonNull;
+use crate::calc_slab::lookup;
 use std::sync::Arc;
 
 /// A reference to the payload of a `calc()` length.
 ///
 /// The reference is `Copy` and carries no lifetime: lengths are copied around
-/// freely, and the payload they refer to is owned elsewhere. What keeps it
-/// valid is a contract on the owner, which this type cannot check:
+/// freely, and the payload they refer to is owned elsewhere. It names the
+/// payload by a handle that is checked on every use, so it can never reach
+/// freed memory:
 ///
-/// - A reference is made only from a payload that is alive and aligned: one
-///   that a getter of this crate reads, or one that the adapter retains in an
-///   [`Arc`] and passes to [`CalcRef::retained`]. No caller can build one from
-///   a raw pointer, so a null or dangling handle cannot be resolved through
-///   safe code.
-/// - The owner of the payload must stay alive for as long as any copy of the
-///   reference is resolved. The adapter that supplies the payloads retains
-///   every one of them for the lifetime of its session, before a getter can
-///   publish a reference to it.
+/// - While the payload is alive, [`CalcRef::resolve`] resolves it.
+/// - Once the last owner of the payload has dropped it, the reference is
+///   stale. A stale reference resolves to `0.0` and has no percentage. It does
+///   not resolve a payload that took over the storage: each reuse of a slot
+///   changes the generation the handle carries, so a stale reference is
+///   recognized until its slot has been reused 2^29 times (2^8 on 32-bit
+///   targets), and freed slots are reused in the order they were freed.
 ///
-/// A length that a getter returned must therefore not be resolved after the
-/// owner of the payload it was read from has been dropped.
+/// A reference is made only from a payload: one that a getter of this crate
+/// reads, or one that the adapter passes to [`CalcRef::retained`]. No caller
+/// can build one from a raw pointer, so a null or dangling handle cannot be
+/// made through safe code, and resolving a handle never dereferences it.
+///
+/// A length that a getter returned therefore stays safe to copy and resolve
+/// after the owner of the payload it was read from has been dropped, but it
+/// no longer resolves to the expression; keep the owner alive for as long as
+/// the length is used to get its value.
 ///
 /// ```compile_fail,E0624
 /// use raikiri_layout_style::{AlignedCalc, values::CalcRef};
@@ -41,20 +43,19 @@ use std::sync::Arc;
 /// let _ = Dimension::calc(std::ptr::null());
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CalcRef(NonNull<AlignedCalc>);
+pub struct CalcRef(usize);
 
 impl CalcRef {
     /// A reference to `payload`.
     #[inline]
     pub(crate) fn new(payload: &AlignedCalc) -> Self {
-        Self(NonNull::from(payload))
+        Self(payload.handle())
     }
 
     /// A reference to the payload that `owner` retains.
     ///
-    /// The reference does not keep the payload alive: the caller must retain
-    /// `owner`, or a clone of it, for as long as the reference, or a length made
-    /// from it, can be resolved.
+    /// The reference does not keep the payload alive: it resolves for as long
+    /// as `owner`, or a clone of it, is retained, and is stale afterwards.
     #[inline]
     pub fn retained(owner: &Arc<AlignedCalc>) -> Self {
         Self::new(owner)
@@ -62,62 +63,71 @@ impl CalcRef {
 
     /// The reference whose handle is `handle`.
     ///
-    /// The handle must have been made by [`Self::handle`]; the lengths of this
-    /// crate keep it in the layout library's representation.
+    /// Any handle is accepted: one that names no live payload gives a stale
+    /// reference.
     #[inline]
     pub(crate) fn from_handle(handle: *const ()) -> Self {
-        Self(NonNull::new(handle.cast_mut().cast()).expect("a calc handle is never null"))
+        Self(handle.addr())
     }
 
     /// The handle of the payload, in the form the layout library keeps.
+    ///
+    /// The handle is an opaque word, not an address: it cannot be dereferenced,
+    /// and [`resolve_projected_calc`] resolves it.
+    #[doc(hidden)]
     #[inline]
-    pub(crate) fn handle(self) -> *const () {
-        self.0.as_ptr().cast_const().cast()
+    pub fn handle(self) -> *const () {
+        std::ptr::without_provenance(self.0)
     }
 
-    /// The address of the payload, which identifies it.
+    /// The word that identifies the payload.
     #[inline]
     pub(crate) fn addr(self) -> usize {
-        self.handle().addr()
-    }
-
-    #[inline]
-    fn payload(&self) -> &AlignedCalc {
-        // SAFETY: A reference is made from a live payload, and its owner keeps
-        // the payload alive while the reference is resolved (see the type
-        // documentation). The payload is never mutated.
-        unsafe { self.0.as_ref() }
+        self.0
     }
 
     /// The payload resolved against the percentage `basis`, with its range
-    /// applied.
+    /// applied; `0.0` for a stale reference.
     #[inline]
     pub fn resolve(self, basis: f32) -> f32 {
-        self.payload().resolve(basis)
+        lookup(self.0).map_or(0.0, |payload| payload.resolve(basis))
     }
 
-    /// Whether the payload has a percentage term, which needs a basis to resolve.
+    /// Whether the payload has a percentage term, which needs a basis to
+    /// resolve; `false` for a stale reference.
     #[inline]
     pub fn has_percentage(self) -> bool {
-        self.payload().expression().percent != 0.0
+        lookup(self.0).is_some_and(|payload| payload.has_percentage())
+    }
+
+    /// Whether the payload is still alive, so that the reference resolves to
+    /// its expression.
+    #[inline]
+    pub fn is_live(self) -> bool {
+        lookup(self.0).is_some()
     }
 }
 
 /// Resolve the calc handle that the layout library hands back from a length
 /// of the projection.
 ///
-/// This is the one way into a payload from a raw pointer, for the library's
-/// callback that resolves the lengths of a style it was given.
-///
-/// # Safety
-/// `handle` must be a calc handle of a length that a getter of this crate
-/// returned, and the owner of its payload must be alive.
-///
-/// ```compile_fail,E0133
-/// use raikiri_layout_style::resolve_projected_calc;
-/// let _ = resolve_projected_calc(std::ptr::null(), 0.0);
-/// ```
+/// This is the entry for the library's callback that resolves the lengths of
+/// a style it was given. Any handle is accepted: one that names no live
+/// payload, because its payload was dropped or because it was never issued,
+/// resolves to `0.0`.
 #[inline]
-pub unsafe fn resolve_projected_calc(handle: *const (), basis: f32) -> f32 {
+pub fn resolve_projected_calc(handle: *const (), basis: f32) -> f32 {
     CalcRef::from_handle(handle).resolve(basis)
+}
+
+/// Whether `handle`, which the layout library handed back from a length of the
+/// projection, names a payload that is still alive.
+///
+/// An adapter that keeps the owners of its payloads for as long as the layout
+/// library holds their handles can assert this where it resolves them:
+/// [`resolve_projected_calc`] answers `0.0` for a handle that names nothing,
+/// and a dropped owner would otherwise go unnoticed.
+#[inline]
+pub fn projected_calc_is_live(handle: *const ()) -> bool {
+    CalcRef::from_handle(handle).is_live()
 }

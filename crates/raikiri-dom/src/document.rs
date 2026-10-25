@@ -1387,7 +1387,7 @@ impl Document {
     ///
     /// Copied styles pass through the same foreign calc sanitization as
     /// `append_element`, so the target never takes ownership of the source
-    /// arena's calc pointers. The layout bridge rebuilds owned calc handles
+    /// arena's calc handles. The layout bridge rebuilds owned calc handles
     /// from computed values before the next layout pass.
     pub fn replace_children_from(
         &mut self,

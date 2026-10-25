@@ -3,6 +3,7 @@
 mod block;
 mod box_style;
 mod calc;
+mod calc_slab;
 mod context;
 mod core;
 pub use core::preferred_aspect_ratio;
@@ -23,7 +24,7 @@ pub use overrides::*;
 pub use prepared::*;
 pub use projection::{Areas, GridRepetition, LineNames, TemplateTracks, Tracks};
 pub use projection::{LeafStyle, TaffyStyle, ToTaffy};
-pub use values::resolve_projected_calc;
+pub use values::{projected_calc_is_live, resolve_projected_calc};
 pub use view::*;
 
 #[cfg(test)]

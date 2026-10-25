@@ -18,7 +18,7 @@ pub struct LengthValue<'a> {
 pub enum OverrideError {
     /// A preparation-only source is not a physical override target.
     PreparationOnly,
-    /// A computed calc needs an aligned payload rather than an inline expression.
+    /// A computed calc needs a payload rather than an inline expression.
     UnpreparedCalc,
     /// The payload uses another property's range.
     WrongRange,

@@ -454,7 +454,7 @@ fn apply_computed_to_style_in_session_inner(
         }
         *slot = settled;
         // The owners of the limits' payloads stay with the document before
-        // any raw pointer to them is published.
+        // any handle to them is published.
         doc.document.box_style_data.calc_values.extend(calc_values);
         if is_contents {
             let key = doc.nodes.box_key(idx).expect("source node has a box key");

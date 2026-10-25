@@ -138,7 +138,10 @@ fn calc_respects_property_range() {
         (positive.resolve(0.0), positive.resolve(100.0)),
         (0.0, 15.0)
     );
-    assert!(std::mem::align_of::<AlignedCalc>() >= 8);
+    // The layout library keeps the handle with its low three bits clear.
+    assert_eq!(signed.handle() & 0b111, 0);
+    assert_ne!(signed.handle(), 0);
+    assert_ne!(signed.handle(), positive.handle());
 }
 
 #[test]
