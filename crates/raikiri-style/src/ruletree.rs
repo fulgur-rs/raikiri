@@ -722,21 +722,16 @@ impl RuleTree {
                             registration.origin,
                             layer,
                             *important,
-                            if color.0.is_some() {
-                                crate::cascade::rollback::Rollback::None
-                            } else {
-                                crate::cascade::rollback::Rollback::Layer
-                            },
+                            color.rollback(),
                         ))
                     },
                 )?;
-                registrations[winner].1.rule.1.0.map(|color| {
-                    (
-                        name.to_owned(),
-                        color,
-                        registrations[winner].1.rule.1.1.clone(),
-                    )
-                })
+                match &registrations[winner].1.rule.1 {
+                    HighlightColor::Paint(color, source) => {
+                        Some((name.to_owned(), *color, source.clone()))
+                    }
+                    _ => None,
+                }
             })
             .collect();
         let custom_highlight_styles = winning_highlights
@@ -2035,9 +2030,41 @@ fn parse_qualified_prelude<'i>(
     .map_err(|_| input.new_custom_error(()))
 }
 
-/// A missing paint requests layer rollback.
+/// What a `::highlight()` rule says about the background paint of its name.
 #[derive(Clone)]
-struct HighlightColor(Option<CssColor>, Option<smol_str::SmolStr>);
+enum HighlightColor {
+    /// A background color, with the expression that depends on the highlighted
+    /// text's foreground when there is one.
+    Paint(CssColor, Option<smol_str::SmolStr>),
+    /// No paint, which still replaces the paint of earlier declarations and of
+    /// lower layers. A highlight has no parent paint to inherit, so `inherit`
+    /// gives the initial value as well.
+    Unpainted,
+    /// `revert-layer`: the rule hands the paint back to the layers below it.
+    RevertLayer,
+    /// `revert`: the rule hands the paint back to the origins below it.
+    Revert,
+}
+
+impl HighlightColor {
+    fn rollback(&self) -> crate::cascade::rollback::Rollback {
+        use crate::cascade::rollback::Rollback;
+        match self {
+            Self::Paint(..) | Self::Unpainted => Rollback::None,
+            Self::RevertLayer => Rollback::Layer,
+            Self::Revert => Rollback::Origin,
+        }
+    }
+
+    fn from_keyword(keyword: crate::property::CssWideKeyword) -> Self {
+        use crate::property::CssWideKeyword;
+        match keyword {
+            CssWideKeyword::RevertLayer => Self::RevertLayer,
+            CssWideKeyword::Revert => Self::Revert,
+            _ => Self::Unpainted,
+        }
+    }
+}
 
 fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColor, bool)> {
     declarations
@@ -2047,7 +2074,7 @@ fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColo
             PropertyValue::BackgroundColor(color) => Some((
                 declaration.important,
                 index,
-                HighlightColor(Some(*color), None),
+                HighlightColor::Paint(*color, None),
             )),
             PropertyValue::ContextualColor(value)
                 if value.key == crate::property::PropertyKey::BackgroundColor =>
@@ -2057,21 +2084,24 @@ fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColo
                 Some((
                     declaration.important,
                     index,
-                    HighlightColor(Some(color), Some(value.source.clone())),
+                    HighlightColor::Paint(color, Some(value.source.clone())),
                 ))
             }
             PropertyValue::Deferred(value)
-                if value.key == crate::property::PropertyKey::BackgroundColor
-                    && matches!(
-                        value.css_wide_keyword(),
-                        Some(crate::property::CssWideKeyword::RevertLayer)
-                    ) =>
+                if value.key == crate::property::PropertyKey::BackgroundColor =>
             {
-                Some((declaration.important, index, HighlightColor(None, None)))
+                let keyword = value.css_wide_keyword()?;
+                Some((
+                    declaration.important,
+                    index,
+                    HighlightColor::from_keyword(keyword),
+                ))
             }
-            PropertyValue::All(crate::property::CssWideKeyword::RevertLayer) => {
-                Some((declaration.important, index, HighlightColor(None, None)))
-            }
+            PropertyValue::All(keyword) => Some((
+                declaration.important,
+                index,
+                HighlightColor::from_keyword(*keyword),
+            )),
             _ => None,
         })
         .max_by_key(|(important, index, _)| (*important, *index))
