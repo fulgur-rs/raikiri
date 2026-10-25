@@ -897,8 +897,12 @@ fn paint_page_background_image(
         Some(PropertyValue::BackgroundSize(sizes)) => Some(&**sizes),
         _ => None,
     };
-    let positions = match page_property(cascade, PropertyKey::BackgroundPosition) {
-        Some(PropertyValue::BackgroundPosition(positions)) => Some(&**positions),
+    let position_xs = match page_property(cascade, PropertyKey::BackgroundPositionX) {
+        Some(PropertyValue::BackgroundPositionX(offsets)) => Some(&**offsets),
+        _ => None,
+    };
+    let position_ys = match page_property(cascade, PropertyKey::BackgroundPositionY) {
+        Some(PropertyValue::BackgroundPositionY(offsets)) => Some(&**offsets),
         _ => None,
     };
     let repeats = match page_property(cascade, PropertyKey::BackgroundRepeat) {
@@ -928,18 +932,12 @@ fn paint_page_background_image(
                 &resolve_context,
             )
         });
-        layer.position = positions.map_or(initial_layer.position, |positions| {
-            resolve_css_position(
-                page_layer_item(
-                    Some(positions),
-                    index,
-                    BackgroundLayerSpec::initial().position,
-                ),
-                page_font_size,
-                None,
-                &resolve_context,
-            )
-        });
+        // Each axis keeps a list of its own, so a shorter one repeats
+        // independently of the other.
+        let mut position = BackgroundLayerSpec::initial().position;
+        position.horizontal = page_layer_item(position_xs, index, position.horizontal);
+        position.vertical = page_layer_item(position_ys, index, position.vertical);
+        layer.position = resolve_css_position(position, page_font_size, None, &resolve_context);
         layer.repeat = page_layer_item(repeats, index, initial_layer.repeat);
         layer.origin = page_layer_item(origins, index, initial_layer.origin);
         layer.attachment = page_layer_item(attachments, index, initial_layer.attachment);
