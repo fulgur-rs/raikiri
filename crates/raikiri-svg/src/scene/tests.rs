@@ -3,6 +3,7 @@ use crate::{SvgElementStyle, SvgRootFont};
 use raikiri_traits::vector::Node;
 use resvg::tiny_skia;
 
+mod image_tests;
 mod text_tests;
 
 const VIEWPORT: SvgViewport = SvgViewport {
@@ -269,6 +270,7 @@ fn draw_group(pixmap: &mut tiny_skia::Pixmap, group: &Group, parent: tiny_skia::
             Node::Group(group) => draw_group(target, group, transform),
             Node::Path(path) => draw_path(target, path, transform),
             Node::Text(run) => text_tests::draw_text(target, run, transform),
+            Node::Image(picture) => image_tests::draw_image(target, picture, transform),
             _ => unreachable!(),
         }
     }
@@ -1100,7 +1102,7 @@ fn unused_definitions_do_not_force_the_fallback() {
 }
 
 /// A tree as the parser alone builds it. A document would not hand some of
-/// these over: it rejects filters, and it resolves no image reference.
+/// these over: it rejects filters, and it asks no source for a picture.
 fn raw_tree(body: &str) -> usvg::Tree {
     usvg::Tree::from_str(
         &format!(
@@ -1115,6 +1117,7 @@ fn scene_of(tree: &usvg::Tree, host_opacity: f32) -> Result<VectorImage, SvgScen
     scene_from_tree(
         tree,
         &FaceMap::default(),
+        &ImageMap::default(),
         VIEWPORT,
         host_opacity,
         SceneLimits::default(),
@@ -1222,7 +1225,7 @@ fn a_hidden_root_keeps_an_empty_scene_where_a_visible_one_is_rejected() {
 // ── Limits and invalid requests ─────────────────────────────
 
 fn limited(document: &SvgDocument, limits: SceneLimits) -> Result<VectorImage, SvgSceneError> {
-    document.build_scene(VIEWPORT, style(1.0), None, limits, None)
+    document.build_scene(VIEWPORT, style(1.0), None, limits, SvgResources::new())
 }
 
 #[test]

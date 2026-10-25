@@ -55,7 +55,7 @@ pub struct VectorImage {
 pub enum Node {
     Group(Group),
     Path(Path),
-    Image(RasterNode),
+    Image(RasterImage),
     Text(TextRun),
 }
 
@@ -83,6 +83,11 @@ Rules of the boundary:
   resolved by the builder.
 - The scene never refers to files, URLs or fonts by name. Raster content is
   carried as decoded pixels, and glyphs carry the font data they need (see D9).
+  A picture (`RasterImage`) is the shared decoded pixels plus whether scaling
+  smooths them. It covers `(0, 0)` to `(width, height)` of the group that
+  holds it, one pixel per unit, and that group's transform sizes and places
+  it, including the clip of `preserveAspectRatio`. The pixels are shared with
+  the page's image cache and not counted in the heap size of the scene.
 - Nothing in the scene depends on the consumer's output format. Krilla-specific
   decisions (tiling patterns, shading functions, tagged content) stay in
   `fulgur-raikiri`.
@@ -254,18 +259,48 @@ governs HTML text.
 The sandbox that governs HTML governs inline SVG: the same `NetworkProvider`,
 the same base directory, the same denial of anything outside it.
 
-Today every `<image>` with a URL is rejected. This contract relaxes that in two
-steps and no further:
+`raikiri-svg` opens no file and no connection and decodes no raster format.
+What an `<image>` may reference is a decision of the host, made when the
+document is parsed (`SvgImageAccess`): `None` (the default of `parse`) allows
+fragment references only, `Data` also allows `data:` URLs, and `Any` also
+allows URLs, which an `xml:base` would send elsewhere, so a document with one
+is rejected under `Any`. A reference outside the access is an error of the
+document, as every reference was before.
 
-- Inline `<svg>` may reference raster images by URL. Every request goes through
-  the page's provider and counts against the page's resource limits. External
-  `use` targets, `@import` and fonts named by the SVG's own CSS stay rejected.
+- Inline `<svg>` may reference raster images by URL. The picture comes from an
+  `SvgImageSource` that the caller passes in `SvgResources`. In `raikiri-html`
+  that is `RenderResources::svg_images(base_url)`, which asks the same code
+  that serves the images of the HTML around it: the URL is resolved against
+  the document's base, checked by the resource policy, fetched through the
+  page's provider under its response and aggregate byte limits (redirects
+  included, each hop checked), and decoded under the per-image and cache
+  limits. A `data:` URL goes through the checks of every inline image: the
+  policy's scheme and MIME rules, the response limit and the aggregate budget,
+  then the decode. A picture that fails any of them is left out of the scene
+  and reported as a warning, like a broken image in HTML. External `use`
+  targets, `@import` and fonts named by the SVG's own CSS stay rejected.
+- A picture is a raster image. An SVG document is never a picture of an SVG,
+  however it is named, so one SVG cannot lead to another or back to itself and
+  there is no cycle to detect. The parser's `data:` SVG images never reach the
+  source either.
+- The requests are bounded. One scene asks for at most 256 different sources
+  (a repeated URL or `data:` payload counts once) and its pictures hold at
+  most 32 MiB of pixels together; the source stops asking once either limit is
+  over, because the scene is an error by then. One source makes at most 256
+  requests, `data:` pictures included, and requests each URL once for all the
+  scenes built with it.
 - An SVG loaded as an image is in static mode, as in browsers: it loads nothing
-  by itself. Fragment references and `data:` raster images inside it work;
-  everything else keeps today's rejection.
-- A `data:` URL never recurses into another SVG document.
+  by itself. Fragment references and `data:` raster images inside it work
+  (`Data` access); everything else keeps today's rejection.
 - The existing parse limits stay as they are. This contract adds none that
   weakens them.
+
+A document that has pictures cannot be drawn by the raster path or exported as
+prepared source: both refuse it (`UnsupportedImages`, `ExternalReference`), so
+a consumer that does not draw scenes can never be handed a reference it would
+resolve on its own. `Page::inline_svg` and the SVG used as an image keep parsing
+with `None` access for now; each moves to `Any` and `Data` together with the
+scene consumer that draws its pictures.
 
 ### D11. Budgets
 
@@ -281,7 +316,8 @@ tuned when the builder exists:
 | Glyphs in one scene | 1,000,000 |
 | Stops in one gradient | 1,024 |
 | Gradient stops in one scene | 1,000,000 |
-| Raster pixels carried in one scene | within the existing per-image output limit |
+| Different pictures one scene asks for | 256 |
+| Pixel bytes the pictures of one scene hold | 32 MiB, the output limit of the raster path |
 
 Exceeding a limit is an error for that image (it does not fall back, because
 the raster path would exceed its own limit too). The cost of a scene is charged
@@ -312,7 +348,10 @@ Each step is mergeable alone and leaves rendering unchanged unless noted.
 2. Gradients, clips and opacity.
 3. Text, fonts and CSS: font collection input, glyph runs, the inline `<svg>`
    cascade inputs.
-4. External resources through the network provider for inline SVG.
+4. External resources through the network provider for inline SVG: the
+   access modes, the picture node, the source trait and the page's source
+   (`RenderSvgImages`). Wiring them into `Page::inline_svg` and into SVG used
+   as an image follows with the scene consumers (steps 5 and 7).
 5. `fulgur-raikiri` draws scenes with Krilla.
 6. The mode switch: `--raikiri-svg-rendering`, the library default and the
    raster scale; the default flips to vector here, once step 5 exists.

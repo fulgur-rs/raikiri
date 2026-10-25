@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::image::DecodedImage;
 
 fn black() -> Paint {
     Paint::Color(PaintColor::new(0.0, 0.0, 0.0, 1.0))
@@ -212,4 +213,25 @@ fn a_text_run_starts_unpainted_and_smoothed() {
     assert_eq!(run.paint_order, PaintOrder::FillThenStroke);
     assert!(run.anti_alias);
     assert!(format!("{:?}", glyph(&face(b"abc"))).contains("byte_len: 3"));
+}
+
+#[test]
+fn a_picture_counts_as_one_node_and_shares_its_pixels() {
+    let pixels = Arc::new(DecodedImage {
+        width: 64,
+        height: 64,
+        rgba: vec![255; 64 * 64 * 4],
+    });
+    let empty = VectorImage::new((10.0, 10.0));
+    let mut image = VectorImage::new((10.0, 10.0));
+    let picture = RasterImage::new(pixels.clone());
+    assert!(picture.smooth);
+    image.root.children.push(Node::Image(picture.clone()));
+    image.root.children.push(Node::Image(picture));
+    assert_eq!(image.node_count(), 3);
+    // Only the nodes are charged: the pixels belong to the image cache that
+    // decoded them, which two nodes of one picture share.
+    assert!(image.estimated_heap_bytes() >= empty.estimated_heap_bytes());
+    assert!(image.estimated_heap_bytes() < empty.estimated_heap_bytes() + 64 * 1024);
+    assert_eq!(Arc::strong_count(&pixels), 3);
 }

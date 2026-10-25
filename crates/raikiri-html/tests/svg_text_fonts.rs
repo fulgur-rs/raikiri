@@ -2,8 +2,8 @@
 
 use raikiri_html::{FontCollectionBuilder, RenderFonts};
 use raikiri_svg::{
-    SvgDocument, SvgFontFamily, SvgFontRequest, SvgFontSource, SvgFontStyle, SvgRootStyle,
-    SvgViewport,
+    SvgDocument, SvgFontFamily, SvgFontRequest, SvgFontSource, SvgFontStyle, SvgResources,
+    SvgRootStyle, SvgViewport,
 };
 use raikiri_traits::vector::{Group, Node, TextRun, VectorImage};
 
@@ -30,7 +30,12 @@ fn scene(body: &str, fonts: &RenderFonts) -> VectorImage {
         format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">{body}</svg>"##);
     SvgDocument::parse(source.as_bytes())
         .unwrap()
-        .scene_with_fonts(VIEWPORT, SvgRootStyle::default(), None, fonts)
+        .scene_with_resources(
+            VIEWPORT,
+            SvgRootStyle::default(),
+            None,
+            SvgResources::new().with_fonts(fonts),
+        )
         .unwrap()
 }
 

@@ -6,9 +6,12 @@
 //! references that could read local files, issue requests, or recursively load
 //! data URLs are rejected.
 //!
-//! The crate bundles no fonts. Text is drawn only by
-//! [`SvgDocument::scene_with_fonts`], in the faces of the [`SvgFontSource`]
-//! it is given; the raster path leaves text out.
+//! The crate bundles no fonts and decodes no pictures. Text and `<image>`
+//! elements are drawn only by [`SvgDocument::scene_with_resources`], in the
+//! faces of the [`SvgFontSource`] and with the pictures of the
+//! [`SvgImageSource`] it is given; the raster path leaves text out and does
+//! not accept a document with pictures. A document may carry `<image>`
+//! references only when it is parsed with [`SvgDocument::parse_with_images`].
 
 use raikiri_traits::DecodedImage;
 use std::cell::Cell;
@@ -16,9 +19,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
 mod fonts;
+mod images;
 mod scene;
 
 pub use fonts::{SvgFontFamily, SvgFontRequest, SvgFontSource, SvgFontStyle};
+pub use images::{SvgImageAccess, SvgImageSource};
 pub use scene::{SvgSceneError, SvgSceneFeature, SvgSceneLimit};
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
@@ -143,6 +148,36 @@ struct SourceRootStyle<'a> {
     elements: &'a [SvgElementStyle<'a>],
 }
 
+/// The sources a vector scene draws on beyond the document: the fonts of its
+/// text and the pictures of its `<image>` elements.
+///
+/// Without a source the matching content is left out, as a broken picture or
+/// a font nobody has leaves it out of HTML.
+#[derive(Clone, Copy, Default)]
+pub struct SvgResources<'a> {
+    fonts: Option<&'a dyn SvgFontSource>,
+    images: Option<&'a dyn SvgImageSource>,
+}
+
+impl<'a> SvgResources<'a> {
+    /// No sources: no text and no pictures.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets text in the faces of `fonts`.
+    pub fn with_fonts(mut self, fonts: &'a dyn SvgFontSource) -> Self {
+        self.fonts = Some(fonts);
+        self
+    }
+
+    /// Draws `<image>` elements with the pictures of `images`.
+    pub fn with_images(mut self, images: &'a dyn SvgImageSource) -> Self {
+        self.images = Some(images);
+        self
+    }
+}
+
 /// SVG parsing, viewport, or allocation failure.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -183,6 +218,9 @@ pub enum SvgError {
     UnsupportedDoctype,
     /// An SVG resource reference would access a resource outside this file.
     ExternalReference,
+    /// The document has `<image>` references, which only a vector scene
+    /// draws. The raster path would leave them out of the picture.
+    UnsupportedImages,
     /// Filter effects are outside the supported static SVG subset.
     UnsupportedFilterEffects,
     /// The requested viewport is zero, negative, non-finite, or out of range.
@@ -231,6 +269,9 @@ impl std::fmt::Display for SvgError {
             Self::ExternalReference => {
                 f.write_str("SVG resource references outside the document are disabled")
             }
+            Self::UnsupportedImages => {
+                f.write_str("SVG images are drawn by vector scenes only, not by the raster path")
+            }
             Self::UnsupportedFilterEffects => {
                 f.write_str("SVG filter effects are outside the supported subset")
             }
@@ -257,12 +298,30 @@ pub struct SvgDocument {
     intrinsic: SvgIntrinsicSize,
     has_view_box: bool,
     root_has_color: bool,
+    /// Whether the document has `<image>` references beyond fragments.
+    has_images: bool,
 }
 
 impl SvgDocument {
     /// Parses and validates a UTF-8 SVG document within fixed input-byte,
     /// XML-node, use-expansion, and element-depth limits.
+    ///
+    /// Every `<image>` reference that is not a fragment is rejected; see
+    /// [`Self::parse_with_images`] to allow some.
     pub fn parse(data: &[u8]) -> Result<Self, SvgError> {
+        Self::parse_with_images(data, SvgImageAccess::None)
+    }
+
+    /// Like [`Self::parse`], allowing the `<image>` references that `access`
+    /// names. Any other reference is rejected with
+    /// [`SvgError::ExternalReference`], so a host that allows nothing but
+    /// `data:` URLs is never asked for a URL.
+    ///
+    /// The pictures are drawn by [`Self::scene_with_resources`] only. The raster path and
+    /// the prepared source of [`Self::styled_source`] reject a document that
+    /// has them, with [`SvgError::UnsupportedImages`] and
+    /// [`SvgError::ExternalReference`].
+    pub fn parse_with_images(data: &[u8], access: SvgImageAccess) -> Result<Self, SvgError> {
         if data.len() as u64 > MAX_INITIAL_PARSE_XML_BYTES {
             return Err(SvgError::InputLimitExceeded {
                 bytes: data.len() as u64,
@@ -301,7 +360,7 @@ impl SvgDocument {
                 "document root is not an SVG element".to_owned(),
             ));
         }
-        reject_external_image_references(root)?;
+        let has_images = check_image_references(root, access)?;
         reject_filter_effects(root)?;
 
         let intrinsic = intrinsic_size(root);
@@ -329,6 +388,7 @@ impl SvgDocument {
             intrinsic,
             has_view_box,
             root_has_color,
+            has_images,
         })
     }
 
@@ -634,6 +694,9 @@ impl SvgDocument {
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity);
         }
+        if self.has_images {
+            return Err(SvgError::UnsupportedImages);
+        }
 
         let (width, height, byte_len) = checked_output_size(viewport, max_output_bytes)?;
         let viewport = if css_pixel_scale {
@@ -716,19 +779,20 @@ impl SvgDocument {
         prepared: Option<String>,
     ) -> Result<Option<usvg::Tree>, SvgError> {
         Ok(self
-            .prepared_tree_with_fonts(viewport, root_style, prepared, None)?
-            .map(|(tree, _)| tree))
+            .prepared_tree_with(viewport, root_style, prepared, SvgResources::new(), 0)?
+            .map(|parsed| parsed.tree))
     }
 
-    /// Like [`Self::prepared_tree`], drawing text in the faces of `fonts`
-    /// when there are any. The map says which face each glyph is taken from.
-    fn prepared_tree_with_fonts(
+    /// Like [`Self::prepared_tree`], drawing text in the faces and pictures
+    /// of `resources`. The pictures may hold `image_bytes` of pixels together.
+    fn prepared_tree_with(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
         prepared: Option<String>,
-        fonts: Option<&dyn SvgFontSource>,
-    ) -> Result<Option<(usvg::Tree, fonts::FaceMap)>, SvgError> {
+        resources: SvgResources<'_>,
+        image_bytes: usize,
+    ) -> Result<Option<ParsedTree>, SvgError> {
         let source = match prepared {
             Some(source) => source,
             None => self.prepare_source(
@@ -741,13 +805,22 @@ impl SvgDocument {
                 false,
             )?,
         };
-        // The tree of the document itself was parsed without fonts, so text
-        // needs a parse of its own even when preparing changed nothing.
-        if let Some(fonts) = fonts.filter(|_| may_have_text(&source)) {
-            return parse_tree_with_fonts(&source, fonts).map(Some);
+        // The tree of the document itself was parsed without fonts or
+        // pictures, so text and pictures need a parse of their own even when
+        // preparing changed nothing.
+        let sets_text = resources.fonts.is_some() && may_have_text(&source);
+        let draws_images = resources.images.is_some() && self.has_images;
+        if sets_text || draws_images {
+            return parse_tree_with_resources(&source, resources, image_bytes).map(Some);
         }
         (source != self.source)
-            .then(|| parse_tree(&source).map(|tree| (tree, fonts::FaceMap::default())))
+            .then(|| {
+                parse_tree(&source).map(|tree| ParsedTree {
+                    tree,
+                    faces: fonts::FaceMap::default(),
+                    images: images::ImageMap::default(),
+                })
+            })
             .transpose()
     }
 }
@@ -780,29 +853,60 @@ fn resolved_source_style<'a>(
 }
 
 fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {
-    parse_tree_with(source, usvg::FontResolver::default())
+    parse_tree_with(source, usvg::FontResolver::default(), no_images())
 }
 
-/// Parses `source` with text drawn in the faces of `fonts`. The map says
-/// which face each glyph of the tree is taken from.
-fn parse_tree_with_fonts(
+/// An image resolver that finds no picture, so the parser opens no file and
+/// makes no request.
+fn no_images<'a>() -> usvg::ImageHrefResolver<'a> {
+    usvg::ImageHrefResolver {
+        resolve_data: Box::new(|_, _, _| None),
+        resolve_string: Box::new(|_, _| None),
+    }
+}
+
+/// A parsed tree with the sources of its text and pictures.
+struct ParsedTree {
+    tree: usvg::Tree,
+    /// Which face each glyph of the tree is taken from.
+    faces: fonts::FaceMap,
+    /// The pixels behind each picture node.
+    images: images::ImageMap,
+}
+
+/// Parses `source` with text drawn in the faces of `resources.fonts` and
+/// pictures taken from `resources.images`, which may hold `image_bytes` of
+/// pixels together.
+fn parse_tree_with_resources(
     source: &str,
-    fonts: &dyn SvgFontSource,
-) -> Result<(usvg::Tree, fonts::FaceMap), SvgError> {
-    let faces = fonts::Faces::new(fonts);
-    let tree = parse_tree_with(source, faces.resolver())?;
-    Ok((tree, faces.into_map()))
+    resources: SvgResources<'_>,
+    image_bytes: usize,
+) -> Result<ParsedTree, SvgError> {
+    let faces = resources.fonts.map(fonts::Faces::new);
+    let images = resources
+        .images
+        .map(|source| images::Images::new(source, image_bytes));
+    let font_resolver = faces
+        .as_ref()
+        .map_or_else(usvg::FontResolver::default, fonts::Faces::resolver);
+    let image_resolver = images
+        .as_ref()
+        .map_or_else(no_images, images::Images::resolver);
+    let tree = parse_tree_with(source, font_resolver, image_resolver)?;
+    Ok(ParsedTree {
+        tree,
+        faces: faces.map(fonts::Faces::into_map).unwrap_or_default(),
+        images: images.map(images::Images::into_map).unwrap_or_default(),
+    })
 }
 
 fn parse_tree_with(
     source: &str,
     font_resolver: usvg::FontResolver<'_>,
+    image_href_resolver: usvg::ImageHrefResolver<'_>,
 ) -> Result<usvg::Tree, SvgError> {
     let options = usvg::Options {
-        image_href_resolver: usvg::ImageHrefResolver {
-            resolve_data: Box::new(|_, _, _| None),
-            resolve_string: Box::new(|_, _| None),
-        },
+        image_href_resolver,
         font_resolver,
         ..usvg::Options::default()
     };
@@ -2126,8 +2230,23 @@ fn doctype_declaration_start(source: &str) -> Option<usize> {
     None
 }
 
-fn reject_external_image_references(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
+/// Rejects the `<image>` references that `access` does not allow, and says
+/// whether any other than a fragment remains.
+fn check_image_references(
+    root: roxmltree::Node<'_, '_>,
+    access: SvgImageAccess,
+) -> Result<bool, SvgError> {
+    let mut has_images = false;
     for node in root.descendants().filter(|node| node.is_element()) {
+        // The source resolves every URL against the page, so a base of the
+        // document's own would send a request to a place the page never named.
+        if access == SvgImageAccess::Any
+            && node
+                .attribute((XML_NAMESPACE, "base"))
+                .is_some_and(|base| !base.trim().is_empty())
+        {
+            return Err(SvgError::ExternalReference);
+        }
         if node.tag_name().name() != "image"
             || node
                 .tag_name()
@@ -2137,14 +2256,31 @@ fn reject_external_image_references(root: roxmltree::Node<'_, '_>) -> Result<(),
             continue;
         }
 
-        let href = node
+        let Some(href) = node
             .attribute("href")
-            .or_else(|| node.attribute((XLINK_NAMESPACE, "href")));
-        if href.is_some_and(|href| !href.trim().starts_with('#')) {
+            .or_else(|| node.attribute((XLINK_NAMESPACE, "href")))
+            .map(str::trim)
+            .filter(|href| !href.starts_with('#'))
+        else {
+            continue;
+        };
+        let allowed = match access {
+            SvgImageAccess::None => false,
+            SvgImageAccess::Data => is_data_url(href),
+            SvgImageAccess::Any => true,
+        };
+        if !allowed {
             return Err(SvgError::ExternalReference);
         }
+        has_images = true;
     }
-    Ok(())
+    Ok(has_images)
+}
+
+/// Whether `href` is a `data:` URL, whose scheme is case-insensitive.
+fn is_data_url(href: &str) -> bool {
+    href.get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
 }
 
 fn reject_exported_external_references(source: &str) -> Result<(), SvgError> {

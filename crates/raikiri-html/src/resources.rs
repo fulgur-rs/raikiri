@@ -29,6 +29,7 @@ use crate::{HtmlDocument, ParseOptions};
 mod decode;
 mod image_cache;
 mod network;
+mod svg_images;
 
 use decode::{
     BackgroundImageDecodeError, decode_background_raster, default_background_raster_size,
@@ -40,6 +41,7 @@ use image_cache::{
     ProcessDecodeGuard, ProcessImageBudget,
 };
 pub(crate) use network::{NetworkFontFaceLoader, ResourceNetworkProvider};
+pub use svg_images::RenderSvgImages;
 
 /// Default maximum response size accepted through [`RenderResources`].
 pub const DEFAULT_MAX_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
@@ -1001,34 +1003,63 @@ impl<'a> RenderResources<'a> {
                 }
                 None
             }
-            Err(BackgroundImageDecodeError::DecodedTooLarge { limit, actual }) => {
-                Some(RenderWarning {
-                    kind: WarningKind::ResourceLimitExceeded {
-                        kind: ResourceKind::Image,
-                        limit,
-                        actual,
-                    },
-                    node_id: None,
-                    details:
-                        "decoded CSS background image exceeded its per-image or cache byte limit"
-                            .into(),
-                })
-            }
-            Err(BackgroundImageDecodeError::Decode) => {
+            Err(error) => Some(self.decode_failure_warning(&url, error, start)),
+        }
+    }
+
+    /// The warning that explains an image whose decode failed with `error`,
+    /// or that was too slow to decode. `start` is when its decode began.
+    fn decode_failure_warning(
+        &self,
+        url: &Url,
+        error: BackgroundImageDecodeError,
+        start: Instant,
+    ) -> RenderWarning {
+        match error {
+            BackgroundImageDecodeError::DecodedTooLarge { limit, actual } => RenderWarning {
+                kind: WarningKind::ResourceLimitExceeded {
+                    kind: ResourceKind::Image,
+                    limit,
+                    actual,
+                },
+                node_id: None,
+                details: "decoded CSS background image exceeded its per-image or cache byte limit"
+                    .into(),
+            },
+            BackgroundImageDecodeError::Decode => {
                 if self.decode_timed_out(start.elapsed()) {
-                    return Some(self.timeout_warning(&url));
+                    return self.timeout_warning(url);
                 }
-                Some(RenderWarning {
+                RenderWarning {
                     kind: WarningKind::ResourceFallback {
                         kind: ResourceKind::Image,
-                        url: Some(redacted_url(&url)),
+                        url: Some(redacted_url(url)),
                     },
                     node_id: None,
                     details: "CSS background image could not be decoded; the image was skipped"
                         .into(),
-                })
+                }
             }
         }
+    }
+
+    /// Decode one raster image of at most `output_limit` decoded bytes,
+    /// returning the (boxed, as warnings are large) warning that explains an
+    /// image that is skipped. `start` is when its decode began, for the
+    /// decode timeout. Nothing is cached.
+    fn decode_raster_image(
+        &self,
+        url: &Url,
+        bytes: &[u8],
+        start: Instant,
+        output_limit: u64,
+    ) -> Result<Arc<DecodedImage>, Box<RenderWarning>> {
+        let image = decode_background_raster(bytes, output_limit)
+            .map_err(|error| Box::new(self.decode_failure_warning(url, error, start)))?;
+        if self.decode_timed_out(start.elapsed()) {
+            return Err(Box::new(self.timeout_warning(url)));
+        }
+        Ok(Arc::new(image))
     }
 
     /// Decode the payload of one inline `data:` background image, pushing a

@@ -4,6 +4,7 @@
 use super::*;
 use crate::SvgFontFamily;
 use crate::SvgFontRequest;
+use crate::SvgFontSource;
 use crate::SvgFontStyle;
 use raikiri_traits::vector::{FontFace, FontVariation, TextRun};
 use skrifa::instance::{LocationRef, Size};
@@ -25,7 +26,7 @@ fn face(bytes: &'static [u8]) -> FontFace {
 
 /// Answers every request with one face and every fallback with another, and
 /// writes down what it was asked.
-struct Fonts {
+pub(super) struct Fonts {
     primary: Option<FontFace>,
     fallback: Option<FontFace>,
     selected: Mutex<Vec<SvgFontRequest>>,
@@ -35,7 +36,7 @@ struct Fonts {
 }
 
 impl Fonts {
-    fn ahem() -> Self {
+    pub(super) fn ahem() -> Self {
         Self {
             primary: Some(face(AHEM)),
             fallback: None,
@@ -45,7 +46,7 @@ impl Fonts {
         }
     }
 
-    fn none() -> Self {
+    pub(super) fn none() -> Self {
         Self {
             primary: None,
             ..Self::ahem()
@@ -77,7 +78,12 @@ impl SvgFontSource for Fonts {
 
 fn scene_with(document: &SvgDocument, fonts: &Fonts) -> VectorImage {
     document
-        .scene_with_fonts(VIEWPORT, style(1.0), None, fonts)
+        .scene_with_resources(
+            VIEWPORT,
+            style(1.0),
+            None,
+            SvgResources::new().with_fonts(fonts),
+        )
         .unwrap()
 }
 
@@ -526,7 +532,12 @@ fn a_pattern_fill_on_text_keeps_the_document_on_the_raster() {
             <text x="2" y="12" font-family="Ahem" font-size="8" fill="url(#p)">A</text>"##,
     );
     let error = document
-        .scene_with_fonts(VIEWPORT, style(1.0), None, &Fonts::ahem())
+        .scene_with_resources(
+            VIEWPORT,
+            style(1.0),
+            None,
+            SvgResources::new().with_fonts(&Fonts::ahem()),
+        )
         .unwrap_err();
     assert!(matches!(
         error,
@@ -569,7 +580,12 @@ fn root_font_styles_reach_text_like_they_reach_the_raster() {
     };
     let fonts = Fonts::ahem();
     let scene = document
-        .scene_with_fonts(VIEWPORT, style(1.0), Some(resolved), &fonts)
+        .scene_with_resources(
+            VIEWPORT,
+            style(1.0),
+            Some(resolved),
+            SvgResources::new().with_fonts(&fonts),
+        )
         .unwrap();
     let run = &runs(&scene.root)[0];
     assert_eq!(run.font_size, 8.0);
@@ -696,7 +712,13 @@ fn glyphs_are_a_budget_of_the_scene() {
             glyphs,
             ..SceneLimits::default()
         };
-        document.build_scene(VIEWPORT, style(1.0), None, limits, Some(&fonts))
+        document.build_scene(
+            VIEWPORT,
+            style(1.0),
+            None,
+            limits,
+            SvgResources::new().with_fonts(&fonts),
+        )
     };
     assert!(at(10).is_ok());
     let error = at(9).unwrap_err();
@@ -724,7 +746,13 @@ fn each_run_and_decoration_counts_as_a_node() {
         ..SceneLimits::default()
     };
     assert!(matches!(
-        document.build_scene(VIEWPORT, style(1.0), None, limits, Some(&fonts)),
+        document.build_scene(
+            VIEWPORT,
+            style(1.0),
+            None,
+            limits,
+            SvgResources::new().with_fonts(&fonts),
+        ),
         Err(SvgSceneError::LimitExceeded {
             limit: SvgSceneLimit::Nodes,
             ..
@@ -738,7 +766,12 @@ fn text_under_host_opacity_leaves_the_opacity_to_the_host() {
         document(r##"<text x="2" y="12" font-family="Ahem" font-size="8" fill="#000">AB</text>"##);
     let fonts = Fonts::ahem();
     let half = document
-        .scene_with_fonts(VIEWPORT, style(0.5), None, &fonts)
+        .scene_with_resources(
+            VIEWPORT,
+            style(0.5),
+            None,
+            SvgResources::new().with_fonts(&fonts),
+        )
         .unwrap();
     assert_eq!(half, scene_with(&document, &fonts));
 }
