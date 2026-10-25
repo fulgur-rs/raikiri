@@ -17,7 +17,7 @@ image          = { workspace = true }
 raikiri-svg    = { workspace = true }
 html5ever      = { workspace = true }
 markup5ever    = { workspace = true }
-roxmltree      = { workspace = true }
+xml5ever       = { workspace = true }
 rustc-hash     = { workspace = true }
 smol_str       = { workspace = true }
 url            = { workspace = true }

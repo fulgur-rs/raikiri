@@ -274,7 +274,7 @@ dependencies = [
  "blitz-dom",
  "blitz-traits",
  "html5ever 0.39.0",
- "xml5ever",
+ "xml5ever 0.39.0",
 ]
 
 [[package]]
@@ -2658,12 +2658,12 @@ dependencies = [
  "raikiri-style",
  "raikiri-svg",
  "raikiri-traits",
- "roxmltree 0.21.1",
  "rustc-hash",
  "shodo",
  "smol_str",
  "unicode-script",
  "url",
+ "xml5ever 0.40.0",
 ]
 
 [[package]]
@@ -4659,6 +4659,16 @@ checksum = "5ab627f34ff61b80d756180d556f9c68801d836d271b3b8c094504ceca69d221"
 dependencies = [
  "log",
  "markup5ever 0.39.0",
+]
+
+[[package]]
+name = "xml5ever"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73290529dc9bc6c6155bf77fdd70ce0061f98ad387586aa3104cddab29206961"
+dependencies = [
+ "log",
+ "markup5ever 0.40.0",
 ]
 
 [[package]]

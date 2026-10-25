@@ -239,6 +239,9 @@ pub enum LimitKind {
     Pages,
     /// Exceeded `max_dom_nodes`.
     DomNodes,
+    /// Exceeded the element nesting depth that `raikiri_html::parse_xhtml`
+    /// accepts.
+    DomDepth,
     /// Exceeded `max_target_slots`.
     TargetSlots,
     /// Exceeded `max_layout_buffer_entries`.

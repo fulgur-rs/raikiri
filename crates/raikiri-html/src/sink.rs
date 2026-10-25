@@ -71,6 +71,15 @@ pub struct RaikiriTreeSink {
     /// element keeps a tag repeated throughout the input from adding a
     /// warning each time.
     root_attributes_reported: RefCell<Vec<usize>>,
+    /// Deepest element nesting accepted, counted from `create_element` and
+    /// `pop` calls (`None` = unchecked). Only a tree builder that pops every
+    /// element it creates, such as xml5ever's, may set it.
+    max_open_depth: Option<u32>,
+    /// Elements created and not yet popped.
+    open_depth: Cell<u32>,
+    /// First open depth over `max_open_depth`, shared with the parser driver
+    /// so it can stop reading at the next input chunk boundary.
+    open_depth_limit_exceeded: Rc<Cell<Option<u64>>>,
 }
 
 impl RaikiriTreeSink {
@@ -117,7 +126,21 @@ impl RaikiriTreeSink {
             pending_text: RefCell::new(None),
             root_attributes_frozen: Cell::new(false),
             root_attributes_reported: RefCell::new(Vec::new()),
+            max_open_depth: None,
+            open_depth: Cell::new(0),
+            open_depth_limit_exceeded: Rc::new(Cell::new(None)),
         }
+    }
+
+    /// Stops accepting elements nested deeper than `limit`: the first element
+    /// that is, sets the signal from [`Self::open_depth_limit_signal`].
+    pub(crate) fn with_open_depth_limit(mut self, limit: u32) -> Self {
+        self.max_open_depth = Some(limit);
+        self
+    }
+
+    pub(crate) fn open_depth_limit_signal(&self) -> Rc<Cell<Option<u64>>> {
+        Rc::clone(&self.open_depth_limit_exceeded)
     }
 
     pub(crate) fn dom_node_limit_signal(&self) -> Rc<Cell<Option<u64>>> {
@@ -393,6 +416,13 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> usize {
+        if let Some(limit) = self.max_open_depth {
+            let depth = self.open_depth.get().saturating_add(1);
+            self.open_depth.set(depth);
+            if depth > limit && self.open_depth_limit_exceeded.get().is_none() {
+                self.open_depth_limit_exceeded.set(Some(u64::from(depth)));
+            }
+        }
         let idx = self.make_element(name, attrs);
         if self.dom_node_limit_exceeded.get().is_some() {
             return idx;
@@ -491,6 +521,12 @@ impl TreeSink for RaikiriTreeSink {
         _system_id: StrTendril,
     ) {
         // Do not create a doctype node yet; a separate callback reports quirks_mode.
+    }
+
+    fn pop(&self, _node: &usize) {
+        if self.max_open_depth.is_some() {
+            self.open_depth.set(self.open_depth.get().saturating_sub(1));
+        }
     }
 
     fn get_template_contents(&self, target: &usize) -> usize {
