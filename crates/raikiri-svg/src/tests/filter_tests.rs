@@ -394,6 +394,22 @@ fn a_wrapped_convolution_pays_for_the_steps_that_bring_a_coordinate_back() {
 }
 
 #[test]
+fn a_long_run_of_primitives_that_name_an_early_result_is_bounded() {
+    // resvg looks a named result up from the last one, so each of these
+    // primitives walks back over all that came before it, on a single pixel.
+    let chain = |count: usize| {
+        let offsets = "<feOffset in='first'/>".repeat(count);
+        format!(
+            "<filter id='f' filterUnits='userSpaceOnUse' x='0' y='0' width='1' height='1'>\
+             <feFlood result='first'/>{offsets}</filter>\
+             <rect width='1' height='1' filter='url(#f)'/>"
+        )
+    };
+    rasterize(&document(1, 1, &chain(100)), 1, 1).unwrap();
+    assert_over_the_work_budget(1, &chain(50_000));
+}
+
+#[test]
 fn a_document_with_a_filter_and_a_picture_has_no_picture() {
     // Only a scene draws pictures and only the raster draws filters.
     let source = format!(
