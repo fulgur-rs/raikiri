@@ -188,6 +188,19 @@ fn a_primitive_whose_time_grows_with_a_number_of_the_document_is_bounded() {
             "<feTurbulence baseFrequency='0.05' numOctaves='100000000'/>",
         ),
     );
+    // A merge composites every one of its inputs over the result.
+    let merge = format!(
+        "<feMerge>{}</feMerge>",
+        "<feMergeNode in='SourceGraphic'/>".repeat(5000)
+    );
+    assert_over_the_work_budget(1000, &filtered(1000, &merge));
+    // A region smaller than a pixel is still drawn as a whole pixel.
+    assert_over_the_work_budget(
+        100,
+        "<filter id='f' filterUnits='userSpaceOnUse' x='0' y='0' width='0.001' height='0.001'>\
+         <feTurbulence baseFrequency='0.05' numOctaves='1000000000'/></filter>\
+         <rect width='100' height='100' filter='url(#f)'/>",
+    );
     // A convolution multiplies each pixel with every cell of its matrix.
     let matrix = vec!["1"; 60 * 60].join(" ");
     assert_over_the_work_budget(
@@ -286,4 +299,20 @@ fn a_document_with_a_filter_and_a_picture_has_no_picture() {
         svg.rasterize(viewport, SvgRootStyle::default(), None),
         Err(SvgError::UnsupportedImages)
     ));
+}
+
+#[test]
+fn a_pattern_tile_is_drawn_at_the_scale_of_its_own_transform() {
+    let pattern = |transform: &str| {
+        format!(
+            "<filter id='f'><feMorphology operator='dilate' radius='3'/></filter>\
+             <pattern id='p' width='10' height='10' patternUnits='userSpaceOnUse' {transform}>\
+             <rect width='10' height='10' filter='url(#f)'/></pattern>\
+             <rect width='300' height='300' fill='url(#p)'/>"
+        )
+    };
+    // Three pixels of radius over a tile of ten.
+    rasterize(&document(300, 300, &pattern("")), 300, 300).unwrap();
+    // A hundred times the scale makes the radius three hundred pixels.
+    assert_over_the_work_budget(300, &pattern("patternTransform='scale(100)'"));
 }

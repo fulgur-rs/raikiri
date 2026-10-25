@@ -11,6 +11,7 @@
 
 use crate::{DEFAULT_MAX_OUTPUT_BYTES, SvgError, SvgFilterBudget};
 use usvg::filter::{Filter, Kind};
+use usvg::{Fill, Stroke};
 
 /// Most pixels one filter may hold at once: eight output-sized buffers.
 const MAX_FILTER_PIXELS: u64 = 8 * (DEFAULT_MAX_OUTPUT_BYTES / 4);
@@ -48,25 +49,55 @@ impl Meter {
     fn group(&mut self, group: &usvg::Group, base: usvg::Transform) -> Result<(), SvgError> {
         for node in group.children() {
             let to_canvas = base.pre_concat(node.abs_transform());
-            if let usvg::Node::Group(inner) = node {
-                for filter in inner.filters() {
-                    self.filter(filter, to_canvas)?;
+            match node {
+                usvg::Node::Group(inner) => {
+                    for filter in inner.filters() {
+                        self.filter(filter, to_canvas)?;
+                    }
+                    self.group(inner, base)?;
+                    // Clip paths, masks and the pictures of `feImage` hold
+                    // nodes of their own, placed by the group that refers to
+                    // them.
+                    let mut failed = None;
+                    node.subroots(|root| {
+                        if let Err(error) = self.group(root, to_canvas) {
+                            failed.get_or_insert(error);
+                        }
+                    });
+                    failed.map_or(Ok(()), Err)?;
                 }
-                self.group(inner, base)?;
-            }
-            // Masks, patterns and the pictures of `feImage` hold nodes of
-            // their own, placed by the node that refers to them.
-            let mut failed = None;
-            node.subroots(|root| {
-                if let Err(error) = self.group(root, to_canvas) {
-                    failed.get_or_insert(error);
+                usvg::Node::Path(path) => {
+                    let paints = [
+                        path.fill().map(Fill::paint),
+                        path.stroke().map(Stroke::paint),
+                    ];
+                    for paint in paints.into_iter().flatten() {
+                        if let usvg::Paint::Pattern(pattern) = paint {
+                            self.pattern(pattern, to_canvas)?;
+                        }
+                    }
                 }
-            });
-            if let Some(error) = failed {
-                return Err(error);
+                // resvg draws the glyphs of a text as the paths it flattens to.
+                usvg::Node::Text(text) => self.group(text.flattened(), base)?,
+                usvg::Node::Image(_) => {}
             }
         }
         Ok(())
+    }
+
+    /// Charges the filters in the tile of `pattern`, which resvg draws at the
+    /// scale that the pattern's own transform gives it, and at no other part
+    /// of the transform.
+    fn pattern(
+        &mut self,
+        pattern: &usvg::Pattern,
+        to_canvas: usvg::Transform,
+    ) -> Result<(), SvgError> {
+        let (scale_x, scale_y) = to_canvas.pre_concat(pattern.transform()).get_scale();
+        self.group(
+            pattern.root(),
+            usvg::Transform::from_scale(scale_x, scale_y),
+        )
     }
 
     fn filter(&mut self, filter: &Filter, to_canvas: usvg::Transform) -> Result<(), SvgError> {
@@ -74,9 +105,14 @@ impl Meter {
             .rect()
             .transform(to_canvas)
             .map_or((0.0, 0.0), |region| {
+                // resvg rounds the region out to whole pixels, and to at least one.
                 (
-                    f64::from(region.width()).min(LAYER_CANVASES * self.canvas.0),
-                    f64::from(region.height()).min(LAYER_CANVASES * self.canvas.1),
+                    f64::from(region.width())
+                        .ceil()
+                        .clamp(1.0, LAYER_CANVASES * self.canvas.0),
+                    f64::from(region.height())
+                        .ceil()
+                        .clamp(1.0, LAYER_CANVASES * self.canvas.1),
                 )
             });
         let area = width * height;
@@ -124,6 +160,8 @@ fn per_pixel_work(kind: &Kind, (scale_x, scale_y): (f64, f64), layer: (f64, f64)
             f64::from(fe.matrix().columns()) * f64::from(fe.matrix().rows())
         }
         Kind::Turbulence(fe) => f64::from(fe.num_octaves()) * OCTAVE_WORK,
+        // Every input is converted and composited over the result.
+        Kind::Merge(fe) => fe.inputs().len() as f64,
         _ => 1.0,
     };
     work.max(1.0)
