@@ -11,7 +11,7 @@ use super::{
     is_monolithic_for_pagination_with_transposed_axes, page_applies_to_box, page_break_is_forced,
     page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    selected_page_name,
+    selected_page_name, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -36,6 +36,9 @@ pub(super) struct ElementContext {
     pub(super) is_grid_item: bool,
     pub(super) is_named: bool,
     pub(super) deferred_named_break_after: bool,
+    /// How far below the border-box top the line of a paragraph of one line
+    /// of generated text ends: the box is kept whole by that line.
+    pub(super) unplaced_line_end: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +108,11 @@ impl BoxContext {
     pub(super) fn is_grid_item(self) -> bool {
         self.element_attributes()
             .is_some_and(|attributes| attributes.is_grid_item)
+    }
+
+    pub(super) fn unplaced_line_end(self) -> Option<f32> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.unplaced_line_end)
     }
 
     pub(super) fn is_named(self) -> bool {
@@ -741,11 +749,27 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // follow it. Tables and flex containers keep their own
                 // item-level candidates.
                 let is_block_flow_box = is_block_level_flow_box(document.nodes[node_id].display());
+                // The one line of generated text of a block is placed by no
+                // text candidate, so the block moves whole instead. Content
+                // placed by the rules of a float, an out-of-flow box, or a
+                // flex, grid or table keeps them, and so does a document
+                // paginated on transposed axes, whose lines do not run
+                // along y.
+                let unplaced_line_end = (!inside_float
+                    && !inside_out_of_flow
+                    && !inside_flex
+                    && !inside_table
+                    && !flex_item_candidate
+                    && !grid_item_candidate
+                    && !is_rendered_leaf
+                    && !document.context.pagination_on_transposed_axes)
+                    .then(|| unplaced_line_end(document, cascade, node_id))
+                    .flatten();
                 let avoids_break = matches!(
                     computed.break_inside,
                     raikiri_style::property::BreakInside::Avoid
                         | raikiri_style::property::BreakInside::AvoidPage
-                );
+                ) || unplaced_line_end.is_some();
                 let clears_float = !inline_level
                     && is_block_flow_box
                     && [FloatValue::Left, FloatValue::Right]
@@ -821,6 +845,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_grid_item: grid_item_candidate,
                                 is_named: own_page_name.is_some(),
                                 deferred_named_break_after,
+                                unplaced_line_end,
                             },
                         ),
                         page_name: page_name_to_owned(page_name),

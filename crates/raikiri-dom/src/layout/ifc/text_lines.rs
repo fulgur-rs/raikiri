@@ -2,7 +2,7 @@
 
 use crate::Document;
 use crate::layout::LayoutError;
-use crate::node::NodeFlags;
+use crate::node::{NodeData, NodeFlags};
 use raikiri_traits::NodeKind;
 use shodo::Fragment;
 use std::collections::{HashMap, HashSet};
@@ -63,16 +63,74 @@ pub(crate) fn glyph_owners(line: &shodo::Line) -> Vec<usize> {
     owners
 }
 
+/// Whether `owner`, the node a glyph run comes from, is a text node of an ifc
+/// paragraph: the only kind of node that owns lines. The glyphs of generated
+/// content come from nodes that are not.
+fn is_text_line_owner(doc: &Document, owner: usize) -> bool {
+    doc.nodes.get(owner).is_some_and(|candidate| {
+        candidate.kind() == NodeKind::Text
+            && candidate
+                .flags
+                .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
+    })
+}
+
+/// Whether `owner`, the node a glyph run comes from, is a text node that
+/// pagination places lines through. White space alone is never a page
+/// candidate, so a line it holds the only glyphs of is placed by no text.
+fn is_placing_text_owner(doc: &Document, owner: usize) -> bool {
+    is_text_line_owner(doc, owner)
+        && matches!(
+            &doc.nodes[owner].data,
+            NodeData::Text(text) if !text.text_content.trim().is_empty()
+        )
+}
+
+/// The line of the paragraph rooted at `root` when the paragraph is a single
+/// line of generated text that no text node places: the line of an empty list
+/// item holding only its inside marker, or of `::before` or `::after` text
+/// alone.
+///
+/// Pagination places the lines of a paragraph through the text nodes that own
+/// them, and generated text belongs to none, so a line like this one is never
+/// placed by itself and a page edge would cut it in two. A line whose only
+/// real text is white space is such a line: the white space of an unclosed
+/// `<li>` before the next one is a text node, but never a page candidate. A
+/// line of atomic inlines alone holds no text at all and is not covered.
+pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<IfcTextLine> {
+    let ifc = doc.ifc_layout_node(root)?.ifc.as_ref()?;
+    // The lines of a multicol container sit in its columns, not at the offset
+    // the paragraph lays them out at.
+    if ifc.multicol_fragments.is_some() {
+        return None;
+    }
+    let lines = ifc.lines.as_ref()?;
+    let [line] = lines.lines.as_slice() else {
+        return None;
+    };
+    let owners = glyph_owners(line);
+    // The ids of generated text name no node of the document.
+    let has_generated_text = owners.iter().any(|&owner| doc.nodes.get(owner).is_none());
+    if !has_generated_text
+        || owners
+            .iter()
+            .any(|&owner| is_placing_text_owner(doc, owner))
+    {
+        return None;
+    }
+    let top = lines.line_top(0);
+    Some(IfcTextLine {
+        line: 0,
+        top,
+        bottom: top + line.block_size(),
+    })
+}
+
 /// The lines `node` has a glyph run on. A line is owned by every text node
 /// one of its glyph runs comes from, so a line shared by two text nodes
 /// belongs to both, and a line of atomic boxes only belongs to none.
 pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
-    let candidate = doc.nodes.get(node)?;
-    if !candidate
-        .flags
-        .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
-        || candidate.kind() != NodeKind::Text
-    {
+    if !is_text_line_owner(doc, node) {
         return None;
     }
     let root_id = root_of(doc, node)?;
@@ -138,14 +196,7 @@ impl Document {
             };
             for owner in glyph_owners(line) {
                 check()?;
-                let Some(candidate) = self.nodes.get(owner) else {
-                    continue;
-                };
-                if candidate.kind() != NodeKind::Text
-                    || !candidate
-                        .flags
-                        .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
-                {
+                if !is_text_line_owner(self, owner) {
                     continue;
                 }
                 let entry = by_node.entry(owner).or_insert_with(|| IfcTextLines {
@@ -178,14 +229,7 @@ impl TextLineIndex {
         node: usize,
         check: impl FnMut() -> Result<(), LayoutError>,
     ) -> Result<(), LayoutError> {
-        let Some(candidate) = doc.nodes.get(node) else {
-            return Ok(());
-        };
-        if candidate.kind() != NodeKind::Text
-            || !candidate
-                .flags
-                .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
-        {
+        if !is_text_line_owner(doc, node) {
             return Ok(());
         }
         let Some(root) = root_of(doc, node) else {
