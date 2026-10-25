@@ -1658,7 +1658,7 @@ impl Document {
         base_url: Option<&url::Url>,
     ) {
         for raw in urls {
-            let size = margin_box_image_url(raw, base_url)
+            let size = crate::image_url::authored_image_url(raw, base_url)
                 .and_then(|url| source.intrinsic_size(&url))
                 .map(|intrinsic| crate::document::content_image_size(intrinsic, None))
                 .filter(|size| {
@@ -1686,21 +1686,6 @@ impl Document {
     pub fn margin_box_image_size(&self, url: &str) -> Option<raikiri_traits::ImageRasterSize> {
         self.margin_box_images.get(url).copied()
     }
-}
-
-/// The absolute URL an image of a margin box's `content` names, without its
-/// fragment, which is how the image is fetched. An empty or fragment-only URL
-/// names no external image.
-fn margin_box_image_url(raw: &str, base_url: Option<&url::Url>) -> Option<url::Url> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
-        return None;
-    }
-    let mut url = url::Url::parse(raw)
-        .ok()
-        .or_else(|| base_url.and_then(|base| base.join(raw).ok()))?;
-    url.set_fragment(None);
-    Some(url)
 }
 
 fn margin_box_text_width(
