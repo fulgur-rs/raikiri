@@ -182,32 +182,269 @@ fn a_keyword_height_in_a_box_with_a_keyword_height_ignores_its_own_bottom_inset(
 }
 
 #[test]
-fn an_auto_margin_on_the_side_of_the_kept_inset_leaves_the_box_stretched() {
+fn an_auto_margin_takes_the_free_space_between_the_insets_of_a_box_sized_by_its_content() {
     let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content";
-    // The margin takes the free space of the box, which needs both insets.
-    for margin in ["margin-top:auto", "margin:auto 0"] {
+    for (margin, y) in [
+        ("margin-top:auto", 80.0),
+        ("margin-bottom:auto", 0.0),
+        ("margin:auto 0", 40.0),
+        ("margin-top:auto;margin-bottom:7px", 73.0),
+        ("margin-top:auto;margin-bottom:7px;margin-left:3px", 73.0),
+    ] {
+        let x = if margin.contains("margin-left") {
+            3.0
+        } else {
+            0.0
+        };
         assert_eq!(
             block_box(CONTAINING_BLOCK, &format!("{child};{margin}")),
-            (0.0, 0.0, 50.0, 100.0),
+            (x, y, 50.0, 20.0),
             "{margin}"
         );
     }
-    // The margin on the side of the ignored inset does not.
+    // Every content keyword is the height of the content.
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        assert_eq!(
+            block_box(
+                CONTAINING_BLOCK,
+                &format!(
+                    "position:absolute;top:0;bottom:0;left:0;width:50px;height:{keyword};\
+                     margin-top:auto"
+                ),
+            ),
+            (0.0, 80.0, 50.0, 20.0),
+            "height:{keyword}"
+        );
+    }
+}
+
+#[test]
+fn an_auto_margin_is_solved_against_the_area_between_the_insets() {
+    let child = "position:absolute;top:10px;bottom:15px;left:0;width:50px;height:max-content";
+    // The area between the insets is 75px tall.
+    assert_eq!(
+        block_box(CONTAINING_BLOCK, &format!("{child};margin-top:auto")),
+        (0.0, 65.0, 50.0, 20.0)
+    );
     assert_eq!(
         block_box(CONTAINING_BLOCK, &format!("{child};margin-bottom:auto")),
-        (0.0, 0.0, 50.0, 20.0)
-    );
-    // The inline axis of the containing block starts at the bottom, so the
-    // kept inset and the margin that matters are the bottom ones.
-    let rtl = format!("{CONTAINING_BLOCK};writing-mode:vertical-rl;direction:rtl");
-    assert_eq!(
-        block_box(&rtl, &format!("{child};margin-top:auto")),
-        (0.0, 80.0, 50.0, 20.0)
+        (0.0, 10.0, 50.0, 20.0)
     );
     assert_eq!(
-        block_box(&rtl, &format!("{child};margin-bottom:auto")),
+        block_box(CONTAINING_BLOCK, &format!("{child};margin:auto 0")),
+        (0.0, 37.5, 50.0, 20.0)
+    );
+}
+
+#[test]
+fn an_auto_margin_leaves_a_box_without_a_keyword_height_alone() {
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px";
+    // An `auto` height still fills the insets, and a length is a size of its own.
+    assert_eq!(
+        block_box(CONTAINING_BLOCK, &format!("{child};margin-top:auto")),
         (0.0, 0.0, 50.0, 100.0)
     );
+    assert_eq!(
+        block_box(
+            CONTAINING_BLOCK,
+            &format!("{child};height:20px;margin-top:auto")
+        ),
+        (0.0, 80.0, 50.0, 20.0)
+    );
+}
+
+#[test]
+fn an_auto_margin_of_a_box_sized_by_its_content_takes_the_free_space_left_by_its_limits() {
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content";
+    for (limits, height) in [
+        ("min-height:30px", 30.0),
+        ("max-height:10px", 10.0),
+        ("box-sizing:border-box;padding:3px 0;border:2px solid", 30.0),
+    ] {
+        for (margin, y) in [
+            ("margin-top:auto", 100.0 - height),
+            ("margin-bottom:auto", 0.0),
+            ("margin:auto 0", (100.0 - height) / 2.0),
+        ] {
+            assert_eq!(
+                block_box(CONTAINING_BLOCK, &format!("{child};{limits};{margin}")),
+                (0.0, y, 50.0, height),
+                "{limits}; {margin}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_auto_margin_takes_the_free_space_whatever_the_alignment_of_the_vertical_axis() {
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content";
+    // `align-self` is the vertical axis of a horizontal containing block and
+    // `justify-self` that of a vertical one.
+    for (root_css, property) in [
+        (CONTAINING_BLOCK.to_string(), "align-self"),
+        (
+            format!("{CONTAINING_BLOCK};writing-mode:vertical-rl"),
+            "justify-self",
+        ),
+    ] {
+        for alignment in [
+            "normal",
+            "stretch",
+            "start",
+            "baseline",
+            "center",
+            "end",
+            "flex-end",
+            "last baseline",
+        ] {
+            for (margin, y) in [
+                ("margin-top:auto", 80.0),
+                ("margin-bottom:auto", 0.0),
+                ("margin:auto 0", 40.0),
+            ] {
+                assert_eq!(
+                    block_box(
+                        &root_css,
+                        &format!("{child};{property}:{alignment};{margin}")
+                    ),
+                    (0.0, y, 50.0, 20.0),
+                    "{root_css}; {property}:{alignment}; {margin}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_auto_margin_of_a_box_taller_than_the_insets_takes_the_negative_free_space() {
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content;\
+                 min-height:120px";
+    // The free space is -20px. One margin takes all of it, two share it.
+    for (margin, y) in [
+        ("margin-top:auto", -20.0),
+        ("margin-bottom:auto", 0.0),
+        ("margin:auto 0", -10.0),
+    ] {
+        assert_eq!(
+            block_box(CONTAINING_BLOCK, &format!("{child};{margin}")),
+            (0.0, y, 50.0, 120.0),
+            "{margin}"
+        );
+    }
+}
+
+#[test]
+fn an_auto_margin_takes_the_free_space_between_the_insets_in_every_writing_mode() {
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content";
+    for mode in [
+        "direction:rtl",
+        "writing-mode:vertical-rl",
+        "writing-mode:vertical-rl;direction:rtl",
+        "writing-mode:sideways-lr",
+        "writing-mode:sideways-lr;direction:rtl",
+        "writing-mode:sideways-rl",
+    ] {
+        let root_css = format!("{CONTAINING_BLOCK};{mode}");
+        for (margin, y) in [
+            ("margin-top:auto", 80.0),
+            ("margin-bottom:auto", 0.0),
+            ("margin:auto 0", 40.0),
+        ] {
+            assert_eq!(
+                block_box(&root_css, &format!("{child};{margin}")),
+                (0.0, y, 50.0, 20.0),
+                "{mode}; {margin}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_auto_margin_takes_the_free_space_of_a_box_in_a_horizontal_wrapper_of_a_vertical_block() {
+    // The box is laid out by a horizontal container that sits in its vertical
+    // containing block, which Taffy aligns on the horizontal axes.
+    let root_css = format!("{CONTAINING_BLOCK};writing-mode:vertical-rl");
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content";
+    for alignment in ["", ";justify-self:center", ";align-self:center"] {
+        for (margin, y) in [
+            ("margin-top:auto", 80.0),
+            ("margin-bottom:auto", 0.0),
+            ("margin:auto 0", 40.0),
+        ] {
+            let mut positioned = 0;
+            let fixture = block_fixture(&root_css, |doc, root| {
+                let wrapper = doc.append_element(
+                    Some(root),
+                    "div",
+                    Some("display:block;writing-mode:horizontal-tb"),
+                );
+                positioned = doc.append_element(
+                    Some(wrapper),
+                    "div",
+                    Some(&format!("display:block;{child};{margin}{alignment}")),
+                );
+                doc.append_element(Some(positioned), "div", Some("display:block;height:20px"));
+            });
+            let root = fixture.root;
+            let mut doc = fixture.doc;
+            layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600())
+                .expect("layout");
+            let (root_x, root_y, ..) = absolute_rect(&doc, root);
+            let (x, top, width, height) = absolute_rect(&doc, positioned);
+            assert_eq!(
+                (x - root_x, top - root_y, width, height),
+                (0.0, y, 50.0, 20.0),
+                "{margin}{alignment}"
+            );
+        }
+    }
+}
+
+#[test]
+fn two_auto_margins_of_a_box_taller_than_the_insets_follow_the_axis_of_the_containing_block() {
+    let child = "position:absolute;top:0;bottom:0;left:0;width:50px;height:max-content;\
+                 min-height:120px;margin:auto 0";
+    // The block axis of a horizontal containing block is the vertical one, and
+    // the margins share the negative free space. In a vertical containing block
+    // the vertical axis is the inline one, whose end margin takes all of it.
+    for (mode, y) in [
+        ("direction:rtl", -10.0),
+        ("writing-mode:vertical-rl", 0.0),
+        ("writing-mode:vertical-rl;direction:rtl", -20.0),
+        ("writing-mode:sideways-lr", -20.0),
+        ("writing-mode:sideways-lr;direction:rtl", 0.0),
+        ("writing-mode:sideways-rl", 0.0),
+    ] {
+        assert_eq!(
+            block_box(&format!("{CONTAINING_BLOCK};{mode}"), child),
+            (0.0, y, 50.0, 120.0),
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn an_auto_margin_takes_the_free_space_of_a_fixed_box_sized_by_its_content() {
+    let root_css = "width:200px;height:100px";
+    let child = "position:fixed;top:0;bottom:0;left:0;width:50px";
+    // The free space is that of the 600px tall page area.
+    for (margin, y) in [
+        ("margin-top:auto", 580.0),
+        ("margin-bottom:auto", 0.0),
+        ("margin:auto 0", 290.0),
+    ] {
+        assert_eq!(
+            block_box(root_css, &format!("{child};height:max-content;{margin}")),
+            (0.0, y, 50.0, 20.0),
+            "{margin}"
+        );
+        // The box is placed like one with the height of its content.
+        assert_eq!(
+            block_box(root_css, &format!("{child};height:20px;{margin}")),
+            (0.0, y, 50.0, 20.0),
+            "{margin}"
+        );
+    }
 }
 
 #[test]
@@ -307,6 +544,33 @@ fn the_root_element_is_its_own_containing_block_for_a_keyword_height() {
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert_eq!(absolute_rect(&doc, html).3, 20.0);
+}
+
+#[test]
+fn an_auto_margin_takes_the_free_space_of_the_root_element_sized_by_its_content() {
+    // The root element is positioned in the 800x600 page area.
+    for (margin, y) in [
+        ("margin-top:auto", 580.0),
+        ("margin-bottom:auto", 0.0),
+        ("margin:auto 0", 290.0),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Some(&format!(
+                "display:block;position:absolute;top:0;bottom:0;left:0;width:50px;\
+                 height:max-content;{margin}"
+            )),
+        );
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        let (_, top, _, height) = absolute_rect(&doc, html);
+        assert_eq!((top, height), (y, 20.0), "{margin}");
+    }
 }
 
 #[test]
