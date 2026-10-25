@@ -68,7 +68,7 @@ taffy = { version = "=0.15.0", default-features = false, features = [
 # ── Text (shodo) ───────────────────────────────────────────────────────
 # Exact pin: the 0.0.x line may change its public API in any release.
 shodo  = { version = "=0.0.38", default-features = false, features = ["system-fonts"] }
-skrifa = "0.44"
+skrifa = "0.48"
 # Script of a character, for choosing a fallback face for SVG text. Already
 # in the build graph through usvg's text support.
 unicode-script = "0.5"
