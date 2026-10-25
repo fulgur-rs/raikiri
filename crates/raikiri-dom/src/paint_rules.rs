@@ -759,6 +759,46 @@ pub fn merges_clipped_inline_content(
         && defers_unless_clipped(document, cascade, node_id)
 }
 
+/// Whether a box that clips its overflow collects the boxes that wait for the
+/// end of its layer (see [`defers_to_positioned_layer`]) in a layer of its
+/// own, and hands that layer to the enclosing one inside its clip.
+///
+/// A plain block does (see [`merges_clipped_inline_content`]), and so does a
+/// block-level flex or grid container: it is no stacking context, so its
+/// items with a stack level paint in the enclosing stacking context, by level
+/// among the boxes outside the container and in tree order within a level (CSS
+/// 2.1 Appendix E steps 8 and 9; CSS Flexbox 1 §4.3; CSS Grid 1 §9.5). Its
+/// clip still covers them.
+pub fn merges_clipped_layer(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    merges_clipped_inline_content(document, cascade, node_id)
+        || merges_clipped_container(document, cascade, node_id)
+}
+
+/// Whether `node_id` is a block-level flex or grid container that clips its
+/// overflow and is no stacking context, placed in a box that leaves its
+/// positioned boxes to the layer around it.
+fn merges_clipped_container(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    let Some(cv) = cascade.computed.get(node_id) else {
+        return false;
+    };
+    cv.display.is_block_flex_or_grid_container()
+        && clips_overflow(cv)
+        && matches!(cv.position, PositionValue::Static)
+        && matches!(cv.float, FloatValue::None)
+        && !establishes_stacking_context(document, node_id, cv)
+        && matches!(cv.column_count, ColumnCountValue::Auto)
+        && matches!(cv.column_width, ComputedColumnWidth::Auto)
+        && box_parent(document, cascade, node_id, BoxParentScope::Document)
+            .and_then(|parent| cascade.computed.get(parent))
+            .is_some_and(|parent| {
+                // A container that is a flex or grid item with an integer
+                // `z-index` forms a stacking context of its own.
+                is_block_container(parent.display)
+                    || (parent.display.is_flex_or_grid_container()
+                        && !is_z_indexed_item(document, cascade, node_id, cv))
+            })
+}
+
 /// [`defers_inline_content`] without its overflow condition.
 fn defers_unless_clipped(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let Some(cv) = cascade.computed.get(node_id) else {
@@ -1094,7 +1134,9 @@ pub fn insert_positioned_frame<F>(
 /// the boxes with a non-zero stack level it holds can all join the enclosing
 /// layer; the boxes inside it of level zero paint right after it either way. A box that clips or forms a
 /// stacking context of its own keeps them, as does a box inside an inline
-/// opacity group, which the painters paint as a whole.
+/// opacity group, which the painters paint as a whole. A clipping plain
+/// block, flex container or grid container keeps them clipped but hands them
+/// on in its own layer (see [`merges_clipped_layer`]).
 pub fn hoists_positioned_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -1379,10 +1421,10 @@ fn held_levels(document: &Document, cascade: &CascadeResult, id: usize) -> HeldL
             .flat_map(move |node| node.children.iter().map(move |&child| (child, kept)))
     };
     // A box between keeps the positioned boxes inside it when it clips (a
-    // plain block hands them on inside its clip), lays out columns, or sits
-    // in an inline opacity group.
+    // plain block, a flex or a grid container hands them on inside its
+    // clip), lays out columns, or sits in an inline opacity group.
     let keeps = |id: usize, cv: &ComputedValues| {
-        (clips_overflow(cv) && !merges_clipped_inline_content(document, cascade, id))
+        (clips_overflow(cv) && !merges_clipped_layer(document, cascade, id))
             || document
                 .get_node(id)
                 .is_some_and(|node| node.is_multicol_container())

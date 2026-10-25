@@ -434,6 +434,7 @@ fn inline_deferral_rejects_a_node_without_cascaded_values() {
     let cascade = cascaded(&doc);
     assert!(!defers_inline_content(&doc, &cascade, usize::MAX));
     assert!(!closes_deferred_inline_content(&doc, &cascade, usize::MAX));
+    assert!(!merges_clipped_layer(&doc, &cascade, usize::MAX));
 }
 
 #[test]
