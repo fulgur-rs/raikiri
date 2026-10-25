@@ -1399,6 +1399,54 @@ fn an_overflow_position_stays_with_the_position_it_qualifies() {
 }
 
 #[test]
+fn anchor_center_is_a_value_of_align_self_and_justify_self_only() {
+    for css in ["anchor-center", "ANCHOR-Center"] {
+        assert_eq!(
+            self_alignments(css),
+            [
+                None,
+                None,
+                Some(SelfAlignmentValue::AnchorCenter),
+                Some(SelfAlignmentValue::AnchorCenter)
+            ],
+            "{css:?}"
+        );
+    }
+    assert_eq!(SelfAlignmentValue::AnchorCenter.position(), None);
+    assert_eq!(
+        parse_entire("anchor-center", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+        }))
+    );
+    assert_eq!(
+        parse_entire("center anchor-center", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Value(SelfAlignmentValue::Center),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+        }))
+    );
+    assert_eq!(parse_entire("anchor-center", "place-items"), None);
+    assert_eq!(parse_entire("center anchor-center", "place-items"), None);
+}
+
+#[test]
+fn anchor_center_is_not_a_self_position() {
+    // It takes no overflow position, and no second position follows it.
+    for css in [
+        "safe anchor-center",
+        "unsafe anchor-center",
+        "anchor-center safe",
+        "anchor-center center",
+        "anchor-center start",
+        "anchor-centre",
+    ] {
+        assert_eq!(self_alignments(css), [None; 4], "{css:?}");
+    }
+}
+
+#[test]
 fn an_overflow_position_qualifies_only_a_position() {
     for css in [
         "safe baseline",

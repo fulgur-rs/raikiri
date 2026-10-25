@@ -336,16 +336,18 @@ pub(super) fn ignored_vertical_inset(
         values.align_self
     };
     if let AlignSelfValue::Value(value) = alignment
-        && (value == SelfAlignmentValue::LastBaseline
-            || matches!(
-                value.position(),
-                Some(
-                    SelfPosition::Center
-                        | SelfPosition::End
-                        | SelfPosition::FlexEnd
-                        | SelfPosition::SelfEnd
-                )
-            ))
+        && (matches!(
+            value,
+            SelfAlignmentValue::LastBaseline | SelfAlignmentValue::AnchorCenter
+        ) || matches!(
+            value.position(),
+            Some(
+                SelfPosition::Center
+                    | SelfPosition::End
+                    | SelfPosition::FlexEnd
+                    | SelfPosition::SelfEnd
+            )
+        ))
     {
         return None;
     }

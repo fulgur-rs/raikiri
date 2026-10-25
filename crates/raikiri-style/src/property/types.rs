@@ -4077,6 +4077,16 @@ pub enum SelfAlignmentValue {
     SelfStart,
     /// `self-end` — `<self-position>`; see [`Self::SelfStart`].
     SelfEnd,
+    /// `anchor-center`, the value that CSS Anchor Positioning 1 adds to
+    /// `align-self` and `justify-self`: an absolutely positioned box aligns to
+    /// the center of its default anchor box. Without a default anchor box, and
+    /// for a box that is not absolutely positioned, it behaves as `center`;
+    /// layout has no anchor positioning, so it always does.
+    ///
+    /// It is a value of its own, not a `<self-position>`: neither `safe` nor
+    /// `unsafe` qualifies it, and `align-items` and `justify-items` do not
+    /// take it.
+    AnchorCenter,
     /// `safe <self-position>`: an overflowing box falls back to `start`
     /// instead of overflowing at the start side (CSS Box Alignment 3,
     /// "Overflow Alignment").
