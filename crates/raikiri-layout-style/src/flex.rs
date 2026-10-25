@@ -49,6 +49,16 @@ pub fn items(value: A) -> values::AlignItems {
 }
 impl LayoutStyleView<'_> {
     pub(crate) fn self_alignment(&self, inline: bool) -> Option<values::AlignSelf> {
+        self.self_alignment_or(inline, values::AlignItems::SAFE_SELF_END)
+    }
+    /// The self alignment along an axis, where an absolutely positioned box that
+    /// asks for `last baseline` aligns as `last_baseline` instead of falling
+    /// back to `safe self-end`.
+    pub(crate) fn self_alignment_or(
+        &self,
+        inline: bool,
+        last_baseline: values::AlignSelf,
+    ) -> Option<values::AlignSelf> {
         if let Some(value) = self.overrides().find_map(|o| match o {
             OverrideKind::AlignSelf(v) if !inline => Some(v),
             OverrideKind::JustifySelf(v) if inline => Some(v),
@@ -62,7 +72,7 @@ impl LayoutStyleView<'_> {
             AlignSelfValue::Value(A::LastBaseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>
             {
-                Some(values::AlignItems::SAFE_SELF_END)
+                Some(last_baseline)
             }
             AlignSelfValue::Value(A::Baseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>

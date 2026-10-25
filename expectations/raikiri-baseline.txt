@@ -5288,5 +5288,9 @@ css/css-grid/abspos/grid-abspos-staticpos-justify-self-002.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-last-baseline-002.html
 
 # --- anchor-center alignment of an absolute box without an anchor (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
-# `justify-self: anchor-center` is a self-position that behaves as `center` for an absolutely positioned box without a default anchor box, so test and reference match, and the box positions match Chromium's with Ahem forced (the dotted container borders are drawn differently); KEEP in two audit-vacuous-passes runs.
+# `justify-self: anchor-center` is a value of its own that behaves as `center` for an absolutely positioned box without a default anchor box, so test and reference match, and the box positions match Chromium's with Ahem forced (the dotted container borders are drawn differently); KEEP in two audit-vacuous-passes runs.
 css/css-align/abspos/justify-self-static-position-001.html
+
+# --- last baseline in the static position of an absolute box of a block container (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# An absolutely positioned box that asks for `last baseline` aligns to the end of the static-position rectangle of a block container, a line of no height, as `end` does, where `safe end` would put it at the start; the purple boxes of all thirteen items match Chromium's pixel for pixel (the dotted container borders are drawn differently); KEEP in two audit-vacuous-passes runs.
+css/css-align/abspos/align-self-static-position-008.html

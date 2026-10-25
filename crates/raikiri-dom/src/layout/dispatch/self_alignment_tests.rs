@@ -323,3 +323,88 @@ fn anchor_center_places_an_absolute_box_without_an_anchor_like_center() {
         assert_ne!(anchor, normal, "{axis}: the keyword moves the box");
     }
 }
+
+/// An absolutely positioned box of a block container that asks for `last
+/// baseline` sits where `end` puts it in the static-position rectangle, a line
+/// of no height in the block axis, wherever it overflows the rectangle; `safe
+/// end` falls back to the start there. The end is the one of the container, not
+/// of the box.
+#[test]
+fn a_last_baseline_static_position_in_a_block_aligns_to_the_end() {
+    for (axis, fits, overflows) in [
+        // The static position is the top edge of the container in the block
+        // axis and the whole content box in the inline axis.
+        ("align-self", (0.0, -50.0), (0.0, -150.0)),
+        ("justify-self", (50.0, 0.0), (-50.0, 0.0)),
+    ] {
+        for (size, (x, y)) in [("", fits), (";width:150px;height:150px", overflows)] {
+            let child = format!("{ABSOLUTE}{size}");
+            let (left, top, _, _) = item_rect(BLOCK, &format!("{child};{axis}:last baseline"));
+            assert_eq!((left, top), (x, y), "{axis} {size}");
+            let end = item_rect(BLOCK, &format!("{child};{axis}:end"));
+            assert_eq!((end.0, end.1), (x, y), "{axis} {size}");
+        }
+    }
+    let overflowing = format!("{ABSOLUTE};width:150px;height:150px");
+    let (left, _, _, _) = item_rect(BLOCK, &format!("{overflowing};justify-self:safe end"));
+    assert_eq!(left, 0.0);
+    let (_, top, _, _) = item_rect(BLOCK, &format!("{overflowing};align-self:safe end"));
+    assert_eq!(top, 0.0);
+}
+
+#[test]
+fn a_last_baseline_static_position_in_a_block_follows_the_direction_of_the_container() {
+    let rtl = format!("{BLOCK};direction:rtl");
+    let child = format!("{ABSOLUTE};direction:ltr");
+    // `end` is the left edge of an `rtl` container; `self-end` is the right edge
+    // of the `ltr` box.
+    for (item, left) in [
+        ("justify-self:last baseline", 0.0),
+        ("justify-self:end", 0.0),
+        ("justify-self:self-end", 50.0),
+    ] {
+        let (x, _, _, _) = item_rect(&rtl, &format!("{child};{item}"));
+        assert_eq!(x, left, "{item}");
+    }
+}
+
+/// The same holds in every writing mode and direction of the container, where
+/// `safe end` falls back to the start in the block axis of a horizontal
+/// container and in the inline axis of a vertical one.
+#[test]
+fn a_last_baseline_static_position_in_a_block_is_the_end_in_every_writing_mode() {
+    for writing_mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
+        for direction in ["ltr", "rtl"] {
+            let container = format!("{BLOCK};writing-mode:{writing_mode};direction:{direction}");
+            for axis in ["align-self", "justify-self"] {
+                assert_eq!(
+                    item_rect(&container, &format!("{ABSOLUTE};{axis}:last baseline")),
+                    item_rect(&container, &format!("{ABSOLUTE};{axis}:end")),
+                    "{writing_mode} {direction} {axis}"
+                );
+            }
+        }
+    }
+    let vertical = format!("{BLOCK};writing-mode:vertical-rl");
+    assert_ne!(
+        item_rect(&vertical, &format!("{ABSOLUTE};align-self:last baseline")),
+        item_rect(&vertical, &format!("{ABSOLUTE};align-self:safe end")),
+    );
+}
+
+/// A `last baseline` alignment in one axis reads on its own: the other axis
+/// keeps the alignment it has, and an inset in the axis settles the position
+/// there as it does for every alignment.
+#[test]
+fn a_last_baseline_static_position_in_a_block_leaves_the_other_axis_alone() {
+    let (left, top, _, _) = item_rect(
+        BLOCK,
+        &format!("{ABSOLUTE};align-self:last baseline;justify-self:center"),
+    );
+    assert_eq!((left, top), (25.0, -50.0));
+    let (left, top, _, _) = item_rect(
+        BLOCK,
+        &format!("{ABSOLUTE};align-self:last baseline;top:10px"),
+    );
+    assert_eq!((left, top), (0.0, 10.0));
+}
