@@ -721,15 +721,34 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("--usage takes a directory", err)
 
-    def write_tier_doc(self, directory: Path, listed: list[str], markers: bool = True) -> None:
+    def write_tier_doc(
+        self,
+        directory: Path,
+        listed: list[str],
+        markers: bool = True,
+        value_types: list[str] | None = None,
+        value_markers: bool = True,
+    ) -> None:
         (directory / "docs").mkdir(exist_ok=True)
         body = "\n".join(listed)
-        text = (
-            f"{lint.surface.FIRST_TIER_BEGIN}\n```text\n{body}\n```\n{lint.surface.FIRST_TIER_END}\n"
-            if markers
-            else "no markers\n"
-        )
+        values = "\n".join(value_types or [])
+        text = "no markers\n"
+        if markers:
+            text = f"{lint.surface.FIRST_TIER_BEGIN}\n```text\n{body}\n```\n{lint.surface.FIRST_TIER_END}\n"
+        if markers and value_markers:
+            text += f"{lint.surface.VALUE_TYPES_BEGIN}\n```text\n{values}\n```\n{lint.surface.VALUE_TYPES_END}\n"
         (directory / lint.FIRST_TIER_DOC).write_text(text, encoding="utf-8")
+
+    def write_exhaustive_types(self, directory: Path, crate: str, types: list[tuple[str, list[str]]]) -> None:
+        """Write the JSON of `crate` with the function every fixture has, plus a type per `(name, attrs)`."""
+        b = DocBuilder()
+        b.function(1, "plain", [resolved(b.traits_node_id, "NodeId")], None)
+        identifier = crate.replace("-", "_")
+        for key, (name, attrs) in enumerate(types, start=10):
+            b.add(key, name, {"enum": {"variants": [1, 2], "impls": []}}, attrs=attrs, path=[identifier, name])
+        (directory / lint.json_file_name(crate)).write_text(
+            __import__("json").dumps(b.doc(root=identifier)), encoding="utf-8"
+        )
 
     OTHER_PLAIN = [
         f"{crate.replace('-', '_')}::plain" for crate in lint.PUBLISHED_CRATES if crate != lint.CONSUMER_CRATE
@@ -776,6 +795,76 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("raikiri_net: the docs of plain link `helper` to the hidden raikiri_net::helper", out)
         self.assertIn("FAIL: 1 finding(s)", err)
+
+    def test_first_tier_reports_an_exhaustive_type_that_is_not_a_listed_value_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_exhaustive_types(Path(tmp), "raikiri-net", [("Kind", [])])
+            self.write_tier_doc(
+                Path(tmp), [*self.OTHER_PLAIN, "raikiri_layout_style::child_count", "raikiri_net::Kind"]
+            )
+            code, out, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 1)
+        self.assertIn("raikiri_net: enum       raikiri_net::Kind  (2 variants) is exhaustive and not a listed value type", out)
+        self.assertIn("FAIL: 1 finding(s)", err)
+
+    def test_first_tier_passes_when_an_exhaustive_type_is_a_listed_value_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_exhaustive_types(Path(tmp), "raikiri-net", [("Kind", [])])
+            self.write_tier_doc(
+                Path(tmp),
+                [*self.OTHER_PLAIN, "raikiri_layout_style::child_count", "raikiri_net::Kind"],
+                value_types=["raikiri_net::Kind"],
+            )
+            code, out, _ = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual((code, out.startswith("PASS")), (0, True), out)
+
+    def test_first_tier_accepts_a_type_with_the_attribute_without_a_listing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_exhaustive_types(Path(tmp), "raikiri-net", [("Kind", ["non_exhaustive"])])
+            self.write_tier_doc(
+                Path(tmp), [*self.OTHER_PLAIN, "raikiri_layout_style::child_count", "raikiri_net::Kind"]
+            )
+            code, out, _ = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual((code, out.startswith("PASS")), (0, True), out)
+
+    def test_first_tier_reports_a_listed_value_type_that_has_the_attribute_now(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_exhaustive_types(Path(tmp), "raikiri-net", [("Kind", ["non_exhaustive"])])
+            self.write_tier_doc(
+                Path(tmp),
+                [*self.OTHER_PLAIN, "raikiri_layout_style::child_count", "raikiri_net::Kind"],
+                value_types=["raikiri_net::Kind"],
+            )
+            code, out, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 1)
+        self.assertIn("listed value type raikiri_net::Kind is not exhaustive", out)
+        self.assertIn("FAIL: 1 finding(s)", err)
+
+    def test_first_tier_reports_a_value_type_that_is_listed_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_exhaustive_types(Path(tmp), "raikiri-net", [("Kind", [])])
+            self.write_tier_doc(
+                Path(tmp),
+                [*self.OTHER_PLAIN, "raikiri_layout_style::child_count", "raikiri_net::Kind"],
+                value_types=["raikiri_net::Kind", "raikiri_net::Kind"],
+            )
+            code, out, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 1)
+        self.assertIn("value type raikiri_net::Kind is listed more than once", out)
+        self.assertIn("FAIL: 1 finding(s)", err)
+
+    def test_first_tier_refuses_a_document_without_the_value_type_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_tier_doc(Path(tmp), [], value_markers=False)
+            code, _, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 2)
+        self.assertIn("value-types:begin", err)
 
     def test_first_tier_refuses_a_document_without_the_markers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
