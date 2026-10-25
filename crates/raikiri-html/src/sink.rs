@@ -18,6 +18,7 @@ use raikiri_dom::Document;
 use raikiri_traits::{Dom, Node, NodeId, NodeKind, RenderWarning, WarningKind};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
+use xml5ever::tree_builder::XmlTreeBuilder;
 
 use crate::fetch::mime_essence;
 use crate::types::UncascadedDocument;
@@ -141,6 +142,15 @@ impl RaikiriTreeSink {
 
     pub(crate) fn open_depth_limit_signal(&self) -> Rc<Cell<Option<u64>>> {
         Rc::clone(&self.open_depth_limit_exceeded)
+    }
+
+    /// The open-depth limit and the first depth over it, once an element
+    /// went past the limit.
+    pub(crate) fn open_depth_limit_error(&self) -> Option<(u64, u64)> {
+        let limit = self.max_open_depth?;
+        self.open_depth_limit_exceeded
+            .get()
+            .map(|actual| (u64::from(limit), actual))
     }
 
     pub(crate) fn dom_node_limit_signal(&self) -> Rc<Cell<Option<u64>>> {
@@ -1233,6 +1243,18 @@ fn assemble_document(
 /// The list over-approximates the stack of open elements; the streaming
 /// layout's stable frontier search narrows it to the elements still open.
 pub(crate) fn traced_handles(builder: &TreeBuilder<usize, RaikiriTreeSink>) -> Vec<usize> {
+    collect_traced(|tracer| builder.trace_handles(tracer))
+}
+
+/// [`traced_handles`] for xml5ever's tree builder: its stack of open
+/// elements from the root down, then the element it is working on.
+pub(crate) fn traced_xml_handles(builder: &XmlTreeBuilder<usize, RaikiriTreeSink>) -> Vec<usize> {
+    collect_traced(|tracer| builder.trace_handles(tracer))
+}
+
+/// The handles a tree builder reports to the tracer it is given, without the
+/// first, which is the document itself.
+fn collect_traced(trace: impl FnOnce(&dyn Tracer<Handle = usize>)) -> Vec<usize> {
     struct Collect(RefCell<Vec<usize>>);
     impl Tracer for Collect {
         type Handle = usize;
@@ -1241,9 +1263,8 @@ pub(crate) fn traced_handles(builder: &TreeBuilder<usize, RaikiriTreeSink>) -> V
         }
     }
     let collect = Collect(RefCell::new(Vec::new()));
-    builder.trace_handles(&collect);
+    trace(&collect);
     let mut handles = collect.0.into_inner();
-    // The first handle is the document itself.
     handles.remove(0);
     handles
 }

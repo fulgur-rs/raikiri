@@ -1,5 +1,5 @@
-//! Push-style layout: feed HTML bytes as they are produced and receive the
-//! laid-out pages in order through a [`PageSink`].
+//! Push-style layout: feed HTML or XHTML bytes as they are produced and
+//! receive the laid-out pages in order through a [`PageSink`].
 //!
 //! [`StreamingLayout`] parses each chunk as soon as it is fed. After every
 //! [`CHECKPOINT_BYTES`] of input it lays out the document parsed so far and
@@ -21,8 +21,8 @@ use raikiri_dom::generated_content::generated_origin;
 use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyValue, FetchOutcome, FetchedResource, LayoutConfig,
-    LimitKind, Method, NetworkError, NetworkProvider, NodeId, NodeKind, PageDefaults, RenderError,
-    RenderWarning, Request, WarningKind,
+    LimitKind, Method, NetworkError, NetworkProvider, NodeId, NodeKind, PageDefaults, ParseError,
+    RenderError, RenderWarning, Request, WarningKind,
 };
 
 use super::{
@@ -34,9 +34,10 @@ use crate::document_parse::assemble_document;
 use crate::input::Utf8Feed;
 use crate::parse::finish_document;
 use crate::render::ResumePoint;
-use crate::sink::{collect_body_inline_stylesheet_ids, traced_handles};
+use crate::sink::{collect_body_inline_stylesheet_ids, traced_handles, traced_xml_handles};
 use crate::svg_rendering::SvgSettings;
 use crate::types::UncascadedDocument;
+use crate::xhtml::{XhtmlParser, xhtml_parser, xhtml_sink};
 use crate::{
     ConsumerPropertyRegistration, HtmlDocument, MarginBox, RaikiriTreeSink, RenderResources,
     SvgRendering, build_rule_tree,
@@ -200,6 +201,8 @@ pub enum StreamStatus<T> {
 /// whole. Documents with running elements or `target-counter()`-style
 /// lookups, and pages that begin inside a table, flex, grid or multi-column
 /// container, are laid out from the start each time. Input must be UTF-8.
+/// [`StreamingLayout::new`] parses it as HTML and
+/// [`StreamingLayout::new_xhtml`] as XHTML.
 /// The input byte cap and the other parse limits come from the
 /// [`RenderResources`]. Only print media is supported.
 ///
@@ -253,7 +256,7 @@ pub enum StreamStatus<T> {
 pub struct StreamingLayout<'r, 'a, S> {
     settings: Settings<'r, 'a>,
     sink: S,
-    input: Utf8Feed<Parser<RaikiriTreeSink>>,
+    input: StreamInput,
     input_bytes: u64,
     /// Input bytes fed since the last checkpoint.
     unchecked_bytes: usize,
@@ -721,9 +724,78 @@ enum Failure {
     Pending(RenderError),
 }
 
+/// The parser a stream feeds, by document syntax.
+enum StreamInput {
+    Html(Utf8Feed<Parser<RaikiriTreeSink>>),
+    Xhtml(Utf8Feed<XhtmlParser>),
+}
+
+impl StreamInput {
+    fn feed(&mut self, bytes: &[u8]) -> Result<(), ParseError> {
+        match self {
+            Self::Html(feed) => feed.feed(bytes),
+            Self::Xhtml(feed) => feed.feed(bytes),
+        }
+    }
+
+    /// The sink the parser builds the document in.
+    fn sink(&self) -> &RaikiriTreeSink {
+        match self {
+            Self::Html(feed) => &feed.parser().tokenizer.sink.sink,
+            Self::Xhtml(feed) => &feed.parser().parser().tokenizer.sink.sink,
+        }
+    }
+
+    /// The element handles the tree builder holds, in the order
+    /// [`traced_handles`] reports them.
+    fn traced_handles(&self) -> Vec<usize> {
+        match self {
+            Self::Html(feed) => traced_handles(&feed.parser().tokenizer.sink),
+            Self::Xhtml(feed) => traced_xml_handles(&feed.parser().parser().tokenizer.sink),
+        }
+    }
+
+    fn finish(self) -> Result<UncascadedDocument, ParseError> {
+        match self {
+            Self::Html(feed) => feed.finish(),
+            Self::Xhtml(feed) => feed.finish(),
+        }
+    }
+}
+
+/// Whether `dom` holds an element a layout could take for the body: a `body`
+/// or `frameset` element in any namespace, as a superset of what layout
+/// accepts.
+fn may_have_body(dom: &raikiri_dom::Document) -> bool {
+    dom.preorder(dom.root_index()).any(|id| {
+        dom.get_node(id)
+            .and_then(|node| node.tag_name())
+            .is_some_and(|tag| {
+                tag.eq_ignore_ascii_case("body") || tag.eq_ignore_ascii_case("frameset")
+            })
+    })
+}
+
+/// The error for a budget that `sink`'s parse went past, if one was.
+fn parse_limit_error(sink: &RaikiriTreeSink) -> Option<RenderError> {
+    if let Some((limit, actual)) = sink.dom_node_limit_error() {
+        return Some(RenderError::LimitExceeded {
+            kind: LimitKind::DomNodes,
+            limit,
+            actual,
+        });
+    }
+    sink.open_depth_limit_error()
+        .map(|(limit, actual)| RenderError::LimitExceeded {
+            kind: LimitKind::DomDepth,
+            limit,
+            actual,
+        })
+}
+
 impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
-    /// Start a layout that uses `resources` for parsing and layout and
-    /// delivers pages to `sink`.
+    /// Start a layout of an HTML document that uses `resources` for parsing
+    /// and layout and delivers pages to `sink`.
     pub fn new(
         resources: &'r RenderResources<'a>,
         defaults: PageDefaults,
@@ -735,6 +807,42 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             parse_limits.max_parse_warnings,
             parse_limits.max_dom_nodes,
         );
+        let input = StreamInput::Html(Utf8Feed::new(parse_document(tree, ParseOpts::default())));
+        Self::with_input(resources, defaults, config, sink, input)
+    }
+
+    /// Start a layout of an XHTML document, parsed as XML as
+    /// [`crate::parse_xhtml`] parses it, that uses `resources` for parsing
+    /// and layout and delivers pages to `sink`.
+    ///
+    /// The syntax is the caller's choice: a document served as
+    /// `application/xhtml+xml` takes this constructor, and one served as
+    /// `text/html` takes [`StreamingLayout::new`] whatever its markup looks
+    /// like. The input is read as [`crate::parse_xhtml`] reads it, so malformed
+    /// markup is repaired and recorded as a parse warning, the DOCTYPE's
+    /// internal subset is ignored, and elements nested deeper than 256 levels
+    /// stop the layout with [`LimitKind::DomDepth`]. Everything else about
+    /// [`StreamingLayout`] holds for XHTML as it does for HTML, and the pages
+    /// are those of a batch layout of the document parsed by
+    /// [`crate::parse_xhtml`].
+    pub fn new_xhtml(
+        resources: &'r RenderResources<'a>,
+        defaults: PageDefaults,
+        config: LayoutConfig,
+        sink: S,
+    ) -> Self {
+        let tree = xhtml_sink(&resources.parse_limits());
+        let input = StreamInput::Xhtml(Utf8Feed::new(xhtml_parser(tree)));
+        Self::with_input(resources, defaults, config, sink, input)
+    }
+
+    fn with_input(
+        resources: &'r RenderResources<'a>,
+        defaults: PageDefaults,
+        config: LayoutConfig,
+        sink: S,
+        input: StreamInput,
+    ) -> Self {
         Self {
             settings: Settings {
                 resources,
@@ -749,7 +857,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                 resumed: std::cell::Cell::new(0),
             },
             sink,
-            input: Utf8Feed::new(parse_document(tree, ParseOpts::default())),
+            input,
             input_bytes: 0,
             unchecked_bytes: 0,
             checkpoint_bytes: CHECKPOINT_BYTES,
@@ -847,19 +955,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             let (piece, tail) = rest.split_at(room.min(rest.len()));
             rest = tail;
             self.input.feed(piece).map_err(RenderError::from)?;
-            if let Some((limit, actual)) = self
-                .input
-                .parser()
-                .tokenizer
-                .sink
-                .sink
-                .dom_node_limit_error()
-            {
-                return Err(RenderError::LimitExceeded {
-                    kind: LimitKind::DomNodes,
-                    limit,
-                    actual,
-                });
+            if let Some(error) = parse_limit_error(self.input.sink()) {
+                return Err(error);
             }
             if self.aborted {
                 continue;
@@ -875,22 +972,14 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
 
     /// Lay out the document parsed so far and deliver its final pages.
     fn checkpoint(&mut self) -> Result<(), RenderError> {
-        let builder = &self.input.parser().tokenizer.sink;
-        if let Some((limit, actual)) = builder.sink.dom_node_limit_error() {
-            return Err(RenderError::LimitExceeded {
-                kind: LimitKind::DomNodes,
-                limit,
-                actual,
-            });
-        }
-        let traced = traced_handles(builder);
-        let parsed = builder.sink.snapshot();
-        if let Some((limit, actual)) = builder.sink.dom_node_limit_error() {
-            return Err(RenderError::LimitExceeded {
-                kind: LimitKind::DomNodes,
-                limit,
-                actual,
-            });
+        // `feed_unchecked` has just checked the parse budgets, and a snapshot
+        // allocates no node of the parse, so they hold here.
+        let traced = self.input.traced_handles();
+        let parsed = self.input.sink().snapshot();
+        // Layout needs a body to lay out. Until it starts, in a long head for
+        // one, no page can be final.
+        if !may_have_body(&parsed.dom) {
+            return Ok(());
         }
         let Cascaded {
             document,
@@ -952,12 +1041,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         }
         if self.progress.delivered > 0 && self.progress.late_nodes_from.is_none() {
             self.progress.late_nodes_from = Some(document.uncascaded.dom.node_count());
-            self.input
-                .parser()
-                .tokenizer
-                .sink
-                .sink
-                .freeze_root_attributes();
+            self.input.sink().freeze_root_attributes();
         }
         Ok(())
     }
@@ -1006,7 +1090,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             ..
         } = self;
         let node_limit = settings.resources.parse_limits().max_dom_nodes;
-        let node_limit_signal = input.parser().tokenizer.sink.sink.dom_node_limit_signal();
+        let node_limit_signal = input.sink().dom_node_limit_signal();
         let parsed = input.finish().map_err(RenderError::Parse)?;
         if let Some(actual) = node_limit_signal.get() {
             return Err(RenderError::LimitExceeded {

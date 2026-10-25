@@ -6,6 +6,8 @@ use super::*;
 use crate::StringFetchMode;
 use crate::layout;
 
+mod xhtml_tests;
+
 const PAGED: &str = "<style>div { break-after: page }</style>\
     <div id=a style='bookmark-level: 1'>one</div>\
     <div id=b style='bookmark-level: 2'>two <a href='#c'>to three</a></div>\
@@ -451,6 +453,18 @@ fn progressive_pages_match_batch_layout() {
             "chunk {chunk}, checkpoint {checkpoint}: only {early} pages before finish"
         );
     }
+}
+
+#[test]
+fn a_checkpoint_before_the_body_starts_delivers_nothing() {
+    // A checkpoint after every byte falls in the head, where there is no
+    // body to lay out yet.
+    let html = "<html><head><style>div { break-after: page }</style></head>\
+                <body><div>one</div><div>two</div><div>three</div></body></html>";
+    let expected = batch_pages(html);
+    assert_eq!(expected.len(), 3);
+    let (pages, _) = stream_progressively(html, 1, 1);
+    assert_eq!(pages, expected);
 }
 
 #[test]
