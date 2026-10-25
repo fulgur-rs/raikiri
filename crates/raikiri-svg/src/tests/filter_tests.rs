@@ -299,6 +299,59 @@ fn filters_met_through_masks_patterns_and_pictures_are_bounded_too() {
 }
 
 #[test]
+fn a_filter_at_the_end_of_a_chain_of_masks_is_bounded() {
+    // Masks link to one another, and resvg draws the whole chain.
+    let chain = |last: &str| {
+        let mask = |id: &str, next: Option<&str>, content: &str| {
+            let link = next.map_or(String::new(), |next| format!("mask='url(#{next})'"));
+            format!(
+                "<mask id='{id}' maskUnits='userSpaceOnUse' x='0' y='0' width='1000' height='1000' {link}>\
+                 {content}</mask>"
+            )
+        };
+        let plain = "<rect width='1000' height='1000' fill='white'/>";
+        format!(
+            "<filter id='f'><feMorphology operator='dilate' radius='300'/></filter>{}{}{}\
+             <rect width='1000' height='1000' mask='url(#m1)'/>",
+            mask("m1", Some("m2"), plain),
+            mask("m2", Some("m3"), plain),
+            mask("m3", None, last),
+        )
+    };
+    rasterize(
+        &document(
+            1000,
+            1000,
+            &chain("<rect width='1000' height='1000' fill='white'/>"),
+        ),
+        1000,
+        1000,
+    )
+    .unwrap();
+    assert_over_the_work_budget(
+        1000,
+        &chain("<rect width='1000' height='1000' fill='white' filter='url(#f)'/>"),
+    );
+}
+
+#[test]
+fn filters_of_one_group_all_work_on_the_union_of_their_regions() {
+    // The second filter has a region of one pixel, but resvg hands it the
+    // layer of the first, which is the whole canvas.
+    let chain = |filters: &str| {
+        format!(
+            "<filter id='a' filterUnits='userSpaceOnUse' x='0' y='0' width='1000' height='1000'>\
+             <feFlood flood-color='red'/></filter>\
+             <filter id='b' filterUnits='userSpaceOnUse' x='0' y='0' width='1' height='1'>\
+             <feMorphology operator='dilate' radius='300'/></filter>\
+             <rect width='1000' height='1000' filter='{filters}'/>"
+        )
+    };
+    rasterize(&document(1000, 1000, &chain("url(#b)")), 1000, 1000).unwrap();
+    assert_over_the_work_budget(1000, &chain("url(#a) url(#b)"));
+}
+
+#[test]
 fn a_document_with_a_filter_and_a_picture_has_no_picture() {
     // Only a scene draws pictures and only the raster draws filters.
     let source = format!(

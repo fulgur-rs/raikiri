@@ -135,10 +135,13 @@ limit bounds neither, so the raster path checks the parsed tree before it
 draws, with the transform it draws with, and fails with
 `SvgError::FilterLimitExceeded` over a budget: at most eight output-sized
 buffers held by one filter, and 2^32 pixel operations over all the filters of
-the picture. Filters met in masks, patterns and `feImage` count too. The limit
-is of the document, not of the filter syntax, so the same filter can pass at one
-raster scale and fail at a larger one. When the raster cannot draw a document
-that fell back to it, its error is the one reported, not the scene's.
+the picture. The filters of one element share the layer of the union of their
+regions, and each primitive handles all of it, so each is charged for that
+layer. Filters met in masks (however long the chain of masks), patterns, the
+text a pattern fills and `feImage` count too. The limit is of the document,
+not of the filter syntax, so the same filter can pass at one raster scale and
+fail at a larger one. When the raster cannot draw a document that fell back to
+it, its error is the one reported, not the scene's.
 
 A document that holds both a filter and an `<image>` has no picture: only a
 scene draws images (the raster path fails with `SvgError::UnsupportedImages`)

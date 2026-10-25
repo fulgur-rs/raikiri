@@ -37,6 +37,16 @@ pub(crate) fn check(
     .group(tree.root(), transform)
 }
 
+/// The layer resvg draws a group with filters on.
+#[derive(Clone, Copy)]
+struct Layer {
+    /// Size in canvas pixels.
+    width: f64,
+    height: f64,
+    /// Canvas pixels per unit of the group's coordinates.
+    scale: (f64, f64),
+}
+
 struct Meter {
     canvas: (f64, f64),
     /// What the filters met so far ask for, in pixel operations.
@@ -52,19 +62,30 @@ impl Meter {
             // Only these kinds hold a filter on the raster path: it is given
             // no picture, and resvg draws a text as the paths it flattens to.
             if let usvg::Node::Group(inner) = node {
+                // resvg draws all the filters of a group on one layer, the
+                // union of their regions, and each primitive handles the whole
+                // of it.
+                let layer = self.layer(inner.layer_bounding_box(), to_canvas);
                 for filter in inner.filters() {
-                    self.filter(filter, to_canvas)?;
+                    self.filter(filter, layer)?;
                 }
                 self.group(inner, base)?;
-                // Clip paths, masks and the pictures of `feImage` hold nodes
-                // of their own, placed by the group that refers to them.
-                let mut failed = None;
-                node.subroots(|root| {
-                    if let Err(error) = self.group(root, to_canvas) {
-                        failed.get_or_insert(error);
+                // A mask can link to another without limit, and resvg draws
+                // the whole chain. A clip path holds no filter: usvg drops
+                // them there.
+                let mut mask = inner.mask();
+                while let Some(link) = mask {
+                    self.group(link.root(), to_canvas)?;
+                    mask = link.mask();
+                }
+                // The picture of an `feImage` holds nodes of its own.
+                for filter in inner.filters() {
+                    for primitive in filter.primitives() {
+                        if let Kind::Image(image) = primitive.kind() {
+                            self.group(image.root(), to_canvas)?;
+                        }
                     }
-                });
-                failed.map_or(Ok(()), Err)?;
+                }
             }
             if let usvg::Node::Path(path) = node {
                 let paints = [
@@ -99,22 +120,31 @@ impl Meter {
         )
     }
 
-    fn filter(&mut self, filter: &Filter, to_canvas: usvg::Transform) -> Result<(), SvgError> {
-        let (width, height) = filter
-            .rect()
-            .transform(to_canvas)
-            .map_or((0.0, 0.0), |region| {
-                // resvg rounds the region out to whole pixels, and to at least one.
-                (
-                    f64::from(region.width())
-                        .ceil()
-                        .clamp(1.0, LAYER_CANVASES * self.canvas.0),
-                    f64::from(region.height())
-                        .ceil()
-                        .clamp(1.0, LAYER_CANVASES * self.canvas.1),
-                )
-            });
-        let area = width * height;
+    /// The layer that resvg draws for `rect`, the area of a group in its own
+    /// coordinates, when the group is placed on the canvas by `to_canvas`.
+    fn layer(&self, rect: usvg::NonZeroRect, to_canvas: usvg::Transform) -> Layer {
+        let (width, height) = rect.transform(to_canvas).map_or((0.0, 0.0), |region| {
+            // resvg rounds the region out to whole pixels, and to at least one.
+            (
+                f64::from(region.width())
+                    .ceil()
+                    .clamp(1.0, LAYER_CANVASES * self.canvas.0),
+                f64::from(region.height())
+                    .ceil()
+                    .clamp(1.0, LAYER_CANVASES * self.canvas.1),
+            )
+        });
+        let (scale_x, scale_y) = to_canvas.get_scale();
+        Layer {
+            width,
+            height,
+            scale: (f64::from(scale_x), f64::from(scale_y)),
+        }
+    }
+
+    /// Charges `filter`, which resvg applies to `layer`.
+    fn filter(&mut self, filter: &Filter, layer: Layer) -> Result<(), SvgError> {
+        let area = layer.width * layer.height;
         let primitives = filter.primitives();
         // One buffer for each result, and one for the source graphic.
         let pixels = area * (primitives.len() + 1) as f64;
@@ -125,14 +155,8 @@ impl Meter {
                 limit: MAX_FILTER_PIXELS,
             });
         }
-        let (scale_x, scale_y) = to_canvas.get_scale();
         for primitive in primitives {
-            self.work += area
-                * per_pixel_work(
-                    primitive.kind(),
-                    (f64::from(scale_x), f64::from(scale_y)),
-                    (width, height),
-                );
+            self.work += area * per_pixel_work(primitive.kind(), layer);
         }
         if self.work > MAX_FILTER_WORK as f64 {
             return Err(SvgError::FilterLimitExceeded {
@@ -145,15 +169,14 @@ impl Meter {
     }
 }
 
-/// Pixel operations `kind` spends on each pixel of a `layer` drawn at
-/// `scale` canvas pixels per unit.
-fn per_pixel_work(kind: &Kind, (scale_x, scale_y): (f64, f64), layer: (f64, f64)) -> f64 {
+/// Pixel operations `kind` spends on each pixel of `layer`.
+fn per_pixel_work(kind: &Kind, layer: Layer) -> f64 {
     let work = match kind {
         // Every pixel is compared with a kernel of twice the radius on a
         // side, which resvg keeps within the layer.
         Kind::Morphology(fe) => {
-            (2.0 * (f64::from(fe.radius_x().get()) * scale_x).ceil()).min(layer.0)
-                * (2.0 * (f64::from(fe.radius_y().get()) * scale_y).ceil()).min(layer.1)
+            (2.0 * (f64::from(fe.radius_x().get()) * layer.scale.0).ceil()).min(layer.width)
+                * (2.0 * (f64::from(fe.radius_y().get()) * layer.scale.1).ceil()).min(layer.height)
         }
         Kind::ConvolveMatrix(fe) => {
             f64::from(fe.matrix().columns()) * f64::from(fe.matrix().rows())
