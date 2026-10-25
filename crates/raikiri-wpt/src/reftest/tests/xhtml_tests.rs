@@ -51,6 +51,40 @@ fn xhtml_geometry_reparse_keeps_self_closing_siblings() {
 }
 
 #[test]
+fn xml_extensions_select_the_xml_parser() {
+    for (name, syntax) in [
+        ("a.xhtml", DocumentSyntax::Xhtml),
+        ("a.xht", DocumentSyntax::Xhtml),
+        ("a.xml", DocumentSyntax::Xhtml),
+        ("a.html", DocumentSyntax::Html),
+        ("a.htm", DocumentSyntax::Html),
+        ("a", DocumentSyntax::Html),
+    ] {
+        assert_eq!(DocumentSyntax::for_path(Path::new(name)), syntax, "{name}");
+    }
+}
+
+#[test]
+fn xht_and_xml_files_decode_style_text_as_xml() {
+    // The text of a `<style>` element is raw text in HTML, so `&gt;` would
+    // stay literal there and the rule would never match. In XML it is `>`.
+    let dir = tempfile::tempdir().unwrap();
+    let source = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="match" href="ref.html"/><style>html,body{margin:0}body &gt; div{width:20px;height:20px;background:green}</style></head><body><div/></body></html>"#;
+    let reference = "<!doctype html><style>html,body{margin:0}</style><div style='width:20px;height:20px;background:green'></div>";
+    std::fs::write(dir.path().join("ref.html"), reference).unwrap();
+    for name in ["test.xht", "test.xml"] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, source).unwrap();
+        let result = run_pair(
+            &discover_pairs_for_file(&path).unwrap()[0],
+            ReftestConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(result.mismatched_pixels, 0, "{name}");
+    }
+}
+
+#[test]
 fn xhtml_reference_accepts_mirrored_author_page_margin() {
     let dir = tempfile::tempdir().unwrap();
     let source = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="match" href="ref.xhtml"/><style>@page{size:200px 160px}html,body{margin:0}div{width:20px;height:20px;background:green}</style></head><body><div/></body></html>"#;
@@ -146,7 +180,9 @@ fn http_print_uses_xhtml_for_base_probe_and_rendering() {
 }
 
 #[test]
-fn legacy_xml_extensions_keep_the_existing_html_compatibility_path() {
+fn named_character_references_render_in_xht_and_xml_files() {
+    // The XML parser resolves HTML named references without a DTD catalog, and
+    // the root needs no namespace declaration to render.
     let dir = tempfile::tempdir().unwrap();
     let source = "<html><head><title>border&ndash;radius</title></head><body></body></html>";
     for extension in ["xht", "xml"] {

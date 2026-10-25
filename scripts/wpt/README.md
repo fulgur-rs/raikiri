@@ -102,6 +102,13 @@ Steps:
 
 ## Relation to `raikiri-wpt`
 
+`raikiri-wpt` parses a test or reference file as XML when its extension is
+`.xhtml`, `.xht`, or `.xml` (WPT serves these as XML), and as HTML for every
+other extension. A document served over HTTP takes its syntax from the
+`Content-Type` header instead. The XML parser reads `&gt;` in a `<style>` as
+`>`, which HTML raw text does not, so an `.xht` test whose selectors use it
+only applies its rules under XML.
+
 `raikiri-wpt` (WPT test runner) does not currently discover the whole
 `target/wpt/` tree. The broad CSS checkout is for survey and test selection; it
 does not mean every file is supported by the runner. Keep the shared roots
