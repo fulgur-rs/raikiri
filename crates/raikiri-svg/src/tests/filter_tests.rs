@@ -284,7 +284,7 @@ fn filters_met_through_masks_patterns_and_pictures_are_bounded_too() {
              <rect width='1000' height='1000' fill='url(#p)'/>"
         ),
         format!(
-            "{heavy}<g id='g'>{inner}</g>\
+            "{heavy}<defs><g id='g'>{inner}</g></defs>\
              <filter id='h'><feImage href='#g' width='1000' height='1000'/></filter>\
              <rect width='1000' height='1000' filter='url(#h)'/>"
         ),
