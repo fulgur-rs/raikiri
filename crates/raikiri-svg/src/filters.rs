@@ -80,14 +80,6 @@ impl Meter {
                     self.group(link.root(), to_canvas)?;
                     mask = link.mask();
                 }
-                // The picture of an `feImage` holds nodes of its own.
-                for filter in inner.filters() {
-                    for primitive in filter.primitives() {
-                        if let Kind::Image(image) = primitive.kind() {
-                            self.at_scale(image.root(), to_canvas)?;
-                        }
-                    }
-                }
             }
             if let usvg::Node::Path(path) = node {
                 let paints = [
@@ -108,8 +100,8 @@ impl Meter {
     }
 
     /// Charges the filters in `root`, which resvg draws at the scale of
-    /// `to_canvas` and at no other part of it: the tile of a pattern and the
-    /// picture of an `feImage` are drawn that way.
+    /// `to_canvas` and at no other part of it, as it draws the tile of a
+    /// pattern.
     fn at_scale(&mut self, root: &usvg::Group, to_canvas: usvg::Transform) -> Result<(), SvgError> {
         let (scale_x, scale_y) = to_canvas.get_scale();
         self.group(root, usvg::Transform::from_scale(scale_x, scale_y))

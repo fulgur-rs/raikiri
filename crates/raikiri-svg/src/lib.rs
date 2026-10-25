@@ -422,7 +422,7 @@ impl SvgDocument {
             ));
         }
         let has_images = check_image_references(root, access)?;
-        check_filter_sizes(root)?;
+        check_filters(root)?;
 
         let intrinsic = intrinsic_size(root);
         let has_view_box = root
@@ -2406,36 +2406,65 @@ fn check_image_references(
 /// size, once for each element that uses it.
 const MAX_FILTER_ELEMENTS: usize = 128;
 
-/// Rejects a `<filter>` with more elements than [`MAX_FILTER_ELEMENTS`], before
-/// `usvg` reads it.
-fn check_filter_sizes(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
-    for filter in root.descendants().filter(|node| {
-        node.tag_name().name() == "filter"
+/// Rejects the filters that `usvg` cannot be trusted to read: a `<filter>` with
+/// more elements than [`MAX_FILTER_ELEMENTS`], and an `feImage` that refers to
+/// an element of the document.
+fn check_filters(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
+    for node in root.descendants().filter(|node| {
+        node.is_element()
             && node
                 .tag_name()
                 .namespace()
                 .is_none_or(|namespace| namespace == SVG_NAMESPACE)
     }) {
-        // Counting stops past the limit, so a chain of nested filters costs
-        // no more than the filters do.
-        let within_limit = filter
+        match node.tag_name().name() {
+            "filter" => check_filter_size(node)?,
+            "feImage" => check_fe_image_target(node)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Rejects `filter` when it has more elements than [`MAX_FILTER_ELEMENTS`],
+/// before `usvg` reads it.
+fn check_filter_size(filter: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
+    let elements = || {
+        filter
             .descendants()
             .skip(1)
             .filter(roxmltree::Node::is_element)
-            .take(MAX_FILTER_ELEMENTS + 1)
-            .count();
-        if within_limit > MAX_FILTER_ELEMENTS {
-            let elements = filter
-                .descendants()
-                .skip(1)
-                .filter(roxmltree::Node::is_element)
-                .count();
-            return Err(SvgError::FilterLimitExceeded {
-                budget: SvgFilterBudget::Elements,
-                requested: elements as u64,
-                limit: MAX_FILTER_ELEMENTS as u64,
-            });
-        }
+    };
+    // Counting stops past the limit, so a chain of nested filters costs no
+    // more than the filters do.
+    if elements().take(MAX_FILTER_ELEMENTS + 1).count() > MAX_FILTER_ELEMENTS {
+        return Err(SvgError::FilterLimitExceeded {
+            budget: SvgFilterBudget::Elements,
+            requested: elements().count() as u64,
+            limit: MAX_FILTER_ELEMENTS as u64,
+        });
+    }
+    Ok(())
+}
+
+/// Rejects an `feImage` that refers to an element of the document. `usvg`
+/// breaks a filter whose picture uses that same filter, but a cycle through two
+/// filters overflows its stack while it reads them, and finding such a cycle
+/// takes the cascade, which only `usvg` applies.
+fn check_fe_image_target(fe_image: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
+    // `usvg` keeps whichever of `href` and `xlink:href` comes last, so either
+    // may be the one that counts.
+    let refers_to_element = [
+        fe_image.attribute("href"),
+        fe_image.attribute((XLINK_NAMESPACE, "href")),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|href| href.trim().starts_with('#'));
+    if refers_to_element {
+        return Err(SvgError::InvalidDocument(
+            "an feImage that refers to an element of the document is not supported".to_owned(),
+        ));
     }
     Ok(())
 }

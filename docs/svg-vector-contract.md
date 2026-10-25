@@ -11,7 +11,7 @@ conformance.
 | Piece | Today |
 | --- | --- |
 | `raikiri-svg` | Parses a bounded SVG (32 MiB input, 1,000,000 XML nodes, depth 128, 1,000,000 nodes after `use` expansion) into a private `usvg` tree, prepares styles (`styled_source*`), and rasterizes with `resvg` under an output byte limit (32 MiB by default). No backend type is public. |
-| Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, a filter that holds more elements than D4 allows or asks for more memory or time than its budgets allow, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
+| Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, an `feImage` that refers to an element, a filter that holds more elements than D4 allows or asks for more memory or time than its budgets allow, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
 | `<img src=*.svg>`, `background-image`, list markers, `content: url()` | `raikiri-net` keeps the SVG bytes and rasterizes lazily at the size paint asks for (1 pixel per CSS pixel of the drawn box), with a per-source LRU of sizes under a shared byte budget. Consumers receive `DecodedImage` pixels through `ImagePixelSource`. |
 | Inline `<svg>` | `Page::inline_svg(fragment)` returns the picture of the root as an `ImageContent`: a vector scene, or pixels where D4 and D6 call for them. The scene is built from the standalone source (viewport, root color, root font and descendant declarations resolved by the cascade) with the fonts of the page. `fulgur-raikiri` draws what it is given. The built-in painter in `raikiri-paint` does not use it and rasterizes the subtree with `raikiri-svg`. |
 
@@ -137,8 +137,8 @@ draws, with the transform it draws with, and fails with
 buffers held by one filter, and 2^32 pixel operations over all the filters of
 the picture. The filters of one element share the layer of the union of their
 regions, and each primitive handles all of it, so each is charged for that
-layer. Filters met in masks (however long the chain of masks), patterns, the
-text a pattern fills and `feImage` count too. The limit is of the document,
+layer. Filters met in masks (however long the chain of masks), patterns and
+the text a pattern fills count too. The limit is of the document,
 not of the filter syntax, so the same filter can pass at one raster scale and
 fail at a larger one. When the raster cannot draw a document that fell back to
 it, its error is the one reported, not the scene's.
@@ -150,6 +150,13 @@ so reading a filter takes the square of its size, once for each element that
 uses it, and the parser would have to read the filter before any budget above
 could look at it. A longer filter fails the parse with the same error and the
 `Elements` budget.
+
+An `feImage` that refers to an element of the document (`href="#id"`) fails the
+parse with `SvgError::InvalidDocument`. `usvg` breaks a filter whose picture
+uses that same filter, but two filters whose pictures use one another's
+elements overflow its stack while it reads them, and a process cannot recover
+from that. Other `feImage` pictures are not refused here; the raster path is
+given no images, so none of them is drawn.
 
 A document that holds both a filter and an `<image>` has no picture: only a
 scene draws images (the raster path fails with `SvgError::UnsupportedImages`)

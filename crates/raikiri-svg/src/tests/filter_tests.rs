@@ -274,7 +274,7 @@ fn a_radius_counts_in_canvas_pixels_whatever_scales_it() {
 }
 
 #[test]
-fn filters_met_through_masks_patterns_and_pictures_are_bounded_too() {
+fn filters_met_through_masks_and_patterns_are_bounded_too() {
     let heavy = "<filter id='f'><feMorphology operator='dilate' radius='300'/></filter>";
     let inner = "<rect width='1000' height='1000' filter='url(#f)'/>";
     let cases = [
@@ -284,11 +284,6 @@ fn filters_met_through_masks_patterns_and_pictures_are_bounded_too() {
         format!(
             "{heavy}<pattern id='p' width='1000' height='1000' patternUnits='userSpaceOnUse'>{inner}</pattern>\
              <rect width='1000' height='1000' fill='url(#p)'/>"
-        ),
-        format!(
-            "{heavy}<defs><g id='g'>{inner}</g></defs>\
-             <filter id='h'><feImage href='#g' width='1000' height='1000'/></filter>\
-             <rect width='1000' height='1000' filter='url(#h)'/>"
         ),
     ];
     for body in cases {
@@ -354,28 +349,6 @@ fn filters_of_one_group_all_work_on_the_union_of_their_regions() {
 }
 
 #[test]
-fn an_fe_image_draws_its_picture_at_the_scale_of_the_filtered_element_only() {
-    // resvg keeps the scale of the filtered element's transform and drops the
-    // rest of it, so a skew there does not cancel one inside the picture.
-    let picture = |outer: &str, inner: &str| {
-        format!(
-            "<filter id='f'><feMorphology operator='dilate' radius='3'/></filter>\
-             <defs><g id='g' {inner}><rect width='1000' height='1000' filter='url(#f)'/></g></defs>\
-             <filter id='h'><feImage href='#g' width='1000' height='1000'/></filter>\
-             <rect width='1000' height='1000' {outer} filter='url(#h)'/>"
-        )
-    };
-    rasterize(&document(1000, 1000, &picture("", "")), 1000, 1000).unwrap();
-    assert_over_the_work_budget(
-        1000,
-        &picture(
-            "transform='matrix(1 0 100 1 0 0)'",
-            "transform='matrix(1 0 -100 1 0 0)'",
-        ),
-    );
-}
-
-#[test]
 fn a_wrapped_convolution_pays_for_the_steps_that_bring_a_coordinate_back() {
     // resvg adds the width of the image to a negative coordinate until it is
     // back in, so a kernel much wider than a one pixel image takes a step for
@@ -425,6 +398,42 @@ fn a_filter_with_too_many_elements_is_refused_before_usvg_reads_it() {
             "{count}: {error:?}"
         );
     }
+}
+
+#[test]
+fn an_fe_image_that_refers_to_an_element_is_refused_at_parse() {
+    // Two filters whose pictures use one another's elements overflow the
+    // stack of usvg, which only breaks a filter that uses its own.
+    let svg = |filters: &str, elements: &str| {
+        format!(
+            "<svg xmlns='{SVG_NAMESPACE}' xmlns:xlink='http://www.w3.org/1999/xlink' \
+             width='1' height='1'>{filters}{elements}</svg>"
+        )
+    };
+    let elements = "<g id='g1' filter='url(#a)'><rect width='1' height='1'/></g>\
+                    <g id='g2' filter='url(#b)'><rect width='1' height='1'/></g>";
+    for (a, b) in [
+        ("href='#g2'", "href='#g1'"),
+        ("xlink:href='#g2'", "xlink:href='#g1'"),
+        ("href=' #g2'", "href='#g1'"),
+        // Both attributes are given, and the one that counts comes last.
+        (
+            "href='x.png' xlink:href='#g2'",
+            "xlink:href='x.png' href='#g1'",
+        ),
+    ] {
+        let filters =
+            format!("<filter id='a'><feImage {a}/></filter><filter id='b'><feImage {b}/></filter>");
+        let error = SvgDocument::parse(svg(&filters, elements).as_bytes()).unwrap_err();
+        assert!(
+            matches!(error, SvgError::InvalidDocument(_)),
+            "{a}: {error:?}"
+        );
+    }
+    // A picture that is not an element of the document is left out, not refused.
+    let filters = "<filter id='a'><feImage href='data:image/png;base64,AAAA'/></filter>";
+    SvgDocument::parse(svg(filters, "<rect width='1' height='1' filter='url(#a)'/>").as_bytes())
+        .unwrap();
 }
 
 #[test]
