@@ -49,6 +49,7 @@ use raikiri_traits::Symbol;
 use smol_str::SmolStr;
 
 use crate::document::Document;
+use crate::generated_content::QuoteDepth;
 
 /// The counter that list items increment implicitly (CSS Lists 3 §4.6).
 const LIST_ITEM_COUNTER: &str = "list-item";
@@ -225,14 +226,27 @@ impl CounterSnapshotBudget {
         self.charge(bytes)
     }
 
-    /// Charge one entry of [`CounterSnapshots`]' pseudo-element table, with
-    /// the same allowance for hash-table capacity slack and control bytes as
-    /// a counter map entry.
-    fn charge_pseudo_entry(&mut self) -> Result<(), CounterSnapshotLimitExceeded> {
-        let bytes = (size_of::<((usize, PseudoElem), CounterSnapshot)>() as u64)
+    /// Charge one entry of a hash table of [`CounterSnapshots`] that is
+    /// `entry_bytes` large, with an allowance for hash-table capacity slack
+    /// and control bytes, as for a counter map entry.
+    fn charge_table_entry(
+        &mut self,
+        entry_bytes: usize,
+    ) -> Result<(), CounterSnapshotLimitExceeded> {
+        let bytes = (entry_bytes as u64)
             .checked_mul(2)
             .and_then(|bytes| bytes.checked_add(16));
         self.charge(bytes)
+    }
+
+    /// Charge one entry of [`CounterSnapshots`]' pseudo-element table.
+    fn charge_pseudo_entry(&mut self) -> Result<(), CounterSnapshotLimitExceeded> {
+        self.charge_table_entry(size_of::<((usize, PseudoElem), CounterSnapshot)>())
+    }
+
+    /// Charge one entry of [`CounterSnapshots`]' quote-depth table.
+    fn charge_quote_entry(&mut self) -> Result<(), CounterSnapshotLimitExceeded> {
+        self.charge_table_entry(size_of::<((usize, PseudoElem), usize)>())
     }
 }
 
@@ -630,6 +644,7 @@ pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
 pub struct CounterSnapshots {
     nodes: Vec<CounterSnapshot>,
     pseudos: HashMap<(usize, PseudoElem), CounterSnapshot>,
+    quote_starts: HashMap<(usize, PseudoElem), usize>,
 }
 
 impl CounterSnapshots {
@@ -639,6 +654,17 @@ impl CounterSnapshots {
     pub fn pseudo(&self, element: usize, pseudo: PseudoElem) -> Option<&CounterSnapshot> {
         self.pseudos.get(&(element, pseudo))
     }
+
+    /// How many quotes are open where the content of the `pseudo` of
+    /// `element` starts: the `open-quote`s of the generated text before it,
+    /// less its `close-quote`s (CSS Content 3 §2.4.2). Zero when no quote is
+    /// open, and for a pseudo-element whose content holds no quote.
+    pub(crate) fn quote_depth(&self, element: usize, pseudo: PseudoElem) -> usize {
+        self.quote_starts
+            .get(&(element, pseudo))
+            .copied()
+            .unwrap_or_default()
+    }
 }
 
 impl From<Vec<CounterSnapshot>> for CounterSnapshots {
@@ -646,6 +672,7 @@ impl From<Vec<CounterSnapshot>> for CounterSnapshots {
         Self {
             nodes,
             pseudos: HashMap::new(),
+            quote_starts: HashMap::new(),
         }
     }
 }
@@ -658,13 +685,19 @@ impl std::ops::Deref for CounterSnapshots {
     }
 }
 
-/// Where the walk is when it hands its counters to a consumer.
+/// What the walk hands to a consumer, and where it is when it does.
 #[derive(Clone, Copy)]
 enum CounterTarget {
-    /// Right after the element's own directives, before its `::before`.
+    /// Its counters right after the element's own directives, before its
+    /// `::before`.
     Element(usize),
-    /// Right after the directives of this pseudo-element of the element.
+    /// Its counters right after the directives of this pseudo-element of the
+    /// element.
     Pseudo(usize, PseudoElem),
+    /// How many quotes are open (not zero) where the content of this
+    /// pseudo-element of the element starts. The pseudo-element's content
+    /// holds a quote.
+    QuoteStart(usize, PseudoElem, usize),
 }
 
 /// Whether the content of the pseudo-element `cv`, or its alternative text,
@@ -680,6 +713,22 @@ fn content_reads_counters(cv: &raikiri_style::ComputedValues) -> bool {
                 ContentComponent::Counter { .. } | ContentComponent::Counters { .. }
             )
         })
+}
+
+/// Whether the element `idx` can have a `::before` or `::after` box. A
+/// replaced element has none, its content being outside CSS, and neither
+/// has a line break; layout draws no generated content for them.
+fn can_have_generated_boxes(doc: &Document, idx: usize) -> bool {
+    !crate::paint_rules::is_replaced_element(doc, idx) && doc.nodes[idx].tag_name() != Some("br")
+}
+
+/// Whether the content of the pseudo-element `cv` holds a quote keyword.
+/// Alternative text takes none (CSS Content 3 §2).
+fn content_has_quotes(cv: &raikiri_style::ComputedValues) -> bool {
+    use raikiri_style::property::ContentComponent;
+    cv.content
+        .iter()
+        .any(|component| matches!(component, ContentComponent::Quote(_)))
 }
 
 /// Build named-counter snapshots in document order for marker and generated
@@ -764,12 +813,16 @@ pub fn counter_snapshots_with_budget(
     }
     let mut snapshots = CounterSnapshots::from(vec![HashMap::new(); doc.node_count()]);
     walk_counter_scopes(doc, cascade, &mut scopes, |target, scopes| {
-        let snapshot = scopes.snapshot(budget)?;
         match target {
-            CounterTarget::Element(idx) => snapshots.nodes[idx] = snapshot,
+            CounterTarget::Element(idx) => snapshots.nodes[idx] = scopes.snapshot(budget)?,
             CounterTarget::Pseudo(idx, pseudo) => {
+                let snapshot = scopes.snapshot(budget)?;
                 budget.charge_pseudo_entry()?;
                 snapshots.pseudos.insert((idx, pseudo), snapshot);
+            }
+            CounterTarget::QuoteStart(idx, pseudo, open_quotes) => {
+                budget.charge_quote_entry()?;
+                snapshots.quote_starts.insert((idx, pseudo), open_quotes);
             }
         }
         Ok(())
@@ -791,11 +844,45 @@ fn has_calculated_reversed_reset(cascade: &CascadeResult) -> bool {
         })
 }
 
+/// Hand `visit` the quote depth where the content of the `pseudo` of
+/// `element` starts when a quote is open and the content holds a quote, then
+/// move `depth` past the quotes of that content. `cv` is the style of a
+/// pseudo-element that generates a box.
+fn walk_quotes(
+    cv: &raikiri_style::ComputedValues,
+    (element, pseudo): (usize, PseudoElem),
+    depth: &mut QuoteDepth,
+    scopes: &CounterScopes,
+    visit: &mut impl FnMut(CounterTarget, &CounterScopes) -> Result<(), CounterSnapshotLimitExceeded>,
+) -> Result<(), CounterSnapshotLimitExceeded> {
+    use raikiri_style::property::ContentComponent;
+    if !content_has_quotes(cv) {
+        return Ok(());
+    }
+    if depth.open_quotes() != 0 {
+        visit(
+            CounterTarget::QuoteStart(element, pseudo, depth.open_quotes()),
+            scopes,
+        )?;
+    }
+    for component in cv.content.iter() {
+        if let ContentComponent::Quote(keyword) = component {
+            depth.advance(*keyword);
+        }
+    }
+    Ok(())
+}
+
 /// Walk the tree in document order, applying every counter directive to
 /// `scopes` and calling `visit` with each element whose box takes part in
 /// counting, right after its own directives and before its `::before`, and
 /// with each `::before` / `::after` whose content reads a counter, right
 /// after that pseudo-element's directives.
+///
+/// The walk also follows the quote nesting through the generated text in the
+/// same order: a list item's `::marker`, then `::before`, the children and
+/// `::after`. It calls `visit` with the depth where a pseudo-element's
+/// content starts when that content holds a quote and a quote is open.
 fn walk_counter_scopes(
     doc: &Document,
     cascade: &CascadeResult,
@@ -809,6 +896,7 @@ fn walk_counter_scopes(
 
     let mut stack = vec![WalkStep::Enter(doc.root)];
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
+    let mut quote_depth = QuoteDepth::default();
     while let Some(step) = stack.pop() {
         match step {
             WalkStep::Enter(idx) => {
@@ -842,6 +930,17 @@ fn walk_counter_scopes(
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
+                if display == Some(DisplayValue::ListItem)
+                    && let Some(marker) = generated_pseudo(cascade, idx, PseudoElem::Marker)
+                {
+                    walk_quotes(
+                        marker,
+                        (idx, PseudoElem::Marker),
+                        &mut quote_depth,
+                        scopes,
+                        &mut visit,
+                    )?;
+                }
                 if let Some(before) = generated_pseudo(cascade, idx, PseudoElem::Before) {
                     scopes.apply(
                         before,
@@ -850,6 +949,15 @@ fn walk_counter_scopes(
                     );
                     if content_reads_counters(before) {
                         visit(CounterTarget::Pseudo(idx, PseudoElem::Before), scopes)?;
+                    }
+                    if can_have_generated_boxes(doc, idx) {
+                        walk_quotes(
+                            before,
+                            (idx, PseudoElem::Before),
+                            &mut quote_depth,
+                            scopes,
+                            &mut visit,
+                        )?;
                     }
                 }
                 let children_start = stack.len();
@@ -868,6 +976,15 @@ fn walk_counter_scopes(
                     );
                     if content_reads_counters(after) {
                         visit(CounterTarget::Pseudo(idx, PseudoElem::After), scopes)?;
+                    }
+                    if can_have_generated_boxes(doc, idx) {
+                        walk_quotes(
+                            after,
+                            (idx, PseudoElem::After),
+                            &mut quote_depth,
+                            scopes,
+                            &mut visit,
+                        )?;
                     }
                 }
                 if let Some(names) = pending_pops.pop() {

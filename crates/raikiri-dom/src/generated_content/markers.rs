@@ -4,9 +4,9 @@ use super::{
     CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, QuoteDepth, format_counter,
     format_counter_component, format_counters_component,
 };
-use crate::{CounterSnapshot, Document};
+use crate::{CounterSnapshots, Document};
 use raikiri_style::property::{ContentComponent, CounterStyle, DisplayValue, ListStyleType};
-use raikiri_style::{CascadeResult, CounterStyleRegistry, resolve_custom_counter};
+use raikiri_style::{CascadeResult, CounterStyleRegistry, PseudoElem, resolve_custom_counter};
 
 impl Document {
     /// Place a standalone image marker using the built-in painter's origin.
@@ -202,7 +202,7 @@ fn marker_content_text<T: AsRef<str>>(
         return Some(String::new());
     }
     let mut text = String::new();
-    let mut depth = QuoteDepth::default();
+    let mut depth = QuoteDepth::starting_at(counters.open_quotes());
     for component in components {
         match component {
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
@@ -266,7 +266,7 @@ pub fn marker_render_info_with_snapshots<'a>(
     document: &Document,
     cascade: &'a CascadeResult,
     node_id: usize,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     // cov:ignore: signature close has no executable mapping
     let computed = cascade.computed.get(node_id)?;
@@ -295,8 +295,15 @@ pub fn marker_render_info_with_snapshots<'a>(
         .and_then(|shared| shared.get(node_id))
         .and_then(|snapshot| snapshot.get(&raikiri_traits::Symbol::new("list-item")))
         .map(Vec::as_slice);
+    // The quotes open before the marker come from the same walk as its
+    // list-item counter.
+    let open_quotes = fallback_snapshots.as_ref().map_or_else(
+        || snapshots.quote_depth(node_id, PseudoElem::Marker),
+        |shared| shared.quote_depth(node_id, PseudoElem::Marker),
+    );
     let counters =
-        CounterSnapshotView::with_list_item_fallback(base, marker_computed, fallback_list_item);
+        CounterSnapshotView::with_list_item_fallback(base, marker_computed, fallback_list_item)
+            .starting_quotes_at(open_quotes);
     // Use the shared counter walk when a caller's snapshot omits the list
     // item counter, keeping repeated marker resolution linear for a list.
     let ordinal = if counters.values_for("list-item").is_empty() {
