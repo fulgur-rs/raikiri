@@ -19,7 +19,7 @@ use html5ever::tendril::fmt::UTF8;
 use html5ever::tendril::{StrTendril, TendrilSink};
 
 /// A parser front end that removes the internal subset of the DOCTYPE.
-pub(super) struct SkipInternalSubset<P> {
+pub(crate) struct SkipInternalSubset<P> {
     parser: P,
     /// Where the scan is; `None` once the prolog is past and everything
     /// passes through.
@@ -32,6 +32,11 @@ impl<P> SkipInternalSubset<P> {
             parser,
             state: Some(State::Prolog),
         }
+    }
+
+    /// The parser behind the filter.
+    pub(crate) fn parser(&self) -> &P {
+        &self.parser
     }
 }
 

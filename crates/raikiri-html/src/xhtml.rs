@@ -3,7 +3,7 @@
 use std::io::Read;
 
 use raikiri_traits::{LimitKind, ParseError, RenderLimits};
-use xml5ever::driver::{XmlParseOpts, parse_document};
+use xml5ever::driver::{XmlParseOpts, XmlParser, parse_document};
 
 use crate::parse::{dom_node_budget_error, parse_with_budgets_and_parser};
 use crate::{ParseOptions, RaikiriTreeSink, UncascadedDocument};
@@ -17,6 +17,21 @@ use subset::SkipInternalSubset;
 /// elements for every end tag, so unbounded nesting would make the parse time
 /// quadratic in the input; real documents stay far below this.
 const MAX_ELEMENT_DEPTH: u32 = 256;
+
+/// The parser behind [`parse_xhtml`]: xml5ever behind the filter that drops
+/// the DOCTYPE's internal subset.
+pub(crate) type XhtmlParser = SkipInternalSubset<XmlParser<RaikiriTreeSink>>;
+
+/// The tree sink for an XHTML parse under `limits`, which also stops at
+/// elements nested deeper than [`MAX_ELEMENT_DEPTH`].
+pub(crate) fn xhtml_sink(limits: &RenderLimits) -> RaikiriTreeSink {
+    RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes)
+        .with_open_depth_limit(MAX_ELEMENT_DEPTH)
+}
+
+pub(crate) fn xhtml_parser(sink: RaikiriTreeSink) -> XhtmlParser {
+    SkipInternalSubset::new(parse_document(sink, XmlParseOpts::default()))
+}
 
 /// Parse UTF-8 XHTML with xml5ever, preserving self-closing elements,
 /// namespaces, case, and CDATA text, and collecting stylesheets as
@@ -54,16 +69,15 @@ pub fn parse_xhtml(
     parse_with_limits(input, options, &RenderLimits::default())
 }
 
-fn parse_with_limits(
+pub(crate) fn parse_with_limits(
     input: impl Read,
     options: &ParseOptions<'_>,
     limits: &RenderLimits,
 ) -> Result<UncascadedDocument, ParseError> {
-    let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes)
-        .with_open_depth_limit(MAX_ELEMENT_DEPTH);
+    let sink = xhtml_sink(limits);
     let node_limit_signal = sink.dom_node_limit_signal();
     let depth_limit_signal = sink.open_depth_limit_signal();
-    let parser = SkipInternalSubset::new(parse_document(sink, XmlParseOpts::default()));
+    let parser = xhtml_parser(sink);
     parse_with_budgets_and_parser(input, parser, options, limits.max_input_bytes, || {
         dom_node_budget_error(limits.max_dom_nodes, &node_limit_signal).or_else(|| {
             depth_limit_signal
