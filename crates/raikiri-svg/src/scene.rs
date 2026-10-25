@@ -5,28 +5,41 @@
 //! `preserveAspectRatio` and `transform` attributes folded into group
 //! transforms. It covers shapes and paths with solid and gradient fills and
 //! strokes, clip paths, group opacity and visibility, and text when the caller
-//! supplies fonts. Patterns, masks, blend modes and images are reported as
-//! [`SvgSceneError::Unsupported`], so the caller draws the raster of the whole
-//! image instead.
+//! supplies fonts, and raster pictures when the caller supplies them. Patterns,
+//! masks and blend modes are reported as [`SvgSceneError::Unsupported`], so the
+//! caller draws the raster of the whole image instead.
 //!
 //! ## Text
 //!
 //! The parser shapes and positions text; the faces come from the caller's
-//! [`SvgFontSource`], so SVG text is set in the fonts of the HTML around it.
+//! [`SvgFontSource`](crate::SvgFontSource), so SVG text is set in the fonts of the HTML around it.
 //! Each styled span becomes a [`TextRun`] of glyphs, with its decorations as
 //! paths around it. Text inside a clip path is flattened to outlines, because
 //! a clip is geometry. Without fonts the text is left out, as the raster path
 //! leaves it out.
+//!
+//! ## Pictures
+//!
+//! An `<image>` is a [`RasterImage`] of the pixels that the caller's
+//! [`SvgImageSource`](crate::SvgImageSource) decoded, in a group that carries the size, the position
+//! and the `preserveAspectRatio` clip of the element. A picture the source
+//! does not give is left out, like a broken picture in HTML, and a document
+//! built without a source has no pictures in its scene. The pictures count
+//! toward a budget of their pixels, so a scene is no bigger than the raster of
+//! the same document could be.
+
+use std::sync::Arc;
 
 use crate::fonts::FaceMap;
+use crate::images::{ImageMap, MAX_SCENE_IMAGES};
 use crate::{
-    SourceRootStyle, SvgDocument, SvgError, SvgFontSource, SvgResolvedStyles, SvgRootStyle,
+    SourceRootStyle, SvgDocument, SvgError, SvgResolvedStyles, SvgResources, SvgRootStyle,
     SvgViewport, resolved_source_style, within_four_ulps_of_one,
 };
 use raikiri_traits::vector::{
     ClipPath, Dash, Fill, FillRule, FontVariation, Glyph, GradientStop, Group, LineCap, LineJoin,
-    LinearGradient, Node, Paint, PaintOrder, Path, PathSegment, RadialGradient, SpreadMethod,
-    Stroke, TextRun, VectorImage,
+    LinearGradient, Node, Paint, PaintOrder, Path, PathSegment, RadialGradient, RasterImage,
+    SpreadMethod, Stroke, TextRun, VectorImage,
 };
 use raikiri_traits::{PaintColor, PaintTransform};
 use usvg::tiny_skia_path;
@@ -49,6 +62,9 @@ const MAX_GRADIENT_STOPS: usize = 1_024;
 const MAX_SCENE_GRADIENT_STOPS: usize = 1_000_000;
 /// Most glyphs in one scene.
 const MAX_SCENE_GLYPHS: usize = 1_000_000;
+/// Most pixel bytes the pictures of one document may hold together, each
+/// distinct picture counting once: the output limit of the raster path.
+const MAX_SCENE_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 /// The length below which the two points of a gradient count as one, as the
 /// raster path counts them.
 const DEGENERATE_GRADIENT_LENGTH: f32 = 1.0 / 32_768.0;
@@ -73,7 +89,8 @@ pub enum SvgSceneFeature {
     Mask,
     /// A blend mode other than normal.
     BlendMode,
-    /// An embedded image, which the builder does not draw yet.
+    /// An image that is not a raster picture of the scene's source, such as a
+    /// nested SVG document.
     Image,
     /// The group of the root `<svg>` element could not be told from the
     /// groups of its content, so the host opacity could not be left out.
@@ -86,7 +103,7 @@ impl SvgSceneFeature {
             Self::Pattern => "patterns",
             Self::Mask => "masks",
             Self::BlendMode => "blend modes",
-            Self::Image => "images",
+            Self::Image => "nested images",
             Self::RootOpacity => "separating the root opacity",
         }
     }
@@ -110,6 +127,11 @@ pub enum SvgSceneLimit {
     SceneGradientStops,
     /// Glyphs in the text of the scene.
     Glyphs,
+    /// Different pictures the document asks its source for.
+    Images,
+    /// Pixel bytes the pictures of the document hold together, each distinct
+    /// picture counted once, whether the scene draws it or not.
+    ImageBytes,
 }
 
 impl SvgSceneLimit {
@@ -122,6 +144,8 @@ impl SvgSceneLimit {
             Self::GradientStops => "stops in one gradient",
             Self::SceneGradientStops => "gradient stops",
             Self::Glyphs => "glyphs",
+            Self::Images => "pictures",
+            Self::ImageBytes => "picture bytes",
         }
     }
 }
@@ -192,6 +216,7 @@ pub(crate) struct SceneLimits {
     pub(crate) gradient_stops: usize,
     pub(crate) scene_gradient_stops: usize,
     pub(crate) glyphs: usize,
+    pub(crate) image_bytes: usize,
 }
 
 impl Default for SceneLimits {
@@ -204,6 +229,7 @@ impl Default for SceneLimits {
             gradient_stops: MAX_GRADIENT_STOPS,
             scene_gradient_stops: MAX_SCENE_GRADIENT_STOPS,
             glyphs: MAX_SCENE_GLYPHS,
+            image_bytes: MAX_SCENE_IMAGE_BYTES,
         }
     }
 }
@@ -231,7 +257,13 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
     ) -> Result<VectorImage, SvgSceneError> {
-        self.build_scene(viewport, root_style, None, SceneLimits::default(), None)
+        self.build_scene(
+            viewport,
+            root_style,
+            None,
+            SceneLimits::default(),
+            SvgResources::new(),
+        )
     }
 
     /// Builds the vector scene like [`Self::scene`] from the source that
@@ -250,25 +282,32 @@ impl SvgDocument {
             root_style,
             Some(source_style),
             SceneLimits::default(),
-            None,
+            SvgResources::new(),
         )
     }
 
     /// Builds the vector scene like [`Self::scene`], or like
     /// [`Self::scene_with_resolved_styles`] when `resolved` is given, with
-    /// the document's text set in the faces of `fonts`.
+    /// the document's text and pictures taken from `resources`.
     ///
-    /// The scene holds the text as glyphs of those faces, so the faces must
-    /// outlive whatever shows the scene; the scene shares their bytes and
-    /// does not copy them. Text that no face can set is left out, like it is
-    /// for [`Self::scene`], and a character that the selected face lacks is
-    /// set in the face that `fonts` gives as its fallback.
-    pub fn scene_with_fonts(
+    /// The scene holds the text as glyphs of the faces of `resources.fonts`,
+    /// so the faces must outlive whatever shows the scene; the scene shares
+    /// their bytes and does not copy them. Text that no face can set is left
+    /// out, like it is for [`Self::scene`], and a character that the selected
+    /// face lacks is set in the face that the font source gives as its
+    /// fallback.
+    ///
+    /// The scene holds each `<image>` as the shared pixels that the picture
+    /// source gave for it. A picture it did not give is left out. A document
+    /// that asks for more than 256 different pictures, or whose pictures
+    /// total more than 32 MiB of pixels, is an error and no fallback, because
+    /// the raster path does not draw pictures at all.
+    pub fn scene_with_resources(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
         resolved: Option<SvgResolvedStyles<'_>>,
-        fonts: &dyn SvgFontSource,
+        resources: SvgResources<'_>,
     ) -> Result<VectorImage, SvgSceneError> {
         let source_style = resolved
             .map(|resolved| resolved_source_style(root_style, resolved))
@@ -278,7 +317,7 @@ impl SvgDocument {
             root_style,
             source_style,
             SceneLimits::default(),
-            Some(fonts),
+            resources,
         )
     }
 
@@ -288,7 +327,7 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         source_style: Option<SourceRootStyle<'_>>,
         limits: SceneLimits,
-        fonts: Option<&dyn SvgFontSource>,
+        resources: SvgResources<'_>,
     ) -> Result<VectorImage, SvgSceneError> {
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity.into());
@@ -309,18 +348,38 @@ impl SvgDocument {
         if root_style.opacity <= 0.0 {
             return Ok(VectorImage::new(size));
         }
-        let parsed = match self.prepared_tree_with_fonts(viewport, root_style, prepared, fonts) {
+        let parsed = match self.prepared_tree_with(
+            viewport,
+            root_style,
+            prepared,
+            resources,
+            limits.image_bytes,
+        ) {
             Ok(parsed) => parsed,
             // A root that is not visible keeps the empty picture it always
             // had when its descendants cannot be drawn.
             Err(_) if !root_style.visible => return Ok(VectorImage::new(size)),
             Err(error) => return Err(error.into()),
         };
-        let no_faces = FaceMap::default();
-        let (tree, faces) = parsed
+        let (no_faces, no_images) = (FaceMap::default(), ImageMap::default());
+        let (tree, faces, images) = parsed
             .as_ref()
-            .map_or((&self.tree, &no_faces), |(tree, faces)| (tree, faces));
-        scene_from_tree(tree, faces, viewport, root_style.opacity, limits)
+            .map_or((&self.tree, &no_faces, &no_images), |parsed| {
+                (&parsed.tree, &parsed.faces, &parsed.images)
+            });
+        if images.overflowed() {
+            return Err(SvgSceneError::LimitExceeded {
+                limit: SvgSceneLimit::Images,
+                max: MAX_SCENE_IMAGES,
+            });
+        }
+        if images.bytes_exceeded() {
+            return Err(SvgSceneError::LimitExceeded {
+                limit: SvgSceneLimit::ImageBytes,
+                max: limits.image_bytes,
+            });
+        }
+        scene_from_tree(tree, faces, images, viewport, root_style.opacity, limits)
     }
 }
 
@@ -330,6 +389,7 @@ impl SvgDocument {
 fn scene_from_tree(
     tree: &usvg::Tree,
     faces: &FaceMap,
+    images: &ImageMap,
     viewport: SvgViewport,
     host_opacity: f32,
     limits: SceneLimits,
@@ -349,7 +409,7 @@ fn scene_from_tree(
     } else {
         None
     };
-    let mut builder = Builder::new(limits, faces);
+    let mut builder = Builder::new(limits, faces, images);
     // The root of the scene counts as a node.
     builder.charge_node()?;
     let mut root = Group::new(fit * transform(tree.root().transform()));
@@ -401,6 +461,8 @@ struct Builder<'a> {
     limits: SceneLimits,
     /// The face behind each font id of the tree's glyphs.
     faces: &'a FaceMap,
+    /// The pixels behind each picture node.
+    images: &'a ImageMap,
     nodes: usize,
     segments: usize,
     stops: usize,
@@ -409,10 +471,11 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn new(limits: SceneLimits, faces: &'a FaceMap) -> Self {
+    fn new(limits: SceneLimits, faces: &'a FaceMap, images: &'a ImageMap) -> Self {
         Self {
             limits,
             faces,
+            images,
             nodes: 0,
             segments: 0,
             stops: 0,
@@ -475,15 +538,38 @@ impl<'a> Builder<'a> {
                 usvg::Node::Text(text) => {
                     nodes.extend(self.text(text, depth)?);
                 }
-                // The parser here resolves no image reference, so this node
-                // appears only if that changes; until the builder draws it,
-                // it keeps the document on the raster.
-                usvg::Node::Image(_) => {
-                    return unsupported(SvgSceneFeature::Image);
+                usvg::Node::Image(image) => {
+                    nodes.extend(self.image(image)?);
                 }
             }
         }
         Ok(nodes)
+    }
+
+    /// The node for `image`, or `None` when it is not visible. The group the
+    /// parser wraps it in scales it from its pixels to its box.
+    fn image(&mut self, image: &usvg::Image) -> Result<Option<Node>, SvgSceneError> {
+        // Only the pictures of the source are known; a nested SVG document
+        // or any other picture keeps the document on the raster.
+        let found = match image.kind() {
+            usvg::ImageKind::PNG(header) => self.images.get(header),
+            _ => None,
+        };
+        let Some(pixels) = found else {
+            return unsupported(SvgSceneFeature::Image);
+        };
+        if !image.is_visible() {
+            return Ok(None);
+        }
+        self.charge_node()?;
+        let mut picture = RasterImage::new(Arc::clone(pixels));
+        picture.smooth = !matches!(
+            image.rendering_mode(),
+            usvg::ImageRendering::OptimizeSpeed
+                | usvg::ImageRendering::CrispEdges
+                | usvg::ImageRendering::Pixelated
+        );
+        Ok(Some(Node::Image(picture)))
     }
 
     /// The nodes that stand for `text`: for each visible span its decorations

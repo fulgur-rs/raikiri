@@ -3,7 +3,8 @@
 //! A [`VectorImage`] is what a producer such as an SVG builder hands to a
 //! consumer that draws it. It is plain data: no parser, rasterizer or output
 //! format type appears here, and the scene never names a file or a URL. Text
-//! carries the bytes of the fonts it uses, shared, and not a font name.
+//! carries the bytes of the fonts it uses, shared, and not a font name, and a
+//! picture carries its pixels.
 //!
 //! ## Space and size
 //!
@@ -30,13 +31,18 @@
 //! [`FontFace`]s with the transform that places each one. A consumer never
 //! selects a font, wraps a line or applies a script's rules.
 //!
+//! Pictures are already fetched and decoded: a [`RasterImage`] holds shared
+//! pixels and is sized and placed by the group around it.
+//!
 //! Every public enum and struct is `#[non_exhaustive]`. Producers build the
 //! structs with their `new` constructors and set the public fields.
 
 use crate::paint::{PaintColor, PaintTransform};
 
+mod raster;
 mod text;
 
+pub use raster::RasterImage;
 pub use text::{FontFace, FontVariation, Glyph, TextRun};
 
 /// A vector drawing of a fixed size.
@@ -65,8 +71,8 @@ impl VectorImage {
 
     /// An estimate of the heap memory the scene holds, in bytes, for charging
     /// it to a cache budget. It counts the storage of nodes, path segments,
-    /// dash arrays and glyphs, not allocator overhead. The bytes of a font are
-    /// shared with the producer and not counted.
+    /// dash arrays and glyphs, not allocator overhead. The bytes of a font and
+    /// the pixels of a picture are shared with the producer and not counted.
     pub fn estimated_heap_bytes(&self) -> usize {
         std::mem::size_of::<Self>() + self.root.heap_bytes()
     }
@@ -82,6 +88,8 @@ pub enum Node {
     Path(Path),
     /// Shaped text.
     Text(TextRun),
+    /// A decoded picture.
+    Image(RasterImage),
 }
 
 /// A set of nodes drawn together.
@@ -122,7 +130,7 @@ impl Group {
             .iter()
             .map(|child| match child {
                 Node::Group(group) => 1 + group.descendant_count(),
-                Node::Path(_) | Node::Text(_) => 1,
+                Node::Path(_) | Node::Text(_) | Node::Image(_) => 1,
             })
             .sum::<usize>()
     }
@@ -138,6 +146,8 @@ impl Group {
                     Node::Group(group) => group.heap_bytes(),
                     Node::Path(path) => path.heap_bytes(),
                     Node::Text(run) => run.heap_bytes(),
+                    // The pixels are shared with the producer's image cache.
+                    Node::Image(_) => 0,
                 })
                 .sum::<usize>()
     }

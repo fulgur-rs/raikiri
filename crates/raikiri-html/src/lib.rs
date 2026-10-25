@@ -65,6 +65,7 @@ pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_s
 // Lets a caller that runs its own pagination lay later pages of another
 // content width out again the way `layout` does.
 pub use render::continuation::{Continuation, ContinuationInputs, continue_at_page_widths};
+pub use resources::RenderSvgImages;
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
     ResourceLimits, parse_html_with_resources,
