@@ -27,44 +27,66 @@ fn text_candidate_context(flow: candidates::CandidateFlowContext) -> candidates:
 }
 
 #[test]
-fn first_line_overflows_needs_a_block_that_starts_on_the_page_and_fits_it() {
+fn first_line_overflows_needs_a_block_that_starts_on_the_page() {
     // A 30px text at y=80 on a page from 0 to 100 straddles its end.
-    assert!(first_line_overflows(80.0, 30.0, 60.0, 50.0, 0.0, 100.0));
+    assert!(first_line_overflows(80.0, 30.0, 60.0, 0.0, 100.0));
     // Text that ends at the page end does not.
-    assert!(!first_line_overflows(70.0, 30.0, 60.0, 50.0, 0.0, 100.0));
-    // A block taller than the page keeps its natural break.
-    assert!(!first_line_overflows(80.0, 30.0, 60.0, 120.0, 0.0, 100.0));
+    assert!(!first_line_overflows(70.0, 30.0, 60.0, 0.0, 100.0));
     // A block that starts on a later page is not this page's to push.
-    assert!(!first_line_overflows(80.0, 30.0, 100.0, 50.0, 0.0, 100.0));
+    assert!(!first_line_overflows(80.0, 30.0, 100.0, 0.0, 100.0));
     // A block that continues from an earlier page is not pushed either.
-    assert!(!first_line_overflows(80.0, 30.0, -10.0, 50.0, 0.0, 100.0));
+    assert!(!first_line_overflows(80.0, 30.0, -10.0, 0.0, 100.0));
     // Text above the page start belongs to an earlier page.
-    assert!(!first_line_overflows(-10.0, 120.0, 0.0, 50.0, 0.0, 100.0));
+    assert!(!first_line_overflows(-10.0, 120.0, 10.0, 0.0, 100.0));
+    // Text pushed past the page end by padding still overflows.
+    assert!(first_line_overflows(110.0, 30.0, 60.0, 0.0, 100.0));
     // Unresolved positions or sizes never move the block.
-    assert!(!first_line_overflows(
-        f32::NAN,
-        30.0,
-        60.0,
-        50.0,
-        0.0,
-        100.0
-    ));
-    assert!(!first_line_overflows(
-        80.0,
-        f32::INFINITY,
-        60.0,
-        50.0,
-        0.0,
-        100.0
-    ));
-    assert!(!first_line_overflows(
-        80.0,
-        30.0,
-        60.0,
-        f32::NAN,
-        0.0,
-        100.0
-    ));
+    assert!(!first_line_overflows(f32::NAN, 30.0, 60.0, 0.0, 100.0));
+    assert!(!first_line_overflows(80.0, f32::INFINITY, 60.0, 0.0, 100.0));
+    assert!(!first_line_overflows(80.0, 30.0, f32::NAN, 0.0, 100.0));
+}
+
+#[test]
+fn a_block_that_fits_a_page_is_judged_by_its_whole_text() {
+    // The 90px of text taken whole is judged, and the first line is not asked.
+    assert_eq!(
+        first_line_judged_height(60.0, 100.0, 50.0, 50.0, 90.0, || panic!("no first line")),
+        Some(90.0)
+    );
+    // A block exactly as tall as the page still fits it.
+    assert_eq!(
+        first_line_judged_height(100.0, 100.0, 50.0, 50.0, 90.0, || None),
+        Some(90.0)
+    );
+}
+
+#[test]
+fn a_block_taller_than_a_page_is_judged_by_its_first_line() {
+    // The 30px first line of 90px of text decides, as the 20px above it in the
+    // block and the line together fit the page.
+    assert_eq!(
+        first_line_judged_height(300.0, 100.0, 80.0, 100.0, 90.0, || Some(30.0)),
+        Some(30.0)
+    );
+    // A first line that cannot fit the page below the block's top gains
+    // nothing from a move.
+    assert_eq!(
+        first_line_judged_height(300.0, 100.0, 8.0, 8.0, 250.0, || Some(250.0)),
+        None
+    );
+    // Unresolved heights and a missing first line never move the block.
+    assert_eq!(
+        first_line_judged_height(f32::NAN, 100.0, 80.0, 80.0, 90.0, || Some(30.0)),
+        None
+    );
+    assert_eq!(
+        first_line_judged_height(f32::INFINITY, 100.0, 80.0, 80.0, 90.0, || Some(30.0)),
+        None
+    );
+    assert_eq!(
+        first_line_judged_height(300.0, 100.0, 80.0, 80.0, 90.0, || None),
+        None
+    );
 }
 
 #[test]
@@ -15346,35 +15368,23 @@ fn an_empty_page_area_advances_by_the_paper_height() {
 fn a_first_line_straddling_the_page_end_pushes_its_block_to_a_later_page() {
     let pages = PageOrigins::new(&[], 100.0);
     // A 30px line at y=80 ends on page 1, so the block moves there.
-    assert_eq!(
-        pages.first_line_push_page(80.0, 30.0, 60.0, 50.0, 0),
-        Some(1)
-    );
+    assert_eq!(pages.first_line_push_page(80.0, 30.0, 60.0, 0), Some(1));
     // A line that ends at the page end stays.
-    assert_eq!(pages.first_line_push_page(70.0, 30.0, 60.0, 50.0, 0), None);
+    assert_eq!(pages.first_line_push_page(70.0, 30.0, 60.0, 0), None);
     // A line reaching past the next page moves the block to the page it ends on.
-    assert_eq!(
-        pages.first_line_push_page(80.0, 250.0, 60.0, 50.0, 0),
-        Some(3)
-    );
+    assert_eq!(pages.first_line_push_page(80.0, 250.0, 60.0, 0), Some(3));
     // The page is measured from the current page's own origin.
-    assert_eq!(
-        pages.first_line_push_page(180.0, 30.0, 160.0, 50.0, 1),
-        Some(2)
-    );
+    assert_eq!(pages.first_line_push_page(180.0, 30.0, 160.0, 1), Some(2));
     // A block that starts on a later page is left to that page.
-    assert_eq!(
-        pages.first_line_push_page(180.0, 30.0, 160.0, 50.0, 0),
-        None
-    );
+    assert_eq!(pages.first_line_push_page(180.0, 30.0, 160.0, 0), None);
     // Scheduled page heights set both the page end and the target.
     let scheduled = PageOrigins::new(&[100.0, 200.0], 50.0);
     assert_eq!(
-        scheduled.first_line_push_page(250.0, 100.0, 120.0, 150.0, 1),
+        scheduled.first_line_push_page(250.0, 100.0, 120.0, 1),
         Some(3)
     );
     assert_eq!(
-        scheduled.first_line_push_page(250.0, 60.0, 120.0, 150.0, 1),
+        scheduled.first_line_push_page(250.0, 60.0, 120.0, 1),
         Some(2)
     );
 }
@@ -18750,4 +18760,109 @@ fn a_marker_only_multicol_container_keeps_its_own_placement() {
         &[],
     );
     assert_eq!(ys, [0.0, 90.0]);
+}
+
+/// Six lines of one letter each, which a 20px-wide block wraps one per line.
+const SIX_LINES: &str = "X X X X X X";
+
+#[test]
+fn a_fixed_height_block_whose_first_line_straddles_a_page_end_moves_whole() {
+    // (spacer height, block style, text, page steps, block y). The block y of
+    // each case is where Chromium prints the block's box.
+    let cases: &[(f32, &str, &str, &[f32], f32)] = &[
+        // The padding puts the line below the page end although the block
+        // starts above it.
+        (80.0, "height:60px;padding-top:30px", "X", &[], 100.0),
+        // The next page is shorter than the block, or than the line: the
+        // block moves to it all the same.
+        (80.0, "height:60px", "X", &[100.0, 50.0], 100.0),
+        (80.0, "height:60px", "X", &[100.0, 20.0], 100.0),
+        // A block taller than the page moves with its first line, however
+        // tall the pages after it are.
+        (80.0, "height:120px", "X", &[], 100.0),
+        (80.0, "height:120px", "X", &[100.0, 50.0], 100.0),
+        (80.0, "width:20px;height:300px", SIX_LINES, &[], 100.0),
+        (
+            40.0,
+            "width:20px;height:300px;padding-top:40px",
+            SIX_LINES,
+            &[],
+            100.0,
+        ),
+        // A block that fits the next page but not the current one moves.
+        (30.0, "height:60px", "X", &[50.0, 100.0], 50.0),
+        // A tall block whose first line fits stays and fragments.
+        (70.0, "width:20px;height:300px", "X", &[], 70.0),
+        (10.0, "width:20px;height:300px", SIX_LINES, &[], 10.0),
+        // A line taller than the page gains nothing from moving, whether
+        // the block is at the top of the page or below a margin.
+        (0.0, "height:60px", "X", &[20.0], 0.0),
+        (8.0, "height:250px;line-height:250px", "X", &[], 8.0),
+    ];
+    for (spacer_height, style, text, page_steps, expected) in cases {
+        let ys = paginated_ys(
+            |doc, body| {
+                let spacer = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some(&format!("display:block;height:{spacer_height}px")),
+                );
+                let block =
+                    doc.append_element(Some(body), "div", Some(&format!("display:block;{style}")));
+                doc.append_text(block, *text);
+                vec![spacer, block]
+            },
+            page_steps,
+        );
+        assert_eq!(
+            ys[1], *expected,
+            "{spacer_height} {style} {text:?} {page_steps:?}"
+        );
+    }
+}
+
+#[test]
+fn what_follows_a_tall_block_moved_whole_moves_with_it() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let spacer = doc.append_element(Some(body), "div", Some("display:block;height:80px"));
+            let block = doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;width:100px;height:300px"),
+            );
+            doc.append_text(block, "X");
+            let next = doc.append_element(Some(body), "div", Some("display:block;height:20px"));
+            vec![spacer, block, next]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0, 400.0]);
+}
+
+#[test]
+fn a_tall_block_whose_first_line_is_inline_markup_moves_whole() {
+    // Both the text inside the `<b>` and the text before it own the straddling
+    // first line.
+    for leading_text in [None, Some("X ")] {
+        let ys = paginated_ys(
+            |doc, body| {
+                let spacer =
+                    doc.append_element(Some(body), "div", Some("display:block;height:80px"));
+                let block = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some("display:block;width:100px;height:300px"),
+                );
+                if let Some(text) = leading_text {
+                    doc.append_text(block, text);
+                }
+                let bold = doc.append_element(Some(block), "b", Some("display:inline"));
+                doc.append_text(bold, "X");
+                vec![spacer, block]
+            },
+            &[],
+        );
+        assert_eq!(ys, [0.0, 100.0], "{leading_text:?}");
+    }
 }

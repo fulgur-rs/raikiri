@@ -11,16 +11,17 @@ use super::{
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
     block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
     box_sets_page_name, break_margins, collapses_through, collapses_with_previous_block,
-    content_overflow_end, current_abs_y, fits_decorated_paper, flex_line_paragraph,
-    forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
-    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    in_row_flex_container, line_block_parent, lines_can_shift_inside, make_room_for_table_header,
-    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
-    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
-    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
-    place_first_table_header, place_text_candidate, positioned_text_start_y, reaches_line,
-    record_candidate_pages, reset_inline_x_for_page_transition, shift_text_candidate,
-    text_changes_page_name, text_sets_page_name,
+    content_overflow_end, current_abs_y, first_line_judged_height, first_owned_line_height,
+    fits_decorated_paper, flex_line_paragraph, forced_line_breaks, forced_line_moves,
+    forced_target_page, grow_ancestors_for_shift, has_explicit_positioned_block_ancestor,
+    has_fixed_height, has_footnote_ancestor, in_row_flex_container, line_block_parent,
+    lines_can_shift_inside, make_room_for_table_header, margin_box_starts_page, materialize_y,
+    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
+    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
+    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
+    place_text_candidate, positioned_text_start_y, reaches_line, record_candidate_pages,
+    reset_inline_x_for_page_transition, shift_text_candidate, text_changes_page_name,
+    text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 
@@ -1024,10 +1025,12 @@ impl PaginationState {
 
     /// Pushes the fixed-height block whose first line would straddle the end
     /// of the page `text` is on to the next page as a unit. This matches
-    /// normal block fragmentation for monolithic content while leaving tall
-    /// blocks and already-forced page transitions to the existing fragment
-    /// logic. A block nested in plain block flow is moved the same way; its
-    /// ancestors then grow to hold it.
+    /// normal block fragmentation for monolithic content while leaving
+    /// already-forced page transitions to the existing fragment logic. A
+    /// block that fits a page is judged by its text as a whole, a taller one
+    /// by its first line alone (see [`first_line_judged_height`]). A block
+    /// nested in plain block flow is moved the same way; its ancestors then
+    /// grow to hold it.
     pub(super) fn push_first_line_block(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1042,6 +1045,7 @@ impl PaginationState {
             body_id,
             control,
             page_origins,
+            text_lines,
             root_flow_offset,
             ..
         } = *env;
@@ -1058,13 +1062,22 @@ impl PaginationState {
                 root_flow_offset,
                 self.flow_shift,
             );
-            if let Some(target_page) = page_origins.first_line_push_page(
+            let judged_height = first_line_judged_height(
+                block_height,
+                page_origins.step_at(self.current_page),
+                block_effective_y,
                 text.effective_y,
                 text.height,
-                block_effective_y,
-                block_height,
-                self.current_page,
-            ) {
+                || first_owned_line_height(document, candidate.node_id, text_lines),
+            );
+            if let Some(target_page) = judged_height.and_then(|judged_height| {
+                page_origins.first_line_push_page(
+                    text.effective_y,
+                    judged_height,
+                    block_effective_y,
+                    self.current_page,
+                )
+            }) {
                 reach_page(control, target_page)?;
                 let target_y = page_origins.origin(target_page);
                 let delta = move_line_block(
