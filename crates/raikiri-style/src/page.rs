@@ -2,7 +2,7 @@
 //!
 //! # Status
 //!
-//! The rule tree stores parsed `@page` rules and [`cascade_page`] resolves the
+//! The rule tree stores parsed `@page` rules and `cascade_page` resolves the
 //! winning declarations for a given page context (origin / specificity /
 //! source-order cascade, then phase 2 = resolution against the page context's
 //! inheritance parent, then phase 3 = absolutization against the page context's

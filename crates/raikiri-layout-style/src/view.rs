@@ -9,6 +9,7 @@ use raikiri_style::{ComputedLengthPercentageOrAuto as L, ComputedLengthPercentag
 /// Taffy getter results may contain raw calc handles. Their owners must
 /// remain alive until the algorithm has finished resolving those handles.
 #[derive(Clone, Copy)]
+#[doc(hidden)]
 pub struct LayoutStyleView<'a> {
     pub(crate) prepared: &'a PreparedStyle<'a>,
     pub(crate) context: ViewContext,

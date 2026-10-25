@@ -31,6 +31,7 @@ use taffy::{
 
 /// A [`LayoutStyleView`] as the style Taffy's algorithms read.
 #[derive(Clone, Copy)]
+#[doc(hidden)]
 pub struct TaffyStyle<'a>(LayoutStyleView<'a>);
 
 impl<'a> TaffyStyle<'a> {
@@ -43,6 +44,7 @@ impl<'a> TaffyStyle<'a> {
 
 /// A [`BoxStyle`] as the style Taffy reads to measure a leaf.
 #[derive(Clone, Copy)]
+#[doc(hidden)]
 pub struct LeafStyle<'a>(&'a BoxStyle);
 
 impl<'a> LeafStyle<'a> {

@@ -10,7 +10,7 @@
 //! **The reverse does not hold: [`Length`] and similar types do not identify
 //! themselves as specified-layer values.** They are specified-layer values when
 //! passed to this module, but a value's **origin determines its layer**, not its
-//! type. The page path ([`crate::page::cascade_page`]) carries a bag of
+//! type. The page path (`crate::page::cascade_page`) carries a bag of
 //! `PropertyValue`s, so it carries **computed values in [`Length`] too**.
 //! The canonical explanation is in the [`Length`] documentation (the section
 //! explaining that its layer depends on origin, not its type). The documentation
@@ -44,15 +44,12 @@
 //! the constraint **by convention**, illustrated by the doctest below.
 //!
 //! **The cascade pipeline does not rely on that convention**: it limits entry
-//! into absolutization to [`SpecifiedValues::finalize`] and
-//! [`SpecifiedValues::finalize_as_root`], and encapsulates phase 3 in a private
+//! into absolutization to `SpecifiedValues::finalize` and
+//! `SpecifiedValues::finalize_as_root`, and encapsulates phase 3 in a private
 //! function that does not accept `parent_font_size`. We chose not to add
 //! `OwnFontSize` / `ParentFontSize` newtypes: each entry point has only two lines
 //! where the constraint matters, whereas newtypes would change the signatures
 //! of this module's public functions and all their doctests.
-//!
-//! [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
-//! [`SpecifiedValues::finalize_as_root`]: crate::specified::SpecifiedValues::finalize_as_root
 //!
 //! # Expected call order: four stages (phases 1 / 2 / 2.5 / 3)
 //!
@@ -62,13 +59,13 @@
 //!
 //! `parent_line_height_basis` (the **parent element's** resolved used line-height)
 //! is also needed in phase 2 for `font-size`'s self-referential `lh` (see the
-//! [`resolve_font_size`] documentation). **This does not reverse the phase 2 →
+//! `resolve_font_size` documentation). **This does not reverse the phase 2 →
 //! 2.5 order**: the basis is not the result of phase 2.5 for **this** node; it is
 //! the result of phase 2.5 for the **parent** node, already resolved in a separate
 //! recursive call. The tree walk processes parents before children, so the value
 //! is available **before** phase 2 of this node. The caller simply computes
 //! `parent_line_height_basis` before calling phase 2 for this node (as below and
-//! in [`SpecifiedValues::finalize`]).
+//! in `SpecifiedValues::finalize`).
 //!
 //! ```
 //! use raikiri_style::{
@@ -130,7 +127,7 @@
 //! - [`ComputedLengthPercentage`] / [`ComputedLengthPercentageOrAuto`] /
 //!   [`ComputedLineHeight`] / [`ComputedTabSize`] — **not marked** (the trade-off
 //!   below requires downstream consumers to match exhaustively).
-//! - [`ComputedBorder`] / [`ResolveContext`] — **marked**. Adding a field does
+//! - [`ComputedBorder`] / `ResolveContext` — **marked**. Adding a field does
 //!   not make downstream matches fail quietly; source compatibility is a gain.
 //! - [`ComputedLength`] — **not marked**, to let downstream code construct
 //!   `ComputedLength(16.0)` positionally (`#[non_exhaustive]` would prohibit it).
@@ -621,7 +618,7 @@ pub enum ComputedFlexBasis {
 /// (<https://www.w3.org/TR/css-align-3/#propdef-row-gap>): "Computed value:
 /// specified keyword, else a computed `<length-percentage>` value". Unlike
 /// `normal` for `letter-spacing`/`word-spacing`, which resolves to
-/// [`ComputedLength`] (see [`resolve_length_or_normal`]), gap's `normal` remains
+/// [`ComputedLength`] (see `resolve_length_or_normal`), gap's `normal` remains
 /// a keyword in the computed layer. The spec says "specified keyword" here,
 /// not "Computes to: normal"; the type preserves that distinction.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -647,7 +644,7 @@ pub enum ComputedLengthPercentageOrNormal {
 /// (see the "fixed-size constraint" in [`GridTrackSize`]). After parsing,
 /// that constraint has already been enforced: a minimum cannot structurally
 /// contain [`Self::Flex`]. The `MinMax` arm of `resolve_grid_track_size` always
-/// applies [`resolve_grid_inflexible_breadth`] to its minimum, whose input,
+/// applies `resolve_grid_inflexible_breadth` to its minimum, whose input,
 /// [`crate::property::GridInflexibleBreadth`], cannot contain `Flex`.
 /// There is no benefit in retaining a second computed type.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -925,7 +922,7 @@ impl ComputedBorderSpacing {
 ///   thick`): no `<percentage>` in the grammar, so [`ComputedLength`] suffices.
 /// - "Computed value: absolute length, snapped as a border width; **zero if the
 ///   border style is `none` or `hidden`**": style gating is required in the
-///   **computed layer**, and [`resolve_border`] implements it. Snapping to device
+///   **computed layer**, and `resolve_border` implements it. Snapping to device
 ///   pixels is not implemented and is outside this module's scope.
 ///
 /// This type uses `#[non_exhaustive]` (see the module doc) so future fields,
@@ -978,7 +975,7 @@ impl ComputedBorderSpacing {
 /// We therefore use no struct-literal fence.
 ///
 /// Instead, assign directly to a value **owned** by the caller and returned by
-/// [`resolve_border`]. That function returns a value, not a reference (see the
+/// `resolve_border`. That function returns a value, not a reference (see the
 /// main doctest above). Thus the confounding `E0594` failure described for
 /// `Declaration` cannot occur: `declarations()` returns `&[_]`, so without a
 /// `.clone()`, assignment always fails as a write through an immutable reference.
@@ -1044,7 +1041,7 @@ impl ComputedBorder {
     /// Read-only accessor for the absolutized border width.
     ///
     /// Always `ComputedLength::ZERO` if [`Self::style`] is
-    /// [`BorderStyle::None`] or [`BorderStyle::Hidden`], as enforced by [`resolve_border`].
+    /// [`BorderStyle::None`] or [`BorderStyle::Hidden`], as enforced by `resolve_border`.
     pub fn width(&self) -> ComputedLength {
         self.width
     }
@@ -1126,6 +1123,7 @@ pub(crate) fn resolve_text_shadow_length(
     }
 }
 
+#[doc(hidden)]
 pub fn resolve_text_shadow_item(
     specified: TextShadowItem,
     font_size: ComputedLength,
@@ -1154,6 +1152,7 @@ pub fn resolve_text_shadow_item(
 /// [`resolve_length`]'s `Px` arm is the identity, so running the lifted value
 /// through phase 3 again does not apply anything twice. Pass through `color`,
 /// which contains no length.
+#[doc(hidden)]
 pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
     TextShadowItem {
         offset_x: TextShadowLength::Length(Length::Px(computed.offset_x.0)),
@@ -1416,6 +1415,7 @@ pub(crate) fn empty_computed_transform_list() -> Arc<Vec<ComputedTransformFuncti
 /// Absolutize one `transform` function against this node's font-size and
 /// line-height. Convert only the length side of `<length-percentage>` slots to
 /// `Px`; retain their percentage side as `Percent`.
+#[doc(hidden)]
 pub fn resolve_transform_function(
     specified: TransformFunction,
     font_size: ComputedLength,
@@ -1451,6 +1451,7 @@ pub(crate) fn empty_computed_box_shadow_list() -> Arc<Vec<ComputedBoxShadowItem>
 }
 
 /// Absolutize each `border-radius` corner against this node's font-size and line-height.
+#[doc(hidden)]
 pub fn resolve_border_radius(
     specified: BorderRadius,
     font_size: ComputedLength,
@@ -1469,6 +1470,7 @@ pub fn resolve_border_radius(
 }
 
 /// Absolutize one `box-shadow` entry against this node's font-size and line-height.
+#[doc(hidden)]
 pub fn resolve_box_shadow_item(
     specified: BoxShadowItem,
     font_size: ComputedLength,
@@ -1488,6 +1490,7 @@ pub fn resolve_box_shadow_item(
 /// Absolutize `outline` width (CSS Basic User Interface Module Level 3
 /// §4.2). Its computed value is zero for `none` or `hidden` styles; only with a
 /// visible style is the specified width absolutized.
+#[doc(hidden)]
 pub fn resolve_outline(
     specified: Outline,
     font_size: ComputedLength,
@@ -1557,16 +1560,17 @@ pub fn resolve_outline(
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub struct ResolveContext {
     /// Root element's computed font-size: the `rem` basis.
     ///
     /// This [`ComputedLength`] stores an **absolutized computed `<length>`**;
-    /// it can directly hold the result of [`resolve_font_size`].
+    /// it can directly hold the result of `resolve_font_size`.
     pub root_font_size: ComputedLength,
     /// Root element's `lh` value: the `rlh` basis.
     ///
     /// An **absolutized length in px** derived by
-    /// [`used_line_height_length_or`] from the root's computed line-height and
+    /// `used_line_height_length_or` from the root's computed line-height and
     /// font-size, with `normal` measured by a [`NormalLineHeight`], or `None`
     /// when `normal` was not measured. `None` reflects the same lack of font
     /// metrics in the style layer as [`ComputedLineHeight::Normal`] (also true
@@ -1708,7 +1712,7 @@ impl ResolveContext {
     /// `rlh` basis.
     ///
     /// The caller must first absolutize `root_line_height` with
-    /// [`used_line_height_length`], passing `None` if the root's computed
+    /// `used_line_height_length`, passing `None` if the root's computed
     /// line-height is `normal` and cannot be resolved.
     pub fn with_root_line_height(
         root_font_size: ComputedLength,
@@ -1743,7 +1747,7 @@ impl ResolveContext {
     /// parent element—or against the computed metrics corresponding to the
     /// initial values of the font and line-height properties, if the element has
     /// no parent." Thus the root uses the initial-value basis. That section
-    /// applies an analogous rule to `lh`/`rlh`. See [`resolve_line_height`] for
+    /// applies an analogous rule to `lh`/`rlh`. See `resolve_line_height` for
     /// the canonical explanation of their asymmetry (`lh` is self-referential;
     /// `rlh` is a tree-global constant). In short, the root element's
     /// `line-height: 1lh` and `1rlh` both reduce to the initial `normal`
@@ -1880,6 +1884,7 @@ fn pc_to_px(v: f32) -> f32 {
 ///     None,
 /// );
 /// ```
+#[doc(hidden)]
 pub fn used_line_height_length(
     line_height: ComputedLineHeight,
     font_size: ComputedLength,
@@ -1897,6 +1902,7 @@ pub fn used_line_height_length(
 /// `normal` is the absolute length that `line-height: normal` takes for this
 /// element's first available font, as a [`NormalLineHeight`] measured it, or
 /// `None` without one; the other values ignore it.
+#[doc(hidden)]
 pub fn used_line_height_length_or(
     line_height: ComputedLineHeight,
     font_size: ComputedLength,
@@ -2109,6 +2115,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 ///     resolve_font_size(Length::Lh(2.0), ComputedLength(16.0), self_reference_basis, &ctx);
 /// assert_eq!(font_size, ComputedLength(48.0));
 /// ```
+#[doc(hidden)]
 pub fn resolve_font_size(
     specified: Length,
     parent_font_size: ComputedLength,
@@ -2168,6 +2175,7 @@ pub fn resolve_font_size(
 /// the other font-relative terms take the parent's font, and `lh` the
 /// parent's line height. The sum is clamped to the `[0,∞]` range (CSS Values
 /// 4 "Range Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
+#[doc(hidden)]
 pub fn resolve_font_size_calc(
     calc: RelativeCalcLengthPercentage,
     parent_font_size: ComputedLength,
@@ -2300,6 +2308,7 @@ pub(crate) fn resolve_length(
 }
 
 /// Resolve the non-negative length-or-auto `column-width` value.
+#[doc(hidden)]
 pub fn resolve_column_width(
     specified: crate::property::ColumnWidthValue,
     font_size: ComputedLength,
@@ -2320,6 +2329,7 @@ pub fn resolve_column_width(
 /// A `Length` is passed to [`resolve_length`] and the result cannot retain a
 /// percentage. `letter-spacing` uses [`resolve_letter_spacing`] instead so its
 /// computed percentage and mixed-calc forms remain available.
+#[doc(hidden)]
 pub fn resolve_length_or_normal(
     specified: LengthOrNormal,
     font_size: ComputedLength,
@@ -2339,6 +2349,7 @@ pub fn resolve_length_or_normal(
 /// Simple percentages and mixed calc percentages remain deferred. Relative
 /// lengths, including `em` terms in a mixed calc, resolve against the
 /// element's computed font size.
+#[doc(hidden)]
 pub fn resolve_letter_spacing(
     specified: LetterSpacingValue,
     font_size: ComputedLength,
@@ -2374,6 +2385,7 @@ pub fn resolve_letter_spacing(
 
 /// Resolve `word-spacing` with the CSS Text 4 computed-value rules shared with
 /// `letter-spacing`.
+#[doc(hidden)]
 pub fn resolve_word_spacing(
     specified: WordSpacingValue,
     font_size: ComputedLength,
@@ -2394,6 +2406,7 @@ pub fn resolve_word_spacing(
 /// [`resolve_length`] for a length-only grammar. For
 /// [`TabSize::Calc`], resolve `px` + `em * font-size` and clamp negative derived
 /// values to zero (CSS Values 4 §10.7; see the arm comment).
+#[doc(hidden)]
 pub fn resolve_tab_size(
     specified: TabSize,
     font_size: ComputedLength,
@@ -2449,6 +2462,7 @@ pub fn resolve_tab_size(
 /// assert_eq!(computed.horizontal, ComputedLength(0.0));
 /// assert_eq!(computed.vertical, ComputedLength(20.0));
 /// ```
+#[doc(hidden)]
 pub fn resolve_border_spacing(
     specified: BorderSpacingValue,
     font_size: ComputedLength,
@@ -2499,6 +2513,7 @@ pub fn resolve_border_spacing(
 /// helper repacks [`ComputedFlexBasis`] into [`FlexBasisValue`], but unlike
 /// that helper there is no `Computed* → specified type` conversion: this
 /// function uses the same type before and after absolutization.
+#[doc(hidden)]
 pub fn resolve_vertical_align(
     specified: VerticalAlign,
     font_size: ComputedLength,
@@ -2532,6 +2547,7 @@ pub fn resolve_vertical_align(
 
 /// Resolve `text-decoration-inset` lengths against the declaring element's
 /// computed font and line-height.
+#[doc(hidden)]
 pub fn resolve_text_decoration_inset(
     specified: TextDecorationInset,
     font_size: ComputedLength,
@@ -2551,6 +2567,7 @@ pub fn resolve_text_decoration_inset(
 ///
 /// Keyword values are retained. Lengths become absolute CSS pixels using the
 /// declaring element's font-size and line-height basis.
+#[doc(hidden)]
 pub fn resolve_text_decoration_thickness(
     specified: TextDecorationThickness,
     font_size: ComputedLength,
@@ -2571,6 +2588,7 @@ pub fn resolve_text_decoration_thickness(
 /// Text Decoration 4 §2.8) so they rescale with each inheriting element's font
 /// size; deferred mixed `calc()` values still use the conservative `auto`
 /// fallback.
+#[doc(hidden)]
 pub fn resolve_text_underline_offset(
     specified: TextUnderlineOffset,
     font_size: ComputedLength,
@@ -2622,6 +2640,7 @@ pub fn resolve_text_underline_offset(
 /// formal cascade declaration drop** that falls through to the next candidate:
 /// winner selection is complete, and only that winner is replaced by its
 /// initial-equivalent value.
+#[doc(hidden)]
 pub fn resolve_length_percentage(
     specified: Length,
     font_size: ComputedLength,
@@ -2679,6 +2698,7 @@ pub fn resolve_length_percentage(
 /// element's computed font size. Percentages remain unresolved for used-value
 /// processing. A pure result is collapsed to `Px` or `Percent`; only a mixed
 /// result needs the `Calc` computed representation.
+#[doc(hidden)]
 pub fn resolve_text_indent_calc(
     specified: LengthPercentageCalc,
     font_size: ComputedLength,
@@ -2744,6 +2764,7 @@ pub(crate) fn resolve_text_indent_calc_with_context(
 /// Applying this function's `Auto` fallback to margins would spuriously
 /// activate that layout behavior in the common `line-height: normal` case,
 /// such as `<div style="line-height: normal; margin-top: 1lh">`.
+#[doc(hidden)]
 pub fn resolve_length_percentage_or_auto(
     specified: LengthOrAuto,
     font_size: ComputedLength,
@@ -2792,6 +2813,7 @@ pub fn resolve_length_percentage_or_auto(
 /// a mixed `calc()` such as `calc(1em - 20px)` that computes to a negative
 /// length becomes zero. Insets accept negative lengths and keep using
 /// [`resolve_length_percentage_or_auto`].
+#[doc(hidden)]
 pub fn resolve_size_length_percentage_or_auto(
     specified: LengthOrAuto,
     font_size: ComputedLength,
@@ -2983,6 +3005,7 @@ fn resolve_css_position_offset(
 /// construct it with a struct literal (as for [`resolve_border_radius`],
 /// [`resolve_box_shadow_item`], and [`resolve_outline`]). Instead, the module's
 /// unit tests include `resolve_css_position_absolutizes_each_offset`.
+#[doc(hidden)]
 pub fn resolve_css_position(
     specified: CssPosition,
     font_size: ComputedLength,
@@ -3026,6 +3049,7 @@ pub fn resolve_css_position(
 ///     },
 /// );
 /// ```
+#[doc(hidden)]
 pub fn resolve_background_size(
     specified: BackgroundSize,
     font_size: ComputedLength,
@@ -3071,6 +3095,7 @@ pub fn resolve_background_size(
 /// used-value resolution outside this crate. Rather than special-case
 /// `Percent`, rely on [`resolve_length_percentage`] to pass it through, as for
 /// `padding`/`margin`/`background-position`.
+#[doc(hidden)]
 pub fn resolve_background_image(
     specified: BackgroundImage,
     font_size: ComputedLength,
@@ -3091,6 +3116,7 @@ pub fn resolve_background_image(
 /// Absolutize a `<gradient>`'s `<length-percentage>` payloads (CSS Images 4
 /// §3) in **phase 3**, using this node's basis. Pass through `Percent` as
 /// documented by [`resolve_background_image`].
+#[doc(hidden)]
 pub fn resolve_gradient(
     specified: Gradient,
     font_size: ComputedLength,
@@ -3229,6 +3255,7 @@ fn resolve_conic_gradient(
 /// matching the `<'width'>` grammar exactly, including its `Auto` fallback for
 /// unresolved `Lh`/`Rlh` and its clamp of a math function to `[0,∞]`. Do not
 /// duplicate the implementation.
+#[doc(hidden)]
 pub fn resolve_flex_basis(
     specified: FlexBasisValue,
     font_size: ComputedLength,
@@ -3280,6 +3307,7 @@ fn computed_flex_basis(
 
 /// Absolutize specified `<track-breadth>` (**phase 3**, using this node's
 /// basis). Pass through keywords and `<flex>`; only `<length-percentage>` changes.
+#[doc(hidden)]
 pub fn resolve_grid_track_breadth(
     specified: GridTrackBreadth,
     font_size: ComputedLength,
@@ -3324,6 +3352,7 @@ fn resolve_grid_breadth_calc(
 /// [`resolve_grid_track_breadth`]. Since
 /// [`crate::property::GridInflexibleBreadth`] has no `<flex>` variant, this
 /// function cannot structurally return [`ComputedGridTrackBreadth::Flex`].
+#[doc(hidden)]
 pub fn resolve_grid_inflexible_breadth(
     specified: GridInflexibleBreadth,
     font_size: ComputedLength,
@@ -3347,6 +3376,7 @@ pub fn resolve_grid_inflexible_breadth(
 }
 
 /// Absolutize specified `<track-size>` (**phase 3**, using this node's basis).
+#[doc(hidden)]
 pub fn resolve_grid_track_size(
     specified: GridTrackSize,
     font_size: ComputedLength,
@@ -3373,6 +3403,7 @@ pub fn resolve_grid_track_size(
 /// Absolutize specified [`crate::property::GridTrackList`] (**phase 3**,
 /// using this node's basis). Clone and carry `line_names` unchanged: they
 /// contain no lengths.
+#[doc(hidden)]
 pub fn resolve_grid_track_list(
     specified: &GridTrackList,
     font_size: ComputedLength,
@@ -3410,6 +3441,7 @@ pub fn resolve_grid_track_list(
 /// values of `none | <track-list> | <auto-track-list>` (**phase 3**,
 /// using this node's basis).
 /// Pass through `none` as a keyword.
+#[doc(hidden)]
 pub fn resolve_grid_template_tracks(
     specified: GridTemplateTracks,
     font_size: ComputedLength,
@@ -3426,6 +3458,7 @@ pub fn resolve_grid_template_tracks(
 
 /// Absolutize `grid-auto-columns` / `grid-auto-rows` specified `<track-size>+`
 /// values (**phase 3**, using this node's basis).
+#[doc(hidden)]
 pub fn resolve_grid_auto_track_list(
     specified: &[GridTrackSize],
     font_size: ComputedLength,
@@ -3450,6 +3483,7 @@ pub fn resolve_grid_auto_track_list(
 /// in [`resolve_length_or_normal`], because the specs use different wording.
 /// Delegate `<length-percentage>` to [`resolve_length_percentage`]; percentages
 /// pass through for downstream used-value resolution (taffy).
+#[doc(hidden)]
 pub fn resolve_length_percentage_or_normal(
     specified: LengthOrNormal,
     font_size: ComputedLength,
@@ -3493,6 +3527,7 @@ pub fn resolve_length_percentage_or_normal(
 /// percentage is clamped to zero now (CSS Values 4 "Range Checking",
 /// <https://www.w3.org/TR/css-values-4/#calc-range>), and one with a
 /// percentage is clamped by its consumer once the basis is known.
+#[doc(hidden)]
 pub fn resolve_non_negative_length_percentage_or_calc(
     specified: LengthPercentageOrCalc,
     font_size: ComputedLength,
@@ -3514,6 +3549,7 @@ pub fn resolve_non_negative_length_percentage_or_calc(
 /// A plain length or percentage resolves as in [`resolve_length_percentage`].
 /// A `calc()` keeps its percentage for used-value time, and one whose
 /// percentage is zero folds to a length.
+#[doc(hidden)]
 pub fn resolve_length_percentage_or_calc(
     specified: LengthPercentageOrCalc,
     font_size: ComputedLength,
@@ -3579,6 +3615,7 @@ fn fold_resolved_calc(resolved: ComputedLengthPercentageOrAuto) -> ComputedLengt
 /// taffy. Do not change the shared public resolver's fallback for margins:
 /// that would also change behavior for its width/height callers and any future
 /// callers. Keep the margin-specific change in this function.
+#[doc(hidden)]
 pub fn resolve_margin_length_or_auto(
     specified: LengthOrAuto,
     font_size: ComputedLength,
@@ -3663,6 +3700,7 @@ pub fn resolve_margin_length_or_auto(
 /// the definition of `rlh`. The quote's "Similarly" prescribes the same
 /// fallback when a self-reference exists; it does not require using the
 /// parent basis when `rlh` has no cycle.
+#[doc(hidden)]
 pub fn resolve_line_height(
     specified: LineHeight,
     font_size: ComputedLength,
@@ -3774,6 +3812,7 @@ pub fn resolve_line_height(
 /// by the caller through [`used_line_height_length`]. It resolves
 /// `border-*-width: 1lh` (same contract as [`resolve_length`]). If it is `None`
 /// because `normal` cannot be resolved, `resolve_length` returns `0px`.
+#[doc(hidden)]
 pub fn resolve_border(
     specified: Border,
     font_size: ComputedLength,
@@ -3885,6 +3924,7 @@ fn snap_border_width_to_device_pixels(width: ComputedLength, scale: f32) -> Comp
 /// let lifted = lift_font_size(inherited);
 /// assert_eq!(resolve_font_size(lifted, ComputedLength(16.0), None, &ctx), inherited);
 /// ```
+#[doc(hidden)]
 pub fn lift_font_size(computed: ComputedLength) -> Length {
     Length::Px(computed.0)
 }
@@ -3927,6 +3967,7 @@ pub fn lift_font_size(computed: ComputedLength) -> Length {
 /// let child = resolve_line_height(lift_line_height(declared), ComputedLength(10.0), None, &ctx);
 /// assert_eq!(child, ComputedLineHeight::Length(ComputedLength(30.0)));
 /// ```
+#[doc(hidden)]
 pub fn lift_line_height(computed: ComputedLineHeight) -> LineHeight {
     match computed {
         ComputedLineHeight::Normal => LineHeight::Normal,
@@ -3939,6 +3980,7 @@ pub fn lift_line_height(computed: ComputedLineHeight) -> LineHeight {
 ///
 /// Percentages remain unresolved, so this is a fixed-point operation for both
 /// variants of [`ComputedLengthPercentage`].
+#[doc(hidden)]
 pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
     match computed {
         ComputedLengthPercentage::Px(v) => Length::Px(v),
@@ -3949,6 +3991,7 @@ pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
 /// Lift a computed [`ComputedLengthPercentageOrCalc`] back into the
 /// specified-layer [`LengthPercentageOrCalc`] (the sibling of
 /// [`lift_length_percentage`]).
+#[doc(hidden)]
 pub fn lift_length_percentage_or_calc(
     computed: ComputedLengthPercentageOrCalc,
 ) -> LengthPercentageOrCalc {
@@ -4191,6 +4234,7 @@ pub(crate) fn lift_grid_auto_track_list(
 ///
 /// The parent's `em` term has already been resolved, so a mixed calc is copied
 /// with `em: 0` and must not be re-resolved against the child's font size.
+#[doc(hidden)]
 pub fn lift_text_indent(computed: ComputedTextIndent) -> TextIndentLength {
     match computed {
         ComputedTextIndent::Px(v) => TextIndentLength::Length(Length::Px(v)),
@@ -4287,6 +4331,7 @@ pub(crate) fn lift_text_decoration_inset(
 /// );
 /// assert_eq!(lifted, LengthOrNormal::Length(raikiri_style::property::Length::Px(2.0)));
 /// ```
+#[doc(hidden)]
 pub fn lift_length_or_normal(computed: ComputedLength) -> LengthOrNormal {
     LengthOrNormal::Length(Length::Px(computed.0))
 }
@@ -4295,6 +4340,7 @@ pub fn lift_length_or_normal(computed: ComputedLength) -> LengthOrNormal {
 ///
 /// Any `em` term has already resolved against the parent, so a lifted mixed
 /// calc uses only absolute px and percentage components.
+#[doc(hidden)]
 pub fn lift_letter_spacing(computed: ComputedLetterSpacing) -> LetterSpacingValue {
     match computed {
         ComputedLetterSpacing::Px(px) => LetterSpacingValue::Length(Length::Px(px)),
@@ -4312,6 +4358,7 @@ pub fn lift_letter_spacing(computed: ComputedLetterSpacing) -> LetterSpacingValu
 
 /// Lift an inherited computed `word-spacing` value back into the specified
 /// staging shape without dropping percentages or mixed calc terms.
+#[doc(hidden)]
 pub fn lift_word_spacing(computed: ComputedWordSpacing) -> WordSpacingValue {
     lift_letter_spacing(computed)
 }
@@ -4345,6 +4392,7 @@ pub fn lift_word_spacing(computed: ComputedWordSpacing) -> WordSpacingValue {
 ///     inherited_number
 /// );
 /// ```
+#[doc(hidden)]
 pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
     match computed {
         ComputedTabSize::Number(n) => TabSize::Number(n),
@@ -4375,6 +4423,7 @@ pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
 /// let lifted = lift_border_spacing(inherited);
 /// assert_eq!(resolve_border_spacing(lifted, font_size, None, &ctx), inherited);
 /// ```
+#[doc(hidden)]
 pub fn lift_border_spacing(computed: ComputedBorderSpacing) -> BorderSpacingValue {
     BorderSpacingValue {
         horizontal: Length::Px(computed.horizontal.px()),

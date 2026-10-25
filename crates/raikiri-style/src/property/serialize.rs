@@ -52,6 +52,7 @@ fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
 /// cannot *correctly* serialize with their current parsed representation —
 /// see the Tier2 Phase 1 plan's Global Constraints). Callers should fall
 /// back to echoing the raw input string when this returns `None`.
+#[doc(hidden)]
 pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     match value {
         PropertyValue::ContextualColor(color) => serialize_one_color(color.source.as_ref()),
@@ -1096,6 +1097,7 @@ fn parse_color_entirely(raw_value: &str) -> Option<CssColor> {
 /// from the already-parsed `PropertyValue` is not possible without
 /// changing `CssColor`/`PropertyValue`'s shape, which is public API used
 /// well beyond this parser (cascade, paint, and downstream consumers).
+#[doc(hidden)]
 pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
     if !matches!(
         name,

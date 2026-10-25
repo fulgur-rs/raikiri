@@ -6,6 +6,7 @@
 
 /// The layout of the children of a box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum Display {
     /// Block layout.
     Block,
@@ -21,6 +22,7 @@ pub enum Display {
 
 /// Whether a box generates boxes at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum BoxGenerationMode {
     /// The box generates boxes as usual.
     Normal,
@@ -30,6 +32,7 @@ pub enum BoxGenerationMode {
 
 /// The position scheme of a box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum Position {
     /// In normal flow; insets have no effect.
     #[default]
@@ -62,6 +65,7 @@ impl Position {
 
 /// Which out-of-flow positions a box is the containing block of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub struct ContainingBlockClaims {
     /// Whether the box is the containing block of `position: absolute` boxes.
     pub absolute: bool,
@@ -89,6 +93,7 @@ impl ContainingBlockClaims {
 
 /// What the size properties of a box measure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum BoxSizing {
     /// The border box.
     #[default]
@@ -99,6 +104,7 @@ pub enum BoxSizing {
 
 /// How overflowing content affects the layout of its box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum Overflow {
     /// Content spills out and counts for the scrollable overflow of ancestors.
     #[default]
@@ -124,6 +130,7 @@ impl Overflow {
 
 /// The layout-relevant parts of `contain`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub struct Contain(u8);
 
 impl Contain {
@@ -159,6 +166,7 @@ impl Contain {
 
 /// The inline base direction of a box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum Direction {
     /// Left to right.
     #[default]
@@ -177,6 +185,7 @@ impl Direction {
 
 /// The float side of a box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum Float {
     /// Floats to the left.
     Left,
@@ -197,6 +206,7 @@ impl Float {
 
 /// The floats a box clears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[doc(hidden)]
 pub enum Clear {
     /// Clears left floats.
     Left,

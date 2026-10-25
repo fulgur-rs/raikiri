@@ -11,6 +11,7 @@ use crate::{RaikiriSelectorImpl, StyleDom, StyleNode, StyleNodeId, parse_selecto
 
 /// A parsed selector list ready to test elements of a [`StyleDom`].
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct SelectorQuery {
     list: SelectorList<RaikiriSelectorImpl>,
 }
@@ -122,6 +123,7 @@ impl SelectorQuery {
 
 /// A [`SelectorQuery`] bound to one DOM and one `:scope` element, created by
 /// [`SelectorQuery::matcher`].
+#[doc(hidden)]
 pub struct SelectorMatcher<'a, D: StyleDom> {
     query: &'a SelectorQuery,
     dom: &'a D,

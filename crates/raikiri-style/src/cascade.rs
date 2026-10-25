@@ -12,18 +12,18 @@
 //! Resolving a node's winners has four stages (named phases 1 / 2 / 2.5 / 3,
 //! in order):
 //!
-//! - **phase 1: stage winners** — seed [`crate::specified::SpecifiedValues`] from
+//! - **phase 1: stage winners** — seed `crate::specified::SpecifiedValues` from
 //!   the parent's [`ComputedValues`] and apply all the node's winners with
 //!   `apply_value`. Lengths remain in specified form here.
 //! - **phase 2: absolutize font-size** — relative to the **parent's** computed font-size.
 //! - **phase 2.5: absolutize line-height** — relative to the node's **own**
-//!   (now determined) font-size. See the canonical [`crate::resolve::resolve_line_height`]
+//!   (now determined) font-size. See the canonical `crate::resolve::resolve_line_height`
 //!   documentation for the asymmetry of the `lh`/`rlh` self-reference basis.
 //! - **phase 3: absolutize all remaining lengths** — relative to the node's
 //!   **own** computed font-size / line-height.
 //!
-//! Phases 2 / 2.5 / 3 are encapsulated in [`crate::specified::SpecifiedValues::finalize`].
-//! See the [`crate::specified`] module docs for why these stages must be separate:
+//! Phases 2 / 2.5 / 3 are encapsulated in `crate::specified::SpecifiedValues::finalize`.
+//! See the `crate::specified` module docs for why these stages must be separate:
 //! the `font-size` that serves as the basis for `padding: 2em` is not known until
 //! **all** the node's winners have been applied, so lengths cannot be absolutized
 //! while winners are being applied.
@@ -134,12 +134,12 @@ pub struct CascadeResult {
     pub authored_writing_modes: Vec<Option<WritingMode>>,
     /// The `@page` cascade for the page query supplied to the cascade entry
     /// point. The compatibility entry point uses the unnamed/default query;
-    /// paged consumers should use [`cascade_with_media_context_for_page`].
+    /// paged consumers should use `cascade_with_media_context_for_page`.
     ///
     /// The page context is a layout input, so a caller deriving another page
     /// query's result from this one should use [`Self::replace_page`] rather
     /// than assigning this field: assignment keeps the old
-    /// [`Self::generation`], and generation-keyed layout caches would treat
+    /// `Self::generation`, and generation-keyed layout caches would treat
     /// the changed result as the cascade they last saw.
     pub page: PageCascadeResult,
     /// The winning `@counter-style` registry captured from the rule tree.
@@ -474,7 +474,7 @@ impl CascadeResult {
     /// The element results are unchanged; `page` is expected to come from
     /// [`Self::cascade_page_from_root`] with the same [`RuleTree`] and
     /// [`MediaContext`]. The page context is a layout input, so the result
-    /// gets a fresh [`Self::generation`] and generation-keyed caches treat it
+    /// gets a fresh `Self::generation` and generation-keyed caches treat it
     /// as a new cascade.
     pub fn replace_page(&mut self, page: PageCascadeResult) {
         self.page = page;
@@ -486,7 +486,7 @@ impl CascadeResult {
     /// `old_of_new` must be in range.
     ///
     /// This pairs with a document copy that keeps only some nodes; the
-    /// result gets a fresh [`Self::generation`]. When the `@page` inheritance
+    /// result gets a fresh `Self::generation`. When the `@page` inheritance
     /// parent is not kept, the new result's is its first node.
     pub fn extract(&self, old_of_new: &[usize]) -> Self {
         // Every field is named so that a new one has to be considered here.
@@ -719,6 +719,7 @@ fn page_inheritance_root_index<D: StyleDom>(dom: &D, computed_len: usize) -> usi
 /// let root_style: &ComputedValues = &result.computed[0];
 /// # }
 /// ```
+#[doc(hidden)]
 pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
     cascade_with_media_context(dom, rule_tree, &MediaContext::default())
 }
@@ -731,6 +732,7 @@ pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResu
 /// # Errors
 ///
 /// See [`cascade_with_options`].
+#[doc(hidden)]
 pub fn cascade_with_media_context<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
@@ -749,6 +751,7 @@ pub fn cascade_with_media_context<D: StyleDom>(
 /// # Errors
 ///
 /// See [`cascade_with_options`].
+#[doc(hidden)]
 pub fn cascade_with_media_context_for_page<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
@@ -779,6 +782,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
 ///   result's buffers.
 /// - [`CascadeError::Internal`] when the stylesheets have more rules,
 ///   selectors or declarations than the cascade can number.
+#[doc(hidden)]
 pub fn cascade_with_options<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,

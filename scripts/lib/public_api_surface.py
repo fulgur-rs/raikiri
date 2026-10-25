@@ -395,6 +395,193 @@ def format_exhaustive(listed: Iterable[tuple[Name, str]]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# The first tier: which names does the consumer API reach?
+# ---------------------------------------------------------------------------
+
+# The markers around the list of names in docs/public-api.md that fulgur uses
+# from crates other than the consumer crate.
+FIRST_TIER_BEGIN = "<!-- first-tier-names:begin -->"
+FIRST_TIER_END = "<!-- first-tier-names:end -->"
+NAME_LINE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+$")
+
+
+def read_first_tier_names(markdown: str) -> list[str]:
+    """The names listed between the first-tier markers of `markdown`, one per line.
+
+    Blank lines and the lines of a code fence are skipped. Any other line must
+    be a path: a name that is misspelled or wrapped would otherwise drop out of
+    the list unnoticed and make the names that depend on it look unreachable.
+    """
+    # A marker counts only on a line of its own, so prose that quotes one does not cut the list.
+    start = re.search(rf"^{re.escape(FIRST_TIER_BEGIN)}[ \t]*$", markdown, re.MULTILINE)
+    end = re.search(rf"^{re.escape(FIRST_TIER_END)}[ \t]*$", markdown, re.MULTILINE)
+    if start is None or end is None or end.start() < start.end():
+        raise ValueError(f"the markers {FIRST_TIER_BEGIN} and {FIRST_TIER_END} are missing")
+    found = []
+    for line in markdown[start.end() : end.start()].splitlines():
+        text = line.strip()
+        if not text or text.startswith("```"):
+            continue
+        if not NAME_LINE_RE.fullmatch(text):
+            raise ValueError(f"the line {text!r} between the first-tier markers is not a path such as crate::Name")
+        found.append(text)
+    return found
+
+
+def canonical_items(doc: dict) -> dict[str, int]:
+    """The ids of the items a crate declares, by canonical path."""
+    table: dict[str, int] = {}
+    for key, summary in doc["paths"].items():
+        if summary["crate_id"] == 0:
+            table.setdefault("::".join(summary["path"]), int(key))
+    return table
+
+
+def first_tier(
+    docs: dict[str, dict], consumer: str, extra: Iterable[str]
+) -> set[tuple[str, int]]:
+    """The items of the published crates that the consumer API reaches, as (crate, id).
+
+    `docs` maps a crate identifier (`raikiri_html`) to its rustdoc JSON. The walk
+    starts at every visible name of the `consumer` crate and at the `extra`
+    names, which are paths of visible names (`raikiri_traits::net::Request`).
+    From an item it goes to its fields, variants, impls and their items, and to
+    everything its signature, bounds and impl headers refer to, across the
+    crates of `docs`. It does not enter a `#[doc(hidden)]` item: a hidden
+    method, impl or type is outside the promise, so what only it names is not
+    reached.
+    """
+    listed = {crate: names(doc) for crate, doc in docs.items()}
+    canon = {crate: canonical_items(doc) for crate, doc in docs.items()}
+    stack: list[tuple[str, int]] = []
+    for name in listed[consumer]:
+        if name.hidden:
+            continue
+        if name.item_id is not None:
+            stack.append((consumer, name.item_id))
+            continue
+        origin = (name.canonical or "").split("::")[0]
+        if origin not in docs:
+            continue
+        found = canon[origin].get(name.canonical or "")
+        if found is not None:
+            stack.append((origin, found))
+        if name.kind in ("glob", "module"):
+            # A glob or a module of another crate publishes everything under it,
+            # whether the item is declared there or re-exported into it.
+            below = name.canonical or ""
+            for other in listed[origin]:
+                if other.item_id is not None and any(
+                    path == below or path.startswith(below + "::") for path in (other.canonical, other.path) if path
+                ):
+                    stack.append((origin, other.item_id))
+    wanted = set(extra)
+    for crate, found_names in listed.items():
+        for name in found_names:
+            if name.path in wanted and name.item_id is not None:
+                stack.append((crate, name.item_id))
+    reached: set[tuple[str, int]] = set()
+    while stack:
+        crate, key = stack.pop()
+        if (crate, key) in reached:
+            continue
+        reached.add((crate, key))
+        doc = docs[crate]
+        item = doc["index"].get(str(key))
+        if item is None or item.get("crate_id") != 0 or is_hidden(item):
+            continue
+        kind = item_kind(item)
+        if kind == "module":
+            continue
+        if kind == "use":
+            target = item["inner"]["use"].get("id")
+            followed = _resolve(docs, canon, crate, target) if isinstance(target, int) else None
+            if followed is not None:
+                stack.append(followed)
+            continue
+        stack.extend((crate, child) for child in members(item))
+        for ref in referenced_ids(item["inner"]):
+            followed = _resolve(docs, canon, crate, ref)
+            if followed is not None:
+                stack.append(followed)
+    return reached
+
+
+def _resolve(
+    docs: dict[str, dict], canon: dict[str, dict[str, int]], crate: str, ref: int
+) -> tuple[str, int] | None:
+    """The (crate, id) of the item that `ref` in the JSON of `crate` stands for, if it is one of ours."""
+    doc = docs[crate]
+    item = doc["index"].get(str(ref))
+    if item is not None and item.get("crate_id") == 0:
+        return crate, ref
+    summary = doc["paths"].get(str(ref))
+    if summary is None or summary["crate_id"] == 0:
+        return None
+    origin = doc.get("external_crates", {}).get(str(summary["crate_id"]), {}).get("name")
+    if origin not in docs:
+        return None
+    found = canon[origin].get("::".join(summary["path"]))
+    return (origin, found) if found is not None else None
+
+
+def outside_first_tier(docs: dict[str, dict], consumer: str, extra: Iterable[str]) -> dict[str, list[Name]]:
+    """The visible names, per crate, that the consumer API does not reach.
+
+    A module of the crate counts as outside when nothing under it is reached.
+    A glob, and a re-export of another crate's item or module, is not judged
+    here: the crate that declares it is.
+    """
+    extra = list(extra)
+    reached = first_tier(docs, consumer, extra)
+    outside: dict[str, list[Name]] = {}
+    for crate, doc in docs.items():
+        visible = [name for name in names(doc) if not name.hidden]
+        kept = [
+            name.path
+            for name in visible
+            if name.kind != "module" and (name.item_id is None or (crate, name.item_id) in reached)
+        ]
+        found = []
+        for name in visible:
+            if name.kind == "module":
+                if name.canonical is None and not any(path.startswith(name.path + "::") for path in kept):
+                    found.append(name)
+            elif name.item_id is not None and (crate, name.item_id) not in reached:
+                found.append(name)
+        if found:
+            outside[crate] = found
+    return outside
+
+
+def hidden_doc_links(docs: dict[str, dict]) -> list[tuple[str, str, str, str]]:
+    """The intra-doc links in the docs of a visible item that lead to a hidden item.
+
+    Each is (crate, item name, link text, target path). The rendered docs of
+    the visible item show such a link as a dead one: the page of a hidden item
+    is not generated. Write the name as a plain code span instead.
+    """
+    canon = {crate: canonical_items(doc) for crate, doc in docs.items()}
+    covers: dict[str, set[int]] = {}
+    found: list[tuple[str, str, str, str]] = []
+    for crate, doc in docs.items():
+        for _key, item in visible_items(doc):
+            for text, target_id in sorted((item.get("links") or {}).items()):
+                followed = _resolve(docs, canon, crate, target_id)
+                if followed is None:
+                    continue
+                origin, target_key = followed
+                if origin not in covers:
+                    covers[origin] = hidden_cover(docs[origin])
+                if target_key in covers[origin]:
+                    summary = docs[origin]["paths"].get(str(target_key))
+                    declared = docs[origin]["index"].get(str(target_key), {}).get("name")
+                    target = "::".join(summary["path"]) if summary is not None else f"{origin}::{declared}"
+                    found.append((crate, item.get("name") or crate, text, target))
+    return sorted(set(found))
+
+
+# ---------------------------------------------------------------------------
 # Usage: which names does a body of Rust source reach?
 # ---------------------------------------------------------------------------
 

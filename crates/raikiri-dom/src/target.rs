@@ -153,6 +153,7 @@ fn counter_directives(
 /// The estimate includes the per-node snapshot vector, hash-table capacity,
 /// counter-stack capacities, and a conservative allowance for allocation
 /// metadata. It is a hard cap independent of `RenderLimits`.
+#[doc(hidden)]
 pub const MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Counter snapshots would exceed their cumulative estimated memory budget.
@@ -182,6 +183,7 @@ impl std::error::Error for CounterSnapshotLimitExceeded {}
 /// snapshot ceiling applies to the complete document operation. A new default
 /// budget starts a new operation with the repository-wide maximum.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct CounterSnapshotBudget {
     estimated_bytes: u64,
     limit: u64,
@@ -688,6 +690,7 @@ fn content_reads_counters(cv: &raikiri_style::ComputedValues) -> bool {
 /// `snapshots[idx]` is empty for an unreachable or skipped node.
 /// Each list item applies the implicit `list-item` increment, so its snapshot
 /// holds the full `list-item` stack that its marker reads.
+#[doc(hidden)]
 pub fn counter_snapshots(
     doc: &Document,
     cascade: &CascadeResult,
@@ -701,7 +704,7 @@ pub(crate) type SharedCounterSnapshots =
     Result<std::sync::Arc<CounterSnapshots>, CounterSnapshotLimitExceeded>;
 
 impl Document {
-    /// The [`counter_snapshots`] of this document for `cascade`, built once
+    /// The `counter_snapshots` of this document for `cascade`, built once
     /// and shared by layout, page projection, paint and generated-content
     /// resolution until the tree changes.
     ///
@@ -737,6 +740,7 @@ impl Document {
 ///
 /// When a style instantiates a reversed counter without a starting value, a
 /// first walk without snapshots collects the directives that calculate it.
+#[doc(hidden)]
 pub fn counter_snapshots_with_budget(
     doc: &Document,
     cascade: &CascadeResult,

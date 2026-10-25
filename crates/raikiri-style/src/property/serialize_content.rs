@@ -13,6 +13,7 @@ use super::types::{ContentComponent, CounterStyle};
 /// Serializes `raw_value` for `content`, or `None` for other properties and
 /// for values holding a component this function does not spell (callers
 /// keep the source text).
+#[doc(hidden)]
 pub fn serialize_content_value(name: &str, raw_value: &str) -> Option<String> {
     if name != "content" || !css_component_values_are_bounded(raw_value) {
         return None;

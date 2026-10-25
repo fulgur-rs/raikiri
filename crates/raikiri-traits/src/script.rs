@@ -18,6 +18,7 @@ use crate::dom::NodeId;
 
 /// Whether the caller should keep going after
 /// [`ScriptExecutor::execute_script`] returns.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] // cov:ignore: no coverage region either; see below
 //
 // cov:ignore: a plain enum declaration with no method body of its own gets
@@ -36,6 +37,7 @@ pub enum ScriptExecution {
 }
 
 /// Runs one `<script>` element.
+#[doc(hidden)]
 //
 // cov:ignore: same reasoning as `ScriptExecution` above -- a trait
 // declaration with no default method body of its own gets no coverage

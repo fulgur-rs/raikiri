@@ -554,6 +554,7 @@ impl LayoutConfigBuilder {
 /// `max_document_pages` into `limits`).
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
+#[doc(hidden)]
 pub struct BatchConfig {
     /// Resource and cost limits.
     pub limits: RenderLimits,
@@ -575,6 +576,7 @@ impl BatchConfig {
 
 /// Fluent builder for `BatchConfig`.
 #[derive(Debug, Default, Clone)]
+#[doc(hidden)]
 pub struct BatchConfigBuilder {
     limits: Option<RenderLimits>,
     initial_registry: Option<Option<TargetRegistry>>,

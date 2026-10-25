@@ -17,6 +17,7 @@ use crate::resolve::{
 /// back as CSSOM text.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum ComputedProperty {
     WhiteSpace,
     WhiteSpaceCollapse,

@@ -30,10 +30,11 @@ use std::path::Path;
 /// hard error, or log-and-skip when a partial input is acceptable.
 #[non_exhaustive]
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum RejectReason {
     /// `symlink_metadata().file_type().is_symlink()` returned `true` at the
     /// pre-open check, **or** the open-time leaf-swap defense in
-    /// [`open_bounded_regular_file`] (`O_NOFOLLOW` on unix, a
+    /// `open_bounded_regular_file` (`O_NOFOLLOW` on unix, a
     /// reparse-point-aware open on Windows) refused a symlink leaf that was
     /// swapped in after the pre-open check ran.  Both detection points map
     /// to the same variant: the caller-facing contract is "this path was
@@ -49,7 +50,7 @@ pub enum RejectReason {
     /// close these vectors.  Rejecting at metadata time is the load-bearing
     /// defense against time-axis DoS.
     NotRegularFile,
-    /// The descriptor [`open_bounded_regular_file`] actually opened does not
+    /// The descriptor `open_bounded_regular_file` actually opened does not
     /// resolve to a regular file (FIFO / character device / block device
     /// swapped in between the pre-open `symlink_metadata` check and the
     /// open).  Race-free complement to `NotRegularFile`: the pre-open
@@ -88,7 +89,7 @@ pub enum RejectReason {
     },
     /// The path's `canonicalize` result is not under the caller's
     /// canonical root (an intermediate directory resolved outside it).
-    /// Produced only by [`read_bounded_contained_file`].
+    /// Produced only by `read_bounded_contained_file`.
     PathEscape {
         /// `canonicalize(path)` result.
         canonical: std::path::PathBuf,
@@ -99,7 +100,7 @@ pub enum RejectReason {
     /// caller's canonical root: an intermediate directory was swapped
     /// between the pathname checks and the open. Derived from the fd
     /// itself, so unlike [`RejectReason::PathEscape`] it cannot be raced by
-    /// a further swap. Produced only by [`read_bounded_contained_file`].
+    /// a further swap. Produced only by `read_bounded_contained_file`.
     PathEscapePostOpen {
         /// Path the opened descriptor resolves to.
         canonical: std::path::PathBuf,
@@ -114,6 +115,7 @@ pub enum RejectReason {
 /// Phase in which [`RejectReason::Oversized`] was detected.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum OversizePhase {
     /// `metadata.len() > size_cap` at the pre-open check.  The file was
     /// never opened.
@@ -347,6 +349,7 @@ fn check_open_handle_regular(file: &std::fs::File) -> Result<(), RejectReason> {
 ///    file bound to the opened descriptor (FIFO/device swapped in between
 ///    step 1 and step 4; `safe_open`'s `O_NONBLOCK` on unix keeps a
 ///    writer-less FIFO from blocking `open()` before this check runs).
+#[doc(hidden)]
 pub fn open_bounded_regular_file(
     path: &Path,
     size_cap: u64,
@@ -461,6 +464,7 @@ pub fn open_bounded_regular_file(
 /// accepted as empty bytes; the saturation keeps the bound at `u64::MAX`
 /// (effectively unlimited) so a small file still reads through and the
 /// post-check cannot spuriously fire.
+#[doc(hidden)]
 pub fn read_bounded_from_open_file(
     file: &mut std::fs::File,
     size_cap: u64,
@@ -495,6 +499,7 @@ pub fn read_bounded_from_open_file(
 /// other post-open check, call [`open_bounded_regular_file`] and
 /// [`read_bounded_from_open_file`] directly and run it against the returned
 /// handle in between.
+#[doc(hidden)]
 pub fn read_bounded_regular_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, RejectReason> {
     let (mut file, _len) = open_bounded_regular_file(path, size_cap)?;
     read_bounded_from_open_file(&mut file, size_cap)
@@ -539,6 +544,7 @@ pub fn read_bounded_regular_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, 
 /// [`RejectReason::Io`], never skipped: a filesystem that cannot answer
 /// the authoritative check fails closed rather than falling back to
 /// step 2 alone.
+#[doc(hidden)]
 pub fn read_bounded_contained_file(
     path: &Path,
     canonical_root: &Path,

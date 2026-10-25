@@ -555,10 +555,8 @@ impl ContentSizeKeyword {
 /// of `<percentage>` varies by property; see each field's documentation.
 ///
 /// The staging representation before conversion is
-/// [`crate::specified::SpecifiedValues`]. Cascade winners are applied there;
-/// [`SpecifiedValues::finalize`] produces this struct.
-///
-/// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
+/// `crate::specified::SpecifiedValues`. Cascade winners are applied there;
+/// `SpecifiedValues::finalize` produces this struct.
 ///
 /// `#[non_exhaustive]` allows new properties without breaking callers.
 #[non_exhaustive]
@@ -589,7 +587,7 @@ pub struct ComputedValues {
     /// Its [`ComputedLength`] type contains absolute px: `em` (relative to the
     /// parent), `rem` (relative to the root), `<percentage>` (relative to the
     /// parent), and `pt` are converted in cascade phase 2 by
-    /// [`crate::resolve::resolve_font_size`].
+    /// `crate::resolve::resolve_font_size`.
     pub font_size: ComputedLength,
     /// Whether [`Self::font_size`] derives from an `<absolute-size>` keyword,
     /// and with which factor. Inherited together with `font_size`; initial:
@@ -632,7 +630,7 @@ pub struct ComputedValues {
     /// Every field of this struct is `pub`, so callers can construct
     /// `ComputedValues { font_weight: ..., .. }` without going through the
     /// cascade (for example, the inherited root argument to
-    /// [`crate::page::cascade_page`]). The old `u16` type could not represent
+    /// `crate::page::cascade_page`). The old `u16` type could not represent
     /// non-finite values. With `f32`, validation shifts from the type to the
     /// caller. The normal cascade path is always finite because
     /// `parse_font_weight` (private; see [`crate::property::FontWeightValue`])
@@ -787,7 +785,7 @@ pub struct ComputedValues {
     /// [`crate::property::resolve_text_align_match_parent`] resolves it using
     /// the parent's [`Self::text_align`] and [`Self::direction`] to `Left`,
     /// `Right`, or a copy of the parent's value. Both the element path
-    /// ([`crate::specified::SpecifiedValues::finalize`] / `finalize_as_root`)
+    /// (`crate::specified::SpecifiedValues::finalize` / `finalize_as_root`)
     /// and page path ([`crate::cascade::resolve_against_inherited`]) use that
     /// same resolver.
     pub text_align: TextAlign,
@@ -906,8 +904,8 @@ pub struct ComputedValues {
     /// CSSOM serialization while leaving the percentage basis for used-value
     /// layout. `text-indent` percentages use the block container's inline-axis
     /// inner size, unlike [`Self::padding`]'s containing-block width. This
-    /// property is inherited; [`crate::specified::SpecifiedValues::inherit_from`]
-    /// lifts the parent's computed value with [`crate::resolve::lift_text_indent`].
+    /// property is inherited; `crate::specified::SpecifiedValues::inherit_from`
+    /// lifts the parent's computed value with `crate::resolve::lift_text_indent`.
     pub text_indent: ComputedTextIndent,
     /// `text-indent`'s `hanging` flag. Inherited, initial `false`.
     pub text_indent_hanging: bool,
@@ -961,7 +959,7 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-backgrounds-3/#border-width> specifies
     /// "Computed value: absolute length, snapped as a border width; zero if the
     /// border style is `none` or `hidden`". The initial border style is `none`,
-    /// so [`crate::resolve::resolve_border`] gates the width to zero.
+    /// so `crate::resolve::resolve_border` gates the width to zero.
     ///
     /// - Physical longhands: [`border-top-width`](https://www.w3.org/TR/css-backgrounds-3/#border-width) /
     ///   `border-top-style` / `border-top-color` × 4 sides.
@@ -1217,7 +1215,7 @@ pub struct ComputedValues {
     /// keywords (`baseline`/`sub`/`super`/`middle`/`text-top`/`text-bottom`)
     /// stay the specified keyword; [`VerticalAlign::Length`] and mixed
     /// [`VerticalAlign::Calc`] values absolutize to `Length::Px`
-    /// ([`crate::resolve::resolve_vertical_align`] doc, percentages use the
+    /// (`crate::resolve::resolve_vertical_align` doc, percentages use the
     /// element's used line-height, with the existing `normal` fallback).
     ///
     /// # Scope carving
@@ -1232,13 +1230,13 @@ pub struct ComputedValues {
     /// Unlike most length-bearing fields in this crate (`flex_basis` /
     /// `letter_spacing` / `border`, which all use a dedicated `Computed*`
     /// type distinct from their specified-layer type), this field keeps the
-    /// **same** [`VerticalAlign`] type [`crate::specified::SpecifiedValues::vertical_align`]
+    /// **same** [`VerticalAlign`] type `crate::specified::SpecifiedValues::vertical_align`
     /// carries. This is forced by raikiri-paint: its
     /// `vertical_align_shift_px` function takes this crate's
     /// [`VerticalAlign`] by value directly, so introducing a separate
     /// computed-only type here would require a raikiri-paint signature
     /// change this crate's scope does not include. See
-    /// [`crate::resolve::resolve_vertical_align`] doc for how the
+    /// `crate::resolve::resolve_vertical_align` doc for how the
     /// [`VerticalAlign::Length`] and [`VerticalAlign::Calc`] variants are
     /// absolutized without changing this field's type.
     ///
@@ -1827,7 +1825,7 @@ pub struct ComputedValues {
     /// [`crate::specified::SpecifiedValues::absolutize_with`] (phase 3) and
     /// its page-context sibling in [`crate::page`]; the corresponding
     /// specified-layer field
-    /// ([`crate::specified::SpecifiedValues::opacity`]) is the one that
+    /// (`crate::specified::SpecifiedValues::opacity`) is the one that
     /// preserves an out-of-range parse (still NaN-free), per
     /// [`crate::property::PropertyValue::Opacity`]'s doc.
     ///
@@ -1847,7 +1845,7 @@ pub struct ComputedValues {
     /// Compositing and Blending Level 1 §3.4.2 "Isolation: the isolation
     /// property" <https://www.w3.org/TR/compositing-1/#isolation>). Always
     /// a keyword — no phase-3 transform, identity pass-through from
-    /// [`crate::specified::SpecifiedValues::isolation`] (same shape as
+    /// `crate::specified::SpecifiedValues::isolation` (same shape as
     /// [`Self::object_fit`]).
     pub isolation: Isolation,
     /// `box-decoration-break`. **non-inherited**, initial:
@@ -1864,16 +1862,16 @@ pub struct ComputedValues {
     pub mix_blend_mode: MixBlendMode,
     /// `contain`. **non-inherited**, initial: [`Contain::NONE`] (CSS
     /// Containment 2 §2 <https://www.w3.org/TR/css-contain-2/#contain-property>).
-    /// Identity pass-through from [`crate::specified::SpecifiedValues::contain`].
+    /// Identity pass-through from `crate::specified::SpecifiedValues::contain`.
     pub contain: Contain,
     /// `will-change`. **non-inherited**, initial: [`WillChange::AUTO`] (CSS
     /// Will Change 1 §3 <https://www.w3.org/TR/css-will-change-1/#will-change>).
-    /// Identity pass-through from [`crate::specified::SpecifiedValues::will_change`].
+    /// Identity pass-through from `crate::specified::SpecifiedValues::will_change`.
     pub will_change: WillChange,
     /// `mask-image`. **non-inherited**, initial: [`MaskImage::None`] (CSS
     /// Masking Level 1 §7.1 "Image Masking: the mask-image property"
     /// <https://www.w3.org/TR/css-masking-1/#the-mask-image>). Identity
-    /// pass-through from [`crate::specified::SpecifiedValues::mask_image`]
+    /// pass-through from `crate::specified::SpecifiedValues::mask_image`
     /// — this crate never absolutizes a `<gradient>` payload's embedded
     /// lengths, same reasoning as [`ComputedBackgroundLayer::image`].
     pub mask_image: MaskImage,
@@ -1892,7 +1890,7 @@ pub struct ComputedValues {
     /// [`crate::property::Length::Percent`] symbolic
     /// ([`crate::resolve::ComputedLengthPercentage::Percent`]) for a later
     /// box-size-relative resolution. Same split as
-    /// [`crate::resolve::resolve_css_position`] for
+    /// `crate::resolve::resolve_css_position` for
     /// `background-position`/`object-position`.
     pub transform: Arc<Vec<ComputedTransformFunction>>,
     /// Border-box origin with absolute lengths and symbolic percentages.

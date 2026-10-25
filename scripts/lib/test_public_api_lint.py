@@ -371,6 +371,17 @@ class ReexportTests(unittest.TestCase):
         with self.assertRaisesRegex(lint.ToolError, "view crate"):
             lint.third_party_report(load)
 
+    def test_a_view_crate_with_every_item_hidden_is_left_out_of_the_third_party_report(self) -> None:
+        def load(crate: str) -> dict:
+            b = DocBuilder()
+            hidden = [{"other": "#[doc(hidden)]"}] if crate in lint.VIEW_CRATES else None
+            b.function(1, "plain", [resolved(b.traits_node_id, "NodeId")], None, attrs=hidden)
+            return b.doc(root=crate.replace("-", "_"))
+
+        unlisted, stale = lint.third_party_report(load)
+        self.assertEqual(unlisted, {})
+        self.assertNotIn("raikiri-layout-style", stale)
+
 
 class ReachTests(unittest.TestCase):
     """What the scan counts as part of the API besides the items the names stand for."""
@@ -586,13 +597,18 @@ class MainTests(unittest.TestCase):
         leaking: str | None = None,
         blind_view: bool = False,
         naming_serde: str | None = None,
+        hidden_view: bool = False,
     ) -> None:
-        """Write the JSON of every crate; `naming_serde` is a crate whose API names a type of serde."""
+        """Write the JSON of every crate; `naming_serde` is a crate whose API names a type of serde.
+
+        `hidden_view` marks every item of the view crate `#[doc(hidden)]`.
+        """
         for crate in lint.ALL_CRATES:
             b = DocBuilder()
-            b.function(1, "plain", [resolved(b.traits_node_id, "NodeId")], None)
+            attrs = [{"other": "#[doc(hidden)]"}] if hidden_view and crate in lint.VIEW_CRATES else None
+            b.function(1, "plain", [resolved(b.traits_node_id, "NodeId")], None, attrs=attrs)
             if crate == leaking or (crate in lint.VIEW_CRATES and not blind_view):
-                b.function(2, "child_count", [resolved(b.taffy_node_id, "NodeId")], None)
+                b.function(2, "child_count", [resolved(b.taffy_node_id, "NodeId")], None, attrs=attrs)
             if crate == naming_serde:
                 b.function(3, "outside", [resolved(b.serde_type, "Serialize")], None)
             (directory / lint.json_file_name(crate)).write_text(
@@ -620,6 +636,15 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("raikiri-paint: raikiri_paint::child_count (function): taffy::tree::node::NodeId", out)
         self.assertNotIn("raikiri-dom:", out)
+
+    def test_a_view_crate_with_every_item_hidden_passes_without_a_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_all(Path(tmp), hidden_view=True)
+            code, out, err = self.run_main(Path(tmp), "-v")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("PASS", out)
+        self.assertIn("raikiri-layout-style: 1 items name Taffy (view crate, allowed)", out)
+        self.assertNotIn("raikiri-layout-style no longer", out)
 
     def test_a_view_crate_the_walker_sees_no_taffy_in_is_a_tool_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -695,6 +720,70 @@ class MainTests(unittest.TestCase):
             code, _, err = self.run_main(Path(tmp), "--usage", str(Path(tmp) / "nowhere"))
         self.assertEqual(code, 2)
         self.assertIn("--usage takes a directory", err)
+
+    def write_tier_doc(self, directory: Path, listed: list[str], markers: bool = True) -> None:
+        (directory / "docs").mkdir(exist_ok=True)
+        body = "\n".join(listed)
+        text = (
+            f"{lint.surface.FIRST_TIER_BEGIN}\n```text\n{body}\n```\n{lint.surface.FIRST_TIER_END}\n"
+            if markers
+            else "no markers\n"
+        )
+        (directory / lint.FIRST_TIER_DOC).write_text(text, encoding="utf-8")
+
+    OTHER_PLAIN = [
+        f"{crate.replace('-', '_')}::plain" for crate in lint.PUBLISHED_CRATES if crate != lint.CONSUMER_CRATE
+    ]
+
+    def test_first_tier_lists_the_visible_names_that_no_consumer_reaches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_tier_doc(Path(tmp), [])
+            code, out, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 1)
+        self.assertIn("raikiri_net: function   raikiri_net::plain", out)
+        self.assertNotIn("raikiri_html::plain", out)
+        self.assertIn("FAIL:", err)
+
+    def test_first_tier_passes_when_the_listed_names_cover_the_rest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            # The fixture's view crate also publishes the function that names Taffy.
+            self.write_tier_doc(Path(tmp), [*self.OTHER_PLAIN, "raikiri_layout_style::child_count"])
+            code, out, _ = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual((code, out.startswith("PASS")), (0, True))
+
+    def test_first_tier_reports_a_listed_name_that_no_crate_publishes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_tier_doc(Path(tmp), [*self.OTHER_PLAIN, "raikiri_layout_style::child_count", "raikiri_net::gone"])
+            code, out, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 1)
+        self.assertIn("listed name raikiri_net::gone is not published", out)
+        self.assertIn("FAIL: 1 finding(s)", err)
+
+    def test_first_tier_reports_a_link_to_a_hidden_item_in_the_docs_of_a_visible_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_tier_doc(Path(tmp), [*self.OTHER_PLAIN, "raikiri_layout_style::child_count"])
+            b = DocBuilder()
+            b.function(1, "plain", [resolved(b.traits_node_id, "NodeId")], None)
+            b.function(4, "helper", [], None, attrs=[{"other": "#[doc(hidden)]"}])
+            data = b.doc(root="raikiri_net")
+            data["index"]["1"]["links"] = {"`helper`": 4}
+            (Path(tmp) / lint.json_file_name("raikiri-net")).write_text(__import__("json").dumps(data), encoding="utf-8")
+            code, out, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 1)
+        self.assertIn("raikiri_net: the docs of plain link `helper` to the hidden raikiri_net::helper", out)
+        self.assertIn("FAIL: 1 finding(s)", err)
+
+    def test_first_tier_refuses_a_document_without_the_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            self.write_tier_doc(Path(tmp), [], markers=False)
+            code, _, err = self.run_main(Path(tmp), "--first-tier")
+        self.assertEqual(code, 2)
+        self.assertIn("markers", err)
 
     def test_fails_when_a_published_crate_names_an_unlisted_third_party_crate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

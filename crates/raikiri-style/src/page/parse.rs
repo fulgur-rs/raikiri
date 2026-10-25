@@ -533,6 +533,7 @@ pub(crate) fn parse_page_declaration_block(
 /// Whether `selector` is a valid `@page` prelude after the at-keyword: a
 /// `<page-selector-list>`, or empty (every page). This is the grammar
 /// [`parse_page_prelude`] applies when it decides whether to keep the rule.
+#[doc(hidden)]
 pub fn is_valid_page_selector(selector: &str) -> bool {
     let mut budget = ParseBudget::new(&crate::ruletree::RuleTreeLimits::default(), 0);
     let mut input = ParserInput::new(selector);
@@ -543,12 +544,14 @@ pub fn is_valid_page_selector(selector: &str) -> bool {
 
 /// The `@page` descriptors that are not CSS properties (CSS Paged Media
 /// Level 3 §7): they are only valid inside a page rule's declaration block.
+#[doc(hidden)]
 pub const PAGE_DESCRIPTOR_NAMES: [&str; 4] = ["size", "marks", "bleed", "page-orientation"];
 
 /// Whether a page rule drops the declaration `name: value` before its
 /// grammar is even consulted: page-context lengths are resolved without a
 /// viewport, so a non-custom declaration using a viewport-percentage length
 /// is invalid there.
+#[doc(hidden)]
 pub fn page_rule_drops_value(name: &str, value: &str) -> bool {
     !name.starts_with("--") && crate::property::has_viewport_length_in(value)
 }
@@ -556,6 +559,7 @@ pub fn page_rule_drops_value(name: &str, value: &str) -> bool {
 /// Whether `value` is a valid value for the `@page` descriptor `name`
 /// (ASCII case-insensitive), with no trailing `!important`. Any name outside
 /// [`PAGE_DESCRIPTOR_NAMES`] is not a descriptor and yields `false`.
+#[doc(hidden)]
 pub fn is_valid_page_descriptor(name: &str, value: &str) -> bool {
     if page_rule_drops_value(name, value) {
         return false;

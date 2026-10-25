@@ -123,6 +123,7 @@ pub(crate) fn used_computed_length_percentage_or_auto(
 /// margins, page percentages use the corresponding page-box axis: top and
 /// bottom use the page height, while left and right use the page width.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[doc(hidden)]
 pub struct PageMargins {
     /// Used top margin in CSS pixels.
     pub top: f32,
@@ -195,6 +196,7 @@ fn page_margin_length(value: LengthOrAuto, basis: f32) -> f32 {
 
 /// Used border and padding inset inside the page margin area.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[doc(hidden)]
 pub struct PageContentInsets {
     /// Top border plus padding.
     pub top: f32,
@@ -281,6 +283,7 @@ fn page_box_side(
 /// The inset shifts the physical flow origin and reduces the block-axis
 /// fragmentainer extent; the inline containing-block width remains the page's
 /// margin content width so page decorations do not force text rewrapping.
+#[doc(hidden)]
 pub fn page_content_insets(cascade: &CascadeResult, page_box: PageBox) -> PageContentInsets {
     page_content_insets_for_page(&cascade.page, page_box)
 }
@@ -291,6 +294,7 @@ pub fn page_content_insets(cascade: &CascadeResult, page_box: PageBox) -> PageCo
 /// This is [`page_content_insets`] for a caller that cascaded only the page
 /// context, for example one that reruns the `@page` cascade per page query
 /// against a single element cascade.
+#[doc(hidden)]
 pub fn page_content_insets_for_page(
     page: &raikiri_style::PageCascadeResult,
     page_box: PageBox,
@@ -363,6 +367,7 @@ fn page_dimension(
 /// page box is a downstream used-value basis.  This is the single geometry
 /// entry point used by layout, scene extraction, and paint so all three agree
 /// on the paper/content split.
+#[doc(hidden)]
 pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
     page_margins_for_page(&cascade.page, page_box)
 }
@@ -372,6 +377,7 @@ pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
 /// This is [`page_margins`] for a caller that cascaded only the page context,
 /// for example one that reruns the `@page` cascade per page query against a
 /// single element cascade.
+#[doc(hidden)]
 pub fn page_margins_for_page(
     page: &raikiri_style::PageCascadeResult,
     page_box: PageBox,
@@ -565,6 +571,7 @@ fn document_has_resolved_pagination_order(document: &Document, cascade: &Cascade
 /// grid rows. Later named descendants belong to a pagination transition and
 /// must not change the initial layout geometry. The scan therefore stops after
 /// the first rendered in-flow body child.
+#[doc(hidden)]
 pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
     first_page_name_with_transposed_axes(document, cascade, false)
 }
@@ -681,6 +688,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
 /// `page_name` is the query name used to build `cascade`; `page_box` is the
 /// matching layout input. Callers rebuild these values
 /// in `recascade` when the resolved first in-flow box selects a different page.
+#[doc(hidden)]
 pub struct InitialPageContext {
     /// Named page used by the current first-page cascade, if any.
     pub page_name: Option<String>,
@@ -707,6 +715,7 @@ impl InitialPageContext {
 
 /// Failure while resolving the page context selected by the first placed Grid item.
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum InitialPageContextError {
     /// The single-page placement probe failed.
     Layout(LayoutError),
@@ -736,6 +745,7 @@ impl std::error::Error for InitialPageContextError {}
 /// Provide the same resolver and base URL as the final layout pass so image
 /// intrinsic sizes produce matching Flex/Grid placement.
 #[derive(Clone, Copy, Default)]
+#[doc(hidden)]
 pub struct InitialPageProbeResources<'a> {
     resolver: Option<&'a dyn ReplacedResolver>,
     base_url: Option<&'a url::Url>,
@@ -766,6 +776,7 @@ impl<'a> InitialPageProbeResources<'a> {
 /// operation is bounded so self-referential page-size changes fail
 /// explicitly. Documents without both features return their input state
 /// without a probe.
+#[doc(hidden)]
 pub fn resolve_initial_page_context(
     document: &Document,
     page_name: Option<String>,

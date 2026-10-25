@@ -91,7 +91,7 @@ impl Default for CascadeLimits {
     }
 }
 
-/// How [`super::cascade_with_options`] runs.
+/// How `super::cascade_with_options` runs.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CascadeOptions {

@@ -261,6 +261,7 @@ fn marker_content_text<T: AsRef<str>>(
 }
 
 /// Resolve marker style and content once for either layout or paint.
+#[doc(hidden)]
 pub fn marker_render_info_with_snapshots<'a>(
     document: &Document,
     cascade: &'a CascadeResult,

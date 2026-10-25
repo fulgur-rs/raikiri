@@ -560,8 +560,8 @@ impl PageCascadeResult {
     /// (<https://www.w3.org/TR/css-page-3/#page-properties>) states that "both
     /// the page context and the margin context have a computed value for every
     /// property" and that "The page context inherits from the root element";
-    /// the inheritance parent is the [`PageInheritance`] argument of
-    /// [`cascade_page`].
+    /// the inheritance parent is the `PageInheritance` argument of
+    /// `cascade_page`.
     ///
     /// **Phase 2** — resolution against the inheritance parent
     /// ([`crate::cascade::resolve_against_inherited`]):
@@ -588,7 +588,7 @@ impl PageCascadeResult {
     ///   end is interpreted against the parent's direction value and results
     ///   in a computed value of either left or right." Implementation:
     ///   [`crate::property::resolve_text_align_match_parent`], shared with the
-    ///   element path's [`crate::specified::SpecifiedValues::finalize`].
+    ///   element path's `crate::specified::SpecifiedValues::finalize`.
     ///
     ///   ⚠️ **Trap avoided here, stated for anyone touching this arm again**:
     ///   the same value definition's second sentence — "Computes to `start`
@@ -599,7 +599,7 @@ impl PageCascadeResult {
     ///   is always resolved via the parent-direction table, never
     ///   short-circuited to `start`. (The element path's analogous
     ///   short-circuit lives in
-    ///   [`crate::specified::SpecifiedValues::finalize_as_root`], which is a
+    ///   `crate::specified::SpecifiedValues::finalize_as_root`, which is a
     ///   different entry point entirely — `cascade_page` never calls it.)
     ///
     /// **Phase 3** — absolutization against the page context's *own*
@@ -678,7 +678,7 @@ impl PageCascadeResult {
     ///   so do not attribute those two to the margin/padding sentence). Either
     ///   way that is the computed value, not an unresolved one; the element
     ///   path resolves it the same way
-    ///   ([`crate::resolve::resolve_length_percentage`]).
+    ///   (`crate::resolve::resolve_length_percentage`).
     ///
     ///   ⚠️ **`font-size` and `line-height` are the opposite case** — their
     ///   `<percentage>` does *not* survive into the computed layer (§5.5.1's
@@ -696,7 +696,7 @@ impl PageCascadeResult {
     /// initial value are **absent**. The spec sentence quoted above ("a computed
     /// value for every property") describes the page context as a whole, not
     /// this map — materialising the complete bag is the downstream page-layout
-    /// consumer's job, and it starts from the resolved [`PageInheritance`]
+    /// consumer's job, and it starts from the resolved `PageInheritance`
     /// plus these declarations.
     ///
     /// # Non-finite values pass through unguarded
@@ -742,7 +742,7 @@ impl PageCascadeResult {
     /// # Why this is a method, not a field
     ///
     /// Keeping the map private prevents callers from inserting unresolved
-    /// specified-layer values without going through [`cascade_page`]. The
+    /// specified-layer values without going through `cascade_page`. The
     /// accessor exposes the resolved declarations read-only.
     ///
     /// ## Compile-fail check
@@ -1010,6 +1010,7 @@ impl PageCascadeResult {
 /// legacy initial-values exception explicit at each invocation.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub enum PageInheritance<'a> {
     /// Resolve against the root element's own [`ComputedValues`] — the §6
     /// rule quoted above. **Prefer this variant** wherever a root style is
@@ -1381,6 +1382,7 @@ fn is_logical_size(value: &PropertyValue) -> bool {
     }
 }
 
+#[doc(hidden)]
 pub fn cascade_page(
     rule_tree: &RuleTree,
     query: &PageContextQuery,
@@ -1396,6 +1398,7 @@ pub fn cascade_page(
 /// intersected condition matches [`crate::media::MediaContext`], mirroring the
 /// element cascade media prefilter. Paper-dimension conditions suppress `size`
 /// descriptors only, as required by CSS Paged Media 3 §7.1.
+#[doc(hidden)]
 pub fn cascade_page_with_media_context(
     rule_tree: &RuleTree,
     query: &PageContextQuery,
@@ -1410,6 +1413,7 @@ pub fn cascade_page_with_media_context(
 /// Raster consumers that resolve the page area before the element cascade
 /// should pass the scale of that output so page borders and the resulting
 /// viewport use the same geometry. `None` preserves fractional widths.
+#[doc(hidden)]
 pub fn cascade_page_with_media_context_and_border_width_device_scale(
     rule_tree: &RuleTree,
     query: &PageContextQuery,

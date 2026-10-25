@@ -10,6 +10,7 @@ use raikiri_layout_geometry::{Edges, Size};
 
 /// Resolving a length that may depend on its containing block, where a length
 /// that cannot be resolved gives `None`.
+#[doc(hidden)]
 pub trait MaybeResolve<In, Out> {
     /// The absolute length, or `None` if it is `auto`, an intrinsic keyword, or
     /// a percentage of a `context` that is not known.
@@ -18,6 +19,7 @@ pub trait MaybeResolve<In, Out> {
 
 /// Resolving a length that may depend on its containing block, where a length
 /// that cannot be resolved gives zero.
+#[doc(hidden)]
 pub trait ResolveOrZero<In, Out> {
     /// The absolute length, or zero where it cannot be resolved.
     fn resolve_or_zero(self, context: In) -> Out;

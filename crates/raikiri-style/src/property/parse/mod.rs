@@ -31,6 +31,7 @@ pub use visual::*;
 /// supported CSS property: any name in [`super::supported_property_names`],
 /// including shorthands that fully expand during parsing and so have no
 /// `PropertyKey`. Custom properties (`--*`) are not included.
+#[doc(hidden)]
 pub fn is_supported_property_name(name: &str) -> bool {
     super::supported_property_names()
         .binary_search(&name.to_ascii_lowercase().as_str())
@@ -55,6 +56,7 @@ const NOT_ANIMATABLE_PROPERTY_NAMES: &[&str] = &[
 /// property that a user agent can animate: a supported property whose
 /// animation type is not "not animatable". Custom properties (`--*`) are
 /// not included.
+#[doc(hidden)]
 pub fn is_animatable_property_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     is_supported_property_name(&name)
@@ -65,6 +67,7 @@ pub fn is_animatable_property_name(name: &str) -> bool {
 
 /// Produce a `PropertyValue` from a property name and parser.
 /// Return `None` for an unknown name or invalid value.
+#[doc(hidden)]
 pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     let start = input.position();
     let value = parse_value_with_black_currentcolor(name, input)?;

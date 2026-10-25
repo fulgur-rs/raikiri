@@ -49,6 +49,7 @@ struct Placement {
 
 /// The running elements of one document, by name, in document order.
 #[derive(Debug, Default)]
+#[doc(hidden)]
 pub struct RunningIndex {
     pools: HashMap<SmolStr, Pool>,
 }
@@ -238,6 +239,7 @@ fn preorder(document: &Document) -> Vec<(usize, usize)> {
 
 /// The page box of one page with its margins, padding and border resolved.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[doc(hidden)]
 pub struct ResolvedPageGeometry {
     /// The page box.
     pub page_box: PageBox,
@@ -250,6 +252,7 @@ pub struct ResolvedPageGeometry {
 }
 
 /// Resolve the margins and content insets `page` sets on `page_box`.
+#[doc(hidden)]
 pub fn resolve_page_geometry(page: &PageCascadeResult, page_box: PageBox) -> ResolvedPageGeometry {
     let margins = page_margins_for_page(page, page_box);
     let content_insets = page_content_insets_for_page(page, page_box);
@@ -274,6 +277,7 @@ pub fn resolve_page_geometry(page: &PageCascadeResult, page_box: PageBox) -> Res
 /// one page of [`Self::slice`]. The top-left content edge of the element's
 /// containing block is the page origin `(0, 0)`.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct RunningElementPage {
     /// For each node of [`Self::document`], the node of the source document
     /// it was copied from.
@@ -294,6 +298,7 @@ pub struct RunningElementPage {
 
 /// The width a running element is laid out at for a requested `width`:
 /// negative and non-finite widths lay out at 0.
+#[doc(hidden)]
 pub fn used_running_element_width(width: f32) -> f32 {
     if width.is_finite() && width > 0.0 {
         width
@@ -313,6 +318,7 @@ pub fn used_running_element_width(width: f32) -> f32 {
 /// laid out with its own computed values, which it inherits from its place
 /// in the document (CSS GCPM 3 §1.2.1). `None` when `node` is not a running
 /// element.
+#[doc(hidden)]
 pub fn layout_running_element(
     source: &Document,
     cascade: &CascadeResult,
@@ -452,6 +458,7 @@ pub fn layout_running_element(
 ///
 /// Does not include generated content (`::before`/`::after`) — that's
 /// `content(before)` / `content(after)`'s job.
+#[doc(hidden)]
 pub fn element_string_value(doc: &Document, idx: usize) -> String {
     let mut raw = String::new();
     collect_descendant_text(doc, idx, &mut raw);

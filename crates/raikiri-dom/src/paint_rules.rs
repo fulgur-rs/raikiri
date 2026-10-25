@@ -463,7 +463,7 @@ pub fn opacity_layer(cv: &ComputedValues) -> Option<f32> {
 
 /// The group opacity a `::before`, `::after` or `::first-letter` laid out in
 /// its paragraph paints its boxes, images and text with, by the generated id
-/// of [`crate::generated_content::generated_node_id`]. Floated and
+/// of `crate::generated_content::generated_node_id`. Floated and
 /// out-of-flow pseudo-elements are not in the paragraph and form no group
 /// there.
 pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {

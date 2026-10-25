@@ -109,6 +109,7 @@ use crate::dom::Symbol;
 /// `pop_scope` call, not a change to this method.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct CounterStack {
     /// Nested scope frames, outermost first. Empty = the counter has not
     /// been instantiated yet (CSS Lists 3 §4.2: an un-instantiated counter
@@ -224,6 +225,7 @@ impl CounterStack {
 /// task, not this promotion's.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct NamedStringState {
     /// The value in effect at the start of the page — `running` as it stood
     /// when [`Self::begin_page`] was last called (CSS GCPM 3 §1.1.2's "entry
@@ -411,6 +413,7 @@ fn resolve_content_source(
 ///   no invariant to protect).
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
+#[doc(hidden)]
 pub struct PageContext {
     /// Counter name → nested scope stack (design §7.2, CSS Lists 3 §4).
     counters: HashMap<Symbol, CounterStack>,
@@ -450,7 +453,7 @@ impl PageContext {
         Self::default()
     }
 
-    /// Apply one [`GcpmDirective`] to this context — the single entry point
+    /// Apply one `GcpmDirective` to this context — the single entry point
     /// for mutating `counters` / `strings` / `running` / `targets` (a
     /// deliberate design decision). Mirrored the dispatch of what was
     /// raikiri-dom's own dom-local `PhaseBWalkState::apply_directive`
@@ -462,7 +465,7 @@ impl PageContext {
     /// `RegisterTarget` really registers (module doc "`RegisterTarget` now
     /// really mutates `self.targets`").
     ///
-    /// **Exhaustive same-crate match, no wildcard arm.** [`GcpmDirective`] is
+    /// **Exhaustive same-crate match, no wildcard arm.** `GcpmDirective` is
     /// defined in this crate; `#[non_exhaustive]`'s "downstream `match` needs
     /// a wildcard" restriction is a cross-crate rule, so unlike the
     /// dom-local mirror's necessarily-wildcarded copy (that copy lived in a
@@ -567,12 +570,12 @@ impl PageContext {
 
     /// Pop the innermost nested scope tracked under `name`, returning its
     /// value (`None` if `name` has no tracked counter at all, or if the
-    /// tracked [`CounterStack`] is already empty). A thin forwarding
+    /// tracked `CounterStack` is already empty). A thin forwarding
     /// wrapper around [`CounterStack::pop_scope`] — this method exists
     /// because `counters` has no `counter_mut` accessor
     /// ([`Self::apply_directive`]'s doc "single entry point" explains why
     /// there is deliberately no per-field mutable accessor for the 4
-    /// encapsulated fields) and none of [`GcpmDirective`]'s existing six
+    /// encapsulated fields) and none of `GcpmDirective`'s existing six
     /// variants carries a "pop a scope" instruction.
     ///
     /// **Why a caller needs this.** CSS Lists 3 §4.3
@@ -596,7 +599,7 @@ impl PageContext {
 
     /// Page-boundary hook — the coordinated way to advance to a new page.
     /// Updates three things together: `page_index` itself, every tracked
-    /// [`NamedStringState`] (via [`NamedStringState::begin_page`]), and the
+    /// `NamedStringState` (via [`NamedStringState::begin_page`]), and the
     /// `targets` registry's own page-local slot-sequence numbering (via
     /// [`TargetRegistry::begin_page`]). Design §7.2 names `PageContext` as
     /// sole owner of `page_index` and `targets` as sibling fields; this

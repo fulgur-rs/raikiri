@@ -608,7 +608,7 @@ pub enum Length {
     ///
     /// `normal` is the **initial value** of `line-height`, so the
     /// unknown-metric branch is common, not an edge case. For the need for
-    /// a real font instance, see the [`crate::resolve::used_line_height_length`]
+    /// a real font instance, see the `crate::resolve::used_line_height_length`
     /// documentation (the same obstacle as `cap`/`rcap`). Unlike `ex`/`ch`/`ic`,
     /// the spec gives no font-size-ratio fallback. Under our independent-
     /// implementation policy, we do not invent one. A cascade given a
@@ -622,13 +622,13 @@ pub enum Length {
     /// `line-height: 1lh` is self-referential: the definition of `lh` says
     /// "the element on which it is used", which means the used element itself
     /// **on every element**. For the spec text and the reason `rlh` differs,
-    /// see the canonical [`crate::resolve::resolve_line_height`] documentation.
+    /// see the canonical `crate::resolve::resolve_line_height` documentation.
     /// This section summarizes rather than repeats that reasoning to avoid
     /// drift between duplicate explanations.
     /// `font-size: 1lh` is also self-referential under that provision (`font-size`
     /// is a font-\* property). It resolves against the parent’s used line-height
     /// (the "`lh` / `rlh` self-reference" section of
-    /// [`crate::resolve::resolve_font_size`] is canonical).
+    /// `crate::resolve::resolve_font_size` is canonical).
     Lh(f32),
     /// Font-relative length: `rlh`, relative to the root element’s `lh`.
     /// `1rlh` → `Rlh(1.0)`.
@@ -649,19 +649,19 @@ pub enum Length {
     /// declaration element’s position: it always refers to the root value.
     /// **Unlike `lh`, it is not self-referential** except when the declaring
     /// element is itself the root. In that case,
-    /// [`crate::specified::SpecifiedValues::finalize_as_root`] handles the
+    /// `crate::specified::SpecifiedValues::finalize_as_root` handles the
     /// parentless case according to the spec’s "if the element has no parent"
     /// clause: use initial values (`line-height: normal`), always unresolved.
     /// On a non-root element, `line-height: 1rlh` only refers to another,
     /// already-resolved node (the root). It uses the same tree-global basis
     /// (`ResolveContext::root_line_height`) as `rlh` on other box properties.
-    /// See [`crate::resolve::resolve_line_height`] for the full reasoning.
+    /// See `crate::resolve::resolve_line_height` for the full reasoning.
     ///
     /// `font-size: 1rlh` is also covered by the same section as [`Length::Lh`],
     /// but the asymmetry above means `rlh` is not self-referential on `font-size`
     /// either. Unless the declaring element is the root, use the tree-global
     /// `ResolveContext::root_line_height` directly
-    /// (see [`crate::resolve::resolve_font_size`]).
+    /// (see `crate::resolve::resolve_font_size`).
     Rlh(f32),
     /// Viewport-percentage length: `vw`, 1% of the viewport's width.
     /// `50vw` → `Vw(50.0)`.
@@ -670,8 +670,8 @@ pub enum Length {
     /// (<https://www.w3.org/TR/css-values-4/#viewport-relative-lengths>).
     /// The small (`svw`), large (`lvw`) and dynamic (`dvw`) variants parse to
     /// [`Length::SizedViewport`]. The viewport itself is supplied
-    /// by [`crate::resolve::ResolveContext::viewport_width`] and
-    /// [`crate::resolve::ResolveContext::viewport_height`].
+    /// by `crate::resolve::ResolveContext::viewport_width` and
+    /// `crate::resolve::ResolveContext::viewport_height`.
     Vw(f32),
     /// Viewport-percentage length: `vh`, 1% of the
     /// viewport's height. See [`Length::Vw`].
@@ -1615,7 +1615,7 @@ css_keywords!(BorderStyle {
 /// carrier does not lose the authored value.
 ///
 /// Do not derive `Default`. The spec initial value (`none`) is set explicitly by
-/// [`crate::specified::SpecifiedValues::initial`] /
+/// `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2545,7 +2545,7 @@ impl FontSynthesisValue {
 /// keyword, no relative resolution needed (as in the [`Direction`] docs).
 ///
 /// As with [`Direction`] / [`BoxSizing`], `Default` is intentionally not
-/// derived: initialization sites ([`crate::specified::SpecifiedValues::initial`] /
+/// derived: initialization sites (`crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]) directly choose
 /// [`FontStyle::Normal`].
 #[non_exhaustive]
@@ -2613,7 +2613,7 @@ css_keywords!(FontStyle {
 ///   represent correctly while it has no longhand for the other 4.
 ///   Implementing only the `-caps` half of the shorthand would silently
 ///   drop that reset, which is worse than not accepting the shorthand name
-///   at all — so `"font-variant"` has no [`parse_value`] dispatch arm, the
+///   at all — so `"font-variant"` has no `parse_value` dispatch arm, the
 ///   same reasoning [`WordBreak`]'s doc applies to the cross-property
 ///   `word-break: break-word` case.
 /// - **CSS-wide keywords**: kept as deferred markers for the cascade, which
@@ -2654,7 +2654,7 @@ css_keywords!(FontStyle {
 ///   feature, this property has no visible effect").
 ///
 /// As with [`FontStyle`] / [`Direction`], `Default` is intentionally not
-/// derived: initialization sites ([`crate::specified::SpecifiedValues::initial`] /
+/// derived: initialization sites (`crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]) directly choose
 /// [`FontVariantCaps::Normal`].
 #[non_exhaustive]
@@ -2792,7 +2792,7 @@ css_keywords!(@serialize TextTransform {
 /// specified"; no relative resolution, as in the [`Direction`] docs).
 ///
 /// As with [`Direction`] / [`FontStyle`], `Default` is intentionally not
-/// derived: initialization sites ([`crate::specified::SpecifiedValues::initial`] /
+/// derived: initialization sites (`crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]) directly choose
 /// [`Visibility::Visible`].
 #[non_exhaustive]
@@ -3717,7 +3717,7 @@ impl DisplayValue {
 ///
 /// `#[non_exhaustive]` — the same forward-compatibility contract as [`DisplayValue`].
 /// Like its siblings, this type does not derive `Default`: the initialization
-/// paths ([`crate::specified::SpecifiedValues::initial`] /
+/// paths (`crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]) select [`Self::Row`] directly.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4762,11 +4762,11 @@ impl HangingPunctuation {
 ///   direction value and results in a computed value of either left or right.
 ///   Computes to start when specified on the root element."
 ///   [`MatchParent`](Self::MatchParent) passes through
-///   [`SpecifiedValues::text_align`](crate::specified::SpecifiedValues::text_align)
+///   `SpecifiedValues::text_align`
 ///   as the specified cascade winner but is resolved **before reaching the
 ///   computed layer**. Both the element paths
-///   [`crate::specified::SpecifiedValues::finalize`] and
-///   [`crate::specified::SpecifiedValues::finalize_as_root`], and the page
+///   `crate::specified::SpecifiedValues::finalize` and
+///   `crate::specified::SpecifiedValues::finalize_as_root`, and the page
 ///   path [`crate::cascade::resolve_against_inherited`], funnel through
 ///   [`resolve_text_align_match_parent`]. Resolution needs the parent's
 ///   computed `direction` ([`Direction`], CSS Writing Modes 4 §2.1).
@@ -5061,7 +5061,7 @@ css_keywords!(WritingMode {
 ///
 /// Like siblings [`BoxSizing`] and [`Direction`], this enum does not derive
 /// `Default`. Its initialization sites
-/// ([`crate::specified::SpecifiedValues::initial`] and
+/// (`crate::specified::SpecifiedValues::initial` and
 /// [`crate::computed::ComputedValues::initial`]) explicitly set
 /// [`OverflowValue::Visible`].
 #[non_exhaustive]
@@ -5098,12 +5098,11 @@ css_keywords!(OverflowValue {
 /// to physical axes as explained in the [`OverflowValue`] non-goal section)
 /// and computed-value coupling across axes ([`resolve_overflow`]) read and
 /// write x and y together. They therefore belong in one struct rather than
-/// two independent scalar fields on [`SpecifiedValues`] / [`ComputedValues`].
+/// two independent scalar fields on `SpecifiedValues` / [`ComputedValues`].
 /// This mirrors bundling `border-*-style` and `border-*-width` for joint use
 /// in [`ComputedValues::border`] as `Sides<Border>` (see the
-/// [`crate::resolve::resolve_border`] docs).
+/// `crate::resolve::resolve_border` docs).
 ///
-/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 /// [`ComputedValues`]: crate::computed::ComputedValues
 /// [`ComputedValues::border`]: crate::computed::ComputedValues::border
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5605,7 +5604,7 @@ pub enum TextDecorationColor {
 /// [`PropertyValue::TextDecorationStyle`] / [`PropertyValue::TextDecorationColor`]
 /// and discards it. As with margin/padding/border/overflow shorthand, expansion
 /// happens at parse time and this value never reaches the cascade (see that
-/// function's docs). [`ComputedValues`] / [`SpecifiedValues`] do **not** hold
+/// function's docs). [`ComputedValues`] / `SpecifiedValues` do **not** hold
 /// this type as a field: the four longhands have no computed-value coupling,
 /// unlike [`OverflowXY`] (see its "cross-axis coupling" section). See the docs
 /// for each of the four longhand fields for details.
@@ -5614,7 +5613,6 @@ pub enum TextDecorationColor {
 /// this shorthand-only carrier is not re-exported by the umbrella crate.
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
-/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextDecorationShorthand {
     /// The `text-decoration-line` component; defaults to [`TextDecorationLine::NONE`]
@@ -5690,8 +5688,8 @@ pub enum TextDecorationSkipSpaces {
 /// The ED grammar also includes `<line-width>` (`thin`/`medium`/`thick`), but this
 /// implementation drops it as out of scope (it does not appear in the WPT vector).
 /// The parser accepts `<percentage>`, but this computed-value slice does not handle it.
-/// `Length` is staged in [`crate::specified::SpecifiedValues`] and converted to
-/// an absolute length by [`crate::resolve::resolve_text_decoration_thickness`]
+/// `Length` is staged in `crate::specified::SpecifiedValues` and converted to
+/// an absolute length by `crate::resolve::resolve_text_decoration_thickness`
 /// on the element path. No font-metric measurements such as `ch` are added for
 /// this property.
 #[non_exhaustive]
@@ -5972,7 +5970,7 @@ pub enum PageValue {
 /// - **Implemented**: A `<percentage>` value (§10.8.1 propdef
 ///   "Percentages: refer to the 'line-height' of the element itself").
 ///   The value is absolutized as a percentage of the element's own used
-///   `line-height` (see [`crate::resolve::resolve_vertical_align`]). For
+///   `line-height` (see `crate::resolve::resolve_vertical_align`). For
 ///   example, `50%` → `Length::Percent(50.0)` at parse time, then resolves to
 ///   `used_line_height_length * p / 100` in phase 3. Under the spec, `0%`
 ///   means the same as `baseline` (as does "`0cm` means the same as
@@ -5987,7 +5985,7 @@ pub enum PageValue {
 ///   **Spec-deviation fallback for `line-height: normal`**: When
 ///   `line-height: normal` applies (the spec initial value and the default
 ///   for an element with no declaration),
-///   [`crate::resolve::used_line_height_length`] returns `None`. The style
+///   `crate::resolve::used_line_height_length` returns `None`. The style
 ///   layer has no real font metrics, so it cannot convert "normal" to an
 ///   absolute length; the "normal" wall in that function's documentation
 ///   is canonical. Normally, used line-height has an absolute length from
@@ -6093,7 +6091,7 @@ pub enum VerticalAlign {
     /// "Percentages: refer to the 'line-height' of the element itself" in
     /// the same propdef. Computed style carries the absolutized `Length::Px`.
     /// See the "Implemented: `<percentage>`" section in the [`Self`]
-    /// documentation and [`crate::resolve::resolve_vertical_align`]. The
+    /// documentation and `crate::resolve::resolve_vertical_align`. The
     /// fallback for `normal` is `0px`. This variant also includes `calc()`
     /// values reducible to a single length or percentage.
     Length(Length),
@@ -6142,7 +6140,7 @@ pub enum VerticalAlign {
 /// layout-side consumer exists for them.
 ///
 /// `Default` is not derived, following [`Direction`] and [`BoxSizing`].
-/// The initializers [`crate::specified::SpecifiedValues::initial`] and
+/// The initializers `crate::specified::SpecifiedValues::initial` and
 /// [`crate::computed::ComputedValues::initial`] specify the spec default
 /// directly.
 #[non_exhaustive]
@@ -6222,7 +6220,7 @@ pub enum ZIndexValue {
 /// [`Direction`].
 ///
 /// `Default` is not derived, following [`Direction`] and [`FontStyle`].
-/// The initializers [`crate::specified::SpecifiedValues::initial`] and
+/// The initializers `crate::specified::SpecifiedValues::initial` and
 /// [`crate::computed::ComputedValues::initial`] specify [`WordBreak::Normal`]
 /// directly.
 #[non_exhaustive]
@@ -6310,7 +6308,7 @@ css_keywords!(WordBreak {
 /// [`Direction`].
 ///
 /// `Default` is not derived, following [`Direction`] and [`WordBreak`].
-/// The initializers [`crate::specified::SpecifiedValues::initial`] and
+/// The initializers `crate::specified::SpecifiedValues::initial` and
 /// [`crate::computed::ComputedValues::initial`] specify [`OverflowWrap::Normal`]
 /// directly.
 #[non_exhaustive]
@@ -6389,7 +6387,7 @@ css_keywords!(OverflowWrap {
 /// cascade winners.
 ///
 /// Do not derive `Default` — following the convention of [`ZIndexValue`] (the spec
-/// initial value is set directly by [`crate::specified::SpecifiedValues::initial`] /
+/// initial value is set directly by `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6523,7 +6521,7 @@ css_keywords!(BreakInside {
 ///   keyword through to [`crate::computed::ComputedValues::float`].
 ///
 /// Do not derive `Default` — following the convention of [`ZIndexValue`] (the spec initial value
-/// is set directly by [`crate::specified::SpecifiedValues::initial`] /
+/// is set directly by `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6593,7 +6591,7 @@ css_keywords!(FloatValue {
 ///   [`crate::computed::ComputedValues::clear`].
 ///
 /// Do not derive `Default` — following the convention of [`FloatValue`] (the spec initial value
-/// is set directly by [`crate::specified::SpecifiedValues::initial`] /
+/// is set directly by `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6811,7 +6809,7 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
 /// specified keyword, with no relative resolution (as for [`Direction`]).
 ///
 /// Following the [`Direction`] / [`WordBreak`] convention, do not derive
-/// `Default`: [`crate::specified::SpecifiedValues::initial`] /
+/// `Default`: `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`] set [`WhiteSpace::Normal`]
 /// directly.
 /// `text-wrap-mode` value (CSS Text 4 §5.1), also used by the `text-wrap`
@@ -7009,7 +7007,7 @@ css_keywords!(WhiteSpaceCollapse {
 /// specified keyword, with no relative resolution (as for [`Direction`]).
 ///
 /// Following the [`Direction`] / [`WordBreak`] convention, do not derive
-/// `Default`: [`crate::specified::SpecifiedValues::initial`] /
+/// `Default`: `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`] set [`Hyphens::Manual`]
 /// directly.
 #[non_exhaustive]
@@ -7143,7 +7141,7 @@ pub enum TabSize {
     Length(Length),
     /// Deferred length from additive `calc()` — retains the same
     /// [`LengthPercentageCalc`] representation (`px` + `em`) as
-    /// [`LetterSpacingValue::Calc`]. [`crate::resolve::resolve_tab_size`]
+    /// [`LetterSpacingValue::Calc`]. `crate::resolve::resolve_tab_size`
     /// resolves it using this element's computed font size. Percentage terms
     /// cannot reach this point: `parse_tab_size` already rejects them
     /// (spec propdef: "Percentages: N/A").
@@ -7581,7 +7579,7 @@ css_keywords!(EmptyCellsValue {
 /// `inline-table`; Inherited: **yes**; Computed value:
 /// "two absolute lengths"; Percentages: N/A; "Negative lengths are illegal"
 /// (the spec rejects them during parsing; for negative computed calc results,
-/// [`crate::resolve::resolve_border_spacing`] clamps to `0`).
+/// `crate::resolve::resolve_border_spacing` clamps to `0`).
 ///
 /// If the second component is omitted, copy the first component (per the spec:
 /// "If only one value is specified, it applies to both the horizontal and
@@ -7589,7 +7587,7 @@ css_keywords!(EmptyCellsValue {
 /// The two components are ordered horizontal, then vertical.
 ///
 /// Because the computed value is "two absolute lengths", phase 3
-/// absolutizes each component with [`crate::resolve::resolve_border_spacing`];
+/// absolutizes each component with `crate::resolve::resolve_border_spacing`;
 /// unlike its sibling keyword-only types [`CaptionSideValue`] / [`EmptyCellsValue`],
 /// the values are not simply passed through.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -8101,7 +8099,7 @@ pub struct BoxShadowItem {
 /// cascade's static side. `invert` applies only to outlines; do not add it
 /// to the border's [`BorderColor`].
 ///
-/// Do not derive `Default`. [`crate::specified::SpecifiedValues::initial`] /
+/// Do not derive `Default`. `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`] explicitly set the spec initial
 /// value (`invert`).
 #[non_exhaustive]
@@ -8153,7 +8151,7 @@ pub struct Outline {
 /// ```
 ///
 /// **The code block above describes `<bg-position>`, the grammar implemented for
-/// `background-position` (see [`parse_bg_position`]), not `<position>`
+/// `background-position` (see `parse_bg_position`), not `<position>`
 /// itself.** Its final alternative independently permits omission of
 /// `<length-percentage>?` in both groups. This is an extension specific to
 /// `<bg-position>`: a three-value edge-offset form with an authored offset
@@ -8164,7 +8162,7 @@ pub struct Outline {
 /// permits either authored offsets on both axes (four values) or a bare
 /// keyword pair without `<length-percentage>` on either axis (the `&&`
 /// form of `<position-two>`). Properties requiring `<position>` (such as
-/// `object-position`) use [`parse_position_strict`] to enforce this
+/// `object-position`) use `parse_position_strict` to enforce this
 /// restriction (see the [`parse_position_branch3_strict`] docs).
 /// `background-position` remains on `<bg-position>` and still allows the
 /// three-value form.
@@ -8883,6 +8881,7 @@ impl BorderImageRepeat {
 }
 
 /// Initial `border-image-width`: `1` on every side.
+#[doc(hidden)]
 pub const BORDER_IMAGE_WIDTH_INITIAL: Sides<BorderImageWidthSide<LengthPercentageOrCalc>> = Sides {
     top: BorderImageWidthSide::Number(1.0),
     right: BorderImageWidthSide::Number(1.0),
@@ -8891,6 +8890,7 @@ pub const BORDER_IMAGE_WIDTH_INITIAL: Sides<BorderImageWidthSide<LengthPercentag
 };
 
 /// Initial `border-image-outset`: `0` on every side.
+#[doc(hidden)]
 pub const BORDER_IMAGE_OUTSET_INITIAL: Sides<BorderImageOutsetSide<Length>> = Sides {
     top: BorderImageOutsetSide::Number(0.0),
     right: BorderImageOutsetSide::Number(0.0),
@@ -8969,7 +8969,7 @@ css_keywords!(BackgroundAttachment {
 ///
 /// The spec initial value differs by property: `background-clip` uses
 /// `border-box`, while `background-origin` uses `padding-box`
-/// (see [`crate::specified::SpecifiedValues::initial`] /
+/// (see `crate::specified::SpecifiedValues::initial` /
 /// [`crate::computed::ComputedValues::initial`]).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9176,10 +9176,9 @@ impl BackgroundLayerSpec {
 /// `#[non_exhaustive]` is intentionally omitted, matching sibling
 /// shorthand-only carriers [`GridLineShorthand`] / [`TextDecorationShorthand`]:
 /// this type exists only as [`PropertyValue::Background`]'s payload and is
-/// never held by [`ComputedValues`] / [`SpecifiedValues`].
+/// never held by [`ComputedValues`] / `SpecifiedValues`.
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
-/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackgroundShorthand {
     /// Symbolic color component, when it contains `currentcolor`.
@@ -9876,14 +9875,14 @@ pub type MaskImage = BackgroundImage;
 /// transformed box at used-value time.
 ///
 /// On the element path, [`crate::resolve::ComputedTransformFunction`]/
-/// [`crate::resolve::resolve_transform_function`] implements this distinction;
-/// on the `page` path, phase 3 of [`crate::page::cascade_page`] does so through
+/// `crate::resolve::resolve_transform_function` implements this distinction;
+/// on the `page` path, phase 3 of `crate::page::cascade_page` does so through
 /// the `Transform` arm of `absolutize_in_page_context`. They absolutize only
 /// the length part of `<length-percentage>` against font-size/root-font-size,
 /// leaving the percentage part symbolic, as
 /// [`crate::resolve::ComputedLengthPercentageOrCalc`]. This is the same treatment that
-/// [`crate::resolve::resolve_css_position`]/
-/// [`crate::resolve::resolve_length_percentage`] applies to
+/// `crate::resolve::resolve_css_position`/
+/// `crate::resolve::resolve_length_percentage` applies to
 /// `background-position`/`object-position`. The six `<number>` slots in
 /// `Matrix` and the `<angle>` slots in `Rotate`/`Skew`/`SkewX`/`SkewY` do
 /// not need this conversion: the former are already fully resolved
@@ -10202,7 +10201,7 @@ pub enum PropertyValue {
     /// `Length::Px(the parent's px value)` by the D5 invariant). It stores the result
     /// in `target.font_size` as [`Self::FontSize`] (`Length::Px`). This variant is only
     /// a temporary representation of a cascade winner and does not survive into
-    /// [`crate::specified::SpecifiedValues`] or later stages. For pages,
+    /// `crate::specified::SpecifiedValues` or later stages. For pages,
     /// [`crate::cascade::resolve_against_inherited`] performs the same resolution;
     /// by the time a value reaches [`crate::page::PageCascadeResult::declarations`],
     /// it has likewise become [`Self::FontSize`] (`Length::Px`).
@@ -10236,7 +10235,7 @@ pub enum PropertyValue {
     /// them against the parent's computed weight and stores an absolute value in
     /// [`crate::computed::ComputedValues::font_weight`] (`f32`).
     ///
-    /// **Page contexts also resolve them.** [`crate::page::cascade_page`] passes the
+    /// **Page contexts also resolve them.** `crate::page::cascade_page` passes the
     /// winner through [`crate::cascade::resolve_against_inherited`] (a sibling of
     /// `apply_value` sharing the same relative-weight table), then stores it in
     /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations).
@@ -11489,8 +11488,8 @@ pub enum PropertyValue {
     /// `background-position` / `object-position` in [`CssPosition`]), but the
     /// grammars differ. It requires strict `<position>` (CSS Values 4 §8.3),
     /// which disallows the `<bg-position>`-specific three-value edge-offset
-    /// syntax. Therefore it is parsed with [`parse_position_strict`] instead
-    /// of [`parse_bg_position`] (see [`parse_position_branch3_strict`]).
+    /// syntax. Therefore it is parsed with `parse_position_strict` instead
+    /// of `parse_bg_position` (see [`parse_position_branch3_strict`]).
     /// Since it contains `<length-percentage>`, absolutization is deferred to
     /// phase 3.
     ObjectPosition(CssPosition),
@@ -11568,7 +11567,7 @@ pub enum PropertyValue {
     /// `border-spacing: <length>{1,2}` — **inherited**, initial: `0`
     /// (`0px` on both axes; CSS Tables 3 §6.1; see [`BorderSpacingValue`]).
     /// The computed value has two absolute lengths. Phase 3 absolutizes them
-    /// via [`crate::resolve::resolve_border_spacing`] (the same staging pattern
+    /// via `crate::resolve::resolve_border_spacing` (the same staging pattern
     /// for length-bearing values as [`Self::TabSize`]).
     /// (Appended for the same reason as [`Self::TableLayout`].)
     BorderSpacing(BorderSpacingValue),
@@ -11615,29 +11614,29 @@ pub enum PropertyValue {
     TextDecorationSkipSpaces(TextDecorationSkipSpaces),
     /// `text-decoration-thickness` — **non-inherited**, initial:
     /// [`TextDecorationThickness::Auto`] (see [`TextDecorationThickness`]).
-    /// The element path stages it in [`crate::specified::SpecifiedValues`]
+    /// The element path stages it in `crate::specified::SpecifiedValues`
     /// and absolutizes its length to computed CSS px via
-    /// [`crate::resolve::resolve_text_decoration_thickness`]. The `@page`
+    /// `crate::resolve::resolve_text_decoration_thickness`. The `@page`
     /// path absolutizes it separately via `absolutize_in_page_context` in
     /// [`crate::page`].
     /// (Appended for the same reason as [`Self::TableLayout`].)
     TextDecorationThickness(TextDecorationThickness),
     /// `text-decoration-inset` — **non-inherited**, initial: `0`
     /// (ED). The element path stages it in
-    /// [`crate::specified::SpecifiedValues`] and absolutizes it against the
+    /// `crate::specified::SpecifiedValues` and absolutizes it against the
     /// declaring node's font metrics via
-    /// [`crate::resolve::resolve_text_decoration_inset`] before painting.
+    /// `crate::resolve::resolve_text_decoration_inset` before painting.
     /// (Appended for the same reason as [`Self::TableLayout`].)
     TextDecorationInset(TextDecorationInset),
     /// `text-emphasis-position` — **inherited**, initial: `over right`
     /// (ED). The element cascade stages this computed-equivalent keyword value
-    /// in [`crate::specified::SpecifiedValues`]; emphasis placement is out of
+    /// in `crate::specified::SpecifiedValues`; emphasis placement is out of
     /// scope.
     /// (Appended for the same reason as [`Self::TableLayout`].)
     TextEmphasisPosition(TextEmphasisPosition),
     /// `text-underline-position` — **inherited**, initial:
     /// [`TextUnderlinePosition::AUTO`]. The element cascade stages this
-    /// computed-equivalent keyword set in [`crate::specified::SpecifiedValues`].
+    /// computed-equivalent keyword set in `crate::specified::SpecifiedValues`.
     /// Underline placement is out of scope.
     /// (Appended for the same placement reason as [`Self::TableLayout`].)
     TextUnderlinePosition(TextUnderlinePosition),
@@ -11858,7 +11857,7 @@ const _: () = assert!(
 /// the cascade.
 ///
 /// Used by the per-node winner selection in cascade.rs and as the map key in
-/// [`PageCascadeResult`] by [`cascade_page`](crate::page::cascade_page) in page.rs.
+/// [`PageCascadeResult`] by `cascade_page` in page.rs.
 /// This extracts only the variant tag from `PropertyValue`, with no additional
 /// state. It is public because [`PageCascadeResult`] requires a `pub` type
 /// (to satisfy clippy's `private_interfaces` lint).
@@ -11871,13 +11870,13 @@ const _: () = assert!(
 ///
 /// - **Where a variant is added** and **the order of existing variants** can
 ///   change the **final value** when multiple winners write to the same field
-///   in [`crate::specified::SpecifiedValues`] for one node.
+///   in `crate::specified::SpecifiedValues` for one node.
 /// - Currently, only shorthand keys (`Padding` / `Margin` / `Border`) could be
 ///   affected, and each is after its longhands. However,
 ///   [`crate::rule::expand_shorthand_into`] expands shorthands into longhands
 ///   both after parsing and on entry to the element cascade, so **shorthand
 ///   keys never reach the element cascade stage**. The `@page` cascade
-///   ([`crate::page::cascade_page`]) performs the same expansion on entry,
+///   (`crate::page::cascade_page`) performs the same expansion on entry,
 ///   closing the analogous gap if `PageRule`'s `pub declarations` are mutated
 ///   after parsing.
 ///
@@ -11899,7 +11898,7 @@ const _: () = assert!(
 /// `text-align: match-parent` is **unrelated** to this `PropertyKey` order.
 /// After all winners have been applied, the caller of
 /// [`crate::property::resolve_text_align_match_parent`],
-/// [`crate::specified::SpecifiedValues::finalize`], receives the explicit
+/// `crate::specified::SpecifiedValues::finalize`, receives the explicit
 /// parent [`crate::computed::ComputedValues`] and resolves it there. Thus it
 /// does not depend on the `apply_winners` slot iteration order (the declaration
 /// order of this enum).
@@ -11954,7 +11953,7 @@ pub enum PropertyKey {
     /// [`crate::rule::expand_shorthand_into`] expands shorthands both after
     /// parsing and on entry to the element cascade. This variant therefore
     /// never reaches that cascade stage, so there is no observable divergence.
-    /// Entry-side expansion in [`crate::page::cascade_page`] closes the analogous
+    /// Entry-side expansion in `crate::page::cascade_page` closes the analogous
     /// gap for `@page`. The exhaustive match in
     /// [`crate::rule::expand_shorthand_into`] prevents a missing expansion arm
     /// at compile time.

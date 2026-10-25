@@ -55,6 +55,7 @@ const MAX_DOCUMENT_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
 
 /// Width and height of an HTML `<canvas>` whose `width` or `height` content
 /// attribute is missing or unparsable (HTML Standard §4.12.5).
+#[doc(hidden)]
 pub const DEFAULT_CANVAS_SIZE: (u32, u32) = (300, 150);
 // Bound all size variants retained beyond the source cache's current raster.
 const MAX_DOCUMENT_LIST_MARKER_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
@@ -102,6 +103,7 @@ fn is_dom_name_breaker(ch: char) -> bool {
 /// DOM "valid namespace prefix"
 /// <https://dom.spec.whatwg.org/#valid-namespace-prefix>: non-empty, with
 /// no ASCII whitespace, NULL, `/` or `>`.
+#[doc(hidden)]
 pub fn is_valid_namespace_prefix(prefix: &str) -> bool {
     !prefix.is_empty() && !prefix.chars().any(is_dom_name_breaker)
 }
@@ -109,6 +111,7 @@ pub fn is_valid_namespace_prefix(prefix: &str) -> bool {
 /// DOM "valid attribute local name"
 /// <https://dom.spec.whatwg.org/#valid-attribute-local-name>: a valid
 /// namespace prefix that also has no `=`.
+#[doc(hidden)]
 pub fn is_valid_attribute_local_name(name: &str) -> bool {
     is_valid_namespace_prefix(name) && !name.contains('=')
 }
@@ -119,6 +122,7 @@ pub fn is_valid_attribute_local_name(name: &str) -> bool {
 /// namespace prefix excludes. Any other name must start with `:`, `_` or a
 /// non-ASCII code point and continue with ASCII alphanumerics, `-`, `.`,
 /// `:`, `_` or non-ASCII code points.
+#[doc(hidden)]
 pub fn is_valid_element_local_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
@@ -356,8 +360,8 @@ impl Document {
     /// `fonts` is the font layer the inline engine looks families up in, for
     /// example one built from bundled fonts, or a document layer of
     /// `@font-face` faces over a shared layer
-    /// ([`crate::build_inline_document_fonts`]). Without this call, the first
-    /// layout uses the installed fonts ([`crate::system_font_collection`]).
+    /// (`crate::build_inline_document_fonts`). Without this call, the first
+    /// layout uses the installed fonts (`crate::system_font_collection`).
     pub fn set_font_collection(&mut self, fonts: shodo::font::FontCollection) {
         self.set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
     }
@@ -728,7 +732,7 @@ impl Document {
     ///
     /// # Fragment-aware semantics (WHATWG DOM §4.2.3 Mutation algorithms)
     ///
-    /// If `child` is the [`NodeData::DocumentFragment`] variant, the fragment
+    /// If `child` is the `NodeData::DocumentFragment` variant, the fragment
     /// node itself is not appended to `parent.children`. Instead, all its
     /// children move to the end of the parent's children, leaving the fragment
     /// empty. This follows insert algorithm steps 1 + 4.1 + 7.2: step 1 takes
@@ -802,7 +806,7 @@ impl Document {
     ///
     /// # Fragment-aware semantics (WHATWG DOM §4.2.3 Mutation algorithms)
     ///
-    /// If `child` is the [`NodeData::DocumentFragment`] variant, the fragment
+    /// If `child` is the `NodeData::DocumentFragment` variant, the fragment
     /// node itself is not inserted into `parent.children`. Instead, its children
     /// are spliced in source order at `before`, leaving the fragment empty.
     /// This follows insert algorithm steps 1 + 4.1 + 7.3: step 1 takes the
@@ -1719,7 +1723,7 @@ impl Document {
     /// The fragment root is allocated detached in the `Document.nodes` arena
     /// (without a parent and unreachable from the Document root). Previously
     /// represented as an Element with a `"#document-fragment"` pseudo-tag, it
-    /// now has the dedicated [`NodeData::DocumentFragment`] variant:
+    /// now has the dedicated `NodeData::DocumentFragment` variant:
     /// - It has `NodeKind::DocumentFragment`, not Element, so the Element gate
     ///   automatically skips it during CSS selection and cascade.
     /// - `tag_name()` returns `None`, eliminating pseudo-tag pollution.
@@ -1952,7 +1956,7 @@ impl Document {
     /// **Historical note**: The old raikiri-html sink used
     /// `strip_non_element_stubs` to remove Comment / PI stubs represented as
     /// unimplemented Elements in bulk. That use disappeared when Comment and
-    /// ProcessingInstruction became permanent [`NodeData`] variants in the
+    /// ProcessingInstruction became permanent `NodeData` variants in the
     /// tree and `mark_in_document_flags` began clearing IS_IN_DOCUMENT for them.
     /// This helper remains for a future mutation runtime and consumers that
     /// build trees directly. It sets [`flags_dirty`](Self#structfield.flags_dirty)
@@ -2189,7 +2193,7 @@ impl Document {
 
     /// Current width/height of an HTML `<canvas>` element (HTML Standard §4.12.5).
     ///
-    /// Missing or unparsable attributes fall back to [`DEFAULT_CANVAS_SIZE`]. Returns `None`
+    /// Missing or unparsable attributes fall back to `DEFAULT_CANVAS_SIZE`. Returns `None`
     /// for non-canvas nodes.
     pub fn canvas_size(&self, id: usize) -> Option<(u32, u32)> {
         if !self.is_canvas_element(id) {

@@ -48,7 +48,12 @@ The types of the standard library are not listed.
 computed values; it names Taffy types on purpose, and nothing is reported for
 it. It is scanned all the same: a view crate whose scan finds no Taffy item
 means the walker cannot see them, which stops the run (exit 2), so a change in
-the JSON format cannot turn the check into a silent pass.
+the JSON format cannot turn the check into a silent pass. Both scans (the walk
+of every item, hidden ones included, and the third-party scan of the visible
+API) must see Taffy, except that the third-party scan has nothing to see while
+every item of the crate is `#[doc(hidden)]`, as they are today: the crate is
+then skipped there, and un-hiding an item that names Taffy brings the check
+back.
 
 ## Usage
 
@@ -57,6 +62,7 @@ the JSON format cannot turn the check into a silent pass.
     python3 public_api_lint.py --repo-root PATH --surface CRATE [--with-hidden]
     python3 public_api_lint.py --repo-root PATH --usage SRC_DIR
     python3 public_api_lint.py --repo-root PATH --exhaustive CRATE
+    python3 public_api_lint.py --repo-root PATH --first-tier
 
 `--dump CRATE` prints the public API of one crate, one line per item with every
 id replaced by the path it names, which is the same text for two builds of the
@@ -73,6 +79,17 @@ for.
 
 `--exhaustive CRATE` prints the types the crate declares that lack
 `#[non_exhaustive]` and that a user can match or build completely.
+
+`--first-tier` lists what falls outside the first tier of `docs/public-api.md`,
+and exits 1 if there is anything. The first tier is what the `raikiri-html`
+names reach through their signatures, plus the names that the document lists
+between its `first-tier-names` markers (what fulgur uses from the other
+crates, and the network providers that a consumer hands to the API). Three
+kinds of finding: a visible name that the first tier does not reach; a listed
+name that no crate publishes any more; and a link in the docs of a visible item
+to a hidden item, which the rendered docs show as a dead link. It is a report,
+not part of the gate: a name it lists is either hidden with `#[doc(hidden)]` or
+added to the list because the consumer needs it.
 
 `--json-dir DIR` reads the JSON files from DIR (named `<crate with _>.json`)
 instead of running cargo.
@@ -154,7 +171,6 @@ THIRD_PARTY_ALLOWED: dict[str, dict[str, str]] = {
     "raikiri-svg": {},
     "raikiri-net": {"url": "providers take and return `Url`"},
     "raikiri-dom": {
-        "bitflags": "`NodeFlags` is a bitflags type, whose iterators are bitflags'",
         "shodo": "the inline engine's `FontCollection` and `FontError` are shodo's",
         "smol_str": "names and strings of the document are `SmolStr`",
         "url": "resource locations are `Url`",
@@ -543,7 +559,12 @@ def third_party_report(
     unlisted: dict[str, dict[str, list[str]]] = {}
     stale: dict[str, list[str]] = {}
     for crate in PUBLISHED_CRATES:
-        named = third_party_crates(load(crate))
+        doc = load(crate)
+        if crate in VIEW_CRATES and all(name.hidden for name in surface.names(doc)):
+            # Every item is #[doc(hidden)]: the visible API names no crate, so
+            # there is nothing to scan and no entry of THIRD_PARTY_ALLOWED to judge.
+            continue
+        named = third_party_crates(doc)
         if crate in VIEW_CRATES and FORBIDDEN_CRATE not in named:
             raise ToolError(
                 f"{crate} is the view crate and names Taffy types, yet the third-party scan found none; "
@@ -557,6 +578,55 @@ def third_party_report(
         if gone:
             stale[crate] = gone
     return unlisted, stale
+
+
+# The crate whose names are the consumer API, and the document that lists what
+# else fulgur uses.
+CONSUMER_CRATE = "raikiri-html"
+FIRST_TIER_DOC = Path("docs") / "public-api.md"
+
+
+def run_first_tier(repo_root: Path, json_dir: Path) -> int:
+    """Print what falls outside the first tier; 1 if there is anything.
+
+    Three kinds of finding: a visible name that the consumer API does not
+    reach, a name in the list of docs/public-api.md that no crate publishes (or
+    publishes only as hidden), and a link in the docs of a visible item to a
+    hidden item.
+    """
+    try:
+        listed = surface.read_first_tier_names((repo_root / FIRST_TIER_DOC).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ToolError(f"{FIRST_TIER_DOC}: {error}") from error
+    docs = {crate.replace("-", "_"): load_doc(json_dir / json_file_name(crate)) for crate in PUBLISHED_CRATES}
+    visible = {
+        name.path
+        for crate_names in (surface.names(doc) for doc in docs.values())
+        for name in crate_names
+        if not name.hidden
+    }
+    stale = [path for path in listed if path not in visible]
+    for path in stale:
+        print(f"{FIRST_TIER_DOC}: listed name {path} is not published (renamed, removed or hidden)")
+    known = [path for path in listed if path in visible]
+    outside = surface.outside_first_tier(docs, CONSUMER_CRATE.replace("-", "_"), known)
+    for crate, found in sorted(outside.items()):
+        for name in found:
+            print(f"{crate}: {name.kind:10s} {name.path}")
+    dead = surface.hidden_doc_links(docs)
+    for crate, item, text, target in dead:
+        print(f"{crate}: the docs of {item} link {text} to the hidden {target}")
+    total = len(stale) + sum(len(found) for found in outside.values()) + len(dead)
+    if total:
+        print(
+            f"FAIL: {total} finding(s). Hide each name outside the first tier with #[doc(hidden)] "
+            f"(or make it crate-private), or list it in {FIRST_TIER_DOC} if fulgur uses it; drop a stale "
+            "listed name; write a link to a hidden item as a plain code span.",
+            file=sys.stderr,
+        )
+        return 1
+    print("PASS: every visible name of the published crates is in the first tier")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -576,6 +646,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SRC_DIR",
         type=Path,
         help="report which published names the Rust sources under SRC_DIR reach instead of checking",
+    )
+    parser.add_argument(
+        "--first-tier",
+        action="store_true",
+        help="list the names outside the consumer API, the stale listed names and the links to hidden items instead of checking",
     )
     parser.add_argument(
         "--list-semver-crates",
@@ -604,6 +679,8 @@ def main(argv: list[str] | None = None) -> int:
             doc = load_doc(json_dir / json_file_name(args.exhaustive))
             sys.stdout.write(surface.format_exhaustive(surface.exhaustive_types(doc)))
             return 0
+        if args.first_tier:
+            return run_first_tier(args.repo_root, json_dir)
         if args.usage is not None:
             if not args.usage.is_dir():
                 raise ToolError(f"--usage takes a directory of Rust sources, not {args.usage}")

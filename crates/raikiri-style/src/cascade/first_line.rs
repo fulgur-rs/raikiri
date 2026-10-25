@@ -93,6 +93,7 @@ use crate::{
 
 /// Normal cascade and resolved first-line inputs on the same immutable DOM.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct FirstLineCascade {
     /// Ordinary element styles and pseudo-element declarations.
     pub normal: CascadeResult,
@@ -102,6 +103,7 @@ pub struct FirstLineCascade {
 
 /// Node-indexed styles for one block's inline first-line fragments.
 #[derive(Debug)]
+#[doc(hidden)]
 pub struct FirstLineStyles {
     /// The originating block's real DOM identifier.
     pub root: StyleNodeId,
@@ -129,6 +131,7 @@ pub struct FirstLineStyles {
 /// Returns an error for an absent, detached, unreachable or non-block root,
 /// an unsupported visible descendant, or a cascade failure (see
 /// [`super::cascade_with_options`]).
+#[doc(hidden)]
 pub fn cascade_with_first_line<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
@@ -161,6 +164,7 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
 ///
 /// # Errors
 /// As [`cascade_with_first_line`].
+#[doc(hidden)]
 pub fn cascade_with_first_line_options<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,

@@ -15,6 +15,7 @@ use super::parse::next_numeric_stable;
 
 /// Serializes `raw_value` for `opacity`, or `None` for other properties and
 /// for text whose math cannot be folded here (callers keep the source text).
+#[doc(hidden)]
 pub fn serialize_alpha_value(name: &str, raw_value: &str) -> Option<String> {
     if !matches!(
         name,

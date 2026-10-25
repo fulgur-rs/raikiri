@@ -15,14 +15,17 @@ use taffy::CompactLength;
 /// A size: a length, a percentage, a `calc()`, `auto` or an intrinsic sizing
 /// keyword.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub struct Dimension(pub(super) taffy::Dimension);
 
 /// A length, a percentage or a `calc()`.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub struct LengthPercentage(pub(super) taffy::LengthPercentage);
 
 /// A length, a percentage, a `calc()` or `auto`.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[doc(hidden)]
 pub struct LengthPercentageAuto(pub(super) taffy::LengthPercentageAuto);
 
 impl Dimension {

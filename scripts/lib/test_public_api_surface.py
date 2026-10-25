@@ -483,5 +483,170 @@ class ExhaustiveTests(unittest.TestCase):
         self.assertEqual(surface.format_exhaustive([]), "")
 
 
+class Crate(Doc):
+    """A crate named `name` whose root module is `name`, with crates of `externals` known by id."""
+
+    def __init__(self, name: str, externals: dict[int, str] | None = None) -> None:
+        super().__init__()
+        self.name = name
+        self.index["0"]["name"] = name
+        self.externals = externals or {}
+
+    def item(self, key: int, name: str, refs: list[int] | None = None, attrs: list | None = None) -> int:
+        """A struct at `name::<name>` whose signature mentions the items `refs`."""
+        inner = {"struct": {"kind": "unit", "impls": []}, "mentions": [{"resolved_path": {"id": r}} for r in refs or []]}
+        return self._add(key, name, inner, attrs, [self.name, name])
+
+    def hidden_impl(self, key: int, refs: list[int]) -> int:
+        inner = {"impl": {"items": [], "mentions": [{"resolved_path": {"id": r}} for r in refs]}}
+        return self._add(key, None, inner, HIDDEN, None)
+
+    def has_impls(self, key: int, impls: list[int]) -> None:
+        self.index[str(key)]["inner"]["struct"]["impls"] = impls
+
+    def other(self, key: int, crate_id: int, path: list[str]) -> int:
+        self.paths[str(key)] = {"crate_id": crate_id, "path": path, "kind": "struct"}
+        return key
+
+    def json(self) -> dict:
+        return {
+            "index": self.index,
+            "paths": self.paths,
+            "root": 0,
+            "external_crates": {str(key): {"name": name} for key, name in self.externals.items()},
+        }
+
+
+class FirstTierTests(unittest.TestCase):
+    def two_crates(self) -> tuple[dict[str, dict], Crate, Crate]:
+        # `app` is the consumer. Its `Page` mentions `lib::Shared` in a signature.
+        library = Crate("lib")
+        shared = library.item(1, "Shared", refs=[2])
+        nested = library.item(2, "Nested")
+        unused = library.item(3, "Unused")
+        direct = library.item(4, "Direct")
+        library.set_items(0, [shared, nested, unused, direct])
+        app = Crate("app", {1: "lib"})
+        page = app.item(1, "Page", refs=[app.other(10, 1, ["lib", "Shared"])])
+        app.set_items(0, [page])
+        return {"app": app.json(), "lib": library.json()}, app, library
+
+    def outside(self, docs: dict[str, dict], extra: list[str] | None = None) -> dict[str, list[str]]:
+        found = surface.outside_first_tier(docs, "app", extra or [])
+        return {crate: [name.path for name in names] for crate, names in found.items()}
+
+    def test_what_a_signature_names_in_another_crate_is_in_the_tier_with_what_that_names(self) -> None:
+        docs, _, _ = self.two_crates()
+        self.assertEqual(self.outside(docs), {"lib": ["lib::Direct", "lib::Unused"]})
+
+    def test_a_listed_name_brings_its_own_signature_with_it(self) -> None:
+        docs, _, _ = self.two_crates()
+        self.assertEqual(self.outside(docs, ["lib::Direct"]), {"lib": ["lib::Unused"]})
+
+    def test_a_hidden_impl_does_not_make_what_it_names_part_of_the_tier(self) -> None:
+        docs, app, library = self.two_crates()
+        # `Unused` is named only by a hidden impl of `Shared`.
+        library.has_impls(1, [20])
+        library.hidden_impl(20, [3])
+        docs["lib"] = library.json()
+        self.assertEqual(self.outside(docs), {"lib": ["lib::Direct", "lib::Unused"]})
+
+    def test_an_impl_that_is_not_hidden_does(self) -> None:
+        docs, app, library = self.two_crates()
+        library.has_impls(1, [20])
+        library._add(20, None, {"impl": {"items": [], "mentions": [{"resolved_path": {"id": 3}}]}}, None, None)
+        docs["lib"] = library.json()
+        self.assertEqual(self.outside(docs), {"lib": ["lib::Direct"]})
+
+    def test_hidden_names_are_not_reported(self) -> None:
+        docs, app, library = self.two_crates()
+        library.index["3"]["attrs"] = HIDDEN
+        library.index["4"]["attrs"] = HIDDEN
+        docs["lib"] = library.json()
+        self.assertEqual(self.outside(docs), {})
+
+    def test_a_module_is_outside_when_nothing_under_it_is_in_the_tier(self) -> None:
+        docs, app, library = self.two_crates()
+        inner = library.item(5, "Inner")
+        library.set_items(0, [1, 2, 3, 4, library.module(6, "m", [inner]), library.module(7, "kept", [2])])
+        docs["lib"] = library.json()
+        found = self.outside(docs)
+        self.assertEqual(found, {"lib": ["lib::Direct", "lib::Unused", "lib::m", "lib::m::Inner"]})
+
+    def test_the_names_between_the_markers_are_read_one_per_line(self) -> None:
+        text = (
+            "intro lib::NotThis\n"
+            f"{surface.FIRST_TIER_BEGIN}\n```text\nlib::A\nlib::m::B\n\n  lib::C  \n```\n"
+            f"{surface.FIRST_TIER_END}\nlib::AfterIt\nnot a path\n"
+        )
+        self.assertEqual(surface.read_first_tier_names(text), ["lib::A", "lib::m::B", "lib::C"])
+
+    def test_a_marker_quoted_in_prose_does_not_cut_the_list(self) -> None:
+        text = (
+            f"Write `{surface.FIRST_TIER_END}` after the list.\n"
+            f"{surface.FIRST_TIER_BEGIN}\n```text\nlib::A\n```\n{surface.FIRST_TIER_END}\n"
+        )
+        self.assertEqual(surface.read_first_tier_names(text), ["lib::A"])
+
+    def test_a_line_between_the_markers_that_is_not_a_path_is_refused(self) -> None:
+        text = f"{surface.FIRST_TIER_BEGIN}\n```text\nlib::A\nlib::B,\n```\n{surface.FIRST_TIER_END}\n"
+        with self.assertRaisesRegex(ValueError, "lib::B,"):
+            surface.read_first_tier_names(text)
+
+    def test_a_module_of_another_crate_brings_in_what_it_re_exports_from_elsewhere(self) -> None:
+        # `lib::m::Thing` is declared in a private module, so its canonical path is `lib::inner::Thing`.
+        library = Crate("lib")
+        thing = library.item(1, "Thing")
+        library.paths["1"]["path"] = ["lib", "inner", "Thing"]
+        module = library.module(3, "m", [library.use(2, "Thing", thing)])
+        library.set_items(0, [module])
+        app = Crate("app", {1: "lib"})
+        reexport = app.other(10, 1, ["lib", "m"])
+        app.paths["10"]["kind"] = "module"
+        app.set_items(0, [app.use(2, "m", reexport)])
+        docs = {"app": app.json(), "lib": library.json()}
+        self.assertEqual(self.outside(docs), {})
+
+    def test_a_link_to_a_hidden_item_in_the_docs_of_a_visible_one_is_reported(self) -> None:
+        library = Crate("lib")
+        shown = library.item(1, "Shown")
+        helper = library.item(2, "Helper", attrs=HIDDEN)
+        library.index["1"]["links"] = {"`Helper`": helper, "`Shown`": shown}
+        library.set_items(0, [shown, helper])
+        self.assertEqual(
+            surface.hidden_doc_links({"lib": library.json()}),
+            [("lib", "Shown", "`Helper`", "lib::Helper")],
+        )
+
+    def test_links_among_visible_items_and_from_hidden_ones_are_not_reported(self) -> None:
+        library = Crate("lib")
+        shown = library.item(1, "Shown")
+        other = library.item(2, "Other")
+        helper = library.item(3, "Helper", attrs=HIDDEN)
+        inner = library.item(4, "Inner", attrs=HIDDEN)
+        library.index["1"]["links"] = {"`Other`": other}
+        library.index["3"]["links"] = {"`Inner`": inner}
+        library.set_items(0, [shown, other, helper, inner])
+        self.assertEqual(surface.hidden_doc_links({"lib": library.json()}), [])
+
+    def test_a_link_to_a_member_of_a_hidden_type_is_reported(self) -> None:
+        library = Crate("lib")
+        shown = library.item(1, "Shown")
+        hidden = library.item(2, "Hidden", attrs=HIDDEN)
+        method = library._add(5, "run", {"function": {}}, None, None)
+        library.index["2"]["inner"]["struct"]["impls"] = [6]
+        library._add(6, None, {"impl": {"items": [method]}}, None, None)
+        library.index["1"]["links"] = {"`Hidden::run`": method}
+        library.set_items(0, [shown, hidden])
+        self.assertEqual(
+            surface.hidden_doc_links({"lib": library.json()}),
+            [("lib", "Shown", "`Hidden::run`", "lib::run")],
+        )
+
+    def test_a_document_without_the_markers_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            surface.read_first_tier_names("no markers here")
+
+
 if __name__ == "__main__":
     unittest.main()

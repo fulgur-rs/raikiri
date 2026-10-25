@@ -8,6 +8,7 @@ use super::{CssRule, OpaqueBudget, Origin, ParseBudget, RuleTree, StyleRule};
 /// It owns no document state. Each [`Self::to_rule_tree`] call produces an
 /// independent tree, preserving the parser's actual budget consumption,
 /// including work spent on rules it discarded.
+#[doc(hidden)]
 pub struct PreparedStylesheet {
     style_rules: Vec<StyleRule>,
     rules: Vec<CssRule>,

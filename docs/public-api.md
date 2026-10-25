@@ -22,13 +22,13 @@ their type and are not listed. A module and a function can share a path
 | crate | visible names | `#[doc(hidden)]` |
 | --- | ---: | ---: |
 | `raikiri-html` | 147 | 3 |
-| `raikiri-dom` | 204 | 105 |
-| `raikiri-traits` | 247 | 0 |
-| `raikiri-style` | 777 | 0 |
-| `raikiri-svg` | 18 | 0 |
+| `raikiri-dom` | 74 | 235 |
+| `raikiri-traits` | 162 | 85 |
+| `raikiri-style` | 600 | 179 |
+| `raikiri-svg` | 9 | 9 |
 | `raikiri-net` (default features) | 7 | 0 |
-| `raikiri-layout-geometry` | 6 | 0 |
-| `raikiri-layout-style` | 65 | 0 |
+| `raikiri-layout-geometry` | 5 | 1 |
+| `raikiri-layout-style` | 0 | 65 |
 
 There are three tiers.
 
@@ -47,16 +47,19 @@ There are three tiers.
    `raikiri-paint`, not because a consumer was promised them. A consumer may
    use one, and then it belongs in the first tier: it is named in the list
    below, or re-exported from `raikiri-html`. One that nobody outside the
-   workspace uses is hidden or made crate-private before the first
-   publication.
+   workspace uses is hidden before the first publication, and
+   `scripts/public-api-lint.sh --first-tier` lists the visible names that no
+   consumer reaches, so the second tier is empty of visible names once that
+   list is empty. Today it is.
 3. **Hidden.** Items marked `#[doc(hidden)]` are public only so that crates of
-   this workspace can call them (65 of them are used by `raikiri-paint` today).
+   this workspace can call them (102 of them are used by `raikiri-paint` today).
    They are outside every promise: documentation leaves them out, and
    `cargo semver-checks` does not count them.
 
 `raikiri-layout-style` is in none of the tiers. No public item of
 `raikiri-html` or `raikiri-dom` names one of its types; it is published only
-because `raikiri-dom` depends on it, and it names Taffy types by design.
+because `raikiri-dom` depends on it, it names Taffy types by design, and every
+one of its items is `#[doc(hidden)]`.
 
 ### What fulgur uses
 
@@ -77,6 +80,102 @@ that a macro builds, or a crate that Cargo renames, is not seen. What it shows i
 that fulgur uses stays and is documented, a hidden one that it uses is either
 promoted or replaced, and a name that nothing outside the workspace uses is
 hidden.
+
+The run on fulgur-raikiri of fulgur `e66c630` (RAIKIRI-834) found 57 names of
+`raikiri-html`, 49 of `raikiri-traits` and one of `raikiri-net`, and none of the
+other crates. It uses no hidden name and no path that matches nothing. Its one
+glob import, `PageMarginBoxSlot::*`, brings in the variants of a type that
+`raikiri-html` publishes. The 50 names outside `raikiri-html` are the ones
+fulgur-raikiri takes straight from another crate; they belong to the first
+tier, and so do all the names they reach. The list below also holds six names
+that fulgur-raikiri does not use but that a consumer needs to set up the
+network side: the providers `FileNetworkProvider`, `SystemHttpProvider` and
+`UreqHttpProvider`, `HostResolverOverrides` for them,
+`ssrf_guard::is_globally_routable`, and `MAX_AUTO_REDIRECT_HOPS`, which the
+docs of `NetworkProvider::fetch` give as the redirect cap.
+
+### The first tier, computed
+
+The first tier is the least set that holds
+
+1. the visible names of `raikiri-html`,
+2. the names listed below, which fulgur-raikiri uses from other crates, and
+3. every visible item that the signature, a field, a variant, a bound or an
+   impl header of an item in the set refers to, in any of the published
+   crates, and the methods and impls of those items.
+
+A `#[doc(hidden)]` item is not entered: what only a hidden method or impl names
+is outside the promise, so a hidden method cannot make a type part of the API.
+`scripts/public-api-lint.sh --first-tier` computes the set and lists the visible
+names outside it, one per line, with exit status 1 if there are any. It reports
+two more things with the same exit status: a name in the list below that no
+crate publishes any more, and a link in the docs of a visible item to a hidden
+item, which the rendered docs would show as a dead link (write the name as a
+plain code span instead). The report is empty at this point and must be empty
+at the first publication. Adding a name that fulgur-raikiri
+starts to use means adding it below; a new `pub` item that no consumer reaches
+is hidden.
+
+<!-- first-tier-names:begin -->
+```text
+raikiri_traits::AbortController
+raikiri_traits::ConsumerPropertyEvent
+raikiri_traits::ConsumerPropertyObserver
+raikiri_traits::ConsumerPropertyValue
+raikiri_traits::DecodedImage
+raikiri_traits::ImageIntrinsicSize
+raikiri_traits::ImagePixelSource
+raikiri_traits::ImageRasterSize
+raikiri_traits::ImageVectorRequest
+raikiri_traits::IntrinsicBox
+raikiri_traits::LayoutConfig
+raikiri_traits::NodeKind
+raikiri_traits::PageBox
+raikiri_traits::PageDefaults
+raikiri_traits::PaintColor
+raikiri_traits::PaintTransform
+raikiri_traits::RenderError
+raikiri_traits::ReplacedResolver
+raikiri_traits::ResolveDisposition
+raikiri_traits::ResolvedIntrinsic
+raikiri_traits::ResolverError
+raikiri_traits::ResolverRequest
+raikiri_traits::ResourceKind
+raikiri_traits::net::Body
+raikiri_traits::net::FetchOutcome
+raikiri_traits::net::FetchedResource
+raikiri_traits::net::MAX_AUTO_REDIRECT_HOPS
+raikiri_traits::net::Method
+raikiri_traits::net::NetworkError
+raikiri_traits::net::NetworkProvider
+raikiri_traits::net::Request
+raikiri_traits::vector
+raikiri_traits::vector::Dash
+raikiri_traits::vector::FontFace
+raikiri_traits::vector::FontVariation
+raikiri_traits::vector::Glyph
+raikiri_traits::vector::GradientStop
+raikiri_traits::vector::Group
+raikiri_traits::vector::LineCap
+raikiri_traits::vector::LineJoin
+raikiri_traits::vector::Node
+raikiri_traits::vector::Paint
+raikiri_traits::vector::PaintOrder
+raikiri_traits::vector::Path
+raikiri_traits::vector::PathSegment
+raikiri_traits::vector::RasterImage
+raikiri_traits::vector::SpreadMethod
+raikiri_traits::vector::Stroke
+raikiri_traits::vector::TextRun
+raikiri_traits::vector::VectorImage
+raikiri_net::FileNetworkProvider
+raikiri_net::HostResolverOverrides
+raikiri_net::ImageResolver
+raikiri_net::SystemHttpProvider
+raikiri_net::UreqHttpProvider
+raikiri_net::ssrf_guard::is_globally_routable
+```
+<!-- first-tier-names:end -->
 
 ### The names of `raikiri-html`
 
@@ -160,8 +259,8 @@ follows:
 that a user can still match or build completely, so the rules can be checked
 against the code. At the time of writing it lists 4 types for `raikiri-html`
 (`ParseOptions`, `StylesheetPart`, `StylesheetSource` and `UncascadedDocument`),
-25 for `raikiri-dom`, 20 for `raikiri-traits`, 82 for `raikiri-style`, 8 for
-`raikiri-svg`, 5 for `raikiri-layout-geometry` and none for `raikiri-net`. Each
+12 for `raikiri-dom`, 12 for `raikiri-traits`, 80 for `raikiri-style`, 2 for
+`raikiri-svg`, 4 for `raikiri-layout-geometry` and none for `raikiri-net`. Each
 list mixes the value types of rule 3 with the types that should get the
 attribute; sorting them is part of narrowing the first tier. The types that
 get it are changed once, before the first publication, together with the
@@ -207,11 +306,11 @@ crates of this workspace as listed but not the unpublished ones such as
 | crate | names types of |
 | --- | --- |
 | `raikiri-html` | `markup5ever` and `tendril` (`RaikiriTreeSink` implements `TreeSink`), `shodo` (`FontCollection`), `url` |
-| `raikiri-dom` | `bitflags` (`NodeFlags`), `shodo`, `smol_str`, `url` |
+| `raikiri-dom` | `shodo`, `smol_str`, `url` |
 | `raikiri-traits` | `bytes`, `smol_str`, `url` |
 | `raikiri-style` | `cssparser`, `selectors`, `precomputed_hash`, `smol_str`, `triomphe` |
 | `raikiri-net` | `url` |
-| `raikiri-layout-style` | `taffy`, `smol_str` |
+| `raikiri-layout-style` | none visible (every item is `#[doc(hidden)]`; its entries for `taffy` and `smol_str` apply again when an item is un-hidden) |
 | `raikiri-svg`, `raikiri-layout-geometry` | none |
 
 A new major version of any of these is a breaking release of ours. `shodo` is
@@ -331,7 +430,7 @@ or remove them, and so that fulgur-raikiri is adapted once per step.
 | 2 | SVG is drawn from a vector scene | RAIKIRI-9 (510 to 519) | done | `InlineSvg`, `ImageContent` and the SVG resources of `RenderResources` carry the scene contract (`docs/svg-vector-contract.md`) |
 | 3 | XHTML joins `StreamingLayout` | RAIKIRI-798 | done | `StreamingLayout::new_xhtml` is added; the caller picks the syntax and nothing is sniffed from the markup |
 | 4 | `Page::inline_svg` returns a scene | RAIKIRI-830 | done | `InlineSvg::source` is replaced by `InlineSvg::content`, an `ImageContent` that raikiri chooses (a scene, or pixels where the contract calls for them), and `Page::inline_svg` fails with `SvgSceneError`; the usvg tree path of the painter goes away |
-| 5 | Narrow the first tier to what fulgur uses | RAIKIRI-834 | open | names that nobody outside the workspace uses become hidden or crate-private |
+| 5 | Narrow the first tier to what fulgur uses | RAIKIRI-834 | done | 310 items and 10 modules that no consumer reaches are `#[doc(hidden)]` (`raikiri-layout-style` entirely), and `--first-tier` reports nothing |
 | 6 | `#[non_exhaustive]` and constructors | RAIKIRI-835 | open | struct literals of the option and result types become constructors and builders, and diagnostic enums need a wildcard arm |
 | 7 | First publication | RAIKIRI-795 | open | from here a breaking change is a version bump, and the semver report is strict |
 

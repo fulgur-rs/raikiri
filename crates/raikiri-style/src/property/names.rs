@@ -11,6 +11,7 @@
 /// `names/tests.rs` keeps this list from drifting away from `parse_value`'s
 /// dispatch match (and from `property_key_for_name`'s, which must remain a
 /// subset of it).
+#[doc(hidden)]
 pub fn supported_property_names() -> &'static [&'static str] {
     &[
         "align-content",

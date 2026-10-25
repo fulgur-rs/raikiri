@@ -29,6 +29,7 @@ pub(crate) mod face;
 
 /// One font file registered under an authored family name.
 #[derive(Clone, Debug)]
+#[doc(hidden)]
 pub struct BundledFace {
     /// CSS family name the face is registered under. Empty (or blank) for a
     /// font whose faces are registered under the family names they record,

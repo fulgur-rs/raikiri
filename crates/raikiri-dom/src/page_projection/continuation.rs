@@ -107,7 +107,7 @@ impl Document {
     /// Where projected page `page_index` begins in source order.
     ///
     /// Reads the projection of the most recent
-    /// [`Document::project_pages_with_control`]. Repeated content, boxes
+    /// `Document::project_pages_with_control`. Repeated content, boxes
     /// outside the normal flow and inline-level boxes are skipped. Returns
     /// `None` when the page has no starting content this function can name,
     /// for example a page that only continues one tall box, or one that

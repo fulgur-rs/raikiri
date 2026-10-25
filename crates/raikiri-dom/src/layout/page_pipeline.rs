@@ -1025,6 +1025,7 @@ fn record_candidate_pages(
 ///
 /// Each paragraph is broken at the content width of the nearest ancestor
 /// with an authored width, otherwise at `max_advance`.
+#[doc(hidden)]
 pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult, max_advance: f32) {
     let mut session = super::context::LayoutSession::with_cascade(document, cascade);
     session.page_projection.clear();
@@ -1057,6 +1058,7 @@ pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult,
 ///   cleared each time), but incremental recomputation is planned for later.
 /// - Consumer PageBox overrides will be handled by future per-page PageBox support.
 /// - Fragment parses (without `<body>`) will be supported later.
+#[doc(hidden)]
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -1263,6 +1265,7 @@ fn layout_single_page_with_table_projection(
 /// page's physical top margin.  Keeping the source coordinate here means a
 /// later scene can select a page without cloning or relaying out the DOM.
 #[derive(Debug, Clone, PartialEq)]
+#[doc(hidden)]
 pub struct PageSlice {
     /// Zero-based page number.
     pub page_index: u32,
@@ -1273,6 +1276,7 @@ pub struct PageSlice {
 }
 
 /// Optional image resolution before paginating a document.
+#[doc(hidden)]
 pub struct PageImageOptions<'a> {
     /// Resolves the intrinsic sizes of rendered images.
     pub resolver: &'a dyn ReplacedResolver,
@@ -1282,6 +1286,7 @@ pub struct PageImageOptions<'a> {
 
 /// Borrowed settings for [`layout_pages_with_options`].
 #[derive(Default)]
+#[doc(hidden)]
 pub struct PageLayoutOptions<'a> {
     /// Per-page content heights for horizontal pagination.
     /// Empty keeps the fixed page height. Vertical pagination instead uses
@@ -1304,6 +1309,7 @@ pub struct PageLayoutOptions<'a> {
 ///
 /// The default matches [`raikiri_traits::RenderLimits::default`]. Pass `None`
 /// to [`Self::new`] only when the caller intentionally wants unbounded pages.
+#[doc(hidden)]
 pub struct PageLayoutControl<'a> {
     max_pages: Option<u32>,
     abort_check: Option<&'a dyn Fn() -> bool>,
@@ -2956,6 +2962,7 @@ pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Opt
 /// This is intentionally separate from [`layout_single_page`]: existing
 /// callers retain the single-page contract while paged callers get a real
 /// per-page result and the same post-layout DOM as the scene builder.
+#[doc(hidden)]
 pub fn layout_pages(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -2968,6 +2975,7 @@ pub fn layout_pages(
 ///
 /// Image resolution preserves the document's decoded image state for later
 /// layout and painting. A hidden root does not ask the resolver for images.
+#[doc(hidden)]
 pub fn layout_pages_with_options(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -4352,6 +4360,7 @@ fn has_footnote_ancestor(cascade: &CascadeResult, node_id: usize, document: &Doc
 /// but only **after** this pre-pass, which would be too late.
 /// `mark_in_document_flags` is O(1) when `flags_dirty == false`,
 /// so calling it twice has no meaningful cost.
+#[doc(hidden)]
 pub fn layout_single_page_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -4362,6 +4371,7 @@ pub fn layout_single_page_with_resolver(
 }
 
 /// [`layout_single_page_with_resolver`] with document-relative image URLs.
+#[doc(hidden)]
 pub fn layout_single_page_with_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,

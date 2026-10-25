@@ -2383,11 +2383,10 @@ pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextSh
 /// four forms (`FontSize` / `FontSizeRelative` / `FontSizeKeyword` /
 /// `FontSizeCalc`); carry them
 /// unchanged in a small enum. This is private to the [`FontShorthand`] payload and
-/// never enters [`ComputedValues`] / [`SpecifiedValues`] or gets re-exported by
+/// never enters [`ComputedValues`] / `SpecifiedValues` or gets re-exported by
 /// the umbrella crate (as with [`BackgroundShorthand`]).
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
-/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FontShorthandSize {
     /// `<length-percentage>`: [`parse_font_size`] returns the
@@ -2460,7 +2459,7 @@ pub enum FontShorthandSize {
 /// `variant` with [`FontVariantCaps::Normal`], `weight` with `400`, and
 /// `line-height` with [`LineHeight::Normal`]. `size` and `family` cannot be
 /// omitted. The fill values equal the standalone longhands' initial values
-/// (the matching fields of [`crate::specified::SpecifiedValues::initial`] are canonical).
+/// (the matching fields of `crate::specified::SpecifiedValues::initial` are canonical).
 ///
 /// [`crate::rule::expand_shorthand_into`] expands [`PropertyValue::Font`] into
 /// [`PropertyValue::FontStyle`] / [`PropertyValue::FontVariantCaps`] /
@@ -2479,11 +2478,10 @@ pub enum FontShorthandSize {
 /// Do not add `#[non_exhaustive]`; as with the sibling shorthand-only carriers
 /// ([`GridLineShorthand`] / [`TextDecorationShorthand`] /
 /// [`BackgroundShorthand`]), this is only the payload of
-/// [`PropertyValue::Font`], not part of [`ComputedValues`] / [`SpecifiedValues`],
+/// [`PropertyValue::Font`], not part of [`ComputedValues`] / `SpecifiedValues`,
 /// and is not re-exported from the umbrella crate.
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
-/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontShorthand {
     /// `font-style` component: defaults to [`FontStyle::Normal`] (initial value in the specification).
