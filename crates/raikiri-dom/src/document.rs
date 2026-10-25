@@ -3067,10 +3067,7 @@ impl Document {
             let raikiri_style::property::BackgroundImage::Url(raw) = &cv.list_style_image else {
                 continue;
             };
-            let Some(url) = url::Url::parse(raw)
-                .ok()
-                .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
-            else {
+            let Some(url) = crate::image_url::authored_image_url(raw, base_url) else {
                 continue;
             };
             let Some(intrinsic) = source.intrinsic_size(&url) else {
@@ -3138,10 +3135,7 @@ impl Document {
                 .enumerate()
                 .take(crate::generated_content::MAX_GENERATED_IMAGES)
             {
-                let Some(url) = url::Url::parse(raw)
-                    .ok()
-                    .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
-                else {
+                let Some(url) = crate::image_url::authored_image_url(raw, base_url) else {
                     continue;
                 };
                 let Some(intrinsic) = source.intrinsic_size(&url) else {

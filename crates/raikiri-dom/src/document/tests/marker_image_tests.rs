@@ -455,6 +455,53 @@ fn content_images_that_cannot_be_sized_represent_nothing() {
 }
 
 #[test]
+fn markers_and_content_images_resolve_their_urls_the_way_margin_boxes_do() {
+    /// Records the URLs the document asks about.
+    struct Recording(std::cell::RefCell<Vec<String>>);
+    impl ImagePixelSource for Recording {
+        fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+            self.0.borrow_mut().push(url.to_string());
+            Some(Arc::new(DecodedImage::new(2, 2, vec![0; 16])))
+        }
+    }
+    let (mut doc, cascade, p) = content_image_document(
+        "p{display:list-item;list-style:inside url(marker.png#a)}\
+         p::before{content:url(content.png#b) url(#c) url('')}\
+         p::after{content:url(content.png#d)}",
+    );
+    let source = Recording(Default::default());
+    doc.prepare_list_marker_images(
+        &cascade,
+        &source,
+        Some(&url::Url::parse("https://images.test/doc.html").unwrap()),
+    );
+    // The fragment names a part of the image and is not requested, and an
+    // empty or fragment-only URL names no image to ask for.
+    let requested = source.0.borrow();
+    assert!(!requested.is_empty());
+    assert!(
+        requested.iter().all(|url| matches!(
+            url.as_str(),
+            "https://images.test/marker.png" | "https://images.test/content.png"
+        )),
+        "{requested:?}"
+    );
+    use raikiri_style::PseudoElem;
+    assert_eq!(
+        doc.list_marker_image_url(p).map(url::Url::as_str),
+        Some("https://images.test/marker.png")
+    );
+    for pseudo in [PseudoElem::Before, PseudoElem::After] {
+        assert_eq!(
+            doc.content_image_url(p, pseudo, 0).map(url::Url::as_str),
+            Some("https://images.test/content.png")
+        );
+    }
+    assert!(doc.content_image(p, PseudoElem::Before, 1).is_none());
+    assert!(doc.content_image(p, PseudoElem::Before, 2).is_none());
+}
+
+#[test]
 fn extracted_documents_keep_the_content_images_of_listed_elements() {
     let (mut doc, cascade, p) =
         content_image_document("p::before{content:url(https://images.test/a.png)}");
