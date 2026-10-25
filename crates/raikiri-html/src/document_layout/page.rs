@@ -1,3 +1,4 @@
+use super::inline_svg::{InlineSvgCache, PictureRequest, PreparedSvg, SvgKey, build_picture};
 use super::{
     DomView, Fragment, GeneratedImageId, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun,
     TextLineId,
@@ -32,65 +33,34 @@ pub struct PageGeometry {
     pub mode: PageMode,
 }
 
-/// Prepared vector source and resolved placement of an inline SVG root.
+/// The picture of an inline SVG root and its resolved placement.
+///
+/// Raikiri decides how the picture is drawn. [`Self::content`] is a scene
+/// when the document is inside the vector subset and the root does not ask
+/// for pixels (see [`SvgRendering`]); it is pixels when the root asks for
+/// them, and when a scene cannot stand for the picture: the document uses a
+/// `mask` or a `pattern`, is over a budget of the scene, or strokes text under
+/// a transform that is not a rotation, a reflection and a uniform scale. A
+/// consumer draws what it is given and has no second path to take.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct InlineSvg {
-    /// Standalone XML with the viewport, root color, and root font resolved.
-    pub source: String,
+    /// What to draw. A scene is `viewport` in size, in CSS pixels, with its
+    /// origin at the top-left corner of the viewport. Pixels are the picture
+    /// of the CSS pixel grid of the viewport at
+    /// [`Page::svg_raster_scale`] device pixels per CSS pixel, so they are
+    /// drawn from the same corner at their size divided by that scale. Draw
+    /// either clipped to the viewport.
+    pub content: ImageContent,
     /// Whole content box in CSS page coordinates, before pagination cuts.
     pub viewport: PaintRect,
     /// Host root opacity represented by the page's paint events.
     ///
-    /// When present, resolve SVG inheritance first, then remove only the
-    /// parsed root group's opacity. Descendant opacity remains in the SVG;
-    /// ancestor opacity remains in the surrounding page paint events.
+    /// The content holds no host opacity, whichever it is: the page's paint
+    /// events composite it around the picture, or, for a consumer that does
+    /// not take the events, this is the opacity to draw the picture with.
+    /// Descendant opacity stays in the content.
     pub host_opacity: Option<f32>,
-}
-
-/// Prepared inline SVG sources of one laid-out document, keyed by SVG root
-/// node and viewport size.
-///
-/// The prepared source depends only on the root's subtree, its computed
-/// styles and its viewport size, so a root painted on several pages (a
-/// running header, or an SVG split across a page break) is serialized,
-/// parsed and restyled once. Placement is taken from each fragment.
-#[derive(Debug)]
-pub(crate) struct InlineSvgCache {
-    sources: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32, u32), PreparedSvg>>,
-    /// The faces handed out to the SVG text of the document. The prepared
-    /// sources belong to one laid-out document, but the faces belong to the
-    /// whole [`super::DocumentLayout`]: its pages laid out at another width
-    /// and its running elements share them, so a face is one allocation
-    /// wherever its text is.
-    faces: std::sync::Arc<crate::svg_fonts::FaceCache>,
-}
-
-impl InlineSvgCache {
-    /// An empty cache that hands out its SVG text faces from `faces`.
-    pub(super) fn new(faces: std::sync::Arc<crate::svg_fonts::FaceCache>) -> Self {
-        Self {
-            sources: std::cell::RefCell::default(),
-            faces,
-        }
-    }
-}
-
-#[cfg(test)]
-impl InlineSvgCache {
-    pub(super) fn faces(&self) -> &std::sync::Arc<crate::svg_fonts::FaceCache> {
-        &self.faces
-    }
-
-    pub(super) fn len(&self) -> usize {
-        self.sources.borrow().len()
-    }
-}
-
-#[derive(Debug, Clone)]
-struct PreparedSvg {
-    source: String,
-    host_opacity: Option<f32>,
 }
 
 /// One laid-out page, borrowed from a [`super::DocumentLayout`].
@@ -110,7 +80,7 @@ pub struct Page<'a> {
     /// The document's running elements; `None` on a page that is itself a
     /// laid-out running element.
     pub(super) running: Option<super::running::RunningSource<'a>>,
-    /// Prepared inline SVG sources of [`Self::document`].
+    /// Prepared inline SVG sources and pictures of [`Self::document`].
     pub(super) svg_sources: &'a InlineSvgCache,
     /// What the layout was asked for about SVG pictures.
     pub(super) svg: SvgSettings,
@@ -587,19 +557,55 @@ impl<'a> Page<'a> {
         })
     }
 
-    /// Prepares the vector source of an SVG root placed by this page.
+    /// The picture of an SVG root placed by this page, and where to draw it.
     ///
     /// Pass a fragment from [`Self::fragments`]. Ordinary elements, text and
-    /// empty SVG viewports return `None`. Hidden roots retain source so their
+    /// empty SVG viewports return `None`. Hidden roots retain content so their
     /// explicitly visible descendants can still be drawn. The host box is drawn
-    /// separately; source admission and preparation errors are returned.
+    /// separately; source admission, preparation and picture errors are
+    /// returned. [`InlineSvg`] says when the picture is a scene and when it is
+    /// pixels. A picture is built once per root and viewport size and shared
+    /// by the pages that show it, as far as the cache has room for it.
     /// Fixed boxes placed through other insets than `top` and `left` lengths
     /// are rejected, including when the fixed box is an ancestor. Their paint
     /// placement is not represented by the fragment projection yet.
     pub fn inline_svg(
         &self,
         fragment: &Fragment<'a>,
-    ) -> Result<Option<InlineSvg>, raikiri_svg::SvgError> {
+    ) -> Result<Option<InlineSvg>, raikiri_svg::SvgSceneError> {
+        let Some((key, viewport, prepared)) = self.prepared_inline_svg(fragment)? else {
+            return Ok(None);
+        };
+        let content = match prepared.content() {
+            Some(content) => content.clone(),
+            None => {
+                let fonts = self.svg_fonts();
+                let content = build_picture(&PictureRequest {
+                    source: &prepared.source,
+                    viewport,
+                    host_opacity: prepared.host_opacity,
+                    rendering: self.svg_rendering(fragment.node()),
+                    raster_scale: self.svg.raster_scale,
+                    fonts: &fonts,
+                })?;
+                self.svg_sources.keep(&key, &content);
+                content
+            }
+        };
+        Ok(Some(InlineSvg {
+            content,
+            viewport,
+            host_opacity: prepared.host_opacity,
+        }))
+    }
+
+    /// The prepared source of the SVG root of `fragment`, its viewport and
+    /// the key it is cached under. See [`Self::inline_svg`] for who gets
+    /// `None` and which roots are rejected.
+    pub(super) fn prepared_inline_svg(
+        &self,
+        fragment: &Fragment<'a>,
+    ) -> Result<Option<(SvgKey, PaintRect, PreparedSvg)>, raikiri_svg::SvgError> {
         let Some(id) = usize::try_from(fragment.node().0).ok() else {
             return Ok(None); // cov:ignore: Fragment node IDs originate from usize arena indices.
         };
@@ -639,36 +645,28 @@ impl<'a> Page<'a> {
             current = dom.parent(node);
         }
         let key = (id, viewport.width.to_bits(), viewport.height.to_bits());
-        if let Some(prepared) = self.svg_sources.sources.borrow().get(&key) {
-            return Ok(Some(InlineSvg {
-                source: prepared.source.clone(),
-                viewport,
-                host_opacity: prepared.host_opacity,
-            }));
+        if let Some(prepared) = self.svg_sources.get(&key) {
+            return Ok(Some((key, viewport, prepared)));
         }
         let Some(prepared) = self.prepare_inline_svg(id, viewport, computed)? else {
             return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
         };
-        let svg = InlineSvg {
-            source: prepared.source.clone(),
-            viewport,
-            host_opacity: prepared.host_opacity,
-        };
-        self.svg_sources.sources.borrow_mut().insert(key, prepared);
-        Ok(Some(svg))
+        self.svg_sources.insert(key, prepared.clone());
+        Ok(Some((key, viewport, prepared)))
     }
 
     /// The fonts that the SVG text of this page is set in: those the page's
     /// document was laid out with.
     ///
-    /// Pass it to [`raikiri_svg::SvgResources::with_fonts`] when building the
-    /// scene of an [`InlineSvg`].
+    /// [`Self::inline_svg`] sets the text of its picture in them. Pass it to
+    /// [`raikiri_svg::SvgResources::with_fonts`] when building the scene of
+    /// another SVG document.
     pub fn svg_fonts(&self) -> crate::PageSvgFonts<'a> {
         crate::PageSvgFonts::new(
             self.document
                 .font_collection()
                 .expect("a laid-out document has fonts"),
-            &self.svg_sources.faces,
+            self.svg_sources.faces(),
         )
     }
 
@@ -763,10 +761,7 @@ impl<'a> Page<'a> {
             },
             &element_styles,
         )?;
-        Ok(Some(PreparedSvg {
-            source,
-            host_opacity,
-        }))
+        Ok(Some(PreparedSvg::new(source, host_opacity)))
     }
 
     /// Local overflow clips of this page's placements and their ancestors,

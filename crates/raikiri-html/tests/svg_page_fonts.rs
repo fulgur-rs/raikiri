@@ -1,7 +1,7 @@
 //! SVG text of a page is set in the fonts the page was laid out with,
 //! `@font-face` faces included.
 
-use raikiri_html::{LayoutOptions, LayoutStatus, RenderResources};
+use raikiri_html::{ImageContent, LayoutOptions, LayoutStatus, RenderResources};
 use raikiri_svg::{
     SvgDocument, SvgFontFamily, SvgFontRequest, SvgFontSource, SvgResources, SvgRootStyle,
     SvgViewport,
@@ -68,6 +68,14 @@ fn runs(group: &Group) -> Vec<&TextRun> {
     found
 }
 
+/// The scene of the inline SVG `fragment` of `page`.
+fn scene_of(page: &raikiri_html::Page<'_>, fragment: &raikiri_html::Fragment<'_>) -> VectorImage {
+    let ImageContent::Vector(scene) = page.inline_svg(fragment).unwrap().unwrap().content else {
+        panic!("the SVG is drawn as a scene");
+    };
+    (*scene).clone()
+}
+
 #[test]
 fn svg_text_uses_the_font_face_rules_of_the_page() {
     with_page_fonts(|page| {
@@ -75,24 +83,7 @@ fn svg_text_uses_the_font_face_rules_of_the_page() {
             .fragments()
             .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
             .unwrap();
-        let source = page.inline_svg(&fragment).unwrap().unwrap().source;
-        let scene = |fonts: &raikiri_html::PageSvgFonts<'_>| -> VectorImage {
-            SvgDocument::parse(source.as_bytes())
-                .unwrap()
-                .scene_with_resources(
-                    SvgViewport {
-                        width: 40.0,
-                        height: 20.0,
-                    },
-                    SvgRootStyle::default(),
-                    None,
-                    SvgResources::new().with_fonts(fonts),
-                )
-                .unwrap()
-        };
-
-        let fonts = page.svg_fonts();
-        let first = scene(&fonts);
+        let first = scene_of(page, &fragment);
         let runs_of_first = runs(&first.root);
         assert_eq!(runs_of_first.len(), 1);
         assert_eq!(runs_of_first[0].glyphs.len(), 2);
@@ -102,7 +93,18 @@ fn svg_text_uses_the_font_face_rules_of_the_page() {
 
         // Scenes of one document share the faces they were set in, whichever
         // handle of the page's fonts built them.
-        let second = scene(&page.svg_fonts());
+        let second = SvgDocument::parse(SVG_TEXT.as_bytes())
+            .unwrap()
+            .scene_with_resources(
+                SvgViewport {
+                    width: 40.0,
+                    height: 20.0,
+                },
+                SvgRootStyle::default(),
+                None,
+                SvgResources::new().with_fonts(&page.svg_fonts()),
+            )
+            .unwrap();
         assert!(
             runs_of_first[0].glyphs[0]
                 .font
@@ -132,19 +134,7 @@ fn svg_text_faces(page: &raikiri_html::Page<'_>) -> Vec<raikiri_traits::vector::
         .fragments()
         .filter(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
     {
-        let source = page.inline_svg(&fragment).unwrap().unwrap().source;
-        let scene = SvgDocument::parse(source.as_bytes())
-            .unwrap()
-            .scene_with_resources(
-                SvgViewport {
-                    width: 40.0,
-                    height: 20.0,
-                },
-                SvgRootStyle::default(),
-                None,
-                SvgResources::new().with_fonts(&page.svg_fonts()),
-            )
-            .unwrap();
+        let scene = scene_of(page, &fragment);
         for run in runs(&scene.root) {
             faces.extend(run.glyphs.iter().map(|glyph| glyph.font.clone()));
         }

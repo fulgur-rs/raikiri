@@ -330,7 +330,7 @@ or remove them, and so that fulgur-raikiri is adapted once per step.
 | 1 | XHTML is parsed by xml5ever | RAIKIRI-797 | done | `XhtmlParseError` is gone, `parse_xhtml` fails with the shared `ParseError`, and malformed XHTML is repaired, not rejected |
 | 2 | SVG is drawn from a vector scene | RAIKIRI-9 (510 to 519) | done | `InlineSvg`, `ImageContent` and the SVG resources of `RenderResources` carry the scene contract (`docs/svg-vector-contract.md`) |
 | 3 | XHTML joins `StreamingLayout` | RAIKIRI-798 | done | `StreamingLayout::new_xhtml` is added; the caller picks the syntax and nothing is sniffed from the markup |
-| 4 | `Page::inline_svg` returns a scene | RAIKIRI-830 | open | `InlineSvg::source` and the usvg tree path of the painter go away |
+| 4 | `Page::inline_svg` returns a scene | RAIKIRI-830 | done | `InlineSvg::source` is replaced by `InlineSvg::content`, an `ImageContent` that raikiri chooses (a scene, or pixels where the contract calls for them), and `Page::inline_svg` fails with `SvgSceneError`; the usvg tree path of the painter goes away |
 | 5 | Narrow the first tier to what fulgur uses | RAIKIRI-834 | open | names that nobody outside the workspace uses become hidden or crate-private |
 | 6 | `#[non_exhaustive]` and constructors | RAIKIRI-835 | open | struct literals of the option and result types become constructors and builders, and diagnostic enums need a wildcard arm |
 | 7 | First publication | RAIKIRI-795 | open | from here a breaking change is a version bump, and the semver report is strict |
