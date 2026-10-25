@@ -155,6 +155,31 @@ fn a_box_gets_one_scene_however_often_it_is_asked_for() {
 }
 
 #[test]
+fn a_scene_built_while_this_thread_waited_for_a_slot_is_used() {
+    let url = svg_url(RED_SQUARE);
+    // One decode slot, held while the scene is being asked for.
+    let budget = Arc::new(ProcessImageBudget::new(1 << 30, 1));
+    let resources = RenderResources::new().with_test_process_budget(Arc::clone(&budget));
+    preload(&resources, std::slice::from_ref(&url));
+    let held = budget.try_acquire().expect("the only slot");
+
+    let (got, built) = std::thread::scope(|scope| {
+        let waiter = scope.spawn(|| resources.get_vector(&url, &request(8.0, 4.0)));
+        // Nothing is cached yet, so the thread waits for the slot.
+        std::thread::sleep(Duration::from_millis(100));
+        let built = scene_of(1);
+        resources.cache_image_scene(
+            url_without_fragment(&url),
+            size(8.0, 4.0),
+            Arc::clone(&built),
+        );
+        drop(held);
+        (waiter.join().expect("the waiter finishes"), built)
+    });
+    assert!(Arc::ptr_eq(&got.expect("a scene"), &built));
+}
+
+#[test]
 fn a_fragment_does_not_name_another_image() {
     let url = svg_url(RED_SQUARE);
     let resources = RenderResources::new();

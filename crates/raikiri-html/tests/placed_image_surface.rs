@@ -393,4 +393,21 @@ fn an_image_without_a_source_answer_is_not_placed() {
         page.image_content(fragment.node(), &url, size(8.0, 4.0), &Nothing)
             .is_none()
     );
+
+    // A source that knows the size of the picture but has neither a scene nor
+    // pixels for it places nothing either.
+    struct SizedOnly;
+    impl ImagePixelSource for SizedOnly {
+        fn get_decoded(&self, _url: &Url) -> Option<Arc<DecodedImage>> {
+            None
+        }
+        fn intrinsic_size(&self, _url: &Url) -> Option<ImageIntrinsicSize> {
+            Some(ImageIntrinsicSize {
+                width: Some(4.0),
+                height: Some(2.0),
+                aspect_ratio: Some(2.0),
+            })
+        }
+    }
+    assert!(page.placed_image(&fragment, &SizedOnly).is_none());
 }
