@@ -8,8 +8,11 @@ use super::{
     ImagePreloads, PageCascader, PipelineInputs, PipelineOutput, Run, page_query_for_slice,
     resolved_consumer_property_events,
 };
-use raikiri_dom::PageSlice;
-use raikiri_traits::{RenderError, RenderWarning};
+use crate::fetch::{authored_image_url, redacted_url};
+use crate::resources::push_resource_warning;
+use raikiri_dom::{Document, PageSlice};
+use raikiri_traits::{RenderError, RenderWarning, ResourceKind, WarningKind};
+use std::collections::HashSet;
 
 impl Run<'_, '_> {
     /// Lay out the document, fetch what needs its final page schedule, and
@@ -51,6 +54,7 @@ impl Run<'_, '_> {
             if let Some(source) = self.resources.image_pixel_source_ref() {
                 document.prepare_margin_box_image_urls(&urls, source, self.base_url);
                 prepare_images(&mut continuations, &urls, source, self.base_url);
+                self.warn_about_unloaded_margin_box_images(&document, &urls);
             }
             // A fetch above may have observed cancellation; do not hand out
             // pages whose backgrounds were left unloaded.
@@ -126,6 +130,50 @@ impl Run<'_, '_> {
         content_images
     }
 
+    /// Warn about each image in `urls`, the images the margin boxes show with
+    /// `content`, that `document` has no size for: a box represents nothing for
+    /// such an image, and nothing else says why. An image the fetch already
+    /// reported is named again here, with what it means for the box.
+    fn warn_about_unloaded_margin_box_images(&self, document: &Document, urls: &[String]) {
+        let mut reported = HashSet::new();
+        for raw in urls {
+            if document.margin_box_image_size(raw).is_some() {
+                continue;
+            }
+            let url = authored_image_url(raw, self.base_url).map(|url| redacted_url(&url));
+            // Two spellings of one image are reported once.
+            if !reported.insert(
+                url.as_ref()
+                    .map_or_else(|| raw.clone(), ToString::to_string),
+            ) {
+                continue;
+            }
+            let details = match &url {
+                Some(url) if url.scheme() == "data" => {
+                    "margin box content image (a data: URL) could not be loaded or has no size; it represents nothing".to_owned()
+                }
+                Some(url) => format!(
+                    "margin box content image {:?} could not be loaded or has no size; it represents nothing",
+                    url.as_str()
+                ),
+                None => format!(
+                    "margin box content image {:?} has a URL that cannot be resolved; it represents nothing",
+                    unresolved_url_text(raw)
+                ),
+            };
+            push_resource_warning(
+                self.warnings,
+                RenderWarning::new(
+                    WarningKind::ResourceFallback {
+                        kind: ResourceKind::Image,
+                        url,
+                    },
+                    details,
+                ),
+            );
+        }
+    }
+
     /// Every warning of the run: those found parsing the document, then those
     /// reported since.
     fn all_warnings(&self) -> Vec<RenderWarning> {
@@ -139,4 +187,15 @@ impl Run<'_, '_> {
         );
         all
     }
+}
+
+/// The authored text of a `url()` that resolves to no URL, as a warning may
+/// show it: cut before a query or fragment, which commonly carry tokens,
+/// bounded, and withheld when it may carry credentials.
+fn unresolved_url_text(raw: &str) -> String {
+    let text = raw.split(['?', '#']).next().unwrap_or_default().trim();
+    if text.contains('@') {
+        return "(withheld: may carry credentials)".to_owned();
+    }
+    text.chars().take(200).collect()
 }

@@ -1549,6 +1549,20 @@ fn pipeline_leaves_the_last_margin_outside_a_body_with_min_height() {
 }
 
 #[test]
+fn pipeline_gives_the_head_no_room_when_a_rule_sizes_every_element() {
+    // `* { height: 100% }` reaches `<head>`, which has no box. The 100px body
+    // fills the first page, and the 300% child that overflows it continues on
+    // the second, as the reference prints it.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} \
+         *{box-sizing:border-box;margin:0;padding:0;height:100%} \
+         body{border:solid orange 10px;padding:10px} div{border:solid gray 10px;height:300%}</style>\
+         <div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
 fn pipeline_does_not_measure_a_display_contents_body() {
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} body{display:contents;height:1000px}</style>",

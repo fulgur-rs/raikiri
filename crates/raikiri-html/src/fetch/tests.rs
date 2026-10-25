@@ -86,3 +86,35 @@ fn network_error_summaries_omit_provider_details() {
         "provider returned a network error"
     );
 }
+
+#[test]
+fn an_authored_image_url_resolves_against_the_base() {
+    let base = url("https://example.test/docs/page.html");
+    for (raw, expected) in [
+        ("a.png", Some("https://example.test/docs/a.png")),
+        (
+            "https://images.test/a.png#part",
+            Some("https://images.test/a.png#part"),
+        ),
+        ("  a.png", Some("https://example.test/docs/a.png")),
+    ] {
+        assert_eq!(
+            authored_image_url(raw, Some(&base))
+                .as_ref()
+                .map(Url::as_str),
+            expected,
+            "{raw:?}"
+        );
+    }
+    assert!(authored_image_url("a.png", None).is_none());
+    assert!(authored_image_url("https://images.test/a.png", None).is_some());
+}
+
+#[test]
+fn an_empty_or_fragment_only_image_url_names_no_image() {
+    let base = url("https://example.test/docs/page.html");
+    for raw in ["", "  ", "#", "#target", " #target"] {
+        assert!(authored_image_url(raw, Some(&base)).is_none(), "{raw:?}");
+        assert!(authored_image_url(raw, None).is_none(), "{raw:?}");
+    }
+}

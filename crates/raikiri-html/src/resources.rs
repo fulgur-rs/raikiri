@@ -22,8 +22,9 @@ use url::Url;
 use raikiri_traits::{ImagePixelSource, ReplacedResolver};
 
 use crate::fetch::{
-    get_request, mime_essence, min_limit, policy_violation_warning_kind, redacted_url, resolve_url,
-    sanitize_policy_violation, url_policy_violation, url_without_fragment,
+    authored_image_url, get_request, mime_essence, min_limit, policy_violation_warning_kind,
+    redacted_url, resolve_url, sanitize_policy_violation, url_policy_violation,
+    url_without_fragment,
 };
 use crate::svg_fonts::PageSvgFonts;
 use crate::{HtmlDocument, ParseOptions};
@@ -783,13 +784,7 @@ impl<'a> RenderResources<'a> {
             if signal.is_some_and(|signal| signal.is_aborted()) {
                 break;
             }
-            // `url()` and `url(#id)` name no external image; joining them
-            // against the base would turn them into the document itself.
-            let trimmed = raw_url.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            let Some(original_url) = resolve_url(raw_url, base_url) else {
+            let Some(original_url) = authored_image_url(raw_url, base_url) else {
                 continue;
             };
             if original_url.cannot_be_a_base() && original_url.scheme() != "data" {
