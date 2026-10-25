@@ -25,6 +25,7 @@ use source_walk::{WalkedSources, walk_sources};
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex, single_unplaced_line};
 use super::table::headers::HeaderRepeats;
+use super::taffy_adapter::CollapsibleMarginSet;
 use super::*;
 use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
@@ -508,7 +509,15 @@ fn block_border_box_end(
     let encloses_floats = holds_floats(document, cascade, flow_root);
     let mut content_end = top + edges_top;
     let mut last_flow_end = None;
-    let mut last_flow_margin = 0.0;
+    // Where the margin box of the last child ends in the committed flow.
+    // Pagination may have cut a margin that crossed a page edge, which the
+    // margins themselves do not show.
+    let mut last_margin_end = f32::INFINITY;
+    // The block-end margins that adjoin the end of the flow: the one of the
+    // last child with a border box of its own and those of the empty children
+    // after it, whose margins collapse through them (CSS 2 §8.3.1).
+    let mut trailing = CollapsibleMarginSet::ZERO;
+    let block_children = root.formatting_context == FormattingContext::Block;
     // Popped in document order, each with the flow offset of its parent's
     // coordinates and whether it is nested in one of the root's blocks,
     // where only floats count. Boxes inside an inline formatting context
@@ -578,28 +587,43 @@ fn block_border_box_end(
         if nested {
             continue;
         }
-        let end =
-            offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
+        let border_end = offset + layout.location.y - relative_shift + layout.size.height;
+        let end = border_end + layout.margin.bottom;
         if end.is_finite() {
             // A reverse column flex container's source order need not end
             // with its lowest item. Its item margins never collapse.
             if root.formatting_context == FormattingContext::Flex {
                 content_end = content_end.max(end);
             }
-            last_flow_end = Some(end);
-            last_flow_margin = layout.margin.bottom;
+            last_margin_end = end;
+            if block_children
+                && child_computed.clear == ClearValue::None
+                && collapses_through(document, cascade, child, layout.size.height)
+            {
+                trailing = trailing
+                    .collapse_with_margin(layout.margin.top)
+                    .collapse_with_margin(layout.margin.bottom);
+            } else {
+                last_flow_end = Some(border_end);
+                trailing = CollapsibleMarginSet::from_margin(layout.margin.bottom);
+            }
         }
     }
+    // Without block-end edges the last child's block-end margin collapses
+    // through the end of the root, unless the root is a formatting context of
+    // its own; a `min-height` leaves it out as well. Margins that collapsed
+    // through every child joined the root's block-start margin when nothing
+    // separates them, so they lie outside the root too.
+    let encloses_margins = edges_bottom > 0.0 || encloses_floats;
     if let Some(end) = last_flow_end {
-        // Without block-end edges the last child's block-end margin
-        // collapses through the end of the root, unless the root is a
-        // formatting context of its own.
-        let end = if edges_end || encloses_floats {
-            end
+        let end = if encloses_margins {
+            (end + trailing.resolve()).min(last_margin_end)
         } else {
-            end - last_flow_margin
+            end
         };
         content_end = content_end.max(end);
+    } else if encloses_margins && (edges_top > 0.0 || encloses_floats) {
+        content_end = content_end.max((top + edges_top + trailing.resolve()).min(last_margin_end));
     }
     // `max-height` caps the auto height, measured as `box-sizing` says;
     // `min-height` still wins over it.

@@ -9268,6 +9268,57 @@ fn a_wrapper_grows_by_how_far_its_content_extends_after_a_moved_child() {
 }
 
 #[test]
+fn the_margins_of_empty_children_after_a_moved_box_stay_inside_the_wrapper_once() {
+    // The empty child collapses its 30px and 20px margins with the 0px one of
+    // the box before it: 30px lie between the content and the padding, and
+    // the 20px bottom margin is not added on top of them.
+    let height = |wrapper_css: &str| {
+        let mut wrapper = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(Some(body), "div", Some("display:block;height:30px"));
+            wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Some(&format!("display:block;{wrapper_css}")),
+            );
+            doc.append_element(Some(wrapper), "div", Some("display:block;height:20px"));
+            doc.append_element(
+                Some(wrapper),
+                "div",
+                Some("display:block;height:60px;break-inside:avoid"),
+            );
+            doc.append_element(
+                Some(wrapper),
+                "div",
+                Some("display:block;margin:30px 0 20px"),
+            );
+        });
+        doc.nodes[wrapper].layout.size.height
+    };
+    // 20px, the gap up to the next page, the moved 60px box, the 30px margin
+    // and the padding.
+    assert_eq!(height("padding-bottom:10px"), 170.0);
+    // Nothing separates the margin from the end of an unpadded wrapper.
+    assert_eq!(height(""), 20.0 + 50.0 + 60.0);
+    // Padding at the top separates the margins from the wrapper's own, and
+    // the one at the bottom keeps them inside: 10 + 20 + 40 + 60 + 30 + 10.
+    assert_eq!(height("padding:10px 0"), 170.0);
+}
+
+#[test]
+fn a_leading_margin_cut_at_the_page_edge_stays_cut_in_the_wrappers_height() {
+    // The 230px margin of the empty child starts at the top of the first page
+    // and runs past three page edges. Pagination keeps what fits the first
+    // page, so the wrapper does not hold the margin again.
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        wrapper = doc.append_element(Some(body), "div", Some("display:block;padding:10px 0"));
+        doc.append_element(Some(wrapper), "div", Some("display:block;margin-top:230px"));
+    });
+    assert_eq!(doc.nodes[wrapper].layout.size.height, 110.0);
+}
+
+#[test]
 fn a_wrappers_max_height_follows_its_box_sizing() {
     assert_eq!(
         nested_avoiding_block(
