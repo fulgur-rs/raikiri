@@ -73,10 +73,16 @@ fn append(doc: &mut Document, parent: usize, child: Child, tested: &mut usize) {
     }
 }
 
-/// The border box `(x, y, width, height)` of the out-of-flow box among
-/// `children`, relative to the border box of the 200x100 root in the writing
-/// mode `mode` and the direction `direction`.
-fn placed(mode: &str, direction: &str, setup: Setup, children: &[Child]) -> (f32, f32, f32, f32) {
+/// A border box as `(x, y, width, height)`.
+type Rect = (f32, f32, f32, f32);
+
+/// The writing mode, the direction and the box expected under them.
+type Expected<'a> = (&'a str, &'a str, Rect);
+
+/// The border box of the out-of-flow box among `children`, relative to the
+/// border box of the 200x100 root in the writing mode `mode` and the
+/// direction `direction`.
+fn placed(mode: &str, direction: &str, setup: Setup, children: &[Child]) -> Rect {
     let root_css = format!(
         "position:relative;writing-mode:{mode};direction:{direction};width:200px;\
          height:100px;box-sizing:border-box;line-height:10px;{}",
@@ -100,12 +106,7 @@ fn placed(mode: &str, direction: &str, setup: Setup, children: &[Child]) -> (f32
 
 /// Check the box among `children` against the position expected in each
 /// writing mode and direction.
-fn check(
-    name: &str,
-    setup: Setup,
-    children: &[Child],
-    expected: &[(&str, &str, (f32, f32, f32, f32))],
-) {
+fn check(name: &str, setup: Setup, children: &[Child], expected: &[Expected]) {
     for &(mode, direction, rect) in expected {
         assert_eq!(
             placed(mode, direction, setup, children),
