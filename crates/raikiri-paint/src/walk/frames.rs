@@ -51,7 +51,7 @@ pub(super) enum PaintFrame<'a> {
     EndDeferral,
     /// Reopen the overflow clip of a block around the content its layer
     /// handed to the enclosing one (see
-    /// [`raikiri_dom::paint_rules::merges_clipped_inline_content`]), in
+    /// [`raikiri_dom::paint_rules::merges_clipped_layer`]), in
     /// the transform the block was painted in.
     PushClip {
         node_id: usize,
