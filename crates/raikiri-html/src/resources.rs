@@ -1516,16 +1516,82 @@ pub fn parse_html_with_resources<R: Read>(
     input: R,
     resources: &RenderResources<'_>,
 ) -> Result<HtmlDocument, raikiri_traits::RenderError> {
+    parse_cascaded_with_resources(input, resources, crate::parse::parse_with_budgets)
+}
+
+/// Parse XHTML using the same renderer-neutral resource configuration as
+/// [`parse_html_with_resources`], and return the cascaded [`HtmlDocument`] a
+/// layout of the document takes.
+///
+/// This is the batch counterpart of [`crate::StreamingLayout::new_xhtml`]:
+/// the pages of a [`crate::layout`] of the returned document are those the
+/// streaming layout delivers for the same bytes and resources, apart from the
+/// content a streaming layout leaves out and reports as
+/// [`WarningKind::StreamingContentIgnored`]. The input is
+/// read as [`crate::parse_xhtml`] reads it, so malformed markup is repaired
+/// and recorded as a parse warning, the DOCTYPE's internal subset is ignored,
+/// and elements nested deeper than 256 levels return
+/// [`LimitKind::DomDepth`](raikiri_traits::LimitKind::DomDepth). The input
+/// byte, DOM node and parse warning budgets, the extra stylesheets, the fonts
+/// and the border width device scale are those of `resources`, as they are
+/// for [`parse_html_with_resources`].
+///
+/// A document served as `text/html` takes [`parse_html_with_resources`]
+/// whatever its markup looks like; the syntax is the caller's choice.
+///
+/// # Errors
+///
+/// The errors of [`parse_html_with_limits`](crate::parse_html_with_limits),
+/// except that the parser is the XML one: invalid UTF-8, input I/O failures,
+/// an exceeded input, DOM node or element depth budget, and a cascade that
+/// passed one of its limits.
+///
+/// ```
+/// use raikiri_html::{
+///     LayoutConfig, LayoutOptions, LayoutStatus, PageDefaults, RenderResources, layout,
+///     parse_xhtml_with_resources,
+/// };
+/// let xhtml = r#"<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Hello</p></body></html>"#;
+/// let document = parse_xhtml_with_resources(xhtml.as_bytes(), &RenderResources::new())?;
+/// let LayoutStatus::Completed(result) = layout(
+///     &document, PageDefaults::default(), LayoutConfig::default(), LayoutOptions::new(),
+/// )? else {
+///     unreachable!("no abort signal is set");
+/// };
+/// assert_eq!(result.pages().count(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn parse_xhtml_with_resources<R: Read>(
+    input: R,
+    resources: &RenderResources<'_>,
+) -> Result<HtmlDocument, raikiri_traits::RenderError> {
+    parse_cascaded_with_resources(input, resources, crate::xhtml::parse_with_limits)
+}
+
+/// Parse `input` with `parse` under the parse options and limits of
+/// `resources`, then cascade it with the fonts and border width device scale
+/// they configure.
+fn parse_cascaded_with_resources<R: Read>(
+    input: R,
+    resources: &RenderResources<'_>,
+    parse: impl FnOnce(
+        R,
+        &ParseOptions<'_>,
+        &RenderLimits,
+    ) -> Result<crate::UncascadedDocument, raikiri_traits::ParseError>,
+) -> Result<HtmlDocument, raikiri_traits::RenderError> {
     let network = resources.network_adapter();
     let network_ref = network
         .as_ref()
         .map(|provider| provider as &dyn NetworkProvider);
     let extra_stylesheets = resources.extra_stylesheets();
     let options = resources.parse_options(&extra_stylesheets, network_ref);
-    crate::document_parse::parse_html_with_fonts(
-        input,
+    let limits = resources.parse_limits();
+    let uncascaded = parse(input, &options, &limits)?;
+    crate::document_parse::assemble_document(
+        uncascaded,
         &options,
-        resources.parse_limits(),
+        &limits,
         resources.configured_fonts(),
         resources.configured_border_width_device_scale(),
     )
@@ -1571,3 +1637,5 @@ fn background_url(image: &BackgroundImage) -> Option<&str> {
 mod scene_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod xhtml_tests;

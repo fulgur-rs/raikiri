@@ -90,6 +90,10 @@ pub fn parse_html<R: Read>(
 /// byte cap, this does not stop early. Excess errors are dropped, and one
 /// synthetic warning is added instead.
 ///
+/// The document is cascaded without a configured font set or border width
+/// device scale; [`parse_html_with_resources`](crate::parse_html_with_resources)
+/// takes those from its [`RenderResources`](crate::RenderResources).
+///
 /// [`RenderLimits::max_dom_nodes`] is enforced before each DOM node allocation.
 /// `None` disables this check.
 /// The rule tree is built within [`RenderLimits::rule_tree_limits`], the
@@ -137,32 +141,15 @@ pub fn parse_html_with_limits<R: Read>(
     options: &ParseOptions<'_>,
     limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    parse_html_with_fonts(input, options, limits, None, None)
-}
-
-/// [`parse_html_with_limits`] for a document laid out with `fonts`, given
-/// to the DOM before the cascade measures `line-height: normal` in them.
-/// `None` leaves the DOM without fonts, so it measures in the installed
-/// fonts its first layout takes.
-pub(crate) fn parse_html_with_fonts<R: Read>(
-    input: R,
-    options: &ParseOptions<'_>,
-    limits: RenderLimits,
-    fonts: Option<shodo::font::FontCollection>,
-    border_width_device_scale: Option<f32>,
-) -> Result<HtmlDocument, RenderError> {
     let uncascaded = parse_with_budgets(input, options, &limits)?;
-    assemble_document(
-        uncascaded,
-        options,
-        &limits,
-        fonts,
-        border_width_device_scale,
-    )
+    assemble_document(uncascaded, options, &limits, None, None)
 }
 
 /// Check the DOM node cap as a defensive postcondition, give the DOM `fonts`
-/// when there are some, and run its first-page cascade.
+/// when there are some, and run its first-page cascade. `fonts` are the ones
+/// a document is laid out with, set before the cascade measures
+/// `line-height: normal` in them; `None` leaves the DOM without fonts, so it
+/// measures in the installed fonts its first layout takes.
 pub(crate) fn assemble_document(
     mut uncascaded: UncascadedDocument,
     options: &ParseOptions<'_>,

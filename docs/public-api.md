@@ -21,7 +21,7 @@ their type and are not listed. A module and a function can share a path
 
 | crate | visible names | `#[doc(hidden)]` |
 | --- | ---: | ---: |
-| `raikiri-html` | 146 | 3 |
+| `raikiri-html` | 147 | 3 |
 | `raikiri-dom` | 204 | 105 |
 | `raikiri-traits` | 247 | 0 |
 | `raikiri-style` | 777 | 0 |
@@ -36,8 +36,8 @@ There are three tiers.
    signatures reach: the types of `raikiri-dom`, `raikiri-traits`,
    `raikiri-style` and `raikiri-svg` that it re-exports or that a field, a
    parameter or a trait impl names. This is what fulgur builds on, and a change
-   to it is what the semver report is for. Of the 146 names of `raikiri-html`,
-   65 are declared there (three of them modules), 42 come from `raikiri-dom`,
+   to it is what the semver report is for. Of the 147 names of `raikiri-html`,
+   66 are declared there (three of them modules), 42 come from `raikiri-dom`,
    23 from `raikiri-style`, 14 from `raikiri-traits` and one,
    `FontCollection`, from shodo. The remaining name is the glob that publishes
    the computed-value types of `raikiri-style` under `computed`.
@@ -82,9 +82,9 @@ hidden.
 
 - Parsing: `parse`, `parse_fragment`, `parse_with_sink`, `parse_html`,
   `parse_html_with_limits`, `parse_html_with_resources`, `parse_xhtml`,
-  `effective_document_base_url`, `expand_live_stylesheet_imports`,
-  `RaikiriTreeSink`, `ParseOptions`, `StylesheetPart`, `StylesheetSource`,
-  `UncascadedDocument`, `HtmlDocument`.
+  `parse_xhtml_with_resources`, `effective_document_base_url`,
+  `expand_live_stylesheet_imports`, `RaikiriTreeSink`, `ParseOptions`,
+  `StylesheetPart`, `StylesheetSource`, `UncascadedDocument`, `HtmlDocument`.
 - Cascade: the ten `build_cascaded*` and `build_rule_tree*` functions,
   `CascadeResult`, `ComputedValues`, `Declaration`, `MediaContext`,
   `MediaType`, `Origin`, `PageCascadeResult`, `PageContextQuery`,
