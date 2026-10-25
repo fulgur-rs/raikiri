@@ -112,12 +112,10 @@ impl NetworkProvider for FontServer {
         if request.url.as_str() != FACE_URL {
             return Err(NetworkError::Aborted);
         }
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: AHEM.to_vec().into(),
-            content_type: Some("font/ttf".into()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(AHEM.to_vec().into(), request.url)
+                .content_type(Some("font/ttf".into())),
+        ))
     }
 }
 
@@ -178,11 +176,7 @@ fn lh_under_a_normal_line_height_measures_an_at_font_face_family() {
 }
 
 fn no_resources() -> raikiri_html::ParseOptions<'static> {
-    raikiri_html::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    }
+    raikiri_html::ParseOptions::new()
 }
 
 /// The computed `height` of the element with `id` in `cascade`.

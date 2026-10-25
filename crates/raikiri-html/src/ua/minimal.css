@@ -168,6 +168,20 @@ legend    { display: block; }
 dialog       { display: none; }
 dialog[open] { display: block; }
 
+/* HTML Living Standard "Rendering" §15.3.1 "Hidden elements" — metadata
+ * content and the other elements that never generate a box:
+ *   area, base, basefont, datalist, head, link, meta, noembed, noframes,
+ *   param, rp, script, style, template, title { display: none; }
+ * Without the rule these elements take the CSS-initial `display: inline`, so
+ * an author rule that gives them a size (`* { height: 100% }`) makes
+ * `<head>` a box that pushes the body down. Only the names that exist in no
+ * other namespace are carried: a type selector also matches the SVG
+ * `script`, `style` and `title`, whose declarations the SVG pipeline lists
+ * and whose content the paint gate already skips. `[hidden]` and `noscript`
+ * (hidden only when scripting is enabled) are left out as well. */
+area, base, basefont, datalist, head, link, meta, noembed, noframes, param, rp,
+template { display: none; }
+
 /* HTML Living Standard "Rendering" §15.3.5 "Bidirectional text" —
  * directionality mapping (verbatim spec rules, narrowed):
  *   [dir]:dir(ltr), bdi:dir(ltr), input[type=tel i]:dir(ltr) { direction: ltr; }

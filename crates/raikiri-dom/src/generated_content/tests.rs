@@ -276,12 +276,15 @@ fn auto_quotes_use_the_inner_marks_at_every_depth_below_the_outermost() {
 }
 
 #[test]
-fn a_lone_closing_quote_uses_the_outermost_pair() {
-    use QuoteKeyword::{CloseQuote as Close, NoCloseQuote};
+fn a_closing_quote_with_no_quote_open_inserts_nothing() {
+    use QuoteKeyword::{CloseQuote as Close, NoCloseQuote, OpenQuote as Open};
     let pairs: &[(&str, &str)] = &[("<", ">"), ("[", "]")];
-    assert_eq!(quote_text(&[Close], pairs, false), ">");
-    assert_eq!(quote_text(&[NoCloseQuote, Close], pairs, false), ">");
-    assert_eq!(quote_text(&[Close], &[] as &[(&str, &str)], true), "”");
+    assert_eq!(quote_text(&[Close], pairs, false), "");
+    assert_eq!(quote_text(&[NoCloseQuote, Close], pairs, false), "");
+    assert_eq!(quote_text(&[Close], &[] as &[(&str, &str)], true), "");
+    // The ignored close leaves the depth at zero, so the next quote is the
+    // outermost one again.
+    assert_eq!(quote_text(&[Close, Open, Close, Close], pairs, false), "<>");
 }
 
 #[test]
@@ -325,7 +328,7 @@ fn pseudo_element_quotes_repeat_the_last_pair_and_nest_the_auto_marks() {
 }
 
 #[test]
-fn an_opening_before_and_a_closing_after_both_use_the_outermost_pair() {
+fn a_closing_after_closes_the_opening_before_of_its_element() {
     let mut document = Document::new();
     let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
     document.append_text(
@@ -336,7 +339,17 @@ fn an_opening_before_and_a_closing_after_both_use_the_outermost_pair() {
     document.mark_in_document_flags();
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade succeeds");
+    let snapshots = crate::counter_snapshots(&document, &cascade).expect("counter snapshots");
     let text = |pseudo| {
+        generated_text(&document, &cascade, element, pseudo, &snapshots)
+            .expect("generated text")
+            .1
+    };
+    assert_eq!(text(PseudoElem::Before), "“");
+    // The `::before` opened a quote, so the `::after` closes the outermost
+    // pair. Without the walk's depth it would find nothing open.
+    assert_eq!(text(PseudoElem::After), "”");
+    let alone = |pseudo| {
         generated_text(
             &document,
             &cascade,
@@ -347,6 +360,5 @@ fn an_opening_before_and_a_closing_after_both_use_the_outermost_pair() {
         .expect("generated text")
         .1
     };
-    assert_eq!(text(PseudoElem::Before), "“");
-    assert_eq!(text(PseudoElem::After), "”");
+    assert_eq!(alone(PseudoElem::After), "");
 }

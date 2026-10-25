@@ -1281,9 +1281,9 @@ fn intra_level_spaces(segment: &Segment) -> Vec<bool> {
 /// shodo's side for the `ruby-position` of an annotation level.
 fn position(position: RubyPosition) -> shodo::RubyPosition {
     match position {
-        RubyPosition::Over => shodo::RubyPosition::Over,
         RubyPosition::Under => shodo::RubyPosition::Under,
         RubyPosition::InterCharacter => shodo::RubyPosition::InterCharacter,
+        _ => shodo::RubyPosition::Over,
     }
 }
 

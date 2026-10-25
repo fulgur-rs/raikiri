@@ -402,30 +402,45 @@ def format_exhaustive(listed: Iterable[tuple[Name, str]]) -> str:
 # from crates other than the consumer crate.
 FIRST_TIER_BEGIN = "<!-- first-tier-names:begin -->"
 FIRST_TIER_END = "<!-- first-tier-names:end -->"
+# The markers around the list of value types, the types that stay without
+# `#[non_exhaustive]` on purpose.
+VALUE_TYPES_BEGIN = "<!-- value-types:begin -->"
+VALUE_TYPES_END = "<!-- value-types:end -->"
 NAME_LINE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+$")
 
 
-def read_first_tier_names(markdown: str) -> list[str]:
-    """The names listed between the first-tier markers of `markdown`, one per line.
+def read_marked_names(markdown: str, begin: str, end: str, what: str) -> list[str]:
+    """The names listed between the markers `begin` and `end` of `markdown`, one per line.
 
     Blank lines and the lines of a code fence are skipped. Any other line must
     be a path: a name that is misspelled or wrapped would otherwise drop out of
     the list unnoticed and make the names that depend on it look unreachable.
+    `what` names the list in the error messages.
     """
     # A marker counts only on a line of its own, so prose that quotes one does not cut the list.
-    start = re.search(rf"^{re.escape(FIRST_TIER_BEGIN)}[ \t]*$", markdown, re.MULTILINE)
-    end = re.search(rf"^{re.escape(FIRST_TIER_END)}[ \t]*$", markdown, re.MULTILINE)
-    if start is None or end is None or end.start() < start.end():
-        raise ValueError(f"the markers {FIRST_TIER_BEGIN} and {FIRST_TIER_END} are missing")
+    start = re.search(rf"^{re.escape(begin)}[ \t]*$", markdown, re.MULTILINE)
+    stop = re.search(rf"^{re.escape(end)}[ \t]*$", markdown, re.MULTILINE)
+    if start is None or stop is None or stop.start() < start.end():
+        raise ValueError(f"the markers {begin} and {end} are missing")
     found = []
-    for line in markdown[start.end() : end.start()].splitlines():
+    for line in markdown[start.end() : stop.start()].splitlines():
         text = line.strip()
         if not text or text.startswith("```"):
             continue
         if not NAME_LINE_RE.fullmatch(text):
-            raise ValueError(f"the line {text!r} between the first-tier markers is not a path such as crate::Name")
+            raise ValueError(f"the line {text!r} between the {what} markers is not a path such as crate::Name")
         found.append(text)
     return found
+
+
+def read_first_tier_names(markdown: str) -> list[str]:
+    """The names listed between the first-tier markers of `markdown`, one per line."""
+    return read_marked_names(markdown, FIRST_TIER_BEGIN, FIRST_TIER_END, "first-tier")
+
+
+def read_value_types(markdown: str) -> list[str]:
+    """The value types listed between the value-type markers of `markdown`, one per line."""
+    return read_marked_names(markdown, VALUE_TYPES_BEGIN, VALUE_TYPES_END, "value-type")
 
 
 def canonical_items(doc: dict) -> dict[str, int]:

@@ -781,16 +781,14 @@ fn origin_inset_rect(
             area.y1 - bb - pb,
         ),
         VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
+            warnings.push(RenderWarning::new(
+                WarningKind::ResourceFallback {
                     kind: raikiri_traits::ResourceKind::Image,
                     url: image_url.map(redacted_image_url),
                 },
-                node_id: None,
-                details:
-                    "background-origin has an unsupported visual box; using padding-box positioning"
-                        .into(),
-            });
+                "background-origin has an unsupported visual box; using padding-box positioning"
+                    .into(),
+            ));
             Rect::new(area.x0 + bl, area.y0 + bt, area.x1 - br, area.y1 - bb)
         }
         // cov:ignore: defensive fallback for future `VisualBox` variants
@@ -843,16 +841,12 @@ fn warn_unpainted_background_layers(layer_count: usize, warnings: &mut Vec<Rende
     if layer_count <= MAX_PAINTED_BACKGROUND_LAYERS {
         return;
     }
-    warnings.push(RenderWarning {
-        kind: WarningKind::ResourceFallback {
+    warnings.push(RenderWarning::new(WarningKind::ResourceFallback {
             kind: raikiri_traits::ResourceKind::Image,
             url: None,
-        },
-        node_id: None,
-        details: format!(
+        }, format!(
             "a box has {layer_count} background layers; only the top {MAX_PAINTED_BACKGROUND_LAYERS} were painted"
-        ),
-    });
+        )));
 }
 
 /// Where the page background paints and where its images are placed.
@@ -2329,27 +2323,31 @@ fn paint_image(
         height: image_h as f32,
     };
     let Some(decoded) = source.get_decoded_at_size(url, raster_size, None) else {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: None,
-            },
-            node_id: Some(NodeId::new(node_id as u64)),
-            details: "image pixels were unavailable at the requested object size".to_owned(),
-        });
+        warnings.push(
+            RenderWarning::new(
+                WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: None,
+                },
+                "image pixels were unavailable at the requested object size".to_owned(),
+            )
+            .node_id(Some(NodeId::new(node_id as u64))),
+        );
         return true;
     };
     let raster_w = decoded.width as f64;
     let raster_h = decoded.height as f64;
     if raster_w <= 0.0 || raster_h <= 0.0 {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: None,
-            },
-            node_id: Some(NodeId::new(node_id as u64)),
-            details: "image pixels had an empty raster size".to_owned(),
-        });
+        warnings.push(
+            RenderWarning::new(
+                WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: None,
+                },
+                "image pixels had an empty raster size".to_owned(),
+            )
+            .node_id(Some(NodeId::new(node_id as u64))),
+        );
         return true;
     }
     let brush = image_cache.whole(&decoded);
@@ -2727,14 +2725,13 @@ fn paint_background_from_source(
             device_grid,
         );
     } else {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
+        warnings.push(RenderWarning::new(
+            WarningKind::ResourceFallback {
                 kind: raikiri_traits::ResourceKind::Image,
                 url: Some(redacted_image_url(url)),
             },
-            node_id: None,
-            details: "CSS background image could not be rasterized; the image was skipped".into(),
-        });
+            "CSS background image could not be rasterized; the image was skipped".into(),
+        ));
     }
 }
 

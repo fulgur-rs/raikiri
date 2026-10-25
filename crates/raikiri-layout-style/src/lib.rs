@@ -8,6 +8,7 @@ mod context;
 mod core;
 pub use core::preferred_aspect_ratio;
 mod flex;
+pub use flex::items as align_items_of;
 mod length;
 mod overrides;
 mod physical_sizing;

@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 /// One line of a text node of an ifc paragraph, in the root's content box.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct IfcTextLine {
     /// Index of the line in the paragraph.
     pub line: usize,
@@ -20,6 +21,7 @@ pub struct IfcTextLine {
 
 /// The lines a text node of an ifc paragraph has, in order.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct IfcTextLines {
     /// Internal paragraph key; anonymous table cells have no DOM node of their own.
     pub root: usize,

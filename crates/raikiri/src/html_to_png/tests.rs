@@ -81,21 +81,17 @@ fn resolver_backed_png_render_prepares_inside_marker_images() {
         ) -> Result<ResolvedIntrinsic, ResolverError> {
             assert_eq!(request.url().as_str(), "https://images.test/marker.png");
             self.0.store(true, Ordering::SeqCst);
-            Ok(ResolvedIntrinsic {
-                intrinsic: IntrinsicBox::new(8.0, 8.0),
-                disposition: ResolveDisposition::Ok,
-            })
+            Ok(ResolvedIntrinsic::new(
+                IntrinsicBox::new(8.0, 8.0),
+                ResolveDisposition::Ok,
+            ))
         }
     }
     impl ImagePixelSource for Marker {
         fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
-            self.0.load(Ordering::SeqCst).then(|| {
-                Arc::new(DecodedImage {
-                    width: 8,
-                    height: 8,
-                    rgba: [255, 0, 0, 255].repeat(8 * 8),
-                })
-            })
+            self.0
+                .load(Ordering::SeqCst)
+                .then(|| Arc::new(DecodedImage::new(8, 8, [255, 0, 0, 255].repeat(8 * 8))))
         }
     }
     let marker = Marker(AtomicBool::new(false));
@@ -163,10 +159,10 @@ fn html_to_png_with_resolver_uses_raster_border_width_snapping() {
             &self,
             _request: ResolverRequest<'_>,
         ) -> Result<ResolvedIntrinsic, ResolverError> {
-            Ok(ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(0.0, 0.0),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(0.0, 0.0),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
     impl ImagePixelSource for NoopResolver {
@@ -225,7 +221,7 @@ fn html_to_png_with_resolver_paints_an_img_element() {
 /// A `ReplacedResolver::resolve()` `Err` is terminal: it must fail the
 /// whole render as `RenderError::Resolver`, not be swallowed into a
 /// silently unsized `<img>`. Graceful degradation is the Consumer's job,
-/// expressed as `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })`
+/// expressed as `Ok(ResolvedIntrinsic::new(intrinsic, ResolveDisposition::Fallback { .. }))`
 /// (see `raikiri_traits::ReplacedResolver`'s doc), so raikiri must not
 /// perform it on the Consumer's behalf.
 #[test]

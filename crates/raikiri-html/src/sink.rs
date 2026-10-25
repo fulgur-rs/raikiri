@@ -352,13 +352,12 @@ impl TreeSink for RaikiriTreeSink {
         let Some(cap) = self.max_parse_warnings else {
             // Unlimited (only reached when a consumer explicitly sets
             // `max_parse_warnings = None`).
-            warnings.push(RenderWarning {
-                kind: WarningKind::HtmlParseError {
+            warnings.push(RenderWarning::new(
+                WarningKind::HtmlParseError {
                     message: msg.into_owned(),
                 },
-                node_id: None,
-                details: String::new(),
-            });
+                String::new(),
+            ));
             return;
         };
         // Streaming warnings share the vector; only parse errors count
@@ -374,13 +373,12 @@ impl TreeSink for RaikiriTreeSink {
             // indistinguishable from zero parse errors and would silently disable the
             // trip-and-record behavior used for cap > 0.
             if recorded == 0 {
-                warnings.push(RenderWarning {
-                    kind: WarningKind::HtmlParseError {
+                warnings.push(RenderWarning::new(
+                    WarningKind::HtmlParseError {
                         message: "parse errors suppressed (max_parse_warnings = 0)".to_string(),
                     },
-                    node_id: None,
-                    details: String::new(),
-                });
+                    String::new(),
+                ));
             }
             return;
         }
@@ -391,24 +389,22 @@ impl TreeSink for RaikiriTreeSink {
         let last_real_slot = cap - 1;
         match recorded.cmp(&last_real_slot) {
             std::cmp::Ordering::Less => {
-                warnings.push(RenderWarning {
-                    kind: WarningKind::HtmlParseError {
+                warnings.push(RenderWarning::new(
+                    WarningKind::HtmlParseError {
                         message: msg.into_owned(),
                     },
-                    node_id: None,
-                    details: String::new(),
-                });
+                    String::new(),
+                ));
             }
             std::cmp::Ordering::Equal => {
-                warnings.push(RenderWarning {
-                    kind: WarningKind::HtmlParseError {
+                warnings.push(RenderWarning::new(
+                    WarningKind::HtmlParseError {
                         message: format!(
                             "further parse errors suppressed after reaching the {cap}-warning cap"
                         ),
                     },
-                    node_id: None,
-                    details: String::new(),
-                });
+                    String::new(),
+                ));
             }
             std::cmp::Ordering::Greater => {}
         }
@@ -620,15 +616,17 @@ impl TreeSink for RaikiriTreeSink {
             }
             reported.push(*target);
             let names: Vec<&str> = missing.iter().map(|a| a.name.local.as_ref()).collect();
-            self.warnings.borrow_mut().push(RenderWarning {
-                kind: WarningKind::StreamingContentIgnored,
-                node_id: Some(raikiri_traits::NodeId(*target as u64)),
-                details: format!(
-                    "attributes {} of a repeated <html> or <body> tag arrived after pages \
+            self.warnings.borrow_mut().push(
+                RenderWarning::new(
+                    WarningKind::StreamingContentIgnored,
+                    format!(
+                        "attributes {} of a repeated <html> or <body> tag arrived after pages \
                      were delivered; attributes of later repeated tags are ignored too",
-                    names.join(", ")
-                ),
-            });
+                        names.join(", ")
+                    ),
+                )
+                .node_id(Some(raikiri_traits::NodeId(*target as u64))),
+            );
             return;
         }
         existing.extend(missing);

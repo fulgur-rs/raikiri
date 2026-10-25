@@ -147,16 +147,14 @@ impl<'a> MarginBoxPaint<'a> {
                     &ring,
                 );
             }
-            None => warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
+            None => warnings.push(RenderWarning::new(
+                WarningKind::ResourceFallback {
                     kind: ResourceKind::Image,
                     url: None,
                 },
-                node_id: None,
-                details:
-                    "margin-box background-clip has an unsupported visual box; the color was skipped"
-                        .into(),
-            }),
+                "margin-box background-clip has an unsupported visual box; the color was skipped"
+                    .into(),
+            )),
         }
     }
 
@@ -202,16 +200,11 @@ impl<'a> MarginBoxPaint<'a> {
                         }
                     }
                     None => {
-                        warnings.push(RenderWarning {
-                            kind: WarningKind::ResourceFallback {
+                        warnings.push(RenderWarning::new(WarningKind::ResourceFallback {
                                 kind: ResourceKind::Image,
                                 url: Some(redacted_image_url(&url)),
-                            },
-                            node_id: None,
-                            details:
-                                "margin-box background-clip has an unsupported visual box; the image was skipped"
-                                    .into(),
-                        });
+                            }, "margin-box background-clip has an unsupported visual box; the image was skipped"
+                                    .into()));
                     }
                 }
             }
@@ -309,16 +302,14 @@ impl<'a> MarginBoxPaint<'a> {
                 .get_decoded_at_size(&url, size, None)
                 .filter(|decoded| decoded.width > 0 && decoded.height > 0)
             else {
-                warnings.push(RenderWarning {
-                    kind: WarningKind::ResourceFallback {
+                warnings.push(RenderWarning::new(
+                    WarningKind::ResourceFallback {
                         kind: ResourceKind::Image,
                         url: Some(redacted_image_url(&url)),
                     },
-                    node_id: None,
-                    details:
-                        "margin-box content image could not be rasterized; the image was skipped"
-                            .into(),
-                });
+                    "margin-box content image could not be rasterized; the image was skipped"
+                        .into(),
+                ));
                 continue;
             };
             let brush = image_cache.whole(&decoded);

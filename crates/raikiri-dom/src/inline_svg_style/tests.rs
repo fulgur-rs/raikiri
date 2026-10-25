@@ -5,12 +5,12 @@ use raikiri_style::property::PropertyKey;
 #[test]
 fn descendant_declarations_ignore_properties_outside_the_svg_contract() {
     for inherited in [false, true] {
-        let properties = [SvgStyleProperty {
-            property: PropertyKey::Width,
+        let properties = [SvgStyleProperty::new(
+            PropertyKey::Width,
             inherited,
-            expression: None,
-            inherited_from: None,
-        }];
+            None,
+            None,
+        )];
         let mut budget = 1024;
         assert_eq!(
             node_declarations(
@@ -28,12 +28,12 @@ fn descendant_declarations_ignore_properties_outside_the_svg_contract() {
 
 #[test]
 fn descendant_declaration_budget_rejects_before_serializing() {
-    let properties = [SvgStyleProperty {
-        property: PropertyKey::Opacity,
-        inherited: false,
-        expression: None,
-        inherited_from: None,
-    }];
+    let properties = [SvgStyleProperty::new(
+        PropertyKey::Opacity,
+        false,
+        None,
+        None,
+    )];
     let mut remaining = 128;
     assert!(
         node_declarations(
@@ -50,12 +50,12 @@ fn descendant_declaration_budget_rejects_before_serializing() {
 #[test]
 fn descendant_declaration_budget_counts_the_text_of_a_painting_property() {
     let text = format!("url(\"#{}\")", "a".repeat(1000));
-    let properties = [SvgStyleProperty {
-        property: PropertyKey::Fill,
-        inherited: false,
-        expression: Some(text.clone()),
-        inherited_from: None,
-    }];
+    let properties = [SvgStyleProperty::new(
+        PropertyKey::Fill,
+        false,
+        Some(text.clone()),
+        None,
+    )];
     // The declaration's own 128 bytes, then the text's 128 and its two copies.
     let needed = 128 + 128 + 2 * text.len();
     let mut remaining = needed - 1;
@@ -85,18 +85,8 @@ fn descendant_declaration_budget_counts_the_text_of_a_painting_property() {
 #[test]
 fn descendant_declarations_keep_relative_expressions_and_literal_inherit() {
     let properties = [
-        SvgStyleProperty {
-            property: PropertyKey::FontSize,
-            inherited: false,
-            expression: Some("2em".into()),
-            inherited_from: None,
-        },
-        SvgStyleProperty {
-            property: PropertyKey::Color,
-            inherited: true,
-            expression: None,
-            inherited_from: None,
-        },
+        SvgStyleProperty::new(PropertyKey::FontSize, false, Some("2em".into()), None),
+        SvgStyleProperty::new(PropertyKey::Color, true, None, None),
     ];
     let mut remaining = 1024;
     assert_eq!(
@@ -126,12 +116,7 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
     ];
     let properties: Vec<_> = keys
         .iter()
-        .map(|&property| SvgStyleProperty {
-            property,
-            inherited: false,
-            expression: None,
-            inherited_from: None,
-        })
+        .map(|&property| SvgStyleProperty::new(property, false, None, None))
         .collect();
     let mut budget = 4096;
     let css = node_declarations(
@@ -156,12 +141,7 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
     }
     let properties: Vec<_> = keys
         .iter()
-        .map(|&property| SvgStyleProperty {
-            property,
-            inherited: true,
-            expression: None,
-            inherited_from: None,
-        })
+        .map(|&property| SvgStyleProperty::new(property, true, None, None))
         .collect();
     let mut budget = 4096;
     let css = node_declarations(
@@ -195,12 +175,12 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
         (PropertyKey::StrokeDashoffset, "stroke-dashoffset", "-1px"),
     ];
     for (property, name, value) in painting {
-        let declared = [SvgStyleProperty {
+        let declared = [SvgStyleProperty::new(
             property,
-            inherited: false,
-            expression: Some(value.into()),
-            inherited_from: None,
-        }];
+            false,
+            Some(value.into()),
+            None,
+        )];
         let mut budget = 1024;
         assert_eq!(
             node_declarations(
@@ -214,12 +194,7 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
             format!("{name}:{value}!important;")
         );
 
-        let inherited = [SvgStyleProperty {
-            property,
-            inherited: true,
-            expression: None,
-            inherited_from: None,
-        }];
+        let inherited = [SvgStyleProperty::new(property, true, None, None)];
         let mut budget = 1024;
         assert_eq!(
             node_declarations(
@@ -235,12 +210,7 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
 
         // No computed field backs these properties, so a declaration without
         // its text has nothing to export.
-        let missing = [SvgStyleProperty {
-            property,
-            inherited: false,
-            expression: None,
-            inherited_from: None,
-        }];
+        let missing = [SvgStyleProperty::new(property, false, None, None)];
         let mut budget = 1024;
         assert_eq!(
             node_declarations(
@@ -259,24 +229,19 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
 #[test]
 fn relative_presentation_attributes_resolve_against_the_declaring_font_size() {
     let attributes = [
-        SvgStyleProperty {
-            property: PropertyKey::StrokeWidth,
-            inherited: false,
-            expression: Some("2em".into()),
-            inherited_from: None,
-        },
-        SvgStyleProperty {
-            property: PropertyKey::StrokeDasharray,
-            inherited: false,
-            expression: Some("2em 1ex".into()),
-            inherited_from: None,
-        },
-        SvgStyleProperty {
-            property: PropertyKey::StrokeDashoffset,
-            inherited: false,
-            expression: Some("-1em".into()),
-            inherited_from: None,
-        },
+        SvgStyleProperty::new(PropertyKey::StrokeWidth, false, Some("2em".into()), None),
+        SvgStyleProperty::new(
+            PropertyKey::StrokeDasharray,
+            false,
+            Some("2em 1ex".into()),
+            None,
+        ),
+        SvgStyleProperty::new(
+            PropertyKey::StrokeDashoffset,
+            false,
+            Some("-1em".into()),
+            None,
+        ),
     ];
     let mut style = ComputedValues::initial();
     style.font_size.0 = 20.0;
@@ -289,12 +254,12 @@ fn relative_presentation_attributes_resolve_against_the_declaring_font_size() {
 
 #[test]
 fn absolute_presentation_attributes_need_no_declaration() {
-    let attributes = [SvgStyleProperty {
-        property: PropertyKey::StrokeWidth,
-        inherited: false,
-        expression: Some("3px".into()),
-        inherited_from: None,
-    }];
+    let attributes = [SvgStyleProperty::new(
+        PropertyKey::StrokeWidth,
+        false,
+        Some("3px".into()),
+        None,
+    )];
     let mut budget = 4096;
     assert_eq!(
         node_declarations(
@@ -312,30 +277,25 @@ fn absolute_presentation_attributes_need_no_declaration() {
 #[test]
 fn declared_font_relative_stroke_lengths_are_written_in_px_outside_an_instance() {
     let declared = [
-        SvgStyleProperty {
-            property: PropertyKey::StrokeWidth,
-            inherited: false,
-            expression: Some("2em".into()),
-            inherited_from: None,
-        },
-        SvgStyleProperty {
-            property: PropertyKey::StrokeDasharray,
-            inherited: false,
-            expression: Some("2em 50% 1ex 3".into()),
-            inherited_from: None,
-        },
-        SvgStyleProperty {
-            property: PropertyKey::StrokeDashoffset,
-            inherited: false,
-            expression: Some("-1em".into()),
-            inherited_from: None,
-        },
-        SvgStyleProperty {
-            property: PropertyKey::StrokeLinecap,
-            inherited: false,
-            expression: Some("round".into()),
-            inherited_from: None,
-        },
+        SvgStyleProperty::new(PropertyKey::StrokeWidth, false, Some("2em".into()), None),
+        SvgStyleProperty::new(
+            PropertyKey::StrokeDasharray,
+            false,
+            Some("2em 50% 1ex 3".into()),
+            None,
+        ),
+        SvgStyleProperty::new(
+            PropertyKey::StrokeDashoffset,
+            false,
+            Some("-1em".into()),
+            None,
+        ),
+        SvgStyleProperty::new(
+            PropertyKey::StrokeLinecap,
+            false,
+            Some("round".into()),
+            None,
+        ),
     ];
     let mut style = ComputedValues::initial();
     style.font_size.0 = 20.0;
@@ -354,12 +314,12 @@ fn declared_font_relative_stroke_lengths_are_written_in_px_outside_an_instance()
 
 #[test]
 fn the_px_text_of_a_stroke_length_counts_against_the_budget() {
-    let declared = [SvgStyleProperty {
-        property: PropertyKey::StrokeWidth,
-        inherited: false,
-        expression: Some("2em".into()),
-        inherited_from: None,
-    }];
+    let declared = [SvgStyleProperty::new(
+        PropertyKey::StrokeWidth,
+        false,
+        Some("2em".into()),
+        None,
+    )];
     let mut style = ComputedValues::initial();
     style.font_size.0 = 20.0;
     // The declaration's own 128 bytes, the text's 128 and its two copies, and
@@ -374,12 +334,12 @@ fn the_px_text_of_a_stroke_length_counts_against_the_budget() {
 
 #[test]
 fn an_inherited_stroke_length_stays_inherit_in_any_place() {
-    let inherited = [SvgStyleProperty {
-        property: PropertyKey::StrokeWidth,
-        inherited: true,
-        expression: Some("2em".into()),
-        inherited_from: None,
-    }];
+    let inherited = [SvgStyleProperty::new(
+        PropertyKey::StrokeWidth,
+        true,
+        Some("2em".into()),
+        None,
+    )];
     let mut style = ComputedValues::initial();
     style.font_size.0 = 20.0;
     for in_instance in [false, true] {

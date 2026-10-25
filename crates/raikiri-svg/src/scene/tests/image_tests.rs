@@ -14,11 +14,7 @@ const WHITE: [u8; 4] = [255, 255, 255, 255];
 
 /// Two pixels by two: red and green over blue and white.
 fn quad() -> Arc<DecodedImage> {
-    Arc::new(DecodedImage {
-        width: 2,
-        height: 2,
-        rgba: [RED, GREEN, BLUE, WHITE].concat(),
-    })
+    Arc::new(DecodedImage::new(2, 2, [RED, GREEN, BLUE, WHITE].concat()))
 }
 
 /// Answers from a table of URLs, answers every `data:` URL with one picture,
@@ -404,19 +400,11 @@ fn pictures_the_source_does_not_give_are_left_out() {
     let malformed = Pictures::new()
         .url(
             "short.png",
-            Some(Arc::new(DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![0; 12],
-            })),
+            Some(Arc::new(DecodedImage::new(2, 2, vec![0; 12]))),
         )
         .url(
             "empty.png",
-            Some(Arc::new(DecodedImage {
-                width: 0,
-                height: 0,
-                rgba: Vec::new(),
-            })),
+            Some(Arc::new(DecodedImage::new(0, 0, Vec::new()))),
         );
     let image = scene(
         SvgImageAccess::Any,

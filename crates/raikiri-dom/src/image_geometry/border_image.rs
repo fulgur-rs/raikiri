@@ -28,6 +28,7 @@ const MAX_PART_TILES: usize = 65_536;
 
 /// One of the nine parts of a border image.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct BorderImagePart {
     /// The rectangle of the sized image this part shows, in the image's
     /// own coordinates (`0..image width`, `0..image height`).
@@ -42,6 +43,28 @@ pub struct BorderImagePart {
     pub x: Vec<f64>,
     /// Top edges of the tile rows that cross the visible area.
     pub y: Vec<f64>,
+}
+
+impl BorderImagePart {
+    /// A part showing `source` of the sized image in `area`, tiled by
+    /// `tile_width` x `tile_height` at the columns `x` and rows `y`.
+    pub fn new(
+        source: Rect,
+        area: Rect,
+        tile_width: f64,
+        tile_height: f64,
+        x: Vec<f64>,
+        y: Vec<f64>,
+    ) -> Self {
+        Self {
+            source,
+            area,
+            tile_width,
+            tile_height,
+            x,
+            y,
+        }
+    }
 }
 
 /// The horizontal and vertical ranges of the page a painter shows, in the
@@ -67,6 +90,7 @@ impl VisibleArea {
 
 /// The parts of one border image, ready to draw.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct BorderImageGeometry {
     /// The size the image is drawn at before slicing: its natural size, or
     /// the border image area for an image without one (a gradient).
@@ -116,6 +140,7 @@ pub fn border_image_geometry(
 /// coordinate `x` lies at device pixel `x * scale_x + offset_x`, and likewise
 /// for `y`.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct DeviceGrid {
     /// Device pixels per CSS pixel along x.
     pub scale_x: f64,
@@ -128,6 +153,16 @@ pub struct DeviceGrid {
 }
 
 impl DeviceGrid {
+    /// A grid with its own scale and offset on each axis.
+    pub fn new(scale_x: f64, offset_x: f64, scale_y: f64, offset_y: f64) -> Self {
+        Self {
+            scale_x,
+            offset_x,
+            scale_y,
+            offset_y,
+        }
+    }
+
     /// A grid of `scale` device pixels per CSS pixel with its origin at the
     /// CSS origin.
     pub fn uniform(scale: f64) -> Self {
@@ -475,11 +510,7 @@ fn default_sized(
             .map(f64::from)
             .filter(|value| value.is_finite() && *value > 0.0)
     };
-    let natural = natural.unwrap_or(ImageIntrinsicSize {
-        width: None,
-        height: None,
-        aspect_ratio: None,
-    });
+    let natural = natural.unwrap_or_default();
     let width = valid(natural.width);
     let height = valid(natural.height);
     let ratio = valid(natural.aspect_ratio).or_else(|| width.zip(height).map(|(w, h)| w / h));

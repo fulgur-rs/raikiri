@@ -1475,11 +1475,7 @@ fn paint_single_page_can_be_called_multiple_times() {
 fn assert_inert_html_content_not_painted(html: &[u8], fixture_label: &str) {
     use raikiri_html::{ParseOptions, parse};
 
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     // The cascade below has no UA sheet: the body is made a block box so it
     // lays its text out.
     let html = String::from_utf8_lossy(html).replace("<body>", "<body style=\"display:block\">");
@@ -1640,23 +1636,20 @@ fn paint_single_page_skips_template_subtree_content_via_inert_predicate() {
 #[test]
 fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
     // Pin the contract: the is_in_document() predicate explicitly skips
-    // template subtrees regardless of any UA CSS template { display: none }
-    // rule. Prevent regression of this formerly silent bug.
+    // template subtrees regardless of any `template { display: none }` rule.
+    // Prevent regression of this formerly silent bug.
     //
-    // Setup: <body><template><p>should_not_paint</p></template></body>.
-    // Current UA CSS has no template rule (checked in minimal.css), so its
-    // default is Display::Block. Before the gate, painting descended into
-    // the subtree and emitted a GlyphRun without reporting the bug.
+    // Setup: <body><template><p>should_not_paint</p></template></body>, with
+    // an author rule that overrides the UA sheet's `template { display: none }`
+    // so the template computes to Display::Block. Before the gate, painting
+    // descended into the subtree and emitted a GlyphRun without reporting
+    // the bug.
     use raikiri_html::{ParseOptions, parse};
 
-    let html = b"<html><head></head><body>\
+    let html = b"<html><head><style>template{display:block}</style></head><body>\
                      <template><p>should_not_paint</p></template>\
                      </body></html>";
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     // parse returns an UncascadedDocument; extract its DOM, then cascade, layout, and paint.
     let mut doc = uncascaded.dom;
@@ -1744,11 +1737,7 @@ fn img_element_paints_its_decoded_pixels() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let url = url::Url::parse("file:///x.png").unwrap();
-    let decoded = Arc::new(DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    });
+    let decoded = Arc::new(DecodedImage::new(1, 1, vec![255, 0, 0, 255]));
     let requested_sizes = Arc::new(std::sync::Mutex::new(Vec::new()));
     let pixel_source = OneImageSource(url, decoded, Arc::clone(&requested_sizes));
 
@@ -1923,11 +1912,7 @@ fn html_inline_svg_stylesheet_opacity_groups_the_complete_root() {
     use raikiri_html::{ParseOptions, parse};
 
     let html = br#"<html><body><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><style>svg { opacity:0.25 }</style><rect width="10" height="10" fill="red"/></svg></body></html>"#;
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     assert_eq!(uncascaded.stylesheet_sources.len(), 1);
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
@@ -1960,11 +1945,7 @@ fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
     use raikiri_html::{ParseOptions, parse};
 
     let html = br#"<html><body><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="opacity:.5"><style>rect { opacity:inherit }</style><rect width="10" height="10" fill="red"/></svg></body></html>"#;
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
@@ -1996,11 +1977,7 @@ fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
     use raikiri_html::{ParseOptions, parse};
 
     let html = br#"<html><body><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="opacity:.5;background-color:rgba(0,0,255,.5)"><rect width="5" height="10" fill="red"/></svg></body></html>"#;
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
@@ -2038,11 +2015,7 @@ fn html_inline_svg_host_transparent_background_suppresses_source_background() {
     use raikiri_html::{ParseOptions, parse};
 
     let html = br#"<html><head><style>svg { background-color: transparent !important }</style></head><body><svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><style>svg { background-color: blue }</style></svg></body></html>"#;
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
@@ -2172,11 +2145,7 @@ fn img_padding_percentage_resolves_against_width_not_height() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let url = url::Url::parse("file:///pad.png").unwrap();
-    let decoded = Arc::new(DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![0, 255, 0, 255],
-    });
+    let decoded = Arc::new(DecodedImage::new(1, 1, vec![0, 255, 0, 255]));
     let pixel_source = OneImageSource(url, decoded);
 
     let mut scene = Scene::new();
@@ -2257,11 +2226,7 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     let url = url::Url::parse("file:///ch-pad.png").unwrap();
-    let decoded = Arc::new(DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![0, 255, 0, 255],
-    });
+    let decoded = Arc::new(DecodedImage::new(1, 1, vec![0, 255, 0, 255]));
     let pixel_source = OneImageSource(url, decoded);
     let mut scene = Scene::new();
     paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source)
@@ -2489,11 +2454,7 @@ fn translucent_before_groups_its_box_and_text() {
     use raikiri_html::{ParseOptions, parse};
 
     let html = br#"<html><head><style>p::before{content:'X';opacity:.5;background:red}</style></head><body><p>abc</p></body></html>"#;
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
@@ -2536,11 +2497,7 @@ fn translucent_before_groups_its_box_and_text() {
 fn painted_html(html: &[u8]) -> Scene {
     use raikiri_html::{ParseOptions, parse};
 
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(html, &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
@@ -2553,11 +2510,7 @@ fn painted_html(html: &[u8]) -> Scene {
 fn painted_html_with_ahem(html: &[u8]) -> Scene {
     use raikiri_html::{ParseOptions, parse};
 
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(html, &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
@@ -3218,11 +3171,11 @@ fn paint_with_images_skips_the_content_of_a_singular_root() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 1,
-                height: 1,
-                rgba: vec![255, 0, 0, 255],
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                1,
+                1,
+                vec![255, 0, 0, 255],
+            )))
         }
     }
     let pixel_source = RedPixel;
@@ -3243,11 +3196,7 @@ fn singularly_transformed_before_paints_nothing() {
     use raikiri_html::{ParseOptions, parse};
 
     let html = br#"<html><head><style>p::before{content:'X';display:inline-block;background:red;transform:scale(0)}</style></head><body><p>abc</p></body></html>"#;
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
@@ -3290,15 +3239,7 @@ fn absolute_box_paints_from_its_containing_block_through_static_wrappers() {
     use raikiri_html::{ParseOptions, parse};
 
     let html = br#"<html><head><style>@page{margin:0}body{margin:0}#cb{position:relative;left:40px;top:50px;width:200px;height:200px}#wrapper{margin-left:30px;margin-top:25px}#oof{position:absolute;left:10px;top:15px;width:20px;height:20px;background:red}</style></head><body><div id=cb><div id=wrapper><div id=oof></div></div></div></body></html>"#;
-    let uncascaded = parse(
-        &html[..],
-        &ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .expect("HTML parse succeeds");
+    let uncascaded = parse(&html[..], &ParseOptions::new()).expect("HTML parse succeeds");
     let cascade = raikiri_html::build_cascaded(&uncascaded).expect("cascade succeeds");
     let mut document = uncascaded.dom;
     layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout succeeds");

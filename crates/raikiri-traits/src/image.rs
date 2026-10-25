@@ -14,7 +14,10 @@ use url::Url;
 use crate::vector::VectorImage;
 
 /// Natural image dimensions, independent of the concrete box used by layout.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// The default knows nothing: no width, no height and no ratio.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[non_exhaustive]
 pub struct ImageIntrinsicSize {
     /// Natural width in CSS pixels, when supplied by the source.
     pub width: Option<f32>,
@@ -22,6 +25,17 @@ pub struct ImageIntrinsicSize {
     pub height: Option<f32>,
     /// Natural width divided by natural height, when known.
     pub aspect_ratio: Option<f32>,
+}
+
+impl ImageIntrinsicSize {
+    /// The dimensions a source supplies; any of them may be missing.
+    pub fn new(width: Option<f32>, height: Option<f32>, aspect_ratio: Option<f32>) -> Self {
+        Self {
+            width,
+            height,
+            aspect_ratio,
+        }
+    }
 }
 
 /// Raster viewport requested by the paint stage, in CSS pixels.
@@ -51,6 +65,7 @@ impl ImageVectorRequest {
 
 /// Decoded raster image: straight (non-premultiplied) RGBA8 pixels.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct DecodedImage {
     /// Pixel width.
     pub width: u32,
@@ -58,6 +73,18 @@ pub struct DecodedImage {
     pub height: u32,
     /// `width * height * 4` bytes, row-major, RGBA8, straight alpha.
     pub rgba: Vec<u8>,
+}
+
+impl DecodedImage {
+    /// An image of `width` x `height` pixels held in `rgba`, which must hold
+    /// `width * height * 4` bytes.
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            rgba,
+        }
+    }
 }
 
 /// Paint-time access to images already resolved via

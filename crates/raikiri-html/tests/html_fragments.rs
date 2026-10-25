@@ -6,11 +6,7 @@ const HTML_NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 
 fn parse(markup: &str, context: &str, namespace: &str) -> raikiri_html::UncascadedDocument {
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     parse_fragment(markup.as_bytes(), &options, context, namespace, true).unwrap()
 }
 

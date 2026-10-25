@@ -27,11 +27,7 @@ fn collect(
 }
 
 fn fixture(markup: &str) -> (Document, raikiri_style::CascadeResult) {
-    let options = raikiri_html::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = raikiri_html::ParseOptions::new();
     let foreign = raikiri_html::parse(markup.as_bytes(), &options)
         .unwrap()
         .dom;
@@ -993,10 +989,10 @@ impl raikiri_traits::ReplacedResolver for ReviewIntrinsicResolver {
         &self,
         _request: raikiri_traits::ResolverRequest<'_>,
     ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
-        Ok(raikiri_traits::ResolvedIntrinsic {
-            intrinsic: raikiri_traits::IntrinsicBox::new(20.0, 10.0),
-            disposition: raikiri_traits::ResolveDisposition::Ok,
-        })
+        Ok(raikiri_traits::ResolvedIntrinsic::new(
+            raikiri_traits::IntrinsicBox::new(20.0, 10.0),
+            raikiri_traits::ResolveDisposition::Ok,
+        ))
     }
 }
 

@@ -38,11 +38,7 @@ fn public_layout_with_named_leaf(
     named_leaf: bool,
 ) -> Result<LayoutStatus, raikiri::RenderError> {
     let html = nested_html(layout_depth, display, named_leaf);
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = raikiri::ParseOptions::new();
     let document = parse_html(html.as_bytes(), &options).expect("deep document parses");
     let mut defaults = PageDefaults::default();
     defaults.page_box = PageBox::new();

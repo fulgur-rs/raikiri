@@ -820,11 +820,7 @@ impl SvgDocument {
             }
         }
 
-        Ok(DecodedImage {
-            width,
-            height,
-            rgba: pixels,
-        })
+        Ok(DecodedImage::new(width, height, pixels))
     }
 
     /// Draws the SVG into `pixels`, a transparent buffer of `width` × `height`

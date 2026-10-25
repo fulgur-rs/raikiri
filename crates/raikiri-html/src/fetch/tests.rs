@@ -24,12 +24,12 @@ fn byte_cap_violations_become_resource_limit_warnings() {
             actual: 2,
         },
     ] {
-        let violation = PolicyViolation {
-            kind: ResourceKind::Image,
-            url: url("https://example.test/a.png"),
+        let violation = PolicyViolation::new(
+            ResourceKind::Image,
+            url("https://example.test/a.png"),
             violation_type,
-            details: String::new(),
-        };
+            String::new(),
+        );
         assert!(matches!(
             policy_violation_warning_kind(&violation, ResourceKind::Image),
             WarningKind::ResourceLimitExceeded {
@@ -43,12 +43,12 @@ fn byte_cap_violations_become_resource_limit_warnings() {
 
 #[test]
 fn other_violations_are_reported_sanitized() {
-    let violation = PolicyViolation {
-        kind: ResourceKind::ExternalStylesheet,
-        url: url("https://example.test/a.css?token=secret"),
-        violation_type: ViolationType::HostNotAllowed,
-        details: "provider text with secret".to_owned(),
-    };
+    let violation = PolicyViolation::new(
+        ResourceKind::ExternalStylesheet,
+        url("https://example.test/a.css?token=secret"),
+        ViolationType::HostNotAllowed,
+        "provider text with secret".to_owned(),
+    );
     let WarningKind::PolicyWarning { violation } =
         policy_violation_warning_kind(&violation, ResourceKind::ExternalStylesheet)
     else {
@@ -85,4 +85,36 @@ fn network_error_summaries_omit_provider_details() {
         network_error_summary(&NetworkError::Other("secret".to_owned())),
         "provider returned a network error"
     );
+}
+
+#[test]
+fn an_authored_image_url_resolves_against_the_base() {
+    let base = url("https://example.test/docs/page.html");
+    for (raw, expected) in [
+        ("a.png", Some("https://example.test/docs/a.png")),
+        (
+            "https://images.test/a.png#part",
+            Some("https://images.test/a.png#part"),
+        ),
+        ("  a.png", Some("https://example.test/docs/a.png")),
+    ] {
+        assert_eq!(
+            authored_image_url(raw, Some(&base))
+                .as_ref()
+                .map(Url::as_str),
+            expected,
+            "{raw:?}"
+        );
+    }
+    assert!(authored_image_url("a.png", None).is_none());
+    assert!(authored_image_url("https://images.test/a.png", None).is_some());
+}
+
+#[test]
+fn an_empty_or_fragment_only_image_url_names_no_image() {
+    let base = url("https://example.test/docs/page.html");
+    for raw in ["", "  ", "#", "#target", " #target"] {
+        assert!(authored_image_url(raw, Some(&base)).is_none(), "{raw:?}");
+        assert!(authored_image_url(raw, None).is_none(), "{raw:?}");
+    }
 }

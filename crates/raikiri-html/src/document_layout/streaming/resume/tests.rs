@@ -601,10 +601,10 @@ impl raikiri_traits::ReplacedResolver for FlakyResolver {
         } else {
             raikiri_traits::ResolveDisposition::Ok
         };
-        Ok(raikiri_traits::ResolvedIntrinsic {
-            intrinsic: raikiri_traits::IntrinsicBox::new(20.0, 20.0),
+        Ok(raikiri_traits::ResolvedIntrinsic::new(
+            raikiri_traits::IntrinsicBox::new(20.0, 20.0),
             disposition,
-        })
+        ))
     }
 }
 

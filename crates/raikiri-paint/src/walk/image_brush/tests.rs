@@ -1,11 +1,7 @@
 use super::*;
 
 fn decoded() -> Arc<DecodedImage> {
-    Arc::new(DecodedImage {
-        width: 4,
-        height: 2,
-        rgba: (0..32).collect(),
-    })
+    Arc::new(DecodedImage::new(4, 2, (0..32).collect()))
 }
 
 #[test]
@@ -22,10 +18,7 @@ fn recorded_pixels_survive_cache_drop_and_source_mutation() {
 #[test]
 fn isolated_crops_share_only_the_same_owner_and_rectangle() {
     let first = decoded();
-    let second = Arc::new(DecodedImage {
-        rgba: vec![255; 32],
-        ..first.as_ref().clone()
-    });
+    let second = Arc::new(DecodedImage::new(first.width, first.height, vec![255; 32]));
     let cache = ImageBrushCache::default();
     let crop = PixelCrop {
         x0: 1,
@@ -81,11 +74,7 @@ fn crop_owners_are_released_with_the_paint_cache() {
 
 #[test]
 fn a_whole_brush_does_not_hide_missing_crop_pixels() {
-    let source = Arc::new(DecodedImage {
-        width: 4,
-        height: 2,
-        rgba: vec![255; 8],
-    });
+    let source = Arc::new(DecodedImage::new(4, 2, vec![255; 8]));
     let cache = ImageBrushCache::default();
     let _ = cache.whole(&source);
     assert!(cache.crop(&source, PixelCrop::whole(&source)).is_none());
@@ -117,23 +106,14 @@ fn the_device_grid_follows_the_root_and_paint_transforms() {
     cache.set_root_transform(Affine::translate((0.25, 0.0)));
     assert_eq!(
         cache.device_grid(Affine::scale_non_uniform(1.5, 3.0)),
-        Some(DeviceGrid {
-            scale_x: 3.0,
-            offset_x: 0.5,
-            scale_y: 6.0,
-            offset_y: 0.0,
-        })
+        Some(DeviceGrid::new(3.0, 0.5, 6.0, 0.0))
     );
     // A rotation leaves no axis-aligned grid to snap to.
     assert_eq!(cache.device_grid(Affine::rotate(0.5)), None);
 }
 
 fn row(pixels: &[[u8; 4]]) -> DecodedImage {
-    DecodedImage {
-        width: pixels.len() as u32,
-        height: 1,
-        rgba: pixels.concat(),
-    }
+    DecodedImage::new(pixels.len() as u32, 1, pixels.concat())
 }
 
 #[test]
@@ -163,11 +143,7 @@ fn averaging_weighs_each_pixel_by_the_area_a_result_pixel_covers() {
         [170, 85, 0, 255]
     );
     // The rows are averaged the same way.
-    let column = DecodedImage {
-        width: 1,
-        height: 4,
-        rgba: [red, red, blue, blue].concat(),
-    };
+    let column = DecodedImage::new(1, 4, [red, red, blue, blue].concat());
     assert_eq!(
         box_average(&column, [0.0, 0.0, 1.0, 4.0], (1, 1)).unwrap(),
         [128, 0, 128, 255]
@@ -183,11 +159,7 @@ fn averaging_runs_over_both_axes_at_once() {
     let red = [255, 0, 0, 255];
     let green = [0, 255, 0, 255];
     let blue = [0, 0, 255, 255];
-    let image = DecodedImage {
-        width: 2,
-        height: 2,
-        rgba: [red, red, blue, green].concat(),
-    };
+    let image = DecodedImage::new(2, 2, [red, red, blue, green].concat());
     let whole = [0.0, 0.0, 2.0, 2.0];
     assert_eq!(
         box_average(&image, whole, (1, 1)).unwrap(),
@@ -220,11 +192,7 @@ fn averaging_a_region_past_the_image_uses_the_pixels_inside() {
         box_average(&image, [1.0, 0.0, 3.0, 1.0], (2, 1)).unwrap(),
         [0, 255, 0, 255, 0, 0, 0, 0]
     );
-    let column = DecodedImage {
-        width: 1,
-        height: 2,
-        rgba: image.rgba.clone(),
-    };
+    let column = DecodedImage::new(1, 2, image.rgba.clone());
     assert_eq!(
         box_average(&column, [0.0, 1.0, 1.0, 3.0], (1, 2)).unwrap(),
         [0, 255, 0, 255, 0, 0, 0, 0]
@@ -265,10 +233,7 @@ fn averaging_gives_nothing_without_pixels_to_average() {
         assert!(box_average(&image, region, (1, 1)).is_none(), "{region:?}");
     }
     // A buffer shorter than its size says.
-    let short = DecodedImage {
-        rgba: vec![0; 4],
-        ..image
-    };
+    let short = DecodedImage::new(image.width, image.height, vec![0; 4]);
     assert!(box_average(&short, whole, (1, 1)).is_none());
 }
 

@@ -39,7 +39,7 @@ fn css_viewport_units_preserve_identifiers_strings_urls_and_non_dimensions() {
 
 #[test]
 fn decoded_inline_units_preserve_html_ids_text_and_css_strings() {
-    let mut document = raikiri::parse(br#"<div id="100vw" style="width:100vw;content:'style=&quot;100vw&quot;';height:100vh">100vw</div>"#.as_slice(), &raikiri::ParseOptions {extra_stylesheets:&[], network:None, base_url:None}).unwrap();
+    let mut document = raikiri::parse(br#"<div id="100vw" style="width:100vw;content:'style=&quot;100vw&quot;';height:100vh">100vw</div>"#.as_slice(), &raikiri::ParseOptions::new()).unwrap();
     expand_document_viewport_units(
         &mut document,
         32.0,
@@ -1644,15 +1644,8 @@ fn dynamic_wait_scripts_preserve_document_mode() {
         let prepared =
             dynamic::prepare(&source, &dir.path().join("test.html"), "", config).unwrap();
         assert!(prepared.html.contains("data-ran=\"yes\""));
-        let parsed = raikiri_html::parse(
-            prepared.html.as_bytes(),
-            &raikiri::ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            },
-        )
-        .unwrap();
+        let parsed =
+            raikiri_html::parse(prepared.html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
         assert_eq!(parsed.dom.quirks_mode(), mode);
     }
 }
@@ -2373,11 +2366,7 @@ fn print_probe_preserves_dom_associated_stylesheet_origins() {
         (raikiri_traits::StylesheetKind::Author, (200.0, 100.0)),
     ] {
         let html = "<style>@page{size:200px 100px!important;margin:0}</style>";
-        let opts = raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
+        let opts = raikiri::ParseOptions::new();
         let mut doc = raikiri_html::parse(html.as_bytes(), &opts).unwrap();
         doc.dom
             .add_stylesheet("@page{size:300px 200px!important;margin:0}", kind);
@@ -2405,11 +2394,7 @@ fn viewport_review_rtl_probe_uses_left_page_basis() {
 }
 
 fn parsed_page_viewport(html: &str, width: f32, height: f32) -> (f32, f32) {
-    let opts = raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = raikiri::ParseOptions::new();
     let doc = raikiri_html::parse(html.as_bytes(), &opts).unwrap();
     authored_document_page_viewport(&doc, html, width, height)
 }
@@ -3193,11 +3178,7 @@ fn a_canvas_on_a_later_page_of_another_width_keeps_its_bitmap() {
                 canvas{display:block;width:10px;height:10px}</style>\
                 <div style=\"height:100px\"></div>\
                 <div style=\"page:wide\"><canvas width=\"10\" height=\"10\"></canvas></div>";
-    let green = raikiri_dom::CanvasBitmap {
-        width: 10,
-        height: 10,
-        rgba: [0, 128, 0, 255].repeat(100),
-    };
+    let green = raikiri_dom::CanvasBitmap::new(10, 10, [0, 128, 0, 255].repeat(100));
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
         print_page_margin: false,

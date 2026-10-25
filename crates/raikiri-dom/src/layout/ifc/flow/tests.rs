@@ -324,11 +324,11 @@ fn rebreaking_lines_preserves_inside_marker_image_dimensions() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 8,
-                height: 8,
-                rgba: [255, 0, 0, 255].repeat(64),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                8,
+                8,
+                [255, 0, 0, 255].repeat(64),
+            )))
         }
     }
     let mut fixture = block_fixture(

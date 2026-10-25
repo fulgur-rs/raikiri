@@ -1,8 +1,6 @@
 //! Shared HTTP document resource preparation for screen and print rendering.
 
-use raikiri::{
-    Body, FetchOutcome, Method, NetworkError, NetworkProvider, Request, ResourceKind, Url,
-};
+use raikiri::{FetchOutcome, NetworkError, NetworkProvider, Request, ResourceKind, Url};
 use raikiri_net::{ImageResolver, SystemHttpProvider};
 use raikiri_style::property::BackgroundImage;
 use raikiri_traits::ResolverRequest;
@@ -49,15 +47,7 @@ impl raikiri_dom::FontFaceLoader for NetworkFontLoader<'_> {
             .ok()
             .or_else(|| self.base_url.join(source).ok())?;
         self.provider
-            .fetch(Request {
-                url,
-                method: Method::Get,
-                content_type: None,
-                headers: Vec::new(),
-                body: Body::Empty,
-                signal: None,
-                kind: ResourceKind::Font,
-            })
+            .fetch(Request::new(url, ResourceKind::Font))
             .ok()
             .map(|resource| resource.bytes.to_vec())
     }

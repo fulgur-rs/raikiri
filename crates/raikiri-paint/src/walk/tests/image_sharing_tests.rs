@@ -11,11 +11,11 @@ impl ImagePixelSource for SharedPixels {
 }
 
 fn pixels() -> SharedPixels {
-    SharedPixels(Arc::new(raikiri_traits::DecodedImage {
-        width: 3,
-        height: 3,
-        rgba: (0..36).collect(),
-    }))
+    SharedPixels(Arc::new(raikiri_traits::DecodedImage::new(
+        3,
+        3,
+        (0..36).collect(),
+    )))
 }
 
 fn repeated_scene(style: &str, source: &dyn ImagePixelSource) -> Scene {
@@ -35,15 +35,8 @@ fn scene_for_pages(
     pages: u32,
     paged_entry: bool,
 ) -> Scene {
-    let mut parsed = raikiri_html::parse(
-        html.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(html.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).unwrap();
     parsed
         .dom
@@ -142,16 +135,16 @@ impl ImagePixelSource for ChangingPixels {
 fn one_url_and_size_can_supply_updated_pixels_with_a_new_owner() {
     let source = ChangingPixels {
         images: [
-            Arc::new(raikiri_traits::DecodedImage {
-                width: 1,
-                height: 1,
-                rgba: vec![255, 0, 0, 255],
-            }),
-            Arc::new(raikiri_traits::DecodedImage {
-                width: 1,
-                height: 1,
-                rgba: vec![0, 0, 255, 255],
-            }),
+            Arc::new(raikiri_traits::DecodedImage::new(
+                1,
+                1,
+                vec![255, 0, 0, 255],
+            )),
+            Arc::new(raikiri_traits::DecodedImage::new(
+                1,
+                1,
+                vec![0, 0, 255, 255],
+            )),
         ],
         request: std::cell::Cell::new(0),
     };
@@ -327,16 +320,16 @@ impl ImagePixelSource for SizedPixels {
 #[test]
 fn one_url_can_supply_different_rasters_at_different_sizes() {
     let source = SizedPixels {
-        small: Arc::new(raikiri_traits::DecodedImage {
-            width: 1,
-            height: 1,
-            rgba: vec![255, 0, 0, 255],
-        }),
-        large: Arc::new(raikiri_traits::DecodedImage {
-            width: 2,
-            height: 2,
-            rgba: [0, 0, 255, 255].repeat(4),
-        }),
+        small: Arc::new(raikiri_traits::DecodedImage::new(
+            1,
+            1,
+            vec![255, 0, 0, 255],
+        )),
+        large: Arc::new(raikiri_traits::DecodedImage::new(
+            2,
+            2,
+            [0, 0, 255, 255].repeat(4),
+        )),
     };
     let scene = scene_for_html(
         "<body><img src='https://images.test/shared.png' style='width:30px;height:30px'><img src='https://images.test/shared.png' style='width:40px;height:40px'></body>",

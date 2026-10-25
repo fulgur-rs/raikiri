@@ -1195,6 +1195,19 @@ fn margin_box_quotes_repeat_the_last_pair_and_nest_the_auto_marks() {
 }
 
 #[test]
+fn a_margin_box_close_quote_with_no_quote_open_inserts_nothing() {
+    // A margin box counts its own quotes from zero, so a close with no open
+    // before it in the same value is ignored and leaves the depth at zero.
+    assert_eq!(
+        single_content(
+            "@page { margin: 40px; @top-left { content: close-quote 'x' open-quote close-quote; \
+             quotes: '<' '>' } }"
+        ),
+        "x<>"
+    );
+}
+
+#[test]
 fn named_strings_and_running_elements_resolve_to_document_text() {
     let mut doc = engine_document();
     let html = doc.append_element(Some(0), "html", Some("display:block"));

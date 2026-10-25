@@ -304,25 +304,22 @@ fn pipeline_returns_aborted_when_resolver_cancels_before_initial_pagination() {
             if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == self.abort_on_call {
                 self.controller.abort();
             }
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(1.0, 1.0),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(1.0, 1.0),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 
-    let controller = raikiri_traits::AbortController::new();
     let resolver = AbortOnResolve {
-        controller: raikiri_traits::AbortController {
-            signal: controller.signal.clone(),
-        },
+        controller: raikiri_traits::AbortController::new(),
         calls: AtomicUsize::new(0),
         abort_on_call: 1,
     };
     let resources = RenderResources::new().replaced_resolver(&resolver);
     let doc = parse("<img src='https://example.invalid/image.png'>");
     let config = LayoutConfig::builder()
-        .signal(Some(controller.signal.clone()))
+        .signal(Some(resolver.controller.signal.clone()))
         .build();
 
     let result = run_pipeline(
@@ -360,18 +357,15 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_scheduled_pagination() 
             if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == self.abort_on_call {
                 self.controller.abort();
             }
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(1.0, 1.0),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(1.0, 1.0),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 
-    let controller = raikiri_traits::AbortController::new();
     let resolver = AbortOnResolve {
-        controller: raikiri_traits::AbortController {
-            signal: controller.signal.clone(),
-        },
+        controller: raikiri_traits::AbortController::new(),
         calls: AtomicUsize::new(0),
         abort_on_call: 3,
     };
@@ -383,7 +377,7 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_scheduled_pagination() 
          <div style='height:30px'></div><div style='height:30px'></div>",
     );
     let config = LayoutConfig::builder()
-        .signal(Some(controller.signal.clone()))
+        .signal(Some(resolver.controller.signal.clone()))
         .build();
 
     let result = run_pipeline(
@@ -424,18 +418,15 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_strict_page_confirmatio
             if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == self.abort_on_call {
                 self.controller.abort();
             }
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(1.0, 1.0),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(1.0, 1.0),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 
-    let controller = raikiri_traits::AbortController::new();
     let resolver = AbortOnResolve {
-        controller: raikiri_traits::AbortController {
-            signal: controller.signal.clone(),
-        },
+        controller: raikiri_traits::AbortController::new(),
         calls: AtomicUsize::new(0),
         abort_on_call: 3,
     };
@@ -452,7 +443,7 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_strict_page_confirmatio
                 .max_document_pages(Some(2))
                 .build(),
         )
-        .signal(Some(controller.signal.clone()))
+        .signal(Some(resolver.controller.signal.clone()))
         .build();
 
     let result = run_pipeline(
@@ -494,10 +485,10 @@ fn pipeline_rechecks_the_page_limit_when_strict_confirmation_changes_page_names(
         ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             let height = if call < 2 { 350.0 } else { 10.0 };
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(10.0, height),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(10.0, height),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 
@@ -897,14 +888,13 @@ fn pipeline_preloads_element_backgrounds_once_then_page_images_in_page_order() {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(request.url.path().to_owned());
             Ok(raikiri_traits::FetchOutcome::Body(
-                raikiri_traits::FetchedResource {
-                    bytes: br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#
+                raikiri_traits::FetchedResource::new(
+                    br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#
                         .as_slice()
                         .into(),
-                    content_type: Some("image/svg+xml".into()),
-                    final_url: request.url,
-                    encoding: None,
-                },
+                    request.url,
+                )
+                .content_type(Some("image/svg+xml".into())),
             ))
         }
     }
@@ -969,12 +959,8 @@ fn pipeline_selects_font_faces_using_layout_media_dimensions() {
         ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
             self.0.lock().unwrap().push(request.url.path().to_owned());
             Ok(raikiri_traits::FetchOutcome::Body(
-                raikiri_traits::FetchedResource {
-                    bytes: super::AHEM.into(),
-                    content_type: Some("font/ttf".into()),
-                    final_url: request.url,
-                    encoding: None,
-                },
+                raikiri_traits::FetchedResource::new(super::AHEM.into(), request.url)
+                    .content_type(Some("font/ttf".into())),
             ))
         }
     }
@@ -1071,16 +1057,13 @@ fn pipeline_honors_cancellation_before_final_page_projection() {
             Err(raikiri_traits::NetworkError::Aborted)
         }
     }
-    let controller = raikiri_traits::AbortController::new();
-    let provider = AbortOnPageBackground(raikiri_traits::AbortController {
-        signal: controller.signal.clone(),
-    });
+    let provider = AbortOnPageBackground(raikiri_traits::AbortController::new());
     let resources = RenderResources::new().network_provider(&provider);
     let doc = parse(
         "<style>@page{size:100px 100px;background-image:url(https://images.test/page.png)}</style><p>text</p>",
     );
     let config = LayoutConfig::builder()
-        .signal(Some(controller.signal.clone()))
+        .signal(Some(provider.0.signal.clone()))
         .build();
     let result = run_pipeline(
         &doc,
@@ -1094,7 +1077,7 @@ fn pipeline_honors_cancellation_before_final_page_projection() {
             resume: None,
         },
     );
-    assert!(controller.signal.is_aborted());
+    assert!(provider.0.signal.is_aborted());
     assert!(matches!(result, Ok(PipelineRun::Aborted)));
 }
 
@@ -1552,15 +1535,31 @@ fn pipeline_caps_a_border_box_auto_body_by_max_height() {
 }
 
 #[test]
-fn pipeline_keeps_the_last_margin_of_a_body_with_min_height() {
-    // A `min-height` keeps the child's block-end margin inside the body.
-    for (min_height, pages) in [("80px", 2), ("0", 1)] {
+fn pipeline_leaves_the_last_margin_outside_a_body_with_min_height() {
+    // Without block-end edges the child's block-end margin adds no page,
+    // whether or not the body has a `min-height`; only a minimum that reaches
+    // past the page does.
+    for (min_height, pages) in [("80px", 1), ("0", 1), ("130px", 2)] {
         let doc = parse(&format!(
             "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;min-height:{min_height}}}</style>\
              <div style='height:20px;margin-bottom:100px'>x</div>"
         ));
         assert_eq!(run(&doc).slices.len(), pages, "{min_height}");
     }
+}
+
+#[test]
+fn pipeline_gives_the_head_no_room_when_a_rule_sizes_every_element() {
+    // `* { height: 100% }` reaches `<head>`, which has no box. The 100px body
+    // fills the first page, and the 300% child that overflows it continues on
+    // the second, as the reference prints it.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} \
+         *{box-sizing:border-box;margin:0;padding:0;height:100%} \
+         body{border:solid orange 10px;padding:10px} div{border:solid gray 10px;height:300%}</style>\
+         <div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
 }
 
 #[test]

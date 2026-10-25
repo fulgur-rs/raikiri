@@ -82,12 +82,10 @@ impl NetworkProvider for Site {
             .map(|(_, reply)| reply.clone())
             .ok_or(NetworkError::Http(404))?;
         match reply {
-            Reply::Body(bytes, content_type) => Ok(FetchOutcome::Body(FetchedResource {
-                bytes: bytes.into(),
-                content_type: Some(content_type.into()),
-                final_url: request.url,
-                encoding: None,
-            })),
+            Reply::Body(bytes, content_type) => Ok(FetchOutcome::Body(
+                FetchedResource::new(bytes.into(), request.url)
+                    .content_type(Some(content_type.into())),
+            )),
             Reply::Redirect(location) => Ok(FetchOutcome::Redirect {
                 location: Url::parse(location).unwrap(),
                 status: 302,
@@ -102,12 +100,10 @@ struct Everything(Vec<u8>);
 
 impl NetworkProvider for Everything {
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: self.0.clone().into(),
-            content_type: Some("image/png".into()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(self.0.clone().into(), request.url)
+                .content_type(Some("image/png".into())),
+        ))
     }
 }
 
@@ -534,11 +530,7 @@ fn the_pixel_source_of_the_page_can_serve_a_picture() {
             (url.host_str() == Some("pixels.test")).then(|| Arc::clone(&self.0))
         }
     }
-    let pixels = Pixels(Arc::new(DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: GREEN.to_vec(),
-    }));
+    let pixels = Pixels(Arc::new(DecodedImage::new(1, 1, GREEN.to_vec())));
     let site = Site::pictures(RED);
     let resources = RenderResources::new()
         .network_provider(&site)

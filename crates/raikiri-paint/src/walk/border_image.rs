@@ -130,16 +130,14 @@ impl<'a> BorderImage<'a> {
             return true;
         };
         let Some(decoded) = decoded_at(pixel_source, &url, raster_size(&geometry)) else {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
+            warnings.push(RenderWarning::new(
+                WarningKind::ResourceFallback {
                     kind: raikiri_traits::ResourceKind::Image,
                     url: Some(redacted_image_url(&url)),
                 },
-                node_id: None,
-                details:
-                    "CSS border image could not be rasterized; the border styles were painted instead"
-                        .into(),
-            });
+                "CSS border image could not be rasterized; the border styles were painted instead"
+                    .into(),
+            ));
             return false;
         };
         // Decoded pixels per image unit.

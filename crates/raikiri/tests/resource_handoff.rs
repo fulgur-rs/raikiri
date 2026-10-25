@@ -48,22 +48,18 @@ struct FixedResolver {
 impl ReplacedResolver for FixedResolver {
     fn resolve(&self, request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
         self.seen.lock().unwrap().push(request.url().clone());
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(48.0, 24.0),
-            disposition: ResolveDisposition::Fallback {
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(48.0, 24.0),
+            ResolveDisposition::Fallback {
                 reason: "test placeholder".into(),
             },
-        })
+        ))
     }
 }
 
 impl ImagePixelSource for FixedResolver {
     fn get_decoded(&self, _url: &Url) -> Option<Arc<DecodedImage>> {
-        Some(Arc::new(DecodedImage {
-            width: 1,
-            height: 1,
-            rgba: vec![0, 0, 0, 0],
-        }))
+        Some(Arc::new(DecodedImage::new(1, 1, vec![0, 0, 0, 0])))
     }
 }
 
@@ -221,12 +217,10 @@ struct OversizedStylesheetProvider {
 impl NetworkProvider for OversizedStylesheetProvider {
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
         self.requests.lock().unwrap().push(request.clone());
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: Bytes::from_static(b"12345"),
-            content_type: Some("text/css".into()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(Bytes::from_static(b"12345"), request.url)
+                .content_type(Some("text/css".into())),
+        ))
     }
 }
 
@@ -279,12 +273,10 @@ struct OneByteProvider {
 impl NetworkProvider for OneByteProvider {
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
         self.requests.lock().unwrap().push(request.clone());
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: Bytes::from_static(b"x"),
-            content_type: Some("text/css".into()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(Bytes::from_static(b"x"), request.url)
+                .content_type(Some("text/css".into())),
+        ))
     }
 }
 
@@ -377,20 +369,16 @@ struct SuccessfulImageProvider;
 
 impl ReplacedResolver for SuccessfulImageProvider {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(1.0, 1.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(1.0, 1.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 
 impl ImagePixelSource for SuccessfulImageProvider {
     fn get_decoded(&self, _url: &Url) -> Option<Arc<DecodedImage>> {
-        Some(Arc::new(DecodedImage {
-            width: 1,
-            height: 1,
-            rgba: vec![0, 0, 0, 0],
-        }))
+        Some(Arc::new(DecodedImage::new(1, 1, vec![0, 0, 0, 0])))
     }
 }
 
@@ -532,12 +520,10 @@ impl NetworkProvider for RedirectChainNetwork {
                 location: Url::parse(next).unwrap(),
                 status: 302,
             }),
-            Some(None) => Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from_static(b"final { color: blue }"),
-                content_type: Some("text/css".to_owned()),
-                final_url: request.url,
-                encoding: None,
-            })),
+            Some(None) => Ok(FetchOutcome::Body(
+                FetchedResource::new(Bytes::from_static(b"final { color: blue }"), request.url)
+                    .content_type(Some("text/css".to_owned())),
+            )),
             None => Err(NetworkError::Other("not found".to_owned())),
         }
     }

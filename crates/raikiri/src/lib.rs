@@ -20,7 +20,7 @@
 //! ```
 //! use raikiri::{build_cascaded, parse, ParseOptions};
 //!
-//! let opts = ParseOptions { extra_stylesheets: &[], network: None, base_url: None };
+//! let opts = ParseOptions::new();
 //! let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
 //! let result = build_cascaded(&doc).expect("the cascade succeeds");
 //! assert!(!result.computed.is_empty(), "cascade populates per-node ComputedValues");

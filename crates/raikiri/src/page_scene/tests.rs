@@ -43,11 +43,7 @@ fn table_scene_geometry_excludes_caption_wrapper_space() {
             "<!doctype html><style>html,body{{margin:0;padding:0}} table{{border-spacing:0;writing-mode:{mode};width:{}px;height:{}px}} caption{{caption-side:{side};margin:0;padding:0;width:{}px;height:{}px}} td{{padding:0;width:{}px;height:{}px}}</style><table id=t><caption id=c></caption><tr><td id=d></td></tr></table>",
             table_size.0, table_size.1, caption_size.0, caption_size.1, table_size.0, table_size.1
         );
-        let opts = ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
+        let opts = ParseOptions::new();
         let uncascaded = parse(html.as_bytes(), &opts).unwrap();
         let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
@@ -94,11 +90,7 @@ fn table_scene_grid_does_not_intersect_a_caption_only_page() {
         let html = format!(
             "<!doctype html><style>html,body{{margin:0;padding:0}} table{{width:40px;height:20px;border-spacing:0}} caption{{width:40px;height:10px;padding:0;margin:0}} td{{padding:0;height:20px}}</style><table id=t>{caption}<tr><td></td></tr></table>"
         );
-        let opts = ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
+        let opts = ParseOptions::new();
         let uncascaded = parse(html.as_bytes(), &opts).unwrap();
         let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
@@ -147,11 +139,7 @@ fn table_scene_grid_does_not_intersect_a_caption_only_page() {
 /// the post-layout Document and CascadeResult. Shared smoke-test setup
 /// for build_page_scene.
 fn hello_world_post_layout() -> (Document, CascadeResult) {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let uncascaded = parse(&b"<p>Hi</p>"[..], &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
@@ -221,11 +209,7 @@ fn build_page_scene_populates_metadata_from_hello_world() {
 #[test]
 fn build_page_scene_is_empty_for_a_hidden_root() {
     let (dom, _) = hello_world_post_layout();
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let hidden = parse(
         &b"<html style='display:none'><style>@page { @top-left { content: \"A\" } }</style><p>Hi</p>"[..],
         &opts,
@@ -245,11 +229,7 @@ fn build_page_scene_is_empty_for_a_hidden_root() {
 /// non-test `TrackedMap::insert` call site.
 #[test]
 fn build_page_scene_consumes_cascaded_margin_box_rules() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let uncascaded = parse(
         &b"<html><head><style>@page { @top-left { content: \"A\" } }</style></head><body>Hi</body></html>"[..],
         &opts,
@@ -352,11 +332,7 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
             (8.0, 8.0),
         ),
     ] {
-        let opts = ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
+        let opts = ParseOptions::new();
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
         let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
@@ -393,11 +369,7 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
 /// margins collapse to max(8, 5) = 8, which layout already applies.
 #[test]
 fn body_margin_lone_5px_collapses_to_8px() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let html = "<div id=a style='margin:5px; width:10px; height:10px'></div>";
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
@@ -468,11 +440,7 @@ fn rasterize_rejects_oversized_direct_page_box() {
 /// Root margins stay in fragment coordinates and never collapse with body.
 #[test]
 fn html_margins_are_already_in_the_fragment_coordinates() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let html = "<!DOCTYPE html><style>html{margin:10px 0 0 4%}</style>\
         <div id=a style='margin-top:30px; height:10px'></div>";
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
@@ -512,11 +480,7 @@ fn body_offset_is_finite_when_margins_do_not_collapse() {
         "<!-- lead --><div id=b style='margin-top:10px'></div>",
         "<style>html{border:2px solid} body{margin-top:8px}</style><div id=b></div>",
     ] {
-        let opts = ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
+        let opts = ParseOptions::new();
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
         let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
@@ -541,11 +505,7 @@ const FONT_DIR: &str = concat!(
 /// Parse the HTML, switch the inline engine on, lay it out on one A4 page,
 /// and build the page scene.
 fn scene_with_engine(html: &str) -> (Document, CascadeResult, PageScene) {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
@@ -650,11 +610,7 @@ fn many_sibling_inline_boxes_build_a_page_scene_within_two_seconds() {
     }
     html.push_str("</div>");
 
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
@@ -688,11 +644,7 @@ fn many_sibling_text_nodes_build_a_page_scene_within_two_seconds() {
     }
     html.push_str("</div>");
 
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
@@ -743,11 +695,7 @@ fn a_later_page_gets_only_the_lines_and_pieces_below_its_top() {
 /// `content_origin_y` plumbing that the single-page helper leaves at zero.
 #[test]
 fn build_page_scene_for_page_splits_tall_content_across_pages() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let html = concat!(
         "<div id=top style='height:10px'></div>",
         "<div style='height:2000px'></div>",
@@ -828,11 +776,7 @@ fn build_page_scene_for_page_splits_tall_content_across_pages() {
 /// elsewhere. `content_origin_y` stays zero for a first-page extraction.
 #[test]
 fn build_page_scene_for_page_named_attaches_name_and_landscape() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let uncascaded = parse(
         &b"<html><head><style>@page { size: 300px 50px }</style></head><body>Hi</body></html>"[..],
         &opts,
@@ -918,15 +862,7 @@ fn page_scene_projects_vertical_blocks_onto_their_own_pages() {
         let markup = format!(
             "<!doctype html><style>html{{writing-mode:{mode}}}body{{margin:0}}div{{width:800px;height:600px}}</style><div id=first></div><div id=second></div><div id=fixed style='position:fixed;left:20px;top:10px;width:10px;height:5px'></div>"
         );
-        let uncascaded = parse(
-            markup.as_bytes(),
-            &ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            },
-        )
-        .expect("parse");
+        let uncascaded = parse(markup.as_bytes(), &ParseOptions::new()).expect("parse");
         let cascade = build_cascaded(&uncascaded).expect("cascade");
         let mut dom = uncascaded.dom;
         let mut page = PageBox::new();
@@ -977,15 +913,7 @@ fn page_scene_maps_vertical_text_lines_to_physical_rectangles() {
             "<!doctype html><style>html{{writing-mode:{mode}}}body{{margin:0;font:10px/10px Ahem}}p{{margin:0;height:10px}}</style><p>{}</p>",
             vec!["X"; 100].join(" ")
         );
-        let uncascaded = parse(
-            markup.as_bytes(),
-            &ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            },
-        )
-        .expect("parse");
+        let uncascaded = parse(markup.as_bytes(), &ParseOptions::new()).expect("parse");
         let cascade = build_cascaded(&uncascaded).expect("cascade");
         let mut dom = uncascaded.dom;
         dom.set_font_collection(

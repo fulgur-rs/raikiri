@@ -51,6 +51,7 @@ mod fragment;
 pub mod generated_content;
 pub mod image_geometry;
 mod image_resolve;
+mod image_url;
 #[doc(hidden)]
 pub mod inline_svg_style;
 mod margin_boxes;

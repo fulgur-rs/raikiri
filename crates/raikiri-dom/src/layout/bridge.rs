@@ -546,6 +546,13 @@ fn apply_computed_to_style_in_session_inner(
                 raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(AlignItems::START)),
             );
         }
+        if settled::is_sized_through_block_stretch(doc, cascade, idx, cv, &settled_styles) {
+            settled_styles[idx].justify_self = Some(AlignItems::START);
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(AlignItems::START)),
+            );
+        }
         if settled::is_stretched_by_keyword_width(doc, cascade, idx, cv, &settled_styles) {
             settled_styles[idx].align_self = Some(AlignItems::FLEX_START);
             doc.record_pass_override(
@@ -1179,19 +1186,7 @@ fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<AlignItems> {
 fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<AlignItems> {
     match v {
         SelfAlignmentValue::Normal => None,
-        SelfAlignmentValue::Stretch => Some(AlignItems::STRETCH),
-        SelfAlignmentValue::Center => Some(AlignItems::CENTER),
-        SelfAlignmentValue::Start => Some(AlignItems::START),
-        SelfAlignmentValue::End => Some(AlignItems::END),
-        SelfAlignmentValue::FlexStart => Some(AlignItems::FLEX_START),
-        SelfAlignmentValue::FlexEnd => Some(AlignItems::FLEX_END),
-        SelfAlignmentValue::Baseline | SelfAlignmentValue::LastBaseline => {
-            Some(AlignItems::BASELINE)
-        }
-        // cov:ignore: unreachable while SelfAlignmentValue is the 9
-        // variants matched above only; required for its #[non_exhaustive]
-        // contract.
-        _ => None,
+        v => Some(raikiri_layout_style::align_items_of(v)),
     }
 }
 

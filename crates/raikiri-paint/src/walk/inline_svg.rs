@@ -242,14 +242,14 @@ fn mentions_visibility(source: Option<&str>, descendants: &[InlineSvgElementDecl
 
 /// The warning for an image that the root `node_id` could not show.
 fn fallback_warning(node_id: usize, details: &str) -> RenderWarning {
-    RenderWarning {
-        kind: WarningKind::ResourceFallback {
+    RenderWarning::new(
+        WarningKind::ResourceFallback {
             kind: ResourceKind::Image,
             url: None,
         },
-        node_id: Some(NodeId::new(node_id as u64)),
-        details: details.to_owned(),
-    }
+        details.to_owned(),
+    )
+    .node_id(Some(NodeId::new(node_id as u64)))
 }
 
 /// `decoded` when it has pixels. Otherwise it is dropped, with a warning for

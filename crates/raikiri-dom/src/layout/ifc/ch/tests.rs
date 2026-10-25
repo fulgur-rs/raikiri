@@ -12,18 +12,18 @@ const CANVAS_TEST: &[u8] = include_bytes!(concat!(
 ));
 
 fn key(family: &[&str], size: f32) -> ChFontKey {
-    ChFontKey {
-        family: Arc::new(
+    ChFontKey::new(
+        Arc::new(
             family
                 .iter()
                 .map(|name| FontFamilyName::named(*name))
                 .collect(),
         ),
-        size: ComputedLength(size),
-        weight: 400.0,
-        style: CssFontStyle::Normal,
-        optical_sizing: FontOpticalSizing::Auto,
-    }
+        ComputedLength(size),
+        400.0,
+        CssFontStyle::Normal,
+        FontOpticalSizing::Auto,
+    )
 }
 
 fn empty_collection() -> FontCollection {

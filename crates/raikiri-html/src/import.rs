@@ -248,21 +248,16 @@ impl ImportExpander<'_> {
                 format!("stylesheet @import fetch failed for {safe_url}: {summary}"),
             ),
         };
-        self.warnings.push(RenderWarning {
-            kind,
-            node_id: None,
-            details,
-        });
+        self.warnings.push(RenderWarning::new(kind, details));
     }
 
     fn record_import_fallback(&mut self, url: &Url, details: String) {
-        self.warnings.push(RenderWarning {
-            kind: WarningKind::NetworkFallback {
+        self.warnings.push(RenderWarning::new(
+            WarningKind::NetworkFallback {
                 url: redacted_url(url),
             },
-            node_id: None,
             details,
-        });
+        ));
     }
 
     fn resolve_import(

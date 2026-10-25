@@ -259,12 +259,8 @@ fn grid_iterators_borrow_names_and_preserve_cursor() {
 #[test]
 fn unnamed_area_dimensions_are_preserved() {
     let mut cv = ComputedValues::initial();
-    cv.grid_template_areas = GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas {
-        row_strings: vec![],
-        areas: vec![],
-        row_count: 2,
-        column_count: 3,
-    }));
+    cv.grid_template_areas =
+        GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas::new(vec![], vec![], 2, 3)));
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
     assert_eq!(v.grid_template_area_row_count(), 2);
@@ -292,18 +288,18 @@ fn repeat_counts_and_area_coordinates_saturate_like_the_bridge() {
                 tracks: vec![S::Breadth(B::Auto)],
             })],
         }));
-        cv.grid_template_areas = GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas {
-            row_strings: vec![],
-            row_count: u32::MAX,
-            column_count: u32::MAX,
-            areas: vec![GridTemplateAreaEntry {
-                name: SmolStr::new("area"),
-                row_start: 1,
-                row_end: u32::MAX,
-                column_start: 1,
-                column_end: u32::MAX,
-            }],
-        }));
+        cv.grid_template_areas = GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas::new(
+            vec![],
+            vec![GridTemplateAreaEntry::new(
+                SmolStr::new("area"),
+                1,
+                u32::MAX,
+                1,
+                u32::MAX,
+            )],
+            u32::MAX,
+            u32::MAX,
+        )));
         let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
         let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
         let mut tracks = v.grid_template_rows().unwrap();

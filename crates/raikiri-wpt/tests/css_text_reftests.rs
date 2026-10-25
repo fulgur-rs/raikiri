@@ -361,15 +361,8 @@ fn is_expected_failure(relative: &str, query: &str) -> bool {
 }
 
 fn declared_variant_queries(html: &str) -> Vec<String> {
-    let parsed = raikiri_html::parse(
-        html.as_bytes(),
-        &raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .expect("parse WPT variant metadata");
+    let parsed = raikiri_html::parse(html.as_bytes(), &raikiri::ParseOptions::new())
+        .expect("parse WPT variant metadata");
     let document = &parsed.dom;
     let mut variants = Vec::new();
     let mut stack = vec![document.root_index()];

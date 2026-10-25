@@ -46,18 +46,18 @@ fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 32,
-                height: 16,
-                rgba: [255, 0, 0, 255].repeat(32 * 16),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                32,
+                16,
+                [255, 0, 0, 255].repeat(32 * 16),
+            )))
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
-            Some(raikiri_traits::ImageIntrinsicSize {
-                width: Some(16.0),
-                height: Some(8.0),
-                aspect_ratio: Some(2.0),
-            })
+            Some(raikiri_traits::ImageIntrinsicSize::new(
+                Some(16.0),
+                Some(8.0),
+                Some(2.0),
+            ))
         }
     }
     let (mut doc, mut cascade, root) = paragraph(
@@ -159,18 +159,18 @@ fn a_replacing_content_image_is_drawn_at_its_object_fit_rect_in_its_box_clip() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 32,
-                height: 16,
-                rgba: [0, 0, 255, 255].repeat(32 * 16),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                32,
+                16,
+                [0, 0, 255, 255].repeat(32 * 16),
+            )))
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
-            Some(raikiri_traits::ImageIntrinsicSize {
-                width: Some(16.0),
-                height: Some(8.0),
-                aspect_ratio: Some(2.0),
-            })
+            Some(raikiri_traits::ImageIntrinsicSize::new(
+                Some(16.0),
+                Some(8.0),
+                Some(2.0),
+            ))
         }
     }
     let (mut doc, cascade, root) = paragraph("", |doc, root| {
@@ -242,11 +242,11 @@ fn translucent_image_only_before_is_a_group() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 1,
-                height: 1,
-                rgba: vec![0, 0, 255, 255],
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                1,
+                1,
+                vec![0, 0, 255, 255],
+            )))
         }
     }
     let (mut doc, cascade, root) = paragraph("", |doc, root| {
@@ -298,18 +298,18 @@ fn before_content_image_scales_raster_pixels_into_its_line_rect() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 32,
-                height: 16,
-                rgba: [0, 0, 255, 255].repeat(32 * 16),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                32,
+                16,
+                [0, 0, 255, 255].repeat(32 * 16),
+            )))
         }
         fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
-            Some(raikiri_traits::ImageIntrinsicSize {
-                width: Some(16.0),
-                height: Some(8.0),
-                aspect_ratio: Some(2.0),
-            })
+            Some(raikiri_traits::ImageIntrinsicSize::new(
+                Some(16.0),
+                Some(8.0),
+                Some(2.0),
+            ))
         }
     }
     let (mut doc, cascade, root) = paragraph("", |doc, root| {

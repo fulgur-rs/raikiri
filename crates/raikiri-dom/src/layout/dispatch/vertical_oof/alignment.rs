@@ -16,10 +16,15 @@
 //! again, in every axis in which both insets are definite and no margin is
 //! `auto`, with the alignment property and the start edge of that axis.
 //! Sizes are left as Taffy found them, and so are the axes in which an inset
-//! is `auto`, which the static position handles. The scrollable overflow
-//! Taffy merged from the boxes is recomputed for their new positions.
+//! is `auto`, which the static position handles, except where a `safe`
+//! static alignment falls back to the start edge of an axis that runs from
+//! right to left or from bottom to top: Taffy falls back to the left or top
+//! edge. The scrollable overflow Taffy merged from the boxes is recomputed
+//! for their new positions.
 
-use crate::layout::protocol::{NodeId, OofPositioningArea};
+use crate::layout::protocol::{
+    AxisStaticEdge, AxisStaticPosition, NodeId, OofPositioningArea, StaticAlignSafety,
+};
 use raikiri_layout_geometry::{Edges, Line, Point, Size};
 use raikiri_layout_style::values::{
     AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, Direction, MaybeResolve, Overflow,
@@ -208,6 +213,64 @@ impl AxisBox {
     }
 }
 
+/// The border-box start of a box whose insets are both `auto` in an axis that
+/// runs from right to left or from bottom to top, when it aligns `safe` at
+/// `static_position` and its margin box of `margin_box` overflows the
+/// inset-modified containing block: the box is aligned to the end edge of that
+/// block, which is the start edge of the axis, rather than to the left or top
+/// edge Taffy falls back to. `area` is the positioning area in border-box
+/// coordinates.
+///
+/// The inset-modified containing block is resolved from the static position as
+/// Taffy does (<https://drafts.csswg.org/css-position-3/#resolving-insets>).
+fn safe_static_location(
+    static_position: AxisStaticPosition,
+    area: Line<f32>,
+    margin_box: f32,
+    margin_start: f32,
+) -> Option<f32> {
+    if static_position.align.safety != StaticAlignSafety::Safe {
+        return None;
+    }
+    let cb_size = area.end - area.start;
+    let static_area = Line {
+        start: static_position.area.start - area.start,
+        end: static_position.area.end - area.start,
+    };
+    let mut imcb = match static_position.align.keyword {
+        AxisStaticEdge::Start => Line {
+            start: static_area.start,
+            end: cb_size,
+        },
+        AxisStaticEdge::End => Line {
+            start: 0.0,
+            end: static_area.end,
+        },
+        // Centered on the static position area, and bounded by the nearer
+        // edge of the containing block.
+        AxisStaticEdge::Center => {
+            let center = (static_area.start + static_area.end) / 2.0;
+            let to_end = cb_size - center;
+            if center.abs() <= to_end.abs() {
+                Line {
+                    start: 0.0,
+                    end: 2.0 * center,
+                }
+            } else {
+                Line {
+                    start: cb_size - 2.0 * to_end,
+                    end: cb_size,
+                }
+            }
+        }
+    };
+    // Over-constrained: the side of the logical end, the physical start,
+    // shrinks until the block has no room left.
+    imcb.start = imcb.start.min(imcb.end);
+    (margin_box > imcb.end - imcb.start)
+        .then(|| area.start + align_in_line(imcb, margin_box, Edge::End) + margin_start)
+}
+
 /// The scrollable overflow that the boxes in `children` contribute to their
 /// containing block when they are at the positions of their layouts, laid out
 /// against `area`: what Taffy merges for them once it has laid them out.
@@ -377,6 +440,7 @@ fn align_children(
                 style.bridge_justify_self(),
             )
         };
+        let safe_static_positions = tree.context.safe_static_positions.get(&child).copied();
         let mut moved = false;
         for axis in [Axis::Horizontal, Axis::Vertical] {
             let (area_line, inset, margin, alignment, size, scroll) = match axis {
@@ -418,20 +482,41 @@ fn align_children(
                 ),
             };
             let cb_size = area_line.end - area_line.start;
+            let reversed = start_is_end(mode, direction, axis);
+            let (margin_start, margin_end) = match axis {
+                Axis::Horizontal => (layout.margin.left, layout.margin.right),
+                Axis::Vertical => (layout.margin.top, layout.margin.bottom),
+            };
             let (Some(inset_start), Some(inset_end)) = (
                 inset.start.maybe_resolve(cb_size),
                 inset.end.maybe_resolve(cb_size),
             ) else {
+                let static_position = safe_static_positions.map(|positions| match axis {
+                    Axis::Horizontal => positions.x,
+                    Axis::Vertical => positions.y,
+                });
+                let fallback = static_position
+                    .filter(|_| reversed && inset.start.is_auto() && inset.end.is_auto())
+                    .and_then(|position| {
+                        safe_static_location(
+                            position,
+                            area_line,
+                            size + margin_start + margin_end,
+                            margin_start,
+                        )
+                    });
+                if let Some(start) = fallback {
+                    match axis {
+                        Axis::Horizontal => layout.location.x = start,
+                        Axis::Vertical => layout.location.y = start,
+                    }
+                    moved = true;
+                }
                 continue;
             };
             if margin.start.is_auto() || margin.end.is_auto() {
                 continue;
             }
-            let (margin_start, margin_end) = match axis {
-                Axis::Horizontal => (layout.margin.left, layout.margin.right),
-                Axis::Vertical => (layout.margin.top, layout.margin.bottom),
-            };
-            let reversed = start_is_end(mode, direction, axis);
             let own_start_is_end = start_is_end(child_mode, child_direction, axis);
             let aligned = AxisBox {
                 area: area_line,

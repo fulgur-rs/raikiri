@@ -23,10 +23,10 @@ struct FixedIntrinsicResolver {
 impl ReplacedResolver for FixedIntrinsicResolver {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(self.width, 40.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(self.width, 40.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 
@@ -41,11 +41,7 @@ fn defaults(width: f32, height: f32) -> PageDefaults {
 
 #[test]
 fn forced_break_pages_are_returned_in_order() {
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = raikiri::ParseOptions::new();
     let doc = parse_html(
         &br#"<html><body><div style="height:40px">first</div><div style="break-before:page;height:10px">second</div></body></html>"#[..],
         &options,
@@ -77,11 +73,7 @@ fn forced_break_pages_are_returned_in_order() {
 
 #[test]
 fn layout_returns_page_local_links_with_fragment_geometry() {
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = raikiri::ParseOptions::new();
     let doc = parse_html(
         &br##"<html><body><a href="#target">link</a><div style="break-before:page">second</div></body></html>"##[..],
         &options,
@@ -119,11 +111,8 @@ fn layout_resolves_page_geometry_from_page_contexts() {
         @page :left { size: 120px 100px; margin: 7px; }
         @page wide { size: 200px 200px; margin: 20px; }
     "#;
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[stylesheet],
-        network: None,
-        base_url: None,
-    };
+    let sheets = [stylesheet];
+    let options = raikiri::ParseOptions::new().extra_stylesheets(&sheets);
     let doc = parse_html(
         &br#"<html><body><div style="height:90px">first</div><div style="page:wide;break-before:page;height:10px">wide</div><div style="height:180px">tail</div></body></html>"#[..],
         &options,
@@ -181,11 +170,8 @@ fn layout_resolves_named_first_page_before_layout() {
         @page { size: 100px 100px; margin: 5px; }
         @page cover { size: 130px 140px; margin: 11px; }
     "#;
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[stylesheet],
-        network: None,
-        base_url: None,
-    };
+    let sheets = [stylesheet];
+    let options = raikiri::ParseOptions::new().extra_stylesheets(&sheets);
     let doc = parse_html(
         &br#"<html><body><div style="page:cover;height:10px">cover</div><div style="break-before:page;height:10px">next</div></body></html>"#[..],
         &options,
@@ -215,11 +201,8 @@ fn layout_resolves_nested_grid_page_before_layout() {
         @page wide { size: 200px 300px; margin: 5px; }
         @page narrow { size: 120px 180px; margin: 12px; }
     "#;
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[stylesheet],
-        network: None,
-        base_url: None,
-    };
+    let sheets = [stylesheet];
+    let options = raikiri::ParseOptions::new().extra_stylesheets(&sheets);
     let doc = parse_html(
         &br#"<html><body style="margin:0"><div style="display:grid;grid-template-columns:100%;grid-template-rows:auto auto"><div style="grid-row:2;order:0;page:wide;height:10px">wide</div><div style="grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">narrow page text</div></div></body></html>"#[..],
         &options,
@@ -264,11 +247,7 @@ fn layout_preflight_uses_resolved_image_size_for_grid_page_selection() {
         <div style="display:block;grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">narrow page text</div>
     </div><img src="image.png"></div></body>"#[..];
     let base_url = raikiri::Url::parse("https://example.test/assets/").expect("base URL");
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = raikiri::ParseOptions::new();
     let doc = parse_html(html, &options).expect("parse");
     assert!((0..doc.dom().node_count()).any(|node_id| {
         doc.dom()
@@ -339,11 +318,8 @@ fn layout_relayouts_until_page_geometry_converges() {
         @page :left { size: 100px 240px; margin: 0; }
         @page wide { size: 100px 180px; margin: 0; }
     "#;
-    let options = raikiri::ParseOptions {
-        extra_stylesheets: &[stylesheet],
-        network: None,
-        base_url: None,
-    };
+    let sheets = [stylesheet];
+    let options = raikiri::ParseOptions::new().extra_stylesheets(&sheets);
     let doc = parse_html(
         &br#"<html><body><div style="height:200px">first</div><div style="page:wide;break-before:page;height:10px">wide</div><div style="height:300px">tail</div></body></html>"#[..],
         &options,

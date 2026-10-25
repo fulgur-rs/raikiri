@@ -870,7 +870,7 @@ pub enum ComputedTabSize {
 /// let font_size = ComputedLength(20.0);
 ///
 /// // Absolutize each component against this element's computed font-size.
-/// let specified = BorderSpacingValue { horizontal: Length::Em(1.0), vertical: Length::Px(5.0) };
+/// let specified = BorderSpacingValue::new(Length::Em(1.0), Length::Px(5.0));
 /// let computed = resolve_border_spacing(specified, font_size, None, &ctx);
 /// assert_eq!(
 ///     computed,
@@ -1945,6 +1945,7 @@ pub trait NormalLineHeight: Send + Sync {
 ///
 /// Two sources compare equal when they share the same measurer.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct NormalLineHeightSource(pub std::sync::Arc<dyn NormalLineHeight>);
 
 impl NormalLineHeightSource {
@@ -2455,7 +2456,7 @@ pub fn resolve_tab_size(
 /// let font_size = ComputedLength(40.0);
 ///
 /// // Clamp negative derived values to zero (WPT computed-value case).
-/// let specified = BorderSpacingValue { horizontal: Length::Em(-0.5), vertical: Length::Em(0.5) };
+/// let specified = BorderSpacingValue::new(Length::Em(-0.5), Length::Em(0.5));
 /// // NOTE: parsing rejects `-0.5em`, so the pipeline cannot reach this case.
 /// // This doctest checks the clamp itself, not a parsed input.
 /// let computed = resolve_border_spacing(specified, font_size, None, &ctx);

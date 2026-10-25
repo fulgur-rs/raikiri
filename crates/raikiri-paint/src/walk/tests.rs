@@ -561,11 +561,7 @@ fn border_radius_paint_keeps_both_axes_and_percentages() {
 
 #[test]
 fn background_image_geometry_covers_supported_size_and_position_forms() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     // Construct the non-exhaustive computed position values through the
     // real parser/cascade boundary rather than bypassing their visibility
     // contract with struct literals.
@@ -697,11 +693,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
         None,
     );
-    let zero = raikiri_traits::DecodedImage {
-        width: 0,
-        height: 1,
-        rgba: Vec::new(),
-    };
+    let zero = raikiri_traits::DecodedImage::new(0, 1, Vec::new());
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
@@ -731,11 +723,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
 
 #[test]
 fn background_image_dimensions_resolve_size_against_intrinsic_metadata() {
-    let intrinsic = raikiri_traits::ImageIntrinsicSize {
-        width: Some(2.0),
-        height: Some(1.0),
-        aspect_ratio: Some(2.0),
-    };
+    let intrinsic = raikiri_traits::ImageIntrinsicSize::new(Some(2.0), Some(1.0), Some(2.0));
 
     assert_eq!(
         background_image_dimensions(&ComputedBackgroundSize::Cover, 100.0, 50.0, intrinsic),
@@ -831,11 +819,7 @@ fn background_image_dimensions_resolve_size_against_intrinsic_metadata() {
 
 #[test]
 fn ratio_only_auto_background_uses_positioning_area_as_default_size() {
-    let intrinsic = raikiri_traits::ImageIntrinsicSize {
-        width: None,
-        height: None,
-        aspect_ratio: Some(2.0),
-    };
+    let intrinsic = raikiri_traits::ImageIntrinsicSize::new(None, None, Some(2.0));
     let auto = ComputedBackgroundSize::Explicit {
         width: ComputedLengthPercentageOrAuto::Auto,
         height: ComputedLengthPercentageOrAuto::Auto,
@@ -1180,15 +1164,8 @@ fn css_transforms_move_painted_box_corners_about_the_authored_origin() {
 }
 
 fn transform_markup_scene(markup: &str) -> Scene {
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
@@ -1590,14 +1567,14 @@ fn replaced_inline_image_composes_own_and_ancestor_transform() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 4,
-                height: 4,
-                rgba: [0u8, 128, 0, 255].repeat(16),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                4,
+                4,
+                [0u8, 128, 0, 255].repeat(16),
+            )))
         }
     }
-    let mut parsed = raikiri_html::parse("<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0'><img src='https://example.test/green.png' style='width:10px;height:10px;transform:scale(3);transform-origin:0 0'></div>".as_bytes(), &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None }).unwrap();
+    let mut parsed = raikiri_html::parse("<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0'><img src='https://example.test/green.png' style='width:10px;height:10px;transform:scale(3);transform-origin:0 0'></div>".as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
@@ -1622,6 +1599,91 @@ fn replaced_inline_image_composes_own_and_ancestor_transform() {
         .unwrap();
     // 4 source pixels map to 10 CSS pixels, then scale by 3 and 2.
     assert_eq!(&image.transform.as_coeffs()[..4], &[15.0, 0.0, 0.0, 15.0]);
+}
+
+/// A pixel source that reports a natural size for every URL but hands out
+/// `at_size` as the pixels for a concrete paint size.
+struct SizedPixels {
+    at_size: Option<std::sync::Arc<raikiri_traits::DecodedImage>>,
+}
+
+impl ImagePixelSource for SizedPixels {
+    fn get_decoded(&self, _: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        None
+    }
+
+    fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        Some(raikiri_traits::ImageIntrinsicSize::new(
+            Some(10.0),
+            Some(10.0),
+            Some(1.0),
+        ))
+    }
+
+    fn get_decoded_at_size(
+        &self,
+        _: &url::Url,
+        _: ImageRasterSize,
+        _: Option<u64>,
+    ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        self.at_size.clone()
+    }
+}
+
+/// The warning details painting `markup` reports against `pixels`.
+fn image_warning_details(markup: &str, pixels: &SizedPixels) -> Vec<String> {
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_images_and_warnings(
+        &mut scene,
+        &parsed.dom,
+        &cascade,
+        PageBox::A4,
+        pixels,
+    )
+    .expect("paint succeeds")
+    .into_iter()
+    .map(|warning| warning.details)
+    .collect()
+}
+
+#[test]
+fn an_image_without_pixels_at_its_object_size_warns() {
+    let details = image_warning_details(
+        "<body style='margin:0'><img src='https://example.test/a.png' style='width:10px;height:10px'>",
+        &SizedPixels { at_size: None },
+    );
+    assert_eq!(
+        details,
+        ["image pixels were unavailable at the requested object size"]
+    );
+}
+
+#[test]
+fn an_image_with_an_empty_raster_warns() {
+    let empty = std::sync::Arc::new(raikiri_traits::DecodedImage::new(0, 0, Vec::new()));
+    let details = image_warning_details(
+        "<body style='margin:0'><img src='https://example.test/a.png' style='width:10px;height:10px'>",
+        &SizedPixels {
+            at_size: Some(empty),
+        },
+    );
+    assert_eq!(details, ["image pixels had an empty raster size"]);
+}
+
+#[test]
+fn a_background_image_without_pixels_warns() {
+    let details = image_warning_details(
+        "<body style='margin:0;width:20px;height:20px;background:url(https://example.test/a.png)'>",
+        &SizedPixels { at_size: None },
+    );
+    assert_eq!(
+        details,
+        ["CSS background image could not be rasterized; the image was skipped"]
+    );
 }
 
 #[test]
@@ -1796,11 +1858,7 @@ fn background_fill_count(scene: &Scene) -> usize {
 
 #[test]
 fn background_repeat_tiles_cover_area_with_clipping() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     let (position, repeat) = background_repeat_fixture("repeat", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
@@ -1857,11 +1915,7 @@ fn background_repeat_tiles_cover_area_with_clipping() {
 
 #[test]
 fn background_no_repeat_paints_single_origin_tile() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     let (position, repeat) = background_repeat_fixture("no-repeat", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
@@ -1900,11 +1954,7 @@ fn background_no_repeat_paints_single_origin_tile() {
 
 #[test]
 fn background_repeat_x_and_y_tile_single_axis() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     let (repeat_x_position, repeat_x) = background_repeat_fixture("repeat-x", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
@@ -1949,11 +1999,7 @@ fn background_repeat_x_and_y_tile_single_axis() {
 
 #[test]
 fn background_repeat_with_offset_covers_both_directions() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     // Origin at 90px/40px: tiling must extend left and up to cover the area,
     // not only right and down from the origin.
     let (position, repeat) = background_repeat_fixture("repeat", "90px 40px");
@@ -1978,11 +2024,7 @@ fn background_repeat_with_offset_covers_both_directions() {
 
 #[test]
 fn background_space_tiles_without_clipping_and_spaces_gaps() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     // Exact fit stays 5 by 5 like `repeat` here.
     let (position, repeat) = background_repeat_fixture("space", "0px 0px");
     let mut scene = Scene::new();
@@ -2045,11 +2087,7 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
 
 #[test]
 fn background_round_rescales_to_whole_tiles() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     let (position, repeat) = background_repeat_fixture("round", "0px 0px");
     // Exact fit keeps the base size.
     let mut exact = Scene::new();
@@ -2111,11 +2149,7 @@ fn background_round_rescales_to_whole_tiles() {
 
 #[test]
 fn background_repeat_rejects_nonfinite_tile_geometry() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(1, 1, vec![255, 0, 0, 255]);
     let (position, repeat) = background_repeat_fixture("repeat", "0px 0px");
     for (image_w, image_h) in [
         (f64::INFINITY, 10.0),
@@ -2157,11 +2191,7 @@ fn background_repeat_rejects_nonfinite_tile_geometry() {
 
 #[test]
 fn background_repeat_tiles_paint_contiguous_pixels() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(1, 1, vec![255, 0, 0, 255]);
     let (repeat_position, repeat) = background_repeat_fixture("repeat", "0px 0px");
     let mut repeat_scene = Scene::new();
     paint_background_image(
@@ -2214,11 +2244,7 @@ fn background_repeat_tiles_paint_contiguous_pixels() {
 
 #[test]
 fn background_origin_positions_independently_from_clip() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]);
     let (position, repeat) = background_repeat_fixture("no-repeat", "0px 0px");
     // Border box 100x50 with 10px borders: padding positioning is inset to
     // (10,10)-(90,40) while painting stays the full border box. The lone tile
@@ -2439,13 +2465,13 @@ fn background_clip_text_warns_and_border_area_masks_images() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
                     255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
                 ],
-            }))
+            )))
         }
     }
     let source = RedPixels;
@@ -2631,11 +2657,7 @@ fn page_and_canvas_backgrounds_separate_paint_and_position_areas() {
 
 #[test]
 fn background_space_and_round_paint_spec_correct_pixels() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(1, 1, vec![255, 0, 0, 255]);
     // `space` with one 2px tile in a 3px positioning width fits once and
     // follows `background-position`; the gap stays transparent.
     let (space_position, space) = background_repeat_fixture("space", "0px 0px");
@@ -2691,11 +2713,7 @@ fn background_space_and_round_paint_spec_correct_pixels() {
 
 #[test]
 fn background_origin_clip_pixel_separation() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(1, 1, vec![255, 0, 0, 255]);
     let (position, repeat) = background_repeat_fixture("no-repeat", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
@@ -2727,11 +2745,7 @@ fn background_origin_clip_pixel_separation() {
 
 #[test]
 fn background_rounded_clip_pixel_corners() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(1, 1, vec![255, 0, 0, 255]);
     let (position, repeat) = background_repeat_fixture("no-repeat", "0px 0px");
     let painting = kurbo::Rect::new(0.0, 0.0, 20.0, 20.0);
     let rounded = rounded_background_path(
@@ -2870,13 +2884,13 @@ fn background_page_images_ignore_clip_and_empty_area_skips() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
                     255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
                 ],
-            }))
+            )))
         }
     }
     let source = RedPixels;
@@ -3025,13 +3039,13 @@ fn background_page_image_origin_starts_at_the_page_box_inside_the_margins() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
                     255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
                 ],
-            }))
+            )))
         }
     }
     let paper = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
@@ -3139,13 +3153,13 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
                     255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
                 ],
-            }))
+            )))
         }
     }
     let source = RedPixels;
@@ -3213,11 +3227,11 @@ fn background_rounded_color_and_image_are_clipped_to_the_curve_together() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: [0, 0, 255, 255].repeat(4),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                [0, 0, 255, 255].repeat(4),
+            )))
         }
     }
     let border = resolve_border(
@@ -3348,11 +3362,11 @@ fn fixed_background_layer_is_positioned_in_the_page_area_and_clipped_to_its_box(
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: [255, 0, 0, 255].repeat(4),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                [255, 0, 0, 255].repeat(4),
+            )))
         }
     }
     let border = bordered_sides(2.0, BorderStyle::Solid, BorderColor::CurrentColor);
@@ -3563,11 +3577,11 @@ fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 4,
-                height: 4,
-                rgba: [0, 0, 255, 255].repeat(16),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                4,
+                4,
+                [0, 0, 255, 255].repeat(16),
+            )))
         }
     }
     let (position, repeat) = background_repeat_fixture("no-repeat", "center");
@@ -3783,13 +3797,13 @@ fn background_element_origins_clips_and_rounded_images() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
                     255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
                 ],
-            }))
+            )))
         }
     }
     let source = RedPixels;
@@ -4052,11 +4066,11 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 1,
-                height: 1,
-                rgba: vec![255, 0, 0, 255],
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                1,
+                1,
+                vec![255, 0, 0, 255],
+            )))
         }
     }
     let source = RedPixels;
@@ -4311,11 +4325,11 @@ struct RedMarginPixels;
 
 impl ImagePixelSource for RedMarginPixels {
     fn get_decoded(&self, _: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-        Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-            width: 2,
-            height: 2,
-            rgba: [255, 0, 0, 255].repeat(4),
-        }))
+        Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+            2,
+            2,
+            [255, 0, 0, 255].repeat(4),
+        )))
     }
 }
 
@@ -4636,11 +4650,7 @@ fn aligned_margin_box_text_shadows_include_positioned_glyphs() {
 
 #[test]
 fn background_tiling_edge_cases_cover_defensive_branches() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(1, 1, vec![255, 0, 0, 255]);
     let (position, repeat) = background_repeat_fixture("repeat", "0px 0px");
     // Non-finite positioning with finite painting skips without crashing.
     let mut nonfinite = Scene::new();
@@ -4732,13 +4742,13 @@ fn background_canvas_empty_painting() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: vec![
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
                     255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
                 ],
-            }))
+            )))
         }
     }
     let source = RedPixels;
@@ -4766,11 +4776,7 @@ fn background_canvas_empty_painting() {
 
 #[test]
 fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![255, 0, 0, 255],
-    };
+    let decoded = raikiri_traits::DecodedImage::new(1, 1, vec![255, 0, 0, 255]);
     let (position, space) = background_repeat_fixture("space", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
@@ -5085,11 +5091,7 @@ fn margin_boxes_are_measured_and_drawn_by_the_engine() {
 fn canvas_bitmap_paints_with_object_fit_fill() {
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='2' height='2' style='width:2px;height:2px'></canvas>".as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
+        &raikiri_html::ParseOptions::new(),
     )
     .unwrap();
     // Paint a red 2x2 bitmap.
@@ -5133,11 +5135,7 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
 fn paint_unmaterialized_large_canvas_without_image_pixels() {
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='3334' height='3000' style='width:2px;height:2px'></canvas>".as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
+        &raikiri_html::ParseOptions::new(),
     )
     .unwrap();
     let canvas = {
@@ -5173,11 +5171,7 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
     // object-fit none and overflow visible must show the full bitmap.
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='50' height='100' style='width:25px;height:50px;object-fit:none;object-position:0% 0%;overflow:visible'></canvas>".as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
+        &raikiri_html::ParseOptions::new(),
     )
     .unwrap();
     let canvas = {
@@ -5240,11 +5234,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing() {
     // Blank (never painted) canvases stay transparent without raster pixel storage.
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='2' height='2' style='width:2px;height:2px'></canvas>".as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
+        &raikiri_html::ParseOptions::new(),
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
@@ -5266,11 +5256,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing() {
     // Hidden canvas paints nothing visible but still counts as handled (no fallback).
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='2' height='2' style='width:2px;height:2px;visibility:hidden'></canvas>".as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
+        &raikiri_html::ParseOptions::new(),
     )
     .unwrap();
     let canvas = {
@@ -5308,11 +5294,7 @@ fn canvas_object_fit_variants_all_paint() {
     for fit in ["fill", "contain", "cover", "scale-down"] {
         let mut parsed = raikiri_html::parse(
             format!("<body style='margin:0'><canvas width='4' height='2' style='width:2px;height:2px;object-fit:{fit}'></canvas>").as_bytes(),
-            &raikiri_html::ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            },
+            &raikiri_html::ParseOptions::new(),
         )
         .unwrap();
         let canvas = {
@@ -5351,11 +5333,7 @@ fn canvas_object_fit_variants_all_paint() {
 fn canvas_hidden_overflow_clips_to_content_box() {
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='4' height='4' style='width:2px;height:2px;object-fit:none;object-position:0% 0%;overflow:hidden'></canvas>".as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
+        &raikiri_html::ParseOptions::new(),
     )
     .unwrap();
     let canvas = {
@@ -5394,11 +5372,7 @@ fn canvas_hidden_overflow_clips_to_content_box() {
 fn canvas_zero_bitmap_size_paints_nothing() {
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='0' height='0' style='width:2px;height:2px'></canvas>".as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
+        &raikiri_html::ParseOptions::new(),
     )
     .unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
@@ -5848,11 +5822,11 @@ fn explicit_marker_content_suppresses_legacy_image_paint() {
             &self,
             _: &url::Url,
         ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
-            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 8,
-                height: 8,
-                rgba: [255, 0, 0, 255].repeat(64),
-            }))
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                8,
+                8,
+                [255, 0, 0, 255].repeat(64),
+            )))
         }
     }
     for content in ["none", "'text'"] {
@@ -6491,7 +6465,7 @@ fn review_float_overflow_does_not_extend_the_plain_wrapper_background() {
 fn review_replaced_canvas_paints_its_monolithic_content_once() {
     let mut parsed = raikiri_html::parse(
         "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px;break-before:avoid'></div><canvas id='canvas' width='20' height='150' style='display:block;width:20px;height:150px'></canvas></div></body>".as_bytes(),
-        &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None },
+        &raikiri_html::ParseOptions::new(),
     ).unwrap();
     let canvas = (0..parsed.dom.node_count())
         .find(|&id| parsed.dom.is_canvas_element(id))
@@ -6718,15 +6692,8 @@ fn review_float_text_ink_keeps_joint_exclusion_when_a_break_constraint_is_added(
         let markup = format!(
             "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px;background:green'></div><div style='height:40px;font-family:Ahem;font-size:20px;line-height:20px;color:red'>M M</div><div style='height:1px;{edge}'></div></div></body>"
         );
-        let mut parsed = raikiri_html::parse(
-            markup.as_bytes(),
-            &raikiri_html::ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            },
-        )
-        .unwrap();
+        let mut parsed =
+            raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
         let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../raikiri-dom/tests/data/text-autospace"
@@ -6769,15 +6736,8 @@ fn review_full_width_float_keeps_displaced_text_ink_when_avoidance_is_added() {
         let markup = format!(
             "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:100px;height:40px;background:green'></div><div style='height:60px;font-family:Ahem;font-size:20px;line-height:20px;color:red'>M M</div><div style='height:1px;{edge}'></div></div></body>"
         );
-        let mut parsed = raikiri_html::parse(
-            markup.as_bytes(),
-            &raikiri_html::ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            },
-        )
-        .unwrap();
+        let mut parsed =
+            raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
         let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../raikiri-dom/tests/data/text-autospace"
@@ -6817,15 +6777,8 @@ fn review_body_page_buffers(body_style: &str, content: &str) -> Vec<Vec<u8>> {
     let markup = format!(
         "<!DOCTYPE html><body style='margin:0;background:white;{body_style}'>{content}</body>"
     );
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     let mut page = PageBox::new();
     page.width = 100.0;
@@ -6905,16 +6858,16 @@ impl BorderImagePixels {
     /// A 3×3 opaque image with natural size 3×3.
     fn opaque() -> Self {
         Self {
-            natural: Some(raikiri_traits::ImageIntrinsicSize {
-                width: Some(3.0),
-                height: Some(3.0),
-                aspect_ratio: Some(1.0),
-            }),
-            decoded: Some(raikiri_traits::DecodedImage {
-                width: 3,
-                height: 3,
-                rgba: [0, 255, 0, 255].repeat(9),
-            }),
+            natural: Some(raikiri_traits::ImageIntrinsicSize::new(
+                Some(3.0),
+                Some(3.0),
+                Some(1.0),
+            )),
+            decoded: Some(raikiri_traits::DecodedImage::new(
+                3,
+                3,
+                [0, 255, 0, 255].repeat(9),
+            )),
         }
     }
 }
@@ -7058,20 +7011,12 @@ fn a_border_image_that_cannot_be_rasterized_warns_and_leaves_the_border() {
         ..BorderImagePixels::opaque()
     };
     let empty_pixels = BorderImagePixels {
-        decoded: Some(raikiri_traits::DecodedImage {
-            width: 0,
-            height: 0,
-            rgba: Vec::new(),
-        }),
+        decoded: Some(raikiri_traits::DecodedImage::new(0, 0, Vec::new())),
         ..BorderImagePixels::opaque()
     };
     // Nonzero dimensions over a buffer too short to hold them.
     let short_pixels = BorderImagePixels {
-        decoded: Some(raikiri_traits::DecodedImage {
-            width: 3,
-            height: 3,
-            rgba: vec![255; 8],
-        }),
+        decoded: Some(raikiri_traits::DecodedImage::new(3, 3, vec![255; 8])),
         ..BorderImagePixels::opaque()
     };
     for source in [&no_pixels, &empty_pixels, &short_pixels] {
@@ -7164,16 +7109,16 @@ fn overlapping_slices_share_the_whole_image() {
 /// An opaque 30×30 image with natural size 30×30.
 fn large_border_image_pixels() -> BorderImagePixels {
     BorderImagePixels {
-        natural: Some(raikiri_traits::ImageIntrinsicSize {
-            width: Some(30.0),
-            height: Some(30.0),
-            aspect_ratio: Some(1.0),
-        }),
-        decoded: Some(raikiri_traits::DecodedImage {
-            width: 30,
-            height: 30,
-            rgba: [0, 255, 0, 255].repeat(900),
-        }),
+        natural: Some(raikiri_traits::ImageIntrinsicSize::new(
+            Some(30.0),
+            Some(30.0),
+            Some(1.0),
+        )),
+        decoded: Some(raikiri_traits::DecodedImage::new(
+            30,
+            30,
+            [0, 255, 0, 255].repeat(900),
+        )),
     }
 }
 
@@ -7225,29 +7170,24 @@ fn border_image_parts_that_shrink_are_averaged_to_device_pixels() {
 #[test]
 fn an_averaged_part_keeps_whole_pixels_along_an_axis_that_does_not_shrink() {
     // 21 rows, each a red of its own.
-    let decoded = std::sync::Arc::new(raikiri_traits::DecodedImage {
-        width: 40,
-        height: 21,
-        rgba: (0..21u8)
+    let decoded = std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+        40,
+        21,
+        (0..21u8)
             .flat_map(|row| [row * 10, 0, 0, 255].repeat(40))
             .collect(),
-    });
-    let part = raikiri_dom::image_geometry::BorderImagePart {
-        source: (0.0, 0.0, 40.0, 10.5),
-        area: (0.0, 0.0, 10.0, 10.5),
-        tile_width: 10.0,
-        tile_height: 10.5,
-        x: vec![0.0],
-        y: vec![0.0],
-    };
+    ));
+    let part = raikiri_dom::image_geometry::BorderImagePart::new(
+        (0.0, 0.0, 40.0, 10.5),
+        (0.0, 0.0, 10.0, 10.5),
+        10.0,
+        10.5,
+        vec![0.0],
+        vec![0.0],
+    );
     let crop = pixel_crop(&decoded, (0.0, 0.0), (40.0, 10.5)).unwrap();
     // A mirrored output counts its device pixels the same.
-    let mirrored = DeviceGrid {
-        scale_x: -1.0,
-        offset_x: 10.0,
-        scale_y: 1.0,
-        offset_y: 0.0,
-    };
+    let mirrored = DeviceGrid::new(-1.0, 10.0, 1.0, 0.0);
     let cache = crate::walk::ImageBrushCache::default();
     let averaged =
         |part: &_, grid| averaged_part_brush(&cache, &decoded, part, crop, (1.0, 1.0), grid);
@@ -7270,20 +7210,14 @@ fn an_averaged_part_keeps_whole_pixels_along_an_axis_that_does_not_shrink() {
     );
     // Nothing to average on a vector output, or when no axis shrinks enough.
     assert!(averaged(&part, None).is_none());
-    let wide = raikiri_dom::image_geometry::BorderImagePart {
-        tile_width: 30.0,
-        ..part
-    };
+    let mut wide = part;
+    wide.tile_width = 30.0;
     assert!(averaged(&wide, Some(mirrored)).is_none());
 }
 
 #[test]
 fn pixel_crops_keep_at_least_one_pixel() {
-    let decoded = raikiri_traits::DecodedImage {
-        width: 4,
-        height: 2,
-        rgba: (0..32).collect(),
-    };
+    let decoded = raikiri_traits::DecodedImage::new(4, 2, (0..32).collect());
     let crop = pixel_crop(&decoded, (1.2, 0.0), (1.4, 2.0)).unwrap();
     assert_eq!((crop.width(), crop.height()), (1, 2));
     let brush = crop.brush(&decoded).unwrap();
@@ -7294,11 +7228,7 @@ fn pixel_crops_keep_at_least_one_pixel() {
     // A rectangle past the last pixel holds none.
     assert!(pixel_crop(&decoded, (4.0, 0.0), (5.0, 2.0)).is_none());
     // Pixels missing from the buffer give no brush.
-    let short = raikiri_traits::DecodedImage {
-        width: 4,
-        height: 2,
-        rgba: vec![0; 8],
-    };
+    let short = raikiri_traits::DecodedImage::new(4, 2, vec![0; 8]);
     assert!(PixelCrop::whole(&short).brush(&short).is_none());
 }
 
@@ -7423,15 +7353,8 @@ fn a_viewport_fixed_box_repeats_in_place_on_pages_along_the_x_axis() {
     let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
         <div style='position:fixed;left:0;top:0;width:10px;height:10px;background:green'></div>\
         <div style='width:100px'></div><div style='width:100px'></div></body></html>";
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     let mut page = PageBox::new();
     page.width = 100.0;
@@ -7473,15 +7396,8 @@ fn a_viewport_fixed_box_repeats_in_place_on_pages_along_the_x_axis() {
 fn a_narrower_page_along_the_x_axis_holds_its_band_against_its_right_edge() {
     let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
         <div style='width:100px'></div><div style='width:30px;background:green'></div></body></html>";
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     let mut page = PageBox::new();
     page.width = 100.0;
@@ -7523,15 +7439,8 @@ fn a_page_along_the_x_axis_laid_out_at_its_own_width_is_not_shifted_again() {
     // painted with the first page's width still given for fixed boxes.
     let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
         <div style='width:30px;background:green'></div></body></html>";
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     let mut page = PageBox::new();
     page.width = 60.0;
@@ -7567,15 +7476,8 @@ fn a_page_along_the_x_axis_laid_out_at_its_own_width_is_not_shifted_again() {
 fn a_zero_width_page_area_still_counts_as_laid_out() {
     let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
         @page { margin: 0 30px }</style></head><body style='margin:0'><div style='width:30px'></div></body></html>";
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     assert_eq!(parsed.dom.laid_out_page_area_width(), None);
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     let mut page = PageBox::new();
@@ -7590,15 +7492,8 @@ fn a_viewport_fixed_box_keeps_its_page_position_on_a_narrower_page_along_the_x_a
     let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
         <div style='width:100px'></div><div style='width:30px'></div>\
         <div style='position:fixed;left:0;top:0;width:10px;height:10px;background:green'></div></body></html>";
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     let mut page = PageBox::new();
     page.width = 100.0;
@@ -7636,15 +7531,8 @@ fn a_viewport_fixed_box_keeps_its_page_position_on_a_narrower_page_along_the_x_a
 /// Lay `markup` out with the Ahem font on `page` and paint page
 /// `page_index` into a buffer of that page's size.
 fn paint_ahem_page(markup: &str, page: PageBox, page_index: usize) -> Vec<u8> {
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     let dir = std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../raikiri-dom/tests/data/text-autospace"
@@ -8153,15 +8041,8 @@ fn clip_layer_bounds(scene: &Scene) -> Vec<Rect> {
 /// a raster output of `device_scale` device pixels per CSS pixel, or for a
 /// vector output with `None`.
 fn paged_scene(markup: &str, device_scale: Option<f32>) -> Scene {
-    let mut parsed = raikiri_html::parse(
-        markup.as_bytes(),
-        &raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let mut parsed =
+        raikiri_html::parse(markup.as_bytes(), &raikiri_html::ParseOptions::new()).unwrap();
     parsed.dom.set_font_collection(
         raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("collection"),
     );
@@ -8210,28 +8091,14 @@ fn a_column_clip_grows_outward_across_the_columns_only() {
     assert_eq!(
         snap_column_clip_outward(
             Rect::new(274.5, 8.5, 525.3, 88.25),
-            Some(DeviceGrid {
-                scale_x: 2.0,
-                offset_x: 0.5,
-                scale_y: 2.0,
-                offset_y: 0.5,
-            }),
+            Some(DeviceGrid::new(2.0, 0.5, 2.0, 0.5)),
             CLOSED
         ),
         Rect::new(274.25, 8.5, 525.75, 88.25)
     );
     // A mirrored grid grows the same device pixels outward.
     assert_eq!(
-        snap_column_clip_outward(
-            clip,
-            Some(DeviceGrid {
-                scale_x: -1.0,
-                offset_x: 800.0,
-                scale_y: 1.0,
-                offset_y: 0.0,
-            }),
-            CLOSED
-        ),
+        snap_column_clip_outward(clip, Some(DeviceGrid::new(-1.0, 800.0, 1.0, 0.0)), CLOSED),
         Rect::new(274.0, 8.5, 526.0, 88.25)
     );
     // Without a grid, or with one that cannot place the edges, it is exact.
@@ -8267,36 +8134,21 @@ fn a_column_clip_grows_outward_at_the_block_edges_no_other_fragment_lies_behind(
         Rect::new(0.0, 80.0, 10.0, 96.0)
     );
     // Whole device pixels at 2 per CSS pixel, 0.5 device pixel in.
-    let doubled = Some(DeviceGrid {
-        scale_x: 2.0,
-        offset_x: 0.5,
-        scale_y: 2.0,
-        offset_y: 0.5,
-    });
+    let doubled = Some(DeviceGrid::new(2.0, 0.5, 2.0, 0.5));
     assert_eq!(
         snap_column_clip_outward(Rect::new(0.0, 80.3, 10.0, 96.3), doubled, open(true, true)),
         Rect::new(-0.25, 80.25, 10.25, 96.75)
     );
     // A mirrored grid grows the same device pixels outward, so the css top
     // edge moves to the larger device coordinate.
-    let mirrored = Some(DeviceGrid {
-        scale_x: 1.0,
-        offset_x: 0.0,
-        scale_y: -1.0,
-        offset_y: 600.0,
-    });
+    let mirrored = Some(DeviceGrid::new(1.0, 0.0, -1.0, 600.0));
     assert_eq!(
         snap_column_clip_outward(clip, mirrored, open(true, true)),
         Rect::new(274.0, 80.0, 526.0, 97.0)
     );
     // A grid that places the columns but not the block edges leaves the
     // open edges exact.
-    let flat = Some(DeviceGrid {
-        scale_x: 1.0,
-        offset_x: 0.0,
-        scale_y: 0.0,
-        offset_y: 0.0,
-    });
+    let flat = Some(DeviceGrid::new(1.0, 0.0, 0.0, 0.0));
     assert_eq!(snap_column_clip_outward(clip, flat, open(true, true)), clip);
     // Without a grid it stays exact.
     assert_eq!(snap_column_clip_outward(clip, None, open(true, true)), clip);

@@ -19,11 +19,7 @@ struct Pixels {
 impl Pixels {
     fn new() -> Self {
         Self {
-            image: Arc::new(DecodedImage {
-                width: 4,
-                height: 2,
-                rgba: [255, 0, 0, 255].repeat(8),
-            }),
+            image: Arc::new(DecodedImage::new(4, 2, [255, 0, 0, 255].repeat(8))),
             requests: Mutex::new(Vec::new()),
         }
     }
@@ -46,10 +42,10 @@ impl ImagePixelSource for Pixels {
 
 impl ReplacedResolver for Pixels {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(4.0, 2.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(4.0, 2.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 
@@ -189,11 +185,7 @@ fn malformed_and_zero_sized_raster_pixels_are_omitted() {
             .find(|fragment| page.dom().local_name(fragment.node()) == Some("img"))
             .unwrap();
         let malformed = Pixels {
-            image: Arc::new(DecodedImage {
-                width,
-                height,
-                rgba,
-            }),
+            image: Arc::new(DecodedImage::new(width, height, rgba)),
             requests: Mutex::new(Vec::new()),
         };
         assert!(page.raster_image(&fragment, &malformed).is_none());
@@ -217,20 +209,12 @@ impl ImagePixelSource for SizedPixels {
 #[test]
 fn empty_objects_overflowing_placements_and_denied_pixels_are_omitted() {
     let pixels = Pixels::new();
-    let ordinary = raikiri_traits::ImageIntrinsicSize {
-        width: Some(4.0),
-        height: Some(2.0),
-        aspect_ratio: Some(2.0),
-    };
+    let ordinary = raikiri_traits::ImageIntrinsicSize::new(Some(4.0), Some(2.0), Some(2.0));
     for (css, natural, decoded) in [
         ("width:0px", ordinary, Some(Arc::clone(&pixels.image))),
         (
             "object-fit:cover",
-            raikiri_traits::ImageIntrinsicSize {
-                width: Some(f32::MAX),
-                height: Some(f32::MIN_POSITIVE),
-                aspect_ratio: None,
-            },
+            raikiri_traits::ImageIntrinsicSize::new(Some(f32::MAX), Some(f32::MIN_POSITIVE), None),
             Some(Arc::clone(&pixels.image)),
         ),
         ("", ordinary, None),

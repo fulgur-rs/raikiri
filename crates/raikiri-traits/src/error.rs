@@ -298,6 +298,7 @@ pub struct RenderSummary {
 
 /// Render warning (fallback usage / policy warning / unresolved target, etc.).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RenderWarning {
     /// Warning kind.
     pub kind: WarningKind,
@@ -305,6 +306,23 @@ pub struct RenderWarning {
     pub node_id: Option<NodeId>,
     /// Human-readable details.
     pub details: String,
+}
+
+impl RenderWarning {
+    /// A warning of `kind` that does not concern one element.
+    pub fn new(kind: WarningKind, details: String) -> Self {
+        Self {
+            kind,
+            node_id: None,
+            details,
+        }
+    }
+
+    /// Set the element the warning concerns.
+    pub fn node_id(mut self, node_id: Option<NodeId>) -> Self {
+        self.node_id = node_id;
+        self
+    }
 }
 
 /// Warning kind. The five base variants in §4 plus `HtmlParseError`.

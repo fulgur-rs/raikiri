@@ -2,8 +2,8 @@
 //! (stylesheets, `@import`, images, fonts, and replaced resources).
 
 use raikiri_traits::{
-    AbortSignal, Body, Method, NetworkError, PolicyViolation, Request, ResourceKind,
-    ResourcePolicy, ViolationType, WarningKind,
+    AbortSignal, NetworkError, PolicyViolation, Request, ResourceKind, ResourcePolicy,
+    ViolationType, WarningKind,
 };
 use url::Url;
 
@@ -14,6 +14,17 @@ pub(crate) fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
         Some(base) => base.join(href).ok(),
         None => Url::parse(href).ok(),
     }
+}
+
+/// The absolute URL that the authored `url()` text `raw` of an image names, or
+/// `None` when it names no external image. An empty or fragment-only URL
+/// would otherwise join against the base into the document itself.
+pub(crate) fn authored_image_url(raw: &str, base: Option<&Url>) -> Option<Url> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    resolve_url(raw, base)
 }
 
 /// `url` without its fragment, the identity used to deduplicate fetches.
@@ -41,15 +52,7 @@ pub(crate) fn mime_essence(content_type: &str) -> &str {
 /// front; a signal that fires mid-fetch does not interrupt bytes already in
 /// flight.
 pub(crate) fn get_request(url: Url, kind: ResourceKind, signal: Option<&AbortSignal>) -> Request {
-    Request {
-        url,
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: signal.cloned(),
-        kind,
-    }
+    Request::new(url, kind).signal(signal.cloned())
 }
 
 /// The scheme or host rule of `policy` that denies `url` for `kind`, if any.

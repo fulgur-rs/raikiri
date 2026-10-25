@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::document_syntax::DocumentSyntax;
 
-use raikiri::{Body, Method, NetworkProvider, ParseOptions, Request, ResourceKind, Url};
+use raikiri::{NetworkProvider, ParseOptions, Request, ResourceKind, Url};
 use raikiri_html::effective_document_base_url;
 use raikiri_net::{ImageResolver, SystemHttpProvider};
 
@@ -24,24 +24,12 @@ pub fn render_print_url(
         ));
     }
     let resource = provider
-        .fetch(Request {
-            url,
-            method: Method::Get,
-            content_type: None,
-            headers: Vec::new(),
-            body: Body::Empty,
-            signal: None,
-            kind: ResourceKind::Other,
-        })
+        .fetch(Request::new(url, ResourceKind::Other))
         .map_err(|error| PrintRenderError::new(format!("document fetch failed: {error:?}")))?;
 
     let syntax = DocumentSyntax::for_content_type(resource.content_type.as_deref());
     let fallback_base_url = resource.final_url;
-    let probe_options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: Some(fallback_base_url.clone()),
-    };
+    let probe_options = ParseOptions::new().base_url(Some(fallback_base_url.clone()));
     let base_probe = syntax
         .parse(resource.bytes.as_ref(), &probe_options)
         .map_err(|error| {

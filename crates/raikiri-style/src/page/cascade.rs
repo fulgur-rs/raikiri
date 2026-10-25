@@ -1052,89 +1052,6 @@ pub enum PageInheritance<'a> {
     LegacyInitialValues,
 }
 
-/// Cascade all `@page` rules in `rule_tree` against `query` and return the
-/// resolved winning declarations.
-///
-/// # Algorithm (spec §"Cascading and page context" + §"Cascade Origin")
-///
-/// 1. For each rule in [`RuleTree::page_rules`], find the highest-specificity
-///    matching entry in its comma-separated `<page-selector-list>` prelude
-///    (each entry is an OR alternative; the entries within an entry — an
-///    optional ident + zero-or-more pseudo-pages — are combined AND-wise).
-///    A rule contributes its declarations if any entry matched, tagged with
-///    that entry's `(f, g, h)` specificity triple (see the crate-internal
-///    `PageSpecificity` type for the exact shape).
-/// 2. Group candidate declarations by [`PropertyKey`], pick the winner per
-///    `(rank, specificity, source_order)` tuple where higher beats lower.
-///    `rank` comes from the crate-internal `cascade_rank` (shared with the
-///    style-rule cascade) and encodes the full L4 §6.2 / L5 §6.5 origin
-///    ordering across all 4 [`Origin`] variants — see that function's doc
-///    for the exact rank table, which this module reuses rather than
-///    duplicating.
-/// 3. **Phase 2** — resolve each winner against the page context's inheritance
-///    parent ([`PageInheritance`]) through the crate-internal
-///    [`crate::cascade::resolve_against_inherited`], the sibling of
-///    [`crate::cascade::apply_value`] that
-///    keeps the `PropertyValue` shape. This covers the two properties that are
-///    determined by the inheritance parent alone: `font-weight: bolder` /
-///    `lighter` (CSS Fonts 4 §2.2.1 "Relative Weights") and `font-size`.
-/// 4. **Phase 3** — absolutize the remaining lengths through the crate-internal
-///    `absolutize_in_page_context`, using the page context's own `font-size`
-///    (step 3's output, or the inherited value when `@page` declared none) as
-///    the `em` basis and the root element's font-size as the `rem` basis, and
-///    apply the `border-*-width` style gate. Mirrors the element path's
-///    [`crate::specified::SpecifiedValues::finalize`]; the split into two phases
-///    is required because `padding: 2em` depends on a sibling declaration whose
-///    winner is only known after step 2.
-///
-/// The result is a bag of **computed** values —
-/// [`PageCascadeResult::declarations`] documents the one remaining exception
-/// (`text-align: match-parent`) and the per-phase citations.
-///
-/// # The inheritance parent
-///
-/// See [`PageInheritance`] for the two named choices, their spec basis, and
-/// which one to prefer — that is what step 3 above resolves winners against.
-///
-/// # Typed inheritance choice
-///
-/// The [`PageInheritance`] parameter is explicit and has no default, so a
-/// caller must choose the inheritance source.
-///
-/// ```compile_fail
-/// use raikiri_style::{Origin, PageContextQuery, RuleTree, cascade_page};
-///
-/// let mut tree = RuleTree::empty();
-/// tree.add_stylesheet("@page { color: red }", Origin::Author);
-/// let _ = cascade_page(&tree, &PageContextQuery::default(), None);
-/// ```
-///
-/// A valid [`PageInheritance`] value is accepted by the ordinary example
-/// below.
-///
-/// # Ties on equal `(rank, specificity, source_order)`
-///
-/// The spec text at the anchor says @page cascade follows normal cascade
-/// tie-breaking. Within a single rule, later declarations of the same
-/// property win per CSS Cascading L4 §6.1
-/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of Appearance";
-/// the `>=` in the crate-internal `page_beats` mirrors the style-rule
-/// sibling's tie-break (`cascade::beats` uses `>=` on the same triple).
-///
-/// # Example
-///
-/// ```ignore
-/// use raikiri_style::{Origin, PageContextQuery, PageInheritance, RuleTree, cascade_page};
-///
-/// let mut tree = RuleTree::empty();
-/// tree.add_stylesheet("@page :first { color: red }", Origin::Author);
-/// let query = PageContextQuery { is_first: true, ..Default::default() };
-/// // Real callers pass `PageInheritance::FromRoot(root_style)` — see
-/// // `PageInheritance`'s doc for the copy-pasteable form. The legacy variant
-/// // appears here only because this snippet has no document to cascade.
-/// let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
-/// // result.declarations() contains one entry: PropertyKey::Color -> red
-/// ```
 fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::LayerOrder<'_>) -> u32 {
     layers.priority(rule.layer, rule.origin, important)
 }
@@ -1382,6 +1299,89 @@ fn is_logical_size(value: &PropertyValue) -> bool {
     }
 }
 
+/// Cascade all `@page` rules in `rule_tree` against `query` and return the
+/// resolved winning declarations.
+///
+/// # Algorithm (spec §"Cascading and page context" + §"Cascade Origin")
+///
+/// 1. For each rule in `RuleTree::page_rules`, find the highest-specificity
+///    matching entry in its comma-separated `<page-selector-list>` prelude
+///    (each entry is an OR alternative; the entries within an entry — an
+///    optional ident + zero-or-more pseudo-pages — are combined AND-wise).
+///    A rule contributes its declarations if any entry matched, tagged with
+///    that entry's `(f, g, h)` specificity triple (see the crate-internal
+///    `PageSpecificity` type for the exact shape).
+/// 2. Group candidate declarations by `PropertyKey`, pick the winner per
+///    `(rank, specificity, source_order)` tuple where higher beats lower.
+///    `rank` comes from the crate-internal `cascade_rank` (shared with the
+///    style-rule cascade) and encodes the full L4 §6.2 / L5 §6.5 origin
+///    ordering across all 4 `Origin` variants — see that function's doc
+///    for the exact rank table, which this module reuses rather than
+///    duplicating.
+/// 3. **Phase 2** — resolve each winner against the page context's inheritance
+///    parent (`PageInheritance`) through the crate-internal
+///    `crate::cascade::resolve_against_inherited`, the sibling of
+///    `crate::cascade::apply_value` that
+///    keeps the `PropertyValue` shape. This covers the two properties that are
+///    determined by the inheritance parent alone: `font-weight: bolder` /
+///    `lighter` (CSS Fonts 4 §2.2.1 "Relative Weights") and `font-size`.
+/// 4. **Phase 3** — absolutize the remaining lengths through the crate-internal
+///    `absolutize_in_page_context`, using the page context's own `font-size`
+///    (step 3's output, or the inherited value when `@page` declared none) as
+///    the `em` basis and the root element's font-size as the `rem` basis, and
+///    apply the `border-*-width` style gate. Mirrors the element path's
+///    `crate::specified::SpecifiedValues::finalize`; the split into two phases
+///    is required because `padding: 2em` depends on a sibling declaration whose
+///    winner is only known after step 2.
+///
+/// The result is a bag of **computed** values —
+/// `PageCascadeResult::declarations` documents the one remaining exception
+/// (`text-align: match-parent`) and the per-phase citations.
+///
+/// # The inheritance parent
+///
+/// See `PageInheritance` for the two named choices, their spec basis, and
+/// which one to prefer — that is what step 3 above resolves winners against.
+///
+/// # Typed inheritance choice
+///
+/// The `PageInheritance` parameter is explicit and has no default, so a
+/// caller must choose the inheritance source.
+///
+/// ```compile_fail
+/// use raikiri_style::{Origin, PageContextQuery, RuleTree, cascade_page};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("@page { color: red }", Origin::Author);
+/// let _ = cascade_page(&tree, &PageContextQuery::default(), None);
+/// ```
+///
+/// A valid `PageInheritance` value is accepted by the ordinary example
+/// below.
+///
+/// # Ties on equal `(rank, specificity, source_order)`
+///
+/// The spec text at the anchor says @page cascade follows normal cascade
+/// tie-breaking. Within a single rule, later declarations of the same
+/// property win per CSS Cascading L4 §6.1
+/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> "Order of Appearance";
+/// the `>=` in the crate-internal `page_beats` mirrors the style-rule
+/// sibling's tie-break (`cascade::beats` uses `>=` on the same triple).
+///
+/// # Example
+///
+/// ```ignore
+/// use raikiri_style::{Origin, PageContextQuery, PageInheritance, RuleTree, cascade_page};
+///
+/// let mut tree = RuleTree::empty();
+/// tree.add_stylesheet("@page :first { color: red }", Origin::Author);
+/// let query = PageContextQuery { is_first: true, ..Default::default() };
+/// // Real callers pass `PageInheritance::FromRoot(root_style)` — see
+/// // `PageInheritance`'s doc for the copy-pasteable form. The legacy variant
+/// // appears here only because this snippet has no document to cascade.
+/// let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
+/// // result.declarations() contains one entry: PropertyKey::Color -> red
+/// ```
 #[doc(hidden)]
 pub fn cascade_page(
     rule_tree: &RuleTree,

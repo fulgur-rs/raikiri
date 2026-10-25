@@ -1577,10 +1577,10 @@ fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
             &self,
             _req: raikiri_traits::ResolverRequest<'_>,
         ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(self.0, self.1),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(self.0, self.1),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 
@@ -1638,10 +1638,10 @@ fn img_presentational_dimensions_override_its_intrinsic_aspect_ratio() {
             &self,
             _req: raikiri_traits::ResolverRequest<'_>,
         ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(20.0, 20.0).with_aspect_ratio(1.0),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(20.0, 20.0).with_aspect_ratio(1.0),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 

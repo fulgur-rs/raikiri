@@ -13,9 +13,9 @@ use crate::net::NetworkError;
 ///   Wrap in `raikiri-net::SandboxedResolver` to apply a centralized policy
 ///   (Finding #6, §10).
 /// - Round 4 review #3: `Err` is always terminal (`RenderError::Resolver`).
-///   Return a consumer-side fallback as `Ok(ResolvedIntrinsic { intrinsic, disposition:
-///   Fallback { .. } })`; raikiri inspects the disposition and automatically
-///   records it in `RenderSummary.warnings`.
+///   Return a consumer-side fallback as `Ok(ResolvedIntrinsic::new(intrinsic,
+///   ResolveDisposition::Fallback { .. }))`; raikiri inspects the disposition
+///   and automatically records it in `RenderSummary.warnings`.
 pub trait ReplacedResolver {
     /// Resolve one replaced element.
     fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError>;
@@ -52,11 +52,22 @@ impl IntrinsicBox {
 
 /// Successful return type from the resolver.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ResolvedIntrinsic {
     /// Intrinsic size and metadata.
     pub intrinsic: IntrinsicBox,
     /// Resolve disposition (`Ok` / `Fallback`).
     pub disposition: ResolveDisposition,
+}
+
+impl ResolvedIntrinsic {
+    /// The size `intrinsic` resolved with the given `disposition`.
+    pub fn new(intrinsic: IntrinsicBox, disposition: ResolveDisposition) -> Self {
+        Self {
+            intrinsic,
+            disposition,
+        }
+    }
 }
 
 /// Classification of successful resolution or fallback.
