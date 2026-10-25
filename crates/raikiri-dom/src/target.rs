@@ -715,11 +715,16 @@ fn content_reads_counters(cv: &raikiri_style::ComputedValues) -> bool {
         })
 }
 
-/// Whether the element `idx` can have a `::before` or `::after` box. A
-/// replaced element has none, its content being outside CSS, and neither
+/// Whether the generated text of the element `idx` takes part in the quote
+/// depth. `unrendered` counts the elements that layout leaves out, with their
+/// subtrees, around and including `idx` (see
+/// [`crate::Node::is_non_rendered_html_element`]). A replaced element has no
+/// `::before` or `::after` box, its content being outside CSS, and neither
 /// has a line break; layout draws no generated content for them.
-fn can_have_generated_boxes(doc: &Document, idx: usize) -> bool {
-    !crate::paint_rules::is_replaced_element(doc, idx) && doc.nodes[idx].tag_name() != Some("br")
+fn counts_quotes(doc: &Document, idx: usize, unrendered: usize) -> bool {
+    unrendered == 0
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+        && doc.nodes[idx].tag_name() != Some("br")
 }
 
 /// Whether the content of the pseudo-element `cv` holds a quote keyword.
@@ -897,6 +902,8 @@ fn walk_counter_scopes(
     let mut stack = vec![WalkStep::Enter(doc.root)];
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     let mut quote_depth = QuoteDepth::default();
+    // How many elements that layout leaves out the walk is inside.
+    let mut unrendered = 0_usize;
     while let Some(step) = stack.pop() {
         match step {
             WalkStep::Enter(idx) => {
@@ -930,7 +937,11 @@ fn walk_counter_scopes(
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
+                if node.is_non_rendered_html_element() {
+                    unrendered += 1;
+                }
                 if display == Some(DisplayValue::ListItem)
+                    && unrendered == 0
                     && let Some(marker) = generated_pseudo(cascade, idx, PseudoElem::Marker)
                 {
                     walk_quotes(
@@ -950,7 +961,7 @@ fn walk_counter_scopes(
                     if content_reads_counters(before) {
                         visit(CounterTarget::Pseudo(idx, PseudoElem::Before), scopes)?;
                     }
-                    if can_have_generated_boxes(doc, idx) {
+                    if counts_quotes(doc, idx, unrendered) {
                         walk_quotes(
                             before,
                             (idx, PseudoElem::Before),
@@ -977,7 +988,7 @@ fn walk_counter_scopes(
                     if content_reads_counters(after) {
                         visit(CounterTarget::Pseudo(idx, PseudoElem::After), scopes)?;
                     }
-                    if can_have_generated_boxes(doc, idx) {
+                    if counts_quotes(doc, idx, unrendered) {
                         walk_quotes(
                             after,
                             (idx, PseudoElem::After),
@@ -986,6 +997,9 @@ fn walk_counter_scopes(
                             &mut visit,
                         )?;
                     }
+                }
+                if doc.nodes[idx].is_non_rendered_html_element() {
+                    unrendered -= 1;
                 }
                 if let Some(names) = pending_pops.pop() {
                     scopes.pop(&names);

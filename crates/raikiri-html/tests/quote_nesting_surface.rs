@@ -168,6 +168,19 @@ fn a_replaced_element_and_a_line_break_have_no_pseudo_elements_to_count() {
 }
 
 #[test]
+fn an_element_that_layout_leaves_out_adds_no_quotes_even_when_displayed() {
+    // `template` and `noscript` are skipped with their subtrees whatever
+    // their `display` says.
+    let css = "template,noscript{display:block}\
+               template::before,.o::before{content:open-quote}";
+    assert_eq!(paired("<template></template><q>a</q>", css), "<a>");
+    assert_eq!(
+        paired("<noscript><p class=o>x</p></noscript><q>a</q>", css),
+        "<a>"
+    );
+}
+
+#[test]
 fn the_pseudo_elements_of_a_display_contents_element_count() {
     assert_eq!(
         paired("<div style='display:contents'><q>a<q>b</q></q></div>", ""),
