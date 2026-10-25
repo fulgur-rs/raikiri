@@ -905,6 +905,38 @@ fn static_positions_follow_the_flex_alignment_of_the_parent_against_the_page_are
         ),
         ("", "direction:rtl;align-self:self-start", (0.0, 50.0)),
         ("", "direction:rtl;align-self:self-end", (0.0, 140.0)),
+        // `self-start` and `self-end` follow the direction of the box itself,
+        // whichever way the column container or its cross axis runs.
+        (
+            "flex-direction:column",
+            "direction:rtl;align-self:self-start",
+            (180.0, 50.0),
+        ),
+        (
+            "flex-direction:column",
+            "direction:rtl;align-self:self-end",
+            (0.0, 50.0),
+        ),
+        (
+            "flex-direction:column;align-items:flex-end",
+            "direction:rtl;align-self:self-start",
+            (180.0, 50.0),
+        ),
+        (
+            "flex-direction:column;align-items:flex-end",
+            "direction:rtl;align-self:self-end",
+            (0.0, 50.0),
+        ),
+        (
+            "flex-direction:column-reverse",
+            "direction:rtl;align-self:self-start",
+            (180.0, 140.0),
+        ),
+        (
+            "flex-direction:column-reverse",
+            "direction:rtl;align-self:self-end",
+            (0.0, 140.0),
+        ),
         (
             "align-items:flex-end;justify-content:flex-end",
             "",
@@ -1370,4 +1402,167 @@ fn an_absolute_box_among_inline_content_keeps_the_alignment_of_the_axis_an_inset
         aligned_in_text_block("direction:rtl;justify-items:end", ""),
         (6.0, 66.0, 50.0, 50.0)
     );
+}
+
+#[test]
+fn static_positions_of_boxes_larger_than_the_flex_line_are_those_of_chromium() {
+    // A 260px by 130px fixed box is larger than the 200px by 100px flex line
+    // on both axes. Each row gives the position of the box, in the order of
+    // `ALIGN_SELF`, for the flex container styled by its first column; the
+    // positions are those of Chromium. The `safe` fallback to the start edge
+    // applies along the inline axis, the cross axis of a column container,
+    // and not along the block axis.
+    const ALIGN_SELF: [&str; 6] = [
+        "safe end",
+        "unsafe end",
+        "safe center",
+        "end",
+        "center",
+        "self-end",
+    ];
+    let rows: [(&str, [(f32, f32); 6]); 12] = [
+        (
+            "",
+            [
+                (0.0, 20.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+            ],
+        ),
+        (
+            "justify-content:center",
+            [
+                (-30.0, 20.0),
+                (-30.0, 20.0),
+                (-30.0, 35.0),
+                (-30.0, 20.0),
+                (-30.0, 35.0),
+                (-30.0, 20.0),
+            ],
+        ),
+        (
+            "justify-content:flex-end",
+            [
+                (-60.0, 20.0),
+                (-60.0, 20.0),
+                (-60.0, 35.0),
+                (-60.0, 20.0),
+                (-60.0, 35.0),
+                (-60.0, 20.0),
+            ],
+        ),
+        (
+            "align-items:center",
+            [
+                (0.0, 20.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+            ],
+        ),
+        (
+            "align-items:flex-end",
+            [
+                (0.0, 20.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+            ],
+        ),
+        (
+            "flex-direction:column",
+            [
+                (0.0, 50.0),
+                (-60.0, 50.0),
+                (0.0, 50.0),
+                (-60.0, 50.0),
+                (-30.0, 50.0),
+                (-60.0, 50.0),
+            ],
+        ),
+        (
+            "flex-direction:column;align-items:center",
+            [
+                (0.0, 50.0),
+                (-60.0, 50.0),
+                (0.0, 50.0),
+                (-60.0, 50.0),
+                (-30.0, 50.0),
+                (-60.0, 50.0),
+            ],
+        ),
+        (
+            "flex-direction:column;justify-content:center",
+            [
+                (0.0, 35.0),
+                (-60.0, 35.0),
+                (0.0, 35.0),
+                (-60.0, 35.0),
+                (-30.0, 35.0),
+                (-60.0, 35.0),
+            ],
+        ),
+        (
+            "flex-wrap:wrap-reverse",
+            [
+                (0.0, 20.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+                (0.0, 35.0),
+                (0.0, 20.0),
+            ],
+        ),
+        (
+            "direction:rtl",
+            [
+                (-60.0, 20.0),
+                (-60.0, 20.0),
+                (-60.0, 35.0),
+                (-60.0, 20.0),
+                (-60.0, 35.0),
+                (-60.0, 20.0),
+            ],
+        ),
+        (
+            "justify-content:space-around",
+            [
+                (-30.0, 20.0),
+                (-30.0, 20.0),
+                (-30.0, 35.0),
+                (-30.0, 20.0),
+                (-30.0, 35.0),
+                (-30.0, 20.0),
+            ],
+        ),
+        (
+            "flex-direction:row-reverse",
+            [
+                (-60.0, 20.0),
+                (-60.0, 20.0),
+                (-60.0, 35.0),
+                (-60.0, 20.0),
+                (-60.0, 35.0),
+                (-60.0, 20.0),
+            ],
+        ),
+    ];
+    for (wrapper_css, expected) in rows {
+        for (align_self, expected) in ALIGN_SELF.into_iter().zip(expected) {
+            let (doc, fixed) = laid_out(
+                "width:200px;height:100px",
+                &format!("display:flex;height:100px;{wrapper_css}"),
+                &format!("position:fixed;width:260px;height:130px;align-self:{align_self}"),
+            );
+            let (x, y, _, _) = absolute_rect(&doc, fixed);
+            assert_eq!((x, y), expected, "{wrapper_css} | {align_self}");
+        }
+    }
 }
