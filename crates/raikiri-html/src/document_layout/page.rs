@@ -56,6 +56,8 @@ pub struct InlineSvg {
 #[derive(Debug, Default)]
 pub(crate) struct InlineSvgCache {
     sources: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32, u32), PreparedSvg>>,
+    /// The faces handed out to the SVG text of the document.
+    faces: crate::svg_fonts::FaceCache,
 }
 
 #[cfg(test)]
@@ -430,6 +432,20 @@ impl<'a> Page<'a> {
         };
         self.svg_sources.sources.borrow_mut().insert(key, prepared);
         Ok(Some(svg))
+    }
+
+    /// The fonts that the SVG text of this page is set in: those the page's
+    /// document was laid out with.
+    ///
+    /// Pass it to [`raikiri_svg::SvgResources::with_fonts`] when building the
+    /// scene of an [`InlineSvg`].
+    pub fn svg_fonts(&self) -> crate::PageSvgFonts<'a> {
+        crate::PageSvgFonts::new(
+            self.document
+                .font_collection()
+                .expect("a laid-out document has fonts"),
+            &self.svg_sources.faces,
+        )
     }
 
     /// Serializes, parses and restyles the SVG root `id`.

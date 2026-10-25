@@ -16,7 +16,7 @@ const DEFAULT_OBLIQUE_DEGREES: f32 = 14.0;
 /// A scene shares one allocation of font bytes between all its glyphs of a
 /// face, and a consumer tells two glyphs of one face apart from those of
 /// another by it, so a face is wrapped once and then reused.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct FaceCache(Mutex<HashMap<FontId, FontFace>>);
 
 impl FaceCache {
@@ -94,6 +94,49 @@ impl SvgFontSource for crate::RenderFonts {
         matching_face(
             self.collection(),
             self.svg_faces(),
+            request,
+            ch.encode_utf8(&mut buffer),
+        )
+    }
+}
+
+/// The fonts SVG text of a page is set in: the font collection its document
+/// was laid out with, so SVG text sees the same `@font-face` faces, bundled
+/// faces and generic-family mapping as the HTML around it.
+///
+/// Get it from [`crate::Page::svg_fonts`] and pass it to
+/// [`raikiri_svg::SvgResources::with_fonts`]. Every scene built for the pages
+/// of one document shares the faces it hands out, so a consumer that embeds
+/// fonts embeds each once.
+#[derive(Clone, Copy)]
+pub struct PageSvgFonts<'a> {
+    collection: &'a FontCollection,
+    cache: &'a FaceCache,
+}
+
+impl<'a> PageSvgFonts<'a> {
+    pub(crate) fn new(collection: &'a FontCollection, cache: &'a FaceCache) -> Self {
+        Self { collection, cache }
+    }
+}
+
+impl std::fmt::Debug for PageSvgFonts<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PageSvgFonts").finish_non_exhaustive()
+    }
+}
+
+impl SvgFontSource for PageSvgFonts<'_> {
+    /// Selects with a space as the probe, like [`RenderFonts`](crate::RenderFonts).
+    fn select(&self, request: &SvgFontRequest) -> Option<FontFace> {
+        matching_face(self.collection, self.cache, request, " ")
+    }
+
+    fn fallback(&self, request: &SvgFontRequest, ch: char) -> Option<FontFace> {
+        let mut buffer = [0; 4];
+        matching_face(
+            self.collection,
+            self.cache,
             request,
             ch.encode_utf8(&mut buffer),
         )

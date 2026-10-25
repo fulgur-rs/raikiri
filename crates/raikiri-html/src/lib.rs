@@ -71,6 +71,7 @@ pub use resources::{
     ResourceLimits, parse_html_with_resources,
 };
 pub use sink::RaikiriTreeSink;
+pub use svg_fonts::PageSvgFonts;
 pub use types::{ParseOptions, StylesheetPart, StylesheetSource, UncascadedDocument};
 pub use ua::MINIMAL_UA_CSS;
 pub use xhtml::{XhtmlParseError, parse_xhtml};

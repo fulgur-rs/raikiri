@@ -248,11 +248,13 @@ governs HTML text.
   use is registered once for each, with its own id.
 - Text that no face can set is left out, as the raster path leaves it out, and
   a document that is built without a font source has no text in its scene.
-- `@font-face` fonts declared by the page become visible to inline SVG when
-  the source is built on the document's own collection, which is the step that
-  moves the page over to scenes. Until then the source built on the shared
-  bundle sees the bundled and, if enabled, the system faces. An SVG used as an
-  image sees only those, never fonts it fetches itself.
+- `@font-face` fonts declared by the page are visible to inline SVG through
+  `Page::svg_fonts()`, a source built on the collection the page's document
+  was laid out with, so SVG and HTML text see the same faces. The faces it
+  hands out are shared by all the scenes of that document. `RenderFonts` is
+  the source for an SVG without a page: it sees the bundled and, if enabled,
+  the system faces, and so does an SVG used as an image, which never sees
+  fonts it fetches itself.
 
 ### D10. External resources and security
 
