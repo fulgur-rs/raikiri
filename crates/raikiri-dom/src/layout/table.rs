@@ -2133,7 +2133,12 @@ fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
 // Measure cells
 // ---------------------------------------------------------------------------
 
-fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: AvailableSpace) -> f32 {
+fn measure_cell_inline(
+    doc: &mut LayoutSession<'_>,
+    cell_id: usize,
+    axis: AvailableSpace,
+    sizing_mode: SizingMode,
+) -> f32 {
     // Only the width is read. A cell whose content is one horizontal
     // paragraph without boxes of its own gets it from the paragraph's
     // intrinsic widths, without breaking it into lines; the size cached for
@@ -2147,7 +2152,7 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
         NodeId::from(cell_id),
         LayoutInput {
             run_mode: RunMode::ComputeSize,
-            sizing_mode: SizingMode::InherentSize,
+            sizing_mode,
             axis: RequestedAxis::Horizontal,
             known_dimensions: Size::NONE,
             parent_size: Size::NONE,
@@ -2351,8 +2356,32 @@ fn resolve_column_widths(
     let mut cell_min = vec![0.0f32; grid.cells.len()];
     let mut cell_max = vec![0.0f32; grid.cells.len()];
     for (i, cell) in grid.cells.iter().enumerate() {
-        let min_content = measure_cell_inline(doc, cell.node_id, AvailableSpace::MIN_CONTENT);
-        let max_content = measure_cell_inline(doc, cell.node_id, AvailableSpace::MAX_CONTENT);
+        let mut min_content = measure_cell_inline(
+            doc,
+            cell.node_id,
+            AvailableSpace::MIN_CONTENT,
+            SizingMode::InherentSize,
+        );
+        let mut max_content = measure_cell_inline(
+            doc,
+            cell.node_id,
+            AvailableSpace::MAX_CONTENT,
+            SizingMode::InherentSize,
+        );
+        if matches!(cell.specified_width.expand(), ExpandedDimension::Length(_)) {
+            // The cell's own `width` made both measures that width. The
+            // column still cannot be narrower than what the content cannot
+            // break (CSS 2.1 17.5.2.2), so the width only sets how wide the
+            // cell wants to be above that.
+            let unbreakable = measure_cell_inline(
+                doc,
+                cell.node_id,
+                AvailableSpace::MIN_CONTENT,
+                SizingMode::ContentSize,
+            );
+            min_content = min_content.max(unbreakable);
+            max_content = max_content.max(unbreakable);
+        }
         let cell_space = match column_space {
             AvailableSpace::Definite(room) => AvailableSpace::Definite(
                 room + spacing * usize::from(cell.col_span).saturating_sub(1) as f32,
