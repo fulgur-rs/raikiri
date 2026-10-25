@@ -556,6 +556,22 @@ impl<'a> Builder<'a> {
             .iter()
             .map(|variation| FontVariation::new(variation.tag, variation.value))
             .collect();
+        // The parser shaped and flattened the glyphs with the optical size set
+        // to the font size, unless the text turns that off or sets the axis
+        // itself. A face without the axis ignores the setting.
+        if span.font_optical_sizing == usvg::FontOpticalSizing::Auto
+            && !run
+                .variations
+                .iter()
+                .any(|variation| &variation.tag == b"opsz")
+            && span
+                .positioned_glyphs
+                .iter()
+                .any(|glyph| self.faces.has_opsz(glyph.font))
+        {
+            run.variations
+                .push(FontVariation::new(*b"opsz", span.font_size.get()));
+        }
         run.fill = fill;
         run.stroke = stroke;
         run.paint_order = paint_order(span.paint_order);

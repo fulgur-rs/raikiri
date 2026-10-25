@@ -30,6 +30,8 @@ struct Fonts {
     fallback: Option<FontFace>,
     selected: Mutex<Vec<SvgFontRequest>>,
     fell_back: Mutex<Vec<char>>,
+    /// The request of each fallback, in order.
+    fallbacks: Mutex<Vec<SvgFontRequest>>,
 }
 
 impl Fonts {
@@ -39,6 +41,7 @@ impl Fonts {
             fallback: None,
             selected: Mutex::default(),
             fell_back: Mutex::default(),
+            fallbacks: Mutex::default(),
         }
     }
 
@@ -65,8 +68,9 @@ impl SvgFontSource for Fonts {
         self.primary.clone()
     }
 
-    fn fallback(&self, _: &SvgFontRequest, ch: char) -> Option<FontFace> {
+    fn fallback(&self, request: &SvgFontRequest, ch: char) -> Option<FontFace> {
         self.fell_back.lock().unwrap().push(ch);
+        self.fallbacks.lock().unwrap().push(request.clone());
         self.fallback.clone()
     }
 }
@@ -421,6 +425,36 @@ fn a_character_the_face_lacks_comes_from_the_fallback() {
 }
 
 #[test]
+fn each_request_falls_back_with_its_own_families_and_weight() {
+    // Both texts select the same primary face, and each lacks `X`. A fallback
+    // is asked for by character and the ids already used, so a request that
+    // shared the id of the first would fall back with the first one's families.
+    let fonts = Fonts::with_fallback();
+    let document = document(
+        r##"<text x="2" y="8" font-family="CanvasTestNoSpace, Alpha" font-size="8">AX</text>
+            <text x="2" y="18" font-family="CanvasTestNoSpace, Beta" font-weight="700"
+                  font-size="8">AX</text>"##,
+    );
+    let scene = scene_with(&document, &fonts);
+    let named = |name: &str| SvgFontFamily::Named(name.into());
+    let fallbacks = fonts.fallbacks.lock().unwrap();
+    let alpha: Vec<_> = fallbacks
+        .iter()
+        .filter(|request| request.families[1] == named("Alpha"))
+        .collect();
+    let beta: Vec<_> = fallbacks
+        .iter()
+        .filter(|request| request.families[1] == named("Beta"))
+        .collect();
+    assert!(!alpha.is_empty() && !beta.is_empty());
+    assert_eq!(alpha.len() + beta.len(), fallbacks.len());
+    assert!(alpha.iter().all(|request| request.weight == 400));
+    assert!(beta.iter().all(|request| request.weight == 700));
+    // Both texts are set in the fallback face and share the primary's bytes.
+    assert_eq!(runs(&scene.root).len(), 2);
+}
+
+#[test]
 fn a_fallback_to_a_face_already_used_is_refused() {
     // The fallback answers with the face that lacks the character again.
     let fonts = Fonts {
@@ -549,6 +583,89 @@ fn root_font_styles_reach_text_like_they_reach_the_raster() {
     )
     .unwrap();
     assert_close(&render(&scene), &raster_with_faces(&written), 2);
+}
+
+/// `font` with an `fvar` table that declares an optical size axis. The parser
+/// looks at the axis list alone to decide whether to size glyphs optically.
+fn with_opsz_axis(font: &[u8]) -> Vec<u8> {
+    let be16 = |at: usize| usize::from(u16::from_be_bytes([font[at], font[at + 1]]));
+    let be32 = |at: usize| u32::from_be_bytes(font[at..at + 4].try_into().unwrap()) as usize;
+    let mut tables: Vec<([u8; 4], Vec<u8>)> = (0..be16(4))
+        .map(|index| {
+            let record = 12 + index * 16;
+            let (offset, length) = (be32(record + 8), be32(record + 12));
+            (
+                font[record..record + 4].try_into().unwrap(),
+                font[offset..offset + length].to_vec(),
+            )
+        })
+        .collect();
+    let mut fvar = Vec::new();
+    // Version 1.0, axes at 16, two reserved, one axis of 20 bytes, no instances.
+    for value in [1u16, 0, 16, 2, 1, 20, 0, 4] {
+        fvar.extend(value.to_be_bytes());
+    }
+    fvar.extend(b"opsz");
+    for fixed in [8u32, 14, 144] {
+        fvar.extend((fixed << 16).to_be_bytes());
+    }
+    fvar.extend([0u8, 0, 1, 0]); // flags, name id 256
+    tables.push((*b"fvar", fvar));
+    tables.sort_by_key(|(tag, _)| *tag);
+
+    let count = tables.len();
+    let search_range = (1usize << count.ilog2()) * 16;
+    let mut out = font[..4].to_vec();
+    out.extend((count as u16).to_be_bytes());
+    out.extend((search_range as u16).to_be_bytes());
+    out.extend((count.ilog2() as u16).to_be_bytes());
+    out.extend(((count * 16 - search_range) as u16).to_be_bytes());
+    let mut offset = 12 + count * 16;
+    for (tag, data) in &tables {
+        out.extend(tag);
+        out.extend(0u32.to_be_bytes());
+        out.extend((offset as u32).to_be_bytes());
+        out.extend((data.len() as u32).to_be_bytes());
+        offset += data.len().next_multiple_of(4);
+    }
+    for (_, data) in &tables {
+        out.extend(data);
+        out.resize(out.len().next_multiple_of(4), 0);
+    }
+    out
+}
+
+#[test]
+fn the_optical_size_the_parser_applied_rides_on_the_run() {
+    let data: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(with_opsz_axis(AHEM));
+    let sized = Fonts {
+        primary: Some(FontFace::new(data, 0)),
+        ..Fonts::ahem()
+    };
+    let variations = |fonts: &Fonts, attributes: &str| {
+        let body = format!(
+            r##"<text x="2" y="12" font-family="Ahem" font-size="16" {attributes}>A</text>"##
+        );
+        let scene = scene_with(&document(&body), fonts);
+        runs(&scene.root)[0].variations.clone()
+    };
+    let weight = FontVariation::new(*b"wght", 400.0);
+    // Automatic optical sizing is the default: the axis follows the font size.
+    assert_eq!(
+        variations(&sized, ""),
+        [weight, FontVariation::new(*b"opsz", 16.0)]
+    );
+    // Turned off, or set by the text itself, the scene adds nothing.
+    assert_eq!(
+        variations(&sized, r#"font-optical-sizing="none""#),
+        [weight]
+    );
+    assert_eq!(
+        variations(&sized, r#"font-variation-settings="'opsz' 9""#),
+        [FontVariation::new(*b"opsz", 9.0), weight]
+    );
+    // A face without the axis has nothing to size.
+    assert_eq!(variations(&Fonts::ahem(), ""), [weight]);
 }
 
 #[test]

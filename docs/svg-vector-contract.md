@@ -228,11 +228,19 @@ governs HTML text.
   settings, the fill and the stroke. It is painted as one shape: the fill
   covers all its glyphs, then the stroke does, or the other way round.
   Underlines, overlines and strike-throughs are paths around the run.
-- Faces are selected, never synthesized: there is no synthetic bold or slant,
-  and a variable font gets only the axes that `font-variation-settings` sets,
-  not an axis derived from the weight or the width. SVG fonts (`font` elements),
-  `tref` and `altGlyph` are not supported. A `pattern` paint on text keeps the
-  document on the raster, like a pattern anywhere else.
+- Faces are selected, never synthesized: there is no synthetic bold or slant.
+  The run's variation settings are the ones the parser shaped and flattened the
+  glyphs with: what `font-variation-settings` sets, the axes the parser derives
+  from the weight, the width and the slant, and the optical size (`opsz`, the
+  font size) unless `font-optical-sizing` is `none` or the text sets the axis
+  itself. A face without an axis ignores its setting. SVG fonts (`font`
+  elements), `tref` and `altGlyph` are not supported. A `pattern` paint on text
+  keeps the document on the raster, like a pattern anywhere else.
+- The fallback is asked per request: a character that the selected face lacks
+  is looked up with the family list, weight, width and slant of the text it
+  belongs to, so two texts with different requests do not share an answer.
+  A face is the same face for one request only; a face that two requests both
+  use is registered once for each, with its own id.
 - Text that no face can set is left out, as the raster path leaves it out, and
   a document that is built without a font source has no text in its scene.
 - `@font-face` fonts declared by the page become visible to inline SVG when

@@ -13,11 +13,9 @@ simplecss = { workspace = true }
 raikiri-traits = { workspace = true }
 resvg = { workspace = true }
 roxmltree = { workspace = true }
+skrifa = { workspace = true }
 svgtypes = { workspace = true }
 usvg = { workspace = true }
-
-[dev-dependencies]
-skrifa = { workspace = true }
 
 [lints]
 workspace = true

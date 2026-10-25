@@ -10,6 +10,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use raikiri_traits::vector::FontFace;
+use skrifa::MetadataProvider;
 use usvg::fontdb;
 
 /// A family in a `font-family` list.
@@ -92,8 +93,12 @@ pub trait SvgFontSource: Send + Sync {
 
 /// The faces a parse has asked for, with the requests that selected them.
 ///
-/// The parser knows a face by its id in a database, so every face that the
-/// source hands out is loaded into that database once and remembered here.
+/// The parser knows a face by its id in a database, and a fallback asks only
+/// for a character and the ids already used. So an id stands for a face in the
+/// context of one request: the same face selected by two requests with
+/// different fallback families, weights or styles has two ids, and the
+/// fallback of each finds its own request. The font bytes are loaded into the
+/// database once and shared by all the ids of a face.
 pub(crate) struct Faces<'a> {
     source: &'a dyn SvgFontSource,
     entries: Mutex<Vec<Entry>>,
@@ -107,13 +112,28 @@ struct Entry {
 
 /// The face behind each database id of a parsed tree.
 #[derive(Default)]
-pub(crate) struct FaceMap(Vec<(fontdb::ID, FontFace)>);
+pub(crate) struct FaceMap(Vec<MappedFace>);
+
+struct MappedFace {
+    id: fontdb::ID,
+    face: FontFace,
+    /// Whether the face has an optical size axis.
+    has_opsz: bool,
+}
 
 impl FaceMap {
     pub(crate) fn get(&self, id: fontdb::ID) -> Option<&FontFace> {
-        self.0
-            .iter()
-            .find_map(|(entry, face)| (*entry == id).then_some(face))
+        self.entry(id).map(|entry| &entry.face)
+    }
+
+    /// Whether the face behind `id` has an `opsz` axis, which the parser sets
+    /// to the font size unless the text turns optical sizing off.
+    pub(crate) fn has_opsz(&self, id: fontdb::ID) -> bool {
+        self.entry(id).is_some_and(|entry| entry.has_opsz)
+    }
+
+    fn entry(&self, id: fontdb::ID) -> Option<&MappedFace> {
+        self.0.iter().find(|entry| entry.id == id)
     }
 }
 
@@ -157,7 +177,8 @@ impl<'a> Faces<'a> {
         }
     }
 
-    /// The database id of `face`, loading it on first use.
+    /// The database id of `face` selected by `request`, loading the face on
+    /// its first use.
     fn load(
         &self,
         face: FontFace,
@@ -165,16 +186,30 @@ impl<'a> Faces<'a> {
         database: &mut Arc<fontdb::Database>,
     ) -> Option<fontdb::ID> {
         let mut entries = self.entries();
-        if let Some(entry) = entries.iter().find(|entry| entry.face.is_same_face(&face)) {
+        if let Some(entry) = entries
+            .iter()
+            .find(|entry| entry.face.is_same_face(&face) && entry.request == *request)
+        {
             return Some(entry.id);
         }
-        let ids = Arc::make_mut(database)
-            .load_font_source(fontdb::Source::Binary(Arc::clone(face.data())));
-        let id = ids.into_iter().find(|&id| {
-            database
-                .face(id)
-                .is_some_and(|info| info.index == face.index())
-        })?;
+        let id = match entries.iter().find(|entry| entry.face.is_same_face(&face)) {
+            // Another request loaded the face: a second entry for it shares
+            // its bytes and needs no parse.
+            Some(loaded) => {
+                let mut info = database.face(loaded.id)?.clone();
+                info.id = fontdb::ID::dummy();
+                Arc::make_mut(database).push_face_info(info)
+            }
+            None => {
+                let ids = Arc::make_mut(database)
+                    .load_font_source(fontdb::Source::Binary(Arc::clone(face.data())));
+                ids.into_iter().find(|&id| {
+                    database
+                        .face(id)
+                        .is_some_and(|info| info.index == face.index())
+                })?
+            }
+        };
         entries.push(Entry {
             face,
             id,
@@ -192,7 +227,11 @@ impl<'a> Faces<'a> {
         FaceMap(
             entries
                 .into_iter()
-                .map(|entry| (entry.id, entry.face))
+                .map(|entry| MappedFace {
+                    id: entry.id,
+                    has_opsz: has_opsz_axis(&entry.face),
+                    face: entry.face,
+                })
                 .collect(),
         )
     }
@@ -234,4 +273,10 @@ fn request(font: &usvg::Font) -> SvgFontRequest {
             usvg::FontStyle::Oblique => SvgFontStyle::Oblique,
         },
     }
+}
+
+/// Whether `face` varies with the optical size.
+fn has_opsz_axis(face: &FontFace) -> bool {
+    skrifa::FontRef::from_index(face.bytes(), face.index())
+        .is_ok_and(|font| font.axes().get_by_tag(skrifa::Tag::new(b"opsz")).is_some())
 }
