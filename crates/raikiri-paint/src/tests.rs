@@ -1636,16 +1636,17 @@ fn paint_single_page_skips_template_subtree_content_via_inert_predicate() {
 #[test]
 fn paint_single_page_skips_template_subtree_without_display_none_ua_rule() {
     // Pin the contract: the is_in_document() predicate explicitly skips
-    // template subtrees regardless of any UA CSS template { display: none }
-    // rule. Prevent regression of this formerly silent bug.
+    // template subtrees regardless of any `template { display: none }` rule.
+    // Prevent regression of this formerly silent bug.
     //
-    // Setup: <body><template><p>should_not_paint</p></template></body>.
-    // Current UA CSS has no template rule (checked in minimal.css), so its
-    // default is Display::Block. Before the gate, painting descended into
-    // the subtree and emitted a GlyphRun without reporting the bug.
+    // Setup: <body><template><p>should_not_paint</p></template></body>, with
+    // an author rule that overrides the UA sheet's `template { display: none }`
+    // so the template computes to Display::Block. Before the gate, painting
+    // descended into the subtree and emitted a GlyphRun without reporting
+    // the bug.
     use raikiri_html::{ParseOptions, parse};
 
-    let html = b"<html><head></head><body>\
+    let html = b"<html><head><style>template{display:block}</style></head><body>\
                      <template><p>should_not_paint</p></template>\
                      </body></html>";
     let opts = ParseOptions::new();

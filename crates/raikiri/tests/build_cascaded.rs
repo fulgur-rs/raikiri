@@ -1006,6 +1006,55 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
 }
 
 #[test]
+fn hidden_elements_are_display_none_via_ua_css() {
+    // HTML LS 15.3.1 "Hidden elements": the elements that never generate a
+    // box compute to `display: none`, so a rule that sizes every element
+    // cannot give them one. `style`, `script` and `title` are not carried,
+    // as the same names exist in SVG.
+    for (tag, html) in [
+        ("head", "<html><head></head><body></body></html>"),
+        ("link", "<html><body><link></body></html>"),
+        ("meta", "<html><body><meta></body></html>"),
+        ("base", "<html><body><base></body></html>"),
+        ("area", "<html><body><area></body></html>"),
+        ("param", "<html><body><param></body></html>"),
+        (
+            "datalist",
+            "<html><body><datalist></datalist></body></html>",
+        ),
+        ("noembed", "<html><body><noembed></noembed></body></html>"),
+        (
+            "noframes",
+            "<html><body><noframes></noframes></body></html>",
+        ),
+        (
+            "rp",
+            "<html><body><ruby>a<rp>(</rp><rt>b</rt></ruby></body></html>",
+        ),
+        (
+            "template",
+            "<html><body><template></template></body></html>",
+        ),
+    ] {
+        let doc = parse_html(html);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
+        let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
+        assert_eq!(
+            result.computed[el_id.0 as usize].display,
+            DisplayValue::None,
+            "<{tag}> should be display: none from the hidden-elements UA CSS rule"
+        );
+    }
+
+    // A rule that sizes every element leaves `display` alone, so the head
+    // stays without a box.
+    let doc = parse_html("<html><head><style>*{height:100%}</style></head><body></body></html>");
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
+    let head = find_by_tag(&doc.dom, "head").expect("<head> exists");
+    assert_eq!(result.computed[head.0 as usize].display, DisplayValue::None);
+}
+
+#[test]
 fn fieldset_is_display_block_via_ua_css() {
     // HTML LS Rendering gives a fieldset a block box (see minimal.css), which
     // `width` and `height` apply to.
