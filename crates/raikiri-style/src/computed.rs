@@ -798,6 +798,12 @@ pub struct ComputedValues {
     /// - `position: static`, another keyword, or no rule → empty
     /// - `position: running(name)` → `[RunningTemplate { name, display }]`
     ///
+    /// `running(name)` is the computed value of `position` for such a node,
+    /// held here and not in [`Self::position`], which stays `static`. So the
+    /// keywords read the template back: `position: inherit` makes a child a
+    /// running element of the parent's name, while `initial` and `unset`
+    /// leave it in the flow.
+    ///
     /// A node with an entry has a computed `display: none`: the running
     /// element is removed from the normal flow (CSS GCPM 3 §1.2.1) and the
     /// display it would have had moves into [`RunningTemplate::display`].

@@ -296,6 +296,37 @@ fn running_elements_take_the_page_of_the_content_around_them() {
 }
 
 #[test]
+fn a_child_that_inherits_position_is_a_running_element_of_the_same_name() {
+    // `position: inherit` takes `running(hdr)` of the parent (CSS GCPM 3
+    // §1.2.1), so the child joins the pool of that name after its parent in
+    // document order, as it would with `running(hdr)` written out.
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", None::<&str>);
+    doc.append_text(
+        style,
+        ".hdr { position: running(hdr) } .hdr > span { position: inherit }",
+    );
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let first = doc.append_element(Some(body), "p", None::<&str>);
+    let outer = doc.append_element(Some(body), "div", None::<&str>);
+    doc.set_element_attributes(outer, vec![(SmolStr::new("class"), SmolStr::new("hdr"))]);
+    let inner = doc.append_element(Some(outer), "span", None::<&str>);
+    doc.append_text(inner, "Head");
+    let second = doc.append_element(Some(body), "p", None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+    let rendered = HashMap::from([(first, (0, 0)), (second, (1, 1))]);
+    let index = RunningIndex::from_rendered_pages(&doc, &cascade, &rendered);
+    let nodes: Vec<_> = index.pools["hdr"]
+        .placements
+        .iter()
+        .map(|placement| placement.node)
+        .collect();
+    assert_eq!(nodes, [NodeId(outer as u64), NodeId(inner as u64)]);
+}
+
+#[test]
 fn a_document_without_running_elements_has_an_empty_index() {
     let mut doc = Document::new();
     doc.append_element(Some(0), "body", None::<&str>);

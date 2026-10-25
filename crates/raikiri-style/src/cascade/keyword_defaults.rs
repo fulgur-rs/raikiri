@@ -47,6 +47,17 @@ fn computed_float(source: &ComputedValues) -> FloatValue {
     }
 }
 
+/// The computed `position` of `source`. A running element keeps `static` in
+/// the stored field and its `running()` name on its running template (CSS
+/// GCPM 3 section 1.2.1), so the specified value that takes the name back is
+/// the `running()` one.
+fn computed_position(source: &ComputedValues) -> PositionValue {
+    match source.running_templates.first() {
+        Some(template) => PositionValue::Running(template.name.clone()),
+        None => source.position.clone(),
+    }
+}
+
 /// The `white-space` keyword that stands for the effective
 /// `white-space-collapse` and `text-wrap-mode` of `source`, or the keyword as
 /// authored when none does: the longhands combine in ways the keywords cannot
@@ -141,7 +152,7 @@ macro_rules! keyword_defaults {
 
 keyword_defaults! {
     source;
-    Position, false => PropertyValue::Position(dup(&source.position));
+    Position, false => PropertyValue::Position(computed_position(source));
     HangingPunctuation, true => PropertyValue::HangingPunctuation(dup(&source.hanging_punctuation));
     BoxSizing, false => PropertyValue::BoxSizing(dup(&source.box_sizing));
     TextDecorationLine, false => PropertyValue::TextDecorationLine(dup(&source.text_decoration_line));
