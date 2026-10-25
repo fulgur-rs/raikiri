@@ -135,9 +135,18 @@ All consumers of SVG go through one resolved-image abstraction that answers
 with either pixels or a scene, chosen by D6.
 
 - `ImagePixelSource` keeps `get_decoded_at_size` and gains a default method
-  that returns the scene for a URL, a size and the host style inputs of D8
-  (the inherited `color` and the root font). Sources without vector support
-  keep the default (`None`), so existing implementations do not break.
+  that returns the scene for a URL and a request (`get_vector`, with an
+  `ImageVectorRequest` that carries the size of the box). Sources without
+  vector support keep the default (`None`), so existing implementations do
+  not break. The request will carry the host style inputs of D8 (the
+  inherited `color` and the root font) when a consumer needs them; until then
+  an image document is built with the default style, as its raster is.
+  `RenderResources` answers for the SVG images in its cache. It builds the
+  scene once per URL and size with the fonts of the resource set (the same
+  faces for all of them), keeps it in the image cache under the same byte
+  budgets as the rasters, and remembers an image that the builder sent to the
+  raster path so no other box asks again. `None` is a choice of the source,
+  never a failure of the image: the caller asks for pixels next.
 - `<img>`, `background-image` (including pseudo-elements and margin boxes),
   `list-style-image` and `content: url()` use that method for SVG sources.
 - Inline `<svg>` goes through `Page::inline_svg`, which returns the scene

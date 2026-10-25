@@ -19,6 +19,17 @@ fn empty_source_returns_none() {
     assert!(EmptySource.get_decoded(&url).is_none());
 }
 
+#[test]
+fn a_source_has_no_vector_form_unless_it_says_so() {
+    let url = Url::parse("file:///tmp/x.svg").unwrap();
+    let request = ImageVectorRequest::new(ImageRasterSize {
+        width: 3.0,
+        height: 2.0,
+    });
+    assert_eq!(request.size.width, 3.0);
+    assert!(EmptySource.get_vector(&url, &request).is_none());
+}
+
 /// A hand-encoded 2x1 RGBA8 PNG (red, green).
 const TINY_PNG: &[u8] = &[
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 1, 8, 6, 0,
