@@ -158,16 +158,15 @@ impl Run<'_, '_> {
         for family in skipped {
             push_resource_warning(
                 self.warnings,
-                RenderWarning {
-                    kind: WarningKind::ResourceFallback {
+                RenderWarning::new(
+                    WarningKind::ResourceFallback {
                         kind: ResourceKind::Font,
                         url: None,
                     },
-                    node_id: None,
-                    details: format!(
+                    format!(
                         "@font-face family {family:?} had no usable source; fallback fonts will be used"
                     ),
-                },
+                ),
             );
         }
     }

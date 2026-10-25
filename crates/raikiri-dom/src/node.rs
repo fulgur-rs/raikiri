@@ -266,6 +266,7 @@ impl std::ops::Deref for CanvasBitmapStorage {
 /// transparent bitmap. Paint reads materialized pixels directly; layout reads
 /// only the width/height attributes for the intrinsic size.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CanvasBitmap {
     /// Bitmap width in px (the canvas width attribute value).
     pub width: u32,
@@ -277,11 +278,23 @@ pub struct CanvasBitmap {
     pub rgba: Vec<u8>,
 }
 
+impl CanvasBitmap {
+    /// A bitmap of `width` x `height` pixels held in `rgba`.
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            rgba,
+        }
+    }
+}
+
 const MAX_CANVAS_BITMAP_PIXELS: u64 = 10_000_000;
 const MAX_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
 
 /// Reason a canvas bitmap could not be materialized or stored safely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CanvasBitmapError {
     /// The dimensions exceed the per-canvas pixel or byte limit.
     DimensionsTooLarge,

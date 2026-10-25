@@ -1442,10 +1442,7 @@ pub(super) fn parse_border_spacing(input: &mut Parser<'_, '_>) -> Option<BorderS
     let vertical = input
         .try_parse(|i| parse_non_negative_length(i).ok_or(()))
         .unwrap_or(horizontal);
-    Some(BorderSpacingValue {
-        horizontal,
-        vertical,
-    })
+    Some(BorderSpacingValue::new(horizontal, vertical))
 }
 
 /// Parses `caption-side: <ident>` (CSS Tables 3 §7

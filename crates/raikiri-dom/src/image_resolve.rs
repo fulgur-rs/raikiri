@@ -49,8 +49,8 @@ use crate::node::NodeData;
 /// `resolver.resolve()` that fails, which also ends the walk. A resolver
 /// `Err` is terminal by contract (see
 /// [`raikiri_traits::ReplacedResolver`]): graceful degradation is the
-/// Consumer's to express, as `Ok(ResolvedIntrinsic { disposition:
-/// ResolveDisposition::Fallback { .. }, .. })`. This pass therefore treats
+/// Consumer's to express, as `Ok(ResolvedIntrinsic::new(intrinsic,
+/// ResolveDisposition::Fallback { .. }))`. This pass therefore treats
 /// a `Fallback` disposition exactly like `Ok` — it still uses the returned
 /// `intrinsic` — and never substitutes a fallback of its own by swallowing
 /// an `Err`.

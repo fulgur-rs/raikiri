@@ -144,12 +144,13 @@ mod external_link_stylesheet_fetch_tests {
 
     impl NetworkProvider for EchoUrlProvider {
         fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: bytes::Bytes::from(format!("/* {} */", request.url).into_bytes()),
-                content_type: Some("text/css".to_string()),
-                final_url: request.url,
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(
+                    bytes::Bytes::from(format!("/* {} */", request.url).into_bytes()),
+                    request.url,
+                )
+                .content_type(Some("text/css".to_string())),
+            ))
         }
     }
 
@@ -179,12 +180,10 @@ mod external_link_stylesheet_fetch_tests {
                 ),
                 _ => return Err(NetworkError::Other("not found".to_owned())),
             };
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: bytes::Bytes::from(css),
-                content_type: Some("text/css".to_owned()),
-                final_url: url::Url::parse(final_url).unwrap(),
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(bytes::Bytes::from(css), url::Url::parse(final_url).unwrap())
+                    .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 
@@ -204,12 +203,10 @@ mod external_link_stylesheet_fetch_tests {
                 }
                 _ => return Err(NetworkError::Other("not found".to_owned())),
             };
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: bytes::Bytes::from(css),
-                content_type: Some("text/css".to_owned()),
-                final_url: request.url,
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(bytes::Bytes::from(css), request.url)
+                    .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 
@@ -317,12 +314,10 @@ mod external_link_stylesheet_fetch_tests {
 
     impl NetworkProvider for EmptyBodyProvider {
         fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: bytes::Bytes::new(),
-                content_type: Some("text/css".to_string()),
-                final_url: request.url,
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(bytes::Bytes::new(), request.url)
+                    .content_type(Some("text/css".to_string())),
+            ))
         }
     }
 
@@ -1059,12 +1054,12 @@ mod external_link_stylesheet_fetch_tests {
     #[test]
     fn parse_records_policy_warning_on_policy_violation() {
         let provider = AlwaysErrorProvider(|| {
-            NetworkError::PolicyViolation(Box::new(PolicyViolation {
-                kind: ResourceKind::ExternalStylesheet,
-                url: url::Url::parse("https://user:secret@blocked.test/a.css").expect("valid url"),
-                violation_type: ViolationType::HostNotAllowed,
-                details: "blocked https://user:secret@blocked.test/token".to_string(),
-            }))
+            NetworkError::PolicyViolation(Box::new(PolicyViolation::new(
+                ResourceKind::ExternalStylesheet,
+                url::Url::parse("https://user:secret@blocked.test/a.css").expect("valid url"),
+                ViolationType::HostNotAllowed,
+                "blocked https://user:secret@blocked.test/token".to_string(),
+            )))
         });
         let opts = ParseOptions {
             extra_stylesheets: &[],

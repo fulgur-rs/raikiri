@@ -118,7 +118,7 @@ pub fn html_to_png_with_render_fonts<R: std::io::Read>(
 /// the raster exceeds its edge or byte budget. The `ReplacedResolver` contract treats
 /// `Err` as terminal: rendering stops at the first error rather than silently
 /// replacing the image with 0×0. Consumers who want a placeholder should
-/// return `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })`; see the
+/// return `Ok(ResolvedIntrinsic::new(intrinsic, ResolveDisposition::Fallback { .. }))`; see the
 /// `raikiri_dom::layout_single_page_with_resolver` docs.
 pub fn html_to_png_with_resolver<R, I>(
     input: impl std::io::Read,

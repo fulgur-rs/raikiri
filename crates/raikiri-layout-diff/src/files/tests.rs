@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_traits::{Body, Method, ResourceKind};
+use raikiri_traits::ResourceKind;
 
 /// A directory that is removed when dropped.
 struct TempDir(PathBuf);
@@ -20,15 +20,10 @@ impl Drop for TempDir {
 }
 
 fn request(url: &str) -> Request {
-    Request {
-        url: Url::parse(url).expect("valid URL"),
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::ExternalStylesheet,
-    }
+    Request::new(
+        Url::parse(url).expect("valid URL"),
+        ResourceKind::ExternalStylesheet,
+    )
 }
 
 fn body(outcome: Result<FetchOutcome, NetworkError>) -> FetchedResource {

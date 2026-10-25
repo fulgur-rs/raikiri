@@ -134,11 +134,7 @@ fn measure<T>(f: impl FnOnce() -> T) -> (T, Usage) {
 fn cascade_allocations_stay_under_their_ceilings() {
     let (pages, rows) = (10, 50);
     let html = report::report_html(pages, rows);
-    let options = raikiri_html::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = raikiri_html::ParseOptions::new();
     let document = raikiri_html::parse(html.as_bytes(), &options).expect("the report parses");
     let tree = raikiri_html::build_rule_tree(&document);
     let media = raikiri_style::MediaContext::print();

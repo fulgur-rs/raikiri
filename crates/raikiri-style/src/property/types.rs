@@ -164,6 +164,7 @@ pub(crate) fn empty_counter_reset_entries() -> Arc<Vec<(SmolStr, CounterResetVal
 /// The value one `counter-reset` entry gives its counter (CSS Lists 3 §4.1
 /// <https://www.w3.org/TR/css-lists-3/#counter-reset>).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum CounterResetValue {
     /// `<counter-name> <integer>?`: a counter starting at the integer, which
     /// defaults to 0.
@@ -1151,6 +1152,7 @@ impl RelativeCalcLengthPercentage {
 
 /// `<length-percentage>` used by `text-indent`, including deferred mixed-unit math.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum TextIndentLength {
     /// A plain authored length-percentage.
     Length(Length),
@@ -1160,6 +1162,7 @@ pub enum TextIndentLength {
 
 /// Linear `<length-percentage>` terms retained until the computed font size is known.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct LengthPercentageCalc {
     /// Percentage coefficient (`100%` is `100.0`).
     pub percent: f32,
@@ -1379,6 +1382,7 @@ pub enum ColumnWidthValue {
 
 /// The `columns` shorthand, before expansion into its two longhands.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ColumnsShorthand {
     /// The `column-width` component.
     pub width: ColumnWidthValue,
@@ -2913,6 +2917,7 @@ pub enum ListStyleType {
 
 /// The three longhands set by the `list-style` shorthand.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ListStyleShorthand {
     /// Marker text or counter style.
     pub kind: ListStyleType,
@@ -3867,6 +3872,7 @@ impl FlexBasisValue {
 /// of the `flex-grow`/`flex-shrink`/`flex-basis` longhands themselves.
 /// [`parse_flex_shorthand`] applies these shorthand-local defaults.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct FlexShorthand {
     /// See the [`Self`] doc — `<'flex-grow'>` component; defaults to 1.0 when omitted.
     pub grow: f32,
@@ -3889,6 +3895,7 @@ pub struct FlexShorthand {
 /// An omitted component expands to its longhand's initial value
 /// (direction=row / wrap=nowrap); [`parse_flex_flow`] applies this rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct FlexFlow {
     /// See the [`Self`] doc — `<'flex-direction'>` component; Row when omitted.
     pub direction: FlexDirectionValue,
@@ -4069,6 +4076,7 @@ pub enum AlignSelfValue {
 /// first component's value (spec text: "If column-gap is omitted, it's set to the same value as
 /// row-gap.").
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GapShorthand {
     /// The `row-gap` component.
     pub row: LengthOrNormal,
@@ -4089,6 +4097,7 @@ pub struct GapShorthand {
 /// [`ContentAlignmentValue`] doc's scope-carving section). Thus the "copy from
 /// first value" branch always applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PlaceContentShorthand {
     /// The `align-content` component.
     pub align: ContentAlignmentValue,
@@ -4276,6 +4285,7 @@ pub enum GridRepeatCount {
 /// be nested."). The element type of [`Self::tracks`] is [`GridTrackSize`],
 /// not [`GridTrackList`], so nesting is structurally impossible.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GridTrackRepeat {
     /// Number of repetitions.
     pub count: GridRepeatCount,
@@ -4323,6 +4333,7 @@ pub enum GridTrackListComponent {
 /// most one auto-repeat, and `<fixed-size>` for every other track when an
 /// auto-repeat is present (see the [`GridTrackRepeat`] docs).
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GridTrackList {
     /// Interleaved line names; see the [`Self`] docs for their shape.
     pub line_names: Vec<Vec<SmolStr>>,
@@ -4356,6 +4367,7 @@ pub enum GridTemplateTracks {
 /// The explicit grid that the `grid` and `grid-template` shorthands set: the
 /// row and column track lists and the named areas.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GridShorthand {
     pub rows: GridTemplateTracks,
     pub columns: GridTemplateTracks,
@@ -4364,6 +4376,7 @@ pub struct GridShorthand {
 
 /// The four-line `grid-area` placement shorthand.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GridAreaShorthand {
     pub row_start: GridLineValue,
     pub column_start: GridLineValue,
@@ -4377,6 +4390,7 @@ pub struct GridAreaShorthand {
 /// Layout Module Level 1 §9.2, "Line-based Placement: the
 /// grid-template-areas shorthand".
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GridTemplateAreaEntry {
     /// Name of the area.
     pub name: SmolStr,
@@ -4389,6 +4403,25 @@ pub struct GridTemplateAreaEntry {
     pub column_start: u32,
     /// Ending column grid line (1-based, exclusive).
     pub column_end: u32,
+}
+
+impl GridTemplateAreaEntry {
+    /// The area `name` spanning the given grid lines.
+    pub fn new(
+        name: SmolStr,
+        row_start: u32,
+        row_end: u32,
+        column_start: u32,
+        column_end: u32,
+    ) -> Self {
+        Self {
+            name,
+            row_start,
+            row_end,
+            column_start,
+            column_end,
+        }
+    }
 }
 
 /// The non-`none` specified value of `grid-template-areas`.
@@ -4404,6 +4437,7 @@ pub struct GridTemplateAreaEntry {
 /// parsing results once, so the raikiri-dom bridge can convert them directly
 /// to taffy `GridTemplateArea` without parsing them again.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GridTemplateAreas {
     /// Authored strings (the computed value specified by the spec).
     pub row_strings: Vec<SmolStr>,
@@ -4415,6 +4449,24 @@ pub struct GridTemplateAreas {
     /// Number of columns in the string grid, equal in every row as required
     /// by the spec (see the [`parse_grid_template_areas`] docs).
     pub column_count: u32,
+}
+
+impl GridTemplateAreas {
+    /// A value holding the authored strings, the areas parsed from them and
+    /// the size of the string grid.
+    pub fn new(
+        row_strings: Vec<SmolStr>,
+        areas: Vec<GridTemplateAreaEntry>,
+        row_count: u32,
+        column_count: u32,
+    ) -> Self {
+        Self {
+            row_strings,
+            areas,
+            row_count,
+            column_count,
+        }
+    }
 }
 
 /// The specified value of the `grid-template-areas` property.
@@ -4526,6 +4578,7 @@ pub enum GridLineValue {
 /// is also set to that `<custom-ident>`; otherwise, it is set to `auto`."
 /// [`parse_grid_line_shorthand`] applies this rule.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GridLineShorthand {
     /// The `-start` longhand component.
     pub start: GridLineValue,
@@ -4547,6 +4600,7 @@ pub struct GridLineShorthand {
 /// [`PropertyValue::JustifyItems`] docs), so the exceptional branch of the
 /// copy rule cannot be reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PlaceItemsShorthand {
     /// The `align-items` component.
     pub align: SelfAlignmentValue,
@@ -4564,6 +4618,7 @@ pub struct PlaceItemsShorthand {
 /// Omitting the second component follows the same copy rule as
 /// [`PlaceItemsShorthand`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PlaceSelfShorthand {
     /// The `align-self` component.
     pub align: AlignSelfValue,
@@ -5106,6 +5161,7 @@ css_keywords!(OverflowValue {
 /// [`ComputedValues`]: crate::computed::ComputedValues
 /// [`ComputedValues::border`]: crate::computed::ComputedValues::border
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OverflowXY {
     /// The `overflow-x` axis.
     pub x: OverflowValue,
@@ -5114,6 +5170,11 @@ pub struct OverflowXY {
 }
 
 impl OverflowXY {
+    /// Constructs the two axes from their own values.
+    pub const fn new(x: OverflowValue, y: OverflowValue) -> Self {
+        Self { x, y }
+    }
+
     /// Constructs x and y with the same value: the two-axis counterpart of
     /// [`Sides::all`]. Used for both one-value `overflow: <value>` shorthand
     /// expansion (CSS Overflow 3 §3.1: "If the second value is omitted, it is
@@ -5184,6 +5245,7 @@ pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
 /// `ruby-position` controls whether ruby annotations are placed above or below
 /// their base. It is inherited and defaults to `over`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RubyPosition {
     /// Place annotations above the base.
     Over,
@@ -5438,6 +5500,7 @@ pub enum PositionValue {
 /// Level 4 defines six keywords (`||` group 4 + top-level 2), so future fields
 /// are less likely than for [`Border`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TextDecorationLine {
     /// `underline` — draws a decoration line along the text's under edge.
     pub underline: bool,
@@ -5614,6 +5677,7 @@ pub enum TextDecorationColor {
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct TextDecorationShorthand {
     /// The `text-decoration-line` component; defaults to [`TextDecorationLine::NONE`]
     /// (the spec initial value) when omitted.
@@ -5838,6 +5902,7 @@ pub enum TextEmphasisStyle {
 /// Omitted components use initial values: `none` for style and `currentColor`
 /// for color. The rule layer expands this carrier to the two longhands.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TextEmphasisShorthand {
     /// `text-emphasis-style` component.
     pub style: TextEmphasisStyle,
@@ -5857,6 +5922,7 @@ pub struct TextEmphasisShorthand {
 /// The element cascade preserves this inherited keyword set as the computed value;
 /// underline placement remains out of scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TextUnderlinePosition {
     /// Specifies `from-font` (mutually exclusive with `under`).
     pub from_font: bool,
@@ -6858,6 +6924,7 @@ css_keywords!(TextWrapStyle {
 /// The normalized components of the CSS Text 4 `text-wrap` shorthand.
 /// Omitted components are stored with their initial values before cascade.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TextWrapShorthand {
     /// `text-wrap-mode` component.
     pub mode: TextWrapMode,
@@ -7069,6 +7136,7 @@ pub enum HyphenateLimitCharsValue {
 /// these values; line breaking and hyphenation remain consumer behavior.
 /// <https://drafts.csswg.org/css-text-4/#propdef-hyphenate-limit-chars>
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HyphenateLimitChars {
     /// Maximum hyphenated word length.
     pub total: HyphenateLimitCharsValue,
@@ -7318,6 +7386,7 @@ css_keywords!(TextSpacingTrim {
 /// The shorthand expands to [`TextSpacingTrim`] and [`TextAutospace`]. Omitted
 /// components use their longhand initial value before cascade.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TextSpacingShorthand {
     /// `text-spacing-trim` component.
     pub trim: TextSpacingTrim,
@@ -7591,11 +7660,22 @@ css_keywords!(EmptyCellsValue {
 /// unlike its sibling keyword-only types [`CaptionSideValue`] / [`EmptyCellsValue`],
 /// the values are not simply passed through.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct BorderSpacingValue {
     /// Horizontal (inline-axis) spacing — the first component.
     pub horizontal: Length,
     /// Vertical (block-axis) spacing — the second component, or `horizontal` if omitted.
     pub vertical: Length,
+}
+
+impl BorderSpacingValue {
+    /// Constructs the two components, horizontal first.
+    pub const fn new(horizontal: Length, vertical: Length) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
 }
 
 /// The `<color>` component of a `text-shadow` entry: like [`BorderColor`] /
@@ -8993,6 +9073,7 @@ pub enum VisualBox {
 /// Specified `overflow-clip-margin` (CSS Overflow 4 §3.2): the box the
 /// overflow clip edge starts from and how far outside it the edge lies.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct OverflowClipMargin {
     /// `content-box`, `padding-box` or `border-box`; `None` when omitted,
     /// which means `content-box` on a replaced element and `padding-box`
@@ -9073,6 +9154,7 @@ pub enum BackgroundSize {
 /// How `<visual-box>` occurrences set origin and clip is described in
 /// [`BackgroundShorthand`].
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct BackgroundLayerSpec {
     /// `background-image` component: [`BackgroundImage::None`] if omitted.
     pub image: BackgroundImage,
@@ -9288,6 +9370,7 @@ css_keywords!(ObjectFit {
 ///
 /// The preferred aspect ratio a box uses is decided by [`Self::preferred`].
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct AspectRatioValue {
     /// Whether `auto` was given. With a `<ratio>` as well, a replaced box
     /// with a natural ratio keeps that ratio and the `<ratio>` stands in for
@@ -10101,6 +10184,7 @@ pub enum FilterFunction {
 /// `<length-percentage> && hanging? && each-line?`. `Copy` (all fields are `Copy`)
 /// keeps by-value cascade assignment and inheritance copies straightforward.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct TextIndentValue {
     /// The `<length-percentage>` component.
     pub length: TextIndentLength,

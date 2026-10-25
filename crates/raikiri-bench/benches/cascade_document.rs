@@ -30,11 +30,7 @@ use raikiri_style::{MediaContext, RuleTree};
 // cov:ignore: bench harness — same reason as `common` above.
 fn parsed(pages: usize, rows: usize) -> (UncascadedDocument, RuleTree) {
     let html = common::report::report_html(pages, rows);
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = ParseOptions::new();
     let document = raikiri_html::parse(html.as_bytes(), &options).expect("the report parses");
     let tree = raikiri_html::build_rule_tree(&document);
     let probe =

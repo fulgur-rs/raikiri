@@ -1415,7 +1415,7 @@ fn run_source(document: &Document, owner: usize) -> Option<RunSource> {
             PseudoElem::Before | PseudoElem::FirstLine => GeneratedKind::Before,
             // Retained typographic boxes are projected with their original
             // text owner; unsupported box pseudos never supply text sources.
-            PseudoElem::FirstLetter | PseudoElem::Backdrop | PseudoElem::FileSelectorButton => {
+            _ => {
                 return None;
             }
         };

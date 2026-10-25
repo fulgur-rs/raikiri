@@ -4,15 +4,7 @@ use std::collections::HashMap;
 use crate::test_http_server::{TestResponse, TestServer};
 
 fn request(url: Url, kind: ResourceKind) -> Request {
-    Request {
-        url,
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind,
-    }
+    Request::new(url, kind)
 }
 
 #[test]

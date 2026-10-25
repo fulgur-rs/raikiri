@@ -16,13 +16,8 @@ const AHEM: &[u8] = include_bytes!(concat!(
 struct Red;
 impl ImagePixelSource for Red {
     fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
-        (url.as_str() == "file:///marker.png").then(|| {
-            Arc::new(DecodedImage {
-                width: 10,
-                height: 10,
-                rgba: [255, 0, 0, 255].repeat(100),
-            })
-        })
+        (url.as_str() == "file:///marker.png")
+            .then(|| Arc::new(DecodedImage::new(10, 10, [255, 0, 0, 255].repeat(100))))
     }
 }
 

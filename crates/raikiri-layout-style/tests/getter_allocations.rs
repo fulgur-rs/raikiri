@@ -181,18 +181,12 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
         line_names: vec![vec![name.clone()], vec![]],
         components: vec![C::Size(S::Breadth(B::Flex(1.0)))],
     }));
-    cv.grid_template_areas = GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas {
-        row_strings: vec![name.clone()],
-        row_count: 1,
-        column_count: 1,
-        areas: vec![GridTemplateAreaEntry {
-            name,
-            row_start: 1,
-            row_end: 2,
-            column_start: 1,
-            column_end: 2,
-        }],
-    }));
+    cv.grid_template_areas = GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas::new(
+        vec![name.clone()],
+        vec![GridTemplateAreaEntry::new(name, 1, 2, 1, 2)],
+        1,
+        1,
+    )));
     let bindings = [
         PreparedCalc {
             slot: CalcSlot::Property(LengthProperty::Width),

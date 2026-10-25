@@ -241,6 +241,7 @@ impl ToCss for AttrValue {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PseudoClass {
     Hover,
     Active,
@@ -406,6 +407,7 @@ impl NonTSPseudoClass for PseudoClass {
 /// The valid native `::backdrop` and `::file-selector-button` selectors never
 /// match, because this renderer does not generate their specialized boxes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PseudoElem {
     /// `::before` (also accepted as legacy `:before`).
     Before,

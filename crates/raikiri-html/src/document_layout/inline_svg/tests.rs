@@ -277,11 +277,11 @@ fn similarity_transforms_keep_angles_and_the_ratio_of_lengths() {
 }
 
 fn raster_of(bytes: usize) -> ImageContent {
-    ImageContent::Raster(Arc::new(raikiri_traits::DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![0; bytes],
-    }))
+    ImageContent::Raster(Arc::new(raikiri_traits::DecodedImage::new(
+        1,
+        1,
+        vec![0; bytes],
+    )))
 }
 
 fn picture_key(source: &str, rendering: SvgRendering) -> PictureKey {

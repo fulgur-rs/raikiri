@@ -19,7 +19,7 @@ fn images(scene: &Scene) -> Vec<&peniko::ImageBrush> {
 fn canvas_page_paints_share_pixels_and_preserve_prior_scenes_after_updates() {
     let mut parsed = raikiri_html::parse(
         b"<body style='margin:0'><canvas width='2' height='2' style='width:20px;height:20px'></canvas></body>".as_slice(),
-        &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None },
+        &raikiri_html::ParseOptions::new(),
     ).unwrap();
     let id = (0..parsed.dom.node_count())
         .find(|&i| parsed.dom.is_canvas_element(i))

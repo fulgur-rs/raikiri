@@ -21,15 +21,8 @@ fn range(value: &str) -> Result<(u64, u64), ReftestError> {
 }
 
 pub(super) fn metadata(html: &str, pair: &ReftestPair) -> Result<Option<Fuzzy>, ReftestError> {
-    let parsed = raikiri_html::parse(
-        html.as_bytes(),
-        &raikiri::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .map_err(|e| ReftestError::RaikiriRender(format!("parse fuzzy: {e:?}")))?;
+    let parsed = raikiri_html::parse(html.as_bytes(), &raikiri::ParseOptions::new())
+        .map_err(|e| ReftestError::RaikiriRender(format!("parse fuzzy: {e:?}")))?;
     let mut stack = vec![parsed.dom.root_index()];
     let mut references = Vec::new();
     let mut contents = Vec::new();

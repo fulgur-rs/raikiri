@@ -94,6 +94,7 @@ pub(crate) const MONOSPACE_MEDIUM_FONT_SIZE_PX: f32 = 13.0;
 /// `font-size: 20px` has no keyword information and stays 20px under any
 /// family.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct FontSizeKeywordInfo {
     /// The `<absolute-size>` keyword the size derives from.
     pub keyword: AbsoluteFontSize,
@@ -383,6 +384,7 @@ impl RunningTemplate {
 /// explicit variation axes and vertical text orientation remain outside this
 /// layout's horizontal metric scope.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ChFontKey {
     /// Font family list used by the shaping resolver.
     pub family: Arc<Vec<FontFamilyName>>,
@@ -395,6 +397,26 @@ pub struct ChFontKey {
     /// Computed `font-optical-sizing`, which selects the `opsz` instance a
     /// variable font's metrics are read at.
     pub optical_sizing: FontOpticalSizing,
+}
+
+impl ChFontKey {
+    /// The key for text in `family` at `size`, `weight`, `style` and
+    /// `optical_sizing`.
+    pub fn new(
+        family: Arc<Vec<FontFamilyName>>,
+        size: ComputedLength,
+        weight: f32,
+        style: FontStyle,
+        optical_sizing: FontOpticalSizing,
+    ) -> Self {
+        Self {
+            family,
+            size,
+            weight,
+            style,
+            optical_sizing,
+        }
+    }
 }
 
 /// Physical preferred sizes of a `vertical-rl` / `vertical-lr` box whose
@@ -519,6 +541,7 @@ impl ComputedBorderImage {
 
 /// A sizing keyword that stands for the content size of a box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ContentSizeKeyword {
     /// `min-content`
     MinContent,

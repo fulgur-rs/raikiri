@@ -39,7 +39,7 @@ use crate::types::{ParseOptions, StylesheetSource, UncascadedDocument};
 /// use raikiri_traits::Dom;
 ///
 /// let html = b"<html><body>Hi</body></html>";
-/// let opts = ParseOptions { extra_stylesheets: &[], network: None, base_url: None };
+/// let opts = ParseOptions::new();
 /// let doc = parse(&html[..], &opts).unwrap();
 /// // Parse succeeded; dom has root
 /// assert_eq!(doc.dom.root_id().0, 0);
@@ -403,25 +403,25 @@ fn link_fetch_warning(
             // ResourcePolicy / RenderResources may deny a response because it
             // exceeds a byte cap. Preserve that diagnostic separately from
             // ordinary policy denials.
-            RenderWarning {
-                kind: policy_violation_warning_kind(&violation, violation.kind),
-                node_id: Some(node_id),
-                details: "<link rel=stylesheet>: fetch denied by resource policy or resource limit"
+            RenderWarning::new(
+                policy_violation_warning_kind(&violation, violation.kind),
+                "<link rel=stylesheet>: fetch denied by resource policy or resource limit"
                     .to_owned(),
-            }
+            )
+            .node_id(Some(node_id))
         }
         error => {
             // Keep a safe, structured summary instead of formatting arbitrary
             // provider-controlled error text into the warning.
             let safe_url = redacted_url(url);
             let summary = network_error_summary(&error);
-            RenderWarning {
-                kind: WarningKind::NetworkFallback {
+            RenderWarning::new(
+                WarningKind::NetworkFallback {
                     url: safe_url.clone(),
                 },
-                node_id: Some(node_id),
-                details: format!("<link rel=stylesheet>: fetch failed for {safe_url}: {summary}"),
-            }
+                format!("<link rel=stylesheet>: fetch failed for {safe_url}: {summary}"),
+            )
+            .node_id(Some(node_id))
         }
     }
 }

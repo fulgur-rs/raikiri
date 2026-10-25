@@ -158,6 +158,7 @@ pub const MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Counter snapshots would exceed their cumulative estimated memory budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CounterSnapshotLimitExceeded {
     /// Maximum estimated bytes allowed for the operation.
     pub limit: u64,

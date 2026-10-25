@@ -35,12 +35,10 @@ impl NetworkProvider for HiddenParagraphStylesheet {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(request.url);
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: b"p { display: none }".as_slice().into(),
-            content_type: Some("text/css".into()),
-            final_url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(b"p { display: none }".as_slice().into(), final_url)
+                .content_type(Some("text/css".into())),
+        ))
     }
 }
 

@@ -35,15 +35,7 @@ fn external_consumer_can_reference_all_reexported_types() {
 /// Parse and inspect a completed layout through umbrella exports.
 #[test]
 fn external_consumer_can_call_parse_and_layout() {
-    let doc = parse_html(
-        b"<p>Hi</p>".as_slice(),
-        &ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let doc = parse_html(b"<p>Hi</p>".as_slice(), &ParseOptions::new()).unwrap();
     let LayoutStatus::Completed(result) = layout(
         &doc,
         PageDefaults::default(),
@@ -108,11 +100,7 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
 
     // Construct HtmlDocument via parse_html: its private field prevents direct
     // construction, even if it later re-exports raikiri_dom::Document.
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let _doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse");
 }
 

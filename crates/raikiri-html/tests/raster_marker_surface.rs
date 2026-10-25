@@ -11,11 +11,11 @@ use url::Url;
 struct Pixels(Arc<DecodedImage>);
 impl Pixels {
     fn new() -> Self {
-        Self(Arc::new(DecodedImage {
-            width: 8,
-            height: 4,
-            rgba: [255, 0, 0, 255].repeat(32),
-        }))
+        Self(Arc::new(DecodedImage::new(
+            8,
+            4,
+            [255, 0, 0, 255].repeat(32),
+        )))
     }
 }
 impl ImagePixelSource for Pixels {
@@ -323,11 +323,7 @@ fn marker_payload_respects_pixel_admission_and_rejects_malformed_sources() {
         assert!(
             page.raster_marker(
                 owner,
-                &Source(Some(Arc::new(DecodedImage {
-                    width,
-                    height,
-                    rgba
-                })))
+                &Source(Some(Arc::new(DecodedImage::new(width, height, rgba))))
             )
             .is_none()
         );
@@ -385,16 +381,8 @@ fn marker_payload_rejects_zero_em_and_overflowing_natural_rectangles() {
         }
     }
     for natural in [
-        raikiri_traits::ImageIntrinsicSize {
-            width: None,
-            height: None,
-            aspect_ratio: None,
-        },
-        raikiri_traits::ImageIntrinsicSize {
-            width: Some(f32::MAX),
-            height: None,
-            aspect_ratio: Some(1e-20),
-        },
+        raikiri_traits::ImageIntrinsicSize::new(None, None, None),
+        raikiri_traits::ImageIntrinsicSize::new(Some(f32::MAX), None, Some(1e-20)),
     ] {
         let source = Natural(natural);
         let document = lay_out("<ul><li></li></ul>", "li{font-size:0}", &source);

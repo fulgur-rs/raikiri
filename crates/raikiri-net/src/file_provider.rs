@@ -37,19 +37,15 @@ impl NetworkProvider for FileNetworkProvider {
         } else {
             Some("image/png".to_string())
         };
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: bytes.into(),
-            content_type,
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(bytes.into(), request.url).content_type(content_type),
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raikiri_traits::{Body, Method};
     use std::io::Write;
 
     #[test]
@@ -60,15 +56,10 @@ mod tests {
 
         let provider = FileNetworkProvider;
         let result = provider
-            .fetch(Request {
-                url: url.clone(),
-                method: Method::Get,
-                content_type: None,
-                headers: Vec::new(),
-                body: Body::Empty,
-                signal: None,
-                kind: raikiri_traits::ResourceKind::Image,
-            })
+            .fetch(Request::new(
+                url.clone(),
+                raikiri_traits::ResourceKind::Image,
+            ))
             .expect("fetch should succeed");
 
         assert_eq!(&result.bytes[..], b"hello");
@@ -80,15 +71,7 @@ mod tests {
         let provider = FileNetworkProvider;
         let url = url::Url::parse("https://example.com/x.png").unwrap();
         let err = provider
-            .fetch(Request {
-                url,
-                method: Method::Get,
-                content_type: None,
-                headers: Vec::new(),
-                body: Body::Empty,
-                signal: None,
-                kind: raikiri_traits::ResourceKind::Image,
-            })
+            .fetch(Request::new(url, raikiri_traits::ResourceKind::Image))
             .unwrap_err();
         assert!(matches!(err, NetworkError::Other(_)));
     }

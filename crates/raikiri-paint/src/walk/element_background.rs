@@ -258,16 +258,11 @@ impl ElementBackgroundLayer<'_> {
         if !matches!(self.clip, VisualBox::Text | VisualBox::BorderAreaText) {
             return false;
         }
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
+        warnings.push(RenderWarning::new(WarningKind::ResourceFallback {
                 kind: ResourceKind::Image,
                 url: visible.url.as_ref().map(redacted_image_url),
-            },
-            node_id: None,
-            details:
-                "background-clip: text for CSS backgrounds is not yet implemented; the background was skipped"
-                    .into(),
-        });
+            }, "background-clip: text for CSS backgrounds is not yet implemented; the background was skipped"
+                    .into()));
         true
     }
 
@@ -343,16 +338,11 @@ impl ElementBackgroundLayer<'_> {
             VisualBox::PaddingBox => padding_box,
             VisualBox::ContentBox => (ux0 + bl + pl, uy0 + bt + pt, ux1 - br - pr, uy1 - bb - pb),
             _ => {
-                warnings.push(RenderWarning {
-                    kind: WarningKind::ResourceFallback {
+                warnings.push(RenderWarning::new(WarningKind::ResourceFallback {
                         kind: ResourceKind::Image,
                         url: url.map(redacted_image_url),
-                    },
-                    node_id: None,
-                    details:
-                        "background-origin has an unsupported visual box; using padding-box positioning"
-                            .into(),
-                });
+                    }, "background-origin has an unsupported visual box; using padding-box positioning"
+                            .into()));
                 padding_box
             }
         };

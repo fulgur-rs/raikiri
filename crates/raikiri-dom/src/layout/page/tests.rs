@@ -806,10 +806,10 @@ fn resolved_image_intrinsic_size_changes_flex_grid_column_count_and_page_order()
             &self,
             _request: raikiri_traits::ResolverRequest<'_>,
         ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(self.0, 40.0),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(self.0, 40.0),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 

@@ -74,12 +74,7 @@ impl ImageBrushCache {
         let scale = self.device_scale?;
         let [a, b, c, d, e, f] =
             (Affine::scale(scale) * self.root_transform.get() * transform).as_coeffs();
-        (b == 0.0 && c == 0.0).then_some(DeviceGrid {
-            scale_x: a,
-            offset_x: e,
-            scale_y: d,
-            offset_y: f,
-        })
+        (b == 0.0 && c == 0.0).then_some(DeviceGrid::new(a, e, d, f))
     }
 
     /// The URL a computed `url()` value names.

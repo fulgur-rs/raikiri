@@ -3,11 +3,7 @@ use super::*;
 #[test]
 fn a_raster_without_pixels_is_dropped_with_a_warning() {
     let mut warnings = Vec::new();
-    let empty = DecodedImage {
-        width: 0,
-        height: 3,
-        rgba: Vec::new(),
-    };
+    let empty = DecodedImage::new(0, 3, Vec::new());
 
     assert_eq!(require_pixels(empty, 7, &mut warnings), None);
 
@@ -29,11 +25,7 @@ fn a_raster_without_pixels_is_dropped_with_a_warning() {
 #[test]
 fn a_raster_with_pixels_is_kept_without_a_warning() {
     let mut warnings = Vec::new();
-    let raster = DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![0, 0, 0, 0],
-    };
+    let raster = DecodedImage::new(1, 1, vec![0, 0, 0, 0]);
 
     assert_eq!(
         require_pixels(raster.clone(), 7, &mut warnings),
@@ -44,11 +36,7 @@ fn a_raster_with_pixels_is_kept_without_a_warning() {
 
 #[test]
 fn a_raster_is_inked_when_any_pixel_is_not_fully_transparent() {
-    let mut raster = DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![9, 9, 9, 0, 9, 9, 9, 0],
-    };
+    let mut raster = DecodedImage::new(2, 1, vec![9, 9, 9, 0, 9, 9, 9, 0]);
     assert!(!has_ink(&raster));
 
     raster.rgba[7] = 1;

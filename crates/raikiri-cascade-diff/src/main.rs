@@ -247,13 +247,11 @@ fn html_into(bytes: &[u8], path: &Path, root: Option<&Path>) -> String {
     let files = root.map(|root| files::RootedFiles {
         root: root.to_owned(),
     });
-    let options = raikiri_html::ParseOptions {
-        extra_stylesheets: &[],
-        network: files
-            .as_ref()
-            .map(|files| files as &dyn raikiri_traits::NetworkProvider),
-        base_url: root.and_then(|root| files::document_url(root, path)),
-    };
+    let mut options = raikiri_html::ParseOptions::new();
+    options.network = files
+        .as_ref()
+        .map(|files| files as &dyn raikiri_traits::NetworkProvider);
+    options.base_url = root.and_then(|root| files::document_url(root, path));
     let mut out = String::new();
     match raikiri_html::parse(bytes, &options) {
         Ok(document) => {

@@ -16,10 +16,10 @@ impl ReplacedResolver for RecordingResolver {
         if self.fails {
             return Err(ResolverError::Decode("test image".into()));
         }
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::new(10.0, 20.0),
-            disposition: ResolveDisposition::Ok,
-        })
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::new(10.0, 20.0),
+            ResolveDisposition::Ok,
+        ))
     }
 }
 

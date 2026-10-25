@@ -24,12 +24,12 @@ fn byte_cap_violations_become_resource_limit_warnings() {
             actual: 2,
         },
     ] {
-        let violation = PolicyViolation {
-            kind: ResourceKind::Image,
-            url: url("https://example.test/a.png"),
+        let violation = PolicyViolation::new(
+            ResourceKind::Image,
+            url("https://example.test/a.png"),
             violation_type,
-            details: String::new(),
-        };
+            String::new(),
+        );
         assert!(matches!(
             policy_violation_warning_kind(&violation, ResourceKind::Image),
             WarningKind::ResourceLimitExceeded {
@@ -43,12 +43,12 @@ fn byte_cap_violations_become_resource_limit_warnings() {
 
 #[test]
 fn other_violations_are_reported_sanitized() {
-    let violation = PolicyViolation {
-        kind: ResourceKind::ExternalStylesheet,
-        url: url("https://example.test/a.css?token=secret"),
-        violation_type: ViolationType::HostNotAllowed,
-        details: "provider text with secret".to_owned(),
-    };
+    let violation = PolicyViolation::new(
+        ResourceKind::ExternalStylesheet,
+        url("https://example.test/a.css?token=secret"),
+        ViolationType::HostNotAllowed,
+        "provider text with secret".to_owned(),
+    );
     let WarningKind::PolicyWarning { violation } =
         policy_violation_warning_kind(&violation, ResourceKind::ExternalStylesheet)
     else {

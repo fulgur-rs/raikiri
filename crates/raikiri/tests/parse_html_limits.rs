@@ -24,11 +24,7 @@ use raikiri_traits::{LimitKind, RenderError, RenderLimits};
 const DEFAULT_INPUT_BYTES_CAP: u64 = 32 * 1024 * 1024;
 
 fn opts() -> ParseOptions<'static> {
-    ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    }
+    ParseOptions::new()
 }
 
 /// Check that `RenderLimits::default().max_input_bytes` retains the

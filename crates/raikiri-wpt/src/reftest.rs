@@ -2383,14 +2383,13 @@ pub(crate) fn resolved_live_viewport_document(
     document: &raikiri_html::UncascadedDocument,
     context: &raikiri::MediaContext,
 ) -> raikiri_html::UncascadedDocument {
-    let mut resolved = raikiri_html::UncascadedDocument {
-        dom: document.dom.clone(),
-        stylesheet_sources: document.stylesheet_sources.clone(),
-        user_stylesheet_sources: document.user_stylesheet_sources.clone(),
-        user_stylesheet_insertion_index: document.user_stylesheet_insertion_index,
-        warnings: Vec::new(),
-        quirks_mode: document.quirks_mode,
-    };
+    let mut resolved = raikiri_html::UncascadedDocument::new(
+        document.dom.clone(),
+        document.stylesheet_sources.clone(),
+        document.user_stylesheet_sources.clone(),
+        document.user_stylesheet_insertion_index,
+        document.quirks_mode,
+    );
     expand_document_viewport_units(
         &mut resolved,
         context.viewport_width() as f32,
@@ -2436,13 +2435,13 @@ pub(crate) fn prepare_wpt_live_document_with_syntax(
     let stylesheet_base = page_base
         .as_deref()
         .and_then(|path| raikiri::Url::from_directory_path(path).ok());
-    let opts = raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: stylesheet_network
-            .as_ref()
-            .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
-        base_url: stylesheet_base.clone(),
-    };
+    let opts = raikiri::ParseOptions::new()
+        .network(
+            stylesheet_network
+                .as_ref()
+                .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
+        )
+        .base_url(stylesheet_base.clone());
 
     let html = absolutize_wpt_resource_urls(html, page_base.as_deref(), wpt_root.as_deref());
     let image_resolver = wpt_root
@@ -2651,13 +2650,13 @@ pub(crate) fn parse_wpt_inner_html_fragment(
     let stylesheet_network = wpt_root
         .as_ref()
         .map(|root| local_resources::WptFileNetworkProvider::new(Some(root.clone())));
-    let opts = raikiri::ParseOptions {
-        extra_stylesheets: &[],
-        network: stylesheet_network
-            .as_ref()
-            .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
-        base_url: document_base_url.cloned(),
-    };
+    let opts = raikiri::ParseOptions::new()
+        .network(
+            stylesheet_network
+                .as_ref()
+                .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
+        )
+        .base_url(document_base_url.cloned());
     let markup = absolutize_wpt_resource_urls(markup, page_base.as_deref(), wpt_root.as_deref());
     raikiri_html::parse_fragment(
         markup.as_bytes(),
@@ -2938,15 +2937,15 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let base_url = resources.base_url;
     let prepare_cascade_images = resources.prepare_cascade_images;
     let print_sheets = [WPT_PRINT_PAGE_MARGIN_CSS];
-    let opts = ParseOptions {
-        extra_stylesheets: if resources.print_page_margin {
-            &print_sheets
-        } else {
-            &[]
-        },
-        network: resources.network,
-        base_url: resources.parse_base_url.cloned(),
+    let extra_stylesheets: &[&str] = if resources.print_page_margin {
+        &print_sheets
+    } else {
+        &[]
     };
+    let opts = ParseOptions::new()
+        .extra_stylesheets(extra_stylesheets)
+        .network(resources.network)
+        .base_url(resources.parse_base_url.cloned());
     // Media queries use the selected output page box before margins and
     // independently of any authored `@page size`.
     let media_context = MediaContext::with_viewport(raikiri::MediaType::Print, width, height);
@@ -3442,12 +3441,12 @@ impl raikiri_traits::ReplacedResolver for NoReplacedResolver {
         &self,
         _request: raikiri_traits::ResolverRequest<'_>,
     ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
-        Ok(raikiri_traits::ResolvedIntrinsic {
-            intrinsic: raikiri_traits::IntrinsicBox::default(),
-            disposition: raikiri_traits::ResolveDisposition::Fallback {
+        Ok(raikiri_traits::ResolvedIntrinsic::new(
+            raikiri_traits::IntrinsicBox::default(),
+            raikiri_traits::ResolveDisposition::Fallback {
                 reason: "no replaced-resource resolver was configured".to_owned(),
             },
-        })
+        ))
     }
 }
 

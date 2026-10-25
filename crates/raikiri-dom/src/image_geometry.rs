@@ -277,6 +277,7 @@ pub fn rounded_background_tile_size(
 /// with one entry of `y`. The tiles cover the painting area and are clipped to
 /// it by the painter.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct BackgroundTiles {
     /// Tile width after `round` rescaling.
     pub width: f64,

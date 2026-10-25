@@ -135,28 +135,27 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
             .record(&url, Vec::new());
         let mut resolved = if let Some(policy) = self.policy {
             if let Some(violation_type) = url_policy_violation(policy, &url, ResourceKind::Image) {
-                let violation = PolicyViolation {
-                    kind: ResourceKind::Image,
-                    url: url.clone(),
+                let violation = PolicyViolation::new(
+                    ResourceKind::Image,
+                    url.clone(),
                     violation_type,
-                    details: "replaced resource URL denied by policy".to_owned(),
-                };
+                    "replaced resource URL denied by policy".to_owned(),
+                );
                 self.report(
                     &url,
-                    RenderWarning {
-                        kind: WarningKind::PolicyWarning {
+                    RenderWarning::new(
+                        WarningKind::PolicyWarning {
                             violation: sanitize_policy_violation(violation),
                         },
-                        node_id: None,
-                        details: "replaced resource URL denied by policy".to_owned(),
-                    },
+                        "replaced resource URL denied by policy".to_owned(),
+                    ),
                 );
-                Ok(ResolvedIntrinsic {
-                    intrinsic: IntrinsicBox::default(),
-                    disposition: ResolveDisposition::Fallback {
+                Ok(ResolvedIntrinsic::new(
+                    IntrinsicBox::default(),
+                    ResolveDisposition::Fallback {
                         reason: "resource policy denied the replaced resource".to_owned(),
                     },
-                })
+                ))
             } else {
                 self.inner.resolve(request)
             }
@@ -174,15 +173,14 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
         {
             self.report(
                 &url,
-                RenderWarning {
-                    kind: WarningKind::ResourceLimitExceeded {
+                RenderWarning::new(
+                    WarningKind::ResourceLimitExceeded {
                         kind: ResourceKind::Image,
                         limit,
                         actual,
                     },
-                    node_id: None,
-                    details: "decoded image exceeded its configured byte limit".to_owned(),
-                },
+                    "decoded image exceeded its configured byte limit".to_owned(),
+                ),
             );
             resolved.intrinsic = IntrinsicBox::default();
             resolved.disposition = ResolveDisposition::Fallback {
@@ -197,14 +195,13 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
             if seen.insert((url.clone(), reason.clone())) {
                 self.report(
                     &url,
-                    RenderWarning {
-                        kind: WarningKind::ResourceFallback {
+                    RenderWarning::new(
+                        WarningKind::ResourceFallback {
                             kind: ResourceKind::Image,
                             url: Some(redacted_url(&url)),
                         },
-                        node_id: None,
-                        details: reason.clone(),
-                    },
+                        reason.clone(),
+                    ),
                 );
             }
         }
@@ -216,12 +213,12 @@ struct NoopReplacedResolver;
 
 impl ReplacedResolver for NoopReplacedResolver {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
-        Ok(ResolvedIntrinsic {
-            intrinsic: IntrinsicBox::default(),
-            disposition: ResolveDisposition::Fallback {
+        Ok(ResolvedIntrinsic::new(
+            IntrinsicBox::default(),
+            ResolveDisposition::Fallback {
                 reason: "no replaced-resource resolver was configured".to_owned(),
             },
-        })
+        ))
     }
 }
 

@@ -4370,7 +4370,7 @@ fn has_footnote_ancestor(cascade: &CascadeResult, node_id: usize, document: &Doc
 /// returns `Err`, wrap that error in `LayoutError::Resolver`, and return
 /// without running taffy layout. The `ReplacedResolver` contract makes `Err`
 /// terminal; consumers request placeholder degradation by returning
-/// `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })` instead.
+/// `Ok(ResolvedIntrinsic::new(intrinsic, ResolveDisposition::Fallback { .. }))` instead.
 /// See the documentation for `crate::image_resolve::resolve_images`.
 ///
 /// # Execution order (essential)

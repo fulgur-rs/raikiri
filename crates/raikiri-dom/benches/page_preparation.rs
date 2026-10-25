@@ -58,15 +58,7 @@ fn fixture(kind: &str, pages: usize) -> (Document, CascadeResult, PageBox, Vec<P
         _ => unreachable!(),
     };
     html.push_str("</body></html>");
-    let parsed = parse(
-        html.as_bytes(),
-        &ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        },
-    )
-    .unwrap();
+    let parsed = parse(html.as_bytes(), &ParseOptions::new()).unwrap();
     let mut doc = parsed.dom;
     doc.set_font_collection(
         build_wpt_font_collection(std::path::Path::new(concat!(

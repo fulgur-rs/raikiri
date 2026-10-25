@@ -13,11 +13,11 @@ use url::Url;
 struct Pixels(Arc<DecodedImage>);
 impl Pixels {
     fn new() -> Self {
-        Self(Arc::new(DecodedImage {
-            width: 8,
-            height: 4,
-            rgba: [0, 0, 255, 255].repeat(32),
-        }))
+        Self(Arc::new(DecodedImage::new(
+            8,
+            4,
+            [0, 0, 255, 255].repeat(32),
+        )))
     }
 }
 impl ImagePixelSource for Pixels {
@@ -314,16 +314,8 @@ fn rastering_fails_for_sources_without_valid_pixels_at_the_used_size() {
     impl ImagePixelSource for Failing {
         fn get_decoded(&self, url: &Url) -> Option<Arc<DecodedImage>> {
             match url.path() {
-                "/short.png" => Some(Arc::new(DecodedImage {
-                    width: 8,
-                    height: 4,
-                    rgba: vec![0; 4],
-                })),
-                "/empty.png" => Some(Arc::new(DecodedImage {
-                    width: 0,
-                    height: 4,
-                    rgba: Vec::new(),
-                })),
+                "/short.png" => Some(Arc::new(DecodedImage::new(8, 4, vec![0; 4]))),
+                "/empty.png" => Some(Arc::new(DecodedImage::new(0, 4, Vec::new()))),
                 _ => None,
             }
         }
@@ -359,11 +351,11 @@ fn rastering_rejects_a_rectangle_that_overflows_css_pixels() {
             self.0.get_decoded(url)
         }
         fn intrinsic_size(&self, _: &Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
-            Some(raikiri_traits::ImageIntrinsicSize {
-                width: Some(f32::MAX),
-                height: None,
-                aspect_ratio: Some(1e-20),
-            })
+            Some(raikiri_traits::ImageIntrinsicSize::new(
+                Some(f32::MAX),
+                None,
+                Some(1e-20),
+            ))
         }
     }
     let source = Overflowing(Pixels::new());
@@ -574,11 +566,11 @@ fn a_covering_image_is_rastered_at_its_prepared_size() {
             None
         }
         fn intrinsic_size(&self, _: &Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
-            Some(raikiri_traits::ImageIntrinsicSize {
-                width: Some(1.0),
-                height: Some(1.0),
-                aspect_ratio: Some(1.0),
-            })
+            Some(raikiri_traits::ImageIntrinsicSize::new(
+                Some(1.0),
+                Some(1.0),
+                Some(1.0),
+            ))
         }
         fn get_decoded_at_size(
             &self,
@@ -589,11 +581,11 @@ fn a_covering_image_is_rastered_at_its_prepared_size() {
             let width = size.width.ceil() as u32;
             let height = size.height.ceil() as u32;
             (width * height <= 10_000).then(|| {
-                Arc::new(DecodedImage {
+                Arc::new(DecodedImage::new(
                     width,
                     height,
-                    rgba: vec![0; (width * height * 4) as usize],
-                })
+                    vec![0; (width * height * 4) as usize],
+                ))
             })
         }
     }

@@ -10,11 +10,7 @@ use raikiri::{
 };
 
 fn parse_html(source: &str) -> raikiri::UncascadedDocument {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     parse(source.as_bytes(), &opts).expect("parse")
 }
 
@@ -275,11 +271,7 @@ fn extra_stylesheets_user_rule_overrides_ua_via_umbrella() {
     // Document.stylesheets as User, without retagging it as Author.
     // Normal User (rank 1) outranks normal UserAgent (rank 0).
     let extra: &[&str] = &["p { display: inline }"];
-    let opts = raikiri::ParseOptions {
-        extra_stylesheets: extra,
-        network: None,
-        base_url: None,
-    };
+    let opts = raikiri::ParseOptions::new().extra_stylesheets(extra);
     let doc = raikiri::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
 
     let result = build_cascaded(&doc).expect("the cascade succeeds");
@@ -322,11 +314,7 @@ fn user_important_beats_normal_ua_via_umbrella() {
     // umbrella StylesheetKind → Origin map (extra_stylesheets → `Origin::User`).
     // Parsing inserts extra_stylesheets with User kind, not retagged Author.
     let extra: &[&str] = &["p { display: inline !important }"];
-    let opts = raikiri::ParseOptions {
-        extra_stylesheets: extra,
-        network: None,
-        base_url: None,
-    };
+    let opts = raikiri::ParseOptions::new().extra_stylesheets(extra);
     let doc = raikiri::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
 
     let result = build_cascaded(&doc).expect("the cascade succeeds");
@@ -361,11 +349,9 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     let _network: Option<&dyn NetworkProvider> = None;
     // Parse a Url for use as base_url.
     let base = Url::parse("https://example.com/").expect("url parse");
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: _network,
-        base_url: Some(base),
-    };
+    let mut opts = ParseOptions::new();
+    opts.network = _network;
+    opts.base_url = Some(base);
 
     let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
     // Annotate UncascadedDocument.dom as Document to verify its re-export.
@@ -469,11 +455,7 @@ fn umbrella_re_exports_cover_computed_sides_container_fields() {
         ParseOptions, Sides, build_cascaded, parse,
     };
 
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let opts = ParseOptions::new();
     let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
     let result = build_cascaded(&doc).expect("the cascade succeeds");
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
@@ -505,12 +487,10 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
             let _kind = request.kind;
 
             // Construct FetchedResource using Bytes and Url.
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from_static(b""),
-                content_type: None,
-                final_url: Url::parse("about:blank").unwrap(),
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(FetchedResource::new(
+                Bytes::from_static(b""),
+                Url::parse("about:blank").unwrap(),
+            )))
         }
     }
 
@@ -538,21 +518,17 @@ fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade()
 
     impl NetworkProvider for StylesheetProvider {
         fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from_static(b"div { display: none }"),
-                content_type: Some("text/css".to_string()),
-                final_url: request.url,
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(Bytes::from_static(b"div { display: none }"), request.url)
+                    .content_type(Some("text/css".to_string())),
+            ))
         }
     }
 
     let provider = StylesheetProvider;
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: Some(&provider as &dyn NetworkProvider),
-        base_url: Some(Url::parse("https://example.test/").expect("valid base url")),
-    };
+    let opts = ParseOptions::new().network(Some(&provider)).base_url(Some(
+        Url::parse("https://example.test/").expect("valid base url"),
+    ));
     let html = br#"<html><head><link rel="stylesheet" href="a.css"></head><body><div>Hi</div></body></html>"#;
     let doc = parse(&html[..], &opts).expect("parse");
 
@@ -612,23 +588,19 @@ fn imported_stylesheet_rules_reach_cascade_in_source_order() {
                 }
                 _ => return Err(NetworkError::Other("not found".to_owned())),
             };
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from(css),
-                content_type: Some("text/css".to_owned()),
-                final_url: Url::parse(final_url).unwrap(),
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(Bytes::from(css), Url::parse(final_url).unwrap())
+                    .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 
     let provider = ImportProvider {
         calls: Mutex::new(Vec::new()),
     };
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: Some(&provider as &dyn NetworkProvider),
-        base_url: Some(Url::parse("https://example.test/").unwrap()),
-    };
+    let opts = ParseOptions::new()
+        .network(Some(&provider))
+        .base_url(Some(Url::parse("https://example.test/").unwrap()));
     let html = br#"<html><head><link rel="stylesheet" href="css/main.css"></head>
         <body><p>Hi</p></body></html>"#;
     let doc = parse(&html[..], &opts).expect("parse");
@@ -675,20 +647,16 @@ fn imported_stylesheet_closed_by_eof_reaches_cascade_without_absorbing_parent_ru
                 "https://example.test/block.css" => "em { display: none",
                 _ => return Err(NetworkError::Other("not found".to_owned())),
             };
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from(css),
-                content_type: Some("text/css".to_owned()),
-                final_url: request.url,
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(Bytes::from(css), request.url)
+                    .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: Some(&ImportProvider as &dyn NetworkProvider),
-        base_url: Some(Url::parse("https://example.test/").unwrap()),
-    };
+    let opts = ParseOptions::new()
+        .network(Some(&ImportProvider))
+        .base_url(Some(Url::parse("https://example.test/").unwrap()));
     let html = br#"<!DOCTYPE html><html><head><link rel="stylesheet" href="main.css"></head>
         <body><p>Hi</p><span>x</span><em>y</em></body></html>"#;
     let doc = parse(&html[..], &opts).expect("parse");
@@ -732,21 +700,17 @@ fn imported_media_condition_is_evaluated_by_the_selected_cascade_context() {
                 }
                 _ => return Err(NetworkError::Other("not found".to_owned())),
             };
-            Ok(FetchOutcome::Body(FetchedResource {
-                bytes: Bytes::from(css),
-                content_type: Some("text/css".to_owned()),
-                final_url: Url::parse(final_url).unwrap(),
-                encoding: None,
-            }))
+            Ok(FetchOutcome::Body(
+                FetchedResource::new(Bytes::from(css), Url::parse(final_url).unwrap())
+                    .content_type(Some("text/css".to_owned())),
+            ))
         }
     }
 
     let provider = ImportProvider;
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: Some(&provider as &dyn NetworkProvider),
-        base_url: Some(Url::parse("https://example.test/").unwrap()),
-    };
+    let opts = ParseOptions::new()
+        .network(Some(&provider))
+        .base_url(Some(Url::parse("https://example.test/").unwrap()));
     let html = br#"<html><head><link rel="stylesheet" href="main.css"></head>
         <body><p>Hi</p></body></html>"#;
     let doc = parse(&html[..], &opts).expect("parse");
@@ -859,11 +823,7 @@ fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrell
     // `push_img_dimension_hints` doc as *the* end-to-end check for the flipped ranking, so it
     // should stand alone.
     let extra: &[&str] = &["img { width: 30px; height: 7px }"];
-    let opts = raikiri::ParseOptions {
-        extra_stylesheets: extra,
-        network: None,
-        base_url: None,
-    };
+    let opts = raikiri::ParseOptions::new().extra_stylesheets(extra);
     let doc = raikiri::parse(&br#"<img src="x.png" width="100">"#[..], &opts).expect("parse");
 
     let result = build_cascaded(&doc).expect("the cascade succeeds");

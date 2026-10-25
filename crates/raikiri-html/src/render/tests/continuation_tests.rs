@@ -692,18 +692,15 @@ fn a_cancellation_while_measuring_a_continuation_aborts_the_run() {
             if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
                 self.controller.abort();
             }
-            Ok(raikiri_traits::ResolvedIntrinsic {
-                intrinsic: raikiri_traits::IntrinsicBox::new(1.0, 1.0),
-                disposition: raikiri_traits::ResolveDisposition::Ok,
-            })
+            Ok(raikiri_traits::ResolvedIntrinsic::new(
+                raikiri_traits::IntrinsicBox::new(1.0, 1.0),
+                raikiri_traits::ResolveDisposition::Ok,
+            ))
         }
     }
 
-    let controller = raikiri_traits::AbortController::new();
     let resolver = AbortOnThirdResolve {
-        controller: raikiri_traits::AbortController {
-            signal: controller.signal.clone(),
-        },
+        controller: raikiri_traits::AbortController::new(),
         calls: AtomicUsize::new(0),
     };
     let resources = RenderResources::new()
@@ -717,7 +714,7 @@ fn a_cancellation_while_measuring_a_continuation_aborts_the_run() {
         <img src='https://example.invalid/image.png' style='display:block;height:30px'>\
         second</div>";
     let config = LayoutConfig::builder()
-        .signal(Some(controller.signal.clone()))
+        .signal(Some(resolver.controller.signal.clone()))
         .build();
     let result = run_pipeline(
         &parse(html),

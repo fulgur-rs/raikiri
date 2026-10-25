@@ -40,11 +40,7 @@ impl ImagePixelSource for Quadrants {
             }
             _ => return None,
         }
-        Some(Arc::new(DecodedImage {
-            width: 10,
-            height: 10,
-            rgba,
-        }))
+        Some(Arc::new(DecodedImage::new(10, 10, rgba)))
     }
 }
 

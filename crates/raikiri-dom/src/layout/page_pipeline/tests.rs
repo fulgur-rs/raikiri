@@ -8788,13 +8788,13 @@ fn max_width_ch_uses_the_inherited_font_before_laying_out_children() {
 
 #[test]
 fn measure_ch_advance_uses_the_engine_fonts() {
-    let key = raikiri_style::ChFontKey {
-        family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
-        size: raikiri_style::ComputedLength(16.0),
-        weight: 400.0,
-        style: raikiri_style::property::FontStyle::Normal,
-        optical_sizing: raikiri_style::property::FontOpticalSizing::Auto,
-    };
+    let key = raikiri_style::ChFontKey::new(
+        std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        raikiri_style::ComputedLength(16.0),
+        400.0,
+        raikiri_style::property::FontStyle::Normal,
+        raikiri_style::property::FontOpticalSizing::Auto,
+    );
     assert_eq!(
         crate::layout::measure_ch_advance(&ifc_ahem_fonts(), &key),
         16.0
@@ -8804,13 +8804,13 @@ fn measure_ch_advance_uses_the_engine_fonts() {
 #[test]
 fn measure_normal_line_height_uses_the_engine_fonts() {
     // Ahem's ascent and descent fill the em box with no line gap.
-    let key = raikiri_style::ChFontKey {
-        family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
-        size: raikiri_style::ComputedLength(20.0),
-        weight: 400.0,
-        style: raikiri_style::property::FontStyle::Normal,
-        optical_sizing: raikiri_style::property::FontOpticalSizing::Auto,
-    };
+    let key = raikiri_style::ChFontKey::new(
+        std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        raikiri_style::ComputedLength(20.0),
+        400.0,
+        raikiri_style::property::FontStyle::Normal,
+        raikiri_style::property::FontOpticalSizing::Auto,
+    );
     assert_eq!(
         crate::layout::measure_normal_line_height(&ifc_ahem_fonts(), &key),
         Some(20.0)
@@ -10163,11 +10163,11 @@ fn projected_decoration_fixture(image_marker: bool) -> (Document, CascadeResult)
     struct MarkerPixels;
     impl ImagePixelSource for MarkerPixels {
         fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
-            Some(Arc::new(DecodedImage {
-                width: 4,
-                height: 4,
-                rgba: [255, 0, 0, 255].repeat(16),
-            }))
+            Some(Arc::new(DecodedImage::new(
+                4,
+                4,
+                [255, 0, 0, 255].repeat(16),
+            )))
         }
     }
     let crate::layout::ifc::test_support::Fixture {
@@ -10416,11 +10416,11 @@ fn projected_content_image_fixture() -> (Document, CascadeResult) {
     struct Pixels;
     impl ImagePixelSource for Pixels {
         fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
-            Some(Arc::new(DecodedImage {
-                width: 4,
-                height: 4,
-                rgba: [255, 0, 0, 255].repeat(16),
-            }))
+            Some(Arc::new(DecodedImage::new(
+                4,
+                4,
+                [255, 0, 0, 255].repeat(16),
+            )))
         }
     }
     let crate::layout::ifc::test_support::Fixture {

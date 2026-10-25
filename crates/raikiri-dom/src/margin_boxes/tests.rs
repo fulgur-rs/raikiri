@@ -1182,11 +1182,7 @@ impl ImagePixelSource for Sizes {
             "/dir/empty.png" => (Some(0.0), Some(0.0)),
             _ => return None,
         };
-        Some(raikiri_traits::ImageIntrinsicSize {
-            width,
-            height,
-            aspect_ratio: None,
-        })
+        Some(raikiri_traits::ImageIntrinsicSize::new(width, height, None))
     }
 }
 
@@ -1259,12 +1255,9 @@ impl ImagePixelSource for Uniform {
     }
 
     fn intrinsic_size(&self, _url: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
-        self.0
-            .map(|(width, height)| raikiri_traits::ImageIntrinsicSize {
-                width: Some(width),
-                height: Some(height),
-                aspect_ratio: None,
-            })
+        self.0.map(|(width, height)| {
+            raikiri_traits::ImageIntrinsicSize::new(Some(width), Some(height), None)
+        })
     }
 }
 

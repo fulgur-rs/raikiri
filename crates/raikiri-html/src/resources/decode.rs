@@ -85,30 +85,22 @@ pub(super) fn decode_background_raster(
             actual: actual_bytes,
         });
     }
-    Ok(DecodedImage {
-        width,
-        height,
-        rgba: pixels,
-    })
+    Ok(DecodedImage::new(width, height, pixels))
 }
 
 pub(super) fn image_intrinsic_size(image: &DecodedImage) -> ImageIntrinsicSize {
     let width = image.width as f32;
     let height = image.height as f32;
-    ImageIntrinsicSize {
-        width: Some(width),
-        height: Some(height),
-        aspect_ratio: (height > 0.0).then_some(width / height),
-    }
+    ImageIntrinsicSize::new(
+        Some(width),
+        Some(height),
+        (height > 0.0).then_some(width / height),
+    )
 }
 
 pub(super) fn svg_intrinsic_size(document: &SvgDocument) -> ImageIntrinsicSize {
     let intrinsic = document.intrinsic_size();
-    ImageIntrinsicSize {
-        width: intrinsic.width,
-        height: intrinsic.height,
-        aspect_ratio: intrinsic.aspect_ratio,
-    }
+    ImageIntrinsicSize::new(intrinsic.width, intrinsic.height, intrinsic.aspect_ratio)
 }
 
 pub(super) fn default_background_raster_size(intrinsic: ImageIntrinsicSize) -> ImageRasterSize {
@@ -154,15 +146,14 @@ pub(super) fn push_image_limit_warning(
 ) {
     push_resource_warning(
         warnings,
-        RenderWarning {
-            kind: WarningKind::ResourceLimitExceeded {
+        RenderWarning::new(
+            WarningKind::ResourceLimitExceeded {
                 kind: ResourceKind::Image,
                 limit,
                 actual,
             },
-            node_id: None,
-            details: details.to_owned(),
-        },
+            details.to_owned(),
+        ),
     );
 }
 
@@ -173,13 +164,12 @@ pub(super) fn push_image_fallback_warning(
 ) {
     push_resource_warning(
         warnings,
-        RenderWarning {
-            kind: WarningKind::ResourceFallback {
+        RenderWarning::new(
+            WarningKind::ResourceFallback {
                 kind: ResourceKind::Image,
                 url: Some(redacted_url(url)),
             },
-            node_id: None,
-            details: details.to_owned(),
-        },
+            details.to_owned(),
+        ),
     );
 }

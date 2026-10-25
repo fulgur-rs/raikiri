@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_traits::{FetchOutcome, NetworkError, NetworkProvider};
+use raikiri_traits::{FetchOutcome, Method, NetworkError, NetworkProvider};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct RejectingProvider;
@@ -79,12 +79,10 @@ impl NetworkProvider for RecordingProvider {
         assert_eq!(request.method, Method::Get);
         assert!(matches!(request.kind, ResourceKind::Image));
         self.fetch_count.fetch_add(1, Ordering::Relaxed);
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: self.bytes.to_vec().into(),
-            content_type: Some("image/png".into()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(self.bytes.to_vec().into(), request.url)
+                .content_type(Some("image/png".into())),
+        ))
     }
 }
 
@@ -153,11 +151,7 @@ fn provider_errors_remain_network_errors() {
 }
 
 fn tiny_decoded() -> DecodedImage {
-    DecodedImage {
-        width: 2,
-        height: 1,
-        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-    }
+    DecodedImage::new(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255])
 }
 
 #[test]
@@ -610,12 +604,10 @@ struct OversizedImageProvider;
 
 impl NetworkProvider for OversizedImageProvider {
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: vec![b'x'; MAX_SVG_BYTES + 1].into(),
-            content_type: Some("image/png".into()),
-            final_url: request.url,
-            encoding: None,
-        }))
+        Ok(FetchOutcome::Body(
+            FetchedResource::new(vec![b'x'; MAX_SVG_BYTES + 1].into(), request.url)
+                .content_type(Some("image/png".into())),
+        ))
     }
 }
 

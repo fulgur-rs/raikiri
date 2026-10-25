@@ -631,11 +631,7 @@ fn assert_exact_pixels(actual: Vec<u8>, expected: Vec<u8>) {
 fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
     for mode in ["vertical-lr", "vertical-rl"] {
         let parse = |source: &str| {
-            let options = raikiri_html::ParseOptions {
-                extra_stylesheets: &[],
-                network: None,
-                base_url: None,
-            };
+            let options = raikiri_html::ParseOptions::new();
             let mut parsed = raikiri_html::parse(source.as_bytes(), &options).unwrap();
             let computed = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
             layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
@@ -938,11 +934,7 @@ fn html_ua_middle_and_row_inheritance_align_cell_ink() {
         let source = format!(
             "<!doctype html><style>html,body{{margin:0;font-family:Ahem;font-size:10px;line-height:10px}}table{{border-spacing:0}}tr{{height:40px}}td{{padding:0}}</style><table><tbody style='{section}'><tr><td style='{cell}'>X</td></tr></tbody></table>"
         );
-        let options = raikiri_html::ParseOptions {
-            extra_stylesheets: &[],
-            network: None,
-            base_url: None,
-        };
+        let options = raikiri_html::ParseOptions::new();
         let mut document = raikiri_html::parse(source.as_bytes(), &options).unwrap();
         document.dom.set_font_collection(
             build_bundled_font_collection(
@@ -1696,11 +1688,7 @@ fn comments_and_processing_instructions_leave_a_cell_empty_after_membership_refr
 #[test]
 fn block_in_inline_and_preserved_lines_align_to_identical_cell_content() {
     let html = "<style>html,body{margin:0;font-family:Ahem;font-size:10px;line-height:10px}table{border-spacing:0}td{padding:0}.inline{display:inline}.block{display:block;margin:10px 0}pre{font-family:Ahem;font-size:10px;line-height:10px;margin:10px 0}</style><table><tr><td><div class=block><div class=inline>A<div class=block>B</div><div class=block>C</div>D<div class=block>E</div>F<div class=block>G</div></div></div></td><td><pre>A\n\nB\n\nC\n\nD\n\nE\n\nF\n\nG</pre></td></tr></table>";
-    let options = raikiri_html::ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
+    let options = raikiri_html::ParseOptions::new();
     let mut parsed = raikiri_html::parse(html.as_bytes(), &options).unwrap();
     parsed.dom.set_font_collection(
         build_bundled_font_collection(

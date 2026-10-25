@@ -173,13 +173,8 @@ fn first_letter_url_background_uses_the_image_pixel_source() {
     struct Pixels;
     impl ImagePixelSource for Pixels {
         fn get_decoded(&self, url: &Url) -> Option<Arc<DecodedImage>> {
-            (url.as_str() == "file:///first-letter.png").then(|| {
-                Arc::new(DecodedImage {
-                    width: 1,
-                    height: 1,
-                    rgba: vec![0, 128, 0, 255],
-                })
-            })
+            (url.as_str() == "file:///first-letter.png")
+                .then(|| Arc::new(DecodedImage::new(1, 1, vec![0, 128, 0, 255])))
         }
     }
     let (doc, computed, _) = fixture(
@@ -1347,11 +1342,11 @@ fn split_first_letter_url_background_keeps_one_positioning_area() {
     impl ImagePixelSource for Pixels {
         fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
             (url.as_str() == "file:///two-color.png").then(|| {
-                Arc::new(DecodedImage {
-                    width: 2,
-                    height: 1,
-                    rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
-                })
+                Arc::new(DecodedImage::new(
+                    2,
+                    1,
+                    vec![255, 0, 0, 255, 0, 0, 255, 255],
+                ))
             })
         }
     }

@@ -13,11 +13,7 @@ const SVG_NS: &str = "http://www.w3.org/2000/svg";
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
 fn empty_options() -> ParseOptions<'static> {
-    ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    }
+    ParseOptions::new()
 }
 
 fn find_all_by_tag(doc: &raikiri_dom::Document, tag: &str) -> Vec<raikiri_traits::NodeId> {

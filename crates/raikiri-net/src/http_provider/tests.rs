@@ -17,15 +17,10 @@ fn default_system_provider_fetches_loopback_without_ssrf_filtering() {
     });
     let url = Url::parse(&format!("http://{address}/browser-resource")).unwrap();
     let resource = SystemHttpProvider::default()
-        .fetch(Request {
-            url: url.clone(),
-            method: RaikiriMethod::Get,
-            content_type: None,
-            headers: vec![("X-Browser".into(), "native".into())],
-            body: Body::Empty,
-            signal: None,
-            kind: ResourceKind::Other,
-        })
+        .fetch(
+            Request::new(url.clone(), ResourceKind::Other)
+                .headers(vec![("X-Browser".into(), "native".into())]),
+        )
         .unwrap();
     let captured = server.join().unwrap();
     assert_eq!(resource.bytes.as_ref(), b"ok");
@@ -139,15 +134,7 @@ fn floor_blocks_a_get_to_a_loopback_ip_literal_through_the_real_agent() {
     // opened, so this is deterministic and makes no real network I/O.
     let provider = UreqHttpProvider::new();
     let url = Url::parse("http://127.0.0.1:1/").unwrap();
-    let request = Request {
-        url: url.clone(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(url.clone(), ResourceKind::Image);
     let err = provider
         .fetch(request)
         .expect_err("loopback IP literal must be blocked by the SSRF floor");
@@ -174,15 +161,10 @@ fn floor_blocks_a_get_to_a_loopback_ip_literal_through_the_real_agent() {
 #[test]
 fn rejects_non_http_schemes_before_any_network_activity() {
     let provider = UreqHttpProvider::new();
-    let request = Request {
-        url: Url::parse("file:///etc/passwd").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("file:///etc/passwd").unwrap(),
+        ResourceKind::Image,
+    );
     let err = provider
         .fetch(request)
         .expect_err("non-http(s) scheme must be rejected");
@@ -304,15 +286,10 @@ fn a_refused_first_address_falls_back_to_the_next_resolved_address() {
     });
 
     let provider = provider_with(FixedAddrsResolver(vec![refused_addr(), live_addr]));
-    let request = Request {
-        url: Url::parse("http://fallback.invalid/").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("http://fallback.invalid/").unwrap(),
+        ResourceKind::Image,
+    );
 
     let resource = provider
         .fetch(request)
@@ -323,15 +300,10 @@ fn a_refused_first_address_falls_back_to_the_next_resolved_address() {
 #[test]
 fn all_addresses_refused_surfaces_a_connection_refused_error() {
     let provider = provider_with(FixedAddrsResolver(vec![refused_addr(), refused_addr()]));
-    let request = Request {
-        url: Url::parse("http://all-refused.invalid/").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("http://all-refused.invalid/").unwrap(),
+        ResourceKind::Image,
+    );
 
     let err = provider
         .fetch(request)
@@ -359,15 +331,10 @@ fn an_already_elapsed_connect_deadline_fails_fast_without_attempting_any_address
     let agent = ureq::Agent::with_parts(config, connector, DefaultResolver::default());
     let provider = UreqHttpProvider::with_agent(agent);
 
-    let request = Request {
-        url: Url::parse("http://127.0.0.1:1/").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("http://127.0.0.1:1/").unwrap(),
+        ResourceKind::Image,
+    );
 
     let err = provider
         .fetch(request)
@@ -429,15 +396,10 @@ fn redirect_target_is_revalidated_and_blocked_even_though_the_first_hop_was_allo
         blocked_port: target_port,
     });
 
-    let request = Request {
-        url: Url::parse(&format!("http://127.0.0.1:{source_port}/")).unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse(&format!("http://127.0.0.1:{source_port}/")).unwrap(),
+        ResourceKind::Image,
+    );
     let err = provider
         .fetch(request)
         .expect_err("redirect to the blocked port must fail the whole fetch");
@@ -490,15 +452,7 @@ fn fetch_reads_back_a_real_successful_response_end_to_end() {
     let provider = provider_with(DefaultResolver::default());
 
     let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
-    let request = Request {
-        url: url.clone(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(url.clone(), ResourceKind::Image);
 
     let resource = provider.fetch(request).expect("fetch must succeed");
     assert_eq!(resource.bytes.as_ref(), body.as_bytes());
@@ -569,15 +523,10 @@ fn gzip_decompression_bomb_is_rejected_instead_of_materialized() {
     });
 
     let provider = provider_with(DefaultResolver::default());
-    let request = Request {
-        url: Url::parse(&format!("http://127.0.0.1:{port}/bomb")).unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse(&format!("http://127.0.0.1:{port}/bomb")).unwrap(),
+        ResourceKind::Image,
+    );
 
     match provider.fetch(request) {
         Ok(resource) => panic!(
@@ -661,15 +610,10 @@ fn a_small_gzip_body_is_still_decoded_end_to_end() {
         serve_one_raw_response(stream, &head, &body);
     });
     let provider = provider_with(DefaultResolver::default());
-    let request = Request {
-        url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+        ResourceKind::Image,
+    );
     let resource = provider.fetch(request).expect("fetch must succeed");
     assert_eq!(resource.bytes.len(), 1024 * 1024);
     assert!(resource.bytes.iter().all(|&b| b == 0));
@@ -716,15 +660,10 @@ fn a_stalled_tls_handshake_fails_at_the_connect_timeout_as_a_typed_timeout() {
         DefaultResolver::default(),
     );
     let provider = UreqHttpProvider::with_agent(agent);
-    let request = Request {
-        url: Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap(),
+        ResourceKind::Image,
+    );
 
     let start = Instant::now();
     let err = provider
@@ -816,15 +755,10 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
         DefaultResolver::default(),
     );
     let provider = UreqHttpProvider::with_agent(agent);
-    let request = Request {
-        url: Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap(),
+        ResourceKind::Image,
+    );
 
     let start = Instant::now();
     let err = provider
@@ -876,15 +810,11 @@ fn an_already_aborted_signal_returns_aborted_before_any_network_activity() {
     // checked before resolution even starts.
     let controller = raikiri_traits::AbortController::new();
     controller.abort();
-    let request = Request {
-        url: Url::parse("http://127.0.0.1:1/").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: Some(controller.signal.clone()),
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("http://127.0.0.1:1/").unwrap(),
+        ResourceKind::Image,
+    )
+    .signal(Some(controller.signal.clone()));
     let err = UreqHttpProvider::new()
         .fetch(request)
         .expect_err("an aborted request must not be fetched");
@@ -897,15 +827,11 @@ fn an_already_aborted_signal_returns_aborted_before_any_network_activity() {
 #[test]
 fn a_not_yet_aborted_signal_does_not_block_the_fetch() {
     let controller = raikiri_traits::AbortController::new();
-    let request = Request {
-        url: Url::parse("http://127.0.0.1:1/").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: Some(controller.signal.clone()),
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("http://127.0.0.1:1/").unwrap(),
+        ResourceKind::Image,
+    )
+    .signal(Some(controller.signal.clone()));
     // Proceeds to the SSRF floor, which rejects the loopback target.
     let err = UreqHttpProvider::new().fetch(request).unwrap_err();
     assert!(
@@ -921,15 +847,10 @@ fn default_impl_delegates_to_new_and_still_enforces_the_floor() {
     // separate, potentially unguarded, provider. No real network needed:
     // the floor rejects the loopback target before any connection.
     let err = UreqHttpProvider::default()
-        .fetch(Request {
-            url: Url::parse("http://127.0.0.1:1/").unwrap(),
-            method: RaikiriMethod::Get,
-            content_type: None,
-            headers: Vec::new(),
-            body: Body::Empty,
-            signal: None,
-            kind: ResourceKind::Image,
-        })
+        .fetch(Request::new(
+            Url::parse("http://127.0.0.1:1/").unwrap(),
+            ResourceKind::Image,
+        ))
         .expect_err("the floor must still reject a loopback target");
     assert!(matches!(err, NetworkError::PolicyViolation(_)));
 }
@@ -1030,15 +951,14 @@ fn post_sends_body_and_headers_and_reads_back_the_response() {
 
     let provider = provider_with(DefaultResolver::default());
 
-    let request = Request {
-        url: Url::parse(&format!("http://127.0.0.1:{port}/submit")).unwrap(),
-        method: RaikiriMethod::Post,
-        content_type: Some("application/x-www-form-urlencoded".to_owned()),
-        headers: vec![("X-Test".to_owned(), "yes".to_owned())],
-        body: Body::Bytes(b"a=1&b=2".to_vec().into()),
-        signal: None,
-        kind: ResourceKind::Other,
-    };
+    let request = Request::new(
+        Url::parse(&format!("http://127.0.0.1:{port}/submit")).unwrap(),
+        ResourceKind::Other,
+    )
+    .method(RaikiriMethod::Post)
+    .content_type(Some("application/x-www-form-urlencoded".to_owned()))
+    .headers(vec![("X-Test".to_owned(), "yes".to_owned())])
+    .body(Body::Bytes(b"a=1&b=2".to_vec().into()));
     let resource = provider.fetch(request).expect("POST fetch must succeed");
     assert_eq!(resource.bytes.as_ref(), b"ok");
 
@@ -1074,15 +994,11 @@ fn post_with_an_empty_body_sends_no_body_bytes() {
 
     let provider = provider_with(DefaultResolver::default());
 
-    let request = Request {
-        url: Url::parse(&format!("http://127.0.0.1:{port}/ping")).unwrap(),
-        method: RaikiriMethod::Post,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Other,
-    };
+    let request = Request::new(
+        Url::parse(&format!("http://127.0.0.1:{port}/ping")).unwrap(),
+        ResourceKind::Other,
+    )
+    .method(RaikiriMethod::Post);
     provider.fetch(request).expect("POST fetch must succeed");
 
     let captured = rx.recv().expect("server captured the request");
@@ -1107,15 +1023,11 @@ fn get_sends_the_requests_custom_headers() {
 
     let provider = provider_with(DefaultResolver::default());
 
-    let request = Request {
-        url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: vec![("X-Test".to_owned(), "yes".to_owned())],
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+        ResourceKind::Image,
+    )
+    .headers(vec![("X-Test".to_owned(), "yes".to_owned())]);
     provider.fetch(request).expect("GET fetch must succeed");
 
     let captured = rx.recv().expect("server captured the request");
@@ -1132,15 +1044,12 @@ fn post_with_form_body_is_rejected_before_any_network_activity() {
     // request, so no listener is needed — a URL with nothing listening
     // would fail differently (a connection error) if this ever reached
     // the network.
-    let request = Request {
-        url: Url::parse("http://127.0.0.1:1/").unwrap(),
-        method: RaikiriMethod::Post,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Form(raikiri_traits::page::FormData::new()),
-        signal: None,
-        kind: ResourceKind::Other,
-    };
+    let request = Request::new(
+        Url::parse("http://127.0.0.1:1/").unwrap(),
+        ResourceKind::Other,
+    )
+    .method(RaikiriMethod::Post)
+    .body(Body::Form(raikiri_traits::page::FormData::new()));
     let err = UreqHttpProvider::new()
         .fetch(request)
         .expect_err("Body::Form must be rejected");
@@ -1160,15 +1069,10 @@ fn redirect_without_location_is_a_protocol_error() {
     });
 
     let provider = provider_with(FixedAddrsResolver(vec![live_addr]));
-    let request = Request {
-        url: Url::parse("http://location-missing.invalid/").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("http://location-missing.invalid/").unwrap(),
+        ResourceKind::Image,
+    );
     let err = provider
         .fetch(request)
         .expect_err("a redirect without Location must fail");
@@ -1191,15 +1095,10 @@ fn redirect_with_unresolvable_location_is_a_protocol_error() {
     });
 
     let provider = provider_with(FixedAddrsResolver(vec![live_addr]));
-    let request = Request {
-        url: Url::parse("http://bad-location.invalid/").unwrap(),
-        method: RaikiriMethod::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: None,
-        kind: ResourceKind::Image,
-    };
+    let request = Request::new(
+        Url::parse("http://bad-location.invalid/").unwrap(),
+        ResourceKind::Image,
+    );
     let err = provider
         .fetch(request)
         .expect_err("a redirect with an unresolvable Location must fail");
