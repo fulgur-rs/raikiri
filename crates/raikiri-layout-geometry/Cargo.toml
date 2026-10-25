@@ -2,6 +2,9 @@
 name = "raikiri-layout-geometry"
 version.workspace = true
 description = "Geometry and box-layout result types shared by raikiri's layout engine and its consumers"
+readme = "README.md"
+keywords = ["layout", "geometry", "css", "paged-media"]
+categories = ["rendering", "graphics"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

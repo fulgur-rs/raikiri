@@ -2,6 +2,9 @@
 name = "raikiri-layout-style"
 version.workspace = true
 description = "Borrowed ComputedValues views for Taffy layout styles"
+readme = "README.md"
+keywords = ["css", "layout", "taffy", "flexbox", "grid"]
+categories = ["rendering", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

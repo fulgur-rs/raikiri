@@ -2,6 +2,9 @@
 name = "raikiri-html"
 version.workspace = true
 description = "HTML document entry points for raikiri: html5ever parsing, cascade assembly, resource handoff, and the layout entry point returning an owned DocumentLayout"
+readme = "README.md"
+keywords = ["html", "css", "layout", "pagination", "paged-media"]
+categories = ["web-programming", "rendering", "parser-implementations"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

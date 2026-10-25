@@ -2,6 +2,9 @@
 name = "raikiri-svg"
 version.workspace = true
 description = "Static SVG parsing, size-bounded rasterization and vector scenes for Raikiri"
+readme = "README.md"
+keywords = ["svg", "rasterizer", "vector-graphics", "paged-media"]
+categories = ["rendering", "graphics"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -2,9 +2,13 @@
 name = "raikiri-net"
 version.workspace = true
 description = "NetworkProvider and ReplacedResolver implementations for raikiri, including SSRF-safe and trusted-system HTTP providers."
+readme = "README.md"
+keywords = ["network", "http", "ssrf", "resources"]
+categories = ["network-programming", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 data-url       = { workspace = true }

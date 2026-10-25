@@ -5,6 +5,7 @@ description = "Umbrella crate for raikiri: in-repo dogfooding APIs (html_to_png 
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 raikiri-traits = { workspace = true }

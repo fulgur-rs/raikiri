@@ -257,6 +257,39 @@ jobs:
           fi
           exit "$status"
 
+  # Packages the crates that go to crates.io and builds each package, without
+  # publishing: catches missing manifest metadata, files that live outside a
+  # crate's directory and dependency cycles through dev-dependencies before the
+  # first publication does. Needs no credentials (see docs/releasing.md).
+  publish-dry-run:
+    name: package the publishable crates
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event.pull_request.stack == null || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref || github.event.pull_request.stack.position == github.event.pull_request.stack.size)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install system dependencies
+        run: |
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          # Bound package acquisition and fail on incomplete index updates.
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" --error-on=any update
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" install -y libfontconfig1-dev pkg-config
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Keep in sync with the `ci` job's prefix-key.
+          prefix-key: v1-rust
+
+      - name: Package every publishable crate (dry run)
+        run: scripts/publish-dry-run.sh
+
   coverage:
     name: coverage
     needs: changes

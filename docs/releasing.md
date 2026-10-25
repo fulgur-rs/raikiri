@@ -25,7 +25,9 @@ before version analysis in each run. Only Release PR jobs use concurrency
 control: tag jobs must run for every merge, including when newer pushes arrive.
 
 `release-plz.toml` enables git-only mode and explicitly disables Cargo publishing
-and GitHub Releases. Neither a crates.io token nor `cargo publish` is used.
+and GitHub Releases. The release workflow uses no crates.io token and never runs
+`cargo publish`; the dry run described under [Publishing to
+crates.io](#publishing-to-cratesio) is a separate CI job that publishes nothing.
 The Release PR uses the existing `RELEASE_PLZ_APP_CLIENT_ID` repository variable
 and `RELEASE_PLZ_APP_PRIVATE_KEY` secret so PR CI can run. Tag creation uses
 `GITHUB_TOKEN`. Both jobs pin release-plz to the locally verified **0.4.0**.
@@ -39,6 +41,7 @@ a merged Release PR for tagging. Automatic PR merging is not enabled.
 ```bash
 cargo metadata --no-deps --locked --format-version 1
 cargo metadata --no-deps --locked --format-version 1 --manifest-path tools/raikiri-js-wasmtime/Cargo.toml
+scripts/publish-dry-run.sh --allow-dirty   # packages the crates for crates.io
 ```
 
 For release-plz upgrades, use a dependency-free temporary workspace with two
@@ -69,6 +72,86 @@ Refreshing the tools lockfile also reconciled pre-existing manifest drift:
 `shodo` was still locked to `0.0.32` despite the shared manifest pin of `0.0.37`,
 and the lockfile was missing the layout-style and color-management dependencies.
 The main workspace lockfile changes only local package versions.
+
+## Publishing to crates.io
+
+Nothing is published yet: release-plz runs in git-only mode, and the crate names
+are only reserved on crates.io (every name below exists at `0.0.0`). This section
+records what is ready for the first publication and what still needs a decision.
+
+### Which crates are published
+
+Eight crates carry the public API (see [public-api.md](public-api.md)). In
+dependency order:
+
+1. `raikiri-style` and `raikiri-layout-geometry`, which depend on no other
+   workspace crate
+2. `raikiri-traits` and `raikiri-layout-style`
+3. `raikiri-svg`
+4. `raikiri-net`
+5. `raikiri-dom`
+6. `raikiri-html`
+
+`raikiri` (dogfooding), `raikiri-paint` and `raikiri-js` carry `publish = false`,
+like the test, benchmark and diff tools. A crate that should leave that list
+needs its own decision, its API review and an entry in `scripts/publish-dry-run.sh`.
+The script fails when the manifests and its list disagree.
+
+### Rules for the manifests
+
+- Dependencies on other workspace crates are declared once in the root
+  `[workspace.dependencies]` with both `version` and `path`; cargo publishes the
+  version and drops the path.
+- A dev-dependency on a sibling that depends back on the crate must be
+  declared with a path and **no version**. Cargo removes it from the published
+  manifest; with a version it would stay in, and the crates could not be
+  published in any order. `raikiri-dom` does this for `raikiri-html`. The
+  consequence is that the tests of a downloaded `raikiri-dom` package that use
+  `raikiri-html` cannot be built from the package alone.
+- No published crate may depend on code that is not on crates.io: no `[patch]`,
+  no git dependency, no path dependency (the version-less dev-dependency above
+  is the one exception, because cargo drops it), no vendored or forked copy.
+- Each published crate has a `description`, a `readme`, `keywords` and
+  `categories` (at most five keywords and five categories, which crates.io
+  enforces).
+
+### Checking without credentials
+
+```bash
+scripts/publish-dry-run.sh                # CI runs this on every pull request
+scripts/publish-dry-run.sh --allow-dirty  # with uncommitted changes
+```
+
+It runs `cargo publish --dry-run` for all eight crates at once, with the
+`http-ureq` feature of `raikiri-net` on. Cargo packages them in dependency order
+and resolves a dependency on another one from its package, so the check works
+while the new versions are not on crates.io. It needs no token and uploads
+nothing. Beyond the manifest metadata it catches a package that does not build on
+its own, for example one that reads a file outside its crate directory, and a
+dependency cycle that publishing would hit. It builds the library of each package
+and not its tests.
+
+### What is still open
+
+- **License files.** The manifests say `MIT OR Apache-2.0`, but the repository
+  has no `LICENSE-MIT` or `LICENSE-APACHE`, so the packages carry no license
+  text. Adding them needs the name of the copyright holder.
+- **Authentication.** Publishing from CI needs one of the following; neither is
+  set up.
+  - *Trusted Publishing* (OIDC): crates.io trusts a GitHub Actions workflow of this
+    repository, configured per crate on crates.io, so no long-lived secret is
+    stored. It can be set up now, because the reserved names already exist.
+  - *An API token* stored as the `CARGO_REGISTRY_TOKEN` secret, scoped to these
+    crates.
+- **Switching release-plz to publish.** Today `release-plz.toml` sets `git_only =
+  true` and `publish = false`, and the workflow uses no registry credential.
+  Publishing needs `git_only` removed, `publish` enabled for the eight crates
+  (and kept off for the rest), and the workflow given the credential above. Do
+  this on a Release PR that is meant to be published, because the next merge of
+  one would publish it.
+- **Package size.** `raikiri-style` and `raikiri-dom` are the largest packages
+  (1.4 MiB and 1.6 MiB compressed, mostly sources and the unit tests next to
+  them). crates.io accepts up to 10 MiB, so no change is needed.
 
 ## Removed pre-migration tags
 
