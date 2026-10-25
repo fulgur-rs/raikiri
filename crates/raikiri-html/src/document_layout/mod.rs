@@ -1,6 +1,7 @@
 //! Owned layout results and borrowed per-page views for drawing consumers.
 
 mod dom_view;
+mod inline_svg;
 mod navigation;
 mod page;
 mod running;
@@ -289,7 +290,7 @@ pub struct DocumentLayout {
 #[derive(Debug)]
 struct DocumentCaches {
     /// Prepared inline SVG sources.
-    svg_sources: page::InlineSvgCache,
+    svg_sources: inline_svg::InlineSvgCache,
     /// The values of page-margin `element()` and `string()` references.
     margin_values: raikiri_dom::MarginBoxNamedValues,
 }
@@ -298,7 +299,7 @@ impl DocumentCaches {
     /// Empty caches whose SVG text takes its faces from `svg_faces`.
     fn new(svg_faces: std::sync::Arc<crate::svg_fonts::FaceCache>) -> Self {
         Self {
-            svg_sources: page::InlineSvgCache::new(svg_faces),
+            svg_sources: inline_svg::InlineSvgCache::new(svg_faces),
             margin_values: raikiri_dom::MarginBoxNamedValues::default(),
         }
     }

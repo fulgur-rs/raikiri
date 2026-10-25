@@ -142,7 +142,7 @@ impl<'a> RunningSource<'a> {
 pub struct RunningElementLayout {
     node: NodeId,
     laid_out: RunningElementPage,
-    pub(super) svg_sources: super::page::InlineSvgCache,
+    pub(super) svg_sources: super::inline_svg::InlineSvgCache,
     svg: SvgSettings,
     margin_values: raikiri_dom::MarginBoxNamedValues,
 }
@@ -232,7 +232,7 @@ pub(crate) fn layout_running_element(
     Ok(laid_out.map(|laid_out| RunningElementLayout {
         node,
         laid_out,
-        svg_sources: super::page::InlineSvgCache::new(faces),
+        svg_sources: super::inline_svg::InlineSvgCache::new(faces),
         svg,
         margin_values: raikiri_dom::MarginBoxNamedValues::new(),
     }))

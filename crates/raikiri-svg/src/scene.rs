@@ -160,8 +160,10 @@ pub enum SvgSceneError {
     /// The document uses content outside the vector subset. Draw the raster
     /// of the whole image instead of mixing the two renderings.
     Unsupported(SvgSceneFeature),
-    /// The scene would exceed a budget. The raster path would exceed its own
-    /// limit as well, so this is an error and not a fallback.
+    /// The scene would exceed a budget. This is an error of the scene and not
+    /// a signal that the raster is a valid substitute
+    /// ([`SvgSceneError::falls_back_to_raster`] is `false`); a caller that can
+    /// draw pixels may still try, within the limits of the raster path.
     LimitExceeded {
         /// The budget.
         limit: SvgSceneLimit,

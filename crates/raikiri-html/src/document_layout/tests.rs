@@ -14,6 +14,26 @@ fn find(view: &DomView<'_>, node: NodeId, name: &str) -> Option<NodeId> {
         .find_map(|child| find(view, child, name))
 }
 
+/// The prepared source of an inline SVG root and where it is placed.
+struct PreparedSvgView {
+    source: String,
+    viewport: PaintRect,
+    host_opacity: Option<f32>,
+}
+
+fn prepared_svg(
+    page: &Page<'_>,
+    fragment: &Fragment<'_>,
+) -> Result<Option<PreparedSvgView>, raikiri_svg::SvgError> {
+    Ok(page
+        .prepared_inline_svg(fragment)?
+        .map(|(_, viewport, prepared)| PreparedSvgView {
+            source: prepared.source.to_string(),
+            viewport,
+            host_opacity: prepared.host_opacity,
+        }))
+}
+
 #[test]
 fn dom_view_walks_structure_and_attributes() {
     let doc = dom(r#"<p id="x" class="c">He<b>ll</b>o</p><svg><g></g></svg>"#);
@@ -177,7 +197,7 @@ fn inline_svg_exports_resolved_font_weight_and_style() {
         let computed = page.computed(fragment.node()).unwrap();
         assert_eq!(computed.font_weight, weight, "host weight: {css} / {attrs}");
         assert_eq!(computed.font_style.as_css_str(), style);
-        let payload = page.inline_svg(&fragment).unwrap().unwrap();
+        let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
         let standalone = laid_out(&payload.source);
         let standalone_page = standalone.page(0).unwrap();
         let root = standalone_page
@@ -203,8 +223,7 @@ fn inline_svg_hidden_root_keeps_explicitly_visible_descendants() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let payload = page
-        .inline_svg(&fragment)
+    let payload = prepared_svg(&page, &fragment)
         .unwrap()
         .expect("hidden roots can have visible descendants");
     let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
@@ -232,7 +251,7 @@ fn inline_svg_export_carries_the_stylesheet_fill_of_the_root() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
     let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
     let image = prepared
         .rasterize(
@@ -259,7 +278,7 @@ fn inline_svg_export_resolves_a_variable_in_a_fill_attribute() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
     let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
     let image = prepared
         .rasterize(
@@ -285,7 +304,7 @@ fn inline_svg_export_carries_the_fill_and_dashes_of_an_html_ancestor() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
     let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
     let image = prepared
         .rasterize(
@@ -317,7 +336,7 @@ fn inline_svg_export_carries_stylesheet_fill_and_stroke() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
     let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
     let image = prepared
         .rasterize(
@@ -377,7 +396,7 @@ fn inline_svg_export_carries_stylesheet_dashes_and_fill_rule() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
     let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
     let image = prepared
         .rasterize(
@@ -415,7 +434,7 @@ fn inline_svg_presentation_dimensions_yield_to_layered_author_css() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let viewport = page.inline_svg(&fragment).unwrap().unwrap().viewport;
+    let viewport = prepared_svg(&page, &fragment).unwrap().unwrap().viewport;
     assert_eq!((viewport.width, viewport.height), (30.0, 15.0));
 }
 
@@ -458,7 +477,7 @@ fn inline_svg_root_color_is_resolved_before_standalone_rendering() {
             .fragments()
             .find(|f| page.dom().local_name(f.node()) == Some("svg"))
             .unwrap();
-        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
         let prepared = raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
         let image = prepared
             .rasterize(
@@ -495,7 +514,7 @@ fn inline_svg_resolved_root_color_keeps_original_selector_matches() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
     let prepared = raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
     let image = prepared
         .rasterize(
@@ -536,7 +555,7 @@ fn inline_svg_attribute_dimensions_define_the_viewport_before_css_overrides() {
             .fragments()
             .find(|f| page.dom().local_name(f.node()) == Some("svg"))
             .unwrap();
-        let payload = page.inline_svg(&fragment).unwrap().unwrap();
+        let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
         assert_eq!(
             (payload.viewport.width, payload.viewport.height),
             (width, height)
@@ -564,7 +583,7 @@ fn inline_svg_attribute_height_paginates_with_one_original_viewport() {
             .fragments()
             .find(|f| page.dom().local_name(f.node()) == Some("svg"))
             .unwrap();
-        let viewport = page.inline_svg(&fragment).unwrap().unwrap().viewport;
+        let viewport = prepared_svg(&page, &fragment).unwrap().unwrap().viewport;
         assert_eq!(
             (viewport.x, viewport.y, viewport.width, viewport.height),
             (10.0, 10.0 - 80.0 * index as f32, 40.0, 180.0)
@@ -593,7 +612,7 @@ fn inline_svg_split_across_pages_is_prepared_once() {
             .fragments()
             .find(|f| page.dom().local_name(f.node()) == Some("svg"))
             .unwrap();
-        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
         assert_eq!(svg.viewport.y, 10.0 - 80.0 * index as f32);
         sources.push(svg.source);
     }
@@ -636,7 +655,7 @@ fn inline_svg_in_a_running_element_is_prepared_once() {
             .fragments()
             .find(|f| element.dom().local_name(f.node()) == Some("svg"))
             .unwrap();
-        sources.push(element.inline_svg(&fragment).unwrap().unwrap().source);
+        sources.push(prepared_svg(&element, &fragment).unwrap().unwrap().source);
         running = Some(placed.layout);
     }
     assert!(sources.iter().all(|source| *source == sources[0]));
@@ -716,7 +735,7 @@ fn inline_svg_payload_uses_the_resolved_content_box_and_host_style() {
         (content.x, content.y, content.width, content.height),
         (40.0, 40.0, 140.0, 60.0)
     );
-    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
     assert_eq!(svg.viewport, content);
     assert_eq!(svg.host_opacity, Some(0.5));
     let prepared = raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
@@ -755,7 +774,7 @@ fn inline_svg_payload_does_not_fold_parent_opacity_into_the_svg_source() {
         .fragments()
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
-    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
     assert_eq!(svg.host_opacity, Some(0.5));
     let alphas: Vec<_> = page
         .paint_order()
@@ -766,6 +785,126 @@ fn inline_svg_payload_does_not_fold_parent_opacity_into_the_svg_source() {
         })
         .collect();
     assert_eq!(alphas, [0.4, 0.5]);
+}
+
+/// The first page of `html` laid out with `options`, run through `check`.
+fn with_first_page(html: &str, options: LayoutOptions<'_, '_>, check: impl FnOnce(&Page<'_>)) {
+    let document = dom(html);
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            options,
+        )
+        .unwrap(),
+    );
+    check(&layout.page(0).unwrap());
+}
+
+/// The picture of the first inline SVG of `page`.
+fn svg_picture(page: &Page<'_>) -> Result<Option<InlineSvg>, raikiri_svg::SvgSceneError> {
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    page.inline_svg(&fragment)
+}
+
+const SVG_PAGE: &str = "<style>@page {size:200px 100px;margin:0} body {margin:0} svg {display:block;opacity:.5}</style>";
+
+#[test]
+fn inline_svg_is_a_scene_unless_the_root_asks_for_pixels() {
+    let html = format!(
+        "{SVG_PAGE}<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><rect width='20' height='10' fill='red'/></svg>"
+    );
+    with_first_page(&html, LayoutOptions::new(), |page| {
+        let svg = svg_picture(page).unwrap().unwrap();
+        let ImageContent::Vector(scene) = svg.content else {
+            panic!("a scene is the default");
+        };
+        assert_eq!(scene.size, (20.0, 10.0));
+        assert_eq!(svg.host_opacity, Some(0.5));
+        assert_eq!((svg.viewport.width, svg.viewport.height), (20.0, 10.0));
+    });
+    let options = || LayoutOptions::new().svg_raster_scale(2.0);
+    let rastered = html.replace("<svg ", "<svg style='--raikiri-svg-rendering: raster' ");
+    with_first_page(&rastered, options(), |page| {
+        let ImageContent::Raster(pixels) = svg_picture(page).unwrap().unwrap().content else {
+            panic!("the root asks for pixels");
+        };
+        assert_eq!((pixels.width, pixels.height), (40, 20));
+    });
+    // The default of the layout is the rendering of every root that names none.
+    with_first_page(
+        &html,
+        options().svg_rendering(SvgRendering::Raster),
+        |page| {
+            assert!(matches!(
+                svg_picture(page).unwrap().unwrap().content,
+                ImageContent::Raster(_)
+            ));
+        },
+    );
+}
+
+#[test]
+fn inline_svg_falls_back_to_pixels_for_a_mask_and_reports_an_invalid_document() {
+    let masked = format!(
+        "{SVG_PAGE}<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><mask id='m'><rect width='10' height='10' fill='white'/></mask><rect width='20' height='10' fill='red' mask='url(#m)'/></svg>"
+    );
+    with_first_page(&masked, LayoutOptions::new(), |page| {
+        let ImageContent::Raster(pixels) = svg_picture(page).unwrap().unwrap().content else {
+            panic!("a mask is drawn as pixels");
+        };
+        assert_eq!((pixels.width, pixels.height), (20, 10));
+    });
+    // A document that is not valid has no picture in either rendering, and
+    // the error says why.
+    let broken = format!(
+        "{SVG_PAGE}<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><use href='#missing'/><image href='https://example.invalid/a.png' width='4' height='4'/></svg>"
+    );
+    with_first_page(&broken, LayoutOptions::new(), |page| {
+        assert!(matches!(
+            svg_picture(page),
+            Err(raikiri_svg::SvgSceneError::Svg(_))
+        ));
+    });
+}
+
+#[test]
+fn inline_svg_split_across_pages_is_built_once() {
+    let document = dom(
+        "<style>@page {size:200px 100px;margin:10px} body {margin:0} svg {display:block}</style><svg width='40' height='180'><rect width='40' height='180' fill='red'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(layout.pages().count(), 3);
+    let scenes: Vec<_> = layout
+        .pages()
+        .map(|page| match svg_picture(&page).unwrap().unwrap().content {
+            ImageContent::Vector(scene) => scene,
+            ImageContent::Raster(_) => panic!("a scene is the default"),
+        })
+        .collect();
+    assert!(
+        scenes
+            .iter()
+            .all(|scene| std::sync::Arc::ptr_eq(scene, &scenes[0]))
+    );
+    let kept: usize = layout
+        .caches
+        .iter()
+        .map(|caches| caches.svg_sources.kept_content())
+        .sum();
+    assert_eq!(kept, 1);
 }
 
 #[test]
@@ -1472,7 +1611,7 @@ fn inline_svg_payload_retains_the_whole_viewport_across_page_cuts() {
             .fragments()
             .find(|f| page.dom().local_name(f.node()) == Some("svg"))
             .unwrap();
-        let payload = page.inline_svg(&fragment).unwrap().unwrap();
+        let payload = prepared_svg(&page, &fragment).unwrap().unwrap();
         assert_eq!(
             payload.viewport,
             raikiri_traits::PaintRect::new(17.0, 17.0 - index as f32 * 80.0, 20.0, 180.0)
@@ -1505,7 +1644,7 @@ fn inline_svg_rejects_fixed_placements_not_represented_by_the_projection() {
                 .find(|f| page.dom().local_name(f.node()) == Some("svg"))
                 .unwrap();
             assert!(
-                matches!(page.inline_svg(&fragment), Err(raikiri_svg::SvgError::InvalidDocument(message)) if message.contains("fixed placement")),
+                matches!(page.inline_svg(&fragment), Err(raikiri_svg::SvgSceneError::Svg(raikiri_svg::SvgError::InvalidDocument(message))) if message.contains("fixed placement")),
                 "placement: {placement}; nested: {nested}"
             );
         }
@@ -1535,7 +1674,7 @@ fn inline_svg_payload_preserves_negative_fixed_offsets_on_each_page() {
         assert_eq!(fragment.repeat(), Some(RepeatKind::EveryPage));
         assert_eq!(fragment.paint_rect().y, 5.0);
         assert_eq!(
-            page.inline_svg(&fragment).unwrap().unwrap().viewport,
+            prepared_svg(&page, &fragment).unwrap().unwrap().viewport,
             raikiri_traits::PaintRect::new(19.0, 11.0, 20.0, 10.0)
         );
     }
@@ -1607,7 +1746,9 @@ fn inline_svg_payload_reports_unsupported_resources() {
         .unwrap();
     assert!(matches!(
         page.inline_svg(&fragment),
-        Err(raikiri_svg::SvgError::ExternalReference)
+        Err(raikiri_svg::SvgSceneError::Svg(
+            raikiri_svg::SvgError::ExternalReference
+        ))
     ));
 }
 
@@ -1636,8 +1777,9 @@ fn inline_svg_payload_reports_source_preparation_limits() {
         .unwrap();
     assert!(matches!(
         page.inline_svg(&fragment),
-        Err(raikiri_svg::SvgError::InvalidDocument(message))
-            if message.contains("selector freezing resource limit")
+        Err(raikiri_svg::SvgSceneError::Svg(
+            raikiri_svg::SvgError::InvalidDocument(message)
+        )) if message.contains("selector freezing resource limit")
     ));
 }
 
@@ -1653,7 +1795,7 @@ fn inline_svg_font_family_escapes_round_trip_through_source_export() {
         .unwrap();
     let family = page.computed(fragment.node()).unwrap().font_family[0].as_str();
     assert_eq!(family, "A\\B\"C\nD\rE\u{c}F");
-    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
     assert!(svg.source.contains("font-family:"));
     raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
 }
@@ -1673,7 +1815,7 @@ fn inline_svg_document_css_hides_descendants() {
             .fragments()
             .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
             .unwrap();
-        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
         let image = raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
             .unwrap()
             .rasterize(
@@ -1699,7 +1841,7 @@ fn inline_svg_definitions_keep_instance_relative_fonts() {
         .fragments()
         .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
         .unwrap();
-    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
     assert!(
         svg.source.contains("font-size:2em"),
         "relative size was frozen before use instantiation: {}",
@@ -1725,7 +1867,7 @@ fn inline_svg_definitions_resolve_ideographic_and_character_font_sizes_per_insta
             .fragments()
             .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
             .unwrap();
-        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
         let image = raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
             .unwrap()
             .rasterize(
@@ -1755,7 +1897,7 @@ fn inline_svg_inherited_font_size_below_a_relative_size_keeps_the_parent_size() 
             .fragments()
             .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
             .unwrap();
-        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
         let image = raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
             .unwrap()
             .rasterize(
@@ -1789,7 +1931,7 @@ fn inline_svg_descendant_font_hints_and_relative_keywords_survive_export() {
             .fragments()
             .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
             .unwrap();
-        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
         assert!(svg.source.contains(expected), "{}", svg.source);
         raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
     }
@@ -1809,7 +1951,7 @@ fn inline_svg_definitions_export_absolute_size_keywords_as_computed_px() {
         .fragments()
         .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
         .unwrap();
-    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
     assert!(
         svg.source.contains("font-size:14.222222px"),
         "{}",
@@ -1838,7 +1980,7 @@ fn svg_document_ink(html: &str) -> Vec<u8> {
         .fragments()
         .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
         .unwrap();
-    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let svg = prepared_svg(&page, &fragment).unwrap().unwrap();
     raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
         .unwrap()
         .rasterize(

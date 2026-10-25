@@ -13,10 +13,10 @@ conformance.
 | `raikiri-svg` | Parses a bounded SVG (32 MiB input, 1,000,000 XML nodes, depth 128, 1,000,000 nodes after `use` expansion) into a private `usvg` tree, prepares styles (`styled_source*`), and rasterizes with `resvg` under an output byte limit (32 MiB by default). No backend type is public. |
 | Rejected inputs | Any `href` or `src` that is not a fragment (this includes every `<image>` with a URL and `data:` URLs), `xml-stylesheet`, `xml:base`, external CSS `url()`, every filter effect, and any `DOCTYPE` other than the inert SVG 1.1 declaration. |
 | `<img src=*.svg>`, `background-image`, list markers, `content: url()` | `raikiri-net` keeps the SVG bytes and rasterizes lazily at the size paint asks for (1 pixel per CSS pixel of the drawn box), with a per-source LRU of sizes under a shared byte budget. Consumers receive `DecodedImage` pixels through `ImagePixelSource`. |
-| Inline `<svg>` | `Page::inline_svg(fragment)` returns a standalone XML source with viewport, root color, root font and descendant declarations resolved by the cascade. `fulgur-raikiri` parses it again with its own `usvg`, its own font database (bundled faces, optionally system fonts) and draws it through `krilla-svg`. The built-in painter in `raikiri-paint` rasterizes it with `raikiri-svg`. |
+| Inline `<svg>` | `Page::inline_svg(fragment)` returns the picture of the root as an `ImageContent`: a vector scene, or pixels where D4 and D6 call for them. The scene is built from the standalone source (viewport, root color, root font and descendant declarations resolved by the cascade) with the fonts of the page. `fulgur-raikiri` draws what it is given. The built-in painter in `raikiri-paint` does not use it and rasterizes the subtree with `raikiri-svg`. |
 
-Two things follow. Vector output exists only for inline SVG, and it lives in the
-consumer, so SVG fonts and CSS are resolved outside raikiri. Images and
+Two things follow. Vector output exists only for inline SVG, and raikiri
+decides there whether a root is drawn as a scene or as pixels. Images and
 backgrounds are always pixels.
 
 ## 2. Decisions
@@ -151,8 +151,16 @@ with either pixels or a scene, chosen by D6.
   never a failure of the image: the caller asks for pixels next.
 - `<img>`, `background-image` (including pseudo-elements and margin boxes),
   `list-style-image` and `content: url()` use that method for SVG sources.
-- Inline `<svg>` goes through `Page::inline_svg`, which returns the scene
-  instead of (and in addition to, until D12 completes) the prepared source.
+- Inline `<svg>` goes through `Page::inline_svg`, which returns an
+  `InlineSvg`: the `ImageContent` of the root, its viewport and the host
+  opacity that the consumer composites around it. The picture is a scene
+  unless the root's rendering (D6) is `raster`, and pixels, at
+  `svg_raster_scale`, where D4 or a limit forces them; the policy is raikiri's
+  and the consumer draws what it is given. A scene whose stroked glyphs sit
+  under a transform other than a rotation, a reflection and a uniform scale
+  (`textLength` stretching them) is drawn as pixels too, because a backend
+  that strokes in glyph space would distort it. When pixels cannot be had
+  either, the scene is returned if there is one and the error otherwise.
 - A page exposes the choice, not the mechanism: a replaced fragment is either
   `Raster(pixels)` or `Vector(scene)`. `Page::placed_image`, `placed_marker`
   and `placed_generated_image` return a `PlacedImage` whose `content` is an
@@ -357,9 +365,13 @@ tuned when the builder exists:
 | Different pictures one scene asks for | 256 |
 | Pixel bytes the pictures of one scene hold | 32 MiB, the output limit of the raster path |
 
-Exceeding a limit is an error for that image (it does not fall back, because
-the raster path would exceed its own limit too). The cost of a scene is charged
-to the shared cache budget, never to an unbounded side allocation.
+Exceeding a limit is an error of the scene
+(`SvgSceneError::LimitExceeded`), not a signal that the raster is a valid
+substitute: `falls_back_to_raster` stays `false`. A consumer that can draw
+pixels still may, as inline SVG does (D5), because most of these budgets are
+not limits of the raster path, which has its own; when it fails too, the scene's
+error is what the caller gets. The cost of a scene is charged to the shared
+cache budget, never to an unbounded side allocation.
 
 ### D12. Consumers
 
@@ -371,9 +383,11 @@ to the shared cache budget, never to an unbounded side allocation.
   the WPT reftests, so it must not change rendering while vector support
   arrives; this means the vector path is covered by the consumer's own tests,
   not by the WPT numbers, until a scene painter is added.
-- The old `Page::inline_svg` source stays available until `fulgur-raikiri` has
-  moved over, then is removed. Every step lands as an additive change first;
-  the removals come last, in the order the public API review fixes.
+- `InlineSvg` no longer carries the prepared source: `fulgur-raikiri` moves
+  to its `content` in step with this change, and removes `usvg`,
+  `krilla-svg` and its own scene building. Every other step lands as an
+  additive change first; the removals come last, in the order the public API
+  review fixes.
 
 ## 3. Build order
 
