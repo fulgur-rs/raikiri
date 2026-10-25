@@ -370,6 +370,65 @@ class ReexportTests(unittest.TestCase):
             lint.third_party_report(load)
 
 
+class ReachTests(unittest.TestCase):
+    """What the scan counts as part of the API besides the items the names stand for."""
+
+    def test_a_type_that_a_signature_returns_counts_though_no_name_leads_to_it(self) -> None:
+        b = DocBuilder()
+        field = b.add(6, "field", {"struct_field": resolved(b.serde_type, "Serialize")})
+        hidden_away = b.add(
+            5,
+            "Unnameable",
+            {"struct": {"kind": {"plain": {"fields": [field], "has_stripped_fields": False}}, "impls": []}},
+            path=["raikiri_x", "private", "Unnameable"],
+        )
+        b.function(1, "make", [], resolved(hidden_away, "Unnameable"))
+        doc = b.doc(root="raikiri_x")
+        doc["index"]["0"]["inner"]["module"]["items"].remove(hidden_away)  # in a private module, not re-exported
+        self.assertEqual(lint.third_party_crates(doc), {"serde": ["serde::Serialize"]})
+
+    def test_an_impl_of_a_local_trait_for_a_foreign_type_counts(self) -> None:
+        b = DocBuilder()
+        implementation = b.add(
+            8,
+            None,
+            {
+                "impl": {
+                    "is_synthetic": False,
+                    "blanket_impl": None,
+                    "trait": {"path": "Local", "id": 7, "args": None},
+                    "for": resolved(b.serde_type, "Serialize"),
+                    "items": [],
+                }
+            },
+        )
+        b.add(
+            7,
+            "Local",
+            {"trait": {"items": [], "implementations": [implementation]}},
+            path=["raikiri_x", "Local"],
+        )
+        self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {"serde": ["serde::Serialize"]})
+
+    def test_a_blanket_impl_listed_by_a_trait_does_not(self) -> None:
+        b = DocBuilder()
+        blanket = b.add(
+            8,
+            None,
+            {
+                "impl": {
+                    "is_synthetic": False,
+                    "blanket_impl": resolved(b.serde_type, "T"),
+                    "trait": {"path": "Local", "id": 7, "args": None},
+                    "for": {"generic": "T"},
+                    "items": [],
+                }
+            },
+        )
+        b.add(7, "Local", {"trait": {"items": [], "implementations": [blanket]}}, path=["raikiri_x", "Local"])
+        self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {})
+
+
 class MainTests(unittest.TestCase):
     def write_all(
         self,

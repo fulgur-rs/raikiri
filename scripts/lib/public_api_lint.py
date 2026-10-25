@@ -381,19 +381,6 @@ def find_leaks(crate: str, doc: dict) -> list[Leak]:
     return sorted(leaks, key=lambda leak: (leak.path, leak.kind, leak.names))
 
 
-def referenced_ids(node: object) -> Iterator[int]:
-    """Every id that a piece of an item refers to."""
-    if isinstance(node, dict):
-        target = node.get("id")
-        if isinstance(target, int):
-            yield target
-        for child in node.values():
-            yield from referenced_ids(child)
-    elif isinstance(node, list):
-        for child in node:
-            yield from referenced_ids(child)
-
-
 def is_third_party(crate: str) -> bool:
     """Whether a consumer who sees `crate` in a signature depends on a crate outside the published set."""
     return crate not in STD_CRATES and crate not in PUBLISHED_CRATE_IDENTIFIERS
@@ -410,7 +397,7 @@ def third_party_crates(doc: dict) -> dict[str, list[str]]:
     external = {int(key): crate["name"] for key, crate in doc["external_crates"].items()}
     found: dict[str, set[str]] = {}
     for _, item in surface.visible_items(doc):
-        for target in referenced_ids(item["inner"]):
+        for target in surface.referenced_ids(item["inner"]):
             summary = doc["paths"].get(str(target))
             if summary is None or summary["crate_id"] == 0:
                 continue

@@ -189,10 +189,12 @@ A type in a public signature ties every consumer to the version of its crate,
 and so does a `pub use` of one. `THIRD_PARTY_ALLOWED` in
 `scripts/lib/public_api_lint.py` lists, per published crate, the crates it may
 name in a signature, a field, a bound, a trait impl or a re-export (a glob of a
-module of another crate counts as naming that crate), and why. The lint fails
-for a crate that is not listed, and it counts the other published crates of
-this workspace as listed but not the unpublished ones such as `raikiri-paint`.
-Today:
+module of another crate counts as naming that crate), and why. It reads the
+items the names stand for, their fields, variants, methods and impls, the
+impls of their traits, and the types of the crate that their signatures
+mention even when no name leads to them. The lint fails for a crate that is
+not listed, and it counts the other published crates of this workspace as
+listed but not the unpublished ones such as `raikiri-paint`. Today:
 
 | crate | names types of |
 | --- | --- |

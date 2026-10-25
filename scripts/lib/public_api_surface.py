@@ -162,7 +162,8 @@ def members(item: dict) -> list[int]:
     if not isinstance(body, dict):
         return []
     found: list[int] = []
-    for key in ("fields", "variants", "impls", "items"):
+    # `implementations` is how a trait lists the impls of it, wherever they are written.
+    for key in ("fields", "variants", "impls", "items", "implementations"):
         value = body.get(key)
         if isinstance(value, list):
             found.extend(entry for entry in value if isinstance(entry, int))
@@ -179,8 +180,26 @@ def members(item: dict) -> list[int]:
     return found
 
 
+def referenced_ids(node: object) -> Iterator[int]:
+    """Every id that a piece of an item refers to."""
+    if isinstance(node, dict):
+        target = node.get("id")
+        if isinstance(target, int):
+            yield target
+        for child in node.values():
+            yield from referenced_ids(child)
+    elif isinstance(node, list):
+        for child in node:
+            yield from referenced_ids(child)
+
+
 def visible_items(doc: dict) -> Iterator[tuple[int, dict]]:
     """Every item of the crate that the visible names reach, with the members of its types.
+
+    That is the items the names stand for, their fields, variants and impls (a
+    trait's impls included), and the types of the crate that their signatures
+    mention, nameable or not: a public function that returns a type of a
+    private module hands its fields and methods to the caller.
 
     Blanket and synthetic impls are skipped: they come from the traits that
     other crates implement for every type, not from the API of this crate.
@@ -201,6 +220,7 @@ def visible_items(doc: dict) -> Iterator[tuple[int, dict]]:
             continue
         yield key, item
         stack.extend(members(item))
+        stack.extend(referenced_ids(item["inner"]))
 
 
 def format_names(listed: Iterable[Name], *, with_hidden: bool = False) -> str:
