@@ -165,7 +165,19 @@ document, or for the cases D4 forces.
 Raster resolution is a separate setting: the library option
 `svg_raster_scale` (device pixels per CSS pixel, default 1, so existing
 output does not change). It is not a CSS property in the first version; it can
-be added the same way later if a use appears.
+be added the same way later if a use appears. A scale that is not finite and
+greater than zero is ignored. It applies to the pictures that are drawn as
+pixels: those whose rendering is `raster`, and those that D4 sends to the
+raster path. A vector scene has no resolution.
+
+The library reports the choice and does not draw. `LayoutOptions` (and
+`StreamingLayout`) take `svg_rendering` and `svg_raster_scale`; a page answers
+`Page::svg_rendering(node)`, with `node` the owner, and
+`Page::svg_raster_scale()`, and so does the page of a running element. An
+unknown value is skipped for the value the element would inherit without it,
+and the keywords are not case sensitive. A pseudo-element or a margin box has
+no node of its own to ask about; the consumer asks about the element that owns
+it until those carry their own answer.
 
 ### D7. Sizes, viewports and caching
 
@@ -356,7 +368,9 @@ Each step is mergeable alone and leaves rendering unchanged unless noted.
    as an image follows with the scene consumers (steps 5 and 7).
 5. `fulgur-raikiri` draws scenes with Krilla.
 6. The mode switch: `--raikiri-svg-rendering`, the library default and the
-   raster scale; the default flips to vector here, once step 5 exists.
+   raster scale; the default flips to vector here, once step 5 exists. The
+   library side (`SvgRendering`, the layout options and the page queries)
+   lands first; each consumer follows it as it moves to scenes.
 7. One path for background, `<img>` and inline SVG, and removal of the old
    inline source.
 

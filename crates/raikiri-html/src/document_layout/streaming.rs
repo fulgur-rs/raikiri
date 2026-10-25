@@ -35,10 +35,11 @@ use crate::input::Utf8Feed;
 use crate::parse::finish_document;
 use crate::render::ResumePoint;
 use crate::sink::{collect_body_inline_stylesheet_ids, traced_handles};
+use crate::svg_rendering::SvgSettings;
 use crate::types::UncascadedDocument;
 use crate::{
     ConsumerPropertyRegistration, HtmlDocument, MarginBox, RaikiriTreeSink, RenderResources,
-    build_rule_tree,
+    SvgRendering, build_rule_tree,
 };
 use frontier::{Frontier, final_page_count, open_html_elements, stable_frontier};
 use resume::{can_resume, inside_subtrees, resume_point};
@@ -330,6 +331,7 @@ struct Settings<'r, 'a> {
     config: LayoutConfig,
     consumer_properties: &'r [ConsumerPropertyRegistration],
     preload_background_images: bool,
+    svg: SvgSettings,
     /// The network every cascade fetches style sheets through.
     network: Option<StreamNetwork<'r>>,
     /// Whether the last layout resumed after delivered pages.
@@ -682,6 +684,7 @@ impl Settings<'_, '_> {
         let mut layout_options = LayoutOptions::new()
             .resources(self.resources)
             .preload_background_images(self.preload_background_images);
+        layout_options.svg = self.svg;
         if !self.consumer_properties.is_empty() {
             layout_options =
                 layout_options.consumer_properties(self.consumer_properties, &mut collect);
@@ -739,6 +742,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                 config,
                 consumer_properties: &[],
                 preload_background_images: true,
+                svg: SvgSettings::default(),
                 network: resources.network_adapter().map(StreamNetwork::new),
                 last_resumed: std::cell::Cell::new(false),
                 #[cfg(test)]
@@ -775,6 +779,21 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
     /// Defaults to `true`.
     pub fn preload_background_images(mut self, enabled: bool) -> Self {
         self.settings.preload_background_images = enabled;
+        self
+    }
+
+    /// The rendering of an SVG picture whose element declares none, as
+    /// [`LayoutOptions::svg_rendering`] sets it for a whole-document layout.
+    /// Defaults to [`SvgRendering::Vector`].
+    pub fn svg_rendering(mut self, rendering: SvgRendering) -> Self {
+        self.settings.svg.rendering = rendering;
+        self
+    }
+
+    /// Device pixels per CSS pixel for an SVG drawn as pixels, as
+    /// [`LayoutOptions::svg_raster_scale`] sets it. Defaults to `1`.
+    pub fn svg_raster_scale(mut self, scale: f32) -> Self {
+        self.settings.svg = self.settings.svg.with_raster_scale(scale);
         self
     }
 

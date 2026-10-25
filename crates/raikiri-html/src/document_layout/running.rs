@@ -16,6 +16,7 @@ use raikiri_traits::{NodeId, RenderError};
 
 use super::Page;
 use crate::svg_fonts::FaceCache;
+use crate::svg_rendering::SvgSettings;
 
 /// Running-element layouts already made, kept as long as the document layout
 /// so that later requests borrow them instead of laying the element out
@@ -104,6 +105,8 @@ pub(crate) struct RunningSource<'a> {
     /// The laid-out document and its cascade.
     pub(crate) document: &'a Document,
     pub(crate) cascade: &'a CascadeResult,
+    /// What the layout was asked for about SVG pictures.
+    pub(crate) svg: SvgSettings,
 }
 
 impl<'a> RunningSource<'a> {
@@ -122,6 +125,7 @@ impl<'a> RunningSource<'a> {
                 node,
                 width,
                 self.layouts.faces().clone(),
+                self.svg,
             )
         })
     }
@@ -139,6 +143,7 @@ pub struct RunningElementLayout {
     node: NodeId,
     laid_out: RunningElementPage,
     pub(super) svg_sources: super::page::InlineSvgCache,
+    svg: SvgSettings,
     margin_values: raikiri_dom::MarginBoxNamedValues,
 }
 
@@ -204,6 +209,7 @@ impl RunningElementLayout {
             paired_style: None,
             running: None,
             svg_sources: &self.svg_sources,
+            svg: self.svg,
             margin_values: &self.margin_values,
         }
     }
@@ -220,12 +226,14 @@ pub(crate) fn layout_running_element(
     node: NodeId,
     width: f32,
     faces: Arc<FaceCache>,
+    svg: SvgSettings,
 ) -> Result<Option<RunningElementLayout>, RenderError> {
     let laid_out = raikiri_dom::layout_running_element(source, cascade, node, width)?;
     Ok(laid_out.map(|laid_out| RunningElementLayout {
         node,
         laid_out,
         svg_sources: super::page::InlineSvgCache::new(faces),
+        svg,
         margin_values: raikiri_dom::MarginBoxNamedValues::new(),
     }))
 }

@@ -81,6 +81,7 @@ impl Run<'_, '_> {
             warnings: self.all_warnings(),
             replaced_resources: self.resolver.take_outcomes(),
             base_url: self.base_url.cloned(),
+            svg: crate::svg_rendering::SvgSettings::default(),
         })
     }
 
