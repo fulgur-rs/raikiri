@@ -11,6 +11,7 @@ mod color;
 mod common;
 mod content;
 mod layout;
+mod percent_comparison;
 mod svg;
 mod text;
 mod visual;
@@ -172,6 +173,14 @@ fn parse_value_with_black_currentcolor(
             return None;
         }
         if !contains_function_in_source(&value, "var") {
+            if matches!(
+                normalized_name.as_str(),
+                "background-position" | "background"
+            ) && let Some(parsed) =
+                parse_background_position_comparison(&normalized_name, value.as_ref())
+            {
+                return Some(parsed);
+            }
             if normalized_name == "hyphenate-limit-chars" {
                 // Integer math is rounded only when it came from a math
                 // function. Reparse the original token stream so direct
@@ -382,6 +391,40 @@ fn parse_value_with_black_currentcolor(
     }
     input.reset(&start);
     parse_property_grammar(&normalized_name, input)
+}
+
+/// The value of `background-position` or `background` (`normalized_name`)
+/// spelled `source` when one of its positions compares percentages with
+/// `min()`, `max()` or `clamp()`, and `None` otherwise.
+///
+/// The generic math simplifier folds such a function to one of its operands by
+/// comparing the percentages themselves, which picks the wrong one when the
+/// free space of the position is negative. Reading the position with its own
+/// grammar keeps the comparison until the free space is known (see
+/// [`ComparedPercentage`]). A value without such a comparison is left to the
+/// generic path.
+pub(crate) fn parse_background_position_comparison(
+    normalized_name: &str,
+    source: &str,
+) -> Option<PropertyValue> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let value = parse_property_grammar(normalized_name, &mut parser)?;
+    parser.expect_exhausted().ok()?;
+    let compares = |position: &CssPosition| {
+        [position.horizontal, position.vertical]
+            .iter()
+            .any(|offset| matches!(offset, CssPositionOffset::Compared(_)))
+    };
+    let found = match &value {
+        PropertyValue::BackgroundPosition(positions) => positions.iter().any(compares),
+        PropertyValue::Background(shorthand) => shorthand
+            .layers
+            .iter()
+            .any(|layer| compares(&layer.position)),
+        _ => false,
+    };
+    found.then_some(value)
 }
 
 /// Parse a value of the ASCII-lowercase property `normalized_name` with its

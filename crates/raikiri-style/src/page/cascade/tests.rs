@@ -6617,6 +6617,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     match o {
                         CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                         CssPositionOffset::Calc(_) => None,
+                        CssPositionOffset::Compared(_) => None,
                         CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     }
                 }
@@ -6649,6 +6650,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             crate::property::CssPositionOffset::Start(l)
                             | crate::property::CssPositionOffset::End(l) => length(l),
                           crate::property::CssPositionOffset::Calc(_) => None,
+                          crate::property::CssPositionOffset::Compared(_) => None,
                           crate::property::CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                         };
                         match g {
@@ -6691,6 +6693,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             match o {
                                 CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                                 CssPositionOffset::Calc(_) => None,
+                                CssPositionOffset::Compared(_) => None,
                                 CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                             }
                         }
@@ -6722,6 +6725,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
                       crate::property::CssPositionOffset::Calc(_) => None,
+                      crate::property::CssPositionOffset::Compared(_) => None,
                       crate::property::CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     };
                     match g {
@@ -6763,6 +6767,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
                       crate::property::CssPositionOffset::Calc(_) => None,
+                      crate::property::CssPositionOffset::Compared(_) => None,
                       crate::property::CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     };
                     match g {
@@ -6794,6 +6799,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 let offset = |o| match o {
                     CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                     CssPositionOffset::Calc(_) => None,
+                    CssPositionOffset::Compared(_) => None,
                     CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                 };
                 offset(pos.horizontal).or_else(|| offset(pos.vertical)).or_else(|| length(*z))
@@ -6803,6 +6809,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     match o {
                         CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                         CssPositionOffset::Calc(_) => None,
+                        CssPositionOffset::Compared(_) => None,
                         CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     }
                 }

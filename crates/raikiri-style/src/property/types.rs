@@ -8214,9 +8214,44 @@ pub enum CssPositionOffset {
     /// A percentage with an absolute-length offset, measured from the start
     /// edge.
     Calc(CalcLengthPercentage),
+    /// A `min()`, `max()` or `clamp()` of percentages whose winner depends on
+    /// the sign of the free space, measured from the start edge. See
+    /// [`ComparedPercentage`].
+    Compared(ComparedPercentage),
     /// A `calc()` with font-relative or viewport terms, measured from the
     /// start edge and absolutized at computed-value time.
     RelativeCalc(RelativeCalcLengthPercentage),
+}
+
+/// The percentage that a comparison function picks between percentages, for
+/// both signs of the percentage basis, such as `min(0%, 100%)` in a position.
+///
+/// CSS Values 4 "Computed Value"
+/// (<https://www.w3.org/TR/css-values-4/#calc-computed-value>) leaves a
+/// percentage unresolved until used-value time, so `min()` and `max()` cannot
+/// name their winner before the basis is known. The basis of a background
+/// position is the positioning area minus the image, and it is negative when
+/// the image is larger than the area. Then `100%` lies below `0%`, and the
+/// comparison picks the other operand than it does for a positive basis. The
+/// value keeps the result for both cases, and
+/// [`Self::percent_for_basis`] picks one once the free space is known.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComparedPercentage {
+    /// The percentage selected when the basis is zero or positive.
+    pub non_negative: f32,
+    /// The percentage selected when the basis is negative.
+    pub negative: f32,
+}
+
+impl ComparedPercentage {
+    /// The percentage the comparison selects for a basis of `basis` px.
+    pub fn percent_for_basis(self, basis: f64) -> f32 {
+        if basis < 0.0 {
+            self.negative
+        } else {
+            self.non_negative
+        }
+    }
 }
 
 impl CssPositionOffset {

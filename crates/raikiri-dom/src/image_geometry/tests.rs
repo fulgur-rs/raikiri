@@ -87,6 +87,27 @@ fn end_percent_positions_resolve_from_the_end_edge() {
 }
 
 #[test]
+fn compared_positions_pick_the_percentage_for_the_sign_of_the_free_space() {
+    // `min(0%, 100%)`: with room to spare it is 0%, and with an image larger
+    // than its area (negative free space, where 100% lies below 0%) it is 100%.
+    let min = ComputedCssPositionOffset::Compared(raikiri_style::property::ComparedPercentage {
+        non_negative: 0.0,
+        negative: 100.0,
+    });
+    assert_eq!(position_offset(min, 50.0), 0.0);
+    assert_eq!(position_offset(min, -50.0), -50.0);
+    // `max(0%, 100%)` is the other way round.
+    let max = ComputedCssPositionOffset::Compared(raikiri_style::property::ComparedPercentage {
+        non_negative: 100.0,
+        negative: 0.0,
+    });
+    assert_eq!(position_offset(max, 50.0), 50.0);
+    assert_eq!(position_offset(max, -50.0), 0.0);
+    // No free space is the same for both signs.
+    assert_eq!(position_offset(min, 0.0), 0.0);
+}
+
+#[test]
 fn calc_positions_resolve_from_the_start_edge() {
     let calc = raikiri_style::property::CalcLengthPercentage {
         percent: 50.0,

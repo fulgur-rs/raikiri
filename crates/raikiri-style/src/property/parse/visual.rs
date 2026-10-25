@@ -9,6 +9,7 @@ use crate::property::types::*;
 
 use super::color::*;
 use super::common::*;
+use super::percent_comparison::parse_percentage_comparison;
 use super::text::*;
 
 /// `<opacity-value> = <number> | <percentage>` (CSS Color 4 §3.3
@@ -184,6 +185,26 @@ fn css_position_center() -> CssPositionOffset {
     CssPositionOffset::Start(Length::Percent(50.0))
 }
 
+/// The offset of a percentage comparison, measured from the end edge when
+/// `from_end` is set: `right min(0%, 100%)` is `100% - min(0%, 100%)` from the
+/// start edge, for either sign of the free space. A comparison that picks the
+/// same percentage for both signs is a plain percentage.
+fn compared_position_offset(compared: ComparedPercentage, from_end: bool) -> CssPositionOffset {
+    let (non_negative, negative) = if from_end {
+        (100.0 - compared.non_negative, 100.0 - compared.negative)
+    } else {
+        (compared.non_negative, compared.negative)
+    };
+    if non_negative == negative {
+        CssPositionOffset::Start(Length::Percent(non_negative))
+    } else {
+        CssPositionOffset::Compared(ComparedPercentage {
+            non_negative,
+            negative,
+        })
+    }
+}
+
 /// A `<length-percentage>` offset of a `<position>`, measured from the end
 /// edge when `from_end` is set. A mixed-unit `calc()` reaches this parser only
 /// after substitution or simplification failed to fold it to one dimension;
@@ -197,6 +218,9 @@ fn parse_position_offset(input: &mut Parser<'_, '_>, from_end: bool) -> Option<C
             calc
         };
         return Some(CssPositionOffset::from_relative_calc(calc));
+    }
+    if let Some(compared) = parse_percentage_comparison(input) {
+        return Some(compared_position_offset(compared, from_end));
     }
     let length = parse_length_percentage_res(input).ok()?;
     Some(if from_end {

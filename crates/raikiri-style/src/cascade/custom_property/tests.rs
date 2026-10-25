@@ -3164,3 +3164,55 @@ fn mixed_calc_in_inset_shorthands_resolves_per_longhand() {
     );
     assert_eq!(cv.top, Auto::Calc(calc(10.0, 1.0)));
 }
+
+#[test]
+fn a_percentage_comparison_in_a_background_position_survives_the_cascade() {
+    use crate::property::ComparedPercentage;
+    use crate::resolve::{ComputedCssPosition, ComputedCssPositionOffset};
+    // The positions of css-backgrounds/background-position-negative-
+    // percentage-comparison.html, however the value is written: the winner of
+    // `min()` and `max()` depends on the sign of the free space, which only
+    // the painter knows.
+    let expected = ComputedCssPosition {
+        horizontal: ComputedCssPositionOffset::Compared(ComparedPercentage {
+            non_negative: 0.0,
+            negative: 100.0,
+        }),
+        vertical: ComputedCssPositionOffset::Compared(ComparedPercentage {
+            non_negative: 100.0,
+            negative: 0.0,
+        }),
+    };
+    for declarations in [
+        "background-position: min(0%, 100%) max(0%, 100%)",
+        "background: url(a.png) min(0%, 100%) max(0%, 100%)",
+        // A substituted `var()` is simplified after the substitution.
+        "--p: 100%; background-position: min(0%, var(--p)) max(0%, var(--p))",
+        "--p: 100%; background: url(a.png) min(0%, var(--p)) max(0%, var(--p))",
+    ] {
+        let cv = cascade_doc("", "div", Some(declarations));
+        assert_eq!(
+            cv.background_layers()[0].position,
+            expected,
+            "{declarations}"
+        );
+    }
+}
+
+#[test]
+fn a_substituted_background_position_without_a_comparison_is_folded_as_before() {
+    use crate::resolve::ComputedLengthPercentage::Percent;
+    use crate::resolve::{ComputedCssPosition, ComputedCssPositionOffset};
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--p: 25%; background-position: min(var(--p), var(--p)) calc(var(--p) + 25%)"),
+    );
+    assert_eq!(
+        cv.background_layers()[0].position,
+        ComputedCssPosition {
+            horizontal: ComputedCssPositionOffset::Start(Percent(25.0)),
+            vertical: ComputedCssPositionOffset::Start(Percent(50.0)),
+        }
+    );
+}
