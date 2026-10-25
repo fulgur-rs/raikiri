@@ -1071,6 +1071,9 @@ fn background_position_percentage_comparison_rejects_what_it_cannot_read() {
         // `+` and `-` need whitespace around them.
         "calc(10%+5%) 0%",
         "calc(10% -5%) 0%",
+        "calc(min(0%, 100%)+ 10%) 0%",
+        "calc(10% +min(0%, 100%)) 0%",
+        "calc(10% +(5%)) 0%",
     ] {
         assert_eq!(parse(invalid, "background-position"), None, "{invalid}");
     }

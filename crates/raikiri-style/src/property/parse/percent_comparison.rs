@@ -20,6 +20,7 @@
 use cssparser::{ParseError, Parser, Token};
 
 use super::common::next_numeric_stable;
+use crate::property::media_math::sum_operator;
 use crate::property::types::{ComparedPercentage, MAX_DEFERRED_VALUE_NESTING_DEPTH};
 
 /// The percentage an expression stands for, once for a basis that is zero or
@@ -134,24 +135,14 @@ fn parse_sum<'i>(
     depth: usize,
 ) -> Result<SignedPercentage, ParseError<'i, ()>> {
     let mut total = parse_term(parser, depth)?;
-    while let Ok(sign) = parser.try_parse(parse_sum_operator) {
+    while let Ok(operator) = parser.try_parse(sum_operator) {
         let term = parse_term(parser, depth)?;
+        let sign = if operator == '+' { 1.0 } else { -1.0 };
         total = total
             .add_scaled(term, sign)
             .ok_or_else(|| parser.new_custom_error(()))?;
     }
     Ok(total)
-}
-
-/// The `+` or `-` between two terms of a sum, as the sign it gives the term
-/// after it.
-fn parse_sum_operator<'i>(parser: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
-    let token = parser.next()?.clone();
-    match token {
-        Token::Delim('+') => Ok(1.0),
-        Token::Delim('-') => Ok(-1.0),
-        token => Err(parser.new_unexpected_token_error(token)),
-    }
 }
 
 /// One operand of a sum: a percentage, a parenthesised sum, or a nested math
