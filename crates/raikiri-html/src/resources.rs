@@ -263,7 +263,12 @@ impl<'a> RenderResources<'a> {
     }
 
     /// Use a font set built from bundled fonts for layout and paint.
+    ///
+    /// The images cached so far are dropped, because SVG images are set in
+    /// these fonts: a clone of a set that changes its fonts neither reuses the
+    /// scenes of the original nor lets the original reuse its own.
     pub fn fonts(mut self, fonts: crate::RenderFonts) -> Self {
+        self.reset_resource_state();
         self.svg_faces = fonts.svg_faces_shared();
         self.font_collection = Some(fonts.into_collection());
         self

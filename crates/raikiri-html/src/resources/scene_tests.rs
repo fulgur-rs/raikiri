@@ -320,11 +320,7 @@ fn a_zero_decode_budget_builds_no_scene() {
 
 #[test]
 fn svg_text_is_set_in_the_fonts_of_the_resources() {
-    let fonts = crate::FontCollectionBuilder::new()
-        .font_bytes("Ahem", AHEM.to_vec())
-        .build()
-        .expect("fonts");
-    let resources = RenderResources::new().fonts(fonts);
+    let resources = RenderResources::new().fonts(ahem_fonts());
     let url = svg_url(
         "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><text x='0' y='8' font-family='Ahem' font-size='8'>A</text></svg>",
     );
@@ -332,16 +328,49 @@ fn svg_text_is_set_in_the_fonts_of_the_resources() {
 
     let small = resources.get_vector(&url, &request(16.0, 16.0)).unwrap();
     let large = resources.get_vector(&url, &request(32.0, 32.0)).unwrap();
-    let face = |scene: &VectorImage| match scene.root.children.iter().find_map(|node| match node {
+    assert_eq!(text_runs(&small), 1);
+    // Every scene of a resource set shares the face it was handed.
+    assert!(first_face(&small).is_same_face(&first_face(&large)));
+}
+
+fn ahem_fonts() -> crate::RenderFonts {
+    crate::FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("fonts")
+}
+
+#[test]
+fn a_clone_given_other_fonts_shares_no_scene_with_the_original() {
+    let original = RenderResources::new().fonts(ahem_fonts());
+    let url = svg_url(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><text x='0' y='8' font-family='Ahem' font-size='8'>A</text></svg>",
+    );
+    preload(&original, std::slice::from_ref(&url));
+    let built = original.get_vector(&url, &request(16.0, 16.0)).unwrap();
+
+    let clone = original.clone().fonts(ahem_fonts());
+    // The clone starts from nothing: it does not see the scene built in the
+    // fonts it replaced.
+    assert!(clone.get_vector(&url, &request(16.0, 16.0)).is_none());
+    preload(&clone, std::slice::from_ref(&url));
+    let rebuilt = clone.get_vector(&url, &request(16.0, 16.0)).unwrap();
+    assert!(!Arc::ptr_eq(&built, &rebuilt));
+    assert!(!first_face(&built).is_same_face(&first_face(&rebuilt)));
+    // The original keeps its scene and its faces.
+    let again = original.get_vector(&url, &request(16.0, 16.0)).unwrap();
+    assert!(Arc::ptr_eq(&built, &again));
+}
+
+/// The face of the first text run of `scene`.
+fn first_face(scene: &VectorImage) -> raikiri_traits::vector::FontFace {
+    match scene.root.children.iter().find_map(|node| match node {
         Node::Text(run) => run.glyphs.first().map(|glyph| glyph.font.clone()),
         _ => None,
     }) {
         Some(face) => face,
         None => panic!("the scene holds no text: {scene:?}"),
-    };
-    assert_eq!(text_runs(&small), 1);
-    // Every scene of a resource set shares the face it was handed.
-    assert!(face(&small).is_same_face(&face(&large)));
+    }
 }
 
 // The scene cache.
