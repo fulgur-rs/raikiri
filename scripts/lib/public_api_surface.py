@@ -154,9 +154,11 @@ def names(doc: dict) -> list[Name]:
             module(entry, path, hidden, active)
         elif kind == "extern_crate":
             # `pub extern crate dep;` publishes the whole crate under this name.
+            # rustdoc puts the name it is published under in `name` and, for
+            # `extern crate dep as other;`, the crate itself in `rename`.
             if entry.get("visibility") == "public":
                 body = entry["inner"]["extern_crate"]
-                add(f"{prefix}::{body.get('rename') or body['name']}", kind, hidden, body["name"])
+                add(f"{prefix}::{body['name']}", kind, hidden, body.get("rename") or body["name"])
         elif kind in DECLARED_KINDS:
             add(f"{prefix}::{entry['name']}", kind, hidden, canonical_path(doc, entry["id"]), entry["id"])
 

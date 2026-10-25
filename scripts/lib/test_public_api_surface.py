@@ -74,8 +74,10 @@ class Doc:
     def variant(self, key: int, name: str, attrs: list | None = None) -> int:
         return self._add(key, name, {"variant": {"kind": "plain", "discriminant": None}}, attrs, None)
 
-    def extern_crate(self, key: int, name: str, rename: str | None = None, visibility: str = "public") -> int:
-        self._add(key, rename or name, {"extern_crate": {"name": name, "rename": rename}}, None, None)
+    def extern_crate(self, key: int, crate: str, as_name: str | None = None, visibility: str = "public") -> int:
+        # rustdoc 1.91 writes the name it is published under to `name` and the crate to `rename`.
+        body = {"name": as_name, "rename": crate} if as_name else {"name": crate, "rename": None}
+        self._add(key, body["name"], {"extern_crate": body}, None, None)
         self.index[str(key)]["visibility"] = visibility
         return key
 
@@ -238,7 +240,7 @@ class NamesTests(unittest.TestCase):
 
     def test_a_public_extern_crate_publishes_the_crate_under_its_local_name(self) -> None:
         doc = Doc()
-        doc.set_items(0, [doc.extern_crate(1, "dep"), doc.extern_crate(2, "other", rename="renamed")])
+        doc.set_items(0, [doc.extern_crate(1, "dep"), doc.extern_crate(2, "other", as_name="renamed")])
         found = listed(doc)
         self.assertEqual(sorted(found), ["x::dep", "x::renamed"])
         self.assertEqual((found["x::dep"].kind, found["x::dep"].canonical), ("extern_crate", "dep"))

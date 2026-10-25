@@ -506,8 +506,15 @@ class ReachTests(unittest.TestCase):
 
     def test_a_public_extern_crate_counts_as_naming_the_crate(self) -> None:
         b = DocBuilder()
-        b.add(1, "renamed", {"extern_crate": {"name": "serde", "rename": "renamed"}})
+        # rustdoc 1.91 writes the exported name to `name` and the crate to `rename`.
+        b.add(1, "renamed", {"extern_crate": {"name": "renamed", "rename": "serde"}})
         b.add(2, "raikiri_traits", {"extern_crate": {"name": "raikiri_traits", "rename": None}})
+        b.add(3, "alias", {"extern_crate": {"name": "alias", "rename": "core"}})
+        self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {"serde": ["serde"]})
+
+    def test_an_extern_crate_cannot_borrow_the_name_of_a_standard_crate(self) -> None:
+        b = DocBuilder()
+        b.add(1, "std", {"extern_crate": {"name": "std", "rename": "serde"}})  # extern crate serde as std;
         self.assertEqual(lint.third_party_crates(b.doc(root="raikiri_x")), {"serde": ["serde"]})
 
     def test_a_blanket_impl_listed_by_a_trait_does_not(self) -> None:
