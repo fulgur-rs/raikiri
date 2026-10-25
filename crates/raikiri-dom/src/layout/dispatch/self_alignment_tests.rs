@@ -280,3 +280,46 @@ fn a_last_baseline_in_one_axis_leaves_the_safe_alignment_of_the_other() {
         ),
     );
 }
+
+const BLOCK: &str = "position:relative;width:100px;height:100px";
+const ABSOLUTE: &str = "position:absolute;width:50px;height:50px";
+
+#[test]
+fn anchor_center_aligns_an_in_flow_item_like_center() {
+    for container in [ROW, GRID] {
+        for item in [
+            "align-self:anchor-center",
+            "align-self:safe anchor-center",
+            "align-self:unsafe anchor-center",
+        ] {
+            let (_, top, _, _) = item_rect(container, &format!("{FITS};{item}"));
+            assert_eq!(top, 20.0, "{container} | {item}");
+        }
+        for (anchor, center) in [
+            ("anchor-center", "center"),
+            ("safe anchor-center", "safe center"),
+            ("unsafe anchor-center", "unsafe center"),
+        ] {
+            assert_eq!(
+                item_rect(container, &format!("{TALL};align-self:{anchor}")),
+                item_rect(container, &format!("{TALL};align-self:{center}")),
+                "{container} | {anchor}"
+            );
+        }
+    }
+    let (left, _, _, _) = item_rect(GRID, &format!("{FITS};justify-self:anchor-center"));
+    assert_eq!(left, 40.0);
+    let (_, top, _, _) = item_rect(&format!("{ROW};align-items:anchor-center"), FITS);
+    assert_eq!(top, 20.0, "align-items");
+}
+
+#[test]
+fn anchor_center_places_an_absolute_box_without_an_anchor_like_center() {
+    for axis in ["align-self", "justify-self"] {
+        let center = item_rect(BLOCK, &format!("{ABSOLUTE};{axis}:center"));
+        let anchor = item_rect(BLOCK, &format!("{ABSOLUTE};{axis}:anchor-center"));
+        let normal = item_rect(BLOCK, &format!("{ABSOLUTE};{axis}:normal"));
+        assert_eq!(anchor, center, "{axis}");
+        assert_ne!(anchor, normal, "{axis}: the keyword moves the box");
+    }
+}

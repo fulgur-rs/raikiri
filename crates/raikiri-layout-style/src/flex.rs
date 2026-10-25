@@ -28,7 +28,7 @@ pub(crate) fn content(value: C) -> values::AlignContent {
 pub fn items(value: A) -> values::AlignItems {
     match value {
         A::Stretch => values::AlignItems::STRETCH,
-        A::Center => values::AlignItems::CENTER,
+        A::Center | A::AnchorCenter => values::AlignItems::CENTER,
         A::Start => values::AlignItems::START,
         A::End => values::AlignItems::END,
         A::FlexStart => values::AlignItems::FLEX_START,

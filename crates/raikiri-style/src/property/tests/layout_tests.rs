@@ -1375,6 +1375,7 @@ fn an_overflow_position_stays_with_the_position_it_qualifies() {
         SelfPosition::SelfEnd,
         SelfPosition::FlexStart,
         SelfPosition::FlexEnd,
+        SelfPosition::AnchorCenter,
     ] {
         let name = match position {
             SelfPosition::Center => "center",
@@ -1383,6 +1384,7 @@ fn an_overflow_position_stays_with_the_position_it_qualifies() {
             SelfPosition::SelfStart => "self-start",
             SelfPosition::SelfEnd => "self-end",
             SelfPosition::FlexStart => "flex-start",
+            SelfPosition::AnchorCenter => "anchor-center",
             _ => "flex-end",
         };
         for (prefix, expected) in [
@@ -1395,6 +1397,45 @@ fn an_overflow_position_stays_with_the_position_it_qualifies() {
             assert_eq!(self_alignments(&css), [Some(expected); 4], "{css:?}");
             assert_eq!(expected.position(), Some(position), "{css:?}");
         }
+    }
+}
+
+#[test]
+fn anchor_center_is_a_self_position_of_all_four_properties() {
+    for css in ["anchor-center", "ANCHOR-Center"] {
+        assert_eq!(
+            self_alignments(css),
+            [Some(SelfAlignmentValue::AnchorCenter); 4],
+            "{css:?}"
+        );
+    }
+    assert_eq!(
+        parse_entire("anchor-center", "align-self"),
+        Some(PropertyValue::AlignSelf(AlignSelfValue::Value(
+            SelfAlignmentValue::AnchorCenter
+        )))
+    );
+    assert_eq!(
+        SelfAlignmentValue::AnchorCenter.position(),
+        Some(SelfPosition::AnchorCenter)
+    );
+    assert_eq!(
+        parse_entire("anchor-center unsafe anchor-center", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::Unsafe(SelfPosition::AnchorCenter)),
+        }))
+    );
+}
+
+#[test]
+fn anchor_center_takes_no_second_position() {
+    for css in [
+        "anchor-center center",
+        "anchor-center start",
+        "anchor-centre",
+    ] {
+        assert_eq!(self_alignments(css), [None; 4], "{css:?}");
     }
 }
 

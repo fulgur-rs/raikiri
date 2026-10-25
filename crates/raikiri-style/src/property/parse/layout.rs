@@ -346,6 +346,7 @@ fn parse_axis_self_alignment(
         "self-end" => SelfPosition::SelfEnd,
         "flex-start" => SelfPosition::FlexStart,
         "flex-end" => SelfPosition::FlexEnd,
+        "anchor-center" => SelfPosition::AnchorCenter,
         "left" if inline_axis => SelfPosition::Start,
         "right" if inline_axis => SelfPosition::End,
         _ if overflow.is_some() => return None,

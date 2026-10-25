@@ -341,6 +341,7 @@ pub(super) fn ignored_vertical_inset(
                 value.position(),
                 Some(
                     SelfPosition::Center
+                        | SelfPosition::AnchorCenter
                         | SelfPosition::End
                         | SelfPosition::FlexEnd
                         | SelfPosition::SelfEnd

@@ -1088,6 +1088,7 @@ fn self_alignment_to_taffy_maps_every_keyword() {
         (SelfAlignmentValue::Normal, None),
         (SelfAlignmentValue::Stretch, Some(AlignItems::STRETCH)),
         (SelfAlignmentValue::Center, Some(AlignItems::CENTER)),
+        (SelfAlignmentValue::AnchorCenter, Some(AlignItems::CENTER)),
         (SelfAlignmentValue::Start, Some(AlignItems::START)),
         (SelfAlignmentValue::End, Some(AlignItems::END)),
         (SelfAlignmentValue::FlexStart, Some(AlignItems::FLEX_START)),
