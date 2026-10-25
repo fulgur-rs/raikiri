@@ -21,6 +21,7 @@ use url::Url;
 
 use raikiri_traits::{ImagePixelSource, ReplacedResolver};
 
+use crate::document_parse::Syntax;
 use crate::fetch::{
     get_request, mime_essence, min_limit, policy_violation_warning_kind, redacted_url, resolve_url,
     sanitize_policy_violation, url_policy_violation, url_without_fragment,
@@ -97,7 +98,8 @@ impl ResourceLimits {
 
 /// Consumer-supplied inputs and resource policy shared by parse and render.
 ///
-/// Use the same value with [`crate::parse_html_with_resources`] and
+/// Use the same value with [`crate::parse_html_with_resources`] (or
+/// [`crate::parse_xhtml_with_resources`]) and
 /// [`crate::LayoutOptions::resources`] so both phases share stylesheet
 /// sources, base URL, network provider, policy, fonts, resolver, and limits.
 /// CSS background sources fetched during rendering are kept in an image cache
@@ -283,7 +285,7 @@ impl<'a> RenderResources<'a> {
             .unwrap_or_else(raikiri_dom::system_font_collection)
     }
 
-    /// Set the limits used when parsing HTML.
+    /// Set the limits used when parsing HTML or XHTML.
     pub fn render_limits(mut self, limits: RenderLimits) -> Self {
         self.render_limits = limits;
         self
@@ -1516,13 +1518,64 @@ pub fn parse_html_with_resources<R: Read>(
     input: R,
     resources: &RenderResources<'_>,
 ) -> Result<HtmlDocument, raikiri_traits::RenderError> {
+    parse_with_resources(Syntax::Html, input, resources)
+}
+
+/// Parse XHTML using the same renderer-neutral resource configuration later
+/// accepted by [`crate::LayoutOptions::resources`], and return the cascaded
+/// document [`parse_html_with_resources`] returns for HTML.
+///
+/// The input is read as [`crate::parse_xhtml`] reads it: UTF-8, parsed by an
+/// XML parser that repairs malformed markup and records each repair as a
+/// parse warning, with the DOCTYPE's internal subset ignored. The input-byte,
+/// DOM-node, parse-warning and cascade limits come from
+/// [`RenderResources::render_limits`], and elements nested deeper than 256
+/// levels return [`raikiri_traits::LimitKind::DomDepth`]. Extra stylesheets,
+/// fonts, the base URL and the border width device scale apply as they do for
+/// HTML. The pages of a [`crate::layout`] of the result are those that
+/// [`crate::StreamingLayout::new_xhtml`] delivers for the same input.
+///
+/// The syntax is the caller's choice: a document served as
+/// `application/xhtml+xml` takes this function, and one served as `text/html`
+/// takes [`parse_html_with_resources`] whatever its markup looks like.
+///
+/// # Errors
+///
+/// The errors of [`parse_html_with_resources`], with XML in place of html5ever
+/// as the parser behind `RenderError::Parse`.
+///
+/// # Example
+///
+/// ```
+/// use raikiri_html::{parse_xhtml_with_resources, RenderResources};
+///
+/// let xhtml = r#"<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Hi<br/></p></body></html>"#;
+/// let doc = parse_xhtml_with_resources(xhtml.as_bytes(), &RenderResources::new())
+///     .expect("parse");
+/// assert!(!doc.cascade().computed.is_empty());
+/// ```
+pub fn parse_xhtml_with_resources<R: Read>(
+    input: R,
+    resources: &RenderResources<'_>,
+) -> Result<HtmlDocument, raikiri_traits::RenderError> {
+    parse_with_resources(Syntax::Xhtml, input, resources)
+}
+
+/// Parses `input` as `syntax` with the parse options, limits and fonts of
+/// `resources`.
+fn parse_with_resources<R: Read>(
+    syntax: Syntax,
+    input: R,
+    resources: &RenderResources<'_>,
+) -> Result<HtmlDocument, raikiri_traits::RenderError> {
     let network = resources.network_adapter();
     let network_ref = network
         .as_ref()
         .map(|provider| provider as &dyn NetworkProvider);
     let extra_stylesheets = resources.extra_stylesheets();
     let options = resources.parse_options(&extra_stylesheets, network_ref);
-    crate::document_parse::parse_html_with_fonts(
+    crate::document_parse::parse_with_fonts(
+        syntax,
         input,
         &options,
         resources.parse_limits(),
@@ -1571,3 +1624,5 @@ fn background_url(image: &BackgroundImage) -> Option<&str> {
 mod scene_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod xhtml_tests;

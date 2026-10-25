@@ -5,6 +5,7 @@
 //!   [`UncascadedDocument`].
 //! - XHTML: [`parse_xhtml`] builds the same document by streaming the input
 //!   through an XML parser, preserving self-closing elements and namespaces.
+//!   [`parse_xhtml_with_resources`] cascades it into an [`HtmlDocument`].
 //! - Document layer: [`parse_html`] / [`parse_html_with_limits`] /
 //!   [`parse_html_with_resources`] assemble a cascaded [`HtmlDocument`];
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
@@ -70,6 +71,7 @@ pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_s
 // content width out again the way `layout` does.
 pub use render::continuation::{Continuation, ContinuationInputs, continue_at_page_widths};
 pub use resources::RenderSvgImages;
+pub use resources::parse_xhtml_with_resources;
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
     ResourceLimits, parse_html_with_resources,

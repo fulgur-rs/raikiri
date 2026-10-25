@@ -1,6 +1,5 @@
 use super::*;
-use crate::document_parse::assemble_document;
-use crate::xhtml::parse_with_limits;
+use crate::parse_xhtml_with_resources;
 
 const NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
@@ -54,24 +53,17 @@ fn long_xhtml() -> String {
 
 /// The pages of a batch layout of `xhtml`.
 fn batch_xhtml(xhtml: &str) -> (PageLog, Vec<RenderWarning>) {
-    let resources = RenderResources::new();
-    let extra_stylesheets = resources.extra_stylesheets();
-    let options = resources.parse_options(&extra_stylesheets, None);
-    let limits = resources.parse_limits();
-    let uncascaded = parse_with_limits(xhtml.as_bytes(), &options, &limits).expect("parse");
-    let document = assemble_document(
-        uncascaded,
-        &options,
-        &limits,
-        resources.configured_fonts(),
-        resources.configured_border_width_device_scale(),
-    )
-    .expect("cascade");
+    batch_xhtml_with(xhtml, &RenderResources::new())
+}
+
+/// The pages of a batch layout of `xhtml` with `resources`.
+fn batch_xhtml_with(xhtml: &str, resources: &RenderResources<'_>) -> (PageLog, Vec<RenderWarning>) {
+    let document = parse_xhtml_with_resources(xhtml.as_bytes(), resources).expect("parse");
     let LayoutStatus::Completed(laid_out) = layout(
         &document,
         PageDefaults::default(),
         LayoutConfig::default(),
-        LayoutOptions::new().resources(&resources),
+        LayoutOptions::new().resources(resources),
     )
     .expect("layout") else {
         panic!("aborted");
@@ -257,4 +249,32 @@ fn xhtml_invalid_utf8_is_an_encoding_error() {
         error,
         RenderError::Parse(ParseError::Encoding { .. })
     ));
+}
+
+#[test]
+fn xhtml_pages_match_batch_layout_with_fonts_and_a_border_scale() {
+    let ahem = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+    ));
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes("Ahem", ahem.to_vec())
+        .build()
+        .expect("fonts");
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .border_width_device_scale(Some(1.5));
+    let mut xhtml = format!(
+        "<html xmlns=\"{NAMESPACE}\"><head><style><![CDATA[\
+         body {{ font: 16px Ahem }} \
+         p {{ border-top: 1.3px solid; margin: 0 }}]]></style></head><body>"
+    );
+    for paragraph in 0..80 {
+        xhtml.push_str(&format!("<p>paragraph {paragraph} of the document</p>"));
+    }
+    xhtml.push_str("</body></html>");
+    let (expected, _) = batch_xhtml_with(&xhtml, &resources);
+    assert!(expected.len() > 1, "the fixture spans pages");
+    let (pages, _, _) = stream_xhtml(&xhtml, &resources, 256, 1);
+    assert_eq!(pages, expected);
 }

@@ -137,21 +137,34 @@ pub fn parse_html_with_limits<R: Read>(
     options: &ParseOptions<'_>,
     limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    parse_html_with_fonts(input, options, limits, None, None)
+    parse_with_fonts(Syntax::Html, input, options, limits, None, None)
+}
+
+/// The syntax a document is parsed as.
+#[derive(Clone, Copy)]
+pub(crate) enum Syntax {
+    /// Parsed by html5ever, as [`parse_html`] does.
+    Html,
+    /// Parsed by xml5ever, as [`crate::parse_xhtml`] does.
+    Xhtml,
 }
 
 /// [`parse_html_with_limits`] for a document laid out with `fonts`, given
 /// to the DOM before the cascade measures `line-height: normal` in them.
 /// `None` leaves the DOM without fonts, so it measures in the installed
-/// fonts its first layout takes.
-pub(crate) fn parse_html_with_fonts<R: Read>(
+/// fonts its first layout takes. `syntax` selects the parser.
+pub(crate) fn parse_with_fonts<R: Read>(
+    syntax: Syntax,
     input: R,
     options: &ParseOptions<'_>,
     limits: RenderLimits,
     fonts: Option<shodo::font::FontCollection>,
     border_width_device_scale: Option<f32>,
 ) -> Result<HtmlDocument, RenderError> {
-    let uncascaded = parse_with_budgets(input, options, &limits)?;
+    let uncascaded = match syntax {
+        Syntax::Html => parse_with_budgets(input, options, &limits)?,
+        Syntax::Xhtml => crate::xhtml::parse_with_limits(input, options, &limits)?,
+    };
     assemble_document(
         uncascaded,
         options,
