@@ -20,11 +20,15 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import public_api_lint as lint
 
 TAFFY_CRATE_ID = 7
 TRAITS_CRATE_ID = 8
+SERDE_CRATE_ID = 9
+ROOT_KINDS = ("function", "struct", "enum", "trait", "constant", "type_alias", "module", "use")
+CORE_CRATE_ID = 10
 
 
 def resolved(item_id: int, path: str, args: list | None = None) -> dict:
@@ -48,7 +52,7 @@ class DocBuilder:
         self.shift = shift
         self.index: dict[str, dict] = {}
         self.paths: dict[str, dict] = {}
-        self.external = {str(TRAITS_CRATE_ID): {"name": "raikiri_traits"}}
+        self.external = {str(TRAITS_CRATE_ID): {"name": "raikiri_traits"}, str(SERDE_CRATE_ID): {"name": "serde"}}
         if with_taffy:
             self.external[str(TAFFY_CRATE_ID)] = {"name": "taffy"}
         self.taffy_node_id = self.foreign(100, TAFFY_CRATE_ID, ["taffy", "tree", "node", "NodeId"])
@@ -56,6 +60,10 @@ class DocBuilder:
         self.taffy_trait = self.foreign(102, TAFFY_CRATE_ID, ["taffy", "tree", "traits", "TraverseTree"])
         # A type of the same name in a crate that is allowed.
         self.traits_node_id = self.foreign(103, TRAITS_CRATE_ID, ["raikiri_traits", "NodeId"])
+        # A type of a crate outside the workspace, and one of the standard library.
+        self.serde_type = self.foreign(104, SERDE_CRATE_ID, ["serde", "Serialize"])
+        self.core_type = self.foreign(105, CORE_CRATE_ID, ["core", "option", "Option"])
+        self.external[str(CORE_CRATE_ID)] = {"name": "core"}
 
     def foreign(self, key: int, crate_id: int, path: list[str]) -> int:
         key += self.shift
@@ -93,11 +101,17 @@ class DocBuilder:
         }
         return self.add(key, name, {"function": {"sig": sig, "generics": {"params": [], "where_predicates": []}}}, **extra)
 
-    def doc(self, format_version: int = 56, includes_private: bool = False) -> dict:
+    def doc(self, format_version: int = 56, includes_private: bool = False, root: str | None = None) -> dict:
+        index = self.index
+        if root is not None:
+            # A root module, named `root`, that lists the items declared at the top level.
+            members = [item["id"] for item in index.values() if next(iter(item["inner"])) in ROOT_KINDS]
+            module = {"module": {"is_crate": True, "items": members, "is_stripped": False}}
+            index = {**index, "0": {"id": 0, "crate_id": 0, "name": root, "visibility": "public", "attrs": [], "inner": module}}
         return {
             "format_version": format_version,
             "includes_private": includes_private,
-            "index": self.index,
+            "index": index,
             "paths": self.paths,
             "external_crates": self.external,
             "root": 0,
@@ -239,15 +253,141 @@ class DumpTests(unittest.TestCase):
         self.assertNotEqual(lint.api_lines(before.doc()), lint.api_lines(after.doc()))
 
 
+class ThirdPartyTests(unittest.TestCase):
+    def named(self, builder: DocBuilder) -> dict[str, list[str]]:
+        return lint.third_party_crates(builder.doc(root="raikiri_x"))
+
+    def test_a_crate_outside_the_workspace_in_a_signature_is_named(self) -> None:
+        b = DocBuilder()
+        b.function(1, "go", [resolved(b.serde_type, "Serialize")], None)
+        self.assertEqual(self.named(b), {"serde": ["serde::Serialize"]})
+
+    def test_the_standard_library_and_the_workspace_are_not_third_party(self) -> None:
+        b = DocBuilder()
+        b.function(1, "go", [resolved(b.traits_node_id, "NodeId")], resolved(b.core_type, "Option"))
+        self.assertEqual(self.named(b), {})
+
+    def test_a_hidden_item_does_not_count(self) -> None:
+        b = DocBuilder()
+        b.function(1, "go", [resolved(b.serde_type, "Serialize")], None, attrs=[{"other": "#[doc(hidden)]"}])
+        self.assertEqual(self.named(b), {})
+
+    def test_a_field_of_a_visible_type_counts(self) -> None:
+        b = DocBuilder()
+        field = b.add(2, "inner", {"struct_field": resolved(b.serde_type, "Serialize")})
+        b.add(
+            1,
+            "Holder",
+            {"struct": {"kind": {"plain": {"fields": [field], "has_stripped_fields": False}}, "impls": []}},
+            path=["raikiri_x", "Holder"],
+        )
+        self.assertEqual(self.named(b), {"serde": ["serde::Serialize"]})
+
+    def test_a_blanket_impl_of_a_foreign_trait_is_not_the_api_of_the_crate(self) -> None:
+        b = DocBuilder()
+        blanket = b.add(
+            3,
+            None,
+            {
+                "impl": {
+                    "is_synthetic": False,
+                    "blanket_impl": resolved(b.serde_type, "T"),
+                    "trait": {"path": "Serialize", "id": b.serde_type, "args": None},
+                    "for": {"generic": "T"},
+                    "items": [],
+                }
+            },
+        )
+        b.add(
+            1,
+            "Holder",
+            {"struct": {"kind": "unit", "impls": [blanket]}},
+            path=["raikiri_x", "Holder"],
+        )
+        self.assertEqual(self.named(b), {})
+
+    def test_an_impl_of_a_foreign_trait_for_a_visible_type_counts(self) -> None:
+        b = DocBuilder()
+        implementation = b.add(
+            3,
+            None,
+            {
+                "impl": {
+                    "is_synthetic": False,
+                    "blanket_impl": None,
+                    "trait": {"path": "Serialize", "id": b.serde_type, "args": None},
+                    "for": {"generic": "Self"},
+                    "items": [],
+                }
+            },
+        )
+        b.add(1, "Holder", {"struct": {"kind": "unit", "impls": [implementation]}}, path=["raikiri_x", "Holder"])
+        self.assertEqual(self.named(b), {"serde": ["serde::Serialize"]})
+
+
+class ReexportTests(unittest.TestCase):
+    """A `pub use` publishes the type of another crate whether or not a signature mentions it."""
+
+    def named(self, builder: DocBuilder) -> dict[str, list[str]]:
+        return lint.third_party_crates(builder.doc(root="raikiri_x"))
+
+    def reexport(self, builder: DocBuilder, key: int, target: int, name: str, *, glob: bool = False) -> int:
+        inner = {"use": {"source": name, "name": name, "id": target, "is_glob": glob}}
+        return builder.add(key, None, inner)
+
+    def test_a_reexported_type_counts_with_no_signature_that_mentions_it(self) -> None:
+        b = DocBuilder()
+        self.reexport(b, 1, b.serde_type, "Serialize")
+        self.assertEqual(self.named(b), {"serde": ["serde::Serialize"]})
+
+    def test_a_glob_of_a_module_of_another_crate_counts_as_naming_that_crate(self) -> None:
+        b = DocBuilder()
+        module = b.foreign(106, SERDE_CRATE_ID, ["serde", "de"])
+        self.reexport(b, 1, module, "de", glob=True)
+        self.assertEqual(self.named(b), {"serde": ["serde::de"]})
+
+    def test_a_reexport_of_a_published_crate_or_a_hidden_one_does_not(self) -> None:
+        b = DocBuilder()
+        self.reexport(b, 1, b.traits_node_id, "NodeId")
+        hidden = self.reexport(b, 2, b.serde_type, "Hidden")
+        b.index[str(hidden)]["attrs"] = [{"other": "#[doc(hidden)]"}]
+        self.assertEqual(self.named(b), {})
+
+    def test_an_unpublished_workspace_crate_is_third_party_to_a_consumer(self) -> None:
+        b = DocBuilder()
+        b.external["11"] = {"name": "raikiri_paint"}
+        paint = b.foreign(107, 11, ["raikiri_paint", "Thing"])
+        b.function(1, "go", [resolved(paint, "Thing")], None)
+        self.assertEqual(self.named(b), {"raikiri_paint": ["raikiri_paint::Thing"]})
+
+    def test_a_view_crate_with_no_taffy_in_the_scan_is_a_tool_error(self) -> None:
+        def load(crate: str) -> dict:
+            b = DocBuilder()
+            b.function(1, "plain", [resolved(b.traits_node_id, "NodeId")], None)
+            return b.doc(root=crate.replace("-", "_"))
+
+        with self.assertRaisesRegex(lint.ToolError, "view crate"):
+            lint.third_party_report(load)
+
+
 class MainTests(unittest.TestCase):
-    def write_all(self, directory: Path, leaking: str | None = None, blind_view: bool = False) -> None:
-        for crate in (*lint.CHECKED_CRATES, *lint.VIEW_CRATES):
+    def write_all(
+        self,
+        directory: Path,
+        leaking: str | None = None,
+        blind_view: bool = False,
+        naming_serde: str | None = None,
+    ) -> None:
+        """Write the JSON of every crate; `naming_serde` is a crate whose API names a type of serde."""
+        for crate in lint.ALL_CRATES:
             b = DocBuilder()
             b.function(1, "plain", [resolved(b.traits_node_id, "NodeId")], None)
             if crate == leaking or (crate in lint.VIEW_CRATES and not blind_view):
                 b.function(2, "child_count", [resolved(b.taffy_node_id, "NodeId")], None)
+            if crate == naming_serde:
+                b.function(3, "outside", [resolved(b.serde_type, "Serialize")], None)
             (directory / lint.json_file_name(crate)).write_text(
-                __import__("json").dumps(b.doc()), encoding="utf-8"
+                __import__("json").dumps(b.doc(root=crate.replace("-", "_"))), encoding="utf-8"
             )
 
     def run_main(self, directory: Path, *extra: str) -> tuple[int, str, str]:
@@ -269,7 +409,7 @@ class MainTests(unittest.TestCase):
             self.write_all(Path(tmp), leaking="raikiri-paint")
             code, out, _ = self.run_main(Path(tmp))
         self.assertEqual(code, 1)
-        self.assertIn("raikiri-paint: child_count (function): taffy::tree::node::NodeId", out)
+        self.assertIn("raikiri-paint: raikiri_paint::child_count (function): taffy::tree::node::NodeId", out)
         self.assertNotIn("raikiri-dom:", out)
 
     def test_a_view_crate_the_walker_sees_no_taffy_in_is_a_tool_error(self) -> None:
@@ -303,8 +443,76 @@ class MainTests(unittest.TestCase):
             self.write_all(Path(tmp))
             code, out, _ = self.run_main(Path(tmp), "--dump", "raikiri-html")
         self.assertEqual(code, 0)
-        self.assertEqual(out.count("\n"), 1)
-        self.assertTrue(out.startswith("plain [function] "), out)
+        # The root module and the one function.
+        self.assertEqual(out.count("\n"), 2)
+        self.assertIn("raikiri_html::plain [function] ", out)
+
+    def write_published(self, directory: Path) -> None:
+        self.write_all(directory)
+
+    def test_surface_prints_the_names_of_one_crate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            code, out, _ = self.run_main(Path(tmp), "--surface", "raikiri-net")
+        self.assertEqual((code, out), (0, "function   raikiri_net::plain\n"))
+
+    def test_exhaustive_prints_the_types_a_user_can_match_completely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            b = DocBuilder()
+            b.add(1, "Kind", {"enum": {"variants": [1, 2, 3], "impls": []}}, path=["raikiri_net", "Kind"])
+            b.add(2, "Sealed", {"enum": {"variants": [1]}}, attrs=["non_exhaustive"], path=["raikiri_net", "Sealed"])
+            (Path(tmp) / lint.json_file_name("raikiri-net")).write_text(
+                __import__("json").dumps(b.doc(root="raikiri_net")), encoding="utf-8"
+            )
+            code, out, _ = self.run_main(Path(tmp), "--exhaustive", "raikiri-net")
+        self.assertEqual((code, out), (0, "enum       raikiri_net::Kind  (3 variants)\n"))
+
+    def test_usage_reports_the_names_that_sources_reach(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            sources = Path(tmp) / "src"
+            sources.mkdir()
+            (sources / "main.rs").write_text("use raikiri_html::plain;\nuse raikiri_dom::missing;\n", encoding="utf-8")
+            code, out, _ = self.run_main(Path(tmp), "--usage", str(sources))
+        self.assertEqual(code, 0)
+        self.assertIn("raikiri_html: 1 names used", out)
+        self.assertIn("function   raikiri_html::plain", out)
+        self.assertIn("raikiri_dom::missing", out)
+
+    def test_usage_of_something_that_is_not_a_directory_is_a_tool_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_published(Path(tmp))
+            code, _, err = self.run_main(Path(tmp), "--usage", str(Path(tmp) / "nowhere"))
+        self.assertEqual(code, 2)
+        self.assertIn("--usage takes a directory", err)
+
+    def test_fails_when_a_published_crate_names_an_unlisted_third_party_crate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_all(Path(tmp), naming_serde="raikiri-net")
+            code, out, _ = self.run_main(Path(tmp))
+        self.assertEqual(code, 1)
+        self.assertIn("raikiri-net: serde (serde::Serialize)", out)
+        self.assertIn("THIRD_PARTY_ALLOWED", out)
+
+    def test_a_listed_third_party_crate_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_all(Path(tmp), naming_serde="raikiri-net")
+            with mock.patch.dict(lint.THIRD_PARTY_ALLOWED["raikiri-net"], {"serde": "for the test"}):
+                code, out, _ = self.run_main(Path(tmp))
+        self.assertEqual(code, 0)
+        self.assertIn("PASS", out)
+
+    def test_a_listed_crate_that_is_no_longer_named_is_a_note_not_a_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_all(Path(tmp))
+            code, out, _ = self.run_main(Path(tmp))
+        self.assertEqual(code, 0)
+        self.assertIn("note: raikiri-html no longer names a type of", out)
+        self.assertIn("drop it from THIRD_PARTY_ALLOWED", out)
+
+    def test_every_published_crate_has_an_entry_in_the_table(self) -> None:
+        self.assertEqual(set(lint.THIRD_PARTY_ALLOWED), set(lint.PUBLISHED_CRATES))
 
     def test_dump_of_a_crate_that_is_not_checked_is_a_tool_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
