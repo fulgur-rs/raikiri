@@ -1532,14 +1532,12 @@ impl PageOrigins {
         text_y: f32,
         text_height: f32,
         block_y: f32,
-        block_height: f32,
         current_page: u32,
     ) -> Option<u32> {
         first_line_overflows(
             text_y,
             text_height,
             block_y,
-            block_height,
             self.origin(current_page),
             self.step_at(current_page),
         )
@@ -1841,6 +1839,25 @@ fn paragraph_line_bounds(
             .map(|(top, bottom)| (top - first_top, bottom - first_top))
             .collect(),
     )
+}
+
+/// The height of the first line of the paragraph the text node `node_id`
+/// belongs to, or `None` when the node does not own that line (a line of an
+/// image comes before its first text, say) or it has no position.
+fn first_owned_line_height(
+    document: &Document,
+    node_id: usize,
+    text_lines: &TextLineIndex,
+) -> Option<f32> {
+    let owned = text_lines.get(node_id)?;
+    let first_line = IfcTextLines {
+        root: owned.root,
+        width: owned.width,
+        lines: vec![*owned.lines.first().filter(|line| line.line == 0)?],
+    };
+    positioned_owned_text_line_bounds(document, &first_line)?
+        .first()
+        .map(|&(top, bottom)| bottom - top)
 }
 
 /// A break moved up between a paragraph's lines: the first line that moves,
@@ -5862,14 +5879,13 @@ fn box_sets_page_name(
 
 /// Whether the text from `text_y` with `text_height` starts at or below the
 /// start of the page that starts at `page_start` and is `page_step` tall and
-/// ends past that page's end, while its block, from `block_y` with
-/// `block_height`, starts on that page and is no taller than it. Such a fixed-height block is pushed to the next page as a
-/// unit, as monolithic content is.
+/// ends past that page's end, while its block, from `block_y`, starts on that
+/// page. Such a fixed-height block is pushed to the next page as a unit, as
+/// monolithic content is.
 fn first_line_overflows(
     text_y: f32,
     text_height: f32,
     block_y: f32,
-    block_height: f32,
     page_start: f32,
     page_step: f32,
 ) -> bool {
@@ -5879,8 +5895,35 @@ fn first_line_overflows(
         && text_y >= page_start
         && block_y >= page_start
         && block_y < page_end
-        && block_fits_page_step(block_height, page_step)
         && text_y + text_height > page_end
+}
+
+/// The height of the text that decides whether a fixed-height block of
+/// `block_height` whose text starts at `text_y` moves, given the block's top
+/// at `block_y` on a page of `page_step`.
+///
+/// A block that fits a page moves as a unit when the text taken whole, of
+/// `text_height`, straddles the page end. A taller block fragments anyway,
+/// so only its first line, of the height `first_line` returns, decides
+/// whether it starts on the next page, and only when the block's top down to
+/// that line fits a page: otherwise moving it gains nothing, as for a first
+/// line taller than the page. A block with no resolved height stays.
+fn first_line_judged_height(
+    block_height: f32,
+    page_step: f32,
+    block_y: f32,
+    text_y: f32,
+    text_height: f32,
+    first_line: impl FnOnce() -> Option<f32>,
+) -> Option<f32> {
+    if block_fits_page_step(block_height, page_step) {
+        Some(text_height)
+    } else {
+        first_line().filter(|first_line| {
+            block_height.is_finite()
+                && block_fits_page_step(text_y - block_y + first_line, page_step)
+        })
+    }
 }
 
 /// Whether later lines of the paragraph `block_id` can move down inside it:
