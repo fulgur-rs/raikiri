@@ -121,6 +121,10 @@ PUBLISHED_CRATES = (
     "raikiri-html",
 )
 ALL_CRATES = tuple(dict.fromkeys((*CHECKED_CRATES, *VIEW_CRATES, *PUBLISHED_CRATES)))
+# The published crates whose API breaks are reported (scripts/semver-checks.sh):
+# all but the view crate, which names Taffy by design and is published only
+# because raikiri-dom depends on it.
+SEMVER_CRATES = tuple(crate for crate in PUBLISHED_CRATES if crate not in VIEW_CRATES)
 
 # The crates outside the workspace whose types the visible API of a published
 # crate may name, each with why. A type in a signature, a field, a bound or an
@@ -167,8 +171,13 @@ STD_CRATES = frozenset({"core", "alloc", "std"})
 PUBLISHED_CRATE_IDENTIFIERS = frozenset(crate.replace("-", "_") for crate in PUBLISHED_CRATES)
 # The crate that must not appear in the signature of a checked item.
 FORBIDDEN_CRATE = "taffy"
-# `format_version` of the rustdoc JSON of the pinned toolchain.
+# `format_version` of the rustdoc JSON of the pinned toolchain. Change it
+# together with SEMVER_CHECKS_VERSION, which must read the same format.
 KNOWN_FORMAT_VERSIONS = frozenset({56})
+# The cargo-semver-checks release that reads KNOWN_FORMAT_VERSIONS (0.50 and
+# later dropped format 56). scripts/semver-checks.sh and .github/workflows/ci.yml
+# name it too; a test keeps the three equal.
+SEMVER_CHECKS_VERSION = "0.49.0"
 
 RUSTDOC_FLAGS = "-Z unstable-options --output-format json --document-hidden-items --cap-lints allow"
 # Keys that hold the ids of the items inside an item.
@@ -568,8 +577,16 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="report which published names the Rust sources under SRC_DIR reach instead of checking",
     )
+    parser.add_argument(
+        "--list-semver-crates",
+        action="store_true",
+        help="print the crates scripts/semver-checks.sh covers, one per line, and stop",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.list_semver_crates:
+        print("\n".join(SEMVER_CRATES))
+        return 0
     try:
         crates = ALL_CRATES
         for option, value in (("--dump", args.dump), ("--surface", args.surface), ("--exhaustive", args.exhaustive)):

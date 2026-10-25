@@ -178,6 +178,85 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps -p raikiri-net --features http-ureq --document-private-items --locked
 
+  # Reports the breaking changes a pull request makes to the published API.
+  # Report only while the crates are at 0.0.x (see docs/public-api.md): the
+  # job passes whatever it finds, and shows the findings in the job summary and
+  # as a warning annotation. Switch the script to `--strict` once the crates
+  # are published and a breaking change must bump the version.
+  semver:
+    name: public API breaking changes (report)
+    needs: changes
+    # Only a pull request has a base to compare with, and only a change of
+    # code can change the API.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true' && (github.event.pull_request.stack == null || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref || github.event.pull_request.stack.position == github.event.pull_request.stack.size)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A report must not block a merge: a failure of the tooling itself (the
+    # tool, the registry, the runner) is shown in the step and as a warning,
+    # and does not turn the pull request red.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The merge base with the base branch must be reachable.
+          fetch-depth: 0
+
+      - name: Free disk space on the runner
+        uses: jlumbroso/free-disk-space@v2.0.0
+        with:
+          preinstalled-runtimes: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Setup Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install system dependencies
+        run: |
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          # Bound package acquisition and fail on incomplete index updates.
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" --error-on=any update
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" install -y libfontconfig1-dev pkg-config
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Keep in sync with the `ci` job's prefix-key.
+          prefix-key: v1-rust
+
+      - name: Install cargo-semver-checks
+        # 0.49.x is the last release that reads the rustdoc JSON of the
+        # pinned 1.91.0 toolchain (format 56). Change it together with
+        # KNOWN_FORMAT_VERSIONS in scripts/lib/public_api_lint.py.
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks@0.49.0
+
+      - name: Compare the public API with the base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          scripts/semver-checks.sh --base "origin/$BASE_REF" 2>&1 | tee "$RUNNER_TEMP/semver.log"
+          status="${PIPESTATUS[0]}"
+          {
+            echo '### Public API'
+            echo '```'
+            tail -n 300 "$RUNNER_TEMP/semver.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q 'breaks the published API' "$RUNNER_TEMP/semver.log"; then
+            echo "::warning title=Public API::this change breaks the published API; see the job summary (report only at 0.0.x)"
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::warning title=Public API::the report could not be made (exit status $status); see the job log"
+          fi
+          exit "$status"
+
   coverage:
     name: coverage
     needs: changes

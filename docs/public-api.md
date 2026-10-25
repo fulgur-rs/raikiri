@@ -36,7 +36,7 @@ There are three tiers.
    signatures reach: the types of `raikiri-dom`, `raikiri-traits`,
    `raikiri-style` and `raikiri-svg` that it re-exports or that a field, a
    parameter or a trait impl names. This is what fulgur builds on, and a change
-   to it is a change every consumer sees. Of the 146 names of `raikiri-html`,
+   to it is what the semver report is for. Of the 146 names of `raikiri-html`,
    65 are declared there (three of them modules), 42 come from `raikiri-dom`,
    23 from `raikiri-style`, 14 from `raikiri-traits` and one,
    `FontCollection`, from shodo. The remaining name is the glob that publishes
@@ -52,7 +52,7 @@ There are three tiers.
 3. **Hidden.** Items marked `#[doc(hidden)]` are public only so that crates of
    this workspace can call them (65 of them are used by `raikiri-paint` today).
    They are outside every promise: documentation leaves them out, and
-   a version number does not count them.
+   `cargo semver-checks` does not count them.
 
 `raikiri-layout-style` is in none of the tiers. No public item of
 `raikiri-html` or `raikiri-dom` names one of its types; it is published only
@@ -128,7 +128,7 @@ regenerate it when the crate root changes.
 
 A name that is `pub` only for the benefit of other crates of this workspace
 carries `#[doc(hidden)]`. It is then outside the promise, which is what the
-version number means by "not public". A new `pub` item in
+semver tool and the version number mean by "not public". A new `pub` item in
 `raikiri-html`, `raikiri-dom` or the crates their signatures name is part of
 the API unless it is hidden, so a change that adds one says why it is needed.
 
@@ -154,7 +154,7 @@ follows:
    `Sides`, `CssColor`, `ComputedLength` and the like). Nobody adds a field to
    them without changing what they are, and a literal such as `Size { width,
    height }` is the natural way to write one. Changing one is a breaking
-   release.
+   release, which the semver report shows.
 
 `scripts/public-api-lint.sh --exhaustive CRATE` lists the types a crate declares
 that a user can still match or build completely, so the rules can be checked
@@ -180,7 +180,11 @@ new public type is added with the attribute from the start.
   dependency in their signatures. `UreqHttpProvider` holds its `ureq::Agent`
   privately, for example.
 - `raikiri-dom`'s `logical-snapshot` and `snapshot-serde` are test and
-  diagnostic support. They are outside the promise like hidden items.
+  diagnostic support. They are outside the promise like hidden items; the
+  semver report, which enables every feature, may list changes to them.
+
+The semver tool checks with every feature on, which is where additivity shows:
+an item that a feature removes or changes is reported as breaking.
 
 The lint described next reads the build with the default features, so the rule
 on the types a feature adds is kept in review, not by a tool.
@@ -212,8 +216,17 @@ crates of this workspace as listed but not the unpublished ones such as
 
 A new major version of any of these is a breaking release of ours. `shodo` is
 the one the project also owns: its `FontCollection` is re-exported by
-`raikiri-html`, so a shodo release that changes it is a breaking release of
-`raikiri-html`.
+`raikiri-html`, so a shodo release that changes it goes through the order below.
+
+### Versions
+
+All workspace crates share one version, and the development series advances by
+patch even for a breaking change (`docs/releasing.md`). Until the first
+publication that is the whole promise: pin the raikiri crates to one exact
+version together. The semver report tells a reviewer, and the order below tells
+the consumers, what a version breaks. At the first publication the report
+becomes strict (`scripts/semver-checks.sh --strict`) and release-plz starts
+checking semver too (`semver_check = true`).
 
 ## Soundness
 
@@ -292,3 +305,55 @@ soundness is theirs.
 - Every crate that can contain `unsafe` code is checked by the compiler:
   seven publishable crates forbid it and `raikiri-layout-style` denies it
   outside three `Send` impls (the section on soundness above).
+- `scripts/semver-checks.sh` runs `cargo semver-checks` over the published
+  crates except `raikiri-layout-style`, against the merge base with the base
+  branch; a crate the base does not have yet is left out. In CI the `semver`
+  job runs it on the pull requests that change more than documentation (in a
+  stack, on the top one) and shows the findings in its summary and as a
+  warning. It does not fail the job while the crates are at 0.0.x, and a fault
+  of the tooling itself is a warning too, so no report is not a clean report:
+  look for the job. cargo-semver-checks is pinned to 0.49.0, the last release
+  that reads the rustdoc JSON format of the pinned toolchain; move
+  `SEMVER_CHECKS_VERSION` together with `KNOWN_FORMAT_VERSIONS` when the
+  toolchain moves (a test keeps the script and the workflow in step).
+
+## Order of the breaking changes
+
+The changes below alter what a consumer of `raikiri-html` or `raikiri-dom`
+writes. Each one is cheap while the only consumer is fulgur-raikiri and no
+release carries this API yet, and a breaking release once one does. The order is
+chosen so that a change that adds types comes before the ones that annotate
+or remove them, and so that fulgur-raikiri is adapted once per step.
+
+| # | Change | Issue | State | What changes for a consumer |
+| ---: | --- | --- | --- | --- |
+| 1 | XHTML is parsed by xml5ever | RAIKIRI-797 | done | `XhtmlParseError` is gone, `parse_xhtml` fails with the shared `ParseError`, and malformed XHTML is repaired, not rejected |
+| 2 | SVG is drawn from a vector scene | RAIKIRI-9 (510 to 519) | done | `InlineSvg`, `ImageContent` and the SVG resources of `RenderResources` carry the scene contract (`docs/svg-vector-contract.md`) |
+| 3 | XHTML joins `StreamingLayout` | RAIKIRI-798 | done | `StreamingLayout::new_xhtml` is added; the caller picks the syntax and nothing is sniffed from the markup |
+| 4 | `Page::inline_svg` returns a scene | RAIKIRI-830 | open | `InlineSvg::source` and the usvg tree path of the painter go away |
+| 5 | Narrow the first tier to what fulgur uses | RAIKIRI-834 | open | names that nobody outside the workspace uses become hidden or crate-private |
+| 6 | `#[non_exhaustive]` and constructors | RAIKIRI-835 | open | struct literals of the option and result types become constructors and builders, and diagnostic enums need a wildcard arm |
+| 7 | First publication | RAIKIRI-795 | open | from here a breaking change is a version bump, and the semver report is strict |
+
+Reasons for the order:
+
+- Step 3 decided the shape of the streaming entry point, and step 4 decides the
+  shape of `InlineSvg`; both add or replace public types, so they come before
+  the steps that decide which types stay and how they are marked. Step 4 is
+  separate work, but after step 7 it would cost a breaking release.
+- Step 5 starts from the output of `scripts/public-api-lint.sh --usage` on
+  fulgur-raikiri (the first run is recorded on RAIKIRI-834) and removes names.
+  It comes before step 6 so that step 6 annotates only the types that remain.
+- Step 6 adds the attribute to the types that `--exhaustive` lists and that are
+  not plain value types, which changes how a consumer builds them. It is last
+  so that it runs once, over the final set of types, with one matching change
+  in fulgur-raikiri.
+- The `shodo` re-export (`FontCollection`) is not a step: a shodo release that
+  changes it is a breaking release of `raikiri-html` and goes through this
+  table when it happens.
+
+Not before the first publication: the `Cache` and adapter crate split
+(S10). It moves code between crates without changing a public signature, which
+a `--dump` of the crates before and after shows, so it can follow the
+publication as a compatible release. A new crate needs its name reserved first,
+which can be done at any time.
