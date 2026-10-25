@@ -1166,6 +1166,37 @@ fn reused_margin_box_text_is_placed_as_if_shaped_afresh() {
     }
 }
 
+#[test]
+fn margin_box_text_with_an_image_that_repeats_on_every_page_is_shaped_once() {
+    // The running header holds an image next to its text, the same on every
+    // page, and only the page number in the footer is new.
+    let (mut doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: url(a.png) ' Report'; font-family: Ahem; font-size: 10px } \
+           @bottom-center { content: 'Page ' counter(page); font-family: Ahem; font-size: 10px } }",
+    );
+    let base = url::Url::parse("https://example.com/dir/page.html").unwrap();
+    doc.prepare_margin_box_images(&cascade.page, &Sizes, Some(&base));
+    let values = MarginBoxNamedValues::new();
+    let mut per_page = Vec::new();
+    for index in 0..10 {
+        let before = doc.standalone_text_calls();
+        let boxes = lay_out_numbered_page(&doc, &cascade, &values, index, 10);
+        per_page.push(doc.standalone_text_calls() - before);
+        let [header, footer] = boxes.as_slice() else {
+            panic!("two boxes: {boxes:?}");
+        };
+        assert_eq!(header.content, " Report");
+        assert_eq!(footer.content, format!("Page {}", index + 1));
+        // The image keeps its place and size on the pages that reuse the run.
+        let [image] = header.content_images.as_slice() else {
+            panic!("one image: {:?}", header.content_images);
+        };
+        assert_eq!((image.rect.width, image.rect.height), (40.0, 30.0));
+    }
+    assert_eq!(per_page, [4, 2, 2, 2, 2, 2, 2, 2, 2, 2]);
+}
+
 /// An image source that knows the natural size of a few images and holds no
 /// pixels.
 struct Sizes;

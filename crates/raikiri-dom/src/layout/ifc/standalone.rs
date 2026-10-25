@@ -218,14 +218,30 @@ const MEMO_MAX_TEXT_BYTES: usize = 4096;
 /// each remembered run holds a copy of the list.
 const MEMO_MAX_FAMILIES: usize = 32;
 
+/// The most images a [`StandaloneMemo`] keeps a run of, since each remembered
+/// run holds a copy of the list.
+const MEMO_MAX_IMAGES: usize = 32;
+
 /// The most lines a [`StandaloneMemo`] keeps a run of: a text of up to
 /// [`MEMO_MAX_TEXT_BYTES`] that is broken at every opportunity (a width probe
 /// of a narrow box) has a line for almost every character.
 const MEMO_MAX_LINES: usize = 32;
 
-/// Whether a run of `text` in `style` is small enough to be remembered.
-fn is_remembered(text: &str, style: &StandaloneStyle) -> bool {
-    text.len() <= MEMO_MAX_TEXT_BYTES && style.families.len() <= MEMO_MAX_FAMILIES
+/// Whether a run of `text` with `images` in `style` is small enough to be
+/// remembered.
+fn is_remembered(text: &str, images: &[StandaloneImage], style: &StandaloneStyle) -> bool {
+    text.len() <= MEMO_MAX_TEXT_BYTES
+        && images.len() <= MEMO_MAX_IMAGES
+        && style.families.len() <= MEMO_MAX_FAMILIES
+}
+
+/// What tells one image of a run from another: where it sits and the bits of
+/// its size, which stand in for the `f32`s, as they have no equality that
+/// holds for every value.
+type ImageKey = (usize, u32, u32);
+
+fn image_key(image: &StandaloneImage) -> ImageKey {
+    (image.offset, image.width.to_bits(), image.height.to_bits())
 }
 
 /// Runs shaped by [`Document::shape_standalone_text_shared`], the least
@@ -248,6 +264,7 @@ struct MemoState {
 
 struct MemoEntry {
     text: String,
+    images: Vec<ImageKey>,
     style: StandaloneStyle,
     // The bits stand in for the `f32`, which has no equality that holds for
     // every value.
@@ -256,18 +273,27 @@ struct MemoEntry {
     shaped: Arc<StandaloneText>,
 }
 
+/// What a run is looked up by.
+#[derive(Clone, Copy)]
+struct RunKey<'a> {
+    text: &'a str,
+    images: &'a [StandaloneImage],
+    style: &'a StandaloneStyle,
+    width: Option<f32>,
+    align: StandaloneAlign,
+}
+
 impl MemoEntry {
-    fn matches(
-        &self,
-        text: &str,
-        style: &StandaloneStyle,
-        width: Option<f32>,
-        align: StandaloneAlign,
-    ) -> bool {
-        self.align == align
-            && self.width == width.map(f32::to_bits)
-            && self.text == text
-            && self.style == *style
+    fn matches(&self, key: RunKey<'_>) -> bool {
+        self.align == key.align
+            && self.width == key.width.map(f32::to_bits)
+            && self.text == key.text
+            && self
+                .images
+                .iter()
+                .copied()
+                .eq(key.images.iter().map(image_key))
+            && self.style == *key.style
     }
 }
 
@@ -285,19 +311,9 @@ impl StandaloneMemo {
         state
     }
 
-    fn get(
-        &self,
-        generations: (u64, Option<u64>),
-        text: &str,
-        style: &StandaloneStyle,
-        width: Option<f32>,
-        align: StandaloneAlign,
-    ) -> Option<Arc<StandaloneText>> {
+    fn get(&self, generations: (u64, Option<u64>), key: RunKey<'_>) -> Option<Arc<StandaloneText>> {
         let mut state = self.state(generations);
-        let index = state
-            .entries
-            .iter()
-            .rposition(|entry| entry.matches(text, style, width, align))?;
+        let index = state.entries.iter().rposition(|entry| entry.matches(key))?;
         let entry = state.entries.remove(index);
         let shaped = Arc::clone(&entry.shaped);
         state.entries.push(entry);
@@ -307,25 +323,21 @@ impl StandaloneMemo {
     fn insert(
         &self,
         generations: (u64, Option<u64>),
-        text: &str,
-        style: &StandaloneStyle,
-        width: Option<f32>,
-        align: StandaloneAlign,
+        key: RunKey<'_>,
         shaped: &Arc<StandaloneText>,
     ) {
         let mut state = self.state(generations);
         // Another thread may have shaped the same run in the meantime.
-        state
-            .entries
-            .retain(|entry| !entry.matches(text, style, width, align));
+        state.entries.retain(|entry| !entry.matches(key));
         if state.entries.len() >= MEMO_CAPACITY {
             state.entries.remove(0);
         }
         state.entries.push(MemoEntry {
-            text: text.to_owned(),
-            style: style.clone(),
-            width: width.map(f32::to_bits),
-            align,
+            text: key.text.to_owned(),
+            images: key.images.iter().map(image_key).collect(),
+            style: key.style.clone(),
+            width: key.width.map(f32::to_bits),
+            align: key.align,
             shaped: Arc::clone(shaped),
         });
     }
@@ -575,8 +587,8 @@ impl Document {
     /// one whose collection changes under it (a font is registered, or a
     /// generic or fallback family list is set). A document that was never
     /// laid out has none to tie them to and shapes every time, and so does a
-    /// text of more than 4 KiB, a list of more than 32 font families or a run
-    /// of more than 32 lines.
+    /// text of more than 4 KiB, a list of more than 32 font families, a run of
+    /// more than 32 images or a run of more than 32 lines.
     #[doc(hidden)]
     pub fn shape_standalone_text_shared(
         &self,
@@ -589,8 +601,8 @@ impl Document {
     }
 
     /// [`Document::shape_standalone_text_shared`] with `images` inserted as
-    /// [`Document::shape_standalone_text_with_images`] does. A run with images
-    /// is not remembered.
+    /// [`Document::shape_standalone_text_with_images`] does. The images are part
+    /// of what a remembered run is looked up by: their places and sizes.
     #[doc(hidden)]
     pub fn shape_standalone_text_shared_with_images(
         &self,
@@ -603,7 +615,7 @@ impl Document {
         let remembered = self
             .ifc
             .as_ref()
-            .filter(|_| images.is_empty() && is_remembered(text, style));
+            .filter(|_| is_remembered(text, images, style));
         let Some(state) = remembered else {
             return self
                 .shape_standalone_text_with_images(text, images, style, width, align)
@@ -612,17 +624,20 @@ impl Document {
         // Read before shaping: a change of the fonts while this run is shaped
         // then drops the run again at the next look-up.
         let generations = state.fonts.generations();
-        if let Some(shaped) = state
-            .standalone_memo
-            .get(generations, text, style, width, align)
-        {
+        let key = RunKey {
+            text,
+            images,
+            style,
+            width,
+            align,
+        };
+        if let Some(shaped) = state.standalone_memo.get(generations, key) {
             return Some(shaped);
         }
-        let shaped = Arc::new(self.shape_standalone_text(text, style, width, align)?);
+        let shaped =
+            Arc::new(self.shape_standalone_text_with_images(text, images, style, width, align)?);
         if shaped.lines().len() <= MEMO_MAX_LINES {
-            state
-                .standalone_memo
-                .insert(generations, text, style, width, align, &shaped);
+            state.standalone_memo.insert(generations, key, &shaped);
         }
         Some(shaped)
     }
