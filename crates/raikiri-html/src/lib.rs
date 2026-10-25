@@ -29,6 +29,7 @@ mod render;
 mod resources;
 mod sink;
 mod svg_fonts;
+mod svg_rendering;
 mod types;
 pub mod ua;
 mod xhtml;
@@ -72,6 +73,7 @@ pub use resources::{
 };
 pub use sink::RaikiriTreeSink;
 pub use svg_fonts::PageSvgFonts;
+pub use svg_rendering::SvgRendering;
 pub use types::{ParseOptions, StylesheetPart, StylesheetSource, UncascadedDocument};
 pub use ua::MINIMAL_UA_CSS;
 pub use xhtml::{XhtmlParseError, parse_xhtml};

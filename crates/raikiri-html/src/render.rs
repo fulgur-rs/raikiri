@@ -721,6 +721,9 @@ pub(crate) struct PipelineOutput {
     /// reported. They are among `warnings` too.
     pub(crate) replaced_resources: Vec<(url::Url, Vec<RenderWarning>)>,
     pub(crate) base_url: Option<url::Url>,
+    /// What the layout was asked for about SVG pictures. A pipeline does not
+    /// draw, so it leaves the default for the layout driver to set.
+    pub(crate) svg: crate::svg_rendering::SvgSettings,
 }
 pub(crate) enum PipelineRun {
     Completed(Box<PipelineOutput>),

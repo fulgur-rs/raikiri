@@ -25,7 +25,8 @@ pub use raikiri_dom::{
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
-use crate::{ConsumerPropertyRegistration, HtmlDocument, RenderResources};
+use crate::svg_rendering::SvgSettings;
+use crate::{ConsumerPropertyRegistration, HtmlDocument, RenderResources, SvgRendering};
 use raikiri_traits::{
     ConsumerPropertyObserver, LayoutConfig, PageDefaults, RenderError, RenderWarning, WarningKind,
 };
@@ -50,6 +51,7 @@ pub struct LayoutOptions<'r, 'a> {
     consumer_properties: &'r [ConsumerPropertyRegistration],
     property_observer: Option<&'r mut dyn ConsumerPropertyObserver>,
     preload_background_images: bool,
+    svg: SvgSettings,
 }
 
 impl Default for LayoutOptions<'_, '_> {
@@ -59,6 +61,7 @@ impl Default for LayoutOptions<'_, '_> {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            svg: SvgSettings::default(),
         }
     }
 }
@@ -98,6 +101,29 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
     /// Defaults to `true`.
     pub fn preload_background_images(mut self, enabled: bool) -> Self {
         self.preload_background_images = enabled;
+        self
+    }
+
+    /// The rendering of an SVG picture whose element declares none with
+    /// `--raikiri-svg-rendering`. Defaults to [`SvgRendering::Vector`].
+    ///
+    /// Layout does not draw SVG, so this changes no fragment; a consumer
+    /// reads the choice for each picture from [`Page::svg_rendering`].
+    pub fn svg_rendering(mut self, rendering: SvgRendering) -> Self {
+        self.svg.rendering = rendering;
+        self
+    }
+
+    /// Device pixels per CSS pixel for an SVG drawn as pixels, which a
+    /// consumer reads from [`Page::svg_raster_scale`]. Defaults to `1`, so a
+    /// raster is as large as the picture is on the page. A scale that is not
+    /// finite and greater than zero is ignored.
+    ///
+    /// A vector rendering has no resolution, so this applies only to the
+    /// pictures whose rendering is [`SvgRendering::Raster`], and to those
+    /// that a vector scene cannot represent.
+    pub fn svg_raster_scale(mut self, scale: f32) -> Self {
+        self.svg = self.svg.with_raster_scale(scale);
         self
     }
 }
@@ -164,6 +190,7 @@ pub(crate) fn layout_resumed<'r>(
         consumer_properties,
         property_observer,
         preload_background_images,
+        svg,
     } = options;
     let signal = config.signal.clone();
     let run = run_pipeline(
@@ -183,6 +210,7 @@ pub(crate) fn layout_resumed<'r>(
         PipelineRun::Aborted => return Ok(Some(LayoutStatus::Aborted)),
         PipelineRun::NotResumed => return Ok(None),
     };
+    out.svg = svg;
     // A paragraph or subtree is reported once, however many of the page
     // layouts it appears in.
     let layouts = std::iter::once((&out.document, &out.cascade)).chain(
@@ -330,6 +358,7 @@ impl DocumentLayout {
             paired_style,
             running: Some(self.running_source()),
             svg_sources: &caches.svg_sources,
+            svg: self.out.svg,
             margin_values: &caches.margin_values,
         }
     }
@@ -358,6 +387,7 @@ impl DocumentLayout {
             layouts: &self.running_layouts,
             document: &self.out.document,
             cascade: &self.out.cascade,
+            svg: self.out.svg,
         }
     }
 

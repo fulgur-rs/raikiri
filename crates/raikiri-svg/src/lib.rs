@@ -148,6 +148,19 @@ struct SourceRootStyle<'a> {
     elements: &'a [SvgElementStyle<'a>],
 }
 
+/// What one rasterization is asked for.
+struct RasterRequest<'a> {
+    viewport: SvgViewport,
+    root_style: SvgRootStyle,
+    source_style: Option<SourceRootStyle<'a>>,
+    /// The faces text is set in, `None` to leave text out.
+    fonts: Option<&'a dyn SvgFontSource>,
+    /// Device pixels per CSS pixel of `viewport`.
+    device_scale: f32,
+    max_output_bytes: Option<u64>,
+    css_pixel_scale: bool,
+}
+
 /// The sources a vector scene draws on beyond the document: the fonts of its
 /// text and the pictures of its `<image>` elements.
 ///
@@ -641,7 +654,15 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
-        self.rasterize_inner(viewport, root_style, None, max_output_bytes, false)
+        self.rasterize_inner(RasterRequest {
+            viewport,
+            root_style,
+            source_style: None,
+            fonts: None,
+            device_scale: 1.0,
+            max_output_bytes,
+            css_pixel_scale: false,
+        })
     }
 
     /// Rasterizes inline SVG on the CSS pixel grid without stretching the
@@ -655,7 +676,15 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
-        self.rasterize_inner(viewport, root_style, None, max_output_bytes, true)
+        self.rasterize_inner(RasterRequest {
+            viewport,
+            root_style,
+            source_style: None,
+            fonts: None,
+            device_scale: 1.0,
+            max_output_bytes,
+            css_pixel_scale: true,
+        })
     }
 
     /// Rasterizes inline SVG like [`Self::rasterize_at_css_pixel_scale`] from
@@ -674,31 +703,80 @@ impl SvgDocument {
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
         let source_style = resolved_source_style(root_style, resolved)?;
-        self.rasterize_inner(
+        self.rasterize_inner(RasterRequest {
             viewport,
             root_style,
-            Some(source_style),
+            source_style: Some(source_style),
+            fonts: None,
+            device_scale: 1.0,
             max_output_bytes,
-            true,
-        )
+            css_pixel_scale: true,
+        })
     }
 
-    fn rasterize_inner(
+    /// Rasterizes the SVG at `device_scale` device pixels per CSS pixel,
+    /// setting its text in the faces of `fonts`.
+    ///
+    /// The picture is the one [`Self::rasterize_at_css_pixel_scale`] makes for
+    /// `viewport`, with every CSS pixel `device_scale` pixels wide, so the
+    /// image is `viewport` times `device_scale` rounded up to whole pixels. The
+    /// caller paints it at one image pixel per `1 / device_scale` CSS pixels
+    /// and clips to the original fractional viewport. The output limit
+    /// applies to the scaled size, so a scale that is no size
+    /// ([`SvgError::InvalidViewport`]) or too large
+    /// ([`SvgError::OutputLimitExceeded`]) is refused before anything is
+    /// allocated.
+    ///
+    /// Without `fonts` the text is left out, as [`Self::rasterize`] leaves it
+    /// out. Pictures cannot be rasterized, with or without fonts
+    /// ([`SvgError::UnsupportedImages`]): draw such a document as a scene.
+    /// Opacity and visibility are applied as [`Self::rasterize`] applies them.
+    pub fn rasterize_with_fonts(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
-        source_style: Option<SourceRootStyle<'_>>,
+        fonts: Option<&dyn SvgFontSource>,
+        device_scale: f32,
         max_output_bytes: Option<u64>,
-        css_pixel_scale: bool,
     ) -> Result<DecodedImage, SvgError> {
+        self.rasterize_inner(RasterRequest {
+            viewport,
+            root_style,
+            source_style: None,
+            fonts,
+            device_scale,
+            max_output_bytes,
+            css_pixel_scale: true,
+        })
+    }
+
+    fn rasterize_inner(&self, request: RasterRequest<'_>) -> Result<DecodedImage, SvgError> {
+        let RasterRequest {
+            viewport,
+            root_style,
+            source_style,
+            fonts,
+            device_scale,
+            max_output_bytes,
+            css_pixel_scale,
+        } = request;
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity);
         }
         if self.has_images {
             return Err(SvgError::UnsupportedImages);
         }
+        if !device_scale.is_finite() || device_scale <= 0.0 {
+            return Err(SvgError::InvalidViewport);
+        }
 
-        let (width, height, byte_len) = checked_output_size(viewport, max_output_bytes)?;
+        let (width, height, byte_len) = checked_output_size(
+            SvgViewport {
+                width: viewport.width * device_scale,
+                height: viewport.height * device_scale,
+            },
+            max_output_bytes,
+        )?;
         let viewport = if css_pixel_scale {
             viewport
         } else {
@@ -716,7 +794,14 @@ impl SvgDocument {
         let mut pixels = allocate_transparent_pixels(byte_len)?;
 
         if root_style.opacity > 0.0 {
-            let drawn = self.draw(viewport, root_style, prepared, (width, height), &mut pixels);
+            let drawn = self.draw(
+                viewport,
+                root_style,
+                prepared,
+                fonts,
+                (width, height, device_scale),
+                &mut pixels,
+            );
             // A root that is not visible keeps the blank raster it always
             // had when its descendants cannot be drawn.
             match drawn {
@@ -743,11 +828,17 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
         prepared: Option<String>,
-        (width, height): (u32, u32),
+        fonts: Option<&dyn SvgFontSource>,
+        (width, height, device_scale): (u32, u32, f32),
         pixels: &mut Vec<u8>,
     ) -> Result<(), SvgError> {
-        let parsed_tree = self.prepared_tree(viewport, root_style, prepared)?;
-        let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
+        let resources = fonts.map_or_else(SvgResources::new, |fonts| {
+            SvgResources::new().with_fonts(fonts)
+        });
+        let parsed_tree = self.prepared_tree_with(viewport, root_style, prepared, resources, 0)?;
+        let tree = parsed_tree
+            .as_ref()
+            .map_or(&self.tree, |parsed| &parsed.tree);
         let raster_opacity = if root_style.neutralize_root_opacity {
             1.0
         } else {
@@ -757,7 +848,10 @@ impl SvgDocument {
             tree,
             width,
             height,
-            viewport,
+            SvgViewport {
+                width: viewport.width * device_scale,
+                height: viewport.height * device_scale,
+            },
             raster_opacity,
             root_style
                 .neutralize_root_opacity
@@ -767,24 +861,13 @@ impl SvgDocument {
     }
 
     /// Parses the tree that `prepared`, or without one the source prepared
-    /// for `root_style`, describes. `None` stands for this document's own
-    /// tree, when preparing changed nothing.
+    /// for `root_style`, describes, setting text in the faces and drawing
+    /// pictures from `resources`. The pictures may hold `image_bytes` of
+    /// pixels together. `None` stands for this document's own tree, when
+    /// preparing changed nothing.
     ///
     /// A root that is not visible is hidden in the source, so only the
     /// descendants that set `visibility: visible` themselves are drawn.
-    fn prepared_tree(
-        &self,
-        viewport: SvgViewport,
-        root_style: SvgRootStyle,
-        prepared: Option<String>,
-    ) -> Result<Option<usvg::Tree>, SvgError> {
-        Ok(self
-            .prepared_tree_with(viewport, root_style, prepared, SvgResources::new(), 0)?
-            .map(|parsed| parsed.tree))
-    }
-
-    /// Like [`Self::prepared_tree`], drawing text in the faces and pictures
-    /// of `resources`. The pictures may hold `image_bytes` of pixels together.
     fn prepared_tree_with(
         &self,
         viewport: SvgViewport,
@@ -5189,6 +5272,8 @@ fn allocate_transparent_pixels(byte_len: usize) -> Result<Vec<u8>, SvgError> {
     Ok(pixels)
 }
 
+/// Draws `tree` stretched to `viewport`, in device pixels, on a `width` by
+/// `height` pixmap.
 fn render_tree(
     tree: &usvg::Tree,
     width: u32,

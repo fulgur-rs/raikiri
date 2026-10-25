@@ -3178,6 +3178,7 @@ fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_r
 }
 
 mod image_access_tests;
+mod raster_scale_tests;
 mod selector_freeze_performance_tests;
 
 thread_local! {

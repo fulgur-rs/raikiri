@@ -3,6 +3,8 @@ use super::{
     TextLineId,
 };
 use crate::RenderError;
+use crate::SvgRendering;
+use crate::svg_rendering::SvgSettings;
 use raikiri_style::property::StringFetchMode;
 use raikiri_style::{ComputedValues, PageCascadeResult};
 use raikiri_traits::{NodeId, PaintInsets, PaintRect, PaintTransform};
@@ -110,6 +112,8 @@ pub struct Page<'a> {
     pub(super) running: Option<super::running::RunningSource<'a>>,
     /// Prepared inline SVG sources of [`Self::document`].
     pub(super) svg_sources: &'a InlineSvgCache,
+    /// What the layout was asked for about SVG pictures.
+    pub(super) svg: SvgSettings,
     /// The `element()` and `string()` values of [`Self::document`], shared
     /// by its pages.
     pub(super) margin_values: &'a raikiri_dom::MarginBoxNamedValues,
@@ -464,6 +468,33 @@ impl<'a> Page<'a> {
                 .expect("a laid-out document has fonts"),
             &self.svg_sources.faces,
         )
+    }
+
+    /// How the SVG picture that `node` owns is to be drawn.
+    ///
+    /// The owner is the `<img>`, the element that has the `background-image`,
+    /// or the `<svg>` root. Its `--raikiri-svg-rendering` decides, as
+    /// [`SvgRendering`] describes; a value that names no rendering is passed
+    /// over for the one the element would inherit without it, and the default
+    /// of [`crate::LayoutOptions::svg_rendering`] applies when no element up
+    /// to the root names one. A node the page does not have gets the default.
+    pub fn svg_rendering(&self, node: NodeId) -> SvgRendering {
+        let dom = self.dom();
+        let mut current = Some(node);
+        while let Some(node) = current {
+            if let Some(rendering) = self.computed(node).and_then(SvgRendering::declared_by) {
+                return rendering;
+            }
+            current = dom.parent(node);
+        }
+        self.svg.rendering
+    }
+
+    /// Device pixels per CSS pixel for an SVG drawn as pixels: the
+    /// [`crate::LayoutOptions::svg_raster_scale`] of the layout, `1` unless
+    /// it was set.
+    pub fn svg_raster_scale(&self) -> f32 {
+        self.svg.raster_scale
     }
 
     /// Serializes, parses and restyles the SVG root `id`.
@@ -877,6 +908,7 @@ impl<'a> Page<'a> {
             node,
             super::running::used_width(content.width),
             source.layouts.faces().clone(),
+            source.svg,
         )?
         else {
             return Ok(None); // cov:ignore: a selected node is always a running element.
