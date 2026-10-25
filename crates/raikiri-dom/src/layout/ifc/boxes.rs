@@ -3265,6 +3265,48 @@ fn content_precedes_anchor(line: &shodo::Line, position: f32) -> bool {
     })
 }
 
+/// Whether an anchor at `position` along `line` lies at an odd embedding level,
+/// where text reads right to left.
+///
+/// The level of an anchor is not reported. A neutral takes the direction of
+/// the text on both of its sides when they agree and that of the paragraph
+/// otherwise (UAX 9, N1 and N2), so the runs next to the anchor tell it: when
+/// the levels of the runs on both sides have one parity, the anchor has it
+/// too. The paragraph direction decides when the anchor has a run on one side
+/// only, or two runs of different parity at its sides.
+fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) -> bool {
+    // Positions are snapped to 1/64 px by the line engine.
+    const SLACK: f32 = 1.0 / 32.0;
+    // The nearest run on each side, with its distance from the anchor.
+    let mut before: Option<(f32, u8)> = None;
+    let mut after: Option<(f32, u8)> = None;
+    for fragment in line.fragments() {
+        let shodo::Fragment::GlyphRun(run) = fragment else {
+            continue;
+        };
+        if run.inline_size() <= 0.0 {
+            continue;
+        }
+        let start = run.inline_start();
+        let end = start + run.inline_size();
+        if end <= position + SLACK {
+            let gap = position - end;
+            if before.is_none_or(|(nearest, _)| gap < nearest) {
+                before = Some((gap, run.bidi_level()));
+            }
+        } else if start >= position - SLACK {
+            let gap = start - position;
+            if after.is_none_or(|(nearest, _)| gap < nearest) {
+                after = Some((gap, run.bidi_level()));
+            }
+        }
+    }
+    match (before, after) {
+        (Some((_, before)), Some((_, after))) if before % 2 == after % 2 => before % 2 == 1,
+        _ => paragraph_rtl,
+    }
+}
+
 /// Where the static position of the out-of-flow box `node` lies along the
 /// block axis of the paragraph, from the content box's block-start edge.
 ///
@@ -3323,17 +3365,17 @@ fn static_block_offset(
 /// from the block-start edge of the content box, which is the right edge in
 /// `vertical-rl` and the left edge in `vertical-lr`.
 ///
-/// A box that was inline-level lies at its anchor, `inline_offset` from the
-/// inline-start edge of the content box, and extends the way left-to-right
-/// text around it reads: downwards, except in `sideways-lr`, whatever the
-/// direction of the paragraph. (The embedding level of the anchor is not
-/// known.) Any other box starts on the inline-start edge of the content box.
-/// The inline direction is reversed, so that its start is the bottom edge, by
-/// `direction: rtl` or by `sideways-lr`, which lays the lines out upwards.
+/// A box that was inline-level lies at its anchor, `anchor.0` from the
+/// inline-start edge of the content box, and extends the way the text around
+/// it reads: downwards for left-to-right text and upwards for right-to-left
+/// text (`anchor.1`), but the other way round in `sideways-lr`, which lays
+/// the lines out upwards. Any other box starts on the inline-start edge of the
+/// content box. The inline direction is reversed, so that its start is the
+/// bottom edge, by `direction: rtl` or by `sideways-lr`.
 fn vertical_static_position(
     writing_mode: WritingMode,
     rtl: bool,
-    inline_offset: Option<f32>,
+    anchor: Option<(f32, bool)>,
     block_offset: f32,
     (content_left, content_top): (f32, f32),
     (content_right, inline_extent): (f32, f32),
@@ -3347,14 +3389,14 @@ fn vertical_static_position(
         AxisStaticPosition::from_edge(content_left + block_offset, AxisStaticEdge::Start)
     };
     let reversed = rtl != (writing_mode == WritingMode::SidewaysLr);
-    let y = match inline_offset {
-        Some(offset) => {
+    let y = match anchor {
+        Some((offset, odd_level)) => {
             let at = if reversed {
                 content_top + inline_extent - offset
             } else {
                 content_top + offset
             };
-            let reads_upwards = writing_mode == WritingMode::SidewaysLr;
+            let reads_upwards = odd_level != (writing_mode == WritingMode::SidewaysLr);
             AxisStaticPosition::from_edge(
                 at,
                 if reads_upwards {
@@ -3523,31 +3565,42 @@ pub(crate) fn place_out_of_flow(
             anchor,
             inline_level,
         );
+        // A box that was inline-level extends from its anchor the way the
+        // text there reads.
+        let inline_anchor = anchor.filter(|_| inline_level).map(|(index, position)| {
+            (
+                position,
+                anchor_has_odd_level(&lines.lines[index], position, rtl),
+            )
+        });
         let static_spot = if vertical_root {
             vertical_static_position(
                 writing_mode,
                 rtl,
-                anchor
-                    .filter(|_| inline_level)
-                    .map(|(_, position)| position),
+                inline_anchor,
                 block_offset,
                 (content_left, content_top),
                 (content_right, lines.width),
             )
         } else {
-            let inline_start = match anchor {
-                Some((_, position)) if inline_level => {
+            let x = match inline_anchor {
+                Some((position, odd_level)) => AxisStaticPosition::from_edge(
                     content_left
                         + if rtl {
                             lines.width - position
                         } else {
                             position
-                        }
-                }
-                _ => content_left,
+                        },
+                    if odd_level {
+                        AxisStaticEdge::End
+                    } else {
+                        AxisStaticEdge::Start
+                    },
+                ),
+                None => AxisStaticPosition::from_edge(content_left, AxisStaticEdge::Start),
             };
             Point {
-                x: AxisStaticPosition::from_edge(inline_start, AxisStaticEdge::Start),
+                x,
                 y: AxisStaticPosition::from_edge(content_top + block_offset, AxisStaticEdge::Start),
             }
         };

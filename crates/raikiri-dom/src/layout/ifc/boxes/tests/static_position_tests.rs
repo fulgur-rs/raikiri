@@ -26,6 +26,8 @@ enum Child {
     Atomic,
     /// A positioned `span` holding the children.
     Relative(&'static [Child]),
+    /// A `span` with the given style, holding the children.
+    Styled(&'static str, &'static [Child]),
 }
 
 /// The root of the paragraph under test.
@@ -66,6 +68,12 @@ fn append(doc: &mut Document, parent: usize, child: Child, tested: &mut usize) {
         }
         Child::Relative(children) => {
             let span = doc.append_element(Some(parent), "span", Some("position:relative"));
+            for &child in children {
+                append(doc, span, child, tested);
+            }
+        }
+        Child::Styled(css, children) => {
+            let span = doc.append_element(Some(parent), "span", Some(css));
             for &child in children {
                 append(doc, span, child, tested);
             }
@@ -552,6 +560,131 @@ fn an_out_of_flow_inline_stays_at_its_anchor_and_reads_with_the_text() {
             ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
             ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
             ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn an_out_of_flow_inline_extends_the_way_the_text_at_its_anchor_reads() {
+    check(
+        "digits_end",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Text("1 2 34"), Child::Inline("")],
+        &[
+            ("horizontal-tb", "ltr", (60.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (110.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 60.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 20.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 60.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 20.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 20.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 60.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "digits_start",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Inline(""), Child::Text("1 2 34")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "letters_digits",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Text("AA"), Child::Inline(""), Child::Text("34")],
+        &[
+            ("horizontal-tb", "ltr", (20.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (180.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 20.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 20.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 60.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "rtl_override_between",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Styled(
+            "unicode-bidi:bidi-override;direction:rtl",
+            &[Child::Text("AAAA"), Child::Inline(""), Child::Text("AA")],
+        )],
+        &[
+            ("horizontal-tb", "ltr", (-10.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (130.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 40.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 40.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 40.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "ltr_override_between",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Styled(
+            "unicode-bidi:bidi-override;direction:ltr",
+            &[Child::Text("AAAA"), Child::Inline(""), Child::Text("AA")],
+        )],
+        &[
+            ("horizontal-tb", "ltr", (40.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (180.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 40.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 40.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 40.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "rtl_override_then_letters",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[
+            Child::Styled(
+                "unicode-bidi:bidi-override;direction:rtl",
+                &[Child::Text("AAAA")],
+            ),
+            Child::Inline(""),
+            Child::Text("AA"),
+        ],
+        &[
+            ("horizontal-tb", "ltr", (40.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (130.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 40.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 40.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 40.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 40.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 40.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 40.0, 30.0, 20.0)),
         ],
     );
 }
