@@ -201,6 +201,25 @@ impl<'a> SvgResources<'a> {
     }
 }
 
+/// A budget the filters of a document can exceed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SvgFilterBudget {
+    /// Pixels one filter holds at once, in its layer and its results.
+    Pixels,
+    /// Pixel operations over all the filters of the picture.
+    Work,
+}
+
+impl SvgFilterBudget {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Pixels => "pixels",
+            Self::Work => "pixel operations",
+        }
+    }
+}
+
 /// SVG parsing, viewport, or allocation failure.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -247,9 +266,8 @@ pub enum SvgError {
     /// The filters of the document would ask for more memory or time than a
     /// picture may use.
     FilterLimitExceeded {
-        /// What the filters ask too much of: `"pixels"` held at once by one
-        /// filter, or `"work"` over all the filters of the document.
-        budget: &'static str,
+        /// What the filters ask too much of.
+        budget: SvgFilterBudget,
         /// The amount the filters ask for.
         requested: u64,
         /// The most that is permitted.
@@ -310,7 +328,8 @@ impl std::fmt::Display for SvgError {
                 limit,
             } => write!(
                 f,
-                "SVG filters ask for {requested} {budget}, exceeding the limit of {limit}"
+                "SVG filters ask for {requested} {}, exceeding the limit of {limit}",
+                budget.name()
             ),
             Self::InvalidViewport => f.write_str("invalid SVG raster viewport"),
             Self::InvalidOpacity => f.write_str("invalid SVG host opacity"),

@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_svg::{SvgFontRequest, SvgSceneFeature, SvgSceneLimit};
+use raikiri_svg::{SvgFontRequest, SvgSceneLimit};
 use raikiri_traits::vector::FontFace;
 
 const AHEM: &[u8] = include_bytes!(concat!(

@@ -1629,15 +1629,23 @@ fn svg_error_display_pins_each_variant() {
     assert!(format!("{}", SvgError::InvalidDocument("bad".to_string())).contains("bad"));
     assert!(!format!("{}", SvgError::UnsupportedDoctype).is_empty());
     assert!(!format!("{}", SvgError::ExternalReference).is_empty());
-    assert_eq!(
-        SvgError::FilterLimitExceeded {
-            budget: "work",
+    for (budget, text) in [
+        (
+            super::SvgFilterBudget::Work,
+            "SVG filters ask for 9 pixel operations, exceeding the limit of 4",
+        ),
+        (
+            super::SvgFilterBudget::Pixels,
+            "SVG filters ask for 9 pixels, exceeding the limit of 4",
+        ),
+    ] {
+        let error = SvgError::FilterLimitExceeded {
+            budget,
             requested: 9,
             limit: 4,
-        }
-        .to_string(),
-        "SVG filters ask for 9 work, exceeding the limit of 4"
-    );
+        };
+        assert_eq!(error.to_string(), text);
+    }
     assert!(!format!("{}", SvgError::InvalidViewport).is_empty());
     assert!(!format!("{}", SvgError::InvalidOpacity).is_empty());
     let msg = format!(

@@ -9,7 +9,7 @@
 //! check estimates both from the parsed tree and the transform it is drawn with,
 //! and fails the picture over a budget instead of starting.
 
-use crate::{DEFAULT_MAX_OUTPUT_BYTES, SvgError};
+use crate::{DEFAULT_MAX_OUTPUT_BYTES, SvgError, SvgFilterBudget};
 use usvg::filter::{Filter, Kind};
 
 /// Most pixels one filter may hold at once: eight output-sized buffers.
@@ -85,7 +85,7 @@ impl Meter {
         let pixels = area * (primitives.len() + 1) as f64;
         if pixels > MAX_FILTER_PIXELS as f64 {
             return Err(SvgError::FilterLimitExceeded {
-                budget: "pixels",
+                budget: SvgFilterBudget::Pixels,
                 requested: pixels as u64,
                 limit: MAX_FILTER_PIXELS,
             });
@@ -101,7 +101,7 @@ impl Meter {
         }
         if self.work > MAX_FILTER_WORK as f64 {
             return Err(SvgError::FilterLimitExceeded {
-                budget: "work",
+                budget: SvgFilterBudget::Work,
                 requested: self.work as u64,
                 limit: MAX_FILTER_WORK,
             });

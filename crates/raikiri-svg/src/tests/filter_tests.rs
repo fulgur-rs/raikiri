@@ -2,8 +2,8 @@
 //! them.
 
 use crate::{
-    SvgDocument, SvgError, SvgImageAccess, SvgRootStyle, SvgSceneError, SvgSceneFeature,
-    SvgViewport,
+    SvgDocument, SvgError, SvgFilterBudget, SvgImageAccess, SvgRootStyle, SvgSceneError,
+    SvgSceneFeature, SvgViewport,
 };
 use raikiri_traits::DecodedImage;
 
@@ -136,7 +136,7 @@ fn filters_over_the_memory_budget_fail_before_resvg_runs() {
         matches!(
             error,
             SvgError::FilterLimitExceeded {
-                budget: "pixels",
+                budget: SvgFilterBudget::Pixels,
                 requested,
                 limit,
             } if requested > limit
@@ -164,7 +164,7 @@ fn assert_over_the_work_budget(side: u32, body: &str) {
         matches!(
             error,
             SvgError::FilterLimitExceeded {
-                budget: "work",
+                budget: SvgFilterBudget::Work,
                 requested,
                 limit,
             } if requested > limit
