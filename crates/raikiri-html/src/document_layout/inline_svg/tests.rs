@@ -284,23 +284,22 @@ fn raster_of(bytes: usize) -> ImageContent {
     }))
 }
 
-fn cache_with_entry() -> (InlineSvgCache, SvgKey) {
-    let cache = InlineSvgCache::new(Arc::default());
-    let key = (1, 1.0f32.to_bits(), 1.0f32.to_bits());
-    cache.insert(key, PreparedSvg::new(document(RECT), None));
-    (cache, key)
+fn picture_key(source: &str, rendering: SvgRendering) -> PictureKey {
+    let prepared = PreparedSvg::new(source.into(), None, rendering);
+    PictureKey::new(&prepared, PaintRect::new(0.0, 0.0, 40.0, 20.0))
 }
 
 #[test]
 fn a_picture_is_kept_for_the_next_request_while_there_is_room_for_it() {
-    let (cache, key) = cache_with_entry();
-    assert!(cache.get(&key).unwrap().content().is_none());
+    let cache = InlineSvgCache::new(Arc::default());
     let source = document(RECT);
+    let key = picture_key(&source, SvgRendering::Vector);
+    assert!(cache.picture(&key).is_none());
     let content = picture(&source, |_| {}).unwrap();
-    cache.keep(&key, &content);
-    assert_eq!(cache.kept_content(), 1);
+    cache.keep(key.clone(), &content);
+    assert_eq!(cache.kept_pictures(), 1);
     let (ImageContent::Vector(kept), ImageContent::Vector(built)) =
-        (cache.get(&key).unwrap().content().unwrap().clone(), content)
+        (cache.picture(&key).unwrap(), content)
     else {
         panic!("expected scenes");
     };
@@ -308,18 +307,42 @@ fn a_picture_is_kept_for_the_next_request_while_there_is_room_for_it() {
 }
 
 #[test]
+fn a_picture_is_told_by_its_markup_opacity_size_and_rendering_and_not_by_its_place() {
+    let source = document(RECT);
+    let viewport = PaintRect::new(0.0, 0.0, 40.0, 20.0);
+    let key = |source: &str, opacity, viewport, rendering| {
+        PictureKey::new(
+            &PreparedSvg::new(source.into(), opacity, rendering),
+            viewport,
+        )
+    };
+    let base = key(&source, None, viewport, SvgRendering::Vector);
+    // The same markup somewhere else on the page is the same picture.
+    let elsewhere = PaintRect::new(9.0, -3.0, 40.0, 20.0);
+    assert_eq!(base, key(&source, None, elsewhere, SvgRendering::Vector));
+    let wider = PaintRect::new(0.0, 0.0, 41.0, 20.0);
+    for other in [
+        key(&format!("{source} "), None, viewport, SvgRendering::Vector),
+        key(&source, Some(0.5), viewport, SvgRendering::Vector),
+        key(&source, None, wider, SvgRendering::Vector),
+        key(&source, None, viewport, SvgRendering::Raster),
+    ] {
+        assert_ne!(base, other);
+    }
+}
+
+#[test]
 fn a_raster_is_not_kept_past_the_budget_of_rasters() {
-    let (cache, key) = cache_with_entry();
-    let other = (2, 1.0f32.to_bits(), 1.0f32.to_bits());
-    cache.insert(other, PreparedSvg::new(document(RECT), None));
-    cache.keep(&key, &raster_of(MAX_KEPT_RASTER_BYTES - 1));
+    let cache = InlineSvgCache::new(Arc::default());
+    let first = picture_key("a", SvgRendering::Vector);
+    let second = picture_key("b", SvgRendering::Vector);
+    cache.keep(first.clone(), &raster_of(MAX_KEPT_RASTER_BYTES - 1));
     // One byte of room is left, and the second picture needs more.
-    cache.keep(&other, &raster_of(2));
-    assert_eq!(cache.kept_content(), 1);
-    assert!(cache.get(&other).unwrap().content().is_none());
-    // A root that is not cached keeps nothing, and a kept one is not replaced.
-    cache.keep(&(3, 0, 0), &raster_of(1));
-    cache.keep(&key, &raster_of(1));
-    assert_eq!(cache.kept_content(), 1);
-    assert_eq!(cache.len(), 2);
+    cache.keep(second.clone(), &raster_of(2));
+    assert_eq!(cache.kept_pictures(), 1);
+    assert!(cache.picture(&second).is_none());
+    // A kept picture is not replaced.
+    cache.keep(first.clone(), &raster_of(1));
+    assert_eq!(cache.kept_pictures(), 1);
+    assert!(cache.picture(&first).is_some());
 }

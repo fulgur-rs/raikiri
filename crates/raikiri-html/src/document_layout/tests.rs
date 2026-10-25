@@ -27,7 +27,7 @@ fn prepared_svg(
 ) -> Result<Option<PreparedSvgView>, raikiri_svg::SvgError> {
     Ok(page
         .prepared_inline_svg(fragment)?
-        .map(|(_, viewport, prepared)| PreparedSvgView {
+        .map(|(viewport, prepared)| PreparedSvgView {
             source: prepared.source.to_string(),
             viewport,
             host_opacity: prepared.host_opacity,
@@ -902,9 +902,36 @@ fn inline_svg_split_across_pages_is_built_once() {
     let kept: usize = layout
         .caches
         .iter()
-        .map(|caches| caches.svg_sources.kept_content())
+        .map(|caches| caches.svg_sources.kept_pictures())
         .sum();
     assert_eq!(kept, 1);
+}
+
+#[test]
+fn inline_svgs_with_the_same_markup_share_one_picture() {
+    let icon = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><rect width='20' height='10' fill='red'/></svg>";
+    let other = icon.replace("red", "blue");
+    let html = format!("{SVG_PAGE}{icon}{icon}{other}{icon}");
+    with_first_page(&html, LayoutOptions::new(), |page| {
+        let scenes: Vec<_> = page
+            .fragments()
+            .filter(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .map(
+                |fragment| match page.inline_svg(&fragment).unwrap().unwrap().content {
+                    ImageContent::Vector(scene) => scene,
+                    ImageContent::Raster(_) => panic!("a scene is the default"),
+                },
+            )
+            .collect();
+        assert_eq!(scenes.len(), 4);
+        for same in [&scenes[1], &scenes[3]] {
+            assert!(std::sync::Arc::ptr_eq(&scenes[0], same));
+        }
+        assert!(!std::sync::Arc::ptr_eq(&scenes[0], &scenes[2]));
+        // Each root has its prepared source, and the two pictures are kept.
+        assert_eq!(page.svg_sources.len(), 4);
+        assert_eq!(page.svg_sources.kept_pictures(), 2);
+    });
 }
 
 #[test]
