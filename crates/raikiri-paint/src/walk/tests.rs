@@ -4021,6 +4021,70 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
 }
 
 #[test]
+fn margin_box_edges_land_on_whole_pixels() {
+    let mut margin_box = raikiri_dom::MarginBox::new(
+        raikiri_style::PageMarginBoxSlot::TopCenter,
+        PaintRect::new(34.5, 34.5, 31.0, 31.0),
+    );
+    margin_box.background_color = Some(CssColor::BLACK);
+    margin_box.borders = [Some(raikiri_dom::MarginBoxBorder::new(3.0, CssColor::BLACK)); 4];
+    let mut scene = Scene::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        &PageBox::new(),
+        None,
+        &mut Vec::new(),
+    );
+    let fills: Vec<kurbo::Rect> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .collect();
+    // The background, then the top, right, bottom and left strips.
+    assert_eq!(
+        fills,
+        [
+            kurbo::Rect::new(35.0, 35.0, 66.0, 66.0),
+            kurbo::Rect::new(35.0, 35.0, 66.0, 38.0),
+            kurbo::Rect::new(63.0, 35.0, 66.0, 66.0),
+            kurbo::Rect::new(35.0, 63.0, 66.0, 66.0),
+            kurbo::Rect::new(35.0, 35.0, 38.0, 66.0),
+        ]
+    );
+
+    // An edge below the half pixel rounds down, and each edge rounds on its
+    // own, so the size follows the rounded edges.
+    let mut below = raikiri_dom::MarginBox::new(
+        raikiri_style::PageMarginBoxSlot::TopCenter,
+        PaintRect::new(10.4, 20.4, 30.2, 10.2),
+    );
+    below.background_color = Some(CssColor::BLACK);
+    let mut below_scene = Scene::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut below_scene,
+        &below,
+        &PageBox::new(),
+        None,
+        &mut Vec::new(),
+    );
+    let fill = below_scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .expect("the color is painted");
+    assert_eq!(fill, kurbo::Rect::new(10.0, 20.0, 41.0, 31.0));
+}
+
+#[test]
 fn margin_box_color_is_clipped_by_the_bottom_layer() {
     let mut margin_box = fixed_margin_box();
     margin_box.borders = [Some(raikiri_dom::MarginBoxBorder::new(4.0, CssColor::BLACK)); 4];
