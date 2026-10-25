@@ -77,9 +77,13 @@ impl Meter {
                         }
                     }
                 }
-                // resvg draws the glyphs of a text as the paths it flattens to.
-                usvg::Node::Text(text) => self.group(text.flattened(), base)?,
-                usvg::Node::Image(_) => {}
+                // The raster path draws no picture, and resvg draws a text as
+                // the paths it flattens to.
+                _ => {
+                    if let usvg::Node::Text(text) = node {
+                        self.group(text.flattened(), base)?;
+                    }
+                }
             }
         }
         Ok(())
