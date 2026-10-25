@@ -5257,3 +5257,8 @@ css/css-break/root-margin-001-print.html
 # --- a line of only a marker is kept whole at a page edge (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
 # The empty list items of the additive counter styles hold only their inside marker, so no text places their line; the item whose line crosses the page edge moves to the second page, like the reference's div of text; KEEP in two audit-vacuous-passes runs.
 css/css-counter-styles/counter-style-at-rule/system-additive.html
+
+# --- background-position offsets (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# calc-minmax-001 (min() and max() offsets in background-position) matches its reference and is KEEP in two audit-vacuous-passes runs; its expected-failure row was stale. negative-percentage-comparison-002 declares the shorthand and both axes with the same values, so the audit's single-declaration ablation cannot reach KEEP; it was reviewed by hand: removing all three declarations makes the clean comparison fail, and the shorthand alone or the two axes alone each match the reference.
+css/css-backgrounds/background-position-calc-minmax-001.html
+css/css-backgrounds/background-position-negative-percentage-comparison-002.html

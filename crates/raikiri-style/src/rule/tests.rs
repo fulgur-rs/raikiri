@@ -335,10 +335,18 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
                 PropertyKey::BackgroundImage,
                 PropertyKey::BackgroundRepeat,
                 PropertyKey::BackgroundAttachment,
-                PropertyKey::BackgroundPosition,
+                PropertyKey::BackgroundPositionX,
+                PropertyKey::BackgroundPositionY,
                 PropertyKey::BackgroundSize,
                 PropertyKey::BackgroundClip,
                 PropertyKey::BackgroundOrigin,
+            ],
+        ),
+        (
+            PropertyKey::BackgroundPosition,
+            &[
+                PropertyKey::BackgroundPositionX,
+                PropertyKey::BackgroundPositionY,
             ],
         ),
     ];

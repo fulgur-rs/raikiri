@@ -159,8 +159,10 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
     // The `background` shorthand resolves once under one of its longhand keys,
     // so the property name tells which value this is.
     let property = deferred.property.to_ascii_lowercase();
-    if matches!(property.as_str(), "background-position" | "background")
-        && let Some(value) = parse_background_position_comparison(&property, substituted)
+    if matches!(
+        property.as_str(),
+        "background-position" | "background-position-x" | "background-position-y" | "background"
+    ) && let Some(value) = parse_background_position_comparison(&property, substituted)
     {
         // Folding a percentage comparison here would compare the percentages
         // themselves, which is wrong when the free space of the position is
@@ -482,7 +484,8 @@ pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
         PropertyKey::BackgroundImage => "background-image",
         PropertyKey::BackgroundRepeat => "background-repeat",
         PropertyKey::BackgroundAttachment => "background-attachment",
-        PropertyKey::BackgroundPosition => "background-position",
+        PropertyKey::BackgroundPositionX => "background-position-x",
+        PropertyKey::BackgroundPositionY => "background-position-y",
         PropertyKey::BackgroundSize => "background-size",
         PropertyKey::BackgroundClip => "background-clip",
         PropertyKey::BackgroundOrigin => "background-origin",
@@ -1164,6 +1167,22 @@ pub(crate) fn project_deferred_value(
             }
             crate::property::PropertyKey::FontFeatureSettings => {
                 PropertyValue::FontFeatureSettings(FontFeatureSettings::Normal)
+            }
+            _ => return None,
+        },
+        PropertyValue::BackgroundPosition(positions) => match key {
+            crate::property::PropertyKey::BackgroundPositionX => {
+                PropertyValue::BackgroundPositionX(
+                    positions
+                        .iter()
+                        .map(|position| position.horizontal)
+                        .collect(),
+                )
+            }
+            crate::property::PropertyKey::BackgroundPositionY => {
+                PropertyValue::BackgroundPositionY(
+                    positions.iter().map(|position| position.vertical).collect(),
+                )
             }
             _ => return None,
         },

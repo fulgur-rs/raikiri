@@ -655,6 +655,8 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Widows(..)
         | PropertyValue::RubyPosition(..)
         | PropertyValue::BackgroundPosition(..)
+        | PropertyValue::BackgroundPositionX(..)
+        | PropertyValue::BackgroundPositionY(..)
         | PropertyValue::BackgroundImage(..)
         | PropertyValue::Background(..)
         | PropertyValue::BorderImageSource(..)

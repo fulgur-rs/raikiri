@@ -26,6 +26,8 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "background-image",
         "background-origin",
         "background-position",
+        "background-position-x",
+        "background-position-y",
         "background-repeat",
         "background-size",
         "block-size",

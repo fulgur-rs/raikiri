@@ -178,7 +178,10 @@ fn parse_value_with_black_currentcolor(
         if !contains_function_in_source(&value, "var") {
             if matches!(
                 normalized_name.as_str(),
-                "background-position" | "background"
+                "background-position"
+                    | "background-position-x"
+                    | "background-position-y"
+                    | "background"
             ) && let Some(parsed) =
                 parse_background_position_comparison(&normalized_name, value.as_ref())
             {
@@ -396,7 +399,8 @@ fn parse_value_with_black_currentcolor(
     parse_property_grammar(&normalized_name, input)
 }
 
-/// The value of `background-position` or `background` (`normalized_name`)
+/// The value of `background-position`, `background-position-x`,
+/// `background-position-y` or `background` (`normalized_name`)
 /// spelled `source` when one of its positions compares percentages with
 /// `min()`, `max()` or `clamp()`, and `None` otherwise.
 ///
@@ -414,13 +418,13 @@ pub(crate) fn parse_background_position_comparison(
     let mut parser = Parser::new(&mut input);
     let value = parse_property_grammar(normalized_name, &mut parser)?;
     parser.expect_exhausted().ok()?;
-    let compares = |position: &CssPosition| {
-        [position.horizontal, position.vertical]
-            .iter()
-            .any(|offset| matches!(offset, CssPositionOffset::Compared(_)))
-    };
+    let compared = |offset: &CssPositionOffset| matches!(offset, CssPositionOffset::Compared(_));
+    let compares =
+        |position: &CssPosition| compared(&position.horizontal) || compared(&position.vertical);
     let found = match &value {
         PropertyValue::BackgroundPosition(positions) => positions.iter().any(compares),
+        PropertyValue::BackgroundPositionX(offsets)
+        | PropertyValue::BackgroundPositionY(offsets) => offsets.iter().any(compared),
         PropertyValue::Background(shorthand) => shorthand
             .layers
             .iter()
@@ -1361,6 +1365,12 @@ pub(crate) fn parse_property_grammar(
         }
         "background-position" => {
             parse_layer_list(input, parse_bg_position).map(PropertyValue::BackgroundPosition)
+        }
+        "background-position-x" => {
+            parse_layer_list(input, parse_bg_position_x).map(PropertyValue::BackgroundPositionX)
+        }
+        "background-position-y" => {
+            parse_layer_list(input, parse_bg_position_y).map(PropertyValue::BackgroundPositionY)
         }
         // <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>.
         "background-image" => {
