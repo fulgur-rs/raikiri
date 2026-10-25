@@ -164,5 +164,5 @@ fn definite_size(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f3
 }
 
 fn resolve_calc(calc: CalcLengthPercentage, basis: f32) -> f32 {
-    AlignedCalc::new(calc, true).resolve(basis)
+    AlignedCalc::resolve_expression(calc, true, basis)
 }

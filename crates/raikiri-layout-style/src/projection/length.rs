@@ -254,7 +254,7 @@ macro_rules! resolve_length {
             #[inline]
             pub fn resolve(self, basis: Option<f32>) -> Option<f32> {
                 let raw = self.0.into_raw();
-                // Calc pointers carry address bits in the tag, so inspect them first.
+                // A calc handle fills the bits above the tag with its identity, so inspect it first.
                 if raw.is_plain_calc() {
                     return basis.map(|basis| CalcRef::from_handle(raw.calc_value()).resolve(basis));
                 }

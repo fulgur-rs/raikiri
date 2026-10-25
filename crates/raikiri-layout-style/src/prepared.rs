@@ -398,9 +398,9 @@ impl<'a> PreparedStyle<'a> {
                 .expect("validated immutable shared calc bindings"),
         }
     }
-    /// The payload these bindings hold at `pointer`, if any.
-    pub(crate) fn payload_at(&self, pointer: *const ()) -> Option<&AlignedCalc> {
-        let at = |payload: &AlignedCalc| payload.pointer() == pointer;
+    /// The payload these bindings hold under `handle`, if any.
+    pub(crate) fn payload_at(&self, handle: usize) -> Option<&AlignedCalc> {
+        let at = |payload: &AlignedCalc| payload.handle() == handle;
         match &self.calcs {
             CalcBindings::Borrowed(bindings) => bindings
                 .iter()

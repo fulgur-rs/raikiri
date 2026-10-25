@@ -65,7 +65,7 @@ fn a_reference_is_the_payload_the_getter_read() {
     let prepared = PreparedStyle::new(&values, StyleMetadata::default(), &bindings).unwrap();
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
     assert_eq!(width_calc_ref(&view), CalcRef::new(&payload));
-    assert_eq!(width_calc_ref(&view).addr(), payload.pointer().addr());
+    assert_eq!(width_calc_ref(&view).addr(), payload.handle());
 }
 
 #[test]
@@ -100,4 +100,32 @@ fn finds_prepared_payloads_past_overrides_of_other_properties() {
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &pass, &[]);
     assert_eq!(width_calc_ref(&view).resolve(100.0), 30.0);
     assert_eq!(margin_top_calc_ref(&view).resolve(100.0), 1.0);
+}
+
+#[test]
+fn resolves_only_the_handles_the_view_holds() {
+    let values = width_calc();
+    let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
+    let margin = AlignedCalc::new(
+        CalcLengthPercentage {
+            px: 1.0,
+            percent: 0.0,
+        },
+        false,
+    );
+    let pass = [
+        PropertyOverride::aspect_ratio(Some(2.0)),
+        PropertyOverride::length(LengthProperty::MarginTop, LengthValue::calc(&margin)).unwrap(),
+    ];
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &pass, &[]);
+    let width = width_calc_ref(&view).handle();
+    let margin_top = margin_top_calc_ref(&view).handle();
+    assert_eq!(view.resolve_calc_handle(width, 100.0), Some(30.0));
+    assert_eq!(view.resolve_calc_handle(margin_top, 100.0), Some(1.0));
+
+    // A live payload that the view does not hold, and a handle nobody issued.
+    let other = AlignedCalc::new(EXPRESSION, true);
+    let foreign = CalcRef::new(&other).handle();
+    assert_eq!(view.resolve_calc_handle(foreign, 100.0), None);
+    assert_eq!(view.resolve_calc_handle(std::ptr::null(), 100.0), None);
 }

@@ -32,7 +32,9 @@ use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
-use raikiri_layout_style::{LayoutStyleView, LeafStyle, TaffyStyle, resolve_projected_calc};
+use raikiri_layout_style::{
+    LayoutStyleView, LeafStyle, TaffyStyle, projected_calc_is_live, resolve_projected_calc,
+};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::DisplayValue;
 
@@ -90,12 +92,11 @@ pub(crate) fn push_calc(
 ///
 /// The handle does not depend on the document, so leaf measure callbacks that
 /// cannot borrow the tree call this directly.
-#[allow(unsafe_code)]
 pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
-    // SAFETY: Taffy hands back only handles of the lengths that the style views
-    // and the bridge made from `CalcRef`s, and the document retains every
-    // payload before it publishes a length that refers to it.
-    unsafe { resolve_projected_calc(val, basis) }
+    // The document retains every payload before it publishes a handle to it, so
+    // a handle that names no live payload means an owner was dropped too early.
+    debug_assert!(projected_calc_is_live(val), "stale calc handle");
+    resolve_projected_calc(val, basis)
 }
 
 /// The limit of a `fit-content(<length-percentage>)` size, resolved against
@@ -3657,27 +3658,24 @@ impl LayoutSession<'_> {
     }
 }
 
-// SAFETY: with taffy calc support enabled, taffy length types hold
-// a raw pointer to a caller-owned calc payload through a compact tagged
-// representation. Raw pointers are not Send, making the length types that a
-// node's content limits and the block-axis snapshots of a transposed
-// pagination store not Send, and thus `Document` not Send without this impl.
+// SAFETY: with taffy calc support enabled, taffy length types hold a raw
+// pointer through a compact tagged representation. Raw pointers are not Send,
+// making the length types that a node's content limits and the block-axis
+// snapshots of a transposed pagination store not Send, and thus `Document` not
+// Send without this impl.
 //
-// Invariant, self-contained arena approach:
-// Every calc pointer a Document stores points to an immutable payload held
-// by the same Document's `BoxStyleStore`. Its Arc owners keep pointees
-// stable across vector growth and `Document::clone()`, so moving the Document
-// to another thread preserves pointer validity.
-// The bridge retains new payloads before publishing their pointers. It keeps
-// old payloads through errors and unwinds, then drains the previous prefix
-// only after a complete successful rebuild.
+// The pointer of a calc length is never dereferenced. It is an opaque handle
+// that names a slot of the calc table shared by the whole process, and
+// resolving it reads that table from any thread. The table is the only state a
+// length shares with other threads, and it synchronizes its own accesses. A
+// handle that outlives its payload resolves to nothing instead of dangling.
 //
-// Enforcement at the boundary:
-// No public API takes a style that carries calc handles: elements are
-// created from inline style text and the bridge builds every handle itself
-// from computed values before each layout pass. Cross-document copies copy
-// the nodes and rebuild their handles on the next pass, so the target never
-// adopts the source arena's pointers.
+// What keeps the handles resolving to their values is the bridge: it retains
+// new payloads in the document's `BoxStyleStore` before publishing their
+// handles, keeps old payloads through errors and unwinds, and drains the
+// previous prefix only after a complete successful rebuild. No public API takes
+// a style that carries calc handles, and cross-document copies rebuild their
+// handles on the next pass.
 //
 // Do not implement Sync: the planned parallel layout path uses an owned
 // deep copy or a read-only borrow of style data. No path reads a shared

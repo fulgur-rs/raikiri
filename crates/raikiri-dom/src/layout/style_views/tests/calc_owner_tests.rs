@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_layout_style::values::{Dimension, LengthIdentity};
+use raikiri_layout_style::values::{CalcRef, Dimension, LengthIdentity};
 use raikiri_layout_style::{
     AlignedCalc, LayoutStyleView, PreparedStyle, StyleMetadata, ViewContext,
 };
@@ -25,7 +25,7 @@ fn legacy_and_view_calc_handles_share_the_resolver() {
         for non_negative in [true, false] {
             let mut owners: Vec<Arc<AlignedCalc>> = Vec::new();
             let legacy = crate::layout::dispatch::push_calc(&mut owners, expression, non_negative);
-            let raw: *const () = Arc::as_ptr(&owners[0]).cast();
+            let raw = legacy.handle();
             assert_eq!(owners[0].expression().px.to_bits(), expression.px.to_bits());
             assert_eq!(owners[0].non_negative(), non_negative);
             let mut values = ComputedValues::initial();
@@ -281,13 +281,13 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
         };
         let check = |handle: *const (), expression: CalcLengthPercentage, range| {
             let first = first_owner(expression, range);
-            assert_eq!(handle, Arc::as_ptr(first).cast::<()>());
+            assert_eq!(handle, CalcRef::retained(first).handle());
             assert!(
                 session
                     .box_style_data
                     .calc_values
                     .iter()
-                    .any(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+                    .any(|owner| CalcRef::retained(owner).handle() == handle)
             );
         };
         let check_length = |identity: LengthIdentity, expression: CalcLengthPercentage, range| {

@@ -1,4 +1,5 @@
 use crate::length::sanitize;
+use crate::values::CalcRef;
 use crate::*;
 use raikiri_style::{
     ComputedGridTemplateTracks, ComputedGridTrackBreadth as B, ComputedGridTrackList,
@@ -301,15 +302,14 @@ fn track(
     size: S,
 ) -> TrackSizingFunction {
     let pointer = |part| {
-        prepared
-            .payload(CalcSlot::Grid {
-                axis,
-                list,
-                component,
-                repeat_track,
-                part,
-            })
-            .pointer()
+        let payload = prepared.payload(CalcSlot::Grid {
+            axis,
+            list,
+            component,
+            repeat_track,
+            part,
+        });
+        CalcRef::new(payload).handle()
     };
     let min = |b| match b {
         B::Px(v) => Min::length(sanitize(v)),
