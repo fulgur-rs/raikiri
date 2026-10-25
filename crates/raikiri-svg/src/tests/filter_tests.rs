@@ -374,6 +374,26 @@ fn an_fe_image_draws_its_picture_at_the_scale_of_the_filtered_element_only() {
 }
 
 #[test]
+fn a_wrapped_convolution_pays_for_the_steps_that_bring_a_coordinate_back() {
+    // resvg adds the width of the image to a negative coordinate until it is
+    // back in, so a kernel much wider than a one pixel image takes a step for
+    // each of its columns, on every cell.
+    let convolve = |edge_mode: &str| {
+        let order = 70_000;
+        let kernel = vec!["1"; order].join(" ");
+        format!(
+            "<filter id='f' filterUnits='userSpaceOnUse' x='0' y='0' width='1' height='1'>\
+             <feConvolveMatrix order='{order} 1' targetX='{target}' kernelMatrix='{kernel}' \
+             edgeMode='{edge_mode}'/></filter>\
+             <rect width='1' height='1' filter='url(#f)'/>",
+            target = order - 1,
+        )
+    };
+    rasterize(&document(1, 1, &convolve("none")), 1, 1).unwrap();
+    assert_over_the_work_budget(1, &convolve("wrap"));
+}
+
+#[test]
 fn a_document_with_a_filter_and_a_picture_has_no_picture() {
     // Only a scene draws pictures and only the raster draws filters.
     let source = format!(

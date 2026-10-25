@@ -10,7 +10,7 @@
 //! and fails the picture over a budget instead of starting.
 
 use crate::{DEFAULT_MAX_OUTPUT_BYTES, SvgError, SvgFilterBudget};
-use usvg::filter::{Filter, Kind};
+use usvg::filter::{EdgeMode, Filter, Kind};
 use usvg::{Fill, Stroke};
 
 /// Most pixels one filter may hold at once: eight output-sized buffers.
@@ -45,6 +45,8 @@ struct Layer {
     height: f64,
     /// Canvas pixels per unit of the group's coordinates.
     scale: (f64, f64),
+    /// Places the group's coordinates on the canvas.
+    to_canvas: usvg::Transform,
 }
 
 struct Meter {
@@ -65,7 +67,7 @@ impl Meter {
                 // resvg draws all the filters of a group on one layer, the
                 // union of their regions, and each primitive handles the whole
                 // of it.
-                let layer = self.layer(inner.layer_bounding_box(), to_canvas);
+                let layer = self.extent(inner.layer_bounding_box(), to_canvas);
                 for filter in inner.filters() {
                     self.filter(filter, layer)?;
                 }
@@ -113,9 +115,9 @@ impl Meter {
         self.group(root, usvg::Transform::from_scale(scale_x, scale_y))
     }
 
-    /// The layer that resvg draws for `rect`, the area of a group in its own
-    /// coordinates, when the group is placed on the canvas by `to_canvas`.
-    fn layer(&self, rect: usvg::NonZeroRect, to_canvas: usvg::Transform) -> Layer {
+    /// The pixels that resvg draws for `rect`, an area in the coordinates of a
+    /// group, when `to_canvas` places the group on the canvas.
+    fn extent(&self, rect: usvg::NonZeroRect, to_canvas: usvg::Transform) -> Layer {
         let (width, height) = rect.transform(to_canvas).map_or((0.0, 0.0), |region| {
             // resvg rounds the region out to whole pixels, and to at least one.
             (
@@ -132,6 +134,7 @@ impl Meter {
             width,
             height,
             scale: (f64::from(scale_x), f64::from(scale_y)),
+            to_canvas,
         }
     }
 
@@ -148,8 +151,12 @@ impl Meter {
                 limit: MAX_FILTER_PIXELS,
             });
         }
+        // The results of the primitives have at least the size of the region
+        // of the filter, which lies within the layer.
+        let region = self.extent(filter.rect(), layer.to_canvas);
         for primitive in primitives {
-            self.work += area * per_pixel_work(primitive.kind(), layer);
+            self.work +=
+                area * per_pixel_work(primitive.kind(), layer, (region.width, region.height));
         }
         if self.work > MAX_FILTER_WORK as f64 {
             return Err(SvgError::FilterLimitExceeded {
@@ -162,8 +169,9 @@ impl Meter {
     }
 }
 
-/// Pixel operations `kind` spends on each pixel of `layer`.
-fn per_pixel_work(kind: &Kind, layer: Layer) -> f64 {
+/// Pixel operations `kind` spends on each pixel of `layer`, where the images
+/// it handles are at least `input` pixels wide and high.
+fn per_pixel_work(kind: &Kind, layer: Layer, input: (f64, f64)) -> f64 {
     let work = match kind {
         // Every pixel is compared with a kernel of twice the radius on a
         // side, which resvg keeps within the layer.
@@ -172,7 +180,18 @@ fn per_pixel_work(kind: &Kind, layer: Layer) -> f64 {
                 * (2.0 * (f64::from(fe.radius_y().get()) * layer.scale.1).ceil()).min(layer.height)
         }
         Kind::ConvolveMatrix(fe) => {
-            f64::from(fe.matrix().columns()) * f64::from(fe.matrix().rows())
+            let matrix = fe.matrix();
+            // In wrap mode resvg brings a coordinate back into the image by
+            // adding the size of the image once per step, so each cell of the
+            // kernel takes a step for every image size that the target lies
+            // from the edge.
+            let steps = if matches!(fe.edge_mode(), EdgeMode::Wrap) {
+                1.0 + (f64::from(matrix.target_x()) / input.0).ceil()
+                    + (f64::from(matrix.target_y()) / input.1).ceil()
+            } else {
+                1.0
+            };
+            f64::from(matrix.columns()) * f64::from(matrix.rows()) * steps
         }
         Kind::Turbulence(fe) => f64::from(fe.num_octaves()) * OCTAVE_WORK,
         // Every input is converted and composited over the result.
