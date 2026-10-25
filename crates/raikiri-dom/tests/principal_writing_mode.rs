@@ -364,3 +364,129 @@ fn the_logical_sizes_of_the_root_follow_its_own_writing_mode() {
         ],
     );
 }
+
+/// The border boxes on each page of three 400px squares `a`, `b` and `c` in
+/// an 800px by 600px page. The squares have no break avoidance, so the one
+/// that crosses a page edge continues on the next page.
+type Pages = &'static [&'static [(&'static str, Rect)]];
+
+/// Chromium's printout of the squares with a horizontal body (three pages; the
+/// last holds a sliver of `c`), measured on the rasterised PDF.
+const DOWN_THE_PAGE: Pages = &[
+    &[
+        ("a", (8.0, 8.0, 400.0, 400.0)),
+        ("b", (8.0, 408.0, 400.0, 192.0)),
+    ],
+    &[
+        ("b", (8.0, 0.0, 400.0, 208.0)),
+        ("c", (8.0, 208.0, 400.0, 392.0)),
+    ],
+    &[("c", (8.0, 0.0, 400.0, 8.0))],
+];
+
+/// The same for a `vertical-rl` or `sideways-rl` body: two pages, each
+/// continuing to the left of the one before.
+const TOWARDS_THE_LEFT: Pages = &[
+    &[
+        ("a", (392.0, 8.0, 400.0, 400.0)),
+        ("b", (0.0, 8.0, 392.0, 400.0)),
+    ],
+    &[
+        ("b", (792.0, 8.0, 8.0, 400.0)),
+        ("c", (392.0, 8.0, 400.0, 400.0)),
+    ],
+];
+
+/// The same for a `vertical-lr` body: two pages, each continuing to the right.
+const TOWARDS_THE_RIGHT: Pages = &[
+    &[
+        ("a", (8.0, 8.0, 400.0, 400.0)),
+        ("b", (408.0, 8.0, 392.0, 400.0)),
+    ],
+    &[
+        ("b", (0.0, 8.0, 8.0, 400.0)),
+        ("c", (8.0, 8.0, 400.0, 400.0)),
+    ],
+];
+
+/// The same for a `sideways-lr` body: as `vertical-lr`, with the inline axis
+/// running up, so the squares sit at the bottom of the page area.
+const TOWARDS_THE_RIGHT_FROM_THE_BOTTOM: Pages = &[
+    &[
+        ("a", (8.0, 192.0, 400.0, 400.0)),
+        ("b", (408.0, 192.0, 392.0, 400.0)),
+    ],
+    &[
+        ("b", (0.0, 192.0, 8.0, 400.0)),
+        ("c", (8.0, 192.0, 400.0, 400.0)),
+    ],
+];
+
+/// Lay out the squares under `css` and compare the boxes on every page.
+fn assert_squares(css: &str, expected: Pages) {
+    let actual = pages_of(&format!(
+        "<!DOCTYPE html><style>@page {{ size: 800px 600px; margin: 0 }} \
+         div {{ box-sizing: border-box; width: 400px; height: 400px }} {css}</style>\
+         <body><div id=a></div><div id=b></div><div id=c></div></body>"
+    ));
+    assert_eq!(actual.len(), expected.len(), "{css}: {actual:?}");
+    let close = |a: f32, b: f32| (a - b).abs() <= TOLERANCE;
+    for (page, (found, wanted)) in actual.iter().zip(expected).enumerate() {
+        assert_eq!(found.len(), wanted.len(), "{css}: page {page} is {found:?}");
+        for ((name, got), &(id, want)) in found.iter().zip(wanted.iter()) {
+            assert!(
+                name == id
+                    && close(got.0, want.0)
+                    && close(got.1, want.1)
+                    && close(got.2, want.2)
+                    && close(got.3, want.3),
+                "{css}: page {page} has #{name} at {got:?}, expected #{id} at {want:?}"
+            );
+        }
+    }
+}
+
+/// The pages follow the block axis of the root's used writing mode, the
+/// body's, so a horizontal body under a vertical root breaks along y.
+#[test]
+fn a_horizontal_body_under_a_vertical_root_breaks_pages_along_y() {
+    assert_squares("body { margin: 8px }", DOWN_THE_PAGE);
+    for root in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        assert_squares(
+            &format!(
+                "html {{ writing-mode: {root} }} body {{ margin: 8px; writing-mode: horizontal-tb }}"
+            ),
+            DOWN_THE_PAGE,
+        );
+    }
+}
+
+/// A vertical body under a horizontal root breaks along x, onto the left of
+/// the page for `vertical-rl` and onto the right for `vertical-lr`.
+#[test]
+fn a_vertical_body_under_a_horizontal_root_breaks_pages_along_x() {
+    for (mode, expected) in [
+        ("vertical-rl", TOWARDS_THE_LEFT),
+        ("sideways-rl", TOWARDS_THE_LEFT),
+        ("vertical-lr", TOWARDS_THE_RIGHT),
+        ("sideways-lr", TOWARDS_THE_RIGHT_FROM_THE_BOTTOM),
+    ] {
+        assert_squares(
+            &format!("body {{ margin: 8px; writing-mode: {mode} }}"),
+            expected,
+        );
+    }
+}
+
+/// The body's flow wins when the root declares the opposite one.
+#[test]
+fn the_body_flow_decides_the_page_direction_when_the_root_declares_another() {
+    assert_squares(
+        "html { writing-mode: vertical-lr } body { margin: 8px; writing-mode: vertical-rl }",
+        TOWARDS_THE_LEFT,
+    );
+    assert_squares(
+        "html { writing-mode: vertical-rl } body { margin: 8px; writing-mode: vertical-lr }",
+        TOWARDS_THE_RIGHT,
+    );
+}
