@@ -9,4 +9,6 @@ mod html_document_tests;
 
 mod parse_html_tests;
 
+mod parse_xhtml_tests;
+
 mod layout_entry_tests;

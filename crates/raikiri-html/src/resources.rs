@@ -1516,13 +1516,62 @@ pub fn parse_html_with_resources<R: Read>(
     input: R,
     resources: &RenderResources<'_>,
 ) -> Result<HtmlDocument, raikiri_traits::RenderError> {
+    parse_with_resources(
+        input,
+        resources,
+        crate::document_parse::parse_html_with_fonts,
+    )
+}
+
+/// Parse an XHTML document using the same renderer-neutral resource
+/// configuration as [`parse_html_with_resources`].
+///
+/// The input is read the way [`crate::parse_xhtml`] reads it: by an XML
+/// parser that repairs malformed markup, ignores a DTD, and stops once the
+/// input-byte, DOM-node, parse-warning, or nesting-depth budget of
+/// [`RenderResources::render_limits`] is exceeded. The result is the cascaded
+/// document that [`parse_html_with_resources`] gives for HTML, so it lays out
+/// to the pages that [`crate::StreamingLayout::new_xhtml`] delivers.
+///
+/// # Errors
+///
+/// The errors of [`parse_html_with_resources`], with
+/// `LimitExceeded { kind: LimitKind::DomDepth, .. }` for nesting deeper than
+/// 256 elements.
+pub fn parse_xhtml_with_resources<R: Read>(
+    input: R,
+    resources: &RenderResources<'_>,
+) -> Result<HtmlDocument, raikiri_traits::RenderError> {
+    parse_with_resources(
+        input,
+        resources,
+        crate::document_parse::parse_xhtml_with_fonts,
+    )
+}
+
+/// The parse of one document syntax, as `parse_html_with_resources` and
+/// `parse_xhtml_with_resources` give it: input, options, limits, fonts, and
+/// the border-width device scale.
+type ParseDocument<R> = fn(
+    R,
+    &ParseOptions<'_>,
+    raikiri_traits::RenderLimits,
+    Option<shodo::font::FontCollection>,
+    Option<f32>,
+) -> Result<HtmlDocument, raikiri_traits::RenderError>;
+
+fn parse_with_resources<R: Read>(
+    input: R,
+    resources: &RenderResources<'_>,
+    parse: ParseDocument<R>,
+) -> Result<HtmlDocument, raikiri_traits::RenderError> {
     let network = resources.network_adapter();
     let network_ref = network
         .as_ref()
         .map(|provider| provider as &dyn NetworkProvider);
     let extra_stylesheets = resources.extra_stylesheets();
     let options = resources.parse_options(&extra_stylesheets, network_ref);
-    crate::document_parse::parse_html_with_fonts(
+    parse(
         input,
         &options,
         resources.parse_limits(),

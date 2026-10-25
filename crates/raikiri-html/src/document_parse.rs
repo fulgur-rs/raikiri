@@ -161,6 +161,26 @@ pub(crate) fn parse_html_with_fonts<R: Read>(
     )
 }
 
+/// [`parse_html_with_fonts`] for an XHTML document: `input` goes through the
+/// XML parser of [`crate::parse_xhtml`] under the same budgets, and the result
+/// is cascaded the same way.
+pub(crate) fn parse_xhtml_with_fonts<R: Read>(
+    input: R,
+    options: &ParseOptions<'_>,
+    limits: RenderLimits,
+    fonts: Option<shodo::font::FontCollection>,
+    border_width_device_scale: Option<f32>,
+) -> Result<HtmlDocument, RenderError> {
+    let uncascaded = crate::xhtml::parse_with_limits(input, options, &limits)?;
+    assemble_document(
+        uncascaded,
+        options,
+        &limits,
+        fonts,
+        border_width_device_scale,
+    )
+}
+
 /// Check the DOM node cap as a defensive postcondition, give the DOM `fonts`
 /// when there are some, and run its first-page cascade.
 pub(crate) fn assemble_document(

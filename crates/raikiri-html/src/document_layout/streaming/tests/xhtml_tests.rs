@@ -1,6 +1,5 @@
 use super::*;
-use crate::document_parse::assemble_document;
-use crate::xhtml::parse_with_limits;
+use crate::parse_xhtml_with_resources;
 
 const NAMESPACE: &str = "http://www.w3.org/1999/xhtml";
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
@@ -55,18 +54,7 @@ fn long_xhtml() -> String {
 /// The pages of a batch layout of `xhtml`.
 fn batch_xhtml(xhtml: &str) -> (PageLog, Vec<RenderWarning>) {
     let resources = RenderResources::new();
-    let extra_stylesheets = resources.extra_stylesheets();
-    let options = resources.parse_options(&extra_stylesheets, None);
-    let limits = resources.parse_limits();
-    let uncascaded = parse_with_limits(xhtml.as_bytes(), &options, &limits).expect("parse");
-    let document = assemble_document(
-        uncascaded,
-        &options,
-        &limits,
-        resources.configured_fonts(),
-        resources.configured_border_width_device_scale(),
-    )
-    .expect("cascade");
+    let document = parse_xhtml_with_resources(xhtml.as_bytes(), &resources).expect("parse");
     let LayoutStatus::Completed(laid_out) = layout(
         &document,
         PageDefaults::default(),
