@@ -380,3 +380,39 @@ fn decoded_byte_len_reports_raster_bytes_and_svg_none() {
         .unwrap();
     assert_eq!(svg_resolver.decoded_byte_len(&svg_url), None);
 }
+
+#[test]
+fn an_svg_image_has_a_scene_for_the_box_it_is_asked_for() {
+    use raikiri_traits::{ImagePixelSource, ImageRasterSize, ImageVectorRequest};
+
+    let resolver = ImageResolver::new(StaticSvgProvider(TWO_COLOR_SVG));
+    let url = url::Url::parse("https://images.test/two-color.svg").unwrap();
+    let request = ImageVectorRequest::new(ImageRasterSize {
+        width: 8.0,
+        height: 4.0,
+    });
+    // Nothing is known of an image that was not resolved yet.
+    assert!(resolver.get_vector(&url, &request).is_none());
+    resolver.resolve(ResolverRequest::new(&url)).unwrap();
+    let scene = resolver.get_vector(&url, &request).expect("an SVG scene");
+    assert_eq!(scene.size, (8.0, 4.0));
+    assert!(scene.node_count() > 1, "the squares are in the scene");
+    assert!(std::sync::Arc::ptr_eq(
+        &scene,
+        &resolver.get_vector(&url, &request).unwrap()
+    ));
+}
+
+#[test]
+fn a_raster_image_has_no_scene() {
+    use raikiri_traits::{ImagePixelSource, ImageRasterSize, ImageVectorRequest};
+
+    let resolver = ImageResolver::new(StaticBytesProvider(TINY_PNG));
+    let url = url::Url::parse("file:///fixture.png").unwrap();
+    resolver.resolve(ResolverRequest::new(&url)).unwrap();
+    let request = ImageVectorRequest::new(ImageRasterSize {
+        width: 8.0,
+        height: 4.0,
+    });
+    assert!(resolver.get_vector(&url, &request).is_none());
+}

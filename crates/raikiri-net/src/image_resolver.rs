@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 
+use raikiri_traits::vector::VectorImage;
 use raikiri_traits::{
-    DecodedImage, ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, IntrinsicBox,
-    NetworkProvider, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
-    ResolverRequest,
+    DecodedImage, ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, ImageVectorRequest,
+    IntrinsicBox, NetworkProvider, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic,
+    ResolverError, ResolverRequest,
 };
 use url::Url;
 
@@ -24,7 +25,8 @@ use crate::resource_loader::{ResourceLoader, default_object_size};
 /// of RGBA pixels, URL keys, and SVG source bytes. New resources that exceed
 /// either limit return [`ResolverError::Decode`]; existing cache entries remain
 /// available. Encoded image inputs are limited to 32 MiB, and SVG rasterization
-/// shares the same cache byte budget. Parsed SVG trees are temporary, so SVG
+/// shares the same cache byte budget. An SVG source also answers
+/// [`ImagePixelSource::get_vector`] with its scene, kept under that budget too. Parsed SVG trees are temporary, so SVG
 /// reference expansion does not create unaccounted retained trees.
 pub struct ImageResolver<N> {
     resources: ResourceLoader<N>,
@@ -76,6 +78,10 @@ impl<N: NetworkProvider> ImagePixelSource for ImageResolver<N> {
         self.resources
             .cached_source(url)?
             .rasterize(size, max_output_bytes)
+    }
+
+    fn get_vector(&self, url: &Url, request: &ImageVectorRequest) -> Option<Arc<VectorImage>> {
+        self.resources.cached_source(url)?.scene(request.size)
     }
 }
 

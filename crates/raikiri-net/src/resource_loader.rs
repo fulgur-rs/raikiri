@@ -6,9 +6,11 @@
 //! providers.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
+use raikiri_traits::vector::VectorImage;
 use raikiri_traits::{
     Body, DecodedImage, FetchedResource, ImageIntrinsicSize, ImageRasterSize, Method,
     NetworkProvider, Request, ResolverError, policy::ResourceKind,
@@ -22,7 +24,8 @@ pub(crate) const MAX_SVG_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_CACHE_ENTRIES: usize = 256;
 /// SVG rasters kept per source, one per paint size, so that an image painted
-/// at a few sizes in turn is not rasterized again at every switch.
+/// at a few sizes in turn is not rasterized again at every switch. SVG scenes
+/// are kept the same way.
 const MAX_RASTER_SIZES: usize = 4;
 
 struct CacheBudget {
@@ -59,6 +62,11 @@ pub(crate) struct ImageSource {
     pub(crate) intrinsic: ImageIntrinsicSize,
     /// SVG rasters by paint size, least recently used first.
     raster_cache: Mutex<Vec<(ImageRasterSize, Arc<DecodedImage>)>>,
+    /// SVG scenes by box size, least recently used first.
+    scene_cache: Mutex<Vec<(ImageRasterSize, Arc<VectorImage>)>>,
+    /// Set once the scene builder has sent the document to the raster path,
+    /// so no other box asks for a scene again.
+    raster_only: AtomicBool,
     budget: Arc<Mutex<CacheBudget>>,
 }
 
@@ -79,6 +87,8 @@ impl ImageSource {
                 aspect_ratio: (height > 0.0).then_some(width / height),
             },
             raster_cache: Mutex::new(Vec::new()),
+            scene_cache: Mutex::new(Vec::new()),
+            raster_only: AtomicBool::new(false),
             budget,
         }
     }
@@ -95,8 +105,75 @@ impl ImageSource {
                 aspect_ratio: intrinsic.aspect_ratio,
             },
             raster_cache: Mutex::new(Vec::new()),
+            scene_cache: Mutex::new(Vec::new()),
+            raster_only: AtomicBool::new(false),
             budget,
         }
+    }
+
+    /// The scene of an SVG source for a box of `size`, built once per size
+    /// and kept under the byte budget of the pixels.
+    ///
+    /// `None` for a source that is not SVG, for a document the scene builder
+    /// leaves to the raster path (remembered, so it is asked once), and for a
+    /// document or size it cannot build a scene for. The caller asks for
+    /// pixels next. The document is built with the default style and without
+    /// fonts, as its raster is.
+    pub(crate) fn scene(&self, size: ImageRasterSize) -> Option<Arc<VectorImage>> {
+        let ImageSourceKind::Svg(bytes) = &self.kind else {
+            return None;
+        };
+        if self.raster_only.load(Ordering::Relaxed) {
+            return None;
+        }
+        {
+            let mut cached = self.scene_cache.lock().ok()?;
+            if let Some(index) = cached.iter().position(|(cached, _)| *cached == size) {
+                let entry = cached.remove(index);
+                let scene = entry.1.clone();
+                cached.push(entry);
+                return Some(scene);
+            }
+        }
+        let document = SvgDocument::parse(bytes).ok()?;
+        let scene = match document.scene(
+            SvgViewport {
+                width: size.width,
+                height: size.height,
+            },
+            SvgRootStyle::default(),
+        ) {
+            Ok(scene) => Arc::new(scene),
+            Err(error) => {
+                if error.falls_back_to_raster() {
+                    self.raster_only.store(true, Ordering::Relaxed);
+                }
+                return None;
+            }
+        };
+        let new_bytes = u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX);
+        let mut cached = self.scene_cache.lock().ok()?;
+        let mut budget = self.budget.lock().ok()?;
+        // Make room for the new scene by dropping the least recently used
+        // sizes. A scene that cannot fit even then is returned without being
+        // kept, and built again the next time it is asked for.
+        let reclaimable: u64 = cached
+            .iter()
+            .map(|(_, scene)| u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX))
+            .fold(0, u64::saturating_add);
+        if new_bytes > budget.remaining().saturating_add(reclaimable) {
+            return Some(scene);
+        }
+        let mut excess = new_bytes.saturating_sub(budget.remaining());
+        while !cached.is_empty() && (cached.len() >= MAX_RASTER_SIZES || excess > 0) {
+            let (_, old) = cached.remove(0);
+            let old_bytes = u64::try_from(old.estimated_heap_bytes()).unwrap_or(u64::MAX);
+            excess = excess.saturating_sub(old_bytes);
+            budget.used = budget.used.saturating_sub(old_bytes);
+        }
+        budget.used = budget.used.saturating_add(new_bytes);
+        cached.push((size, scene.clone()));
+        Some(scene)
     }
 
     pub(crate) fn rasterize(

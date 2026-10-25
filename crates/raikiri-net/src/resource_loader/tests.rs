@@ -233,6 +233,112 @@ fn test_budget(limit: u64) -> Arc<Mutex<CacheBudget>> {
     Arc::new(Mutex::new(CacheBudget { used: 0, limit }))
 }
 
+fn svg_source(budget: &Arc<Mutex<CacheBudget>>) -> ImageSource {
+    let document = SvgDocument::parse(TWO_COLOR_SVG).expect("parse svg");
+    ImageSource::svg(document, TWO_COLOR_SVG.into(), budget.clone())
+}
+
+fn box_of(width: f32) -> ImageRasterSize {
+    ImageRasterSize { width, height: 2.0 }
+}
+
+fn scene_bytes(scene: &VectorImage) -> u64 {
+    u64::try_from(scene.estimated_heap_bytes()).unwrap()
+}
+
+#[test]
+fn svg_source_builds_one_scene_per_box_size() {
+    let budget = test_budget(MAX_CACHE_BYTES);
+    let source = svg_source(&budget);
+    let first = source.scene(box_of(8.0)).expect("a scene");
+    assert_eq!(first.size, (8.0, 2.0));
+    assert!(Arc::ptr_eq(&first, &source.scene(box_of(8.0)).unwrap()));
+    let other = source.scene(box_of(4.0)).expect("a scene for another box");
+    assert!(!Arc::ptr_eq(&first, &other));
+    // Both scenes are kept, and charged to the budget of the pixels.
+    assert!(Arc::ptr_eq(&first, &source.scene(box_of(8.0)).unwrap()));
+    assert_eq!(
+        budget.lock().unwrap().used,
+        scene_bytes(&first) + scene_bytes(&other)
+    );
+}
+
+#[test]
+fn svg_source_drops_the_oldest_scene_past_the_size_limit() {
+    let budget = test_budget(MAX_CACHE_BYTES);
+    let source = svg_source(&budget);
+    let first = source.scene(box_of(1.0)).unwrap();
+    for width in [2.0, 3.0, 4.0] {
+        source.scene(box_of(width)).unwrap();
+    }
+    // The fifth size pushes the first one out.
+    source.scene(box_of(5.0)).unwrap();
+    assert_eq!(
+        budget.lock().unwrap().used,
+        4 * scene_bytes(&source.scene(box_of(5.0)).unwrap())
+    );
+    assert!(!Arc::ptr_eq(&first, &source.scene(box_of(1.0)).unwrap()));
+}
+
+#[test]
+fn svg_source_drops_older_scenes_to_make_room_in_the_budget() {
+    let one = scene_bytes(
+        &svg_source(&test_budget(MAX_CACHE_BYTES))
+            .scene(box_of(1.0))
+            .unwrap(),
+    );
+    // Room for two scenes.
+    let budget = test_budget(2 * one);
+    let source = svg_source(&budget);
+    let first = source.scene(box_of(1.0)).unwrap();
+    source.scene(box_of(2.0)).unwrap();
+    let third = source.scene(box_of(3.0)).unwrap();
+    assert_eq!(budget.lock().unwrap().used, 2 * one);
+    assert!(Arc::ptr_eq(&third, &source.scene(box_of(3.0)).unwrap()));
+    assert!(!Arc::ptr_eq(&first, &source.scene(box_of(1.0)).unwrap()));
+}
+
+#[test]
+fn svg_source_does_not_keep_a_scene_the_budget_has_no_room_for() {
+    let budget = test_budget(0);
+    let source = svg_source(&budget);
+    let first = source.scene(box_of(8.0)).expect("the scene is still given");
+    assert_eq!(budget.lock().unwrap().used, 0);
+    assert!(!Arc::ptr_eq(&first, &source.scene(box_of(8.0)).unwrap()));
+}
+
+#[test]
+fn a_raster_source_has_no_scene() {
+    let source = ImageSource::raster(Arc::new(tiny_decoded()), test_budget(MAX_CACHE_BYTES));
+    assert!(source.scene(box_of(8.0)).is_none());
+}
+
+#[test]
+fn svg_source_remembers_a_document_that_needs_the_raster_path() {
+    // A mask is outside the vector subset.
+    let masked: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"2\"><mask id=\"m\"><rect width=\"2\" height=\"2\" fill=\"white\"/></mask><rect width=\"4\" height=\"2\" fill=\"red\" mask=\"url(#m)\"/></svg>";
+    let budget = test_budget(MAX_CACHE_BYTES);
+    let source = ImageSource::svg(
+        SvgDocument::parse(masked).unwrap(),
+        masked.into(),
+        budget.clone(),
+    );
+    assert!(source.scene(box_of(4.0)).is_none());
+    assert!(source.raster_only.load(Ordering::Relaxed));
+    assert!(source.scene(box_of(4.0)).is_none());
+    // The raster of the same document is still available.
+    assert!(source.rasterize(box_of(4.0), None).is_some());
+    assert_eq!(budget.lock().unwrap().used, 4 * 2 * 4);
+}
+
+#[test]
+fn a_box_that_is_no_size_has_no_scene_but_the_document_stays_vector() {
+    let source = svg_source(&test_budget(MAX_CACHE_BYTES));
+    assert!(source.scene(box_of(0.0)).is_none());
+    assert!(!source.raster_only.load(Ordering::Relaxed));
+    assert!(source.scene(box_of(4.0)).is_some());
+}
+
 #[test]
 fn aggregate_pixel_and_key_budget_is_checked_before_cache_admission() {
     let first_url = Url::parse("https://images.test/a.png").unwrap();
