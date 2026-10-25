@@ -246,3 +246,37 @@ fn a_last_baseline_static_position_keeps_the_end_edge_when_it_overflows() {
         end
     );
 }
+
+/// The last-baseline exception applies to the axis that aligns to the last
+/// baseline only: an explicit `safe` alignment in the other axis still falls
+/// back to the start of that axis.
+#[test]
+fn a_last_baseline_in_one_axis_leaves_the_safe_alignment_of_the_other() {
+    let grid = "display:grid;padding:2px 1px;border:1px solid black;position:relative;width:30px;\
+                height:25px;grid:3px 14px 3px / 2px 20px 2px";
+    let child = "position:absolute;grid-area:2 / 2 / 3 / 3;width:21px;height:21px";
+    // The block axis, which runs from right to left, aligns `safe`.
+    let container = format!("{grid};writing-mode:vertical-rl");
+    assert_eq!(
+        item_rect(
+            &container,
+            &format!("{child};align-self:safe center;justify-self:last baseline")
+        ),
+        item_rect(
+            &container,
+            &format!("{child};align-self:start;justify-self:last baseline")
+        ),
+    );
+    // The inline axis, which runs from bottom to top, aligns `safe`.
+    let container = format!("{container};direction:rtl");
+    assert_eq!(
+        item_rect(
+            &container,
+            &format!("{child};align-self:last baseline;justify-self:safe end")
+        ),
+        item_rect(
+            &container,
+            &format!("{child};align-self:last baseline;justify-self:start")
+        ),
+    );
+}

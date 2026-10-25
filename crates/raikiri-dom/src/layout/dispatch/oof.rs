@@ -16,7 +16,7 @@ use crate::layout::taffy_adapter::algorithms::{
     claims_position, compute_oof_layout_for_area, compute_root_layout,
 };
 use crate::layout::taffy_adapter::{GridInfo, OofBatch, OofSpan};
-use raikiri_layout_geometry::Size;
+use raikiri_layout_geometry::{Point, Size};
 use raikiri_layout_style::values::{BaselineSet, ContainingBlockClaims, Direction};
 
 impl LayoutSession<'_> {
@@ -221,34 +221,45 @@ pub(super) fn layout_candidates(
 /// Remember the static positions of the `hoisted` boxes among `candidates`
 /// that align `safe` in an axis, for the vertical containing block that
 /// positioned them to align them again.
-///
-/// A box that aligns to the last baseline is left out. Its `safe self-end`
-/// fallback keeps the box at the end edge when it overflows in the
-/// web-platform-tests (`grid-abspos-staticpos-align-self-vertWM-last-baseline-*`),
-/// which Taffy's fallback to the left or top edge matches.
 fn record_safe_static_positions(
     tree: &mut LayoutSession<'_>,
     candidates: &OofBatch,
     hoisted: &[NodeId],
 ) {
-    let last_baseline = |tree: &LayoutSession<'_>, node: usize| {
-        tree.taffy_parent_of(node).is_some_and(|parent| {
-            let (style, parent) = (tree.physical_style(node), tree.physical_style(parent));
-            [false, true]
-                .into_iter()
-                .any(|justify| style.self_baseline_set(&parent, justify) == Some(BaselineSet::Last))
-        })
-    };
+    let safe = |axis: AxisStaticPosition| axis.align.safety == StaticAlignSafety::Safe;
     for candidate in candidates.iter() {
-        let safe = |axis: AxisStaticPosition| axis.align.safety == StaticAlignSafety::Safe;
         let node = usize::from(candidate.node);
-        if (safe(candidate.static_position.x) || safe(candidate.static_position.y))
-            && hoisted.contains(&candidate.node)
-            && !last_baseline(tree, node)
-        {
-            tree.context
-                .safe_static_positions
-                .insert(node, candidate.static_position);
+        let position = without_last_baseline_safety(tree, node, candidate.static_position);
+        if (safe(position.x) || safe(position.y)) && hoisted.contains(&candidate.node) {
+            tree.context.safe_static_positions.insert(node, position);
         }
     }
+}
+
+/// `position`, the static position of `node`, without the overflow position of
+/// the axes in which it aligns to the last baseline. The `safe self-end`
+/// fallback of such an alignment keeps the box at the end edge when it
+/// overflows in the web-platform-tests
+/// (`grid-abspos-staticpos-align-self-vertWM-last-baseline-*`), which Taffy's
+/// fallback to the left or top edge matches.
+fn without_last_baseline_safety(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    mut position: Point<AxisStaticPosition>,
+) -> Point<AxisStaticPosition> {
+    if let Some(parent) = tree.taffy_parent_of(node) {
+        let (style, parent_style) = (tree.physical_style(node), tree.physical_style(parent));
+        // The parent aligns the box along its block axis by `align-self`, which
+        // is the physical horizontal axis of a vertical parent.
+        let parent_vertical = super::block_right_to_left(tree, parent).is_some();
+        let last_baseline =
+            |justify| style.self_baseline_set(&parent_style, justify) == Some(BaselineSet::Last);
+        if last_baseline(!parent_vertical) {
+            position.x.align.safety = StaticAlignSafety::Default;
+        }
+        if last_baseline(parent_vertical) {
+            position.y.align.safety = StaticAlignSafety::Default;
+        }
+    }
+    position
 }
