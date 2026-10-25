@@ -245,21 +245,22 @@ fn record_safe_static_positions(
 fn without_last_baseline_safety(
     tree: &LayoutSession<'_>,
     node: usize,
-    mut position: Point<AxisStaticPosition>,
+    position: Point<AxisStaticPosition>,
 ) -> Point<AxisStaticPosition> {
-    if let Some(parent) = tree.taffy_parent_of(node) {
+    tree.taffy_parent_of(node).map_or(position, |parent| {
         let (style, parent_style) = (tree.physical_style(node), tree.physical_style(parent));
         // The parent aligns the box along its block axis by `align-self`, which
         // is the physical horizontal axis of a vertical parent.
         let parent_vertical = super::block_right_to_left(tree, parent).is_some();
         let last_baseline =
             |justify| style.self_baseline_set(&parent_style, justify) == Some(BaselineSet::Last);
+        let mut position = position;
         if last_baseline(!parent_vertical) {
             position.x.align.safety = StaticAlignSafety::Default;
         }
         if last_baseline(parent_vertical) {
             position.y.align.safety = StaticAlignSafety::Default;
         }
-    }
-    position
+        position
+    })
 }
