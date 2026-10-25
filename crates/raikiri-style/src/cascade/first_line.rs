@@ -39,6 +39,8 @@ pub(crate) fn first_line_property_applies(key: PropertyKey) -> bool {
             | BackgroundOrigin
             | BackgroundSize
             | BackgroundPosition
+            | BackgroundPositionX
+            | BackgroundPositionY
             | LineHeight
             | VerticalAlign
             | RubyPosition

@@ -678,6 +678,33 @@ pub fn parse_bg_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     Some(normalize_css_position(position))
 }
 
+/// One layer of `background-position-x` / `-y` (CSS Backgrounds 4 §2.6): the
+/// edge-and-offset group of the axis (`center | [ <start> | <end> ]
+/// <length-percentage>?`, see [`parse_position_horizontal_group`]) or a bare
+/// `<length-percentage>`, which measures from the start edge. `group` reads the
+/// keyword form of the axis; it consumes nothing when no keyword of the axis
+/// starts the value.
+fn parse_bg_position_axis(
+    input: &mut Parser<'_, '_>,
+    group: fn(&mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)>,
+) -> Option<CssPositionOffset> {
+    let offset = match group(input) {
+        Some((offset, _)) => offset,
+        None => input.try_parse(parse_start_position_offset_res).ok()?,
+    };
+    Some(normalize_css_position_offset(offset))
+}
+
+/// One layer of `background-position-x`.
+pub(crate) fn parse_bg_position_x(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    parse_bg_position_axis(input, parse_position_horizontal_group)
+}
+
+/// One layer of `background-position-y`.
+pub(crate) fn parse_bg_position_y(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    parse_bg_position_axis(input, parse_position_vertical_group)
+}
+
 fn parse_position_branch3_strict_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<CssPosition, ParseError<'i, ()>> {

@@ -366,9 +366,14 @@ pub(super) const CASES: &[(&str, bool, &[&str])] = &[
         &["content-box", "border-box", "border-box, padding-box"],
     ),
     (
-        "background-position",
+        "background-position-x",
         false,
-        &["10px 20px", "30% 40%", "right 5px bottom 6px, center"],
+        &["10px", "30%", "right 5px, center"],
+    ),
+    (
+        "background-position-y",
+        false,
+        &["20px", "40%", "bottom 6px, center"],
     ),
     (
         "background-size",
@@ -453,6 +458,11 @@ pub(super) const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         &["hidden scroll", "scroll", "clip hidden"],
     ),
     ("columns", false, &["30px 3", "50px 2", "auto 4"]),
+    (
+        "background-position",
+        false,
+        &["10px 20px", "30% 40%", "right 5px bottom 6px, center"],
+    ),
     (
         "background",
         false,

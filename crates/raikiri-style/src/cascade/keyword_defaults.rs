@@ -24,10 +24,10 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedColumnWidth, lift_background_size, lift_border_spacing, lift_box_shadow,
-    lift_css_position, lift_flex_basis, lift_grid_auto_track_list, lift_grid_template_tracks,
-    lift_length_percentage_or_normal, lift_letter_spacing, lift_line_height, lift_tab_size,
-    lift_text_decoration_inset, lift_text_decoration_thickness, lift_text_indent,
-    lift_text_underline_offset, lift_transform, lift_word_spacing,
+    lift_css_position, lift_css_position_offset, lift_flex_basis, lift_grid_auto_track_list,
+    lift_grid_template_tracks, lift_length_percentage_or_normal, lift_letter_spacing,
+    lift_line_height, lift_tab_size, lift_text_decoration_inset, lift_text_decoration_thickness,
+    lift_text_indent, lift_text_underline_offset, lift_transform, lift_word_spacing,
 };
 
 static INITIAL: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
@@ -282,9 +282,12 @@ keyword_defaults! {
     };
     BackgroundClip, false => PropertyValue::BackgroundClip(layers(source, |layer| layer.clip));
     BackgroundOrigin, false => PropertyValue::BackgroundOrigin(layers(source, |layer| layer.origin));
-    BackgroundPosition, false => {
-        PropertyValue::BackgroundPosition(layers(source, |layer| lift_css_position(layer.position)))
-    };
+    BackgroundPositionX, false => PropertyValue::BackgroundPositionX(layers(source, |layer| {
+        lift_css_position_offset(layer.position.horizontal)
+    }));
+    BackgroundPositionY, false => PropertyValue::BackgroundPositionY(layers(source, |layer| {
+        lift_css_position_offset(layer.position.vertical)
+    }));
     BackgroundSize, false => {
         PropertyValue::BackgroundSize(layers(source, |layer| lift_background_size(layer.size)))
     };

@@ -65,13 +65,14 @@ use crate::property::{
     resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
-    ComputedBoxShadowItem, ComputedLength, ComputedLengthPercentageOrAuto, ComputedLineHeight,
-    ComputedTextIndent, NormalLineHeight, ResolveContext, empty_computed_box_shadow_list,
-    empty_computed_text_shadow_list, lift_border_spacing, lift_font_size, lift_letter_spacing,
-    lift_line_height, lift_tab_size, lift_text_indent, lift_text_underline_offset,
-    lift_word_spacing, resolve_background_image, resolve_background_size, resolve_border_radius,
-    resolve_border_spacing, resolve_border_with_width_provenance, resolve_box_shadow_item,
-    resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
+    ComputedBoxShadowItem, ComputedCssPosition, ComputedLength, ComputedLengthPercentageOrAuto,
+    ComputedLineHeight, ComputedTextIndent, NormalLineHeight, ResolveContext,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
+    lift_font_size, lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent,
+    lift_text_underline_offset, lift_word_spacing, resolve_background_image,
+    resolve_background_size, resolve_border_radius, resolve_border_spacing,
+    resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_column_width,
+    resolve_css_position, resolve_css_position_offset, resolve_flex_basis, resolve_font_size,
     resolve_font_size_calc, resolve_grid_auto_track_list, resolve_grid_template_tracks,
     resolve_length, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
@@ -636,9 +637,12 @@ pub struct SpecifiedValues {
     /// `auto` layer. Phase 3 absolutizes `<length-percentage>` on each axis,
     /// as for `width` / `height`.
     pub background_size: Option<Arc<[BackgroundSize]>>,
-    /// **Specified** `background-position` list; `None` is the initial single
-    /// `0% 0%` layer. Phase 3 absolutizes `<length-percentage>` in each offset.
-    pub background_position: Option<Arc<[CssPosition]>>,
+    /// **Specified** `background-position-x` list; `None` is the initial single
+    /// `0%` layer. Phase 3 absolutizes `<length-percentage>` in each offset.
+    pub background_position_x: Option<Arc<[CssPositionOffset]>>,
+    /// **Specified** `background-position-y` list; the vertical counterpart
+    /// of `background_position_x`.
+    pub background_position_y: Option<Arc<[CssPositionOffset]>>,
     /// Specified `background-image` list, whose length is the number of
     /// background layers; `None` is the initial single `none` layer. `None`
     /// and `Url(String)` items are computed-equivalent. Phase 3 absolutizes
@@ -1159,7 +1163,8 @@ impl SpecifiedValues {
             background_clip: None,
             background_origin: None,
             background_size: None,
-            background_position: None,
+            background_position_x: None,
+            background_position_y: None,
             background_image: None,
             border_image_source: BackgroundImage::None,
             border_image_slice: BorderImageSlice::INITIAL,
@@ -1536,7 +1541,8 @@ impl SpecifiedValues {
             background_clip: None,
             background_origin: None,
             background_size: None,
-            background_position: None,
+            background_position_x: None,
+            background_position_y: None,
             background_image: None,
             border_image_source: BackgroundImage::None,
             border_image_slice: BorderImageSlice::INITIAL,
@@ -2494,7 +2500,8 @@ impl SpecifiedValues {
             background_layers: computed_background_layers(
                 &BackgroundLists {
                     image: self.background_image.as_deref(),
-                    position: self.background_position.as_deref(),
+                    position_x: self.background_position_x.as_deref(),
+                    position_y: self.background_position_y.as_deref(),
                     size: self.background_size.as_deref(),
                     repeat: self.background_repeat.as_deref(),
                     attachment: self.background_attachment.as_deref(),
@@ -3014,7 +3021,8 @@ fn resolve_auto_tracks(
 /// initial single-layer list.
 pub(crate) struct BackgroundLists<'a> {
     pub(crate) image: Option<&'a [BackgroundImage]>,
-    pub(crate) position: Option<&'a [CssPosition]>,
+    pub(crate) position_x: Option<&'a [CssPositionOffset]>,
+    pub(crate) position_y: Option<&'a [CssPositionOffset]>,
     pub(crate) size: Option<&'a [BackgroundSize]>,
     pub(crate) repeat: Option<&'a [BackgroundRepeat]>,
     pub(crate) attachment: Option<&'a [BackgroundAttachment]>,
@@ -3056,7 +3064,8 @@ pub(crate) fn computed_background_layers(
     ctx: &ResolveContext,
 ) -> Arc<[ComputedBackgroundLayer]> {
     if lists.image.is_none()
-        && lists.position.is_none()
+        && lists.position_x.is_none()
+        && lists.position_y.is_none()
         && lists.size.is_none()
         && lists.repeat.is_none()
         && lists.attachment.is_none()
@@ -3082,12 +3091,20 @@ pub(crate) fn computed_background_layers(
                 own_line_height,
                 ctx,
             );
-            layer.position = resolve_css_position(
-                item(lists.position, index, initial.position),
-                font_size,
-                own_line_height,
-                ctx,
-            );
+            layer.position = ComputedCssPosition {
+                horizontal: resolve_css_position_offset(
+                    item(lists.position_x, index, initial.position.horizontal),
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+                vertical: resolve_css_position_offset(
+                    item(lists.position_y, index, initial.position.vertical),
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+            };
             layer.size = resolve_background_size(
                 item(lists.size, index, initial.size),
                 font_size,

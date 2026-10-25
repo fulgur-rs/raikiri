@@ -5090,6 +5090,14 @@ property_key_samples! {
         horizontal: CssPositionOffset::Start(Length::Em(1.0)),
         vertical: CssPositionOffset::End(Length::Rem(2.0)),
     }])),
+    // The two axis longhands of `background-position`, with the same
+    // payloads as the shorthand sample above.
+    BackgroundPositionX => PropertyValue::BackgroundPositionX(Arc::from([
+        CssPositionOffset::Start(Length::Em(1.0)),
+    ])),
+    BackgroundPositionY => PropertyValue::BackgroundPositionY(Arc::from([
+        CssPositionOffset::End(Length::Rem(2.0)),
+    ])),
     // CSS Backgrounds and Borders 3 §2.3 — `Url` is the non-initial
     // worst case among the two payloads with no length component
     // (`None` is the spec initial value, same reasoning as
@@ -5696,6 +5704,8 @@ property_value_variant_registry! {
     BackgroundOrigin,
     BackgroundSize,
     BackgroundPosition,
+    BackgroundPositionX,
+    BackgroundPositionY,
     BackgroundImage,
     Background,
     ObjectFit,
@@ -6042,6 +6052,16 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
         f: impl Fn(T) -> Option<&'static str>,
     ) -> Option<&'static str> {
         f(p.start).or_else(|| f(p.end))
+    }
+    /// One offset of a `<position>`: `Start` and `End` both wrap a plain
+    /// `Length` (the edge itself carries no length).
+    fn position_offset_residue(offset: CssPositionOffset) -> Option<&'static str> {
+        match offset {
+            CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+            CssPositionOffset::Calc(_) => None,
+            CssPositionOffset::Compared(_) => None,
+            CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
+        }
     }
     /// `<track-breadth>` — `min-content`/`max-content`/`auto`/`<flex>`
     /// Keywords never leave residue (equivalent to `<number>`; no
@@ -6612,19 +6632,16 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `background-position` stores a `<length-percentage>` per
             // edge/offset (`CssPositionOffset::Start`/`End` both wrap a
             // plain `Length` — the edge itself carries no length).
-            PropertyValue::BackgroundPosition(pos) => {
-                fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
-                    match o {
-                        CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
-                        CssPositionOffset::Calc(_) => None,
-                        CssPositionOffset::Compared(_) => None,
-                        CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
-                    }
-                }
-                pos.iter().find_map(|pos| {
-                    offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
-                })
-            }
+            PropertyValue::BackgroundPosition(pos) => pos.iter().find_map(|pos| {
+                position_offset_residue(pos.horizontal)
+                    .or_else(|| position_offset_residue(pos.vertical))
+            }),
+            // The axis longhands of `background-position` hold one offset
+            // per layer.
+            PropertyValue::BackgroundPositionX(offsets)
+            | PropertyValue::BackgroundPositionY(offsets) => offsets
+                .iter()
+                .find_map(|offset| position_offset_residue(*offset)),
             // `background` shorthand fall-through — `position`/`size`/`image`
             // all carry `<length-percentage>` (same shape as `Flex`/`Gap`
             // above, but now including the gradient payload's font-relative
@@ -8354,15 +8371,12 @@ fn page_mixed_calc_radius_size_and_position_keep_their_percentage() {
             height: LengthOrAuto::Auto,
         }
     );
-    let Some(PropertyValue::BackgroundPosition(positions)) =
-        declarations.get(&PropertyKey::BackgroundPosition)
+    let Some(PropertyValue::BackgroundPositionX(offsets)) =
+        declarations.get(&PropertyKey::BackgroundPositionX)
     else {
-        panic!("background-position")
+        panic!("background-position-x")
     };
-    assert_eq!(
-        positions[0].horizontal,
-        CssPositionOffset::Calc(calc(90.0, -20.0))
-    );
+    assert_eq!(offsets[0], CssPositionOffset::Calc(calc(90.0, -20.0)));
 }
 
 #[test]

@@ -14,9 +14,9 @@ use crate::cascade::rollback::{Rollback, rollback_kind};
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::logical::LogicalSide;
 use crate::property::{
-    BackgroundShorthand, Border, BorderColor, BorderImageShorthand, BorderStyle, CssWideKeyword,
-    CustomProperty, DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontShorthand, FontShorthandSize,
+    BackgroundShorthand, Border, BorderColor, BorderImageShorthand, BorderStyle, CssPosition,
+    CssWideKeyword, CustomProperty, DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontShorthand, FontShorthandSize,
     FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
     FontVariantPosition, FontVariationSettings, GapShorthand, GridAreaShorthand, GridAutoFlowValue,
     GridLineShorthand, GridShorthand, Length, LengthOrAuto, LengthPercentageOrCalc, Outline,
@@ -340,12 +340,14 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         PlaceSelf => &[AlignSelf, JustifySelf],
         // `BackgroundShorthand`'s own field order. Each key lands in its own
         // `SpecifiedValues` field, so the order does not affect the result.
+        BackgroundPosition => &[BackgroundPositionX, BackgroundPositionY],
         Background => &[
             BackgroundColor,
             BackgroundImage,
             BackgroundRepeat,
             BackgroundAttachment,
-            BackgroundPosition,
+            BackgroundPositionX,
+            BackgroundPositionY,
             BackgroundSize,
             BackgroundClip,
             BackgroundOrigin,
@@ -474,7 +476,8 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | BackgroundClip
         | BackgroundOrigin
         | BackgroundSize
-        | BackgroundPosition
+        | BackgroundPositionX
+        | BackgroundPositionY
         | BackgroundImage
         | ObjectFit
         | ObjectPosition
@@ -1020,17 +1023,18 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::WritingMode(_)
         | PropertyValue::RubyPosition(_)
         // background-repeat / background-attachment / background-clip /
-        // background-origin / background-size / background-position /
-        // background-image (CSS Backgrounds and Borders 3 §2.3-§2.9) —
-        // Likewise have no expansion longhands (the `background` shorthand has
-        // a separate `PropertyValue::Background` variant, expanded by the
-        // `expand_background` arm below).
+        // background-origin / background-size / background-position-x /
+        // background-position-y / background-image (CSS Backgrounds and
+        // Borders 3 §2.3-§2.9) — Likewise have no expansion longhands (the
+        // `background` shorthand has a separate `PropertyValue::Background`
+        // variant, expanded by the `expand_background` arm below).
         | PropertyValue::BackgroundRepeat(_)
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
         | PropertyValue::BackgroundOrigin(_)
         | PropertyValue::BackgroundSize(_)
-        | PropertyValue::BackgroundPosition(_)
+        | PropertyValue::BackgroundPositionX(_)
+        | PropertyValue::BackgroundPositionY(_)
         | PropertyValue::BackgroundImage(_)
         // object-fit / object-position (CSS Images Module Level 3 §5.1/§5.2)
         // / opacity (CSS Color 4 §3.3): likewise have no expansion longhands
@@ -1113,6 +1117,9 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::GridTemplate(ref t) => expand_grid_template(t, push_longhand),
         PropertyValue::Grid(ref g) => expand_grid(g, push_longhand),
         PropertyValue::PlaceSelf(p) => expand_place_self(p, push_longhand),
+        PropertyValue::BackgroundPosition(ref positions) => {
+            expand_background_position(positions, push_longhand)
+        }
         // `BackgroundShorthand` holds its layers in a boxed slice, which is
         // not `Copy` — same reason `GridLineShorthand`
         // needs `ref` binding here (`GridRow` arm's comment above), not the
@@ -1756,6 +1763,24 @@ pub(crate) fn expand_place_self(p: PlaceSelfShorthand, mut push: impl FnMut(Prop
     push(PropertyValue::JustifySelf(p.justify));
 }
 
+/// Cold helper expanding `background-position` into its two axis longhands,
+/// each holding one offset per layer (CSS Backgrounds 4 §2.6).
+#[inline(never)]
+pub(crate) fn expand_background_position(
+    positions: &[CssPosition],
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::BackgroundPositionX(
+        positions
+            .iter()
+            .map(|position| position.horizontal)
+            .collect(),
+    ));
+    push(PropertyValue::BackgroundPositionY(
+        positions.iter().map(|position| position.vertical).collect(),
+    ));
+}
+
 /// `text-decoration` shorthand (CSS Text Decoration 4 ED §2.6
 /// <https://drafts.csswg.org/css-text-decor-4/#text-decoration-property>) into
 /// four longhands: `text-decoration-line` / `-thickness` / `-style` / `-color`.
@@ -1847,8 +1872,9 @@ pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(Proper
     ));
 }
 
-/// Cold helper expanding `background` into eight longhands (color/image/repeat/
-/// attachment/position/size/clip/origin; see the [`BackgroundShorthand`] docs).
+/// Cold helper expanding `background` into nine longhands (color/image/repeat/
+/// attachment/position-x/position-y/size/clip/origin; see the
+/// [`BackgroundShorthand`] docs).
 /// Each per-layer longhand receives one item per layer, and the color comes
 /// from the final layer.
 #[inline(never)]
@@ -1861,7 +1887,8 @@ pub(crate) fn expand_background(
         PropertyKey::BackgroundImage,
         PropertyKey::BackgroundRepeat,
         PropertyKey::BackgroundAttachment,
-        PropertyKey::BackgroundPosition,
+        PropertyKey::BackgroundPositionX,
+        PropertyKey::BackgroundPositionY,
         PropertyKey::BackgroundSize,
         PropertyKey::BackgroundClip,
         PropertyKey::BackgroundOrigin,

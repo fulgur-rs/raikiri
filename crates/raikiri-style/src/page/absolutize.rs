@@ -6,8 +6,8 @@ use std::sync::Arc;
 use crate::cascade::{ResolvedAgainstInherited, resolve_relative_font_size};
 use crate::property::{
     BackgroundSize, Border, BorderColor, BorderImageOutsetSide, BorderImageWidthSide, BorderRadius,
-    BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, FlexBasisValue,
-    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridShorthand,
+    BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset,
+    FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridShorthand,
     GridTemplateTracks, GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
     LengthPercentageOrCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
     TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
@@ -139,6 +139,16 @@ impl PageLengthBasis<'_> {
     /// applied to each edge/offset via [`resolve_css_position`].
     fn css_position(self, specified: CssPosition) -> CssPosition {
         crate::resolve::lift_css_position(resolve_css_position(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ))
+    }
+    /// One axis of `background-position`, with the same round-trip as
+    /// [`Self::css_position`].
+    fn css_position_offset(self, specified: CssPositionOffset) -> CssPositionOffset {
+        crate::resolve::lift_css_position_offset(crate::resolve::resolve_css_position_offset(
             specified,
             self.font_size,
             self.own_line_height,
@@ -898,6 +908,12 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::BackgroundPosition(v) => {
             PropertyValue::BackgroundPosition(v.iter().map(|p| basis.css_position(*p)).collect())
         }
+        PropertyValue::BackgroundPositionX(v) => PropertyValue::BackgroundPositionX(
+            v.iter().map(|p| basis.css_position_offset(*p)).collect(),
+        ),
+        PropertyValue::BackgroundPositionY(v) => PropertyValue::BackgroundPositionY(
+            v.iter().map(|p| basis.css_position_offset(*p)).collect(),
+        ),
         PropertyValue::Background(mut shorthand) => {
             for layer in shorthand.layers.iter_mut() {
                 layer.image = crate::resolve::resolve_background_image(

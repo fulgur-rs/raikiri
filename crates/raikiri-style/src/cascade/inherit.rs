@@ -18,15 +18,15 @@ use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
 };
 use crate::rule::{
-    expand_background, expand_border, expand_border_bottom, expand_border_bottom_css_wide,
-    expand_border_color, expand_border_css_wide, expand_border_left, expand_border_left_css_wide,
-    expand_border_right, expand_border_right_css_wide, expand_border_style, expand_border_top,
-    expand_border_top_css_wide, expand_border_width, expand_flex, expand_flex_flow, expand_font,
-    expand_gap, expand_grid, expand_grid_column, expand_grid_row, expand_grid_template,
-    expand_inset, expand_inset_block, expand_inset_inline, expand_margin, expand_margin_block,
-    expand_margin_inline, expand_outline, expand_overflow, expand_padding, expand_padding_block,
-    expand_padding_inline, expand_place_content, expand_place_items, expand_place_self,
-    expand_text_decoration,
+    expand_background, expand_background_position, expand_border, expand_border_bottom,
+    expand_border_bottom_css_wide, expand_border_color, expand_border_css_wide, expand_border_left,
+    expand_border_left_css_wide, expand_border_right, expand_border_right_css_wide,
+    expand_border_style, expand_border_top, expand_border_top_css_wide, expand_border_width,
+    expand_flex, expand_flex_flow, expand_font, expand_gap, expand_grid, expand_grid_column,
+    expand_grid_row, expand_grid_template, expand_inset, expand_inset_block, expand_inset_inline,
+    expand_margin, expand_margin_block, expand_margin_inline, expand_outline, expand_overflow,
+    expand_padding, expand_padding_block, expand_padding_inline, expand_place_content,
+    expand_place_items, expand_place_self, expand_text_decoration,
 };
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -3663,6 +3663,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BackgroundOrigin(_)
         | PropertyValue::BackgroundSize(_)
         | PropertyValue::BackgroundPosition(_)
+        | PropertyValue::BackgroundPositionX(_)
+        | PropertyValue::BackgroundPositionY(_)
         // background-image (CSS Backgrounds and Borders 3 §2.3) — `None` /
         // `Url(String)` items are opaque to font-size/line-height
         // resolution, same as the keyword-only siblings just above.
@@ -4305,7 +4307,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BackgroundClip(v) => target.background_clip = Some(v),
         PropertyValue::BackgroundOrigin(v) => target.background_origin = Some(v),
         PropertyValue::BackgroundSize(v) => target.background_size = Some(v),
-        PropertyValue::BackgroundPosition(v) => target.background_position = Some(v),
+        PropertyValue::BackgroundPosition(v) => {
+            expand_background_position(&v, |v| apply_value(v, target))
+        }
+        PropertyValue::BackgroundPositionX(v) => target.background_position_x = Some(v),
+        PropertyValue::BackgroundPositionY(v) => target.background_position_y = Some(v),
         PropertyValue::BackgroundImage(v) => target.background_image = Some(v),
         PropertyValue::Background(shorthand) => {
             expand_background(&shorthand, |v| apply_value(v, target))
