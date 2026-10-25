@@ -32,6 +32,16 @@ The format changes with the toolchain; `KNOWN_FORMAT_VERSIONS` names the ones
 this walker was written against, and another one stops the run (exit 2) until
 the walker has been checked against it.
 
+## Third-party crates
+
+The same walk, limited to what a published crate documents (hidden items and
+the blanket impls of other crates' traits do not count), collects the crates
+outside the workspace that the API names. Each published crate has an entry in
+`THIRD_PARTY_ALLOWED` with the crates it may name and why; a crate that is not
+listed fails the lint, so that putting another crate's type into a signature is
+a decision someone made. An entry that matches nothing any more is only a note.
+The types of the standard library are not listed.
+
 ## The view crate
 
 `raikiri-layout-style` (`VIEW_CRATES`) implements Taffy's style traits over
@@ -44,12 +54,25 @@ the JSON format cannot turn the check into a silent pass.
 
     python3 public_api_lint.py --repo-root PATH [-v]
     python3 public_api_lint.py --repo-root PATH --dump CRATE
+    python3 public_api_lint.py --repo-root PATH --surface CRATE [--with-hidden]
+    python3 public_api_lint.py --repo-root PATH --usage SRC_DIR
+    python3 public_api_lint.py --repo-root PATH --exhaustive CRATE
 
 `--dump CRATE` prints the public API of one crate, one line per item with every
 id replaced by the path it names, which is the same text for two builds of the
 same API. Dump a base checkout and a head checkout and `diff` them to check
 that a change left a crate's public signatures alone (raikiri-html is the
 surface fulgur depends on).
+
+`--surface CRATE` prints the names the crate publishes (types, functions,
+constants, modules; no methods) with the item each re-export comes from, and
+`--usage SRC_DIR` reports which of those names, for every checked crate, the
+Rust sources under SRC_DIR reach. See `public_api_surface.py` for what a name
+is and how a use is counted. `docs/public-api.md` explains what the lists are
+for.
+
+`--exhaustive CRATE` prints the types the crate declares that lack
+`#[non_exhaustive]` and that a user can match or build completely.
 
 `--json-dir DIR` reads the JSON files from DIR (named `<crate with _>.json`)
 instead of running cargo.
@@ -68,9 +91,11 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+import public_api_surface as surface
 
 # Crates whose public API may not name a Taffy type.
 CHECKED_CRATES = (
@@ -83,6 +108,63 @@ CHECKED_CRATES = (
 )
 # Crates that name Taffy types by design; scanned only to prove the walker sees.
 VIEW_CRATES = ("raikiri-layout-style",)
+# The crates whose names were reserved on crates.io for the first publication;
+# `--surface` and `--usage` cover them.
+PUBLISHED_CRATES = (
+    "raikiri-traits",
+    "raikiri-style",
+    "raikiri-layout-geometry",
+    "raikiri-layout-style",
+    "raikiri-svg",
+    "raikiri-net",
+    "raikiri-dom",
+    "raikiri-html",
+)
+ALL_CRATES = tuple(dict.fromkeys((*CHECKED_CRATES, *VIEW_CRATES, *PUBLISHED_CRATES)))
+
+# The crates outside the workspace whose types the visible API of a published
+# crate may name, each with why. A type in a signature, a field, a bound or an
+# impl ties every consumer to that crate's version: a new major version of it
+# is a breaking release of ours. The lint fails when the API names a crate that
+# is not listed, so that adding one is a decision with a reason, and prints a
+# note for an entry that no longer matches anything. `core`, `alloc` and `std`
+# are not listed.
+THIRD_PARTY_ALLOWED: dict[str, dict[str, str]] = {
+    "raikiri-traits": {
+        "bytes": "fetched resource bodies are `Bytes`",
+        "smol_str": "short strings in the DOM and in options are `SmolStr`",
+        "url": "resource locations are `Url`",
+    },
+    "raikiri-style": {
+        "cssparser": "the parsers and `ToCss` of the CSS value types are cssparser's",
+        "precomputed_hash": "`PrecomputedHash` is required by selectors' string types",
+        "selectors": "the selector impl types implement selectors' traits",
+        "smol_str": "identifiers and strings in computed values are `SmolStr`",
+        "triomphe": "shared payloads of computed values are triomphe `Arc`s",
+    },
+    "raikiri-layout-geometry": {},
+    "raikiri-layout-style": {
+        "smol_str": "grid line names are `SmolStr`",
+        "taffy": "the view crate implements Taffy's style traits (by design, see VIEW_CRATES)",
+    },
+    "raikiri-svg": {},
+    "raikiri-net": {"url": "providers take and return `Url`"},
+    "raikiri-dom": {
+        "bitflags": "`NodeFlags` is a bitflags type, whose iterators are bitflags'",
+        "shodo": "the inline engine's `FontCollection` and `FontError` are shodo's",
+        "smol_str": "names and strings of the document are `SmolStr`",
+        "url": "resource locations are `Url`",
+    },
+    "raikiri-html": {
+        "markup5ever": "`RaikiriTreeSink` implements html5ever's `TreeSink`",
+        "shodo": "`FontCollection` is shodo's, re-exported",
+        "tendril": "`TreeSink::new_text` and friends take `StrTendril`",
+        "url": "resource locations are `Url`",
+    },
+}
+STD_CRATES = frozenset({"core", "alloc", "std"})
+# The published crates as they appear in a rustdoc path.
+PUBLISHED_CRATE_IDENTIFIERS = frozenset(crate.replace("-", "_") for crate in PUBLISHED_CRATES)
 # The crate that must not appear in the signature of a checked item.
 FORBIDDEN_CRATE = "taffy"
 # `format_version` of the rustdoc JSON of the pinned toolchain.
@@ -299,16 +381,45 @@ def find_leaks(crate: str, doc: dict) -> list[Leak]:
     return sorted(leaks, key=lambda leak: (leak.path, leak.kind, leak.names))
 
 
+def is_third_party(crate: str) -> bool:
+    """Whether a consumer who sees `crate` in a signature depends on a crate outside the published set."""
+    return crate not in STD_CRATES and crate not in PUBLISHED_CRATE_IDENTIFIERS
+
+
+def third_party_crates(doc: dict) -> dict[str, list[str]]:
+    """The crates outside the published set that the visible API names, with example items.
+
+    A crate is named by a signature, a field, a bound or a trait impl of a
+    visible item, and by a re-export (`pub use url::Url;`), which publishes the
+    type whether or not another item mentions it. A glob re-export of a module
+    of another crate counts as naming that crate.
+    """
+    external = {int(key): crate["name"] for key, crate in doc["external_crates"].items()}
+    found: dict[str, set[str]] = {}
+    for _, item in surface.visible_items(doc):
+        for target in surface.referenced_ids(item["inner"]):
+            summary = doc["paths"].get(str(target))
+            if summary is None or summary["crate_id"] == 0:
+                continue
+            crate = external.get(summary["crate_id"])
+            if crate is not None and is_third_party(crate):
+                found.setdefault(crate, set()).add("::".join(summary["path"]))
+    own = doc["index"][str(doc["root"])]["name"]
+    for name in surface.names(doc):
+        if name.hidden or name.item_id is not None or not name.canonical:
+            continue
+        crate = name.canonical.split("::", 1)[0]
+        if crate != own and is_third_party(crate):
+            found.setdefault(crate, set()).add(name.canonical)
+    return {crate: sorted(paths) for crate, paths in sorted(found.items())}
+
+
 def api_lines(doc: dict) -> list[str]:
     """One line per public item: its path, its kind and its canonical signature."""
     names = Names(doc)
     lines = []
     for key, item in local_items(doc):
-        hidden = any(
-            isinstance(attr, dict) and "doc(hidden)" in attr.get("other", "")
-            for attr in item.get("attrs", [])
-        )
-        flags = " hidden" if hidden else ""
+        flags = " hidden" if surface.is_hidden(item) else ""
         lines.append(
             f"{names.path_of(key)} [{item_kind(item)}{flags}] {canonical(names, item['inner'])}"
         )
@@ -354,10 +465,18 @@ def generate_json(repo_root: Path, crates: Iterable[str]) -> Path:
 
 
 def run_check(json_dir: Path, verbose: bool) -> int:
+    docs: dict[str, dict] = {}
+
+    def doc_of(crate: str) -> dict:
+        # The big files (raikiri-style, raikiri-dom) are read once for both checks.
+        if crate not in docs:
+            docs[crate] = load_doc(json_dir / json_file_name(crate))
+        return docs[crate]
+
     leaks: list[Leak] = []
     counts: dict[str, tuple[int, int]] = {}
     for crate in CHECKED_CRATES:
-        doc = load_doc(json_dir / json_file_name(crate))
+        doc = doc_of(crate)
         published = sum(1 for _ in local_items(doc))
         if published == 0:
             raise ToolError(f"{crate}: the JSON lists no public item; the walker cannot see the API")
@@ -366,7 +485,7 @@ def run_check(json_dir: Path, verbose: bool) -> int:
         counts[crate] = (published, len(found))
     view_counts: dict[str, int] = {}
     for crate in VIEW_CRATES:
-        doc = load_doc(json_dir / json_file_name(crate))
+        doc = doc_of(crate)
         view_counts[crate] = len(find_leaks(crate, doc))
         if view_counts[crate] == 0:
             raise ToolError(
@@ -374,21 +493,61 @@ def run_check(json_dir: Path, verbose: bool) -> int:
                 "the rustdoc JSON format has probably changed in a way it cannot read"
             )
 
-    if leaks:
+    unlisted, stale = third_party_report(doc_of)
+
+    if leaks or unlisted:
         print("public-api-lint: FAIL")
-        print("  these public items name a Taffy type; consumers would have to depend on Taffy:")
-        for leak in leaks:
-            print(f"  {leak.crate}: {leak.path} ({leak.kind}): {', '.join(leak.names)}")
-        print("  Use an owned type (raikiri-layout-geometry, or raikiri-dom's own), or make the item private.")
+        if leaks:
+            print("  these public items name a Taffy type; consumers would have to depend on Taffy:")
+            for leak in leaks:
+                print(f"  {leak.crate}: {leak.path} ({leak.kind}): {', '.join(leak.names)}")
+            print("  Use an owned type (raikiri-layout-geometry, or raikiri-dom's own), or make the item private.")
+        if unlisted:
+            print("  these crates publish an API that names types of a crate that THIRD_PARTY_ALLOWED does not list;")
+            print("  a consumer would depend on that crate's version:")
+            for crate, others in unlisted.items():
+                for other, examples in others.items():
+                    shown = ", ".join(examples[:3]) + (", ..." if len(examples) > 3 else "")
+                    print(f"  {crate}: {other} ({shown})")
+            print("  Hide or wrap the type, or add the crate to THIRD_PARTY_ALLOWED in scripts/lib/public_api_lint.py")
+            print("  with the reason a consumer should depend on it (see docs/public-api.md).")
         return 1
 
-    print("public-api-lint: PASS (no public item of the checked crates names a Taffy type)")
+    print(
+        "public-api-lint: PASS (no public item of the checked crates names a Taffy type; "
+        "the published crates name only the third-party crates listed in THIRD_PARTY_ALLOWED)"
+    )
     if verbose:
         for crate, (published, _) in counts.items():
             print(f"  {crate}: {published} public items, none names Taffy")
         for crate, count in view_counts.items():
             print(f"  {crate}: {count} items name Taffy (view crate, allowed)")
+    for crate, others in stale.items():
+        print(f"  note: {crate} no longer names a type of {', '.join(others)}; drop it from THIRD_PARTY_ALLOWED")
     return 0
+
+
+def third_party_report(
+    load: Callable[[str], dict],
+) -> tuple[dict[str, dict[str, list[str]]], dict[str, list[str]]]:
+    """(crates named without being listed, listed crates no longer named), per published crate."""
+    unlisted: dict[str, dict[str, list[str]]] = {}
+    stale: dict[str, list[str]] = {}
+    for crate in PUBLISHED_CRATES:
+        named = third_party_crates(load(crate))
+        if crate in VIEW_CRATES and FORBIDDEN_CRATE not in named:
+            raise ToolError(
+                f"{crate} is the view crate and names Taffy types, yet the third-party scan found none; "
+                "the rustdoc JSON format has probably changed in a way it cannot read"
+            )
+        allowed = THIRD_PARTY_ALLOWED[crate]
+        extra = {other: examples for other, examples in named.items() if other not in allowed}
+        if extra:
+            unlisted[crate] = extra
+        gone = sorted(other for other in allowed if other not in named)
+        if gone:
+            stale[crate] = gone
+    return unlisted, stale
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -396,15 +555,48 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--json-dir", type=Path, help="read the rustdoc JSON from here instead of running cargo")
     parser.add_argument("--dump", metavar="CRATE", help="print the public API of one crate instead of checking")
+    parser.add_argument("--surface", metavar="CRATE", help="print the names one crate publishes instead of checking")
+    parser.add_argument("--with-hidden", action="store_true", help="with --surface: include #[doc(hidden)] names")
+    parser.add_argument(
+        "--exhaustive",
+        metavar="CRATE",
+        help="print the types one crate declares without #[non_exhaustive] instead of checking",
+    )
+    parser.add_argument(
+        "--usage",
+        metavar="SRC_DIR",
+        type=Path,
+        help="report which published names the Rust sources under SRC_DIR reach instead of checking",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     try:
-        crates = (*CHECKED_CRATES, *VIEW_CRATES)
-        if args.dump is not None and args.dump not in crates:
-            raise ToolError(f"--dump takes one of: {', '.join(crates)}")
+        crates = ALL_CRATES
+        for option, value in (("--dump", args.dump), ("--surface", args.surface), ("--exhaustive", args.exhaustive)):
+            if value is not None and value not in crates:
+                raise ToolError(f"{option} takes one of: {', '.join(crates)}")
         json_dir = args.json_dir or generate_json(args.repo_root, crates)
         if args.dump is not None:
             sys.stdout.write("\n".join(api_lines(load_doc(json_dir / json_file_name(args.dump)))) + "\n")
+            return 0
+        if args.surface is not None:
+            listed = surface.names(load_doc(json_dir / json_file_name(args.surface)))
+            sys.stdout.write(surface.format_names(listed, with_hidden=args.with_hidden))
+            return 0
+        if args.exhaustive is not None:
+            doc = load_doc(json_dir / json_file_name(args.exhaustive))
+            sys.stdout.write(surface.format_exhaustive(surface.exhaustive_types(doc)))
+            return 0
+        if args.usage is not None:
+            if not args.usage.is_dir():
+                raise ToolError(f"--usage takes a directory of Rust sources, not {args.usage}")
+            surfaces = {
+                crate.replace("-", "_"): {
+                    name.path: name for name in surface.names(load_doc(json_dir / json_file_name(crate)))
+                }
+                for crate in PUBLISHED_CRATES
+            }
+            sys.stdout.write(surface.format_usage(surface.scan_usage(args.usage, surfaces), surfaces))
             return 0
         return run_check(json_dir, args.verbose)
     except ToolError as error:

@@ -159,7 +159,8 @@ jobs:
         # Same command as scripts/gate.sh. Builds the rustdoc JSON of the
         # workspace (only rustdoc is bootstrapped, the dependency build is the
         # one of the step above) and fails when a public item of a
-        # consumer-facing crate names a Taffy type.
+        # consumer-facing crate names a Taffy type, or a published crate names
+        # a type of a crate it is not allowed to.
         run: scripts/public-api-lint.sh
 
       # raikiri-net's `http-ureq` feature (UreqHttpProvider) is off by default;
