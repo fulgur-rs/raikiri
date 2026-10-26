@@ -997,33 +997,28 @@ fn compute_table_layout_checked(
             .flatten()
             .reduce(f32_max_compat)
         {
-            // The rows without an authored height take the extra, which keeps
-            // the others as they are (see `distribute_extra_to_rows`).
+            // The row groups share the extra first and the rows without an
+            // authored height take their group's share, which keeps the
+            // others as they are (see `distribute_extra_to_groups`).
             let authored = authored_height_rows(doc, &grid);
             // The percentages of rows resolve only in a table whose `height`
             // or `min-height` is authored: a height imposed from outside, which
             // may come from fragmentation, does not make it definite. They are
             // also left alone in vertical writing modes, which this pass does
-            // not adjust, and when the rows come from several row groups, whose
-            // heights Chromium settles before those of the rows in them.
-            let (percents, percent_base) = if !vertical_writing
-                && (specified_height.is_some() || min_h_outer.is_some())
-                && rows_form_one_section(doc, &grid)
-            {
-                // A percentage of the rows' height is that of their group,
-                // which holds the spacing between them but not the spacing at
-                // the table's edges.
-                let base = target + spacing.height - 2.0 * border_spacing.1;
-                (percent_height_rows(doc, &grid), f32_max_compat(base, 0.0))
-            } else {
-                (vec![None; grid.rows.len()], 0.0)
-            };
-            distribute_extra_to_rows(
+            // not adjust.
+            let percents =
+                if !vertical_writing && (specified_height.is_some() || min_h_outer.is_some()) {
+                    percent_height_rows(doc, &grid)
+                } else {
+                    vec![None; grid.rows.len()]
+                };
+            distribute_extra_to_groups(
                 &mut row_heights,
                 &hidden_rows,
                 &authored,
                 &percents,
-                percent_base,
+                &row_groups(doc, table_idx, &grid),
+                border_spacing.1,
                 target,
             );
         }
@@ -2857,8 +2852,78 @@ fn distribute_extra(sizes: &mut [f32], hidden: Option<&[bool]>, target: f32) {
     }
 }
 
+/// A run of the table's rows that sit in one box: a row group, or the rows
+/// that hang directly under the table.
+struct RowGroup {
+    rows: std::ops::Range<usize>,
+    /// The first header group of the table, on top, or its first footer group,
+    /// at the bottom: it keeps its height while a body group can take the
+    /// extra.
+    fixed: bool,
+}
+
 /// Grow the row heights `sizes` until they sum to `target`, the way browsers
 /// share a table's extra height (CSS 2.1 17.5.3 leaves it to the user agent):
+/// the row groups share it first, in proportion to their heights (the rows and
+/// the spacing between them) or equally when none has any, and each group
+/// shares what it got among its rows as [`distribute_extra_to_rows`] does. The
+/// first header group and the first footer group take no part while another
+/// group can, since they keep the height of their rows.
+///
+/// A group's percentage rows resolve against that group's height. Rows in
+/// `hidden` take no part, and a group with none left is left out.
+fn distribute_extra_to_groups(
+    sizes: &mut [f32],
+    hidden: &[bool],
+    authored: &[bool],
+    percents: &[Option<f32>],
+    groups: &[RowGroup],
+    row_gap: f32,
+    target: f32,
+) {
+    let extra = target - sizes.iter().sum::<f32>();
+    if extra <= 0.0 {
+        return;
+    }
+    // Each group with a row to show, with the spacing between those rows,
+    // which belongs to its height.
+    let shown: Vec<(&RowGroup, f32)> = groups
+        .iter()
+        .filter_map(|group| {
+            let rows = group.rows.clone().filter(|&row| !hidden[row]).count();
+            (rows > 0).then(|| (group, (rows - 1) as f32 * row_gap))
+        })
+        .collect();
+    let any_open = shown.iter().any(|(group, _)| !group.fixed);
+    let growing: Vec<(&RowGroup, f32, f32)> = shown
+        .into_iter()
+        .filter(|(group, _)| !any_open || !group.fixed)
+        .map(|(group, spacing)| {
+            let height = sizes[group.rows.clone()].iter().sum::<f32>() + spacing;
+            (group, spacing, height)
+        })
+        .collect();
+    let total: f32 = growing.iter().map(|&(_, _, height)| height).sum();
+    for &(group, spacing, height) in &growing {
+        let share = if total > 0.0 {
+            extra * (height / total)
+        } else {
+            extra / growing.len() as f32
+        };
+        let rows = group.rows.clone();
+        let group_target = sizes[rows.clone()].iter().sum::<f32>() + share;
+        distribute_extra_to_rows(
+            &mut sizes[rows.clone()],
+            &hidden[rows.clone()],
+            &authored[rows.clone()],
+            &percents[rows],
+            f32_max_compat(group_target + spacing, 0.0),
+            group_target,
+        );
+    }
+}
+
+/// Grow the row heights `sizes` until they sum to `target`:
 /// 1. The rows with a percentage height (`percents`, fractions of one) grow,
 ///    in order, to that share of `percent_base` while the extra lasts.
 /// 2. The rows with neither a percentage nor an authored height (`authored`)
@@ -2970,13 +3035,43 @@ fn percent_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<Option<
     )
 }
 
-/// Whether the rows all have the same parent: the table's rows then form one
-/// row group, or sit in the table itself. A row of cells with no row around
-/// them is recorded by its first cell, whose parent is the box that holds them.
-fn rows_form_one_section(doc: &LayoutSession<'_>, grid: &TableGrid) -> bool {
-    let mut parents = grid.rows.iter().map(|&row_id| doc.nodes[row_id].parent);
-    let first = parents.next();
-    parents.all(|parent| Some(parent) == first)
+/// The row groups of `grid`: the runs of rows that share the box they sit in,
+/// seen through `display: contents` wrappers. A row of cells with no row around
+/// them is recorded by its first cell, whose box is the one that holds them.
+fn row_groups(doc: &LayoutSession<'_>, table_idx: usize, grid: &TableGrid) -> Vec<RowGroup> {
+    let mut groups: Vec<(Option<usize>, RowGroup)> = Vec::new();
+    for (index, &row_id) in grid.rows.iter().enumerate() {
+        let holder = doc
+            .ancestors(row_id)
+            .find(|&id| doc.nodes[id].display() != DisplayValue::Contents);
+        match groups.last_mut() {
+            Some((last, group)) if *last == holder => group.rows.end = index + 1,
+            _ => groups.push((
+                holder,
+                RowGroup {
+                    rows: index..index + 1,
+                    fixed: false,
+                },
+            )),
+        }
+    }
+    // The first header group and the first footer group among the table's own
+    // children are the ones laid out on top and at the bottom.
+    let first_with = |display: DisplayValue| {
+        doc.nodes[table_idx]
+            .children
+            .iter()
+            .copied()
+            .find(|&child| doc.nodes[child].display() == display)
+    };
+    let sections = [
+        first_with(DisplayValue::TableHeaderGroup),
+        first_with(DisplayValue::TableFooterGroup),
+    ];
+    for (holder, group) in &mut groups {
+        group.fixed = holder.is_some_and(|id| sections.contains(&Some(id)));
+    }
+    groups.into_iter().map(|(_, group)| group).collect()
 }
 
 fn cell_baseline_aligned(align: VerticalAlign) -> bool {
