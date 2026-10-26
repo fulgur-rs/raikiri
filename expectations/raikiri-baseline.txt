@@ -5314,3 +5314,19 @@ css/css-inline/dominant-baseline/dominant-baseline-mixed-writing-modes-002.html
 # The `close-quote` or `no-close-quote` of a `contain: style` element moves the quote depth only inside that element, so the `close-quote` of the element around it still closes the quote it opened (the texts AZZ and AZ); both KEEP in two audit-vacuous-passes runs.
 css/css-contain/quote-scoping-002.html
 css/css-contain/quote-scoping-004.html
+
+# --- a vertical block-size keyword sizes the box by its content (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
+# In a vertical writing mode, `block-size: min-content`, `max-content` or `fit-content` is the physical width, so an absolute box between a left and a right inset takes its content width instead of stretching between the insets; the squares match Chromium pixel for pixel; all KEEP in two audit-vacuous-passes runs.
+css/css-sizing/div-fit-content-orthogonal-auto-margin-left.tentative.html
+css/css-sizing/div-fit-content-orthogonal-auto-margin-right.tentative.html
+css/css-sizing/div-fit-content-orthogonal-auto-margin.tentative.html
+css/css-sizing/div-fit-content-orthogonal-block-size.tentative.html
+css/css-sizing/div-max-content-orthogonal-auto-margin-left.tentative.html
+css/css-sizing/div-max-content-orthogonal-auto-margin-right.tentative.html
+css/css-sizing/div-max-content-orthogonal-auto-margin.tentative.html
+css/css-sizing/div-max-content-orthogonal-block-size.tentative.html
+css/css-sizing/div-min-content-orthogonal-auto-margin-left.tentative.html
+css/css-sizing/div-min-content-orthogonal-auto-margin-right.tentative.html
+css/css-sizing/div-min-content-orthogonal-auto-margin.tentative.html
+css/css-sizing/div-min-content-orthogonal-block-size.tentative.html
+css/css-sizing/div-orthogonal-left-and-non-auto-margin.tentative.html
