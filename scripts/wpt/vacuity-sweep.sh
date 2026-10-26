@@ -6,9 +6,14 @@
 # Usage: scripts/wpt/vacuity-sweep.sh [OUTPUT_DIR]
 #   (default output: target/wpt-vacuity; WPT_SWEEP_JOBS sets --jobs)
 #
+# The ids are audited in chunks, each in a process of its own, so a test that
+# exhausts memory or never finishes costs the sweep that one id instead of the
+# run (see scripts/lib/audit_chunks.py).
+#
 # Writes into OUTPUT_DIR:
 #   candidates.txt  runnable ids absent from every expectations file
-#   audit.tsv       audit-vacuous-passes report, one id<TAB>VERDICT<TAB>detail row
+#   audit.tsv       audit-vacuous-passes report, one id<TAB>VERDICT<TAB>detail row;
+#                   an id whose audit was stopped has the verdict CRASH
 #   keep.txt        ids with the KEEP verdict: candidates for raikiri-baseline.txt
 #   meta.txt        the WPT and Raikiri revisions that were measured
 set -euo pipefail
@@ -69,7 +74,9 @@ Path(output_path).write_text("".join(f"{test_id}\n" for test_id in ids), encodin
 print(f"{len(ids)} unregistered runnable reftest ids")
 PY
 
-cargo run --release --locked -p raikiri-wpt --bin audit-vacuous-passes -- \
+cargo build --release --locked -p raikiri-wpt --bin audit-vacuous-passes
+python3 "$SCRIPT_DIR/../lib/audit_chunks.py" \
+  --binary "${CARGO_TARGET_DIR:-$REPO_ROOT/target}/release/audit-vacuous-passes" \
   --wpt-root target/wpt \
   --ids "$out_dir/candidates.txt" \
   --jobs "${WPT_SWEEP_JOBS:-$(nproc)}" \

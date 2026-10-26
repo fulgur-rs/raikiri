@@ -6,6 +6,10 @@ name: WPT vacuity sweep
 # and does not fail on new KEEP ids. Promote them by hand as described in
 # expectations/README.md ("Promoting sweep passes").
 #
+# The ids are audited in chunks, each in a process of its own: a test that
+# exhausts memory or never finishes is reported as CRASH and the sweep goes on
+# (scripts/lib/audit_chunks.py).
+#
 # Weekly rather than nightly: a KEEP id stays in the report until someone
 # promotes it, so a daily run would repeat the same list. Run it by hand
 # (workflow_dispatch) after a change that should make tests pass.
@@ -66,6 +70,13 @@ jobs:
             echo '| --- | --- |'
             awk -F '\t' '{ count[$2]++ } END { for (v in count) printf "| %s | %d |\n", v, count[v] }' "$dir/audit.tsv" | sort
             echo
+            crashed="$(awk -F '\t' '$2 == "CRASH" { printf "- `%s`: %s\n", $1, $3 }' "$dir/audit.tsv")"
+            if [ -n "$crashed" ]; then
+              echo 'These ids ran out of memory, never finished, or killed their process, so they were not audited (verdict CRASH):'
+              echo
+              echo "$crashed"
+              echo
+            fi
             keep_count="$(wc -l < "$dir/keep.txt")"
             if [ "$keep_count" -eq 0 ]; then
               echo 'No unregistered reftest passes the audit.'
