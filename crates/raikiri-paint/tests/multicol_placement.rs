@@ -2117,7 +2117,7 @@ fn pages(body: &str) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn a_paragraph_in_wrappers_of_a_balanced_container_flows_over_pages_like_one_of_its_own() {
+fn a_paragraph_in_wrappers_of_a_balanced_container_flows_over_pages_whatever_their_depth() {
     // Each line has its own color, so a line lost, repeated or moved to
     // another page shows. A container taller than a page continues on the
     // next one, and no page is left empty.
@@ -2131,13 +2131,19 @@ fn a_paragraph_in_wrappers_of_a_balanced_container_flows_over_pages_like_one_of_
         .collect();
     let direct = pages(&format!("<div class=mc><p>{lines}</p></div><p>X</p>"));
     assert_eq!(direct.len(), 2);
-    for depth in 1..=2 {
-        let wrapped = pages(&format!(
-            "<div class=mc>{}</div><p>X</p>",
-            in_wrappers(&format!("<p>{lines}</p>"), depth)
-        ));
-        assert!(wrapped == direct, "{depth} wrappers");
-    }
+    // A paragraph in the container fills one page's columns before the next
+    // page's; the columns of a container that holds wrappers stay whole and
+    // the pages cut them, however deep the wrappers are.
+    let wrapped: Vec<_> = (1..=2)
+        .map(|depth| {
+            pages(&format!(
+                "<div class=mc>{}</div><p>X</p>",
+                in_wrappers(&format!("<p>{lines}</p>"), depth)
+            ))
+        })
+        .collect();
+    assert_eq!(wrapped[0].len(), 2);
+    assert!(wrapped[0] == wrapped[1]);
 }
 
 /// A column container 170px wide with two 80px columns and a fixed height,

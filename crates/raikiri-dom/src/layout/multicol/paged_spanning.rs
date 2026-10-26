@@ -1,7 +1,35 @@
 use super::*;
+use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::fragment::{LayoutFragment, MulticolGroup};
 use lineless::EPSILON;
 use std::collections::HashSet;
+
+/// Whether `owner`, or a box around it, is an atomic inline such as an
+/// `inline-block`, whose contents the pages cut as one tall box.
+fn inside_atomic_inline(tree: &LayoutSession<'_>, owner: usize) -> bool {
+    let mut walk = AncestorCursor::new(Some(owner), ParentRelation::Layout);
+    while let Some(id) = walk.current() {
+        if tree.nodes[id].display().is_atomic_inline_level() {
+            return true;
+        }
+        walk.advance(tree);
+    }
+    false
+}
+
+/// Drop the groups kept for containers without a spanner, when the columns of
+/// the document are not broken along the page axis.
+pub(in crate::layout) fn release_unspanned_groups(tree: &mut LayoutSession<'_>) {
+    for owner in 0..tree.nodes.len() {
+        if tree.nodes[owner].multicol_groups.is_empty() {
+            continue;
+        }
+        let children = tree.children_through_contents(owner);
+        if !children.iter().any(|&id| spanning::is_spanner(tree, id)) {
+            tree.nodes[owner].multicol_groups.clear();
+        }
+    }
+}
 
 // The page pipeline supplies the owner's final source position and page
 // schedule. Shaped paragraph lines remain authoritative; only their column
@@ -17,20 +45,33 @@ pub(in crate::layout) fn paginate_spanning_columns(
     page_for: &impl Fn(f32) -> (u32, f32, f32),
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<f32, LayoutError> {
+    let old_groups = tree.nodes[owner].multicol_groups.clone();
     // A multicol container is not broken when pagination runs on transposed
     // axes: its columns lay out on the horizontal axes of the page.
-    if tree.context.pagination_on_transposed_axes {
+    if old_groups.is_empty() || tree.context.pagination_on_transposed_axes {
         return Ok(0.0);
     }
-    let old_groups = tree.nodes[owner].multicol_groups.clone();
-    if old_groups.is_empty() || !style_of(tree, owner).size().height.is_auto() {
+    let children = tree.children_through_contents(owner);
+    work.charge(children.len())?;
+    let spanner_free = !children.iter().any(|&id| spanning::is_spanner(tree, id));
+    // The columns of a container without a spanner are filled page by page
+    // only where it runs onto a later page. One inside a line stays whole, as
+    // the cut of its page is not the cut of a box in the flow.
+    let whole = spanner_free && {
+        let old = &old_groups[0];
+        let top = owner_y + old.context.origin_y;
+        let (_, origin, height) = page_for(top);
+        top + old.height <= origin + height + EPSILON || inside_atomic_inline(tree, owner)
+    };
+    if whole || !style_of(tree, owner).size().height.is_auto() {
+        if spanner_free {
+            tree.nodes[owner].multicol_groups.clear();
+        }
         return Ok(0.0);
     }
     let Some(container) = edits.first(owner) else {
         return Ok(0.0); // cov:ignore: retained groups are created only after the owner source fragment exists.
     };
-    let children = tree.children_through_contents(owner);
-    work.charge(children.len())?;
     let mut groups = Vec::<MulticolGroup>::new();
     let mut replacements = Vec::<(usize, Vec<LayoutFragment>)>::new();
     // Fragment shifts are applied in one pass after the walk: scanning every
@@ -120,7 +161,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                                 parent: Some(container),
                                 fragmentainer: f.fragmentainer,
                                 rect: f.rect,
-                                fragmentainer_clip: Some(f.clip),
+                                fragmentainer_clip: f.clip,
                                 fragment_index: 0,
                                 fragment_count: 1,
                                 line_start: Some(f.line_start),
@@ -160,8 +201,17 @@ pub(in crate::layout) fn paginate_spanning_columns(
         start = end + 1;
     }
     edits.shift_children(container, &shifts);
+    let refilled = !replacements.is_empty();
     for (id, fragments) in replacements {
         edits.replace(id, fragments);
+    }
+    if spanner_free {
+        if refilled {
+            tree.context.page_filled_columns.push(owner);
+        } else {
+            // The columns stay as the source layout made them.
+            groups.clear();
+        }
     }
     tree.nodes[owner].multicol_groups = groups;
     tree.nodes[owner].layout.size.height += delta;
