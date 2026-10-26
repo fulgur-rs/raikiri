@@ -244,6 +244,32 @@ fn override_push_and_pop_each_invalidate_the_parent_before_lookup() {
 }
 
 #[test]
+fn a_local_override_change_keeps_the_generation_and_what_is_stored() {
+    let mut cache = LayoutCacheContext::default();
+    let parent = BoxKey::Source(0);
+    let child = BoxKey::Source(1);
+    let view = ViewContext::default();
+    store_view(&mut cache, parent, view);
+    store_view(&mut cache, child, view);
+    let epoch = cache.epoch();
+    let fingerprint = cache.fingerprint(child, view);
+    cache.local_override_changed(child);
+    assert_eq!(cache.epoch(), epoch);
+    assert!(cache.can_read(parent));
+    assert!(cache.can_read(child));
+    // The box has a fingerprint of its own for as long as it is overridden, and
+    // entering it under that is no change of context that moves the generation.
+    assert_ne!(cache.fingerprint(child, view), fingerprint);
+    let frame = cache.enter_view(child, view);
+    assert_eq!(cache.epoch(), epoch);
+    assert!(cache.can_store(child));
+    cache.leave(frame);
+    cache.local_override_changed(child);
+    assert_eq!(cache.epoch(), epoch);
+    assert!(cache.can_read(parent));
+}
+
+#[test]
 fn basis_tags_and_alignment_axes_remain_distinct() {
     let mut cache = LayoutCacheContext::default();
     let node = BoxKey::Source(0);

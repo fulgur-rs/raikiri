@@ -6,7 +6,7 @@ use crate::layout::{
     context::LayoutSession,
     style_views::tests::{fixture_with_styles, with_setup_inspector},
 };
-use raikiri_layout_geometry::{Line, Size};
+use raikiri_layout_geometry::{Edges, Line, Size};
 use raikiri_layout_style::values::{Dimension, LengthPercentageAuto as Lpa};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
@@ -132,7 +132,68 @@ fn intrinsic_scope_keeps_earlier_child_bounds() {
 }
 
 #[test]
-fn intrinsic_scope_isolates_probe_cache_and_rejects_late_outer_store() {
+fn intrinsic_scope_sets_the_bounded_item_cache_apart_and_keeps_the_generation() {
+    use raikiri_layout_style::ViewContext;
+    let (mut doc, cascade, child, _) =
+        fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let id = NodeId::from(child);
+    let input = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let outside = LayoutOutput::HIDDEN;
+    let inside = LayoutOutput::from_sizes(
+        Size {
+            width: 100.0,
+            height: 10.0,
+        },
+        Edges::ZERO,
+    );
+    tree.with_cache_frame(child, ViewContext::default(), |tree| {
+        tree.cache_store(id, &input, outside.clone());
+        assert_eq!(tree.cache_get(id, &input), Some(outside.clone()));
+        let ordinary_epoch = tree.layout_cache_context.epoch();
+        with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
+            with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
+                // The item is measured under bounds of its own, so what it kept
+                // for its ordinary style is not read, and what it keeps now is
+                // not for the ordinary style.
+                assert!(tree.cache_get(id, &input).is_none());
+                tree.with_cache_frame(child, ViewContext::default(), |tree| {
+                    tree.cache_store(id, &input, inside.clone());
+                    assert_eq!(tree.cache_get(id, &input), Some(inside.clone()));
+                });
+            });
+        });
+        // The scopes left the generation alone: the answer of the ordinary
+        // style is back and the frame that was open before can keep answers.
+        assert_eq!(tree.layout_cache_context.epoch(), ordinary_epoch);
+        assert_eq!(tree.cache_get(id, &input), Some(outside.clone()));
+        tree.cache_store(id, &input, inside.clone());
+        assert_eq!(tree.cache_get(id, &input), Some(inside.clone()));
+    });
+}
+
+#[test]
+fn intrinsic_scope_discards_the_saved_item_cache_when_the_generation_moves() {
+    // An answer kept for the ordinary style is only restored while it is
+    // still one the cache context vouches for; a scope inside that changes a
+    // style the ordinary way moves the generation, and the item is measured
+    // from nothing afterwards.
     use raikiri_layout_style::ViewContext;
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");
@@ -157,19 +218,15 @@ fn intrinsic_scope_isolates_probe_cache_and_rejects_late_outer_store() {
     };
     tree.with_cache_frame(child, ViewContext::default(), |tree| {
         tree.cache_store(id, &input, LayoutOutput::HIDDEN);
-        assert!(tree.cache_get(id, &input).is_some());
         let ordinary_epoch = tree.layout_cache_context.epoch();
         with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
             with_flex_item_basis_bounds(tree, NodeId::from(parent), |tree| {
-                assert!(tree.cache_get(id, &input).is_none());
-                tree.with_cache_frame(child, ViewContext::default(), |tree| {
-                    tree.cache_store(id, &input, LayoutOutput::HIDDEN);
-                    assert!(tree.cache_get(id, &input).is_some());
-                });
+                tree.layout_cache_context.invalidate();
             });
         });
         assert!(tree.layout_cache_context.epoch() > ordinary_epoch);
         assert!(tree.cache_get(id, &input).is_none());
+        // The frame opened before the generation moved cannot keep answers.
         tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         assert!(tree.cache_get(id, &input).is_none());
     });
@@ -221,21 +278,46 @@ fn a_probe_of_a_container_without_a_maximum_leaves_the_cache_generation_alone() 
 }
 
 #[test]
-fn a_probe_of_a_container_with_a_maximum_still_drops_it_and_moves_the_generation() {
+fn a_probe_of_a_container_with_a_maximum_drops_it_and_leaves_the_cache_generation_alone() {
+    // The maximum is dropped for the probe only, and the probe is the one
+    // measurement of the container that reads its style: what is kept for the
+    // boxes inside it, and for the container itself, stays readable inside the
+    // probe and after it.
     use raikiri_layout_style::ViewContext;
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex;max-width:50px", "width:10px");
     let parent = doc.nodes[child].parent.unwrap();
     let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let id = NodeId::from(child);
+    let input = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
     tree.with_cache_frame(child, ViewContext::default(), |tree| {
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
         let epoch = tree.layout_cache_context.epoch();
         with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
             assert_eq!(tree.override_checkpoint(), 1);
             assert!(tree.style_view(parent).max_size().width.is_auto());
-            assert!(tree.layout_cache_context.epoch() > epoch);
+            assert_eq!(tree.layout_cache_context.epoch(), epoch);
+            assert!(tree.cache_get(id, &input).is_some());
         });
         assert_eq!(tree.override_checkpoint(), 0);
         assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
+        assert_eq!(tree.layout_cache_context.epoch(), epoch);
+        assert!(tree.cache_get(id, &input).is_some());
     });
 }
 
