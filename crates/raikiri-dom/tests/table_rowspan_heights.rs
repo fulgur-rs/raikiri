@@ -302,3 +302,79 @@ fn a_span_counts_the_spacing_the_collapsed_rows_and_the_baseline() {
     ];
     check_rows(cases);
 }
+
+/// A cell belongs to the row it starts in: when that row is collapsed the cell has no height of its own, however many rows it spans, while the rows that remain still take its content into account.
+#[test]
+fn a_cell_starting_in_a_collapsed_row_has_no_height_of_its_own() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a span over the row below",
+            "<table><tr id=r0 style=visibility:collapse><td id=c rowspan=2><div style=height:50px></div></td></tr><tr id=r1><td id=d><div style=height:10px></div></td></tr></table>",
+            &[("c", 8.0, 0.0), ("r1", 8.0, 50.0), ("d", 8.0, 50.0)],
+        ),
+        (
+            "the spacing between the rows still counts toward the span",
+            "<table style=border-spacing:10px><tr id=r0 style=visibility:collapse><td id=c rowspan=2><div style=height:50px></div></td></tr><tr id=r1><td id=d><div style=height:10px></div></td></tr></table>",
+            &[("c", 18.0, 0.0), ("r1", 18.0, 40.0), ("d", 18.0, 40.0)],
+        ),
+        (
+            "a collapsed second row",
+            "<table><tr id=r0><td id=a><div style=height:10px></div></td></tr><tr id=r1 style=visibility:collapse><td id=c rowspan=2><div style=height:50px></div></td></tr><tr id=r2><td id=d><div style=height:10px></div></td></tr></table>",
+            &[("c", 18.0, 0.0), ("r2", 18.0, 50.0), ("d", 18.0, 50.0)],
+        ),
+        (
+            "a span over two rows shares its content between them",
+            "<table><tr id=r0 style=visibility:collapse><td id=c rowspan=3><div style=height:50px></div></td></tr><tr id=r1><td id=d><div style=height:10px></div></td></tr><tr id=r2><td id=e><div style=height:10px></div></td></tr></table>",
+            &[
+                ("c", 8.0, 0.0),
+                ("r1", 8.0, 25.0),
+                ("r2", 33.0, 25.0),
+                ("e", 33.0, 25.0),
+            ],
+        ),
+        (
+            "a span over collapsed rows adds nothing",
+            "<table><tr id=r0 style=visibility:collapse><td id=c rowspan=2><div style=height:50px></div></td></tr><tr id=r1 style=visibility:collapse><td id=d><div style=height:10px></div></td></tr><tr id=r2><td id=e><div style=height:10px></div></td></tr></table>",
+            &[("c", 8.0, 0.0), ("r2", 8.0, 10.0)],
+        ),
+        (
+            "a collapsed row group",
+            "<table><tbody style=visibility:collapse><tr id=r0><td id=c rowspan=2><div style=height:50px></div></td></tr><tr id=r1><td id=d><div style=height:10px></div></td></tr></tbody><tbody><tr id=r2><td id=e><div style=height:10px></div></td></tr></tbody></table>",
+            &[("c", 8.0, 0.0), ("d", 8.0, 0.0), ("e", 8.0, 10.0)],
+        ),
+        (
+            "a table taller than its rows",
+            "<table style=height:200px><tr id=r0 style=visibility:collapse><td id=c rowspan=2><div style=height:50px></div></td></tr><tr id=r1><td id=d><div style=height:10px></div></td></tr></table>",
+            &[("c", 8.0, 0.0), ("r1", 8.0, 200.0)],
+        ),
+        (
+            "a bottom-aligned cell",
+            "<table><tr id=r0 style=visibility:collapse><td id=c rowspan=2 style=vertical-align:bottom><div style=height:50px></div></td><td id=a><div style=height:10px></div></td></tr><tr id=r1><td id=d><div style=height:10px></div></td></tr></table>",
+            &[("c", 8.0, 0.0), ("r1", 8.0, 25.0)],
+        ),
+        (
+            "a span that starts in a row that stays keeps the rows that remain",
+            "<table><tr id=r0><td id=a><div style=height:10px></div></td><td id=c rowspan=2><div style=height:50px></div></td></tr><tr id=r1 style=visibility:collapse><td id=d><div style=height:10px></div></td></tr></table>",
+            &[("c", 8.0, 25.0), ("r1", 33.0, 0.0)],
+        ),
+    ];
+    check_rows(cases);
+}
+
+/// A cell with no height does not set the baseline of the rows it spans, so a baseline-aligned cell in the row below keeps its own place.
+#[test]
+fn a_cell_starting_in_a_collapsed_row_sets_no_baseline_for_the_row_below() {
+    let cases: &[Case<'_>] = &[
+        (
+            "baseline-aligned cells",
+            "<table><tr id=r0 style=visibility:collapse><td id=c rowspan=2 style=\"vertical-align:baseline;font:40px/40px Ahem\"><span id=sc>X</span></td></tr><tr id=r1><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[("c", 8.0, 0.0), ("r1", 8.0, 20.0), ("sd", 8.0, 20.0)],
+        ),
+        (
+            "middle-aligned cells",
+            "<table><tr id=r0 style=visibility:collapse><td id=c rowspan=2 style=\"font:40px/40px Ahem\"><span id=sc>X</span></td></tr><tr id=r1><td id=d style=\"font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[("c", 8.0, 0.0), ("r1", 8.0, 40.0), ("sd", 18.0, 20.0)],
+        ),
+    ];
+    check_rows(cases);
+}
