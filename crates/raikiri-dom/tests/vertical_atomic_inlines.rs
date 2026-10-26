@@ -642,3 +642,26 @@ fn the_percentage_margins_of_an_atomic_in_a_vertical_root_follow_the_lines() {
     ];
     check_modes(content, &same, &same);
 }
+
+#[test]
+fn a_percentage_height_horizontal_atomic_resolves_against_the_height_the_lines_gave() {
+    // The 20px of text and the 10px of the box make the float 30px tall, and
+    // the box takes half of that. With a known height of 100px it takes 50px.
+    check_modes(
+        &horizontal_atomic("float:left", "height:50%", "bb"),
+        &[
+            ("a", (18.0, 8.0, 20.0, 15.0)),
+            ("r", (8.0, 8.0, 30.0, 30.0)),
+        ],
+        &[("a", (8.0, 8.0, 20.0, 15.0)), ("r", (8.0, 8.0, 30.0, 30.0))],
+    );
+    let known = [
+        ("a", (8.0, 28.0, 20.0, 50.0)),
+        ("r", (8.0, 8.0, 20.0, 100.0)),
+    ];
+    check_modes(
+        &horizontal_atomic("float:left;height:100px", "height:50%", "bb"),
+        &known,
+        &known,
+    );
+}
