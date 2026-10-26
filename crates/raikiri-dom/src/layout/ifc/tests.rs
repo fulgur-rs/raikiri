@@ -599,12 +599,21 @@ fn nested_shrink_to_fit_boxes_are_measured_a_few_times_each() {
     // every level (30240 at ten levels, about 200000 at twelve). They are kept
     // now, and the count follows the depth.
     //
-    // A flex container is measured under a probe of its own, which used to
-    // move the cache generation and multiply the work by four per level, so
-    // its chain is kept short enough for a regression to fail rather than hang.
+    // A flex container is measured under a probe of its own, and a container
+    // with a `max-width` or items with a length as their flex basis under
+    // overrides of the style as well. Those used to move the cache generation,
+    // which made every answer kept so far unreadable and multiplied the work
+    // by four (five with `flex-wrap`, two and a bit for the basis) per level,
+    // so their chains are kept short enough for a regression to fail rather
+    // than hang.
     for (display, depth) in [
         ("inline-block", 12),
         ("inline-flex", 8),
+        ("inline-flex;max-width:1000px", 8),
+        ("inline-flex;max-width:50%", 8),
+        ("inline-flex;max-width:1000px;flex-wrap:wrap", 7),
+        ("inline-flex;flex:1 0 1px", 8),
+        ("inline-flex;flex:0 1 1px", 8),
         ("inline-grid", 12),
     ] {
         let (mut doc, cascade, outermost) = nested_boxes(depth, display);
@@ -616,12 +625,13 @@ fn nested_shrink_to_fit_boxes_are_measured_a_few_times_each() {
         );
         // Each box holds one `X`, as wide as its font size, and the box inside
         // it: side by side in a line or a row, one under the other in a grid,
-        // which is as wide as the `X` then.
-        let widths = (1..=depth).map(|level| 10.0 / 1.1f32.powi(level as i32));
-        let expected: f32 = if display == "inline-grid" {
-            widths.take(1).sum()
-        } else {
-            widths.sum()
+        // which is as wide as the `X` then. An item that cannot grow adds at
+        // most its flex basis of 1px for the box inside it.
+        let mut widths = (1..=depth).map(|level| 10.0 / 1.1f32.powi(level as i32));
+        let expected: f32 = match display {
+            "inline-grid" => widths.next().expect("a box"),
+            "inline-flex;flex:0 1 1px" => widths.next().expect("a box") + 1.0,
+            _ => widths.sum(),
         };
         let width = doc.nodes[outermost].layout.size.width;
         assert!(

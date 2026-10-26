@@ -102,6 +102,67 @@ fn scoped_override_production_invalidates_a_b_a_cache_and_late_outer_store() {
 }
 
 #[test]
+fn a_local_override_scope_leaves_the_cache_generation_alone_on_the_way_in_and_out() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(child).unwrap();
+    let before = tree.style_view(child).size().width;
+    let epoch = tree.layout_cache_context.epoch();
+    tree.with_local_overrides(vec![entry(key, 11.0)], |tree| {
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
+        assert_eq!(tree.override_checkpoint(), 1);
+        assert_eq!(tree.layout_cache_context.epoch(), epoch);
+    });
+    assert_eq!(tree.style_view(child).size().width, before);
+    assert_eq!(tree.override_checkpoint(), 0);
+    assert_eq!(tree.layout_cache_context.epoch(), epoch);
+}
+
+#[test]
+fn a_local_scope_around_an_ordinary_one_leaves_the_generation_to_the_ordinary_one() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(child).unwrap();
+    let epoch = tree.layout_cache_context.epoch();
+    let mut inner = epoch;
+    tree.with_local_overrides(vec![entry(key, 11.0)], |tree| {
+        tree.with_overrides(vec![entry(key, 12.0)], |tree| {
+            assert_eq!(tree.style_view(child).size().width, Dimension::length(12.0));
+            inner = tree.layout_cache_context.epoch();
+            assert!(inner > epoch);
+        });
+        // The ordinary scope moved the generation on the way out as well, and
+        // the local one it is nested in does not take that back.
+        assert!(tree.layout_cache_context.epoch() > inner);
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
+    });
+    assert!(tree.layout_cache_context.epoch() > inner);
+    assert_eq!(tree.override_checkpoint(), 0);
+}
+
+#[test]
+fn a_local_override_scope_that_unwinds_restores_the_style_and_leaves_the_generation_alone() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let key = tree.nodes.box_key(child).unwrap();
+    let before = tree.style_view(child).size().width;
+    let epoch = tree.layout_cache_context.epoch();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tree.with_local_overrides(vec![entry(key, 11.0)], |_| {
+            panic!("local scope body failure")
+        })
+    }))
+    .unwrap_err();
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"local scope body failure")
+    );
+    assert_eq!(tree.style_view(child).size().width, before);
+    assert_eq!(tree.override_checkpoint(), 0);
+    assert_eq!(tree.layout_cache_context.epoch(), epoch);
+}
+
+#[test]
 fn scoped_override_production_retains_calc_until_successful_rebinding() {
     use raikiri_style::property::CalcLengthPercentage;
     use std::sync::Arc;
