@@ -984,9 +984,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                         && !takes_no_block_space(document, last_box)
                                 })
                                 .map_or(0.0, |last_box| {
-                                    document.nodes[last_box].layout.margin.bottom.max(0.0)
+                                    document.nodes[last_box].layout.margin.bottom
                                 });
-                            edges + margin
+                            // A negative margin pulls the edges up under the
+                            // box, and may leave none below it.
+                            (edges + margin).max(0.0)
                         });
                     let child_previous_box = previous_box;
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {

@@ -263,6 +263,25 @@ fn the_margin_below_the_last_box_counts_with_the_edges() {
 }
 
 #[test]
+fn a_negative_margin_below_the_last_box_pulls_the_edges_up_under_it() {
+    // The box ends at 90 and its -20px margin leaves 10px of the 30px of
+    // padding below it, which fit; -40px leaves none.
+    for margin in [-20, -40] {
+        let mut last = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:30px");
+            block(doc, parent, "display:block;height:70px");
+            last = block(
+                doc,
+                parent,
+                &format!("display:block;height:20px;margin-bottom:{margin}px"),
+            );
+        });
+        assert_eq!(page_flow_y(&doc, last), 70.0, "{margin}");
+    }
+}
+
+#[test]
 fn the_margin_below_an_inner_block_counts_with_the_edges_of_the_outer_one() {
     // The inner block ends at 80 with 5px of padding, and the outer block has
     // 5px more below the margin of the inner one.
