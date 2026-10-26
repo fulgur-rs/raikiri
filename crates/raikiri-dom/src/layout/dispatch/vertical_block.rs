@@ -30,7 +30,7 @@ use crate::layout::protocol::{
     SizingMode,
 };
 use raikiri_layout_geometry::{Edges, Line, Size};
-use raikiri_layout_style::values::{BoxSizing, Float, MaybeResolve, Position, ResolveOrZero};
+use raikiri_layout_style::values::{Position, ResolveOrZero};
 
 use super::block_flow::compute_block_flow;
 use super::transposed_axes::{
@@ -587,9 +587,10 @@ fn resolves_padding_on_physical_axes(tree: &Document, idx: usize) -> bool {
 /// physical axes. A child that flows horizontally is an orthogonal flow:
 /// its block size is its physical height, which comes from its content, not
 /// from the inline size of the container that taffy stretched it to (CSS
-/// Writing Modes 4 §7.3), and its inline size is found in the physical
-/// width of the container's content box, `block_space`, when that is
-/// definite.
+/// Writing Modes 4 §7.3). Its inline size, the physical width, is the
+/// fit-content width of its content in the physical width of the
+/// container's content box, `block_space`, when that is definite (§7.3.1),
+/// so an auto width does not stretch to fill the container.
 fn orthogonal_child_inputs(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -609,56 +610,8 @@ fn orthogonal_child_inputs(
     }
     if let Some(space) = block_space {
         inputs.available_space.width = AvailableSpace::Definite(space);
-        // An in-flow block box with an auto width fills that space, as it
-        // would under a horizontal block container; a table still shrinks
-        // to fit.
-        if inputs.known_dimensions.width.is_none()
-            && style.size().width.is_auto()
-            && style.float() == Float::None
-            && !is_table_box(tree.nodes[idx].display())
-        {
-            inputs.known_dimensions.width = Some(stretched_width(&style, space, inputs));
-        }
     }
     inputs
-}
-
-/// The border-box width of a horizontal block box with an auto width that
-/// fills `space`, the physical width of its vertical container, within its
-/// min and max widths. Its margins, which the container places like its
-/// other children's, resolve against the container's inline size, its
-/// physical height.
-fn stretched_width(
-    style: &raikiri_layout_style::LayoutStyleView<'_>,
-    space: f32,
-    inputs: LayoutInput,
-) -> f32 {
-    let inline_size = inputs.parent_size.height;
-    let margin = style
-        .margin()
-        .map(|margin| margin.resolve_or_zero(inline_size));
-    // Min and max widths are content-box sizes under `box-sizing:
-    // content-box`.
-    let edges = match style.box_sizing() {
-        BoxSizing::BorderBox => 0.0,
-        BoxSizing::ContentBox => {
-            // Against the container's inline size, as the child's own
-            // layout resolves them.
-            let basis = inputs.parent_size.height;
-            let padding = style.padding().resolve_or_zero(basis);
-            let border = style.border().resolve_or_zero(basis);
-            padding.left + padding.right + border.left + border.right
-        }
-    };
-    let basis = Some(space);
-    let mut width = space - margin.left - margin.right;
-    if let Some(max) = style.max_size().width.maybe_resolve(basis) {
-        width = width.min(max + edges);
-    }
-    if let Some(min) = style.min_size().width.maybe_resolve(basis) {
-        width = width.max(min + edges);
-    }
-    width.max(0.0)
 }
 
 /// Resolve the percentage paddings of the children of the transposed

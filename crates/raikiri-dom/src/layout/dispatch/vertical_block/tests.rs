@@ -296,20 +296,82 @@ fn vertical_auto_height_never_shrinks_below_its_content() {
 }
 
 #[test]
-fn horizontal_child_of_a_vertical_container_fills_its_width() {
+fn empty_horizontal_child_of_a_vertical_container_has_no_width() {
+    // The auto width of an orthogonal flow is fit-content, so an empty box
+    // does not fill the container (CSS Writing Modes 4 §7.3.1).
     let rects = layout(
         "writing-mode:vertical-rl;width:300px;height:200px;padding:0 5px",
         &["writing-mode:horizontal-tb;height:10px;margin:0 7px"],
     );
-    // The 300px content box less the child's 7px margins.
-    assert_eq!(rects[1], (20.0, 8.0, 286.0, 10.0));
+    // Against the block-start (right) edge of the 300px content box, less
+    // the child's 7px margin.
+    assert_eq!(rects[1], (306.0, 8.0, 0.0, 10.0));
+}
+
+#[test]
+fn horizontal_child_of_a_vertical_container_is_as_wide_as_its_content() {
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:300px",
+        &[
+            "writing-mode:horizontal-tb|aa",
+            "writing-mode:horizontal-tb;padding:0 5px;border:3px solid|aa",
+            "writing-mode:horizontal-tb;height:10px;padding:0 5px;border:3px solid",
+        ],
+    );
+    assert_eq!(rects[1], (188.0, 8.0, 20.0, 10.0));
+    assert_eq!(rects[2], (152.0, 8.0, 36.0, 16.0));
+    // Nothing but its own edges, and a 10px content height around them.
+    assert_eq!(rects[3], (136.0, 8.0, 16.0, 16.0));
+}
+
+#[test]
+fn horizontal_child_of_a_vertical_container_is_as_wide_as_its_widest_child() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;writing-mode:vertical-lr;width:200px;height:300px"),
+    );
+    let child = doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;writing-mode:horizontal-tb"),
+    );
+    let wide = doc.append_element(
+        Some(child),
+        "div",
+        Some("display:block;width:80px;height:10px"),
+    );
+    let narrow = doc.append_element(
+        Some(child),
+        "div",
+        Some("display:block;width:60px;height:20px"),
+    );
+    // A percentage width counts as auto while the box is sized by its
+    // content, and then resolves against the width that gave it.
+    let percent = doc.append_element(
+        Some(child),
+        "div",
+        Some("display:block;width:50%;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, child), (8.0, 8.0, 80.0, 35.0));
+    assert_eq!(absolute_rect(&doc, wide), (8.0, 8.0, 80.0, 10.0));
+    assert_eq!(absolute_rect(&doc, narrow), (8.0, 18.0, 60.0, 20.0));
+    assert_eq!(absolute_rect(&doc, percent), (8.0, 38.0, 40.0, 5.0));
 }
 
 #[test]
 fn horizontal_child_of_a_vertical_container_keeps_its_max_width() {
     let rects = layout(
         "writing-mode:vertical-rl;width:300px;height:200px",
-        &["writing-mode:horizontal-tb;height:10px;max-width:100px"],
+        &["writing-mode:horizontal-tb;max-width:100px|aaaaaaaaaaaaaaa"],
     );
     // Placed on the block-start (right) edge.
     assert_eq!(rects[1], (208.0, 8.0, 100.0, 10.0));
@@ -320,9 +382,9 @@ fn horizontal_child_margins_resolve_against_the_inline_size() {
     // 10% of the container's 400px inline size, its physical height.
     let rects = layout(
         "writing-mode:vertical-rl;width:200px;height:400px",
-        &["writing-mode:horizontal-tb;height:10px;margin:0 10%"],
+        &["writing-mode:horizontal-tb;width:50px;height:10px;margin:0 10%"],
     );
-    assert_eq!(rects[1], (48.0, 8.0, 120.0, 10.0));
+    assert_eq!(rects[1], (118.0, 8.0, 50.0, 10.0));
 }
 
 #[test]
@@ -341,7 +403,7 @@ fn border_box_child_max_width_includes_its_padding() {
     let rects = layout(
         "writing-mode:vertical-rl;width:300px;height:200px",
         &[
-            "writing-mode:horizontal-tb;height:10px;padding:0 5px;box-sizing:border-box;max-width:100px",
+            "writing-mode:horizontal-tb;padding:0 5px;box-sizing:border-box;max-width:100px|aaaaaaaaaaaaaaa",
         ],
     );
     assert_eq!(rects[1], (208.0, 8.0, 100.0, 10.0));
