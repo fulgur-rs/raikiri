@@ -688,3 +688,91 @@ fn an_out_of_flow_inline_extends_the_way_the_text_at_its_anchor_reads() {
         ],
     );
 }
+
+#[test]
+fn a_block_level_box_follows_the_text_before_it_in_visual_order() {
+    check(
+        "block_after_rtl_override_text",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Styled(
+            "unicode-bidi:bidi-override;direction:rtl",
+            &[Child::Text("AAAA"), Child::Box("")],
+        )],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "block_after_rtl_override_atomic",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Styled(
+            "unicode-bidi:bidi-override;direction:rtl",
+            &[Child::Atomic, Child::Box("")],
+        )],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 12.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (0.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (12.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "block_before_rtl_override_text",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Styled(
+            "unicode-bidi:bidi-override;direction:rtl",
+            &[Child::Box(""), Child::Text("AAAA")],
+        )],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (160.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (170.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (10.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (0.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (0.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+    check(
+        "block_between_rtl_override_text",
+        Setup {
+            sheet: r#""#,
+            root_css: "",
+        },
+        &[Child::Styled(
+            "unicode-bidi:bidi-override;direction:rtl",
+            &[Child::Text("AA"), Child::Box(""), Child::Text("AA")],
+        )],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (160.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (10.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
+        ],
+    );
+}

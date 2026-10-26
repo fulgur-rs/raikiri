@@ -3249,8 +3249,10 @@ pub(crate) fn commit_child_layout_with_edges(
 }
 
 /// Whether `line` holds text or an atomic inline ahead of the anchor at
-/// `position` along it. The fragments come in visual order, so they are
-/// compared by their logical inline position.
+/// `position` along it. The fragments come in visual order and are compared by
+/// their inline position, as Chromium decides it for text that bidi reorders:
+/// a block-level box that comes after reversed text in the source but lies
+/// before it on the line starts the line.
 fn content_precedes_anchor(line: &shodo::Line, position: f32) -> bool {
     // Positions are snapped to 1/64 px by the line engine.
     const SLACK: f32 = 1.0 / 32.0;
