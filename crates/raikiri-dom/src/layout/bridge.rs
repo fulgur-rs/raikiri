@@ -1001,10 +1001,7 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// - a replaced element takes its natural size, and an `auto` size is what
 ///   transfers its aspect ratio;
 /// - a vertical flex or grid item takes its inline size from the height, which
-///   the container's algorithm sizes along its own axes;
-/// - a flex or grid item with a `min-width` or `max-width` is measured by Taffy
-///   at the keyword size before that size is clamped, so the lines of its
-///   content break at a width the box does not keep.
+///   the container's algorithm sizes along its own axes.
 pub(super) fn sized_by_content_keyword(
     doc: &Document,
     cascade: &CascadeResult,
@@ -1017,24 +1014,7 @@ pub(super) fn sized_by_content_keyword(
     if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
         return true;
     }
-    // Only a `min-width` that is not `auto` or zero clamps the keyword.
-    let unclamped = matches!(cv.max_width, ComputedLengthPercentageOrAuto::Auto)
-        && (matches!(cv.min_width, ComputedLengthPercentageOrAuto::Auto)
-            || is_zero_length(cv.min_width));
-    !is_flex_or_grid_item(doc, cascade, idx) || (unclamped && !lays_out_vertically(cascade, idx))
-}
-
-/// Whether `size` is zero whatever it refers to: a zero length, a zero
-/// percentage, or a `calc()` whose terms are both zero.
-fn is_zero_length(size: ComputedLengthPercentageOrAuto) -> bool {
-    match size {
-        ComputedLengthPercentageOrAuto::Px(px) => matches!(px, 0.0),
-        ComputedLengthPercentageOrAuto::Percent(percent) => matches!(percent, 0.0),
-        ComputedLengthPercentageOrAuto::Calc(calc) => {
-            matches!((calc.percent, calc.px), (0.0, 0.0))
-        }
-        _ => false,
-    }
+    !is_flex_or_grid_item(doc, cascade, idx) || !lays_out_vertically(cascade, idx)
 }
 
 /// Whether the box of element `idx` is an item of a flex or grid container:

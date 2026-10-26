@@ -2938,6 +2938,7 @@ pub(crate) fn flex_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let inputs = with_fit_content_width(tree, node_id, inputs);
+    let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
     flex_layout_sized(tree, node_id, inputs)
 }
 
@@ -3152,6 +3153,62 @@ fn with_fit_content_width(
     inputs
 }
 
+/// Settle the width of a flex or grid container whose `width` is `min-content`
+/// or `max-content` and that a `min-width` or `max-width` clamps, before its
+/// lines or tracks are sized.
+///
+/// Taffy sizes the content of such a container at the keyword size and clamps
+/// the box afterwards, so the items of the container break their lines at a
+/// width the box does not keep, and its height follows that width. A
+/// container that no limit clamps is sized by Taffy alone. `measure` is the
+/// layout of the container, which gives the clamped width when asked for its
+/// size.
+fn with_clamped_keyword_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    measure: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    // A width measured as that of the content (`flex-basis: content`) is not
+    // the width the box keeps; a height measured at its width is.
+    if inputs.known_dimensions.width.is_some()
+        || (inputs.sizing_mode == SizingMode::ContentSize
+            && inputs.axis == RequestedAxis::Horizontal)
+    {
+        return inputs;
+    }
+    let space = match tree.physical_style(idx).size().width.expand() {
+        ExpandedDimension::MinContent => AvailableSpace::MinContent,
+        ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
+        _ => return inputs,
+    };
+    let clamped = {
+        let style = tree.physical_style(idx);
+        let zero = |size: ExpandedLengthPercentageAuto| {
+            matches!(
+                size,
+                ExpandedLengthPercentageAuto::Auto | ExpandedLengthPercentageAuto::Length(0.0)
+            )
+        };
+        !zero(style.min_size().width.expand())
+            || !matches!(
+                style.max_size().width.expand(),
+                ExpandedLengthPercentageAuto::Auto
+            )
+    } || tree.nodes[idx].content_limits != content_limits::ContentLimits::NONE;
+    if clamped {
+        let mut probe = inputs;
+        probe.run_mode = RunMode::ComputeSize;
+        probe.sizing_mode = SizingMode::InherentSize;
+        probe.axis = RequestedAxis::Horizontal;
+        probe.available_space.width = space;
+        inputs.known_dimensions.width = Some(measure(tree, node_id, probe).size.width);
+        inputs.known_dimensions_are_definite.width = true;
+    }
+    inputs
+}
+
 /// Lay out the grid container `node_id` with taffy's grid algorithm.
 ///
 /// A container with a preferred aspect ratio and an `auto` height takes the
@@ -3162,6 +3219,7 @@ fn with_fit_content_width(
 /// automatic minimum size of CSS Sizing 4 §5.1.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
+    let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
     let height_follows_width = inputs.known_dimensions.height.is_none()
         && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal)
         && grid_oof::right_to_left(tree, idx).is_none();
