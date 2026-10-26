@@ -27,6 +27,11 @@ pub(super) struct CandidateFlowContext {
     /// box left at its static position, which keeps its name in the page
     /// flow.
     pub(super) page_name_in_flow: bool,
+    /// For the text of a paragraph that ends the blocks around it: the block
+    /// size of the bottom padding and border that follow its last line, which
+    /// would break away from it if the lines stayed on a page they do not fit
+    /// (see [`super::closing_edges_line_move`]).
+    pub(super) lines_closing_edges: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -124,6 +129,10 @@ impl BoxContext {
     pub(super) fn closing_edges(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.closing_edges)
+    }
+
+    pub(super) fn lines_closing_edges(self) -> f32 {
+        self.flow().lines_closing_edges
     }
 
     pub(super) fn is_named(self) -> bool {
@@ -351,6 +360,9 @@ struct CandidateFrame<'name> {
     /// The box before the node in the flow of its parent, which a break can
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
+    /// The block size of the bottom padding and border that follow the last
+    /// line of the paragraph the node is in or is the text of.
+    lines_closing_edges: f32,
 }
 
 impl CandidateFrame<'_> {
@@ -371,6 +383,7 @@ impl CandidateFrame<'_> {
             clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
+            lines_closing_edges: 0.0,
         }
     }
 }
@@ -571,6 +584,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_float_descendant: inside_float,
                                 is_out_of_flow_descendant: inside_out_of_flow,
                                 page_name_in_flow: !inside_float && !inside_out_of_flow,
+                                lines_closing_edges: frame.lines_closing_edges,
                             }),
                             page_name: page_name_to_owned(frame.inherited_page_name),
                             named_flex_context,
@@ -807,10 +821,10 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // The last box of a block whose bottom padding or border
                 // would break away from it stays with them: it is a nested
                 // candidate that moves to the next page when they do not fit
-                // after it. Nothing may break inside it at a better place
-                // than before it, and a box before it must be there to break
-                // from, with no break avoided between the two.
-                let closing_edges_base = nested_candidate_base
+                // after it. A box before it must be there to break from, with
+                // no break avoided between the two.
+                let closing_edges_shape = nested_candidate_base
+                    && !inside_float
                     && frame.closing_edges > 0.0
                     && !inline_level
                     && !is_float
@@ -826,13 +840,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && frame.previous_box.is_some_and(|previous| {
                         !page_edge_constraint(document, cascade, previous, false).1
                     })
-                    && !page_edge_constraint(document, cascade, node_id, true).1
-                    && breaks_only_around(document, cascade, node_id);
+                    && !page_edge_constraint(document, cascade, node_id, true).1;
+                // Nothing may break inside it at a better place than before
+                // it. A paragraph with lines enough to break between moves
+                // some of them instead (see `lines_closing_edges`).
+                let closing_edges_base =
+                    closing_edges_shape && breaks_only_around(document, cascade, node_id);
                 let needs_ancestor_constraints = (nested_candidate_base
                     && ((!inline_level && is_block_flow_box && avoids_break)
                         || is_float
                         || clears_float))
-                    || closing_edges_base;
+                    || closing_edges_shape;
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         candidate_ancestor_constraints(document, cascade, node_id, body_id)
@@ -848,6 +866,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
+                // The edges also follow the lines of a paragraph that breaks
+                // between them.
+                let lines_closing_edges = if closing_edges_shape
+                    && can_move_nested
+                    && !closing_edges_base
+                    && !avoids_break
+                    && node.is_ifc_root()
+                {
+                    frame.closing_edges + node.layout.padding.bottom + node.layout.border.bottom
+                } else {
+                    0.0
+                };
                 // A forced break and a page name change the pages wherever the
                 // box sits, even past the edge of a clipping ancestor.
                 let sets_page_flow = deferred_named_break_after
@@ -887,6 +917,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_out_of_flow_descendant: out_of_flow_subtree,
                                 page_name_in_flow: !inside_float
                                     && (!out_of_flow_subtree || own_page_name.is_some()),
+                                lines_closing_edges: 0.0,
                             },
                             ElementContext {
                                 is_rendered_leaf,
@@ -1059,6 +1090,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
+                            lines_closing_edges,
                         },
                     )?;
                 }
