@@ -18,6 +18,15 @@ pub(crate) struct LayoutContext {
     pub(super) table_cache: super::table::cache::TableCache,
     pub(crate) ifc_width_probe: bool,
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
+    /// Whether the column container whose children are being laid out across
+    /// its whole width lays them out again in its columns afterwards, so that
+    /// whatever a column container inside them settles is redone and is not
+    /// worked out now (see `compute_multicol_layout`).
+    pub(crate) columns_relayout_pending: bool,
+    /// How many column containers were left unsettled for the layout that
+    /// follows (see `compute_multicol_layout`). A layout that moves it is not
+    /// kept in the caches.
+    pub(crate) columns_deferred_layouts: usize,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// Whether the out-of-flow boxes being positioned have a containing block
     /// on vertical axes, whose alignment properties name the other physical

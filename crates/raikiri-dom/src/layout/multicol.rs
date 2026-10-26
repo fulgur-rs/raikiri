@@ -127,6 +127,8 @@ pub(crate) fn compute_multicol_layout(
     let Some(style) = tree.nodes[index].multicol else {
         return crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     };
+    #[cfg(test)]
+    crate::layout::test_support::MULTICOL_LAYOUTS.with(|count| count.set(count.get() + 1));
     let inputs = with_keyword_width(tree, node_id, inputs);
 
     // Taffy supplies the used border-box width to a block child. Do not fall
@@ -224,11 +226,36 @@ pub(crate) fn compute_multicol_layout(
     let outer_height = stack_depth
         .checked_sub(1)
         .and_then(|outer| tree.context.fragmentation_stack[outer].available_height);
+    // A container with a column container inside it lays its children out
+    // again in its columns after the pass across its whole width below.
+    let relays_out_children = custom_scope
+        && inputs.run_mode == RunMode::PerformLayout
+        && multicol_has_nested_descendant(tree, index);
+    let deferred = tree.context.columns_relayout_pending;
+    let deferred_before = tree.context.columns_deferred_layouts;
     tree.context.fragmentation_stack.push(context);
+    tree.context.columns_relayout_pending = deferred || relays_out_children;
     let mut output = crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
+    tree.context.columns_relayout_pending = deferred;
     if tree.fragment_tree.limit_exceeded {
         tree.context.fragmentation_stack.truncate(stack_depth);
         return output;
+    }
+    // The size of a box with a definite height does not depend on its
+    // columns, and the container that lays it out again settles them then.
+    // What the caches of the boxes inside hold was laid out before the pass
+    // above, which has replaced their lines and fragments. A layout that does
+    // not go through the cache of this box leaves it to this call to drop them.
+    if deferred && inputs.run_mode == RunMode::PerformLayout && available_height.is_some() {
+        tree.context.fragmentation_stack.truncate(stack_depth);
+        tree.context.columns_deferred_layouts += 1;
+        tree.cache_clear_subtree(NodeId::from(index));
+        return output;
+    }
+    // The columns below are settled by the end of this layout if it lays its
+    // children out again.
+    if relays_out_children {
+        tree.context.columns_deferred_layouts = deferred_before;
     }
     // Columns sliced here are not cut again at the end of an outer column,
     // so such a container keeps the nested strategies from the start unless

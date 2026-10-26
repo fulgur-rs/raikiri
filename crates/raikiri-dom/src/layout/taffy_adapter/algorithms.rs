@@ -165,7 +165,16 @@ pub(crate) fn compute_cached_layout(
     if let Some(cached) = tree.cache_get(node, &inputs) {
         return cached;
     }
+    let deferred_before = tree.context.columns_deferred_layouts;
     let computed = compute(tree, node, inputs);
-    tree.cache_store(node, &inputs, computed.clone());
+    // A layout that left a column container for the layout that follows is not
+    // kept, and it drops what the caches of the boxes inside held: that was
+    // laid out before they were laid out again, so a later call with the same
+    // inputs would take its size and never settle the container.
+    if tree.context.columns_deferred_layouts == deferred_before {
+        tree.cache_store(node, &inputs, computed.clone());
+    } else {
+        tree.cache_clear_subtree(node);
+    }
     computed
 }
