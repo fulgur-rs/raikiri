@@ -4270,6 +4270,8 @@ css/css-writing-modes/text-combine-upright-value-all-003.html
 css/css-writing-modes/text-orientation-upright-vlr-100.html
 css/css-writing-modes/text-orientation-upright-vrl-100.html
 css/css-writing-modes/vrl-inline-paint-invalidation.html
+css/css-writing-modes/wm-propagation-body-033.html
+css/css-writing-modes/wm-propagation-body-037.html
 css/css-writing-modes/wm-propagation-body-040.html
 css/css-writing-modes/wm-propagation-body-041.html
 css/css-writing-modes/wm-propagation-body-048.html

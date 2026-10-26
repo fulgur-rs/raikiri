@@ -184,24 +184,58 @@ fn logical_clear_sides_are_not_mapped() {
     assert_eq!(block("clear: inline-start").clear, Clear::None);
 }
 
-#[test]
-fn a_vertical_paragraph_breaks_its_lines_at_a_block_before_without_its_edges() {
-    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
-        "div::before { content: 'X'; display: block; width: 30px; margin: 10px }",
-        "writing-mode: vertical-rl; height: 60px; line-height: 10px",
-        |doc, root| {
+/// The pieces of the generated blocks of a paragraph of `root_css` with the
+/// text `AA`, which `sheet` styles, and its lines, on a page of 800x600.
+fn vertical_pieces(
+    sheet: &str,
+    root_css: &str,
+) -> (
+    crate::Document,
+    usize,
+    Vec<crate::layout::GeneratedBlockPiece>,
+) {
+    let mut fixture =
+        crate::layout::ifc::test_support::sheet_fixture(sheet, root_css, |doc, root| {
             doc.append_text(root, "AA");
-        },
-    );
+        });
     layout_single_page(
         with_ahem(&mut fixture.doc),
         &fixture.cascade,
         page_box_800x600(),
     )
     .expect("layout");
-    let root = &fixture.doc.nodes[fixture.root];
+    let pieces = fixture.doc.nodes[fixture.root].ifc_generated_block_pieces();
+    (fixture.doc, fixture.root, pieces)
+}
+
+#[test]
+fn a_vertical_paragraph_sets_a_block_before_along_its_block_axis() {
+    let (doc, root, pieces) = vertical_pieces(
+        "div::before { content: 'X'; display: block; width: 30px; margin: 10px }",
+        "writing-mode: vertical-rl; height: 60px; line-height: 10px",
+    );
+    let root = &doc.nodes[root];
+    // The box's own line and the paragraph's one.
     assert_eq!(root.ifc_lines().expect("lines").len(), 2);
-    assert_eq!(root.layout.size.width, 20.0);
+    // Its 30px and 10px margins on both sides take the block extent: the
+    // paragraph's line is 10px wide beside them.
+    assert_eq!(root.layout.size.width, 60.0);
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    // From the right, the block start, the box leaves its 10px margin, takes
+    // 30px, and leaves 10px before the line. Along the root's inline axis it
+    // spans the 60px less its margins.
+    assert_eq!(
+        piece.border_box,
+        BoxRect {
+            x: 20.0,
+            y: 10.0,
+            width: 30.0,
+            height: 40.0
+        }
+    );
+    assert!(piece.has_block_start_edge && piece.has_block_end_edge);
 }
 
 #[test]
@@ -351,13 +385,172 @@ fn an_empty_block_after_is_placed_below_the_lines_and_one_collapsed_through_is_n
 }
 
 #[test]
-fn a_vertical_paragraph_places_no_block_box() {
-    let (_, blocks) = placed(
-        "div::before { content: 'X'; display: block; background: red }",
+fn a_vertical_paragraph_places_a_block_box_on_its_own_axes() {
+    let (lines, blocks) = placed(
+        "div::before { content: 'X'; display: block; background: red; margin-top: 3px; \
+         margin-right: 5px; padding-left: 2px }",
         "writing-mode: vertical-rl; height: 60px; font: 10px/10px Ahem",
         "AA",
     );
-    assert!(blocks.is_empty());
+    let [block] = blocks.as_slice() else {
+        panic!("one placed block: {blocks:?}")
+    };
+    // The line loop works on the root's axes: along the inline axis the
+    // box leaves the physical top margin, its inline start; across them the
+    // right margin comes before it, as that is the block start, and the
+    // left padding is its block end, beside the 10px line.
+    assert_eq!(
+        block.border_box,
+        BoxRect {
+            x: 3.0,
+            y: 5.0,
+            width: 57.0,
+            height: 12.0
+        }
+    );
+    assert_eq!(lines.len(), 2);
+}
+
+#[test]
+fn a_vertical_lr_paragraph_sets_a_block_before_from_the_left() {
+    let (_, _, pieces) = vertical_pieces(
+        "div::before { content: ''; display: block; width: 30px; height: 20px; margin: 4px 0 0 6px }",
+        "writing-mode: vertical-lr; height: 60px; line-height: 10px",
+    );
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    assert_eq!(
+        piece.border_box,
+        BoxRect {
+            x: 6.0,
+            y: 4.0,
+            width: 30.0,
+            height: 20.0
+        }
+    );
+}
+
+#[test]
+fn a_sideways_lr_paragraph_that_runs_from_the_top_sets_a_block_before_from_the_top() {
+    let (_, _, pieces) = vertical_pieces(
+        "div::before { content: ''; display: block; width: 30px; height: 20px; margin-top: 4px }",
+        "writing-mode: sideways-lr; direction: rtl; height: 60px; line-height: 10px",
+    );
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    // The inline start is the top, so the 4px margin is above the box.
+    assert_eq!(
+        piece.border_box,
+        BoxRect {
+            x: 0.0,
+            y: 4.0,
+            width: 30.0,
+            height: 20.0
+        }
+    );
+}
+
+#[test]
+fn a_block_after_of_a_vertical_paragraph_follows_its_lines() {
+    let (_, _, pieces) = vertical_pieces(
+        "div::after { content: ''; display: block; width: 8px; height: 12px }",
+        "writing-mode: vertical-lr; height: 60px; font: 10px/10px Ahem",
+    );
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    // The one 10px line of the text is first, from the left.
+    assert_eq!(
+        piece.border_box,
+        BoxRect {
+            x: 10.0,
+            y: 0.0,
+            width: 8.0,
+            height: 12.0
+        }
+    );
+}
+
+#[test]
+fn a_vertical_paragraph_records_no_forced_page_break() {
+    let sheet = "div::before { content: ''; display: block; width: 4px; break-before: page } \
+                 div::after { content: ''; display: block; width: 4px; break-after: page }";
+    for (root_css, expected) in [
+        (
+            "writing-mode: vertical-rl; height: 60px; font: 10px/10px Ahem",
+            0,
+        ),
+        ("height: 60px; font: 10px/10px Ahem", 1),
+    ] {
+        let mut fixture =
+            crate::layout::ifc::test_support::sheet_fixture(sheet, root_css, |doc, root| {
+                doc.append_text(root, "AA");
+            });
+        layout_single_page(
+            with_ahem(&mut fixture.doc),
+            &fixture.cascade,
+            page_box_800x600(),
+        )
+        .expect("layout");
+        let lines = fixture.doc.nodes[fixture.root]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .expect("lines");
+        // The box after the text asks for a break; the one before it has no
+        // line above it.
+        assert_eq!(lines.forced_breaks.len(), expected, "{root_css}");
+    }
+}
+
+#[test]
+fn a_paragraph_that_runs_from_the_bottom_places_no_block_box() {
+    // The sides of such a box are not mapped to the root's axes.
+    for root_css in [
+        "writing-mode: vertical-rl; direction: rtl; height: 60px",
+        "writing-mode: sideways-lr; height: 60px",
+    ] {
+        let (_, blocks) = placed(
+            "div::before { content: 'X'; display: block; background: red }",
+            &format!("{root_css}; font: 10px/10px Ahem"),
+            "AA",
+        );
+        assert!(blocks.is_empty(), "{root_css}");
+    }
+}
+
+#[test]
+fn a_box_takes_the_sides_of_a_vertical_root() {
+    let base = block("margin: 1px 2px 3px 4px; width: 50px; height: 60px; min-width: 5px");
+    let rl = base.on_root_axes(WritingMode::VerticalRl, false);
+    // The block start is the right, the inline start the top.
+    assert!(rl.on_root_axes);
+    assert_eq!(rl.margin.top, base.margin.right);
+    assert_eq!(rl.margin.right, base.margin.bottom);
+    assert_eq!(rl.margin.bottom, base.margin.left);
+    assert_eq!(rl.margin.left, base.margin.top);
+    assert_eq!((rl.width, rl.height), (base.height, base.width));
+    assert_eq!(rl.min_height, base.min_width);
+    let lr = base.on_root_axes(WritingMode::VerticalLr, false);
+    assert_eq!(lr.margin.top, base.margin.left);
+    assert_eq!(lr.margin.bottom, base.margin.right);
+    // A horizontal root, and one that runs from the bottom, keep the box.
+    for kept in [
+        base.on_root_axes(WritingMode::HorizontalTb, false),
+        base.on_root_axes(WritingMode::VerticalRl, true),
+        base.on_root_axes(WritingMode::SidewaysLr, false),
+    ] {
+        assert!(!kept.on_root_axes);
+        assert_eq!(kept.margin.top, base.margin.top);
+        assert_eq!(kept.width, base.width);
+    }
+    // `sideways-lr` with a right-to-left direction runs from the top.
+    assert!(
+        base.on_root_axes(WritingMode::SidewaysLr, true)
+            .on_root_axes
+    );
 }
 
 #[test]

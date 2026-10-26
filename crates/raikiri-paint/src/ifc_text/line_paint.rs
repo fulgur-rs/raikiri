@@ -294,7 +294,8 @@ impl<'a> LinePaint<'a, '_> {
             let paint = groups.for_line(piece.line);
             let group = paint.piece_group(piece);
             // The piece's edges are along the block axis: its progression runs
-            // down the page.
+            // down the page, or across it in a vertical paragraph, from the
+            // side its lines start on.
             crate::walk::paint_inline_box(
                 self.image_cache,
                 paint.box_target(group, piece),
@@ -302,8 +303,11 @@ impl<'a> LinePaint<'a, '_> {
                 piece,
                 Some(joined),
                 crate::walk::InlineProgression {
-                    vertical: true,
-                    reversed: false,
+                    vertical: !self.vertical,
+                    reversed: matches!(
+                        self.writing_mode,
+                        WritingMode::VerticalRl | WritingMode::SidewaysRl
+                    ),
                 },
                 transform_applies(document, cascade, piece.node, cv),
                 x,

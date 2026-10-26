@@ -723,10 +723,7 @@ fn run_boxes_segment(
     start: LineStart,
 ) -> RunBoxesOutcome {
     let FlowGeometry {
-        width,
-        edges,
-        top_edge,
-        ..
+        width, top_edge, ..
     } = geometry;
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
@@ -1060,10 +1057,13 @@ fn run_boxes_segment(
                     if matches!(edge, generated_blocks::Token::Start(_)) {
                         generated_block_starts.push((block_line_starts.len(), lines.len()));
                     }
-                    // A generated block is laid out along a horizontal
-                    // root's block axis only; a vertical root breaks its
-                    // lines at the tokens.
-                    if horizontal {
+                    // A generated block is laid out along the block axis of
+                    // a horizontal root, and of a vertical one when the box
+                    // is on its axes; a vertical root breaks its lines at the
+                    // tokens of the others.
+                    let (generated_blocks::Token::Start(block)
+                    | generated_blocks::Token::End(block)) = edge;
+                    if horizontal || block.on_root_axes {
                         let at_start = leading_margin_open
                             && lines.is_empty()
                             && y == 0.0
@@ -1075,12 +1075,16 @@ fn run_boxes_segment(
                             lines: &lines,
                             ctx,
                             width,
-                            content_left: edges.0,
+                            content_left: inline_insets.0,
                             top_edge,
-                            definite_height: geometry.definite_height,
+                            definite_height: if horizontal {
+                                geometry.definite_height
+                            } else {
+                                geometry.vertical_width
+                            },
                             at_start,
                             top_margin_escapes,
-                            rtl: root.rtl,
+                            rtl: root.rtl && horizontal,
                         };
                         match edge {
                             generated_blocks::Token::Start(block) => {
@@ -1101,11 +1105,17 @@ fn run_boxes_segment(
                                 block_cursor += 1;
                                 if let Some(open) = open_block.take() {
                                     let placed = generated_blocks::close(block, open, flow);
-                                    forced_breaks.extend(block.forced_breaks(
-                                        &open,
-                                        placed.as_ref(),
-                                        lines.len(),
-                                    ));
+                                    // Pagination moves the lines of a paragraph
+                                    // down at a forced break; a vertical
+                                    // paragraph's lines are columns it does not
+                                    // break between.
+                                    if horizontal {
+                                        forced_breaks.extend(block.forced_breaks(
+                                            &open,
+                                            placed.as_ref(),
+                                            lines.len(),
+                                        ));
+                                    }
                                     if let Some(placed) = placed {
                                         leading_margin_open = false;
                                         ctx.commit_strut();
@@ -4020,15 +4030,12 @@ pub(crate) fn intrinsics_of_boxes(
         blocks: (0.0, 0.0),
     };
     if let Some(root) = tree.nodes[idx].ifc.as_ref() {
-        // Generated blocks set in only horizontal lines, so a vertical
-        // paragraph's inline extent takes nothing from them.
-        let blocks = if vertical {
-            &[][..]
-        } else {
-            &root.generated_blocks[..]
-        };
-        for width in blocks
+        // The generated blocks that a vertical paragraph does not set in
+        // take nothing from its inline extent.
+        for width in root
+            .generated_blocks
             .iter()
+            .filter(|block| !vertical || block.on_root_axes)
             .map(generated_blocks::GeneratedBlock::intrinsic_width)
         {
             intrinsics.blocks.0 = intrinsics.blocks.0.max(width);

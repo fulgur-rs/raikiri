@@ -20,6 +20,7 @@ use raikiri_style::{
     ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
     ComputedTextIndent, ComputedValues,
 };
+use shodo::geometry::WritingMode;
 use shodo::style::LineOptions;
 
 /// Marks the end token of a block-level `::before` or `::after`: the id of
@@ -95,6 +96,27 @@ pub(crate) struct GeneratedBlock {
     own_lines: (LineOptions, ComputedTextIndent),
     break_before: BreakBetween,
     break_after: BreakBetween,
+    /// The sides and sizes above are on the axes of a vertical root (see
+    /// [`GeneratedBlock::on_root_axes`]); the root lays the box out.
+    pub(crate) on_root_axes: bool,
+}
+
+/// `sides` on the axes of a vertical root: `top` and `bottom` become the
+/// block-start and block-end sides, `left` and `right` the inline-start and
+/// inline-end ones. The block start is at the right of the root when
+/// `block_start_right`.
+fn on_axes<T: Copy>(sides: Sides<T>, block_start_right: bool) -> Sides<T> {
+    let (start, end) = if block_start_right {
+        (sides.right, sides.left)
+    } else {
+        (sides.left, sides.right)
+    };
+    Sides {
+        top: start,
+        right: sides.bottom,
+        bottom: end,
+        left: sides.top,
+    }
 }
 
 impl GeneratedBlock {
@@ -139,6 +161,40 @@ impl GeneratedBlock {
             own_lines: lines,
             break_before: cv.break_before,
             break_after: cv.break_after,
+            on_root_axes: false,
+        }
+    }
+
+    /// The box as a block child of a root in `writing_mode` whose `direction`
+    /// is right to left when `rtl`, on the axes the root lays out its lines
+    /// on. A vertical root keeps its lines in the order of the coordinates of
+    /// its inline axis and its blocks along its block axis, so the box takes
+    /// the sides of the root's content box it is set in by: its block-start
+    /// and block-end sides are the top and bottom, its inline-start and
+    /// inline-end sides the left and right, and its width and height are its
+    /// inline and block sizes. A root whose inline axis runs from the bottom
+    /// does not lay its blocks out: the box stays as it is.
+    pub(crate) fn on_root_axes(self, writing_mode: WritingMode, rtl: bool) -> Self {
+        let from_bottom = rtl != (writing_mode == WritingMode::SidewaysLr);
+        if writing_mode == WritingMode::HorizontalTb || from_bottom {
+            return self;
+        }
+        let block_start_right = matches!(
+            writing_mode,
+            WritingMode::VerticalRl | WritingMode::SidewaysRl
+        );
+        Self {
+            margin: on_axes(self.margin, block_start_right),
+            padding: on_axes(self.padding, block_start_right),
+            border: on_axes(self.border, block_start_right),
+            width: self.height,
+            min_width: self.min_height,
+            max_width: self.max_height,
+            height: self.width,
+            min_height: self.min_width,
+            max_height: self.max_width,
+            on_root_axes: true,
+            ..self
         }
     }
 
@@ -236,7 +292,8 @@ impl GeneratedBlock {
     /// and right sides and its width are on it.
     pub(crate) fn separates_margins(&self, inline_size: f32, vertical: bool) -> bool {
         let edges = self.edges(inline_size);
-        let (block_edges, sizes) = if vertical {
+        // A box on the root's axes has its block-axis sides on top and bottom.
+        let (block_edges, sizes) = if vertical && !self.on_root_axes {
             (
                 edges.left + edges.right,
                 [self.width, self.min_width, self.max_width],
