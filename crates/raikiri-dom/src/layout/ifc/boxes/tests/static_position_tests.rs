@@ -22,6 +22,8 @@ enum Child {
     Box(&'static str),
     /// The out-of-flow `span` under test, with the given style.
     Inline(&'static str),
+    /// A forced line break.
+    Break,
     /// An inline block of 10x10.
     Atomic,
     /// A positioned `span` holding the children.
@@ -58,6 +60,9 @@ fn append(doc: &mut Document, parent: usize, child: Child, tested: &mut usize) {
         }
         Child::Inline(css) => {
             *tested = doc.append_element(Some(parent), "span", Some(&format!("{BOX}{css}")));
+        }
+        Child::Break => {
+            doc.append_element(Some(parent), "br", None::<&str>);
         }
         Child::Atomic => {
             doc.append_element(
@@ -307,6 +312,64 @@ fn an_out_of_flow_box_after_block_children_follows_the_blocks() {
         &[
             ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
             ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+        ],
+    );
+}
+
+#[test]
+fn an_out_of_flow_inline_alone_after_a_break_follows_the_lines_above_it() {
+    // The line the box would have started holds nothing else, so it has no
+    // anchor: the box sits below the last line before it, not below the block.
+    const AFTER_THE_TEXT: &[Expected] = &[
+        ("horizontal-tb", "ltr", (0.0, 20.0, 30.0, 20.0)),
+        ("horizontal-tb", "rtl", (170.0, 20.0, 30.0, 20.0)),
+        ("vertical-rl", "ltr", (150.0, 0.0, 30.0, 20.0)),
+        ("vertical-rl", "rtl", (150.0, 80.0, 30.0, 20.0)),
+        ("vertical-lr", "ltr", (20.0, 0.0, 30.0, 20.0)),
+        ("vertical-lr", "rtl", (20.0, 80.0, 30.0, 20.0)),
+        ("sideways-lr", "ltr", (20.0, 80.0, 30.0, 20.0)),
+        ("sideways-lr", "rtl", (20.0, 0.0, 30.0, 20.0)),
+    ];
+    let setup = Setup {
+        sheet: r#""#,
+        root_css: "",
+    };
+    check(
+        "block_text_break_inline",
+        setup,
+        &[
+            Child::Block("AAAA", ""),
+            Child::Text("CC"),
+            Child::Break,
+            Child::Inline(""),
+        ],
+        AFTER_THE_TEXT,
+    );
+    check(
+        "block_text_break_inline_block",
+        setup,
+        &[
+            Child::Block("AAAA", ""),
+            Child::Text("CC"),
+            Child::Break,
+            Child::Inline(""),
+            Child::Block("DDDD", ""),
+        ],
+        AFTER_THE_TEXT,
+    );
+    check(
+        "text_break_inline",
+        setup,
+        &[Child::Text("CC"), Child::Break, Child::Inline("")],
+        &[
+            ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
+            ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+            ("vertical-rl", "ltr", (160.0, 0.0, 30.0, 20.0)),
+            ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
+            ("vertical-lr", "ltr", (10.0, 0.0, 30.0, 20.0)),
+            ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
+            ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
         ],
     );
 }
