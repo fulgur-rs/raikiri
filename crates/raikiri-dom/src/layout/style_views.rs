@@ -455,6 +455,9 @@ impl LayoutSession<'_> {
         } else {
             ClaimsPolicy::Positioning
         };
+        if matches!(role, ReadRole::FlexItem) {
+            context.flex_item_ratio = self.flex_item_ratio(idx);
+        }
         if matches!(role, ReadRole::BlockItem) {
             context.block_item_basis = self
                 .context
@@ -467,6 +470,50 @@ impl LayoutSession<'_> {
                 .and_then(|&(_, basis)| basis);
         }
         view.with_context(context)
+    }
+
+    /// The aspect ratio the flex algorithm is told about the flex item `idx`.
+    ///
+    /// An item that states its main size and leaves its cross size `auto` takes
+    /// the cross size from the main size it ends up with after flexing. The
+    /// library derives it from the main size the item states, which the item
+    /// does not keep when it grows or shrinks, or when its flex basis is not
+    /// `auto`, so the library is told no ratio and the item derives the cross
+    /// size itself when it is laid out at the flexed main size.
+    ///
+    /// An item with a flex basis of `content` that states its cross size gets
+    /// its flex base size from that size through the ratio, even when it states
+    /// its main size too and the ratio has nothing left to do for its own size.
+    fn flex_item_ratio(&self, idx: usize) -> raikiri_layout_style::FlexItemRatio {
+        use raikiri_layout_style::FlexItemRatio;
+        use raikiri_layout_style::values::ExpandedDimension;
+        let item = self.physical_style(idx);
+        if self.container_is_vertical(idx) || item.stated_aspect_ratio().is_none() {
+            return FlexItemRatio::Declared;
+        }
+        let size = item.size();
+        let is_row = self
+            .taffy_parent_of(idx)
+            .is_none_or(|container| self.physical_style(container).flex_direction_is_row());
+        let (main, cross) = if is_row {
+            (size.width, size.height)
+        } else {
+            (size.height, size.width)
+        };
+        // The `100%` width of an `<svg>` that fills the room its parent offers
+        // stands in for an `auto` one, so the svg states no width of its own.
+        let width_stands_in = self.nodes[idx].svg_width_follows_available;
+        let main_is_stated = states_a_size(main) && (!is_row || !width_stands_in);
+        let cross_is_stated = states_a_size(cross) && (is_row || !width_stands_in);
+        if item.aspect_ratio().is_some() && cross.is_auto() && main_is_stated {
+            FlexItemRatio::CrossFollowsMain
+        } else if matches!(item.flex_basis().expand(), ExpandedDimension::Content)
+            && cross_is_stated
+        {
+            FlexItemRatio::BasisFromCross
+        } else {
+            FlexItemRatio::Declared
+        }
     }
 
     /// The physical view of a laid-out box as the paginator reads it.
@@ -631,3 +678,13 @@ impl LayoutSession<'_> {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+/// Whether `size` is a length, a percentage or a `calc()`: not `auto` and no
+/// sizing keyword.
+fn states_a_size(size: raikiri_layout_style::values::Dimension) -> bool {
+    use raikiri_layout_style::values::ExpandedDimension;
+    matches!(
+        size.expand(),
+        ExpandedDimension::Length(_) | ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_)
+    )
+}

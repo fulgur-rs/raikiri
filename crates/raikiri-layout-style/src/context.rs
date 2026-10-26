@@ -229,6 +229,24 @@ pub enum ClaimsPolicy {
     Positioning,
 }
 
+/// The aspect ratio a flex item reports to the flex algorithm.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum FlexItemRatio {
+    /// The preferred aspect ratio of the box.
+    #[default]
+    Declared,
+    /// None. The item states its main size and leaves its cross size `auto`,
+    /// so the cross size follows from the main size the item ends up with once
+    /// it has flexed. The flex algorithm would instead derive it from the main
+    /// size the item states, which flexing may well change.
+    CrossFollowsMain,
+    /// The ratio the style states, even though the item states both sizes. A
+    /// flex basis of `content` ignores the main size, so the flex base size
+    /// comes from the cross size the item states and the ratio.
+    BasisFromCross,
+}
+
 /// The context in which an algorithm reads a box's style.
 #[derive(Clone, Copy, Debug)]
 #[doc(hidden)]
@@ -247,6 +265,8 @@ pub struct ViewContext {
     pub align_axis_is_inline: bool,
     /// Optional replacement basis for percentage padding and border edges.
     pub percent_basis: PercentBasis,
+    /// The aspect ratio the view reports for a flex item.
+    pub flex_item_ratio: FlexItemRatio,
 }
 impl Default for ViewContext {
     fn default() -> Self {
@@ -258,6 +278,7 @@ impl Default for ViewContext {
             layout_wm: WritingMode::HorizontalTb,
             align_axis_is_inline: false,
             percent_basis: PercentBasis::Taffy,
+            flex_item_ratio: FlexItemRatio::Declared,
         }
     }
 }

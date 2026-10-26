@@ -5292,3 +5292,12 @@ css/css-align/abspos/justify-self-static-position-001.html
 # --- last baseline in the static position of an absolute box of a block container (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
 # An absolutely positioned box that asks for `last baseline` aligns to the end of the static-position rectangle of a block container, a line of no height, as `end` does, where `safe end` would put it at the start; the purple boxes of all thirteen items match Chromium's pixel for pixel (the dotted container borders are drawn differently); KEEP in two audit-vacuous-passes runs.
 css/css-align/abspos/align-self-static-position-008.html
+
+# --- flex items with an aspect-ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
+# An item that states its main size and leaves its cross size auto takes the cross size from the main size it ends up with once it has flexed (011, 013, 023, 028), and an item with a flex basis of content gets its flex base size from the cross size it states through the ratio, ignoring the main size it states (021, 022); the green squares match Chromium's pixel for pixel (the paragraph text is drawn differently); all KEEP in two audit-vacuous-passes runs.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-011.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-013.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-021.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-022.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-023.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-028.html
