@@ -113,6 +113,11 @@ pub(crate) struct StyleViews<'a> {
 }
 
 impl<'a> StyleViews<'a> {
+    /// The cascade the views read.
+    pub(crate) fn cascade(&self) -> &'a CascadeResult {
+        self.cascade
+    }
+
     pub(crate) fn new(cascade: &'a CascadeResult) -> Self {
         Self {
             cascade,

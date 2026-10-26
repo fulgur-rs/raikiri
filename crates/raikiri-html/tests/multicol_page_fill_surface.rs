@@ -34,10 +34,8 @@ fn articles() -> String {
         .collect()
 }
 
-/// The lines of every column of every page, as `p<page> x<left>: <runs>`.
-/// A run is the first and last label of lines one after the other, and the
-/// top of the first, as in `L1-L10@0`.
-fn columns(body: &str, css: &str) -> Vec<String> {
+/// The page, left edge, top and text of every line the pages report.
+fn lines(body: &str, css: &str) -> Vec<(u32, i32, i32, String)> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -61,20 +59,30 @@ fn columns(body: &str, css: &str) -> Vec<String> {
     .unwrap() else {
         panic!("layout must complete")
     };
-    let mut cells: BTreeMap<(u32, i32), Vec<(i32, String)>> = BTreeMap::new();
+    let mut lines = Vec::new();
     for index in 0..12 {
         let Some(page) = result.page(index) else {
             continue;
         };
         for run in page.text_runs() {
-            cells
-                .entry((index, run.origin.0.round() as i32))
-                .or_default()
-                .push((
-                    (run.origin.1 - ASCENT).round() as i32,
-                    run.text.trim_end().to_owned(),
-                ));
+            lines.push((
+                index,
+                run.origin.0.round() as i32,
+                (run.origin.1 - ASCENT).round() as i32,
+                run.text.trim_end().to_owned(),
+            ));
         }
+    }
+    lines
+}
+
+/// The lines of every column of every page, as `p<page> x<left>: <runs>`.
+/// A run is the first and last label of lines one after the other, and the
+/// top of the first, as in `L1-L10@0`.
+fn columns(body: &str, css: &str) -> Vec<String> {
+    let mut cells: BTreeMap<(u32, i32), Vec<(i32, String)>> = BTreeMap::new();
+    for (page, left, top, text) in lines(body, css) {
+        cells.entry((page, left)).or_default().push((top, text));
     }
     cells
         .into_iter()
@@ -519,6 +527,26 @@ fn a_paragraph_that_is_shifted_keeps_its_runs_where_it_stays_whole() {
         ],
         "shifted"
     );
+}
+
+#[test]
+fn a_paragraph_that_is_cut_and_shifted_keeps_its_runs() {
+    // A piece of a paragraph is clipped at its column, and the painter moves
+    // the paragraph's own offset inside that clip, so the runs of the pieces
+    // are not reported. The paragraph stays in the columns that the pages cut,
+    // where all its lines are reported.
+    for shift in [
+        "p{position:relative;top:3px}",
+        "p{transform:translate(5px,3px)}",
+    ] {
+        let mut texts: Vec<_> = lines(&mc(&par("L", 1, 45)), shift)
+            .into_iter()
+            .map(|line| line.3)
+            .collect();
+        texts.sort_by_key(|text| text[1..].parse::<u32>().unwrap());
+        let expected: Vec<_> = (1..=45).map(|n| format!("L{n}")).collect();
+        assert_eq!(texts, expected, "{shift}");
+    }
 }
 
 #[test]

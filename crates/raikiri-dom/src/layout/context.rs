@@ -78,7 +78,7 @@ pub(crate) struct LayoutContext {
     /// Whether a multicol container of plain paragraphs and a height of
     /// `auto` is laid out without keeping its groups for pagination, which
     /// leaves its columns in one tall set that the page walk cuts (see
-    /// `multicol::paged_spanning`).
+    /// its `paged_spanning` module in [`crate::layout::multicol`]).
     pub(crate) unpaged_plain_columns: bool,
     /// The multicol containers without a spanner whose columns pagination
     /// filled page by page.
