@@ -240,12 +240,15 @@ fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bo
     }
     let mut boxes = 0usize;
     let mut sized = false;
-    let mut pending = vec![child];
-    while let Some(id) = pending.pop() {
+    // Whether a box on the way down is the containing block of the absolutely
+    // positioned boxes below it, so that they are cut with the container.
+    let mut pending = vec![(child, false)];
+    while let Some((id, contained)) = pending.pop() {
         boxes += 1;
-        if boxes > MAX_SLICED_FLEX_BOXES || !is_sliceable_flex_box(tree, id) {
+        if boxes > MAX_SLICED_FLEX_BOXES || !is_sliceable_flex_box(tree, id, contained) {
             return None;
         }
+        let contained = contained || layout_node(tree, id).contains_absolute_boxes;
         let style = style_of(tree, id);
         sized |= style_dimension_length(style.size().height).is_some()
             || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
@@ -257,7 +260,7 @@ fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bo
                 continue;
             }
             match &held_node.data {
-                NodeData::Element(_) => pending.push(held),
+                NodeData::Element(_) => pending.push((held, contained)),
                 NodeData::Text(text) if text.text_content.trim().is_empty() => {}
                 _ => return None,
             }
@@ -268,7 +271,7 @@ fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bo
 
 /// Whether `id`, a flex container or a box inside one, can be sliced with
 /// the rest of the container (see [`sliceable_flex_container`]).
-fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize) -> bool {
+fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize, contained: bool) -> bool {
     let node = layout_node(tree, id);
     let style = style_of(tree, id);
     matches!(
@@ -276,10 +279,10 @@ fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize) -> bool {
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex
     ) && is_horizontal(node)
         && !node.size_containment.height
-        && matches!(
+        && (matches!(
             node.layout_position(),
             Position::Relative | Position::Static
-        )
+        ) || contained && is_absolute_box(node))
         && !style.float().is_floated()
         && style.overflow()
             == (Point {
@@ -664,6 +667,12 @@ fn absolute_pieces(
         let mut own = Vec::new();
         let first = pieces.first()?;
         let last = pieces.last()?;
+        // A flex container is sliced whole, with the absolutely positioned
+        // boxes it holds.
+        if sliceable_flex_container(tree, child).is_some() {
+            all.push(own);
+            continue;
+        }
         // The containing block's block offset in the columns laid end to end.
         let flow_top = first.column as f32 * column_height + first.top;
         for node in absolute_children(tree, child) {
