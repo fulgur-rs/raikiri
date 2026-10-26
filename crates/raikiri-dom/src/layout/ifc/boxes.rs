@@ -2558,16 +2558,23 @@ fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> boo
 
 /// Whether the block child `node` of a vertical root laid out in
 /// `root_writing_mode` takes part in the root's block formatting context: it
-/// does when it flows in the block direction of the root and does not align its
-/// content. A child that flows the other way, across or against the root, is
-/// laid out as the root of a context of its own, whose margins do not collapse
-/// with its content's.
+/// does when it has the root's writing mode and does not align its content. A
+/// child with another writing mode, even one that flows in the same block
+/// direction as `sideways-lr` does in a `vertical-lr` root (CSS Writing Modes
+/// 4 §3.1), or that flows the other way, across or against the root, is laid
+/// out as the root of a context of its own, whose margins do not collapse with
+/// its content's and which does not overlap the root's floats.
 fn shares_vertical_root_context(
     tree: &LayoutSession<'_>,
     node: usize,
     root_writing_mode: WritingMode,
 ) -> bool {
     in_the_roots_formatting_context(tree, node)
+        && super::style::shodo_writing_mode(
+            crate::layout::dispatch::used_writing_mode(tree, node),
+            node,
+        )
+        .is_ok_and(|writing_mode| writing_mode == root_writing_mode)
         && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
         && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
             node_direction
