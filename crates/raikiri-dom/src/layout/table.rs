@@ -981,23 +981,51 @@ fn compute_table_layout_checked(
         // impose a definite height on a single-row table without doing so; keep
         // that free space in the wrapper rather than manufacturing a cell
         // fragment in that case.
-        // The extra goes to the rows without an authored height, which keep
-        // the others as they are (see `distribute_extra_to_rows`).
-        if effective_known.height.is_some() && (grid.rows.len() > 1 || specified_height.is_some()) {
-            let known_h = effective_known.height.unwrap(); // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-            let target = f32_max_compat(known_h - distrib_insets.height, 0.0);
-            let authored = authored_height_rows(doc, &grid);
-            distribute_extra_to_rows(&mut row_heights, &hidden_rows, &authored, target);
-        }
-
-        // Extra min-height grows rows (same path as a definite height);
+        let known_target = effective_known
+            .height
+            .filter(|_| grid.rows.len() > 1 || specified_height.is_some())
+            .map(|known_h| f32_max_compat(known_h - distrib_insets.height, 0.0));
+        // Extra min-height grows rows the same way as a definite height;
         // max-height only clamps the box (content overflows visibly). The outer
         // domain keeps content-box correct: `min_outer - distrib_insets` =
         // `min_content + overlap`, the track sum that yields `min_content`.
-        if let Some(mn) = min_h_outer {
-            let target = f32_max_compat(mn - distrib_insets.height, 0.0);
+        let min_target = min_h_outer.map(|mn| f32_max_compat(mn - distrib_insets.height, 0.0));
+        // The taller of the two is shared once, so that the percentage heights
+        // of rows resolve against the height the table ends up with.
+        if let Some(target) = [known_target, min_target]
+            .into_iter()
+            .flatten()
+            .reduce(f32_max_compat)
+        {
+            // The rows without an authored height take the extra, which keeps
+            // the others as they are (see `distribute_extra_to_rows`).
             let authored = authored_height_rows(doc, &grid);
-            distribute_extra_to_rows(&mut row_heights, &hidden_rows, &authored, target);
+            // The percentages of rows resolve only in a table whose `height`
+            // or `min-height` is authored: a height imposed from outside, which
+            // may come from fragmentation, does not make it definite. They are
+            // also left alone in vertical writing modes, which this pass does
+            // not adjust, and when the rows come from several row groups, whose
+            // heights Chromium settles before those of the rows in them.
+            let (percents, percent_base) = if !vertical_writing
+                && (specified_height.is_some() || min_h_outer.is_some())
+                && rows_form_one_section(doc, &grid)
+            {
+                // A percentage of the rows' height is that of their group,
+                // which holds the spacing between them but not the spacing at
+                // the table's edges.
+                let base = target + spacing.height - 2.0 * border_spacing.1;
+                (percent_height_rows(doc, &grid), f32_max_compat(base, 0.0))
+            } else {
+                (vec![None; grid.rows.len()], 0.0)
+            };
+            distribute_extra_to_rows(
+                &mut row_heights,
+                &hidden_rows,
+                &authored,
+                &percents,
+                percent_base,
+                target,
+            );
         }
         if vertical_writing {
             // Vertical columns stack the same row track along the physical
@@ -2829,22 +2857,40 @@ fn distribute_extra(sizes: &mut [f32], hidden: Option<&[bool]>, target: f32) {
 
 /// Grow the row heights `sizes` until they sum to `target`, the way browsers
 /// share a table's extra height (CSS 2.1 17.5.3 leaves it to the user agent):
-/// the rows without an authored height (`authored`) take all of it, in
-/// proportion to their heights or equally when none has any, and the rows with
-/// one keep theirs. Only when every shown row has an authored height do they
-/// all share it, as [`distribute_extra`] does. Rows in `hidden` take no part.
-fn distribute_extra_to_rows(sizes: &mut [f32], hidden: &[bool], authored: &[bool], target: f32) {
-    let current: f32 = sizes.iter().sum();
-    if current >= target {
+/// 1. The rows with a percentage height (`percents`, fractions of one) grow,
+///    in order, to that share of `percent_base` while the extra lasts.
+/// 2. The rows with neither a percentage nor an authored height (`authored`)
+///    take the rest, in proportion to their heights or equally when none has
+///    any, and the other rows keep theirs.
+/// 3. Only when every shown row has a percentage or an authored height do they
+///    all share the rest, as [`distribute_extra`] does.
+///
+/// Rows in `hidden` take no part.
+fn distribute_extra_to_rows(
+    sizes: &mut [f32],
+    hidden: &[bool],
+    authored: &[bool],
+    percents: &[Option<f32>],
+    percent_base: f32,
+    target: f32,
+) {
+    let mut extra = target - sizes.iter().sum::<f32>();
+    if extra <= 0.0 {
         return;
     }
-    let takes = |index: usize| !hidden[index] && !authored[index];
+    for (index, size) in sizes.iter_mut().enumerate() {
+        if let Some(percent) = percents[index].filter(|_| !hidden[index]) {
+            let grown = (percent * percent_base - *size).clamp(0.0, extra);
+            *size += grown;
+            extra -= grown;
+        }
+    }
+    let takes = |index: usize| !hidden[index] && !authored[index] && percents[index].is_none();
     let takers = (0..sizes.len()).filter(|&index| takes(index)).count();
     if takers == 0 {
         distribute_extra(sizes, Some(hidden), target);
         return;
     }
-    let extra = target - current;
     let taker_total: f32 = sizes
         .iter()
         .enumerate()
@@ -2866,24 +2912,69 @@ fn distribute_extra_to_rows(sizes: &mut [f32], hidden: &[bool], authored: &[bool
 // Row heights
 // ---------------------------------------------------------------------------
 
+/// The `height` of each row's own box and of the cells confined to it, read
+/// with `read` and folded into one value per row with `fold`. A cell that spans
+/// rows is left out.
+fn fold_row_heights<T: Copy>(
+    doc: &LayoutSession<'_>,
+    grid: &TableGrid,
+    read: impl Fn(Dimension) -> T,
+    fold: impl Fn(T, T) -> T,
+) -> Vec<T> {
+    let mut rows: Vec<T> = grid
+        .rows
+        .iter()
+        .map(|&row_id| read(doc.table_style(row_id).size().height))
+        .collect();
+    for cell in &grid.cells {
+        let start = cell.row as usize;
+        let end = (start + cell.row_span as usize).min(rows.len());
+        if end - start == 1 {
+            let height = read(doc.table_style(cell.node_id).size().height);
+            rows[start] = fold(rows[start], height);
+        }
+    }
+    rows
+}
+
 /// The rows with an authored height: the row's own `height`, or the `height` of
 /// a cell confined to it, is a length. A cell that spans rows does not make any
 /// of them so.
 fn authored_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<bool> {
-    let mut authored: Vec<bool> = grid
-        .rows
-        .iter()
-        .map(|&row_id| resolve_dimension(doc.table_style(row_id).size().height, None).is_some())
-        .collect();
-    for cell in &grid.cells {
-        let start = cell.row as usize;
-        let end = (start + cell.row_span as usize).min(authored.len());
-        if end - start == 1 {
-            authored[start] |=
-                resolve_dimension(doc.table_style(cell.node_id).size().height, None).is_some();
-        }
-    }
-    authored
+    fold_row_heights(
+        doc,
+        grid,
+        |height| resolve_dimension(height, None).is_some(),
+        |row, cell| row || cell,
+    )
+}
+
+/// The percentage `height` of each row, as a fraction of one: the largest of
+/// the row's own and those of the cells confined to it, as in Chromium. A cell
+/// that spans rows does not count. A `calc()` that mixes a percentage with a
+/// length is not a percentage here, and neither is a row without a `height`.
+fn percent_height_rows(doc: &LayoutSession<'_>, grid: &TableGrid) -> Vec<Option<f32>> {
+    fold_row_heights(
+        doc,
+        grid,
+        |height| match height.expand() {
+            ExpandedDimension::Percent(percent) => Some(percent),
+            _ => None,
+        },
+        |row, cell| match (row, cell) {
+            (Some(row), Some(cell)) => Some(row.max(cell)),
+            (row, cell) => row.or(cell),
+        },
+    )
+}
+
+/// Whether the rows all have the same parent: the table's rows then form one
+/// row group, or sit in the table itself. A row of cells with no row around
+/// them is recorded by its first cell, whose parent is the box that holds them.
+fn rows_form_one_section(doc: &LayoutSession<'_>, grid: &TableGrid) -> bool {
+    let mut parents = grid.rows.iter().map(|&row_id| doc.nodes[row_id].parent);
+    let first = parents.next();
+    parents.all(|parent| Some(parent) == first)
 }
 
 fn cell_baseline_aligned(align: VerticalAlign) -> bool {
@@ -2972,7 +3063,8 @@ fn resolve_row_heights(
     // is taller than the rows it spans.
     let fixed_rows = authored_height_rows(doc, grid);
     // Authored `height` on rows floors the row (CSS 2.1 §17.5.3; lengths
-    // only — percentages need the table height, indefinite at this stage).
+    // only — percentages need the table height, indefinite at this stage, and
+    // are settled by `distribute_extra_to_rows` once it is known).
     // Anonymous-row markers reuse the first cell's id; flooring by a cell's
     // own height there is consistent with its content measure.
     // Vertical writing modes are NOT adjusted here: in vertical-rl the row's
