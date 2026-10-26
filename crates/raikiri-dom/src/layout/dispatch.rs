@@ -2044,6 +2044,17 @@ fn measure_ifc_root(
         geometry.vertical_width = vertical_width;
         geometry
     };
+    // The block extent a vertical root with an auto block size settled on
+    // last time at the same inline size starts the search for it, so that
+    // the first pass is the last one. From its intrinsic inline size, which is
+    // not an extent along the block axis, the search lays the children out a
+    // second time to confirm the extent, and that doubles the work for every
+    // level of vertical roots nested in each other.
+    let seed_key = (vertical && !measure.stretched_width && known_width.is_none())
+        .then(|| (idx, content_size.height.to_bits()));
+    if let Some(seed) = seed_key.and_then(|key| tree.context.vertical_block_size_seeds.get(&key)) {
+        content_size.width = *seed;
+    }
     let mut geometry = geometry_of(content_size);
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
@@ -2114,6 +2125,12 @@ fn measure_ifc_root(
                     measure.bottom_margin_escapes,
                 );
             }
+        }
+        // Only an extent the search settled on is worth starting from.
+        if let Some(key) = seed_key.filter(|_| !needs_final_probe) {
+            tree.context
+                .vertical_block_size_seeds
+                .insert(key, block_size);
         }
         (lines, block_size)
     } else {

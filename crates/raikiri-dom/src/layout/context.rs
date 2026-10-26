@@ -58,6 +58,11 @@ pub(crate) struct LayoutContext {
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
+    /// The block extent each vertical paragraph root with an auto block size
+    /// settled on, by root and inline size (the bits of the physical height).
+    /// It is a first guess for the next layout of the same root, and a wrong
+    /// one is corrected like any other.
+    pub(crate) vertical_block_size_seeds: HashMap<(usize, u32), f32>,
     /// The static positions of the boxes hoisted to a containing block on
     /// vertical axes that align `safe` in an axis, which that block aligns
     /// again once the library has positioned them (see
@@ -211,6 +216,7 @@ impl<'doc> LayoutSession<'doc> {
             self.context.grid_layout_info.clear();
             self.context.taffy_hoisted_children.clear();
             self.context.safe_static_positions.clear();
+            self.context.vertical_block_size_seeds.clear();
             self.document.layout_dirty = false;
         }
     }

@@ -642,6 +642,49 @@ fn nested_shrink_to_fit_boxes_are_measured_a_few_times_each() {
 }
 
 #[test]
+fn nested_vertical_boxes_are_measured_a_few_times_each() {
+    // A vertical box with an auto block size starts from the intrinsic extent
+    // of its lines, which is not its block extent, so it laid its boxes out a
+    // second time at the extent it found. Every level did, and the scans of
+    // paragraphs doubled with each level of vertical boxes nested in each
+    // other (49136 at fourteen levels). The extent that a box settled on is
+    // the first try now, and the count follows the depth.
+    let depth = 14;
+    for display in ["block", "inline-block"] {
+        let mut outermost = None;
+        let (mut doc, cascade, root) =
+            ahem_paragraph_with("writing-mode:vertical-rl", |doc, root| {
+                let mut parent = root;
+                for _ in 0..depth - 1 {
+                    parent = doc.append_element(
+                        Some(parent),
+                        "div",
+                        Some(format!("display:{display};writing-mode:vertical-rl").as_str()),
+                    );
+                    outermost.get_or_insert(parent);
+                }
+                doc.append_text(parent, "X");
+            });
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert!(
+            intrinsic_measurements(&doc) < 40 * depth,
+            "{display}: {} scans",
+            intrinsic_measurements(&doc)
+        );
+        // Every box holds one `X` in a column, so each is a column wide and as
+        // tall as the `X`, and the boxes inside do not widen it.
+        for node in [root, outermost.expect("a box")] {
+            let size = doc.nodes[node].layout.size;
+            assert_eq!(
+                (size.width, size.height),
+                (10.0, 10.0),
+                "{display}: box {node}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_stretched_vertical_paragraph_is_still_measured_for_intrinsic_widths() {
     // In vertical flow the intrinsic widths still size the block extent.
     let (mut doc, cascade, _root) =
