@@ -1,7 +1,9 @@
 //! `width` set to `min-content`, `max-content` or `fit-content` on a flex or
 //! grid item takes the size the keyword measures (CSS Sizing 3 §3.1.1), and the
-//! item is not stretched. The text of the fixtures is `AAAA BBBB` in Ahem at
-//! 10px: 40px wide at its longest word, 90px wide on one line.
+//! item is not stretched; a `min-width` or `max-width` clamps that size, and
+//! the lines of the item break at the clamped width. The text of the fixtures
+//! is `AAAA BBBB` in Ahem at 10px: 40px wide at its longest word, 90px wide on
+//! one line. Every size is the one Chromium gives.
 
 use crate::layout::ifc::test_support::block_fixture;
 use crate::layout::layout_single_page;
@@ -257,6 +259,149 @@ fn an_item_is_in_a_column_flex_container_only_when_the_main_axis_is_vertical() {
                 .in_column_flex_container(item),
             expected,
             "{container}"
+        );
+    }
+}
+
+/// An item holding text, the `min-width` or `max-width` that clamps its keyword
+/// width, and the `(width, height)` it takes in a container 200px wide.
+const CLAMPED_ITEMS: [(&str, (f32, f32)); 7] = [
+    ("width:max-content;max-width:60px", (60.0, 20.0)),
+    ("width:max-content;min-width:120px", (120.0, 10.0)),
+    ("width:min-content;max-width:30px", (30.0, 20.0)),
+    ("width:min-content;min-width:60px", (60.0, 20.0)),
+    ("width:fit-content;max-width:50%", (90.0, 10.0)),
+    ("width:fit-content;min-width:120px", (120.0, 10.0)),
+    ("width:max-content;min-width:50%", (100.0, 10.0)),
+];
+
+/// The same for an item that is a flex or grid container itself.
+const CLAMPED_CONTAINER_ITEMS: [(&str, (f32, f32)); 5] = [
+    (
+        "display:grid;width:max-content;max-width:60px",
+        (60.0, 20.0),
+    ),
+    (
+        "display:flex;width:max-content;max-width:60px",
+        (60.0, 20.0),
+    ),
+    (
+        "display:flex;width:min-content;min-width:60px",
+        (60.0, 20.0),
+    ),
+    (
+        "display:grid;width:max-content;min-width:120px",
+        (120.0, 10.0),
+    ),
+    (
+        "display:flex;width:fit-content;max-width:60px",
+        (60.0, 20.0),
+    ),
+];
+
+#[test]
+fn a_minimum_or_maximum_width_clamps_the_keyword_width_of_an_item() {
+    for container in [COLUMN, ROW, GRID] {
+        for (style, expected) in CLAMPED_ITEMS {
+            assert_eq!(
+                size(container, style, Body::Text),
+                expected,
+                "{container} {style}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_lines_of_a_clamped_container_item_break_at_the_width_it_keeps() {
+    for container in [COLUMN, ROW, GRID] {
+        for (style, expected) in CLAMPED_CONTAINER_ITEMS {
+            assert_eq!(
+                size(container, style, Body::Text),
+                expected,
+                "{container} {style}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_clamped_keyword_width_adds_the_padding_and_border_of_the_item() {
+    let edges =
+        "box-sizing:content-box;padding:0 5px;border:2px solid;width:max-content;max-width:60px";
+    for container in [COLUMN, ROW, GRID] {
+        assert_eq!(size(container, edges, Body::Text), (74.0, 24.0));
+        assert_eq!(
+            size(container, &format!("display:grid;{edges}"), Body::Text),
+            (74.0, 24.0)
+        );
+    }
+}
+
+#[test]
+fn a_clamped_container_item_sizes_a_min_content_grid_around_it() {
+    // The item asks for its max-content width, which its `max-width` cuts to
+    // 50px; that is the min-content width of the grid around it too.
+    assert_eq!(
+        item_rect(
+            "display:grid;width:min-content",
+            "display:grid;width:max-content;max-width:50px",
+            Body::Text
+        ),
+        (0.0, 0.0, 50.0, 20.0)
+    );
+}
+
+#[test]
+fn a_keyword_minimum_or_maximum_width_clamps_the_keyword_width_of_a_container_item() {
+    assert_eq!(
+        size(
+            ROW,
+            "display:grid;width:max-content;max-width:min-content",
+            Body::Text
+        ),
+        (40.0, 20.0)
+    );
+    assert_eq!(
+        size(
+            ROW,
+            "display:flex;width:max-content;max-width:min-content",
+            Body::Text
+        ),
+        (40.0, 20.0)
+    );
+    assert_eq!(
+        size(
+            ROW,
+            "display:grid;width:min-content;min-width:max-content",
+            Body::Text
+        ),
+        (90.0, 10.0)
+    );
+}
+
+#[test]
+fn a_content_flex_basis_takes_the_content_width_of_a_clamped_container_item() {
+    // `flex-basis: content` sets aside the keyword width; only the limits
+    // clamp the width of the content.
+    for display in ["display:grid", "display:flex"] {
+        assert_eq!(
+            size(
+                ROW,
+                &format!("{display};flex:0 0 content;width:max-content;max-width:60px"),
+                Body::Text
+            ),
+            (60.0, 20.0),
+            "{display}"
+        );
+        assert_eq!(
+            size(
+                ROW,
+                &format!("{display};flex:0 0 content;width:min-content;min-width:60px"),
+                Body::Text
+            ),
+            (90.0, 10.0),
+            "{display}"
         );
     }
 }

@@ -2252,10 +2252,10 @@ fn a_display_contents_parent_passes_its_own_container_to_the_width_keyword() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
 
-    // The flex item is clamped, so its keyword stays out of Taffy's way; the
-    // block is sized by the keyword and clamped afterwards.
+    // The flex item and the block are both sized by the keyword and clamped
+    // afterwards.
     let mut width = |item: usize| bridged_style(&mut doc, &cascade, item).size.width;
-    assert_eq!(width(items[0]), Dimension::auto());
+    assert_eq!(width(items[0]), Dimension::max_content());
     assert_eq!(width(items[1]), Dimension::max_content());
 }
 
@@ -2281,11 +2281,6 @@ fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
                 "div",
                 &format!("{width};writing-mode:vertical-rl"),
             ),
-            // A flex or grid item with a minimum or maximum width is measured
-            // by Taffy before the size is clamped.
-            ("display:flex", "div", &format!("{width};max-width:100px")),
-            ("display:flex", "div", &format!("{width};min-width:10px")),
-            ("display:grid", "div", &format!("{width};max-width:50%")),
             // A replaced element takes its natural size, also when it is
             // absolutely positioned.
             ("display:block", "img", &width),
@@ -2345,7 +2340,8 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
             ("display:inline-flex", "div", width),
             ("display:grid", "div", width),
             ("display:flex", "div", "display:flex;width:max-content"),
-            // A minimum width that is zero or `auto` clamps nothing.
+            // A minimum or maximum width does not change the box the keyword
+            // sizes; it is clamped after the keyword is measured.
             (
                 "display:flex",
                 "div",
@@ -2359,12 +2355,22 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
             (
                 "display:flex",
                 "div",
-                "display:block;width:max-content;min-width:0%"
+                "display:block;width:max-content;max-width:100px"
+            ),
+            (
+                "display:flex",
+                "div",
+                "display:block;width:max-content;min-width:10px"
             ),
             (
                 "display:grid",
                 "div",
-                "display:block;width:max-content;min-width:calc(0% + 0px)"
+                "display:block;width:max-content;max-width:50%"
+            ),
+            (
+                "display:grid",
+                "div",
+                "display:block;width:max-content;min-width:calc(10% + 4px)"
             ),
             // A multicol container is sized by its columns.
             (
@@ -2378,34 +2384,8 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
                 "display:block;column-count:2;width:max-content;"
             ),
         ]),
-        [keyword; 16],
+        [keyword; 18],
     );
-}
-
-#[test]
-fn a_size_that_is_zero_whatever_it_refers_to_is_a_zero_length() {
-    use raikiri_style::property::CalcLengthPercentage;
-
-    let calc =
-        |percent, px| ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage { percent, px });
-    for zero in [
-        ComputedLengthPercentageOrAuto::Px(0.0),
-        ComputedLengthPercentageOrAuto::Px(-0.0),
-        ComputedLengthPercentageOrAuto::Percent(0.0),
-        calc(0.0, 0.0),
-    ] {
-        assert!(is_zero_length(zero), "{zero:?}");
-    }
-    for other in [
-        ComputedLengthPercentageOrAuto::Px(1.0),
-        ComputedLengthPercentageOrAuto::Percent(5.0),
-        calc(10.0, 0.0),
-        calc(0.0, 4.0),
-        ComputedLengthPercentageOrAuto::Auto,
-        ComputedLengthPercentageOrAuto::MinContent,
-    ] {
-        assert!(!is_zero_length(other), "{other:?}");
-    }
 }
 
 #[test]
