@@ -3280,25 +3280,19 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
     // The nearest run on each side, with its distance from the anchor.
     let mut before: Option<(f32, u8)> = None;
     let mut after: Option<(f32, u8)> = None;
-    for fragment in line.fragments() {
-        let shodo::Fragment::GlyphRun(run) = fragment else {
-            continue;
+    let runs = line.fragments().filter_map(|fragment| match fragment {
+        shodo::Fragment::GlyphRun(run) if run.inline_size() > 0.0 => Some(run),
+        _ => None,
+    });
+    for run in runs {
+        let end = run.inline_start() + run.inline_size();
+        let (side, gap) = if end <= position + SLACK {
+            (&mut before, position - end)
+        } else {
+            (&mut after, run.inline_start() - position)
         };
-        if run.inline_size() <= 0.0 {
-            continue;
-        }
-        let start = run.inline_start();
-        let end = start + run.inline_size();
-        if end <= position + SLACK {
-            let gap = position - end;
-            if before.is_none_or(|(nearest, _)| gap < nearest) {
-                before = Some((gap, run.bidi_level()));
-            }
-        } else if start >= position - SLACK {
-            let gap = start - position;
-            if after.is_none_or(|(nearest, _)| gap < nearest) {
-                after = Some((gap, run.bidi_level()));
-            }
+        if side.is_none_or(|(nearest, _)| gap < nearest) {
+            *side = Some((gap, run.bidi_level()));
         }
     }
     match (before, after) {
