@@ -1445,15 +1445,25 @@ fn consumed_rows(pieces: &[Piece], stream_pieces: &[Vec<Piece>], items: &[Item])
                 return piece.height;
             };
             let shown = (blocks.end - piece.top).clamp(0.0, piece.height);
-            // The next column starts with the block after this column's last
-            // one, whose margin above it is cut by the break.
+            // The next column starts with a block after this column's last
+            // one, with only blocks with no block size between them. The
+            // margins around them collapse into one, which the break cuts.
             let cut_margin = columns
                 .get(&pieces[index + 1].column)
-                .filter(|next| next.first == blocks.last + 1 && next.first_top <= EPSILON)
+                .filter(|next| {
+                    next.first > blocks.last
+                        && next.first_top <= EPSILON
+                        && items[blocks.last + 1..next.first]
+                            .iter()
+                            .all(|item| item.height <= 0.0)
+                })
                 .map_or(0.0, |next| {
-                    items[blocks.last]
-                        .margin_bottom
-                        .max(items[next.first].margin_top)
+                    items[blocks.last + 1..next.first].iter().fold(
+                        items[blocks.last]
+                            .margin_bottom
+                            .max(items[next.first].margin_top),
+                        |gap, item| gap.max(item.margin_top).max(item.margin_bottom),
+                    )
                 });
             shown + cut_margin
         })

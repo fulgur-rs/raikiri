@@ -2940,6 +2940,31 @@ fn the_margin_a_column_break_cuts_is_still_part_of_the_box_a_wrapper_shows() {
         vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -50.0, 150.0)]
     );
 
+    // Blocks with no block size between the two let their margins collapse
+    // with it.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:48px;border-bottom:2px solid"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:40px"));
+    doc.append_element(Some(wrapper), "div", Some("display:block;margin-top:10px"));
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;margin-bottom:5px"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:50px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -50.0, 150.0)]
+    );
+
     // A block that fits the column exactly leaves the margin to the next
     // block as well.
     let mut doc = Document::new();
