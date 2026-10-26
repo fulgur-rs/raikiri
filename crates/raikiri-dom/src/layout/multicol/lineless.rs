@@ -63,7 +63,17 @@ fn supported_with_wrapped_blocks(
     }
     let mut children = Vec::new();
     let mut boxes = Vec::new();
+    let mut sized_flex = false;
     for child in rendered_elements(tree, parent) {
+        // A flex container is sliced whole, with the boxes it holds.
+        if let Some(sized) = allow_wrapped_blocks
+            .then(|| sliceable_flex_container(tree, child))
+            .flatten()
+        {
+            sized_flex |= sized;
+            children.push(child);
+            continue;
+        }
         let node = layout_node(tree, child);
         let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
         let plain_block = is_plain_block_ignoring_insets(tree, child);
@@ -103,7 +113,7 @@ fn supported_with_wrapped_blocks(
             layout_node(tree, child).contains_absolute_boxes
                 && !absolute_children(tree, child).is_empty()
         });
-    (sized || holds_absolute_boxes).then_some(children)
+    (sized || sized_flex || holds_absolute_boxes).then_some(children)
 }
 
 /// The rendered element children of `parent`, with those of a `display:
@@ -201,6 +211,95 @@ fn is_plain_block_with_display(
         || is_right_aligned_in_parent(tree, child))
 }
 
+/// The most boxes a flex container may hold and still be sliced whole, so
+/// that checking a very large one stays cheap.
+const MAX_SLICED_FLEX_BOXES: usize = 256;
+
+/// Whether `child` is a flex container that the stream slices as one box:
+/// it and the boxes inside it hold no lines, so there is nowhere to break
+/// between lines, and nothing that breaks on its own terms. The container is
+/// laid out whole, and each column shows the part of it that falls in the
+/// column (CSS Flexbox 1, 12). `Some(sized)` says whether any of them has a
+/// block size of its own to slice.
+///
+/// Boxes that need handling at a break of their own keep the other
+/// strategies: forced or avoided breaks, absolutely positioned or floated
+/// boxes, scroll containers, replaced elements, and containers that are not
+/// block or flex.
+fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bool> {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    if node.display() != DisplayValue::Flex
+        || style.inset() != Edges::splat(LengthPercentageAuto::auto())
+        || style.float().is_floated()
+        || style.clear() != Clear::None
+        || block_margins(&style).is_none()
+        || is_right_aligned_in_parent(tree, child)
+    {
+        return None;
+    }
+    let mut boxes = 0usize;
+    let mut sized = false;
+    let mut pending = vec![child];
+    while let Some(id) = pending.pop() {
+        boxes += 1;
+        if boxes > MAX_SLICED_FLEX_BOXES || !is_sliceable_flex_box(tree, id) {
+            return None;
+        }
+        let style = style_of(tree, id);
+        sized |= style_dimension_length(style.size().height).is_some()
+            || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
+            || style.aspect_ratio().is_some();
+        // Text that renders gives a box lines.
+        for held in tree.children_through_contents(id) {
+            let held_node = layout_node(tree, held);
+            if !held_node.is_in_document() || held_node.is_display_none() {
+                continue;
+            }
+            match &held_node.data {
+                NodeData::Element(_) => pending.push(held),
+                NodeData::Text(text) if text.text_content.trim().is_empty() => {}
+                _ => return None,
+            }
+        }
+    }
+    Some(sized)
+}
+
+/// Whether `id`, a flex container or a box inside one, can be sliced with
+/// the rest of the container (see [`sliceable_flex_container`]).
+fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let node = layout_node(tree, id);
+    let style = style_of(tree, id);
+    matches!(
+        node.display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex
+    ) && is_horizontal(node)
+        && !node.size_containment.height
+        && matches!(
+            node.layout_position(),
+            Position::Relative | Position::Static
+        )
+        && !style.float().is_floated()
+        && style.overflow()
+            == (Point {
+                x: TaffyOverflow::Visible,
+                y: TaffyOverflow::Visible,
+            })
+        && !node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+        })
+        && node.break_before == BreakBetween::Auto
+        && node.break_after == BreakBetween::Auto
+        && node.break_inside == BreakInside::Auto
+        && !node.has_before_or_after_content
+        && !node.column_span_all
+        && node.multicol.is_none()
+        && node.ifc.is_none()
+}
+
 /// A block-only wrapper tree whose leaves can be placed in the column stream.
 struct WrappedBlockTree {
     node: usize,
@@ -284,6 +383,10 @@ fn wrapped_block_tree(
     }
     let node = layout_node(tree, wrapper);
     let style = style_of(tree, wrapper);
+    // The blocks a flex container holds are not stacked.
+    if !matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot) {
+        return None;
+    }
     if in_multicol_context && node.column_span_all {
         return None;
     }
@@ -1981,7 +2084,10 @@ pub(super) fn layout(
         let mut records = Vec::with_capacity(pieces.len());
         // How far each piece of a sliced box is moved up.
         let mut shifts = Vec::with_capacity(pieces.len());
-        let sliced = pieces.len() > 1 && slices_decorations(tree, child);
+        // A flex container shows its items in each piece, so its pieces are
+        // the whole box moved up, like those that slice their decorations.
+        let sliced = pieces.len() > 1
+            && (slices_decorations(tree, child) || sliceable_flex_container(tree, child).is_some());
         let consumed = match &wrapped_leaf_pieces[order] {
             Some(_) if sliced => consumed_rows(
                 pieces,

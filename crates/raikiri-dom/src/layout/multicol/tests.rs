@@ -1923,6 +1923,134 @@ fn a_block_without_lines_is_sliced_into_definite_height_columns() {
 }
 
 #[test]
+fn a_flex_container_without_lines_is_sliced_with_its_items() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto"),
+    );
+    let flex = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:flex;width:25px;height:400px"),
+    );
+    let item = doc.append_element(Some(flex), "div", Some("display:block;width:25px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    // Each piece is the whole container, moved up by what the earlier
+    // pieces show and clipped to its column. The items are not cut apart:
+    // they paint with the container, at the place layout gave them in it.
+    assert_eq!(
+        fragment_rects(&doc, flex),
+        vec![
+            (0, 0.0, 0.0, 400.0),
+            (1, 25.0, -100.0, 400.0),
+            (2, 50.0, -200.0, 400.0),
+            (3, 75.0, -300.0, 400.0)
+        ]
+    );
+    assert!(fragment_rects(&doc, item).is_empty());
+    assert_eq!(doc.nodes[item].layout.size.height, 400.0);
+    assert_eq!(doc.nodes[item].layout.location.y, 0.0);
+}
+
+#[test]
+fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
+    let supported = |flex: &str, held: &[&str], outermost: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:100px;columns:2;column-gap:0"),
+        );
+        let flex = doc.append_element(Some(parent), "div", Some(flex));
+        for css in held {
+            doc.append_element(Some(flex), "div", Some(*css));
+        }
+        layout_nested_flex_float_fixture(&mut doc);
+        with_bridged_session(&mut doc, |session| {
+            if outermost {
+                lineless::supported_with_wrappers(session, parent)
+            } else {
+                lineless::supported(session, parent, true)
+            }
+        })
+        .is_some()
+    };
+    let sized = "display:flex;height:150px";
+    let item = "display:block;width:10px";
+    assert!(supported(sized, &[item, item], true));
+    // A block size may come from a box the container holds instead.
+    assert!(supported(
+        "display:flex",
+        &["display:block;width:10px;height:150px"],
+        true
+    ));
+    // The container has no block size to slice.
+    assert!(!supported("display:flex", &[item], true));
+    // A nested multicol container leaves the container to its other
+    // strategies.
+    assert!(!supported(sized, &[item], false));
+    // A box the container holds that breaks, clips or paints on its own
+    // terms.
+    for held in [
+        "display:block;break-before:column",
+        "display:block;break-after:column",
+        "display:block;break-inside:avoid",
+        "display:block;position:absolute",
+        "display:block;float:left",
+        "display:block;overflow:hidden",
+        "display:grid",
+        "display:inline-block",
+        "display:block;columns:2",
+    ] {
+        assert!(!supported(sized, &[held], true), "{held}");
+    }
+    // The container itself.
+    for flex in [
+        "display:flex;height:150px;float:left",
+        "display:flex;height:150px;position:relative;top:5px",
+        "display:flex;height:150px;margin-left:5px",
+        "display:grid;height:150px",
+    ] {
+        assert!(!supported(flex, &[item], true), "{flex}");
+    }
+    // Too many boxes to look through.
+    let many = vec![item; 300];
+    assert!(!supported(sized, &many, true));
+}
+
+#[test]
+fn a_flex_container_that_holds_lines_is_not_sliced() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;height:100px;columns:2;column-gap:0"),
+    );
+    let flex = doc.append_element(Some(parent), "div", Some("display:flex;height:150px"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block;width:10px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    let supported = |doc: &mut Document| {
+        with_bridged_session(doc, |session| {
+            lineless::supported_with_wrappers(session, parent)
+        })
+        .is_some()
+    };
+    assert!(supported(&mut doc));
+    // Text that renders gives the item a line to break between.
+    doc.append_text(item, "text");
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(!supported(&mut doc));
+}
+
+#[test]
 fn blocks_without_lines_are_balanced_and_keep_break_avoidance() {
     let (doc, parent, children) = lineless_fixture(
         "display:block;width:200px;columns:2;column-gap:0",
