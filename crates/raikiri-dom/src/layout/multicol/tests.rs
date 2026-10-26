@@ -2889,6 +2889,29 @@ fn the_last_block_of_a_padded_wrapper_moves_with_the_padding_that_would_break_aw
 }
 
 #[test]
+fn the_padding_of_a_wrapper_that_fills_a_column_is_part_of_the_box_it_shows() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:100px;border-bottom:2px solid"),
+    );
+    let block = doc.append_element(Some(wrapper), "div", Some("display:block;height:50px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    // The padding runs from the end of the block to the end of the first
+    // column and on into the second, so the second piece is moved up by the
+    // whole 100px the first one shows, not by the 50px of the block.
+    assert_eq!(fragment_rects(&doc, block)[0], (0, 0.0, 0.0, 50.0));
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 152.0), (1, 100.0, -100.0, 152.0)]
+    );
+}
+
+#[test]
 fn an_absolute_box_in_a_sliced_block_stays_in_its_column() {
     let (doc, _, ids) = absolute_fixture(
         DEFINITE_COLUMNS,

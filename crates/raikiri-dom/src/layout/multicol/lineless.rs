@@ -1407,14 +1407,16 @@ fn push_wrapped_block(
 /// The block size of the box each piece of a wrapper shows, which is what the
 /// pieces after it are moved up by. A piece that ends where a block moved to
 /// the next column leaves room at the bottom of its column, which is no part
-/// of the box.
-fn consumed_rows(pieces: &[Piece], leaf_pieces: &[Vec<Piece>]) -> Vec<f32> {
+/// of the box. `stream_pieces` are those of the wrapper's blocks as the
+/// stream placed them, with the wrapper's padding and border that fall in
+/// them, which do fill the column they reach the end of.
+fn consumed_rows(pieces: &[Piece], stream_pieces: &[Vec<Piece>]) -> Vec<f32> {
     let last = pieces.len().saturating_sub(1);
     pieces
         .iter()
         .enumerate()
         .map(|(index, piece)| {
-            let content_end = leaf_pieces
+            let content_end = stream_pieces
                 .iter()
                 .flatten()
                 .filter(|leaf| leaf.column == piece.column && leaf.height > 0.0)
@@ -1941,7 +1943,7 @@ pub(super) fn layout(
         let mut shifts = Vec::with_capacity(pieces.len());
         let sliced = pieces.len() > 1 && slices_decorations(tree, child);
         let consumed = match &wrapped_leaf_pieces[order] {
-            Some(leaf_pieces) => consumed_rows(pieces, leaf_pieces),
+            Some(_) => consumed_rows(pieces, &placements.pieces[spans[order].clone()]),
             None => pieces.iter().map(|piece| piece.height).collect(),
         };
         let mut taken = 0.0f32;
