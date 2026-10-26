@@ -13,6 +13,17 @@ use raikiri_traits::{LayoutError, NodeKind};
 #[doc(hidden)]
 pub const MAX_LAYOUT_DEPTH: usize = 256;
 
+/// Most child layouts that may be nested while a layout pass runs.
+///
+/// The layouts of a chain of boxes nest one per element, plus a few for the
+/// boxes above `<body>` and the wrappers a display generates; chains of every
+/// display, positioning, writing mode, containment and fragmentation reach the
+/// element depth plus four at most. Eight times the deepest tree layout accepts
+/// ([`MAX_LAYOUT_DEPTH`]) leaves room for a box that nests its own layout a few
+/// times, while a layout that never ends is stopped within a few megabytes of
+/// stack instead of growing it without bound.
+pub(crate) const MAX_LAYOUT_RECURSION: usize = MAX_LAYOUT_DEPTH * 8;
+
 /// Reject a body subtree whose element depth exceeds [`MAX_LAYOUT_DEPTH`].
 ///
 /// This check uses an explicit work stack so it remains safe for attacker-
@@ -50,3 +61,6 @@ pub fn validate_layout_depth(document: &Document) -> Result<(), LayoutError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

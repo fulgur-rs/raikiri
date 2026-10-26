@@ -570,10 +570,10 @@ fn a_shrink_to_fit_paragraph_is_still_measured_for_intrinsic_widths() {
     }
 }
 
-/// `depth` shrink-to-fit boxes, each inside the one before and each smaller
-/// than it, so that the widths a parent tries on a box differ. Returns the
-/// document, its cascade and the outermost box.
-fn nested_inline_blocks(depth: usize) -> (Document, raikiri_style::CascadeResult, usize) {
+/// `depth` shrink-to-fit boxes of the kind `display`, each inside the one
+/// before and each smaller than it, so that the widths a parent tries on a box
+/// differ. Returns the document, its cascade and the outermost box.
+fn nested_boxes(depth: usize, display: &str) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut outermost = None;
     let (doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
         let mut parent = root;
@@ -581,7 +581,7 @@ fn nested_inline_blocks(depth: usize) -> (Document, raikiri_style::CascadeResult
             let span = doc.append_element(
                 Some(parent),
                 "span",
-                Some("display:inline-block;font-size:calc(1em / 1.1)"),
+                Some(format!("display:{display};font-size:calc(1em / 1.1)").as_str()),
             );
             doc.append_text(span, "X");
             outermost.get_or_insert(span);
@@ -598,23 +598,37 @@ fn nested_shrink_to_fit_boxes_are_measured_a_few_times_each() {
     // inside it the same: the scans of paragraphs grew by a factor of 2.6 with
     // every level (30240 at ten levels, about 200000 at twelve). They are kept
     // now, and the count follows the depth.
-    let depth = 12;
-    let (mut doc, cascade, outermost) = nested_inline_blocks(depth);
-    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    assert!(
-        intrinsic_measurements(&doc) < 40 * depth,
-        "{} scans",
-        intrinsic_measurements(&doc)
-    );
-    // Each box holds one `X`, as wide as its font size, and the box inside it.
-    let expected: f32 = (1..=depth)
-        .map(|level| 10.0 / 1.1f32.powi(level as i32))
-        .sum();
-    let width = doc.nodes[outermost].layout.size.width;
-    assert!(
-        (width - expected).abs() < 0.2,
-        "the outermost box is {width} wide, not {expected}"
-    );
+    //
+    // A flex container is measured under a probe of its own, which used to
+    // move the cache generation and multiply the work by four per level, so
+    // its chain is kept short enough for a regression to fail rather than hang.
+    for (display, depth) in [
+        ("inline-block", 12),
+        ("inline-flex", 8),
+        ("inline-grid", 12),
+    ] {
+        let (mut doc, cascade, outermost) = nested_boxes(depth, display);
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert!(
+            intrinsic_measurements(&doc) < 40 * depth,
+            "{display}: {} scans",
+            intrinsic_measurements(&doc)
+        );
+        // Each box holds one `X`, as wide as its font size, and the box inside
+        // it: side by side in a line or a row, one under the other in a grid,
+        // which is as wide as the `X` then.
+        let widths = (1..=depth).map(|level| 10.0 / 1.1f32.powi(level as i32));
+        let expected: f32 = if display == "inline-grid" {
+            widths.take(1).sum()
+        } else {
+            widths.sum()
+        };
+        let width = doc.nodes[outermost].layout.size.width;
+        assert!(
+            (width - expected).abs() < 0.2,
+            "{display}: the outermost box is {width} wide, not {expected}"
+        );
+    }
 }
 
 #[test]

@@ -85,6 +85,7 @@ use sanitize::*;
 
 #[cfg(test)]
 pub(crate) use bridge::{apply_computed_to_style, apply_computed_to_style_in_session};
+pub(crate) use depth::MAX_LAYOUT_RECURSION;
 pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::spanning::{is_spanner, is_spanner_in};
 pub(crate) use multicol::{

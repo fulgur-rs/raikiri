@@ -1114,11 +1114,31 @@ pub(super) fn layout_single_page_in_session(
     layout_single_page_with_table_projection(session, cascade, page_box, false, false)
 }
 
+/// The error of a layout that nested deeper than the limit, if the session
+/// recorded one. The boxes it left unlaid are zero-sized stand-ins, which the
+/// cache must not keep.
+fn take_recursion_failure(
+    document: &mut super::context::LayoutSession<'_>,
+) -> Result<(), LayoutError> {
+    if let Some(node) = document.context.recursion.exceeded_at.take() {
+        document.layout_dirty = true;
+        return Err(LayoutError::Internal {
+            message: format!(
+                "layout nested more than {} levels deep at node {node}",
+                document.context.recursion.limit
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// The error a layout pass recorded in the session while taffy ran: a
-/// rejected table or an exhausted fragment budget.
+/// layout that nested too deeply, a rejected table or an exhausted fragment
+/// budget.
 fn take_layout_failure(
     document: &mut super::context::LayoutSession<'_>,
 ) -> Result<(), LayoutError> {
+    take_recursion_failure(document)?;
     if let Some(message) = document.context.table_layout_error.take() {
         // A rejected pass must not cache its temporary zero-sized fallback.
         document.layout_dirty = true;
@@ -3214,6 +3234,9 @@ fn layout_pages_attempt(
             )?
         }
     };
+    // The pages were cut from layouts run since the first pass, which take the
+    // same limit.
+    take_recursion_failure(&mut session)?;
     Ok((slices, session.context.page_filled_columns_moved))
 }
 

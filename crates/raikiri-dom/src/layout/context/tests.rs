@@ -1,4 +1,4 @@
-use super::LayoutSession;
+use super::{LayoutRecursion, LayoutSession};
 use crate::document::Document;
 use crate::layout::test_support::cascaded;
 use crate::node::Node;
@@ -95,4 +95,26 @@ fn layout_session_state_covers_every_box_key_kind() {
             .taffy_child_walks
             .is_some()
     );
+}
+
+#[test]
+fn the_recursion_count_refuses_the_layout_past_its_limit_and_every_one_after_it() {
+    let mut recursion = LayoutRecursion {
+        limit: 2,
+        ..LayoutRecursion::default()
+    };
+    assert!(recursion.enter(10));
+    assert!(recursion.enter(11));
+    assert_eq!(recursion.depth, 2);
+    assert!(!recursion.enter(12));
+    assert_eq!(recursion.exceeded_at, Some(12));
+    assert_eq!(recursion.depth, 2);
+
+    // The layouts that were running finish, and the pass stays refused: the
+    // boxes it still has to lay out are not worth descending into.
+    recursion.leave();
+    recursion.leave();
+    assert_eq!(recursion.depth, 0);
+    assert!(!recursion.enter(13));
+    assert_eq!(recursion.exceeded_at, Some(12));
 }

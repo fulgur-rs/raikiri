@@ -181,6 +181,65 @@ fn intrinsic_scope_isolates_probe_cache_and_rejects_late_outer_store() {
 }
 
 #[test]
+fn a_probe_of_a_container_without_a_maximum_leaves_the_cache_generation_alone() {
+    // With no `max-width` to drop, the probe changes nothing a box could be
+    // measured differently by, so what is stored before it stays readable
+    // inside it and after it.
+    use raikiri_layout_style::ViewContext;
+    let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", "width:10px");
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    let id = NodeId::from(child);
+    let input = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    tree.with_cache_frame(child, ViewContext::default(), |tree| {
+        tree.cache_store(id, &input, LayoutOutput::HIDDEN);
+        let epoch = tree.layout_cache_context.epoch();
+        with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
+            assert_eq!(tree.override_checkpoint(), 0);
+            assert_eq!(tree.context.flex_intrinsic_probe, Some(parent));
+            assert_eq!(tree.layout_cache_context.epoch(), epoch);
+            assert!(tree.cache_get(id, &input).is_some());
+        });
+        assert_eq!(tree.layout_cache_context.epoch(), epoch);
+        assert!(tree.cache_get(id, &input).is_some());
+    });
+}
+
+#[test]
+fn a_probe_of_a_container_with_a_maximum_still_drops_it_and_moves_the_generation() {
+    use raikiri_layout_style::ViewContext;
+    let (mut doc, cascade, child, _) =
+        fixture_with_styles("display:flex;max-width:50px", "width:10px");
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
+    tree.with_cache_frame(child, ViewContext::default(), |tree| {
+        let epoch = tree.layout_cache_context.epoch();
+        with_flex_intrinsic_probe(tree, NodeId::from(parent), |tree| {
+            assert_eq!(tree.override_checkpoint(), 1);
+            assert!(tree.style_view(parent).max_size().width.is_auto());
+            assert!(tree.layout_cache_context.epoch() > epoch);
+        });
+        assert_eq!(tree.override_checkpoint(), 0);
+        assert_eq!(tree.style_view(parent).max_size().width, Lpa::length(50.0));
+    });
+}
+
+#[test]
 fn intrinsic_scope_dirty_descendant_preserves_original_panic() {
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:flex;max-width:50px", "flex:1 0 100px;width:auto");

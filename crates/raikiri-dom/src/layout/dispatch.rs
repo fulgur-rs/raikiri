@@ -738,6 +738,9 @@ impl LayoutSession<'_> {
     ) -> LayoutOutput {
         self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
+        if !self.context.recursion.enter(idx) {
+            return LayoutOutput::HIDDEN;
+        }
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
                 .context
@@ -772,6 +775,7 @@ impl LayoutSession<'_> {
             self.context.text_group = group;
             self.context.text_group_shortest = shortest;
         }
+        self.context.recursion.leave();
         output
     }
 
@@ -828,6 +832,9 @@ impl LayoutSession<'_> {
             let inputs = with_fit_content_room(tree, idx, inputs);
             let inputs = with_column_flex_keyword_room(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
+            // Size containment may give the box a width the request did not
+            // have; whether the request stretched it is read before that.
+            let stretched_width = inputs.known_dimensions.width.is_some();
             let inputs = if empty {
                 inputs
             } else {
@@ -886,9 +893,12 @@ impl LayoutSession<'_> {
                 }
             }
             // A vertical box under a horizontal block container is sized by
-            // its content on the axis its container stretched it along.
+            // its content on the axis its container stretched it along. Its
+            // own measure of that content asks for no width, and a size
+            // contained box answers that with the width containment gives it;
+            // that answer is not a stretched width to measure again.
             if !empty
-                && inputs.known_dimensions.width.is_some()
+                && stretched_width
                 && inputs.sizing_mode == SizingMode::InherentSize
                 && tree.context.orthogonal_block_in_layout != Some(idx)
                 && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
@@ -2531,8 +2541,9 @@ fn compute_inline_block_shrink_wrap(
     // so the answers are kept in the node's cache. Only while the node's own
     // cache frame is open: a box laid out apart from its cache (in a block
     // context shared with its parent, say) also measures apart from it. A flex
-    // container measures under a style override, which moves the cache
-    // generation, so its answers are neither found nor kept.
+    // container that has a `max-width`, or items with a length as their flex
+    // basis, measures under style overrides, which move the cache generation,
+    // so its answers are neither found nor kept.
     let cache_probes = !is_leaf && tree.caches_node(node_id);
 
     // Intrinsic outer width under the given width constraint.
@@ -2931,6 +2942,7 @@ pub(crate) fn flex_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let inputs = with_fit_content_width(tree, node_id, inputs);
+    let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
     flex_layout_sized(tree, node_id, inputs)
 }
 
@@ -3145,6 +3157,62 @@ fn with_fit_content_width(
     inputs
 }
 
+/// Settle the width of a flex or grid container whose `width` is `min-content`
+/// or `max-content` and that a `min-width` or `max-width` clamps, before its
+/// lines or tracks are sized.
+///
+/// Taffy sizes the content of such a container at the keyword size and clamps
+/// the box afterwards, so the items of the container break their lines at a
+/// width the box does not keep, and its height follows that width. A
+/// container that no limit clamps is sized by Taffy alone. `measure` is the
+/// layout of the container, which gives the clamped width when asked for its
+/// size.
+fn with_clamped_keyword_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    measure: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    // A width measured as that of the content (`flex-basis: content`) is not
+    // the width the box keeps; a height measured at its width is.
+    if inputs.known_dimensions.width.is_some()
+        || (inputs.sizing_mode == SizingMode::ContentSize
+            && inputs.axis == RequestedAxis::Horizontal)
+    {
+        return inputs;
+    }
+    let space = match tree.physical_style(idx).size().width.expand() {
+        ExpandedDimension::MinContent => AvailableSpace::MinContent,
+        ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
+        _ => return inputs,
+    };
+    let clamped = {
+        let style = tree.physical_style(idx);
+        let zero = |size: ExpandedLengthPercentageAuto| {
+            matches!(
+                size,
+                ExpandedLengthPercentageAuto::Auto | ExpandedLengthPercentageAuto::Length(0.0)
+            )
+        };
+        !zero(style.min_size().width.expand())
+            || !matches!(
+                style.max_size().width.expand(),
+                ExpandedLengthPercentageAuto::Auto
+            )
+    } || tree.nodes[idx].content_limits != content_limits::ContentLimits::NONE;
+    if clamped {
+        let mut probe = inputs;
+        probe.run_mode = RunMode::ComputeSize;
+        probe.sizing_mode = SizingMode::InherentSize;
+        probe.axis = RequestedAxis::Horizontal;
+        probe.available_space.width = space;
+        inputs.known_dimensions.width = Some(measure(tree, node_id, probe).size.width);
+        inputs.known_dimensions_are_definite.width = true;
+    }
+    inputs
+}
+
 /// Lay out the grid container `node_id` with taffy's grid algorithm.
 ///
 /// A container with a preferred aspect ratio and an `auto` height takes the
@@ -3155,6 +3223,7 @@ fn with_fit_content_width(
 /// automatic minimum size of CSS Sizing 4 §5.1.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
+    let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
     let height_follows_width = inputs.known_dimensions.height.is_none()
         && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal)
         && grid_oof::right_to_left(tree, idx).is_none();
