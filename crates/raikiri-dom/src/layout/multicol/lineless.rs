@@ -397,6 +397,7 @@ fn apply_wrapped_layout(
         items[first_item].height += layout.stream_leading;
         items[first_item].margin_top = layout.margin_top;
         items[last_item].height += layout.stream_trailing;
+        items[last_item].edges += layout.stream_trailing;
         items[last_item].margin_bottom = layout.margin_bottom;
     }
     wrapped.layout = Some(layout);
@@ -653,6 +654,10 @@ struct Item {
     /// pieces slice them: it is cut where it is taller than a column, but
     /// not inside these insets.
     slice: Option<(f32, f32)>,
+    /// The block-end margin, border and padding that follow the content of
+    /// the box and are counted in `height`: a break between the content and
+    /// them leaves them alone in the next column.
+    edges: f32,
 }
 
 pub(super) const EPSILON: f32 = 0.001;
@@ -783,6 +788,24 @@ fn place_columns(
             let mut left = item.height;
             loop {
                 let room = height_of(column) - cursor;
+                // A break between a box and the block-end border and padding
+                // that follow it leaves them alone at the top of the next
+                // column, a break that browsers avoid for one before the box
+                // (CSS Break 3, 4.1): the box moves whole when something
+                // precedes it in this column and the next one holds it.
+                if cursor > 0.0
+                    && item.edges > 0.0
+                    && left > room + EPSILON
+                    && left - room <= item.edges + EPSILON
+                    && item.height <= height_of(column + 1) + EPSILON
+                {
+                    column += 1;
+                    if column >= max_columns {
+                        return Err(Stop::Exhausted);
+                    }
+                    cursor = 0.0;
+                    continue;
+                }
                 // A break is not inside the block-end border and padding: the
                 // box ends in the next column with them, whole. At the top of
                 // a column that is taller than what is left, the next column
@@ -1381,6 +1404,30 @@ fn push_wrapped_block(
     Some(())
 }
 
+/// The block size of the box each piece of a wrapper shows, which is what the
+/// pieces after it are moved up by. A piece that ends where a block moved to
+/// the next column leaves room at the bottom of its column, which is no part
+/// of the box.
+fn consumed_rows(pieces: &[Piece], leaf_pieces: &[Vec<Piece>]) -> Vec<f32> {
+    let last = pieces.len().saturating_sub(1);
+    pieces
+        .iter()
+        .enumerate()
+        .map(|(index, piece)| {
+            let content_end = leaf_pieces
+                .iter()
+                .flatten()
+                .filter(|leaf| leaf.column == piece.column && leaf.height > 0.0)
+                .map(|leaf| leaf.top + leaf.height)
+                .reduce(f32::max);
+            match content_end {
+                Some(end) if index < last => (end - piece.top).clamp(0.0, piece.height),
+                _ => piece.height,
+            }
+        })
+        .collect()
+}
+
 /// The rect of a piece of a box that slices its decorations: the whole box,
 /// of block size `whole.1`, moved up by the `whole.0` the earlier pieces took.
 /// The clip of the column then cuts it to the piece. `rect` is the piece's own.
@@ -1460,6 +1507,7 @@ fn item(tree: &LayoutSession<'_>, child: usize, height: f32, slice: Option<Inset
         // break.
         whole: node.paints_whole_box_effects || has_block_edge_decorations(&style),
         slice,
+        edges: slice.map_or(0.0, |(_, trailing)| trailing),
     }
 }
 
@@ -1892,6 +1940,10 @@ pub(super) fn layout(
         // How far each piece of a sliced box is moved up.
         let mut shifts = Vec::with_capacity(pieces.len());
         let sliced = pieces.len() > 1 && slices_decorations(tree, child);
+        let consumed = match &wrapped_leaf_pieces[order] {
+            Some(leaf_pieces) => consumed_rows(pieces, leaf_pieces),
+            None => pieces.iter().map(|piece| piece.height).collect(),
+        };
         let mut taken = 0.0f32;
         for (index, piece) in pieces.iter().enumerate() {
             shifts.push(if sliced { taken } else { 0.0 });
@@ -1938,7 +1990,7 @@ pub(super) fn layout(
                 line_end: None,
             })?;
             records.push(record);
-            taken += piece.height;
+            taken += consumed[index];
         }
         if let (Some(wrapped_tree), Some(leaf_pieces)) =
             (&wrapped[order], &wrapped_leaf_pieces[order])
