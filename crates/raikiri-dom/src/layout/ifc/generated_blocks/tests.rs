@@ -432,6 +432,27 @@ fn a_vertical_lr_paragraph_sets_a_block_before_from_the_left() {
 }
 
 #[test]
+fn a_sideways_lr_paragraph_that_runs_from_the_top_sets_a_block_before_from_the_top() {
+    let (_, _, pieces) = vertical_pieces(
+        "div::before { content: ''; display: block; width: 30px; height: 20px; margin-top: 4px }",
+        "writing-mode: sideways-lr; direction: rtl; height: 60px; line-height: 10px",
+    );
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    // The inline start is the top, so the 4px margin is above the box.
+    assert_eq!(
+        piece.border_box,
+        BoxRect {
+            x: 0.0,
+            y: 4.0,
+            width: 30.0,
+            height: 20.0
+        }
+    );
+}
+
+#[test]
 fn a_block_after_of_a_vertical_paragraph_follows_its_lines() {
     let (_, _, pieces) = vertical_pieces(
         "div::after { content: ''; display: block; width: 8px; height: 12px }",

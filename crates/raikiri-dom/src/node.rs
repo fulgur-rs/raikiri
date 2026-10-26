@@ -1043,12 +1043,14 @@ impl Node {
         if root.writing_mode.is_vertical()
             && let Some(content_size) = self.ifc_physical_content_size()
         {
-            // A box is only placed in a paragraph whose inline direction
-            // runs along its physical axis, so the direction is not read.
-            let axes = crate::layout::ifc::geometry::IfcAxes::new(
-                root.writing_mode,
-                shodo::geometry::Direction::Ltr,
-            );
+            // A box is only placed in a paragraph whose lines run from the
+            // top, which `sideways-lr` does with a right-to-left direction.
+            let direction = if root.rtl {
+                shodo::geometry::Direction::Rtl
+            } else {
+                shodo::geometry::Direction::Ltr
+            };
+            let axes = crate::layout::ifc::geometry::IfcAxes::new(root.writing_mode, direction);
             let physical = |rect: crate::layout::BoxRect| {
                 let rect = axes.rect(
                     content_size,

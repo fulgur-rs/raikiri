@@ -220,3 +220,16 @@ fn a_vertical_block_box_keeps_its_border_on_the_sides_it_has() {
     assert_eq!(pixel(&pixels, 12, 2), [255, 255, 255], "above the margin");
     assert_eq!(pixel(&pixels, 3, 30), [255, 255, 255], "left margin");
 }
+
+#[test]
+fn a_sideways_lr_paragraph_that_runs_from_the_top_paints_its_block_box_from_the_top() {
+    let pixels = paint(
+        "div { writing-mode: sideways-lr; direction: rtl; width: 60px; height: 50px } \
+         div::before { content: ''; display: block; width: 8px; height: 20px; \
+         margin-top: 4px; background: red }",
+    );
+    // The lines start at the top, so the 4px margin is above the box.
+    assert_eq!(pixel(&pixels, 4, 2), [255, 255, 255], "margin");
+    assert_eq!(pixel(&pixels, 4, 10), [255, 0, 0], "box");
+    assert_eq!(pixel(&pixels, 4, 40), [255, 255, 255], "below the box");
+}
