@@ -2148,19 +2148,11 @@ fn layout_vertical_block_child(
         width: Some(geometry.content_size.width),
         height: Some(inline_basis),
     };
+    let shares_context = shares_vertical_root_context(tree, node, geometry.axes.writing_mode());
     let own_inline_size = used_block_height(tree, node, inline_basis)
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size))
-        .or_else(|| orthogonal_content_height(tree, node, width, parent_size));
-    let shares_context = in_the_roots_formatting_context(tree, node)
-        && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
-        && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
-            node_direction
-                == matches!(
-                    geometry.axes.writing_mode(),
-                    WritingMode::VerticalRl | WritingMode::SidewaysRl
-                )
-        });
+        .or_else(|| orthogonal_content_height(tree, node, width, parent_size, shares_context));
     let clear = tree.physical_style(node).clear();
     let clear_y = ctx
         .cleared_threshold(clear)
@@ -2490,6 +2482,28 @@ fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> boo
         && !style.contain().establishes_independent_formatting_context()
 }
 
+/// Whether the block child `node` of a vertical root laid out in
+/// `root_writing_mode` takes part in the root's block formatting context: it
+/// does when it flows in the block direction of the root and does not align its
+/// content. A child that flows the other way, across or against the root, is
+/// laid out as the root of a context of its own, whose margins do not collapse
+/// with its content's.
+fn shares_vertical_root_context(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    root_writing_mode: WritingMode,
+) -> bool {
+    in_the_roots_formatting_context(tree, node)
+        && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
+        && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
+            node_direction
+                == matches!(
+                    root_writing_mode,
+                    WritingMode::VerticalRl | WritingMode::SidewaysRl
+                )
+        })
+}
+
 /// Lay out a block child that establishes a formatting context of its own
 /// the way taffy's block algorithm does (CSS 2.1 9.4.1, 9.5): its top margin
 /// collapses with the margins above it but not with its children's, and its
@@ -2714,6 +2728,7 @@ fn orthogonal_content_height(
     node: usize,
     width: Option<f32>,
     parent_size: Size<Option<f32>>,
+    shares_context: bool,
 ) -> Option<OwnWidth> {
     if crate::layout::dispatch::used_writing_mode(tree, node).is_vertical() {
         return None;
@@ -2735,7 +2750,10 @@ fn orthogonal_content_height(
             width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
             height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: Line::FALSE,
+        vertical_margins_are_collapsible: Line {
+            start: shares_context,
+            end: shares_context,
+        },
     };
     let output = tree.compute_child_layout_with_block_ctx(NodeId::from(node), inputs, None);
     Some(OwnWidth::Fixed(output.size.height))
@@ -3981,15 +3999,17 @@ pub(crate) fn intrinsics_of_boxes(
     percent_height: Option<f32>,
     physical_width: Option<f32>,
 ) -> BoxIntrinsics {
-    let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
-        matches!(
-            root.writing_mode,
-            WritingMode::VerticalRl
-                | WritingMode::VerticalLr
-                | WritingMode::SidewaysRl
-                | WritingMode::SidewaysLr
-        )
-    });
+    let writing_mode = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .map_or(WritingMode::HorizontalTb, |root| root.writing_mode);
+    let vertical = matches!(
+        writing_mode,
+        WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr
+    );
     let boxes = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -4077,7 +4097,11 @@ pub(crate) fn intrinsics_of_boxes(
                 // Only a block in the root's formatting context has margins
                 // that collapse with its content's; the others are laid out
                 // as formatting-context roots.
-                let margins_collapse = in_the_roots_formatting_context(tree, b.node);
+                let margins_collapse = if vertical {
+                    shares_vertical_root_context(tree, b.node, writing_mode)
+                } else {
+                    in_the_roots_formatting_context(tree, b.node)
+                };
                 let (min_content, max_content) = if vertical {
                     content_heights(
                         tree,

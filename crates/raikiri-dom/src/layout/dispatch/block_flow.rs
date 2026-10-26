@@ -76,6 +76,9 @@ fn contains_spanner(tree: &LayoutSession<'_>, node: NodeId) -> bool {
 }
 
 /// The width of the margin box of `child` under `space`, measured as a whole.
+///
+/// The box is measured with the margin collapsing its layout runs in, so that
+/// measuring it does not empty the cache of the sizes it is laid out with.
 fn outer_width(
     tree: &mut LayoutSession<'_>,
     child: NodeId,
@@ -89,6 +92,11 @@ fn outer_width(
     };
     let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
     inputs.available_space.width = space;
+    let margins_collapse = shares_context(&child_style(tree, child));
+    inputs.vertical_margins_are_collapsible = Line {
+        start: margins_collapse,
+        end: margins_collapse,
+    };
     let measured =
         measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
             tree.compute_child_layout_with_block_ctx(child, inputs, None)
