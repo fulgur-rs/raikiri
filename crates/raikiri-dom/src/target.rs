@@ -751,6 +751,19 @@ fn content_has_quotes(cv: &raikiri_style::ComputedValues) -> bool {
         .any(|component| matches!(component, ContentComponent::Quote(_)))
 }
 
+/// Whether the element `idx` scopes the quote depth to its subtree: it has
+/// style containment and a box of its own (CSS Containment 2, style
+/// containment scopes `open-quote` and `close-quote` like counters). The
+/// quotes inside start at the depth the element is at, and the depth is back
+/// to that value after the element, whatever the quotes of its subtree opened
+/// or closed.
+fn scopes_quote_depth(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    cascade.computed.get(idx).is_some_and(|cv| {
+        cv.contain.contains(raikiri_style::property::Contain::STYLE)
+            && doc.counter_display(idx, cv.display) != DisplayValue::Contents
+    })
+}
+
 /// Build named-counter snapshots in document order for marker and generated
 /// content consumers.
 ///
@@ -917,6 +930,8 @@ fn walk_counter_scopes(
     let mut stack = vec![WalkStep::Enter(doc.root)];
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     let mut quote_depth = QuoteDepth::default();
+    // The quote depth at which each element that scopes it was entered.
+    let mut quote_scopes: Vec<QuoteDepth> = Vec::new();
     // How many elements the walk is inside that draw no boxes below them.
     let mut unrendered = 0_usize;
     while let Some(step) = stack.pop() {
@@ -952,6 +967,9 @@ fn walk_counter_scopes(
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
+                if scopes_quote_depth(doc, cascade, idx) {
+                    quote_scopes.push(quote_depth);
+                }
                 if draws_no_boxes_below(node, cv) {
                     unrendered += 1;
                 }
@@ -1012,6 +1030,11 @@ fn walk_counter_scopes(
                             &mut visit,
                         )?;
                     }
+                }
+                if scopes_quote_depth(doc, cascade, idx)
+                    && let Some(entered) = quote_scopes.pop()
+                {
+                    quote_depth = entered;
                 }
                 if draws_no_boxes_below(&doc.nodes[idx], cascade.computed.get(idx)) {
                     unrendered -= 1;
