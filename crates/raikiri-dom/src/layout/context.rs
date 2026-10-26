@@ -86,6 +86,63 @@ pub(crate) struct LayoutContext {
     /// Whether the page walk moved any of those containers from where the
     /// pagination placed their columns, which are then in the wrong pages.
     pub(crate) page_filled_columns_moved: bool,
+    /// How deeply the child layouts of this pass are nested, and whether that
+    /// passed its limit.
+    pub(crate) recursion: LayoutRecursion,
+}
+
+/// The nesting of the child layouts running at a moment (see
+/// `compute_child_layout_with_block_ctx` in [`crate::layout::dispatch`]).
+///
+/// The stack grows on demand while a layout recurses, so a cycle that never
+/// ends does not overflow it; it takes memory until the process is gone. Past
+/// `limit` nested layouts the pass stops descending and `exceeded_at` names the
+/// box it stopped at, which ends the pass with an error.
+#[derive(Debug)]
+pub(crate) struct LayoutRecursion {
+    pub(crate) depth: usize,
+    pub(crate) limit: usize,
+    pub(crate) exceeded_at: Option<usize>,
+    /// The deepest nesting so far, for the tests that size the limit.
+    #[cfg(test)]
+    pub(crate) peak: usize,
+}
+
+impl Default for LayoutRecursion {
+    fn default() -> Self {
+        Self {
+            depth: 0,
+            limit: super::MAX_LAYOUT_RECURSION,
+            exceeded_at: None,
+            #[cfg(test)]
+            peak: 0,
+        }
+    }
+}
+
+impl LayoutRecursion {
+    /// Count one more nested layout of the box `idx`, or refuse it: `false`
+    /// when the limit is passed (now or earlier in this pass), and the layout
+    /// must not run. The layout that is let in is left with [`Self::leave`].
+    pub(crate) fn enter(&mut self, idx: usize) -> bool {
+        if self.exceeded_at.is_some() {
+            return false;
+        }
+        if self.depth >= self.limit {
+            self.exceeded_at = Some(idx);
+            return false;
+        }
+        self.depth += 1;
+        #[cfg(test)]
+        {
+            self.peak = self.peak.max(self.depth);
+        }
+        true
+    }
+
+    pub(crate) fn leave(&mut self) {
+        self.depth -= 1;
+    }
 }
 
 /// The `text-group-align` group the lines being laid out belong to: the
