@@ -5357,3 +5357,82 @@ fn an_inline_block_of_columns_sits_on_the_baseline_of_its_last_line() {
     assert_eq!(doc.nodes[columns].layout.location.y, 0.0);
     assert_eq!(doc.nodes[beside].layout.location.y, 40.0);
 }
+
+#[test]
+fn a_spanner_contains_its_floats() {
+    // The spanner is a formatting context of its own, so it is as tall as the
+    // float in it and the lines below it start under the float.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[Part::Lines(1), Part::Spanner("height:auto"), Part::Lines(2)],
+    );
+    doc.append_element(
+        Some(boxes[0]),
+        "div",
+        Some("float:left;width:50px;height:40px"),
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(doc.nodes[boxes[0]].layout.size.height, 40.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 80.0);
+    assert_eq!(
+        column_ranges(&doc, container)
+            .iter()
+            .map(|range| range.4)
+            .collect::<Vec<_>>(),
+        [0.0, 60.0, 60.0]
+    );
+}
+
+#[test]
+fn the_margins_of_the_children_of_a_spanner_stay_inside_it() {
+    // The 10px above the child does not collapse through the top of the
+    // spanner, which stays 20px below the top of the columns.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[Part::Lines(1), Part::Spanner("height:auto"), Part::Lines(2)],
+    );
+    doc.append_element(Some(boxes[0]), "div", Some("margin-top:10px;height:20px"));
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    let spanner = doc.nodes[boxes[0]].layout;
+    assert_eq!((spanner.location.y, spanner.size.height), (20.0, 30.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 70.0);
+}
+
+#[test]
+fn a_spanner_in_a_relatively_positioned_inline_stays_across_the_columns() {
+    // The lines move with the inline element, but the spanner is hoisted out
+    // of it and spans the columns where it is, as in Chromium.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let columns = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    let inline = doc.append_element(
+        Some(columns),
+        "span",
+        Some("position:relative;left:10px;top:5px"),
+    );
+    bare_line(&mut doc, inline);
+    doc.append_text(inline, "x");
+    let spanner = doc.append_element(
+        Some(inline),
+        "div",
+        Some("display:block;column-span:all;height:20px"),
+    );
+    bare_line(&mut doc, inline);
+    doc.append_text(inline, "x");
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    let layout = doc.nodes[spanner].layout;
+    assert_eq!(
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height
+        ),
+        (0.0, 20.0, 100.0, 20.0)
+    );
+}

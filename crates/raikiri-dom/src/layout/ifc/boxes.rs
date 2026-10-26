@@ -2166,7 +2166,9 @@ pub(crate) struct PlacedBlock {
 /// above it ending at `y` and the margins of `pending` below that.
 ///
 /// A column spanner is placed this way: the lines around it were broken at the
-/// width of a column, and it spans all of them.
+/// width of a column, and it spans all of them. It establishes a formatting
+/// context, which keeps the margins and the floats of its children inside it
+/// (CSS Multi-column Layout 1, 6.1).
 pub(crate) fn place_block_across(
     tree: &mut LayoutSession<'_>,
     node: usize,
@@ -2179,7 +2181,8 @@ pub(crate) fn place_block_across(
     let mut ctx = bfc.root_block_context();
     let inline_insets = geometry.inline_axis_insets();
     ctx.set_width(geometry.width + inline_insets.0 + inline_insets.1);
-    let block = layout_block_child(tree, &mut ctx, node, y, pending, geometry, perform, false);
+    let block =
+        layout_formatting_context_child(tree, &mut ctx, node, y, pending, geometry, perform, false);
     PlacedBlock {
         next_y: block.next_y,
         pending: block.pending,
