@@ -1885,8 +1885,8 @@ fn measure_ifc_root(
         !(inline_stretched && matches!(inline_available, AvailableSpace::Definite(_)));
     let box_intrinsics = if has_box_intrinsics && needs_intrinsics {
         let basis = match inline_available {
-            AvailableSpace::Definite(size) => size,
-            _ => 0.0,
+            AvailableSpace::Definite(size) => Some(size),
+            _ => None,
         };
         let percent_height = measure.definite_height.filter(|_| !vertical);
         // A vertical paragraph's boxes are measured along their heights, and
