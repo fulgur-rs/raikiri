@@ -6,12 +6,13 @@ use super::super::context::LayoutSession;
 use super::{
     BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue, FloatValue,
     FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl, PositionValue,
-    TextLineIndex, candidate_ancestor_constraints, clears_float_side, first_owned_text_line_top,
-    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
+    TextLineIndex, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
+    closing_edges_of, first_owned_text_line_top, in_inset_out_of_flow_subtree,
+    is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, page_applies_to_box, page_break_is_forced,
-    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
     positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    selected_page_name, unplaced_line_end,
+    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -39,6 +40,10 @@ pub(super) struct ElementContext {
     /// How far below the border-box top the line of a paragraph of one line
     /// of generated text ends: the box is kept whole by that line.
     pub(super) unplaced_line_end: Option<f32>,
+    /// The block size of the bottom padding and border that close the blocks
+    /// around the box, which it ends: they would break away from it if it
+    /// stayed on a page they do not fit (see [`super::closing_edges_move`]).
+    pub(super) closing_edges: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +118,11 @@ impl BoxContext {
     pub(super) fn unplaced_line_end(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.unplaced_line_end)
+    }
+
+    pub(super) fn closing_edges(self) -> f32 {
+        self.element_attributes()
+            .map_or(0.0, |attributes| attributes.closing_edges)
     }
 
     pub(super) fn is_named(self) -> bool {
@@ -333,6 +343,13 @@ struct CandidateFrame<'name> {
     /// ancestor does. A text or box starting at or past it is never visible,
     /// so it takes no part in pagination.
     clip_end: f32,
+    /// The block size of the bottom padding and border of the ancestors that
+    /// end with the node: it is the last box in the flow of each of them, and
+    /// their heights follow their content.
+    closing_edges: f32,
+    /// The box before the node in the flow of its parent, which a break can
+    /// fall after, when the node ends the blocks that `closing_edges` counts.
+    previous_box: Option<usize>,
 }
 
 impl CandidateFrame<'_> {
@@ -351,6 +368,8 @@ impl CandidateFrame<'_> {
             inside_float: false,
             inside_out_of_flow: false,
             clip_end: f32::INFINITY,
+            closing_edges: 0.0,
+            previous_box: None,
         }
     }
 }
@@ -579,6 +598,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         let mut child_frame = frame.clone();
                         child_frame.direct_body_child =
                             candidate_parent(document, child_id) == Some(roots.contents_box);
+                        child_frame.closing_edges = 0.0;
+                        child_frame.previous_box = None;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -782,10 +803,35 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree;
-                let needs_ancestor_constraints = nested_candidate_base
+                // The last box of a block whose bottom padding or border
+                // would break away from it stays with them: it is a nested
+                // candidate that moves to the next page when they do not fit
+                // after it. Nothing may break inside it at a better place
+                // than before it, and a box before it must be there to break
+                // from, with no break avoided between the two.
+                let closing_edges_base = nested_candidate_base
+                    && frame.closing_edges > 0.0
+                    && !inline_level
+                    && !is_float
+                    && matches!(
+                        document.nodes[node_id].display(),
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    )
+                    && matches!(
+                        document.nodes[node_id].position(),
+                        PositionValue::Static | PositionValue::Relative
+                    )
+                    && !node.used_writing_mode.is_vertical()
+                    && frame.previous_box.is_some_and(|previous| {
+                        !page_edge_constraint(document, cascade, previous, false).1
+                    })
+                    && !page_edge_constraint(document, cascade, node_id, true).1
+                    && breaks_only_around(document, cascade, node_id);
+                let needs_ancestor_constraints = (nested_candidate_base
                     && ((!inline_level && is_block_flow_box && avoids_break)
                         || is_float
-                        || clears_float);
+                        || clears_float))
+                    || closing_edges_base;
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         candidate_ancestor_constraints(document, cascade, node_id, body_id)
@@ -800,6 +846,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && can_move_nested;
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
+                let closing_edges_candidate = closing_edges_base && can_move_nested;
                 // A forced break and a page name change the pages wherever the
                 // box sits, even past the edge of a clipping ancestor.
                 let sets_page_flow = deferred_named_break_after
@@ -814,6 +861,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && (explicit_page_name.is_none() || inline_level))
                         || nested_avoid_candidate
                         || nested_float_candidate
+                        || closing_edges_candidate
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
@@ -848,6 +896,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 is_named: own_page_name.is_some(),
                                 deferred_named_break_after,
                                 unplaced_line_end,
+                                closing_edges: if closing_edges_candidate {
+                                    frame.closing_edges
+                                } else {
+                                    0.0
+                                },
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -889,7 +942,60 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                 };
                 let child_order = pagination_child_order(document, cascade, node_id);
-                for child_id in child_order {
+                // The closing edges of this block, and of the blocks that it
+                // ends in turn, follow its last box in the flow: a float after
+                // a box keeps it from being the last.
+                let own_closing_edges = closing_edges_of(document, node_id, body_id);
+                let closing_chain = own_closing_edges
+                    .map(|own| own + frame.closing_edges)
+                    .filter(|&edges| edges > 0.0);
+                // For each child, its last in-flow box and whether it floats.
+                let flow_flags: Vec<(Option<usize>, bool)> =
+                    closing_chain.map_or_else(Vec::new, |_| {
+                        let mut boxes = Vec::new();
+                        child_order
+                            .iter()
+                            .map(|&child_id| {
+                                boxes.clear();
+                                push_in_flow_boxes_rev(document, cascade, child_id, &mut boxes);
+                                (
+                                    boxes.first().copied(),
+                                    is_floating_box_for_pagination(document, cascade, child_id),
+                                )
+                            })
+                            .collect()
+                    });
+                let last_in_flow = flow_flags
+                    .iter()
+                    .rposition(|&(in_flow, floated)| in_flow.is_some() || floated);
+                let mut previous_box = None;
+                for (index, child_id) in child_order.into_iter().enumerate() {
+                    // The margin below the last box sits between it and the
+                    // padding and border of this block, unless it collapses
+                    // through that block (when it has neither) or through the
+                    // box itself (when it takes no block space).
+                    let child_closing_edges = closing_chain
+                        .filter(|_| last_in_flow == Some(index))
+                        .map_or(0.0, |edges| {
+                            let margin = flow_flags[index]
+                                .0
+                                .filter(|&last_box| {
+                                    own_closing_edges.is_some_and(|own| own > 0.0)
+                                        && !takes_no_block_space(document, last_box)
+                                })
+                                .map_or(0.0, |last_box| {
+                                    document.nodes[last_box].layout.margin.bottom.max(0.0)
+                                });
+                            edges + margin
+                        });
+                    let child_previous_box = previous_box;
+                    if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
+                        // A box that takes no block space is no box to break
+                        // from, and breaking after it may be avoided.
+                        previous_box = (document.nodes[last_box].kind() == NodeKind::Element
+                            && !takes_no_block_space(document, last_box))
+                        .then_some(last_box);
+                    }
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);
                     self.collect(
@@ -928,6 +1034,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             inside_float: float_subtree || monolithic,
                             inside_out_of_flow: out_of_flow_subtree,
                             clip_end,
+                            closing_edges: child_closing_edges,
+                            previous_box: child_previous_box,
                         },
                     )?;
                 }
