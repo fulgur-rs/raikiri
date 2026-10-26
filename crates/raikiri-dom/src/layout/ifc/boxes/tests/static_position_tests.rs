@@ -357,20 +357,43 @@ fn an_out_of_flow_inline_alone_after_a_break_follows_the_lines_above_it() {
         ],
         AFTER_THE_TEXT,
     );
+    const AFTER_ONE_LINE: &[Expected] = &[
+        ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
+        ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
+        ("vertical-rl", "ltr", (160.0, 0.0, 30.0, 20.0)),
+        ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
+        ("vertical-lr", "ltr", (10.0, 0.0, 30.0, 20.0)),
+        ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
+        ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
+        ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
+    ];
     check(
         "text_break_inline",
         setup,
         &[Child::Text("CC"), Child::Break, Child::Inline("")],
+        AFTER_ONE_LINE,
+    );
+    // A block-level `::after` comes after the box, so its lines do not move it.
+    let with_after = Setup {
+        sheet: r#"#cb::after{content:"BB";display:block}"#,
+        root_css: "",
+    };
+    check(
+        "block_inline_then_generated_block",
+        with_after,
+        &[Child::Block("AAAA", ""), Child::Inline("")],
+        AFTER_ONE_LINE,
+    );
+    check(
+        "block_text_break_inline_then_generated_block",
+        with_after,
         &[
-            ("horizontal-tb", "ltr", (0.0, 10.0, 30.0, 20.0)),
-            ("horizontal-tb", "rtl", (170.0, 10.0, 30.0, 20.0)),
-            ("vertical-rl", "ltr", (160.0, 0.0, 30.0, 20.0)),
-            ("vertical-rl", "rtl", (160.0, 80.0, 30.0, 20.0)),
-            ("vertical-lr", "ltr", (10.0, 0.0, 30.0, 20.0)),
-            ("vertical-lr", "rtl", (10.0, 80.0, 30.0, 20.0)),
-            ("sideways-lr", "ltr", (10.0, 80.0, 30.0, 20.0)),
-            ("sideways-lr", "rtl", (10.0, 0.0, 30.0, 20.0)),
+            Child::Block("AAAA", ""),
+            Child::Text("CC"),
+            Child::Break,
+            Child::Inline(""),
         ],
+        AFTER_THE_TEXT,
     );
 }
 

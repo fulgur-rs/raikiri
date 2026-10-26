@@ -174,6 +174,10 @@ pub(crate) struct IfcLines {
     /// Each block child of the root with the index of the first line after
     /// it.
     pub(crate) block_line_starts: Vec<(usize, usize)>,
+    /// Each block-level `::before` and `::after` of the root, in document
+    /// order, with the number of block children laid out before it and the
+    /// index of its first line. A fragmenting layout records none.
+    pub(crate) generated_block_starts: Vec<(usize, usize)>,
     /// Each block child of the root with the index of the first line after it
     /// and the block offset, from the content-box block-start edge, where the
     /// content after it starts: below its border box and the margins that

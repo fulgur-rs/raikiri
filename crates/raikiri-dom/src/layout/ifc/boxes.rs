@@ -168,6 +168,7 @@ pub(crate) fn layout_with_boxes_in(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
+            generated_block_starts: Vec::new(),
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
@@ -374,6 +375,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
+            generated_block_starts: Vec::new(),
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(),
             fragment_box_placements: Vec::new(),
@@ -553,6 +555,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         escaping_margin,
         leading_block_margin: None,
         block_line_starts,
+        generated_block_starts: Vec::new(),
         block_ends: Vec::new(),
         shifts,
         fragment_box_placements,
@@ -767,6 +770,7 @@ fn run_boxes_segment(
     let mut leading_block_margin = None;
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
+    let mut generated_block_starts = Vec::new();
     let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
@@ -1053,6 +1057,9 @@ fn run_boxes_segment(
                     generated_blocks::token(&root.generated_blocks, node.0, block_cursor)
                 {
                     block_cursor = index;
+                    if matches!(edge, generated_blocks::Token::Start(_)) {
+                        generated_block_starts.push((block_line_starts.len(), lines.len()));
+                    }
                     // A generated block is laid out along a horizontal
                     // root's block axis only; a vertical root breaks its
                     // lines at the tokens.
@@ -1244,6 +1251,7 @@ fn run_boxes_segment(
             escaping_margin,
             leading_block_margin,
             block_line_starts,
+            generated_block_starts,
             block_ends,
             shifts: super::root::LineShifts::default(),
             fragment_box_placements,
@@ -3431,7 +3439,8 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
 /// when text or an atomic inline comes before it on the line, and at the top
 /// of the line otherwise (CSS 2.1 10.6.4). One without an anchor has no line
 /// of its own: it follows the lines that come after the block child before it
-/// (or that block itself when no line does), or starts the paragraph
+/// and before the next block child or block-level `::after` (or that block
+/// itself when no line does), or starts the paragraph
 /// when nothing comes before it, or else, for the lines and blocks that
 /// `::before` generates, follows all the content. `boxes` are the paragraph's
 /// boxes in document order.
@@ -3475,10 +3484,26 @@ fn static_block_offset(
             .map_or(lines.height, |&(_, next_line, end)| {
                 // A line holding nothing but the box is dropped, so the box
                 // has no anchor and the lines after the block are all before
-                // it: it follows the last of them, up to the next block.
-                let lines_end = block_after
+                // it: it follows the last of them, up to the next block or the
+                // `::after` block, whose lines come after the box.
+                let next_block = block_after
                     .and_then(|id| lines.block_line_starts.iter().find(|&&(b, _)| b == id))
-                    .map_or(lines.lines.len(), |&(_, first)| first);
+                    .map(|&(_, first)| first);
+                let blocks_before = lines
+                    .block_line_starts
+                    .iter()
+                    .position(|&(id, _)| id == block)
+                    .map_or(0, |index| index + 1);
+                let generated_block = lines
+                    .generated_block_starts
+                    .iter()
+                    .find(|&&(count, _)| count >= blocks_before)
+                    .map(|&(_, first)| first);
+                let lines_end = next_block
+                    .into_iter()
+                    .chain(generated_block)
+                    .min()
+                    .unwrap_or(lines.lines.len());
                 match lines_end.checked_sub(1).filter(|&last| last >= next_line) {
                     Some(last) => lines.line_top(last) + lines.lines[last].block_size(),
                     None => end + lines.shift_of(next_line),
