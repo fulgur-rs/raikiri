@@ -94,12 +94,15 @@ fn a_cell_spanning_a_collapsed_row_shrinks_to_the_remaining_rows_and_clips() {
 }
 
 #[test]
-fn a_cell_starting_in_a_collapsed_row_moves_to_the_first_remaining_row() {
+fn a_cell_starting_in_a_collapsed_row_has_no_block_extent() {
+    // The cell belongs to the row it starts in, so the row that remains
+    // under it does not give it a height.
     let fixture = fixture(SEPARATE, GROUP, &[COLLAPSED, ROW], Some(2));
     let doc = &fixture.doc;
     let span = fixture.cells[1];
-    assert_eq!(cell_box(doc, span), (10.0, 20.0));
+    assert_eq!(cell_box(doc, span), (10.0, 0.0));
     assert!(doc.nodes[span].clips_collapsed_table_span);
+    assert_eq!(cell_box(doc, fixture.cells[2]), (10.0, 20.0));
 }
 
 #[test]
@@ -307,7 +310,7 @@ fn the_row_after_a_collapsed_first_row_resolves_against_the_table_edge() {
 }
 
 #[test]
-fn a_spanning_cell_moved_past_a_collapsed_row_aligns_with_its_new_row() {
+fn a_spanning_cell_starting_in_a_collapsed_row_sets_no_baseline_for_the_row_below() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
     let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -332,9 +335,9 @@ fn a_spanning_cell_moved_past_a_collapsed_row_aligns_with_its_new_row() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-    // The moved 40px cell's baseline sits 32px down and now sets the second
-    // row's baseline, so the 20px cell there (16px down) shifts by 16px.
-    assert_eq!(doc.nodes[cells[1]].layout.padding.top, 16.0);
+    // The 40px cell has no block extent, so its baseline (32px down) does not
+    // set the second row's baseline and the 20px cell there stays at the top.
+    assert_eq!(doc.nodes[cells[1]].layout.padding.top, 0.0);
 }
 
 #[test]

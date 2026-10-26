@@ -2802,7 +2802,9 @@ fn without_collapsed_columns(
 }
 
 /// The first row a cell shows in once collapsed rows are removed, or the
-/// row it starts in when its whole span is collapsed.
+/// row it starts in when its whole span is collapsed. Only the table's first
+/// baseline reads it: `place_cells` leaves a cell that starts in a collapsed
+/// row in that row, with no extent.
 fn first_shown_row(cell: &CellPlacement, collapsed: &[bool]) -> usize {
     let start = cell.row as usize;
     let end = (start + cell.row_span as usize).min(collapsed.len());
@@ -3368,15 +3370,18 @@ fn place_cells(
         row_spacing,
         vertical_writing,
     } = tracks;
-    // A cell moved past collapsed rows aligns with the row it now starts in.
+    // A cell belongs to the row it starts in. One starting in a collapsed row
+    // has no block extent, so it sets no baseline for the rows it spans.
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
-        if cell_baseline_aligned(
-            doc.ifc_layout_node(cell.node_id)
-                .expect("table cell layout view")
-                .table_vertical_align,
-        ) {
-            let row = first_shown_row(cell, collapsed_rows);
+        let row = cell.row as usize;
+        if !collapsed_rows[row]
+            && cell_baseline_aligned(
+                doc.ifc_layout_node(cell.node_id)
+                    .expect("table cell layout view")
+                    .table_vertical_align,
+            )
+        {
             row_baselines[row] = row_baselines[row].max(cell.baseline);
         }
     }
@@ -3385,9 +3390,12 @@ fn place_cells(
         let span_end = (cell.row as usize + cell.row_span as usize).min(row_heights.len());
         // A cell spanning collapsed rows shrinks to the rows that remain and
         // clips its contents; with none left it has no block extent (CSS
-        // Tables 3, "Visibility-collapse cell rendering").
+        // Tables 3, "Visibility-collapse cell rendering"). A cell that starts
+        // in a collapsed row departs from that on purpose: Chromium keeps it
+        // in the row it belongs to, with no extent even when later rows of
+        // its span remain.
         let mut kept = (cell.row as usize..span_end).filter(|&row| !collapsed_rows[row]);
-        let first_kept = kept.next();
+        let first_kept = kept.next().filter(|_| !collapsed_rows[cell.row as usize]);
         let (start_row, end_row) = match first_kept {
             Some(first) => (first, kept.next_back().unwrap_or(first) + 1),
             None => (cell.row as usize, cell.row as usize),
