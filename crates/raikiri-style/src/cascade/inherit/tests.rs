@@ -705,8 +705,9 @@ fn block_size_keywords_compute_to_auto_for_an_element() {
         );
         assert_eq!(horizontal.width, ComputedLengthPercentageOrAuto::Auto);
     }
-    // In a vertical writing mode the block size is the physical width, and
-    // the inline size keeps its keyword as the physical height.
+    // In a vertical writing mode the block size is the physical width, which
+    // keeps its keyword as `width` does, and the inline size keeps its
+    // keyword as the physical height.
     let vertical = cascade_doc(
         "",
         "div",
@@ -715,9 +716,44 @@ fn block_size_keywords_compute_to_auto_for_an_element() {
     assert_eq!(
         vertical.vertical_logical_size,
         Some(VerticalLogicalSize {
-            width: ComputedLengthPercentageOrAuto::Auto,
+            width: ComputedLengthPercentageOrAuto::MaxContent,
             height: ComputedLengthPercentageOrAuto::MaxContent,
         })
+    );
+    // The horizontal mapping the box keeps for the layouts that do not run on
+    // its own axes still computes the block size to `auto`.
+    assert_eq!(vertical.width, ComputedLengthPercentageOrAuto::MaxContent);
+    assert_eq!(vertical.height, ComputedLengthPercentageOrAuto::Auto);
+}
+
+#[test]
+fn a_vertical_block_size_keeps_its_keyword_as_the_physical_width() {
+    for (keyword, width) in [
+        ("min-content", ComputedLengthPercentageOrAuto::MinContent),
+        ("max-content", ComputedLengthPercentageOrAuto::MaxContent),
+        ("fit-content", ComputedLengthPercentageOrAuto::FitContent),
+    ] {
+        for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+            let style = format!("writing-mode: {mode}; block-size: {keyword}");
+            let values = cascade_doc("", "div", Some(style.as_str()));
+            let logical = values.vertical_logical_size.expect("vertical sizes");
+            assert_eq!(logical.width, width, "{mode} {keyword}");
+            assert_eq!(
+                logical.height,
+                ComputedLengthPercentageOrAuto::Auto,
+                "{mode} {keyword}"
+            );
+        }
+    }
+    // The physical width declared later wins, as for any size on one axis.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-rl; block-size: min-content; width: 30px"),
+    );
+    assert_eq!(
+        values.vertical_logical_size.expect("vertical sizes").width,
+        ComputedLengthPercentageOrAuto::Px(30.0)
     );
 }
 
