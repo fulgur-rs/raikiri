@@ -26,6 +26,7 @@ fn split(height: f32) -> Item {
         splittable: true,
         whole: false,
         slice: None,
+        edges: 0.0,
     }
 }
 
@@ -108,6 +109,7 @@ fn sliced(height: f32, leading: f32, trailing: f32) -> Item {
     Item {
         whole: true,
         slice: Some((leading, trailing)),
+        edges: trailing,
         ..split(height)
     }
 }
@@ -162,6 +164,54 @@ fn a_box_that_slices_its_decorations_does_not_break_inside_the_block_end_ones() 
     assert_eq!(
         shape(&[sliced(105.0, 0.0, 10.0)], 100.0),
         vec![vec![(0, 0.0, 95.0), (1, 0.0, 10.0)]]
+    );
+}
+
+#[test]
+fn a_box_moves_with_the_block_end_decorations_that_would_break_away_from_it() {
+    let edged = |height, edges| Item {
+        edges,
+        ..split(height)
+    };
+    // The box fills the rest of the column and its 50px of padding do not
+    // fit, so the box follows them to the next column instead of leaving them
+    // alone there.
+    assert_eq!(
+        shape(&[split(50.0), edged(100.0, 50.0)], 100.0),
+        vec![vec![(0, 0.0, 50.0)], vec![(1, 0.0, 100.0)]]
+    );
+    // Padding that would be cut in two goes whole the same way.
+    assert_eq!(
+        shape(&[split(50.0), edged(90.0, 60.0)], 100.0),
+        vec![vec![(0, 0.0, 50.0)], vec![(1, 0.0, 90.0)]]
+    );
+    // Nothing precedes the box in the column, so there is nothing to break
+    // from.
+    assert_eq!(
+        shape(&[edged(105.0, 10.0)], 100.0),
+        vec![vec![(0, 0.0, 100.0), (1, 0.0, 5.0)]]
+    );
+    // The next column cannot hold the box with the padding.
+    assert_eq!(
+        shape(&[split(80.0), edged(120.0, 100.0)], 100.0),
+        vec![vec![(0, 0.0, 80.0)], vec![(0, 80.0, 20.0), (1, 0.0, 100.0)]]
+    );
+    // The break falls inside the content, not next to the padding.
+    assert_eq!(
+        shape(&[split(50.0), edged(130.0, 20.0)], 100.0),
+        vec![vec![(0, 0.0, 50.0)], vec![(0, 50.0, 50.0), (1, 0.0, 80.0)]]
+    );
+    // Moving the box needs a column past the limit.
+    assert_eq!(
+        super::place_within(
+            &[split(50.0), edged(100.0, 50.0)],
+            100.0,
+            usize::MAX,
+            1,
+            true
+        )
+        .err(),
+        Some(super::Stop::Exhausted)
     );
 }
 
