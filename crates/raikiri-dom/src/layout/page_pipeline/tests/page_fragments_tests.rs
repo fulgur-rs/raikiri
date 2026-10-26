@@ -1437,8 +1437,8 @@ fn two_forced_breaks_in_one_body_paragraph_start_two_pages() {
 #[test]
 fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
     // "aa", a 20px block holding "bb" that would straddle the 25px page,
-    // then " cc": the block moves to the second page as a unit and " cc"
-    // follows it there (on both paths).
+    // then " dd": the block moves to the second page as a unit and " dd"
+    // follows it (on both paths).
     let run = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Some("display:block"));
@@ -1478,9 +1478,10 @@ fn a_fixed_height_block_pushed_to_the_next_page_takes_the_lines_after_it() {
         })
     };
     // Hand-computed: the block's two lines start the second page; " dd"
-    // follows the 20px block.
-    assert_eq!(run(), [(1, 0.0), (1, 20.0)]);
-    assert_eq!(run(), [(1, 0.0), (1, 20.0)]);
+    // would follow the 20px block at 20px, where its 10px line does not fit
+    // the 25px page, so it starts the third page.
+    assert_eq!(run(), [(1, 0.0), (2, 0.0)]);
+    assert_eq!(run(), [(1, 0.0), (2, 0.0)]);
 }
 
 #[test]

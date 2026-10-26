@@ -5687,7 +5687,8 @@ impl DeferredShifts {
                     && text_lines
                         .get(node_id)
                         .and_then(|owned| owned.lines.first())
-                        .is_some_and(|line| line.line >= first_moved);
+                        .is_some_and(|line| line.line >= first_moved)
+                || follows_line_of_paragraph(document, node_id, root, first_moved);
             if reached {
                 *flow_shift += shift;
             }
@@ -5746,6 +5747,9 @@ struct CheckedParagraphs {
     block_text: HashSet<usize>,
     /// Blocks whose orphans and widows were checked.
     orphans_widows: HashSet<usize>,
+    /// Runs of lines between the block children of a paragraph that were
+    /// checked against the page end: `(paragraph root, first line)`.
+    lines_after_blocks: HashSet<(usize, usize)>,
 }
 
 impl CheckedParagraphs {
@@ -6007,6 +6011,93 @@ fn lines_can_shift_inside(document: &super::context::LayoutSession<'_>, block_id
             .ifc_layout_node(block_id)
             .and_then(|node| node.ifc.as_ref())
             .is_some_and(|ifc| ifc.boxes.is_empty() && ifc.multicol_fragments.is_none())
+}
+
+/// Whether the lines of the paragraph `block_id` that follow its block
+/// children can move down inside it: its height grows with them, it is in one
+/// column, and the only boxes it lays out are those block children, which
+/// follow the moved lines when pagination reaches them.
+fn lines_can_shift_between_blocks(
+    document: &super::context::LayoutSession<'_>,
+    block_id: usize,
+) -> bool {
+    height_follows_content(document, block_id)
+        && document
+            .ifc_layout_node(block_id)
+            .and_then(|node| node.ifc.as_ref())
+            .is_some_and(|ifc| {
+                ifc.multicol_fragments.is_none()
+                    && ifc.boxes.iter().all(|b| b.kind == IfcBoxKind::Block)
+            })
+}
+
+/// The lines of the paragraph `root` that lie between two of its block
+/// children, as line indices, for the run that holds the first line of the
+/// text `node_id`. `None` when no block child comes before that line: the
+/// paragraph's own checks judge such lines.
+fn lines_between_blocks(
+    document: &Document,
+    text_lines: &TextLineIndex,
+    node_id: usize,
+    root: usize,
+) -> Option<std::ops::Range<usize>> {
+    let first = text_lines.get(node_id)?.lines.first()?.line;
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    let mut start = None;
+    let mut end = lines.lines.len();
+    for &(_, after) in &lines.block_line_starts {
+        if after <= first {
+            start = start.max(Some(after));
+        } else {
+            end = end.min(after);
+        }
+    }
+    Some(start?..end)
+}
+
+/// The first of the lines `line_metrics` (block-start and block-end edges
+/// relative to `effective_y`) that crosses the end of the page from
+/// `page_start` to `page_end` without starting the next page, if it is not the
+/// first thing on its page.
+fn straddling_line(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    page_start: f32,
+    page_end: f32,
+) -> Option<usize> {
+    let line = line_metrics
+        .iter()
+        .position(|&(_, bottom)| effective_y + bottom > page_end + 0.001)?;
+    let top = effective_y + line_metrics[line].0;
+    (top > page_start + 0.001 && top < page_end - 0.001).then_some(line)
+}
+
+/// Whether `node_id` lies in a block child of the paragraph `root` that comes
+/// after line `line`, so that moving the lines from `line` on moves it too.
+fn follows_line_of_paragraph(
+    document: &Document,
+    node_id: usize,
+    root: usize,
+    line: usize,
+) -> bool {
+    let block = std::iter::successors(Some(node_id), |&node| document.layout_parent_of(node))
+        .find(|&node| document.layout_parent_of(node) == Some(root));
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .zip(block)
+        .is_some_and(|(lines, block)| {
+            lines
+                .block_line_starts
+                .iter()
+                .any(|&(child, after)| child == block && after > line)
+        })
 }
 
 /// How a paragraph that crosses the page end is repaired so that its break
