@@ -288,6 +288,7 @@ pub(crate) fn place_lines(
         escaping_margin: CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
         block_line_starts: Vec::new(),
+        generated_block_starts: Vec::new(),
         block_ends: Vec::new(),
         shifts: super::root::LineShifts::default(),
         fragment_box_placements: Vec::new(),
