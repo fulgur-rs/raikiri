@@ -12,6 +12,25 @@ use crate::Document;
 use crate::node::NodeFlags;
 use raikiri_layout_geometry::Point;
 use raikiri_traits::NodeKind;
+use std::collections::HashMap;
+
+/// The origins one walk of [`Document::layout_origin_of`] has resolved.
+///
+/// An out-of-flow box takes its origin from three boxes: the one it is
+/// positioned against, the one it would sit in without being positioned, and
+/// its coordinate parent, which is usually the first of them. In a chain of
+/// positioned boxes all three are the box one level up, so each level asks the
+/// level above it for the same origin three times, and a chain of `n` boxes
+/// costs `3^n` steps. The origins are kept once resolved, so the chain costs
+/// `n`.
+///
+/// A walk that meets no out-of-flow box is one chain of ancestors, which has
+/// nothing to remember, so the map stays empty (and unallocated) until the
+/// first out-of-flow box.
+#[derive(Default)]
+struct OriginWalk {
+    resolved: HashMap<usize, Option<Point<f32>>>,
+}
 
 impl Document {
     /// The node `node`'s layout location is relative to: its DOM parent,
@@ -41,14 +60,14 @@ impl Document {
     /// automatic static position relative to its containing block.
     #[doc(hidden)]
     pub fn layout_offset_of(&self, node: usize) -> Option<Point<f32>> {
-        self.layout_offset_of_at_depth(node, 0)
+        self.layout_offset_of_at_depth(node, 0, &mut OriginWalk::default())
     }
 
     /// The node's border-box origin in the unfragmented layout coordinate
     /// space, following containing-block owners for out-of-flow boxes.
     #[doc(hidden)]
     pub fn layout_origin_of(&self, node: usize) -> Option<Point<f32>> {
-        self.layout_origin_of_at_depth(node, 0)
+        self.layout_origin_of_at_depth(node, 0, &mut OriginWalk::default())
     }
 
     pub(crate) fn begin_oof_layout(&mut self) {
@@ -77,8 +96,21 @@ impl Document {
         }
     }
 
-    fn layout_offset_of_at_depth(&self, node: usize, depth: usize) -> Option<Point<f32>> {
-        if depth > self.nodes.len().saturating_add(2) {
+    /// The deepest a walk goes before it gives up. A walk steps from a box to
+    /// its offset and from the offset to the origin of another box, so it takes
+    /// two steps for each box on the way, and meets each box once unless the
+    /// coordinates form a cycle.
+    fn origin_walk_limit(&self) -> usize {
+        self.nodes.len().saturating_mul(2).saturating_add(2)
+    }
+
+    fn layout_offset_of_at_depth(
+        &self,
+        node: usize,
+        depth: usize,
+        walk: &mut OriginWalk,
+    ) -> Option<Point<f32>> {
+        if depth > self.origin_walk_limit() {
             return None;
         }
         let mut offset = self.nodes.layout_node(node)?.layout.location;
@@ -92,10 +124,10 @@ impl Document {
             return Some(offset);
         };
         let owner = self
-            .layout_origin_of_at_depth(coordinate.owner, depth + 1)
+            .layout_origin_of_at_depth(coordinate.owner, depth + 1, walk)
             .unwrap_or(initial_owner);
         let static_owner = self
-            .layout_origin_of_at_depth(coordinate.static_owner, depth + 1)
+            .layout_origin_of_at_depth(coordinate.static_owner, depth + 1, walk)
             .unwrap_or(initial_static);
         if coordinate.follow_static_x {
             offset.x += (static_owner.x - initial_static.x) - (owner.x - initial_owner.x);
@@ -106,16 +138,51 @@ impl Document {
         Some(offset)
     }
 
-    fn layout_origin_of_at_depth(&self, node: usize, depth: usize) -> Option<Point<f32>> {
-        if depth > self.nodes.len().saturating_add(2) {
+    fn layout_origin_of_at_depth(
+        &self,
+        node: usize,
+        depth: usize,
+        walk: &mut OriginWalk,
+    ) -> Option<Point<f32>> {
+        if depth > self.origin_walk_limit() {
             return None;
         }
-        let offset = self.layout_offset_of_at_depth(node, depth + 1)?;
+        // Only an out-of-flow box reaches the same box along several paths.
+        // From the first one on, everything the walk resolves is kept, since a
+        // box below the others may be met again from any of them.
+        let positioned = self.oof_coordinates.contains_key(&node);
+        if positioned || !walk.resolved.is_empty() {
+            if let Some(&resolved) = walk.resolved.get(&node) {
+                return resolved;
+            }
+            if positioned {
+                // A box that asks for its own origin, through the boxes it is
+                // positioned against, finds no origin there instead of
+                // looping.
+                walk.resolved.insert(node, None);
+            }
+        }
+        let origin = self.resolve_layout_origin(node, depth, walk);
+        if positioned || !walk.resolved.is_empty() {
+            walk.resolved.insert(node, origin);
+        }
+        origin
+    }
+
+    fn resolve_layout_origin(
+        &self,
+        node: usize,
+        depth: usize,
+        walk: &mut OriginWalk,
+    ) -> Option<Point<f32>> {
+        #[cfg(test)]
+        crate::layout::test_support::LAYOUT_ORIGIN_STEPS.with(|steps| steps.set(steps.get() + 1));
+        let offset = self.layout_offset_of_at_depth(node, depth + 1, walk)?;
         let Some(parent) = self.layout_coordinate_parent_of(node) else {
             return Some(offset);
         };
         let parent_origin = self
-            .layout_origin_of_at_depth(parent, depth + 1)
+            .layout_origin_of_at_depth(parent, depth + 1, walk)
             .unwrap_or(Point::ZERO);
         Some(Point {
             x: parent_origin.x + offset.x,
