@@ -28,9 +28,11 @@ fn text_context_keeps_flow_attributes_without_element_attributes() {
         is_float_descendant: true,
         is_out_of_flow_descendant: true,
         page_name_in_flow: true,
+        lines_closing_edges: 7.0,
     });
 
     assert!(context.is_text());
+    assert_eq!(context.lines_closing_edges(), 7.0);
     assert!(context.is_float_descendant());
     assert!(context.is_out_of_flow_descendant());
     assert!(context.page_name_in_flow());

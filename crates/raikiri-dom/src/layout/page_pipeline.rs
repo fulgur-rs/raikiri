@@ -5716,6 +5716,39 @@ fn closing_edges_of(
     .then_some(node.layout.padding.bottom + node.layout.border.bottom)
 }
 
+/// The break that keeps a paragraph's last `widows` lines with the `edges` of
+/// bottom padding and border that close the blocks around it, when the lines
+/// fit the page but the edges do not. A break between the last line and the
+/// edges (class C) is not taken while one between lines (class B) honors
+/// `orphans` and `widows`, as in [`closing_edges_move`]. `line_metrics` is as
+/// for [`widows_break_on_next_page`]. `None` when the lines or the edges do
+/// not run past the page end the way that needs, there are too few lines for
+/// both constraints, or the next page cannot hold the lines with the edges.
+fn closing_edges_line_move(
+    line_metrics: &[(f32, f32)],
+    edges: f32,
+    effective_y: f32,
+    current_page: u32,
+    orphans: usize,
+    widows: usize,
+    page_origins: &PageOrigins,
+) -> Option<LineBreakMove> {
+    let page_start = page_origins.origin(current_page);
+    let page_end = page_start + page_origins.step_at(current_page);
+    let first_top = effective_y + line_metrics.first()?.0;
+    let last_bottom = effective_y + line_metrics.last()?.1;
+    let fits_lines = first_top >= page_start - 0.001
+        && first_top < page_end
+        && last_bottom <= page_end + 0.001
+        && line_metrics.len() >= orphans + widows;
+    if !fits_lines || last_bottom + edges <= page_end + 0.001 {
+        return None;
+    }
+    let mut with_edges = line_metrics.to_vec();
+    with_edges.last_mut()?.1 += edges;
+    widows_break_on_next_page(&with_edges, effective_y, current_page, widows, page_origins)
+}
+
 /// Whether the page cannot break inside the block `node_id` at a better place
 /// than before it: it has no box in its flow, or its lines are too few for
 /// `orphans` and `widows` to let a break fall between them, or it is a block

@@ -388,11 +388,20 @@ fn an_inner_block_that_the_box_does_not_end_stops_the_edges_there() {
 
 /// `body > div(padding-bottom:40px) > [div, paragraph]` where the paragraph is
 /// `lines` lines of 10px Ahem text, 30px wide, and ends at 70px. Returns the
-/// page-flow y of the paragraph.
-fn closed_paragraph(lines: usize, paragraph_css: &str) -> f32 {
-    let mut paragraph = 0;
+/// page-flow y of the paragraph and the height of the div.
+fn closed_paragraph(lines: usize, paragraph_css: &str) -> (f32, f32) {
+    closed_paragraph_with(lines, 40, paragraph_css)
+}
+
+/// [`closed_paragraph`] with `padding` pixels of padding below the div.
+fn closed_paragraph_with(lines: usize, padding: u32, paragraph_css: &str) -> (f32, f32) {
+    let (mut parent, mut paragraph) = (0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
-        let parent = block(doc, body, "display:block;padding-bottom:40px");
+        parent = block(
+            doc,
+            body,
+            &format!("display:block;padding-bottom:{padding}px"),
+        );
         block(
             doc,
             parent,
@@ -408,20 +417,108 @@ fn closed_paragraph(lines: usize, paragraph_css: &str) -> f32 {
         doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
     });
     assert!(doc.nodes[paragraph].is_ifc_root());
-    page_flow_y(&doc, paragraph)
+    (
+        page_flow_y(&doc, paragraph),
+        doc.nodes[parent].layout.size.height,
+    )
 }
 
 #[test]
 fn lines_that_orphans_and_widows_keep_together_move_with_the_edges() {
     // The lines end at 70 on the page and the padding below them does not.
-    assert_eq!(closed_paragraph(3, ""), 100.0);
-    assert_eq!(closed_paragraph(2, ""), 100.0);
-    assert_eq!(closed_paragraph(1, ""), 100.0);
-    // Lines that fit apart stay: a break between them comes later.
-    assert_eq!(closed_paragraph(4, ""), 30.0);
-    // Fewer orphans and widows let the lines break apart.
-    assert_eq!(closed_paragraph(3, "orphans:1;widows:1"), 40.0);
-    assert_eq!(closed_paragraph(2, "orphans:1;widows:1"), 50.0);
+    // The paragraph moves whole to the top of the next page, and the padding
+    // follows it.
+    for lines in [3, 2, 1] {
+        assert_eq!(
+            closed_paragraph(lines, ""),
+            (100.0, 140.0 + 10.0 * lines as f32),
+            "{lines} lines"
+        );
+    }
+}
+
+#[test]
+fn the_last_lines_that_widows_keep_together_move_with_the_edges() {
+    // Lines that fit apart stay where the paragraph starts, and only the last
+    // `widows` lines move with the padding. Four lines make a break between
+    // the second and third.
+    assert_eq!(closed_paragraph(4, ""), (30.0, 160.0));
+    // Six lines, the last two moving from 50 to the top of the next page.
+    assert_eq!(closed_paragraph(6, ""), (10.0, 160.0));
+    // Fewer widows move fewer lines, and the break is the one that the
+    // widows allow, not the earliest one.
+    assert_eq!(closed_paragraph(6, "orphans:1;widows:1"), (10.0, 150.0));
+    assert_eq!(closed_paragraph(6, "orphans:1;widows:3"), (10.0, 170.0));
+    assert_eq!(closed_paragraph(3, "orphans:1;widows:1"), (40.0, 150.0));
+    assert_eq!(closed_paragraph(2, "orphans:1;widows:1"), (50.0, 150.0));
+}
+
+#[test]
+fn the_padding_of_the_paragraph_itself_moves_with_its_last_lines() {
+    // The paragraph has 20px of padding below its lines and the div 40px more:
+    // the lines end at 70, and 60px of edges do not fit after them.
+    assert_eq!(closed_paragraph(6, "padding-bottom:20px"), (10.0, 180.0));
+}
+
+#[test]
+fn lines_that_the_next_page_cannot_hold_with_the_edges_stay() {
+    // The last two lines and 90px of padding make 110px, more than a page.
+    assert_eq!(closed_paragraph_with(6, 90, ""), (10.0, 160.0));
+}
+
+#[test]
+fn a_paragraph_alone_in_its_parent_keeps_its_last_lines() {
+    // Nothing before the paragraph in the div is a box to break from.
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:10px");
+        parent = block(doc, body, "display:block;padding-bottom:40px");
+        paragraph = block(
+            doc,
+            parent,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, ["aaa"; 6].join(" "));
+    });
+    assert_eq!(doc.nodes[parent].layout.size.height, 100.0);
+}
+
+#[test]
+fn the_lines_of_a_paragraph_in_a_float_keep_their_place() {
+    // A float is a flow of its own: the padding that closes a block in it does
+    // not move the paragraph's lines.
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let float = block(doc, body, "float:left;width:30px");
+        parent = block(doc, float, "display:block;padding-bottom:40px");
+        block(doc, parent, "display:block;height:10px");
+        paragraph = block(
+            doc,
+            parent,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, ["aaa"; 6].join(" "));
+    });
+    assert_eq!(doc.nodes[parent].layout.size.height, 110.0);
+}
+
+#[test]
+fn a_paragraph_with_a_block_among_its_lines_keeps_its_last_lines() {
+    // The lines run in two runs around a block, which the page breaks at.
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        parent = block(doc, body, "display:block;padding-bottom:40px");
+        block(doc, parent, "display:block;height:10px");
+        paragraph = block(
+            doc,
+            parent,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "aaa bbb");
+        block(doc, paragraph, "display:block;height:10px");
+        doc.append_text(paragraph, "ccc ddd eee");
+    });
+    assert_eq!(doc.nodes[parent].layout.size.height, 110.0);
 }
 
 #[test]
