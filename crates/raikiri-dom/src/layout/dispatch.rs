@@ -2531,8 +2531,9 @@ fn compute_inline_block_shrink_wrap(
     // so the answers are kept in the node's cache. Only while the node's own
     // cache frame is open: a box laid out apart from its cache (in a block
     // context shared with its parent, say) also measures apart from it. A flex
-    // container measures under a style override, which moves the cache
-    // generation, so its answers are neither found nor kept.
+    // container that has a `max-width`, or items with a length as their flex
+    // basis, measures under style overrides, which move the cache generation,
+    // so its answers are neither found nor kept.
     let cache_probes = !is_leaf && tree.caches_node(node_id);
 
     // Intrinsic outer width under the given width constraint.
