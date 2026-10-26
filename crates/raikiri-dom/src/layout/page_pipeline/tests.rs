@@ -7,6 +7,7 @@ mod ancestor_walk_tests;
 mod avoid_followup_tests;
 mod candidate_context_tests;
 mod candidate_text_tests;
+mod closing_edge_tests;
 mod column_projection_tests;
 mod fragment_sources_tests;
 pub(super) mod link_ancestor_tests;

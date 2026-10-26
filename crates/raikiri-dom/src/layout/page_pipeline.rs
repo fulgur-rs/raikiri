@@ -4021,7 +4021,8 @@ struct BoxFit {
 
 /// The ways, besides a forced break, in which a box moves to the next page.
 struct BoxOverflow {
-    /// The box avoids breaks inside it and would cross the page edge.
+    /// The box avoids breaks inside it and would cross the page edge, or it
+    /// ends its parent and the parent's closing edges would break away from it.
     page: bool,
     /// The box starts a run of boxes joined by avoided breaks that would
     /// cross the page edge.
@@ -5667,6 +5668,111 @@ fn avoided_box_moves(
 ) -> bool {
     flow_y - margin_top.max(0.0) > page_start + 0.001
         && starts_on_page_and_runs_past_it(flow_y, box_end, page_start, page_end)
+}
+
+/// Whether a box ending the blocks around it with `edges` of bottom padding
+/// and border below it moves to the next page, so that those edges do not
+/// break away from it.
+///
+/// When the last box of a block fits its page but the block's closing edges
+/// do not, a break between the two would leave the edges alone at the top of
+/// the next page. A break between boxes (a class A break point) is preferred
+/// to that one (class C, CSS Break 3 §4.1), as browsers do, so the last box
+/// moves along with the edges. The next page must hold the box with the
+/// edges, or moving it gains nothing; and a box that its page starts with
+/// would break from the edges on any page.
+fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
+    let edges = candidate.context.closing_edges();
+    let BoxFit {
+        flow_y,
+        margin_top,
+        page_start,
+        page_end,
+        next_page_step,
+        ..
+    } = *fit;
+    let box_end = flow_y + candidate.height;
+    edges > 0.0
+        && box_end <= page_end + 0.001
+        && candidate.height + edges <= next_page_step + 0.001
+        && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
+}
+
+/// The block size of the bottom padding and border of the block `node_id`
+/// that close it below its last box, when they follow that box: the block is
+/// not the body, stacks its boxes in block flow, and has a height that is that
+/// of its content.
+fn closing_edges_of(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+    body_id: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    (node_id != body_id
+        && node.kind() == NodeKind::Element
+        && !node.used_writing_mode.is_vertical()
+        && moves_later_siblings(document, node_id)
+        && height_follows_content(document, node_id))
+    .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+}
+
+/// Whether the page cannot break inside the block `node_id` at a better place
+/// than before it: it has no box in its flow, or its lines are too few for
+/// `orphans` and `widows` to let a break fall between them, or it is a block
+/// without padding or border around one box that is as unbreakable.
+fn breaks_only_around(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let mut current = node_id;
+    loop {
+        let node = &document.nodes[current];
+        if node.multicol.is_some() {
+            return false;
+        }
+        if node.is_ifc_root() {
+            let computed = &cascade.computed[current];
+            return document
+                .ifc_layout_node(current)
+                .and_then(|node| node.ifc.as_ref())
+                .and_then(|ifc| ifc.lines.as_ref())
+                .is_some_and(|lines| {
+                    // Block boxes between the lines are breakable places too.
+                    lines.block_line_starts.is_empty()
+                        && i64::try_from(lines.lines.len()).unwrap_or(i64::MAX)
+                            < i64::from(computed.orphans) + i64::from(computed.widows)
+                });
+        }
+        let mut boxes = Vec::new();
+        for &child in &node.children {
+            if is_floating_box_for_pagination(document, cascade, child) {
+                return false;
+            }
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+        let layout = &node.layout;
+        match boxes[..] {
+            [] => return true,
+            // Nothing separates the block from its one box, so it breaks as
+            // that box does.
+            [only]
+                if layout.padding.top
+                    + layout.padding.bottom
+                    + layout.border.top
+                    + layout.border.bottom
+                    == 0.0
+                    && document.nodes[only].kind() == NodeKind::Element
+                    && matches!(
+                        document.nodes[only].display(),
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    ) =>
+            {
+                current = only;
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// Whether a table row group of `group_height` at `flow_y` that avoids
