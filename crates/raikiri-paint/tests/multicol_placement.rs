@@ -2697,6 +2697,8 @@ fn an_empty_block_with_painting_content_still_cuts_the_boxes_beside_it() {
         "&nbsp;",
         "<div class=g></div>",
         "<span style='position:relative'></span>",
+        // A positioned wrapper without a box leaves its text in the flow.
+        "<span style='display:contents;position:absolute'>X</span>",
     ] {
         compare_bodies(
             &format!(

@@ -739,9 +739,11 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     }
                 } else if kind == NodeKind::Element {
                     let cv = &cascade.computed[child];
-                    if cv.display == DisplayValue::None
-                        || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-                    {
+                    // A `display: contents` element has no box to take out of
+                    // the flow whatever its `position`, so its children stay.
+                    let out_of_flow = cv.display != DisplayValue::Contents
+                        && matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+                    if cv.display == DisplayValue::None || out_of_flow {
                         continue;
                     }
                     if child_node.layout().size.height > 0.0 || is_containing_block(child) {
