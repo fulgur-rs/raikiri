@@ -4,6 +4,7 @@ mod constrained_chain;
 mod lineless;
 mod paged_spanning;
 mod paragraph_group;
+pub(super) mod paragraph_spanners;
 pub(super) mod spanning;
 
 use authored::AuthoredBox;
@@ -3415,8 +3416,19 @@ pub(crate) fn root_column_fragments(
     lines: &crate::layout::ifc::root::IfcLines,
     context: FragmentationContext,
 ) -> (Vec<MulticolTextFragment>, f32) {
-    let extents: Vec<(f32, f32)> = lines
-        .lines
+    group_column_fragments(lines, 0..lines.lines.len(), context, 0.0)
+}
+
+/// [`root_column_fragments`] for the lines `range` of the paragraph, which
+/// stand with their first line at the block offset `y` of the root's content
+/// box: a group of lines between two column spanners.
+pub(crate) fn group_column_fragments(
+    lines: &crate::layout::ifc::root::IfcLines,
+    range: std::ops::Range<usize>,
+    context: FragmentationContext,
+    y: f32,
+) -> (Vec<MulticolTextFragment>, f32) {
+    let extents: Vec<(f32, f32)> = lines.lines[range.clone()]
         .iter()
         .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
         .collect();
@@ -3450,11 +3462,11 @@ pub(crate) fn root_column_fragments(
     let fragments = ranges
         .into_iter()
         .map(|(start, end, column)| MulticolTextFragment {
-            line_start: start,
-            line_end: end,
+            line_start: range.start + start,
+            line_end: range.start + end,
             fragmentainer: column,
             x: context.column_offset_x(column),
-            y: 0.0,
+            y,
         })
         .collect();
     (fragments, height)

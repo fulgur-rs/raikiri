@@ -1139,16 +1139,20 @@ fn run_boxes_segment(
                     && y == 0.0
                     && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
-                let mut block = layout_block_child(
-                    tree,
-                    ctx,
-                    node.0 as usize,
-                    y,
-                    pending,
-                    geometry,
-                    perform,
-                    top_margin_escapes && starts_paragraph,
-                );
+                let mut block = if geometry.blocks_apart {
+                    BlockChild::apart(y, pending)
+                } else {
+                    layout_block_child(
+                        tree,
+                        ctx,
+                        node.0 as usize,
+                        y,
+                        pending,
+                        geometry,
+                        perform,
+                        top_margin_escapes && starts_paragraph,
+                    )
+                };
                 oof_candidates.append(&mut block.oof_candidates);
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
@@ -1878,6 +1882,25 @@ struct BlockChild {
     top_margin: Option<CollapsibleMarginSet>,
     /// No content or formatting boundary separates the margins through it.
     collapses_through: bool,
+    /// The first baseline of the block, from the content-box top of the root,
+    /// when it has one and the root lays out horizontal lines.
+    first_baseline: Option<f32>,
+}
+
+impl BlockChild {
+    /// A block that is not laid out with the lines: it takes no room in them.
+    fn apart(y: f32, pending: CollapsibleMarginSet) -> Self {
+        Self {
+            oof_candidates: OofCandidates::new(),
+            top: y,
+            next_y: y,
+            pending,
+            floats_bottom: f32::NEG_INFINITY,
+            top_margin: None,
+            collapses_through: true,
+            first_baseline: None,
+        }
+    }
 }
 
 fn translated_child_oof_candidates(output: &LayoutOutput, location: Point<f32>) -> OofCandidates {
@@ -2124,6 +2147,43 @@ fn layout_block_child(
             }
         }),
         collapses_through: !has_clearance && output.margins_can_collapse_through,
+        first_baseline: output.baselines.first.map(|baseline| top + baseline),
+    }
+}
+
+/// Where [`place_block_across`] left the content that follows the block.
+pub(crate) struct PlacedBlock {
+    /// Where the content after the block starts, before `pending`.
+    pub(crate) next_y: f32,
+    /// Margins below the block that collapse with what follows.
+    pub(crate) pending: CollapsibleMarginSet,
+    /// The first baseline of the block, from the content-box top of the root.
+    pub(crate) first_baseline: Option<f32>,
+}
+
+/// Lay out the block box `node` of the root on its own, as a box of a
+/// formatting context of its own that spans `geometry.width`, with the content
+/// above it ending at `y` and the margins of `pending` below that.
+///
+/// A column spanner is placed this way: the lines around it were broken at the
+/// width of a column, and it spans all of them.
+pub(crate) fn place_block_across(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    y: f32,
+    pending: CollapsibleMarginSet,
+    geometry: FlowGeometry,
+    perform: bool,
+) -> PlacedBlock {
+    let mut bfc = BlockFormattingContext::new();
+    let mut ctx = bfc.root_block_context();
+    let inline_insets = geometry.inline_axis_insets();
+    ctx.set_width(geometry.width + inline_insets.0 + inline_insets.1);
+    let block = layout_block_child(tree, &mut ctx, node, y, pending, geometry, perform, false);
+    PlacedBlock {
+        next_y: block.next_y,
+        pending: block.pending,
+        first_baseline: block.first_baseline,
     }
 }
 
@@ -2475,6 +2535,7 @@ fn layout_vertical_block_child(
             }
         }),
         collapses_through,
+        first_baseline: None,
     }
 }
 
@@ -2683,6 +2744,7 @@ fn layout_formatting_context_child(
         // Specifying clear introduces no clearance without relevant floats.
         top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
+        first_baseline: output.baselines.first.map(|baseline| top + baseline),
     }
 }
 

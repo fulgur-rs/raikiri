@@ -1989,11 +1989,16 @@ fn measure_ifc_root(
             .boxes
             .iter()
             .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic);
+    // Column spanners among the boxes split the paragraph in groups of lines,
+    // each of which fills the columns on its own.
+    let spanner_groups = !vertical
+        && nested_fragmentation.is_none()
+        && crate::layout::multicol::paragraph_spanners::supports(tree, idx, &probe);
     let fragmentation = if vertical {
         None
     } else if nested_fragmentation.is_some() {
         nested_fragmentation
-    } else if !atomics_only {
+    } else if !atomics_only && !spanner_groups {
         None
     } else {
         tree.nodes[idx]
@@ -2054,6 +2059,9 @@ fn measure_ifc_root(
         let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
         geometry.definite_height = measure.definite_height;
         geometry.vertical_width = vertical_width;
+        // The spanners are laid out across the columns once the lines are
+        // placed in them.
+        geometry.blocks_apart = spanner_groups && fragmentation.is_some();
         geometry
     };
     // The block extent a vertical root with an auto block size settled on
@@ -2178,13 +2186,30 @@ fn measure_ifc_root(
             .min(measure.width_bounds.1)
             .max(measure.width_bounds.0);
     }
+    // The baselines of the groups of lines around the column spanners.
+    let mut group_baselines = None;
     let fragments = lines
         .fragmentainer_line_ranges
         .clone()
         .map(|fragments| (fragments, lines.height))
         .or_else(|| {
-            fragmentation.map(|context| crate::layout::root_column_fragments(&lines, context))
+            fragmentation.map(|context| {
+                if !spanner_groups {
+                    return crate::layout::root_column_fragments(&lines, context);
+                }
+                let groups = crate::layout::multicol::paragraph_spanners::arrange(
+                    tree, idx, &lines, context, geometry, width, perform,
+                );
+                group_baselines = Some((groups.first_baseline, groups.last_baseline));
+                (groups.fragments, groups.height)
+            })
         });
+    // The groups of an earlier layout of this root no longer apply when it
+    // is not laid out in groups now, for instance inside the columns of
+    // another container.
+    if perform && group_baselines.is_none() {
+        tree.nodes[idx].multicol_groups.clear();
+    }
     // The fragments of a paragraph laid out across the columns by the engine
     // come with its lines; only the ones split here still hold the boxes where
     // the lines stand in one tall column.
@@ -2222,12 +2247,15 @@ fn measure_ifc_root(
     // 10.8.1); every other box exposes its first. The lines of a vertical
     // root sit on the central baseline unless its text is set sideways.
     let kind = dominant_baseline(tree, idx);
-    let baseline =
-        if tree.nodes[idx].display() == raikiri_style::property::DisplayValue::InlineBlock {
-            flow::last_baseline_of(&lines, kind)
-        } else {
-            flow::first_baseline_of(&lines, kind)
-        };
+    let inline_block =
+        tree.nodes[idx].display() == raikiri_style::property::DisplayValue::InlineBlock;
+    let baseline = match group_baselines {
+        // The lines stand apart from the spanners between them.
+        Some((first, last)) if inline_block => last.or(first),
+        Some((first, _)) => first,
+        None if inline_block => flow::last_baseline_of(&lines, kind),
+        None => flow::first_baseline_of(&lines, kind),
+    };
     let leading_margin = if measure.top_margin_escapes {
         lines
             .leading_block_margin
