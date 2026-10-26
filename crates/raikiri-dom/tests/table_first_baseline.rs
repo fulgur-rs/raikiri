@@ -235,6 +235,46 @@ fn only_a_cell_with_something_in_flow_gives_a_baseline() {
             &[("y", 16.0, 10.0), ("t", 8.0, 96.0)],
         ),
         (
+            "empty cell with top padding beside text: the text keeps the top of the row",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"vertical-align:baseline;padding-top:96px\"></td><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[
+                ("y", 16.0, 10.0),
+                ("t", 8.0, 96.0),
+                ("c", 8.0, 96.0),
+                ("sd", 8.0, 20.0),
+            ],
+        ),
+        (
+            "empty cell with bottom padding beside text",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"vertical-align:baseline;padding-bottom:96px\"></td><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[
+                ("y", 16.0, 10.0),
+                ("t", 8.0, 96.0),
+                ("c", 8.0, 96.0),
+                ("sd", 8.0, 20.0),
+            ],
+        ),
+        (
+            "empty cell with a top border shorter than the text",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"vertical-align:baseline;border-top:30px solid\"></td><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[
+                ("y", 16.0, 10.0),
+                ("t", 8.0, 30.0),
+                ("c", 8.0, 30.0),
+                ("sd", 8.0, 20.0),
+            ],
+        ),
+        (
+            "empty cell with an authored height and top padding beside text",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"vertical-align:baseline;height:96px;padding-top:10px\"></td><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[
+                ("y", 16.0, 10.0),
+                ("t", 8.0, 106.0),
+                ("c", 8.0, 106.0),
+                ("sd", 8.0, 20.0),
+            ],
+        ),
+        (
             "empty cell in a row with an authored height",
             "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0 style=\"height:50px\"><td id=c style=\"vertical-align:baseline\"></td></tr></table>",
             &[("y", 50.0, 10.0), ("t", 8.0, 50.0)],
