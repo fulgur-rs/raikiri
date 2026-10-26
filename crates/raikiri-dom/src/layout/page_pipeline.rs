@@ -5823,32 +5823,29 @@ fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
 
 /// Whether in-flow content comes before the box `node_id` in the flow below
 /// `body_id`: a sibling of the box, or of an ancestor of it that is not the
-/// body, which holds text or generates a box in the flow. The flow can break
-/// before such a box, between it and what comes first. A box that starts the
-/// flow, below nothing but margins, cannot be broken from.
-fn follows_flow_content(document: &Document, body_id: usize, node_id: usize) -> bool {
+/// body, which generates an in-flow box (see [`push_in_flow_boxes_rev`]). The
+/// flow can break before such a box, between it and what comes first. A box
+/// that starts the flow, below nothing but margins, cannot be broken from.
+fn follows_flow_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
     let mut node = node_id;
+    let mut boxes = Vec::new();
     while node != body_id {
         let Some(parent) = document.parent_of(node) else {
             return false;
         };
-        let content_before = document.nodes[parent]
+        for &child in document.nodes[parent]
             .children
             .iter()
             .take_while(|&&child| child != node)
-            .any(|&child| match &document.nodes[child].data {
-                crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
-                // Comments and processing instructions are not in the document.
-                _ => {
-                    document.nodes[child].is_in_document()
-                        && document.nodes[child].display() != DisplayValue::None
-                        && !matches!(
-                            document.nodes[child].position(),
-                            PositionValue::Absolute | PositionValue::Fixed
-                        )
-                }
-            });
-        if content_before {
+        {
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+        if !boxes.is_empty() {
             return true;
         }
         node = parent;

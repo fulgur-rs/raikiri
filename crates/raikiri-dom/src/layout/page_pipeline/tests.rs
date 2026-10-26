@@ -18949,7 +18949,8 @@ fn a_paragraph_taller_than_a_page_that_leaves_too_few_orphans_moves_whole() {
 /// 100px pages, held by a `<section>` with the style `wrapper` when there is
 /// one, where `before` is the markup that comes first: a tag (`#text` for a
 /// text node of the body, `#comment` for a comment, `#pi` for a processing
-/// instruction), its style and its text.
+/// instruction, `#contents-spacer` for a `display: contents` wrapper of a
+/// 60px box), its style and its text.
 fn tall_paragraph_y_after(
     before: &[(&str, &str, Option<&str>)],
     wrapper: Option<&str>,
@@ -18964,6 +18965,11 @@ fn tall_paragraph_y_after(
                 }
                 if tag == "#comment" {
                     doc.append_comment(Some(body), text.unwrap_or_default());
+                    continue;
+                }
+                if tag == "#contents-spacer" {
+                    let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
+                    doc.append_element(Some(wrapper), "div", Some("display:block;height:60px"));
                     continue;
                 }
                 if tag == "#pi" {
@@ -19007,12 +19013,15 @@ fn a_paragraph_taller_than_a_page_moves_only_below_content_the_flow_can_break_af
         tall_paragraph_y_after(&[], Some("margin-top:60px"), ""),
         60.0
     );
-    // Collapsed white space, comments, processing instructions,
-    // `display: none` and out-of-flow boxes come before it as nothing.
+    // Collapsed white space, comments, processing instructions, boxes
+    // that are not generated, floats, and out-of-flow boxes come before it
+    // as nothing.
     for before in [
         ("#text", "", Some("  ")),
         ("#comment", "", Some("note")),
         ("#pi", "", None),
+        ("div", "display:contents", None),
+        ("div", "float:left;width:5px;height:5px", None),
         ("div", "display:none", None),
         ("div", "position:absolute;height:60px", None),
         ("div", "position:fixed;height:60px", None),
@@ -19026,6 +19035,22 @@ fn a_paragraph_taller_than_a_page_moves_only_below_content_the_flow_can_break_af
     // A box that generates a box, or text, is content to break after, even in
     // an ancestor of the block.
     assert_eq!(tall_paragraph_y_after(&[spacer], None, ""), 100.0);
+    // So is a `display: contents` wrapper of a box or text, and a no-break
+    // space, which does not collapse.
+    for before in [
+        ("#contents-spacer", "", None),
+        ("div", "display:contents", Some("a")),
+    ] {
+        assert_eq!(
+            tall_paragraph_y_after(&[before], None, "margin-top:30px"),
+            100.0,
+            "{before:?}"
+        );
+    }
+    assert_eq!(
+        tall_paragraph_y_after(&[("#text", "", Some("\u{a0}"))], None, "margin-top:30px"),
+        100.0
+    );
     assert_eq!(
         tall_paragraph_y_after(&[spacer], Some("padding:0"), ""),
         100.0
@@ -19044,11 +19069,15 @@ fn a_paragraph_taller_than_a_page_moves_only_below_content_the_flow_can_break_af
 fn a_box_outside_the_flow_follows_no_flow_content() {
     // The walk up from the box never meets the body, so it ends at the root
     // of the document with nothing before the box.
+    use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block"));
     let block = doc.append_element(Some(body), "div", Some("display:block"));
-    assert!(!follows_flow_content(&doc, usize::MAX, block));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    assert!(!follows_flow_content(&doc, &cascade, usize::MAX, block));
 }
 
 #[test]

@@ -1185,7 +1185,7 @@ impl PaginationState {
                     && blocks.block.is_some()
                     && (block_fits_page_step(block_height, page_step)
                         || (block_effective_y > page_start + 0.001
-                            && follows_flow_content(document, body_id, block_id)
+                            && follows_flow_content(document, cascade, body_id, block_id)
                             && line_fit.gains_from_moving_tall_block(
                                 text.effective_y - block_effective_y + line_metrics[0].1,
                                 page_step,
