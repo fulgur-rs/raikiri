@@ -13,7 +13,9 @@ use crate::text;
 use anyrender::PaintScene;
 use kurbo::Affine;
 use raikiri_dom::Node;
-use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, ZIndexValue};
+use raikiri_style::property::{
+    ColumnCountValue, DisplayValue, PositionValue, WillChange, ZIndexValue,
+};
 use raikiri_traits::NodeKind;
 
 /// Where the children of an element are placed from, and what they inherit
@@ -663,7 +665,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             // block that layout broke into column pieces places
             // its descendants in those pieces itself. A
             // `display: contents` element has no box at all, so
-            // its children are the ones the columns hold.
+            // its children are the ones the columns hold. Boxes that
+            // are out of its flow are not its parallel flow: their
+            // containing block lies outside it.
             Some(_) // cov:ignore: exercised by ignored exact paged-text WPT.
                 if !self.fragmented_nodes.contains(&child) && document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
                     child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
@@ -671,6 +675,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                         && !child_node.generates_no_box()
                         && child_node.layout().size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
                         && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
+                        && self.holds_in_flow_paint(child)
                 }) => // cov:ignore: exercised by ignored exact paged-text WPT.
             {
                 Some(0.0) // cov:ignore: exercised by ignored exact paged-text WPT.
@@ -678,6 +683,77 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             Some(_) => None,
             None => plan.fragment_clip_height,
         }
+    }
+
+    /// Whether the subtree of the element `root` has anything in its own flow
+    /// that can paint: text, generated content, or a box with a block size.
+    /// Absolutely and fixed positioned boxes are not part of that flow, unless
+    /// a box of the subtree is their containing block, which then places them
+    /// itself.
+    fn holds_in_flow_paint(&self, root: usize) -> bool {
+        let (document, cascade) = (self.document, self.cascade);
+        let is_containing_block = |id: usize| {
+            let cv = &cascade.computed[id];
+            cv.display != DisplayValue::Contents
+                && (cv.position != PositionValue::Static
+                    || cv.will_change.contains(WillChange::POSITION))
+                || raikiri_dom::establishes_fixed_containing_block(document, id, cv)
+        };
+        let has_generated_content = |id: usize| {
+            [
+                raikiri_style::PseudoElem::Before,
+                raikiri_style::PseudoElem::After,
+            ]
+            .into_iter()
+            .any(|pseudo| {
+                super::generated_pseudo_content_with_snapshots(
+                    document,
+                    cascade,
+                    id,
+                    pseudo,
+                    self.counter_snapshots,
+                )
+                .is_some()
+            })
+        };
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            if (id == root && is_containing_block(id)) || has_generated_content(id) {
+                return true;
+            }
+            let children = document.get_node(id).map(|node| &node.children[..]);
+            for (child, child_node) in children
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|&child| Some((child, document.get_node(child)?)))
+            {
+                let kind = child_node.kind();
+                if kind == NodeKind::Text {
+                    // Only collapsible white space paints nothing.
+                    let text = child_node.text_content().unwrap_or_default();
+                    if !text
+                        .trim_matches([' ', '\t', '\n', '\r', '\x0c'])
+                        .is_empty()
+                    {
+                        return true;
+                    }
+                } else if kind == NodeKind::Element {
+                    let cv = &cascade.computed[child];
+                    // A `display: contents` element has no box to take out of
+                    // the flow whatever its `position`, so its children stay.
+                    let out_of_flow = cv.display != DisplayValue::Contents
+                        && matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+                    if cv.display == DisplayValue::None || out_of_flow {
+                        continue;
+                    }
+                    if child_node.layout().size.height > 0.0 || is_containing_block(child) {
+                        return true;
+                    }
+                    pending.push(child);
+                }
+            }
+        }
+        false
     }
 
     /// The children of `element` that are visited, in the order they paint:

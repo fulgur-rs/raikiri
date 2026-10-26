@@ -2619,3 +2619,93 @@ fn a_plain_wrapper_of_a_spanner_keeps_the_column_clip_of_its_children() {
         );
     }
 }
+
+#[test]
+fn an_absolute_box_in_a_block_with_no_height_is_not_cut_to_the_block() {
+    // The box is placed from the initial containing block, so the empty
+    // block it sits in does not clip it.
+    compare(
+        "<div class=mc><div><div style='position:absolute;width:100px;height:100px;background:red'></div></div></div>",
+        ".mc{height:100px;column-gap:0;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:100px;height:100px;background:red'></div>",
+    );
+}
+
+#[test]
+fn an_absolute_box_under_an_opacity_layer_in_a_column_container_blends_with_it() {
+    compare(
+        "<div class=mc><div style='opacity:.5'><div style='position:absolute;width:100px;height:100px;background:red'></div></div></div>",
+        ".mc{height:100px;column-gap:0;column-fill:auto;background:blue}",
+        "<div style='width:100px;height:100px;background:blue'><div style='opacity:.5;width:100px;height:100px;background:red'></div></div>",
+    );
+}
+
+#[test]
+fn a_block_with_no_height_still_clips_its_overflowing_flow_to_the_column() {
+    // Only boxes out of the block's flow escape its empty fragment area.
+    compare(
+        "<div class=mc><div><div style='height:200px;background:red'></div></div><div style='height:0'></div></div>",
+        ".mc{height:100px;column-gap:0;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:50px;height:100px;background:red'></div><div style='position:absolute;left:50px;top:0;width:50px;height:100px;background:red'></div>",
+    );
+}
+
+#[test]
+fn a_positioned_block_with_no_height_still_cuts_the_boxes_it_holds() {
+    // The block is the containing block of the box, so the box is not one
+    // of those that escape the block's empty fragment area.
+    let css = ".mc{height:100px;column-gap:0;column-fill:auto}";
+    let spanner = "<div style='column-span:all;height:20px'></div>";
+    for style in ["position:relative", "transform:translate(0)"] {
+        compare_bodies(
+            &format!(
+                "<div class=mc>{spanner}<div style='{style}'><div style='position:absolute;width:100%;height:100px;background:red'></div></div></div>"
+            ),
+            &format!("<div class=mc>{spanner}<div style='{style}'></div></div>"),
+            css,
+        );
+    }
+}
+
+#[test]
+fn absolute_boxes_with_a_containing_block_outside_an_empty_block_all_escape_its_cut() {
+    let css = ".mc{height:100px;column-gap:0;column-fill:auto}";
+    let abs = "position:absolute;width:100px;height:100px;background:red";
+    let literal = "<div style='position:absolute;left:0;top:0;width:100px;height:100px;background:red'></div>";
+    for body in [
+        // Nested empty wrappers.
+        format!("<div class=mc><div><div><div style='{abs}'></div></div></div></div>"),
+        // A fixed box has the page as its containing block.
+        "<div class=mc><div><div style='position:fixed;left:0;top:0;width:100px;height:100px;background:red'></div></div></div>".to_string(),
+        // A wrapper without a box is no containing block.
+        format!("<div class=mc><div><span style='display:contents;position:relative'><div style='{abs}'></div></span></div></div>"),
+        // A comment paints nothing.
+        format!("<div class=mc><div><!-- note --><div style='{abs}'></div></div></div>"),
+        // Hidden text and collapsible white space paint nothing.
+        format!("<div class=mc><div> <span style='display:none'>hidden</span> <div style='{abs}'></div></div></div>"),
+    ] {
+        compare(&body, css, literal);
+    }
+}
+
+#[test]
+fn an_empty_block_with_painting_content_still_cuts_the_boxes_beside_it() {
+    let css = ".mc{height:100px;column-gap:0;column-fill:auto}.g{height:0}.g::before{content:'X'}";
+    let abs = "position:absolute;width:100px;height:100px;background:red";
+    for inner in [
+        "X",
+        "&nbsp;",
+        "<div class=g></div>",
+        "<span style='position:relative'></span>",
+        // A positioned wrapper without a box leaves its text in the flow.
+        "<span style='display:contents;position:absolute'>X</span>",
+    ] {
+        compare_bodies(
+            &format!(
+                "<div class=mc><div style='height:0'>{inner}<div style='{abs}'></div></div></div>"
+            ),
+            &format!("<div class=mc><div style='height:0'>{inner}</div></div>"),
+            css,
+        );
+    }
+}
