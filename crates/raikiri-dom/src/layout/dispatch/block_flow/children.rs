@@ -1,7 +1,7 @@
 //! Place block-flow children while retaining one shared float transaction.
 
 use super::context::{BlockContext, BoxProbe};
-use super::{Metrics, child_inputs, child_style, commit, shares_context};
+use super::{Metrics, child_inputs, child_style, commit, shares_parent_context};
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
@@ -450,7 +450,7 @@ pub(super) fn layout(
             }
             continue;
         }
-        let same = shares_context(&style);
+        let same = shares_parent_context(tree, node, child, &style);
         // The box after the float that starts a page lines up beside that
         // float, but below the floats of the pages before it.
         let floor = tree
