@@ -4,7 +4,9 @@ use crate::layout::protocol::{LayoutInput, SizingMode};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{Edges, Size};
 use raikiri_layout_style::BoxStyle as Style;
-use raikiri_layout_style::values::{BoxSizing, MaybeResolve, Overflow, ResolveOrZero};
+use raikiri_layout_style::values::{
+    BoxSizing, Dimension, ExpandedDimension, MaybeResolve, Overflow, ResolveOrZero,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Metrics {
@@ -38,6 +40,15 @@ fn bounds(own: [Option<f32>; 2], carried: [Option<f32>; 2]) -> (Option<f32>, Opt
     let min = own_min.or(carried_min);
     let max = own_max.or(carried_max);
     (min, max)
+}
+
+/// Whether `size` is a percentage, or a `calc()` with one.
+fn is_percentage(size: Dimension) -> bool {
+    match size.expand() {
+        ExpandedDimension::Percent(_) => true,
+        ExpandedDimension::Calc(calc) => calc.has_percentage(),
+        _ => false,
+    }
 }
 
 impl Metrics {
@@ -125,18 +136,26 @@ impl Metrics {
         // Whether the content may raise an axis that the aspect ratio gives:
         // unless the box scrolls or `min-*` says otherwise, an automatic
         // minimum keeps it from ending up smaller than its content.
-        let ratio_eligible = |specified: Option<f32>, min_is_auto: bool, overflow: Overflow| {
-            style.aspect_ratio.is_some()
-                && (inputs.sizing_mode != SizingMode::InherentSize || specified.is_none())
-                && min_is_auto
-                && !overflow.is_scroll_container()
-        };
+        //
+        // A percentage size that does not resolve behaves as `auto` for the
+        // ratio, but it is no `auto` size: the automatic minimum is the size of
+        // the content only for a box whose computed size is `auto`.
+        let ratio_eligible =
+            |size: Dimension, specified: Option<f32>, min_is_auto: bool, overflow: Overflow| {
+                style.aspect_ratio.is_some()
+                    && (inputs.sizing_mode != SizingMode::InherentSize
+                        || (specified.is_none() && !is_percentage(size)))
+                    && min_is_auto
+                    && !overflow.is_scroll_container()
+            };
         let width_eligible = ratio_eligible(
+            style.size.width,
             specified.width,
             style.min_size.width.is_auto(),
             style.overflow.x,
         );
         let height_eligible = ratio_eligible(
+            style.size.height,
             specified.height,
             style.min_size.height.is_auto(),
             style.overflow.y,

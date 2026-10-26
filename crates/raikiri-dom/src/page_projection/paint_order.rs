@@ -138,7 +138,7 @@ enum Frame {
     EndDeferral,
     /// Reopen the overflow clip of a block around the content its layer
     /// handed to the enclosing one (see
-    /// [`paint_rules::merges_clipped_inline_content`]).
+    /// [`paint_rules::merges_clipped_layer`]).
     PushClip(usize),
     /// An inline opacity group of a paragraph, by paragraph root and element,
     /// with the lines it lists.

@@ -678,6 +678,33 @@ pub fn parse_bg_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     Some(normalize_css_position(position))
 }
 
+/// One layer of `background-position-x` / `-y` (CSS Backgrounds 4 §2.6): the
+/// edge-and-offset group of the axis (`center | [ <start> | <end> ]
+/// <length-percentage>?`, see [`parse_position_horizontal_group`]) or a bare
+/// `<length-percentage>`, which measures from the start edge. `group` reads the
+/// keyword form of the axis; it consumes nothing when no keyword of the axis
+/// starts the value.
+fn parse_bg_position_axis(
+    input: &mut Parser<'_, '_>,
+    group: fn(&mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)>,
+) -> Option<CssPositionOffset> {
+    let offset = match group(input) {
+        Some((offset, _)) => offset,
+        None => input.try_parse(parse_start_position_offset_res).ok()?,
+    };
+    Some(normalize_css_position_offset(offset))
+}
+
+/// One layer of `background-position-x`.
+pub(crate) fn parse_bg_position_x(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    parse_bg_position_axis(input, parse_position_horizontal_group)
+}
+
+/// One layer of `background-position-y`.
+pub(crate) fn parse_bg_position_y(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    parse_bg_position_axis(input, parse_position_vertical_group)
+}
+
 fn parse_position_branch3_strict_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<CssPosition, ParseError<'i, ()>> {
@@ -2279,41 +2306,38 @@ pub(super) fn parse_will_change(input: &mut Parser<'_, '_>) -> Option<WillChange
     {
         return Some(WillChange::AUTO);
     }
-    let features = input
-        .parse_comma_separated(|input| {
-            let ident = input.expect_ident()?.clone();
-            let name = ident.to_ascii_lowercase();
-            // CSS Will Change 1 §3 and CSS Values 4 §4.2: these keywords
-            // and the CSS-wide keywords are excluded from the
-            // `<custom-ident>`.
-            if matches!(
-                name.as_str(),
-                "will-change"
-                    | "none"
-                    | "all"
-                    | "auto"
-                    | "initial"
-                    | "inherit"
-                    | "unset"
-                    | "revert"
-                    | "revert-layer"
-                    | "revert-rule"
-                    | "default"
-            ) {
-                return Err(input.new_custom_error::<_, ()>(()));
-            }
-            // spec: https://www.w3.org/TR/css-will-change-1/#valdef-will-change-custom-ident
-            Ok(match name.as_str() {
-                "position" => WillChange::POSITION,
-                "transform" | "translate" | "rotate" | "scale" | "perspective" => {
-                    WillChange::TRANSFORM
-                }
-                "filter" | "backdrop-filter" => WillChange::FILTER,
-                "contain" => WillChange::CONTAIN,
-                _ => WillChange::AUTO,
-            })
+    let features = parse_comma_list_before_important(input, |input| {
+        let ident = input.expect_ident()?.clone();
+        let name = ident.to_ascii_lowercase();
+        // CSS Will Change 1 §3 and CSS Values 4 §4.2: these keywords
+        // and the CSS-wide keywords are excluded from the
+        // `<custom-ident>`.
+        if matches!(
+            name.as_str(),
+            "will-change"
+                | "none"
+                | "all"
+                | "auto"
+                | "initial"
+                | "inherit"
+                | "unset"
+                | "revert"
+                | "revert-layer"
+                | "revert-rule"
+                | "default"
+        ) {
+            return Err(input.new_custom_error::<_, ()>(()));
+        }
+        // spec: https://www.w3.org/TR/css-will-change-1/#valdef-will-change-custom-ident
+        Ok(match name.as_str() {
+            "position" => WillChange::POSITION,
+            "transform" | "translate" | "rotate" | "scale" | "perspective" => WillChange::TRANSFORM,
+            "filter" | "backdrop-filter" => WillChange::FILTER,
+            "contain" => WillChange::CONTAIN,
+            _ => WillChange::AUTO,
         })
-        .ok()?;
+    })
+    .ok()?;
     Some(
         features
             .into_iter()
@@ -2366,10 +2390,11 @@ pub(super) fn parse_layer_list<T>(
     input: &mut Parser<'_, '_>,
     item: impl Fn(&mut Parser<'_, '_>) -> Option<T>,
 ) -> Option<Arc<[T]>> {
-    input
-        .parse_comma_separated(|i| item(i).ok_or_else(|| i.new_custom_error::<_, ()>(())))
-        .ok()
-        .map(Arc::from)
+    parse_comma_list_before_important(input, |i| {
+        item(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+    })
+    .ok()
+    .map(Arc::from)
 }
 
 /// One axis of `<bg-size>`: `<length-percentage [0,∞]> | auto`.
@@ -2459,11 +2484,10 @@ pub(crate) fn parse_background_position_and_size(
 pub(crate) fn parse_background_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<BackgroundShorthand> {
-    let layers = input
-        .parse_comma_separated(|i| {
-            parse_background_layer(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
-        })
-        .ok()?;
+    let layers = parse_comma_list_before_important(input, |i| {
+        parse_background_layer(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+    })
+    .ok()?;
     let last = layers.len() - 1;
     let mut color = CssColor::TRANSPARENT;
     let mut color_expression = None;

@@ -8,7 +8,7 @@ use crate::layout::LayoutWarn;
 use crate::layout::protocol::{self, LayoutInput};
 use crate::layout::taffy_adapter::GridInfo;
 use crate::node::arena::BoxKey;
-use raikiri_layout_geometry::Size;
+use raikiri_layout_geometry::{Point, Size};
 
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
@@ -58,6 +58,11 @@ pub(crate) struct LayoutContext {
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
+    /// The static positions of the boxes hoisted to a containing block on
+    /// vertical axes that align `safe` in an axis, which that block aligns
+    /// again once the library has positioned them (see
+    /// `dispatch::vertical_oof::alignment`).
+    pub(crate) safe_static_positions: HashMap<usize, Point<protocol::AxisStaticPosition>>,
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) text_group: TextGroupScope,
     /// The least space a line leaves unfilled so far in the group being
@@ -70,6 +75,17 @@ pub(crate) struct LayoutContext {
     /// The layout being entered is such a child: its size cache is bypassed,
     /// which would answer without laying its lines out in the group.
     pub(crate) group_child_uncached: bool,
+    /// Whether a multicol container of plain paragraphs and a height of
+    /// `auto` is laid out without keeping its groups for pagination, which
+    /// leaves its columns in one tall set that the page walk cuts (see
+    /// its `paged_spanning` module in [`crate::layout::multicol`]).
+    pub(crate) unpaged_plain_columns: bool,
+    /// The multicol containers without a spanner whose columns pagination
+    /// filled page by page.
+    pub(crate) page_filled_columns: Vec<usize>,
+    /// Whether the page walk moved any of those containers from where the
+    /// pagination placed their columns, which are then in the wrong pages.
+    pub(crate) page_filled_columns_moved: bool,
 }
 
 /// The `text-group-align` group the lines being laid out belong to: the
@@ -137,6 +153,7 @@ impl<'doc> LayoutSession<'doc> {
             self.document.layout_cache_context.publish_metadata();
             self.context.grid_layout_info.clear();
             self.context.taffy_hoisted_children.clear();
+            self.context.safe_static_positions.clear();
             self.document.layout_dirty = false;
         }
     }

@@ -335,10 +335,18 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
                 PropertyKey::BackgroundImage,
                 PropertyKey::BackgroundRepeat,
                 PropertyKey::BackgroundAttachment,
-                PropertyKey::BackgroundPosition,
+                PropertyKey::BackgroundPositionX,
+                PropertyKey::BackgroundPositionY,
                 PropertyKey::BackgroundSize,
                 PropertyKey::BackgroundClip,
                 PropertyKey::BackgroundOrigin,
+            ],
+        ),
+        (
+            PropertyKey::BackgroundPosition,
+            &[
+                PropertyKey::BackgroundPositionX,
+                PropertyKey::BackgroundPositionY,
             ],
         ),
     ];
@@ -611,6 +619,58 @@ fn font_family_leaves_important_alone() {
         )]))
     );
     assert!(decls[0].important);
+}
+
+#[test]
+fn comma_separated_lists_leave_important_alone() {
+    // A list parsed with `Parser::parse_comma_separated` counts `!important`
+    // as part of its last item and drops the declaration; every list must
+    // stop before the `!` and keep the value it has without the flag.
+    for (name, value) in [
+        ("background-image", "url(a.png), none"),
+        ("background-repeat", "no-repeat, repeat-x"),
+        ("background-attachment", "fixed, scroll"),
+        ("background-clip", "padding-box, content-box"),
+        ("background-origin", "content-box, border-box"),
+        ("background-size", "5px, 10px 20px"),
+        ("background-position", "10px 20px, 0 0"),
+        ("background-position-x", "10px, right 5px"),
+        ("background-position-y", "10px, bottom 5px"),
+        ("background", "url(a.png) no-repeat, red"),
+        ("box-shadow", "0 0 2px red, 1px 1px blue"),
+        ("text-shadow", "1px 1px red, 2px 2px"),
+        ("will-change", "transform, opacity"),
+    ] {
+        let plain = parse_block(&format!("{name}: {value};"));
+        let flagged = parse_block(&format!("{name}: {value} !important;"));
+        assert!(!plain.is_empty(), "{name}: {value} should parse");
+        assert_eq!(flagged.len(), plain.len(), "{name}: {value} !important");
+        for (flagged, plain) in flagged.iter().zip(&plain) {
+            assert_eq!(flagged.value, plain.value, "{name}: {value} !important");
+            assert!(flagged.important, "{name}: {value} !important");
+            assert!(!plain.important, "{name}: {value}");
+        }
+    }
+}
+
+#[test]
+fn comma_separated_lists_reject_malformed_importance() {
+    // Stopping before the `!` must not let anything but a valid
+    // `!important` through: the declaration-level exhaustion check still
+    // rejects the rest, and an empty segment stays an error.
+    for declaration in [
+        "background-image: none !bogus;",
+        "background-image: none !important extra;",
+        "background-image: none, !important;",
+        "background-image: !important;",
+        "background-position-x: 5px, !important;",
+        "background: red, !important;",
+        "box-shadow: 0 0 red, !important;",
+        "text-shadow: 1px 1px, !important;",
+        "will-change: transform, !important;",
+    ] {
+        assert!(parse_block(declaration).is_empty(), "{declaration}");
+    }
 }
 
 // ── margin shorthand expansion (CSS Cascading L4 §3) ──

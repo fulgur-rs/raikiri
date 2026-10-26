@@ -6,8 +6,9 @@ use crate::Atom;
 use crate::cascade::keyword_defaults::KEYS;
 use crate::computed::ComputedBackgroundLayer;
 use crate::property::{
-    BoxSizing, FloatValue, PageValue, TextAutospace, TextSpacingTrim, TextTransform, TextWrapMode,
-    TextWrapStyle, WhiteSpaceCollapse, WordBreak, property_key_for_name,
+    BoxSizing, DisplayValue, FloatValue, PageValue, PositionValue, TextAutospace, TextSpacingTrim,
+    TextTransform, TextWrapMode, TextWrapStyle, WhiteSpaceCollapse, WordBreak,
+    property_key_for_name,
 };
 use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal};
 
@@ -366,9 +367,14 @@ pub(super) const CASES: &[(&str, bool, &[&str])] = &[
         &["content-box", "border-box", "border-box, padding-box"],
     ),
     (
-        "background-position",
+        "background-position-x",
         false,
-        &["10px 20px", "30% 40%", "right 5px bottom 6px, center"],
+        &["10px", "30%", "right 5px, center"],
+    ),
+    (
+        "background-position-y",
+        false,
+        &["20px", "40%", "bottom 6px, center"],
     ),
     (
         "background-size",
@@ -453,6 +459,11 @@ pub(super) const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         &["hidden scroll", "scroll", "clip hidden"],
     ),
     ("columns", false, &["30px 3", "50px 2", "auto 4"]),
+    (
+        "background-position",
+        false,
+        &["10px 20px", "30% 40%", "right 5px bottom 6px, center"],
+    ),
     (
         "background",
         false,
@@ -746,6 +757,101 @@ fn a_background_keyword_takes_one_item_per_layer_of_the_parent() {
 }
 
 #[test]
+fn a_background_keyword_takes_the_whole_list_of_the_parent() {
+    // The lists of the parent are not cut to its three images: the child's
+    // five images repeat the parent's short lists from their start, and the
+    // list that is longer than the parent's images keeps its last items.
+    let lists = "background-repeat: no-repeat, repeat-x; \
+                 background-attachment: fixed; \
+                 background-position-x: 1px, 2px, 3px, 4px, 5px; \
+                 background-position-y: 10%, 20%; \
+                 background-size: 6px, 7px auto; \
+                 background-clip: padding-box, content-box; \
+                 background-origin: content-box, border-box, padding-box, content-box";
+    let parent = format!("background-image: url(a.png), url(b.png), url(c.png); {lists}");
+    let images = "background-image: url(d.png), url(e.png), url(f.png), url(g.png), url(h.png)";
+    let inherited = child(
+        &parent,
+        &[],
+        &format!(
+            "#target {{ {images}; background-repeat: inherit; background-attachment: inherit; \
+             background-position-x: inherit; background-position-y: inherit; \
+             background-size: inherit; background-clip: inherit; background-origin: inherit }}"
+        ),
+    );
+    let authored = child("", &[], &format!("#target {{ {images}; {lists} }}"));
+    assert_eq!(inherited.background_layers().len(), 5);
+    assert_eq!(inherited.background_layers(), authored.background_layers());
+}
+
+#[test]
+fn a_background_list_survives_a_node_with_another_number_of_images() {
+    // The middle node has three images and the lists of the outer one, which
+    // are two items long; the node below it, with four images, repeats the
+    // original two items rather than the three layers the middle node shows.
+    let mut doc = TestDoc::new();
+    let outer = doc.push_element(
+        0,
+        "div",
+        Some("background-image: url(a.png), url(b.png); background-repeat: no-repeat, repeat-x"),
+    );
+    let middle = doc.push_element(
+        outer,
+        "div",
+        Some(
+            "background-image: url(c.png), url(d.png), url(e.png); \
+             background-repeat: inherit",
+        ),
+    );
+    let inner = doc.push_element(
+        middle,
+        "div",
+        Some(
+            "background-image: url(f.png), url(g.png), url(h.png), url(i.png); \
+             background-repeat: inherit",
+        ),
+    );
+    let computed = cascade(&doc, &RuleTree::empty()).unwrap().computed;
+    let repeats = |id: usize| -> Vec<_> {
+        computed[id]
+            .background_layers()
+            .iter()
+            .map(|layer| layer.repeat)
+            .collect()
+    };
+    let (no_repeat, repeat_x) = (repeats(outer)[0], repeats(outer)[1]);
+    assert_ne!(no_repeat, repeat_x);
+    assert_eq!(repeats(middle), [no_repeat, repeat_x, no_repeat]);
+    assert_eq!(repeats(inner), [no_repeat, repeat_x, no_repeat, repeat_x]);
+}
+
+#[test]
+fn a_background_list_is_kept_only_where_the_layers_do_not_say_it_all() {
+    let images = |count: usize| {
+        let urls: Vec<String> = (0..count)
+            .map(|index| format!("url({index}.png)"))
+            .collect();
+        format!("background-image: {}", urls.join(", "))
+    };
+    let kept = |count: usize, repeat: &str| {
+        let css = format!(
+            "#target {{ {}; background-repeat: {repeat} }}",
+            images(count)
+        );
+        child("", &[], &css).background_lists.is_some()
+    };
+    // One value throughout, one item per layer, and a list that repeats
+    // evenly over the layers read the same from the layers as from the list.
+    assert!(!kept(3, "no-repeat"));
+    assert!(!kept(3, "no-repeat, repeat-x, repeat-y"));
+    assert!(!kept(4, "no-repeat, repeat-x"));
+    assert!(!kept(3, "no-repeat, no-repeat"));
+    // A list that the layers cut short, or fill unevenly, is read back whole.
+    assert!(kept(3, "no-repeat, repeat-x"));
+    assert!(kept(2, "no-repeat, repeat-x, repeat-y"));
+}
+
+#[test]
 fn an_initial_background_keyword_is_one_initial_layer() {
     let parent = "background-image: url(a.png), url(b.png); background-repeat: no-repeat";
     let values = child(
@@ -1013,6 +1119,96 @@ fn float_takes_the_computed_none_of_an_absolutely_positioned_parent() {
         let values = child(parent, &[], "#target { float: inherit }");
         assert_eq!(values.float, expected, "{parent}");
     }
+}
+
+/// The names of the running templates of `values`.
+fn running_names(values: &ComputedValues) -> Vec<&str> {
+    values
+        .running_templates
+        .iter()
+        .map(|template| template.name.as_str())
+        .collect()
+}
+
+#[test]
+fn position_inherit_takes_the_running_name_of_the_parent() {
+    // CSS GCPM 3 §1.2.1: `running()` is a value of `position`, so the child
+    // becomes a running element of the same name, with the display it would
+    // have had on its own.
+    let parent = "position: running(hdr); display: flex";
+    let inherited = child(parent, &[], "#target { display: block; position: inherit }");
+    assert_eq!(running_names(&inherited), ["hdr"]);
+    assert_eq!(inherited.display, DisplayValue::None);
+    assert_eq!(inherited.running_templates[0].display, DisplayValue::Block);
+    let written = child(
+        parent,
+        &[],
+        "#target { display: block; position: running(hdr) }",
+    );
+    assert!(same(&inherited, &written));
+    // The declaration that wins is the only one that counts, and it is not
+    // added to a template the element already has.
+    let over_own = child(
+        parent,
+        &[],
+        "#target { position: running(own); position: inherit }",
+    );
+    assert_eq!(running_names(&over_own), ["hdr"]);
+    let static_wins = child(
+        parent,
+        &[],
+        "#target { display: block; position: inherit; position: static }",
+    );
+    assert!(static_wins.running_templates.is_empty());
+    assert_eq!(static_wins.display, DisplayValue::Block);
+}
+
+#[test]
+fn position_initial_and_unset_are_not_running() {
+    // `position` is not inherited: both keywords are `static`, whatever the
+    // parent is.
+    for keyword in ["initial", "unset"] {
+        let values = child(
+            "position: running(hdr)",
+            &[],
+            &format!("#target {{ display: block; position: running(own); position: {keyword} }}"),
+        );
+        assert!(values.running_templates.is_empty(), "{keyword}");
+        assert_eq!(values.position, PositionValue::Static, "{keyword}");
+        assert_eq!(values.display, DisplayValue::Block, "{keyword}");
+    }
+}
+
+#[test]
+fn position_revert_returns_the_running_name_of_the_user_agent() {
+    let user_agent = [("p { position: running(ua) }", Origin::UserAgent)];
+    for keyword in ["revert", "revert-layer"] {
+        let values = child(
+            "position: running(hdr)",
+            &user_agent,
+            &format!("#target {{ position: running(own); position: {keyword} }}"),
+        );
+        assert_eq!(running_names(&values), ["ua"], "{keyword}");
+    }
+}
+
+#[test]
+fn position_inherit_passes_the_running_name_down_a_chain() {
+    // Each level inherits the computed value of the one above, which for a
+    // running element is its `running()` name. The names stay apart where a
+    // level declares its own.
+    let mut doc = TestDoc::new();
+    let outer = doc.push_element(0, "div", Some("position: running(a)"));
+    let middle = doc.push_element(outer, "div", Some("position: inherit"));
+    let renamed = doc.push_element(middle, "div", Some("position: running(b)"));
+    let inner = doc.push_element(renamed, "div", Some("position: inherit"));
+    let plain = doc.push_element(inner, "div", None);
+    let computed = cascade(&doc, &RuleTree::empty()).unwrap().computed;
+    assert_eq!(running_names(&computed[outer]), ["a"]);
+    assert_eq!(running_names(&computed[middle]), ["a"]);
+    assert_eq!(running_names(&computed[renamed]), ["b"]);
+    assert_eq!(running_names(&computed[inner]), ["b"]);
+    assert!(computed[plain].running_templates.is_empty());
 }
 
 #[test]

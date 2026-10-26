@@ -1,4 +1,5 @@
 use super::*;
+use crate::CounterSnapshot;
 use raikiri_style::property::QuoteKeyword;
 use raikiri_style::{build_rule_tree, cascade};
 
@@ -287,7 +288,7 @@ fn marker_render_info_reuses_shared_list_item_counters_when_snapshots_are_missin
     document.mark_in_document_flags();
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let empty_snapshots: [CounterSnapshot; 0] = [];
+    let empty_snapshots = CounterSnapshots::default();
 
     let render = |node| {
         marker_render_info_with_snapshots(&document, &cascade, node, &empty_snapshots)
@@ -298,6 +299,33 @@ fn marker_render_info_reuses_shared_list_item_counters_when_snapshots_are_missin
     assert_eq!(render(first), "5");
     assert_eq!(render(second), "18");
     assert_eq!(render(third), "19");
+}
+
+#[test]
+fn marker_render_info_reuses_shared_quote_depth_when_snapshots_are_missing() {
+    let mut document = Document::new();
+    let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
+    document.append_text(
+        style,
+        "div { quotes: '<' '>' '[' ']' } div::before { content: open-quote } \
+         li { display: list-item } li::marker { content: open-quote counter(list-item) close-quote }",
+    );
+    let host = document.append_element(Some(document.root_index()), "div", None::<&str>);
+    let item = document.append_element(Some(host), "li", None::<&str>);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let marker = |snapshots: &CounterSnapshots| {
+        marker_render_info_with_snapshots(&document, &cascade, item, snapshots)
+            .expect("list marker")
+            .1
+    };
+
+    // The `::before` of the host opened the first quote, so the marker takes
+    // the second pair, whether or not the caller's snapshots know the item.
+    assert_eq!(marker(&CounterSnapshots::default()), "[1]");
+    let shared = crate::counter_snapshots(&document, &cascade).expect("counter snapshots");
+    assert_eq!(marker(&shared), "[1]");
 }
 
 #[test]

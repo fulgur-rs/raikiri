@@ -23,20 +23,42 @@ pub(crate) fn content(value: C) -> values::AlignContent {
         _ => values::AlignContent::NORMAL,
     }
 }
-pub(crate) fn items(value: A) -> values::AlignItems {
+/// The item alignment that the self alignment `value` asks for.
+#[doc(hidden)]
+pub fn items(value: A) -> values::AlignItems {
     match value {
         A::Stretch => values::AlignItems::STRETCH,
-        A::Center => values::AlignItems::CENTER,
+        A::Center | A::AnchorCenter => values::AlignItems::CENTER,
         A::Start => values::AlignItems::START,
         A::End => values::AlignItems::END,
         A::FlexStart => values::AlignItems::FLEX_START,
         A::FlexEnd => values::AlignItems::FLEX_END,
+        A::SelfStart => values::AlignItems::SELF_START,
+        A::SelfEnd => values::AlignItems::SELF_END,
+        A::Safe(position) => values::AlignItems {
+            safety: values::AlignmentSafety::Safe,
+            ..items(position.alignment())
+        },
+        A::Unsafe(position) => values::AlignItems {
+            safety: values::AlignmentSafety::Unsafe,
+            ..items(position.alignment())
+        },
         A::Baseline | A::LastBaseline => values::AlignItems::BASELINE,
         _ => values::AlignItems::NORMAL,
     }
 }
 impl LayoutStyleView<'_> {
     pub(crate) fn self_alignment(&self, inline: bool) -> Option<values::AlignSelf> {
+        self.self_alignment_or(inline, values::AlignItems::SAFE_SELF_END)
+    }
+    /// The self alignment along an axis, where an absolutely positioned box that
+    /// asks for `last baseline` aligns as `last_baseline` instead of falling
+    /// back to `safe self-end`.
+    pub(crate) fn self_alignment_or(
+        &self,
+        inline: bool,
+        last_baseline: values::AlignSelf,
+    ) -> Option<values::AlignSelf> {
         if let Some(value) = self.overrides().find_map(|o| match o {
             OverrideKind::AlignSelf(v) if !inline => Some(v),
             OverrideKind::JustifySelf(v) if inline => Some(v),
@@ -50,7 +72,7 @@ impl LayoutStyleView<'_> {
             AlignSelfValue::Value(A::LastBaseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>
             {
-                Some(values::AlignItems::SAFE_SELF_END)
+                Some(last_baseline)
             }
             AlignSelfValue::Value(A::Baseline)
                 if matches!(c.position, PositionValue::Absolute | PositionValue::Fixed) =>

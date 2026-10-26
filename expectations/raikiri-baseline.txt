@@ -4647,9 +4647,7 @@ css/css-ruby/ruby-dynamic-removal-003.html
 css/css-ruby/ruby-float-handling-001.html
 css/css-ruby/ruby-intra-level-whitespace-001.html
 css/css-ruby/ruby-intra-level-whitespace-002.html
-css/css-ruby/ruby-intrinsic-isize-001.html
 css/css-ruby/ruby-intrinsic-isize-002.html
-css/css-ruby/ruby-intrinsic-isize-003.html
 css/css-ruby/ruby-justification-002.html
 css/css-ruby/ruby-line-break-suppression-004.html
 css/css-ruby/ruby-line-break-suppression-005.html
@@ -5266,3 +5264,48 @@ css/css-sizing/aspect-ratio/grid-aspect-ratio-040.html
 # --- a line of only a marker is kept whole at a page edge (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
 # The empty list items of the additive counter styles hold only their inside marker, so no text places their line; the item whose line crosses the page edge moves to the second page, like the reference's div of text; KEEP in two audit-vacuous-passes runs.
 css/css-counter-styles/counter-style-at-rule/system-additive.html
+
+# --- background-position offsets (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# calc-minmax-001 (min() and max() offsets in background-position) matches its reference and is KEEP in two audit-vacuous-passes runs; its expected-failure row was stale. negative-percentage-comparison-002 declares the shorthand and both axes with the same values, so the audit's single-declaration ablation cannot reach KEEP; it was reviewed by hand: removing all three declarations makes the clean comparison fail, and the shorthand alone or the two axes alone each match the reference.
+css/css-backgrounds/background-position-calc-minmax-001.html
+css/css-backgrounds/background-position-negative-percentage-comparison-002.html
+
+# --- static position of absolute grid children by self-alignment value (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# The static position of an absolutely positioned grid child follows its align-self or justify-self (the self-position keywords, including self-start and self-end, and first and last baseline) in horizontal, rtl and vertical-rl grid containers, so test and reference match, and the layout matches Chromium's with Ahem forced; KEEP in two audit-vacuous-passes runs.
+css/css-grid/abspos/grid-abspos-staticpos-align-self-002.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-last-baseline-002.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-rtl-001.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-rtl-002.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-rtl-003.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-rtl-004.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-rtl-last-baseline-003.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-rtl-last-baseline-004.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-001.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-002.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-last-baseline-002.html
+
+# --- anchor-center alignment of an absolute box without an anchor (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# `justify-self: anchor-center` is a value of its own that behaves as `center` for an absolutely positioned box without a default anchor box, so test and reference match, and the box positions match Chromium's with Ahem forced (the dotted container borders are drawn differently); KEEP in two audit-vacuous-passes runs.
+css/css-align/abspos/justify-self-static-position-001.html
+
+# --- last baseline in the static position of an absolute box of a block container (WPT pin 97ea26e2, EXACT, Linux, 2026-10-25) ---
+# An absolutely positioned box that asks for `last baseline` aligns to the end of the static-position rectangle of a block container, a line of no height, as `end` does, where `safe end` would put it at the start; the purple boxes of all thirteen items match Chromium's pixel for pixel (the dotted container borders are drawn differently); KEEP in two audit-vacuous-passes runs.
+css/css-align/abspos/align-self-static-position-008.html
+
+# --- an absolute block before inline content takes the top-left of its container (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
+# An absolutely positioned block with no insets, followed by a line that holds inline-blocks, stays at the start of the line instead of below it, so it covers the red squares as in the reference. The audit reports it VACUOUS-UNSTYLED because the probe also removes the red squares' own declarations, which leaves the green square alone; it is a negative test that failed before the static position fix (20000 mismatched pixels), and without its `all: inherit` the squares stack and show red (5000 mismatched pixels), so it stays as a guard.
+css/css-cascade/all-prop-002.html
+
+# --- flex items with an aspect-ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
+# An item that states its main size and leaves its cross size auto takes the cross size from the main size it ends up with once it has flexed (011, 013, 023, 028), and an item with a flex basis of content gets its flex base size from the cross size it states through the ratio, ignoring the main size it states (021, 022); the green squares match Chromium's pixel for pixel (the paragraph text is drawn differently); all KEEP in two audit-vacuous-passes runs.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-011.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-013.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-021.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-022.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-023.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-028.html
+# --- css-inline golden spiral (WPT 97ea26e2, 800x600 EXACT, 2026-10-26, RAIKIRI-877) ---
+# audit-vacuous-passes reports VACUOUS-UNSTYLED: the test still matches its reference without its
+# dominant-baseline declaration, so the PASS does not show the property at work. Kept as a guard
+# for twelve nested orthogonal inline boxes, which did not finish laying out.
+css/css-inline/dominant-baseline/dominant-baseline-mixed-writing-modes-002.html

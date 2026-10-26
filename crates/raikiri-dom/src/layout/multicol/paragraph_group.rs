@@ -209,15 +209,19 @@ fn fill(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let chunk = fill_chunk(paragraphs, context, height, FlowCursor::default())?;
+    let chunk = fill_chunk(paragraphs, context, height, FlowCursor::default(), true)?;
     chunk.next.is_none().then_some(chunk.group)
 }
 
+/// Fill columns of `height` from `resume`. The margin below the last
+/// paragraph adds to the height used when `trailing_margin` is set; without
+/// it, the margin ends with the content, as it does at a break.
 fn fill_chunk(
     paragraphs: &[Option<Paragraph>],
     context: FragmentationContext,
     height: f32,
     resume: FlowCursor,
+    trailing_margin: bool,
 ) -> Option<Chunk> {
     let mut placements: Vec<Option<Placement>> = Vec::new();
     let mut column = 0usize;
@@ -236,7 +240,11 @@ fn fill_chunk(
         } else {
             0
         };
-        let adjoining = pending_margin.with(if initial_line == 0 {
+        // A break discards the margin above the paragraph it ends up before,
+        // so a paragraph resumed from its start has none either.
+        let at_resumed_start =
+            paragraph_index == resume.paragraph && resume != FlowCursor::default();
+        let adjoining = pending_margin.with(if initial_line == 0 && !at_resumed_start {
             paragraph.margin_top
         } else {
             0.0
@@ -350,7 +358,11 @@ fn fill_chunk(
             fragments,
         });
     }
-    let used = maximum.max(cursor + pending_margin.value());
+    let used = maximum.max(if trailing_margin {
+        cursor + pending_margin.value()
+    } else {
+        cursor
+    });
     (used <= height + f32::EPSILON).then(|| Chunk {
         group: finish_group(placements, used),
         next: None,
@@ -434,8 +446,8 @@ pub(super) fn fill_rows(
         if !capacity.is_finite() || capacity <= 0.0 {
             return Err(RowsStop::Unsupported);
         }
-        let mut chunk =
-            fill_chunk(&paragraphs, context, capacity, resume).ok_or(RowsStop::Unsupported)?;
+        let mut chunk = fill_chunk(&paragraphs, context, capacity, resume, true)
+            .ok_or(RowsStop::Unsupported)?;
         // `balance` balances the last row only, `balance-all` every row; a
         // balanced row keeps the content the full row would hold.
         let balance = context.column_fill == ColumnFillValue::BalanceAll
@@ -449,7 +461,7 @@ pub(super) fn fill_rows(
                     break;
                 }
                 let trial = (low + high) * 0.5;
-                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume)
+                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume, true)
                     && candidate.next == next
                 {
                     high = trial;
@@ -521,7 +533,9 @@ pub(super) struct PagedFragment {
     pub(super) line_end: usize,
     pub(super) fragmentainer: usize,
     pub(super) rect: crate::fragment::FragmentRect,
-    pub(super) clip: crate::fragment::FragmentRect,
+    /// The cut of the column, or `None` for a fragment that holds its whole
+    /// paragraph, which has no neighbour to keep out.
+    pub(super) clip: Option<crate::fragment::FragmentRect>,
 }
 
 pub(super) struct PagedGroup {
@@ -575,7 +589,7 @@ pub(super) fn paginate(
         // A fill visits the paragraphs from `resume` until the page's columns
         // are full; charge what it visited. Placing lines is logarithmic in
         // a paragraph's lines, and each placed range is charged below.
-        let filled = fill_chunk(&paragraphs, context, capacity, resume);
+        let filled = fill_chunk(&paragraphs, context, capacity, resume, false);
         work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
         let Some(mut chunk) = filled else {
             // A short remainder can contain fewer lines than the paragraph's
@@ -595,7 +609,7 @@ pub(super) fn paginate(
                     break;
                 }
                 let trial = (low + high) * 0.5;
-                let filled = fill_chunk(&paragraphs, context, trial, resume);
+                let filled = fill_chunk(&paragraphs, context, trial, resume, false);
                 work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
                 if let Some(candidate) = filled
                     && candidate.next.is_none()
@@ -659,24 +673,26 @@ pub(super) fn paginate(
                     // paragraph begins or ends has no neighbour behind it,
                     // so what the box paints there, an outline for one,
                     // stays visible too.
-                    clip: {
-                        let top = if range.line_start == 0 {
-                            group_y - CLIP_REACH
-                        } else {
-                            group_y
-                        };
-                        let bottom = if range.line_end >= paragraph.extents.len() {
-                            group_y + height + CLIP_REACH
-                        } else {
-                            group_y + height
-                        };
-                        crate::fragment::FragmentRect {
-                            x: x - CLIP_REACH,
-                            y: top,
-                            width: context.column_width + 2.0 * CLIP_REACH,
-                            height: bottom - top,
-                        }
-                    },
+                    clip: (range.line_start > 0 || range.line_end < paragraph.extents.len()).then(
+                        || {
+                            let top = if range.line_start == 0 {
+                                group_y - CLIP_REACH
+                            } else {
+                                group_y
+                            };
+                            let bottom = if range.line_end >= paragraph.extents.len() {
+                                group_y + height + CLIP_REACH
+                            } else {
+                                group_y + height
+                            };
+                            crate::fragment::FragmentRect {
+                                x: x - CLIP_REACH,
+                                y: top,
+                                width: context.column_width + 2.0 * CLIP_REACH,
+                                height: bottom - top,
+                            }
+                        },
+                    ),
                 });
             }
         }

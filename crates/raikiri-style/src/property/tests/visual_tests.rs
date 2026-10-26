@@ -930,6 +930,114 @@ fn only_background_position(source: &str) -> Option<CssPosition> {
     }
 }
 
+/// The offsets of a parsed `background-position-x`.
+fn background_position_x(source: &str) -> Option<Vec<CssPositionOffset>> {
+    match parse(source, "background-position-x")? {
+        PropertyValue::BackgroundPositionX(offsets) => Some(offsets.to_vec()),
+        other => panic!("{source}: {other:?}"),
+    }
+}
+
+/// The offsets of a parsed `background-position-y`.
+fn background_position_y(source: &str) -> Option<Vec<CssPositionOffset>> {
+    match parse(source, "background-position-y")? {
+        PropertyValue::BackgroundPositionY(offsets) => Some(offsets.to_vec()),
+        other => panic!("{source}: {other:?}"),
+    }
+}
+
+#[test]
+fn background_position_x_reads_an_edge_and_an_offset_per_layer() {
+    let start = |length| CssPositionOffset::Start(length);
+    let percent = |value| start(Length::Percent(value));
+    assert_eq!(background_position_x("left"), Some(vec![percent(0.0)]));
+    assert_eq!(background_position_x("center"), Some(vec![percent(50.0)]));
+    assert_eq!(background_position_x("right"), Some(vec![percent(100.0)]));
+    assert_eq!(background_position_x("-20%"), Some(vec![percent(-20.0)]));
+    assert_eq!(
+        background_position_x("10px"),
+        Some(vec![start(Length::Px(10.0))])
+    );
+    assert_eq!(
+        background_position_x("left -20%"),
+        Some(vec![percent(-20.0)])
+    );
+    // An offset in px stays measured from the end edge; a percentage is
+    // folded into the start edge.
+    assert_eq!(
+        background_position_x("right 10px"),
+        Some(vec![CssPositionOffset::End(Length::Px(10.0))])
+    );
+    assert_eq!(
+        background_position_x("RIGHT 25%"),
+        Some(vec![percent(75.0)])
+    );
+    assert_eq!(
+        background_position_x("center, left, 5px"),
+        Some(vec![percent(50.0), percent(0.0), start(Length::Px(5.0))])
+    );
+}
+
+#[test]
+fn background_position_y_reads_an_edge_and_an_offset_per_layer() {
+    let percent = |value| CssPositionOffset::Start(Length::Percent(value));
+    assert_eq!(background_position_y("top"), Some(vec![percent(0.0)]));
+    assert_eq!(background_position_y("center"), Some(vec![percent(50.0)]));
+    assert_eq!(background_position_y("bottom"), Some(vec![percent(100.0)]));
+    assert_eq!(
+        background_position_y("bottom 10px"),
+        Some(vec![CssPositionOffset::End(Length::Px(10.0))])
+    );
+    assert_eq!(
+        background_position_y("top 3em, 25%"),
+        Some(vec![
+            CssPositionOffset::Start(Length::Em(3.0)),
+            percent(25.0)
+        ])
+    );
+}
+
+#[test]
+fn background_position_axes_reject_the_keywords_of_the_other_axis() {
+    // The invalid cases of css-backgrounds/parsing/background-position-x-
+    // invalid.html and -y-invalid.html that the grammar can decide.
+    for invalid in [
+        "top",
+        "bottom",
+        "center 10px",
+        "20% left",
+        "right left",
+        "left, center right",
+        "",
+    ] {
+        assert_eq!(background_position_x(invalid), None, "x: {invalid}");
+    }
+    for invalid in [
+        "left",
+        "right",
+        "center 10px",
+        "20% top",
+        "bottom top",
+        "top, center bottom",
+        "",
+    ] {
+        assert_eq!(background_position_y(invalid), None, "y: {invalid}");
+    }
+}
+
+#[test]
+fn background_position_axes_keep_a_percentage_comparison() {
+    assert_eq!(
+        background_position_x("min(0%, 100%)"),
+        Some(vec![compared(0.0, 100.0)])
+    );
+    // After an edge keyword the comparison is measured from that edge.
+    assert_eq!(
+        background_position_y("bottom max(10%, 20%)"),
+        Some(vec![compared(80.0, 90.0)])
+    );
+}
+
 #[test]
 fn background_position_keeps_a_percentage_comparison_until_the_free_space_is_known() {
     // The two positions of css-backgrounds/background-position-negative-

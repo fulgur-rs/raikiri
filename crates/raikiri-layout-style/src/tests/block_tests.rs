@@ -35,6 +35,46 @@ fn core_claims_and_block_defaults_stay_distinct() {
 }
 
 #[test]
+fn a_last_baseline_static_position_aligns_to_the_end_not_safe_self_end() {
+    use raikiri_style::property::PositionValue;
+    let alignments = |position, value| {
+        let mut cv = ComputedValues::initial();
+        cv.position = position;
+        cv.align_self = AlignSelfValue::Value(value);
+        cv.justify_self = AlignSelfValue::Value(value);
+        let prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+        let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+        [
+            view.bridge_align_self(),
+            view.bridge_justify_self(),
+            view.static_position_align_self(),
+            view.static_position_justify_self(),
+        ]
+    };
+    let last = SelfAlignmentValue::LastBaseline;
+    for position in [PositionValue::Absolute, PositionValue::Fixed] {
+        let [align, justify, static_align, static_justify] = alignments(position, last);
+        assert_eq!(align, Some(values::AlignSelf::SAFE_SELF_END));
+        assert_eq!(justify, Some(values::AlignSelf::SAFE_SELF_END));
+        assert_eq!(static_align, Some(values::AlignSelf::END));
+        assert_eq!(static_justify, Some(values::AlignSelf::END));
+    }
+    // A box in flow aligns to the baselines it shares with its siblings, and
+    // every other alignment reads the same in both places.
+    let in_flow = alignments(PositionValue::Static, last);
+    assert_eq!(in_flow, [Some(values::AlignSelf::BASELINE); 4]);
+    for value in [
+        SelfAlignmentValue::Center,
+        SelfAlignmentValue::Baseline,
+        SelfAlignmentValue::Safe(raikiri_style::property::SelfPosition::End),
+    ] {
+        let [align, justify, static_align, static_justify] =
+            alignments(PositionValue::Absolute, value);
+        assert_eq!([static_align, static_justify], [align, justify]);
+    }
+}
+
+#[test]
 fn block_and_oof_table_facts_are_separate_from_formatting_context() {
     let cv = ComputedValues::initial();
     for (flags, block, oof) in [

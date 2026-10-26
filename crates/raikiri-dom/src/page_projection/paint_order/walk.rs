@@ -724,11 +724,11 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         let deferring = self.layers.last().is_some_and(|layer| layer.allowed);
         let defers =
             deferring && !clipped && paint_rules::defers_inline_content(document, cascade, node_id);
-        // A plain block that clips collects its inline content in a layer of
-        // its own, which it hands to the enclosing layer inside its clip.
-        let merges = deferring
-            && clipped
-            && paint_rules::merges_clipped_inline_content(document, cascade, node_id);
+        // A plain block that clips collects its inline content, and a flex or
+        // grid container that clips the items with a stack level, in a layer
+        // of its own, which it hands to the enclosing layer inside its clip.
+        let merges =
+            deferring && clipped && paint_rules::merges_clipped_layer(document, cascade, node_id);
         // In-flow blocks inside a paragraph's inline content paint their
         // backgrounds before its lines. With content positioned below them,
         // the paragraph's content lists them after that content.

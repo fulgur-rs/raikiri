@@ -40,6 +40,23 @@ impl LayoutStyleView<'_> {
     pub fn bridge_justify_self(&self) -> Option<values::AlignSelf> {
         self.self_alignment(true)
     }
+    /// The block-axis alignment of a box in the static-position rectangle of its
+    /// block container.
+    ///
+    /// An absolutely positioned box that asks for `last baseline` takes no part
+    /// in baseline alignment and aligns to the end of the rectangle even when it
+    /// overflows it, which a zero-height rectangle makes it always do: `safe
+    /// end` would put it at the start instead.
+    #[inline]
+    pub fn static_position_align_self(&self) -> Option<values::AlignSelf> {
+        self.self_alignment_or(false, values::AlignSelf::END)
+    }
+    /// The inline-axis alignment of a box in the static-position rectangle of
+    /// its block container (see [`Self::static_position_align_self`]).
+    #[inline]
+    pub fn static_position_justify_self(&self) -> Option<values::AlignSelf> {
+        self.self_alignment_or(true, values::AlignSelf::END)
+    }
     /// The alignment of an out-of-flow box along the physical vertical axis
     /// (see [`Self::with_swapped_oof_alignment`]).
     #[inline]

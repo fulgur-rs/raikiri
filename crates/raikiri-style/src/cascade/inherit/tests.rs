@@ -9465,9 +9465,10 @@ fn apply_value_direct_background_shorthand_fall_through() {
     // Sibling of `apply_value_direct_margin_shorthand_fall_through`
     // above: `apply_value`'s `PropertyValue::Background(shorthand)` arm
     // is unreachable via the cascade path (`expand_shorthand_into`
-    // expands it to the 8 `BackgroundColor`/`BackgroundImage`/
-    // `BackgroundRepeat`/`BackgroundAttachment`/`BackgroundPosition`/
-    // `BackgroundSize`/`BackgroundClip`/`BackgroundOrigin` longhands
+    // expands it to the 9 `BackgroundColor`/`BackgroundImage`/
+    // `BackgroundRepeat`/`BackgroundAttachment`/`BackgroundPositionX`/
+    // `BackgroundPositionY`/`BackgroundSize`/`BackgroundClip`/
+    // `BackgroundOrigin` longhands
     // before `apply_value` ever sees it) — not a safety net, a canary.
     use crate::property::{
         BackgroundAttachment, BackgroundImage, BackgroundLayerSpec, BackgroundRepeat,
@@ -9513,12 +9514,44 @@ fn apply_value_direct_background_shorthand_fall_through() {
         Some(&[layer.attachment][..])
     );
     assert_eq!(
-        cv.background_position.as_deref(),
-        Some(&[layer.position][..])
+        cv.background_position_x.as_deref(),
+        Some(&[layer.position.horizontal][..])
+    );
+    assert_eq!(
+        cv.background_position_y.as_deref(),
+        Some(&[layer.position.vertical][..])
     );
     assert_eq!(cv.background_size.as_deref(), Some(&[layer.size][..]));
     assert_eq!(cv.background_clip.as_deref(), Some(&[layer.clip][..]));
     assert_eq!(cv.background_origin.as_deref(), Some(&[layer.origin][..]));
+}
+
+#[test]
+fn apply_value_direct_background_position_shorthand_fall_through() {
+    // Sibling of the `Background` canary above: `expand_shorthand_into`
+    // splits `background-position` into its two axis longhands before
+    // `apply_value` sees it, so only a direct call reaches this arm.
+    use crate::property::{CssPosition, CssPositionOffset};
+    let mut cv = SpecifiedValues::initial();
+    let layers: std::sync::Arc<[CssPosition]> = std::sync::Arc::from([
+        CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+            vertical: CssPositionOffset::End(Length::Px(20.0)),
+        },
+        CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Px(30.0)),
+            vertical: CssPositionOffset::Start(Length::Px(40.0)),
+        },
+    ]);
+    apply_value(PropertyValue::BackgroundPosition(layers.clone()), &mut cv);
+    assert_eq!(
+        cv.background_position_x.as_deref(),
+        Some(&[layers[0].horizontal, layers[1].horizontal][..])
+    );
+    assert_eq!(
+        cv.background_position_y.as_deref(),
+        Some(&[layers[0].vertical, layers[1].vertical][..])
+    );
 }
 
 #[test]
@@ -9600,6 +9633,151 @@ fn background_longhand_lists_are_reconciled_to_the_image_count() {
     );
     assert_eq!(cv.final_background_clip(), VisualBox::BorderBox);
     assert!(cv.has_background_image());
+}
+
+/// The computed position of each background layer of a `div` styled `style`.
+fn background_layer_positions(style: &str) -> Vec<crate::resolve::ComputedCssPosition> {
+    cascade_doc("", "div", Some(style))
+        .background_layers()
+        .iter()
+        .map(|layer| layer.position)
+        .collect()
+}
+
+/// A computed position with the given offsets in px from the start edges.
+fn px_position(horizontal: f32, vertical: f32) -> crate::resolve::ComputedCssPosition {
+    use crate::resolve::{
+        ComputedCssPosition, ComputedCssPositionOffset, ComputedLengthPercentage,
+    };
+    let start = |px| ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(px));
+    ComputedCssPosition {
+        horizontal: start(horizontal),
+        vertical: start(vertical),
+    }
+}
+
+#[test]
+fn background_position_axes_cascade_independently() {
+    // `background-position` sets both axes, so a later axis longhand
+    // replaces only its own axis.
+    assert_eq!(
+        background_layer_positions("background-position: 10px 20px; background-position-x: 5px"),
+        [px_position(5.0, 20.0)]
+    );
+    assert_eq!(
+        background_layer_positions("background-position: 10px 20px; background-position-y: 5px"),
+        [px_position(10.0, 5.0)]
+    );
+    // The later shorthand replaces an earlier axis longhand.
+    assert_eq!(
+        background_layer_positions("background-position-x: 5px; background-position: 10px 20px"),
+        [px_position(10.0, 20.0)]
+    );
+    // `background` resets both axes.
+    assert_eq!(
+        background_layer_positions("background-position-x: 5px; background: url(a.png) 7px 8px"),
+        [px_position(7.0, 8.0)]
+    );
+}
+
+#[test]
+fn background_position_axis_lists_repeat_to_the_image_count() {
+    // The axes keep a list of their own: `x` repeats from its start while
+    // the one-item `y` list serves every layer.
+    assert_eq!(
+        background_layer_positions(
+            "background-image: url(a.png), url(b.png), url(c.png); \
+             background-position-x: 1px, 2px; background-position-y: 3px"
+        ),
+        [
+            px_position(1.0, 3.0),
+            px_position(2.0, 3.0),
+            px_position(1.0, 3.0)
+        ]
+    );
+}
+
+#[test]
+fn important_applies_to_per_layer_background_lists() {
+    use crate::property::{BackgroundRepeat, BackgroundRepeatKeyword};
+    // An `!important` axis longhand beats a later shorthand, on that axis only.
+    assert_eq!(
+        background_layer_positions(
+            "background-position-y: 5px !important; background-position: 10px 20px"
+        ),
+        [px_position(10.0, 5.0)]
+    );
+    // The flag on a list longhand wins over a later normal declaration.
+    let no_repeat = BackgroundRepeat {
+        x: BackgroundRepeatKeyword::NoRepeat,
+        y: BackgroundRepeatKeyword::NoRepeat,
+    };
+    let cv = cascade_doc(
+        "div { background-repeat: no-repeat !important } div { background-repeat: repeat-x }",
+        "div",
+        None,
+    );
+    assert_eq!(cv.background_layers()[0].repeat, no_repeat);
+    // The `background` shorthand and its image list carry the flag as well.
+    for style in [
+        "background-image: url(a.png) !important",
+        "background: url(a.png) !important",
+        "background: url(a.png), red !important",
+    ] {
+        assert!(
+            cascade_doc("", "div", Some(style)).has_background_image(),
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn background_position_axis_reads_edges_and_substituted_values() {
+    use crate::property::ComparedPercentage;
+    use crate::resolve::{
+        ComputedCssPosition, ComputedCssPositionOffset, ComputedLengthPercentage,
+    };
+    let start = |px| ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(px));
+    let initial = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(0.0));
+    // An offset from the end edge stays one.
+    assert_eq!(
+        background_layer_positions("background-position-x: right 10px"),
+        [ComputedCssPosition {
+            horizontal: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(10.0)),
+            vertical: initial,
+        }]
+    );
+    // A `var()` stands for the axis longhand and for the shorthand alike.
+    assert_eq!(
+        background_layer_positions("--x: 7px; background-position-x: var(--x)"),
+        [ComputedCssPosition {
+            horizontal: start(7.0),
+            vertical: initial,
+        }]
+    );
+    assert_eq!(
+        background_layer_positions("--p: 10px 20px; background-position: var(--p)"),
+        [px_position(10.0, 20.0)]
+    );
+    // A percentage comparison keeps both of its results, written directly
+    // or substituted.
+    let compared = ComputedCssPositionOffset::Compared(ComparedPercentage {
+        non_negative: 0.0,
+        negative: 100.0,
+    });
+    for style in [
+        "background-position-y: min(0%, 100%)",
+        "--y: min(0%, 100%); background-position-y: var(--y)",
+    ] {
+        assert_eq!(
+            background_layer_positions(style),
+            [ComputedCssPosition {
+                horizontal: initial,
+                vertical: compared,
+            }],
+            "{style}"
+        );
+    }
 }
 
 #[test]

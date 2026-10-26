@@ -433,9 +433,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let defers = defers_here
             && overflow_clip_pushed.is_none()
             && raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id);
-        // A plain block that clips collects its inline content in a
-        // layer of its own, which it hands to the enclosing layer
-        // inside its clip.
+        // A plain block that clips collects its inline content, and a
+        // flex or grid container that clips the items with a stack
+        // level, in a layer of its own, which it hands to the
+        // enclosing layer inside its clip.
         let merge = overflow_clip_pushed
             .filter(|_| {
                 defers_here
@@ -443,9 +444,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                         .deferral_scopes
                         .last()
                         .is_some_and(|layer| layer.allowed)
-                    && raikiri_dom::paint_rules::merges_clipped_inline_content(
-                        document, cascade, node_id,
-                    )
+                    && raikiri_dom::paint_rules::merges_clipped_layer(document, cascade, node_id)
             })
             .map(|(clip, transform)| LayerClose::Merge {
                 node_id,

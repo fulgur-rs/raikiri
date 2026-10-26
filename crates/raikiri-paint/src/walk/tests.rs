@@ -2956,6 +2956,82 @@ fn background_page_images_ignore_clip_and_empty_area_skips() {
 }
 
 #[test]
+fn background_page_image_position_follows_each_axis_list() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                2,
+                2,
+                vec![
+                    255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                ],
+            )))
+        }
+    }
+    let paper = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    let page_box = kurbo::Rect::new(10.0, 10.0, 190.0, 90.0);
+    // The 2px image sits in the 180px by 80px page box: 100% is 178px and
+    // 78px past its start edge.
+    let image = "url('https://example.test/red.png')";
+    for (declarations, expected) in [
+        (
+            format!("background-image: {image}; background-position: 100% 100%"),
+            vec![(188.0, 88.0)],
+        ),
+        // An axis longhand after the shorthand replaces only its own axis.
+        (
+            format!(
+                "background-image: {image}; background-position: 100% 100%; \
+                 background-position-x: 0%"
+            ),
+            vec![(10.0, 88.0)],
+        ),
+        // The `background` shorthand sets both axes.
+        (
+            format!("background: {image} no-repeat 100% 0%"),
+            vec![(188.0, 10.0)],
+        ),
+        // The one-item `x` list serves both layers while `y` has one value each.
+        (
+            format!(
+                "background-image: {image}, {image}; background-position-x: 0%; \
+                 background-position-y: 0%, 100%"
+            ),
+            vec![(10.0, 88.0), (10.0, 10.0)],
+        ),
+    ] {
+        let (document, cascade) = canvas_fixture(
+            Some(&format!(
+                "@page {{ margin: 10px; background-repeat: no-repeat; \
+                 background-origin: border-box; {declarations} }}"
+            )),
+            None,
+        );
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_page_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            PageBackgroundAreas {
+                paper,
+                border_box: page_box,
+            },
+            Some(&RedPixels),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{declarations}: {warnings:?}");
+        // The last layer paints first.
+        assert_eq!(background_fill_origins(&scene), expected, "{declarations}");
+    }
+}
+
+#[test]
 fn background_page_image_origin_starts_at_the_page_box_inside_the_margins() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {

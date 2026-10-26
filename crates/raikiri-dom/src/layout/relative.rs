@@ -10,6 +10,7 @@ use super::page::used_computed_length_percentage_or_auto;
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use crate::node::{BoxPropertiesRef, Node};
+use raikiri_layout_geometry::Size;
 use raikiri_layout_style::values::Direction;
 use raikiri_style::property::{DisplayValue, FloatValue, PositionValue, WritingMode};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
@@ -27,7 +28,9 @@ use raikiri_traits::NodeKind;
 /// ICB; the body uses its ordinary ancestor box. The width is known; a
 /// percentage of the height counts as `auto` unless layout gave the
 /// containing block a definite height (CSS 2.1 §9.3.2, §10.5): a specified
-/// one, or one its flex, grid or absolute positioning fixed.
+/// one, or one its flex, grid or absolute positioning fixed. The containing
+/// block of a grid item is its grid area, whose size is always definite
+/// (CSS Grid 1 §6.2).
 pub(crate) fn used_relative_insets(
     document: &Document,
     cascade: &CascadeResult,
@@ -114,9 +117,13 @@ fn relative_insets_with_box_tree(
             basis().and_then(|basis| used_computed_length_percentage_or_auto(value, basis))
         })
     };
+    let grid_area = block.and_then(|block| grid_item_area(document, boxes, block.key, node_id));
     let width = || {
         if is_root() {
             return Some(document.fixed_page_area.unwrap_or_default().0);
+        }
+        if let Some(area) = grid_area {
+            return Some(area.width);
         }
         let block = document.ifc_layout_node(block?.key)?;
         Some(if is_spanner_in(document, cascade, node_id) {
@@ -128,6 +135,9 @@ fn relative_insets_with_box_tree(
     let height = || {
         if is_root() {
             return Some(document.fixed_page_area.unwrap_or_default().1);
+        }
+        if let Some(area) = grid_area {
+            return Some(area.height);
         }
         document.ifc_layout_node(block?.key)?.percent_basis_height
     };
@@ -265,6 +275,27 @@ fn containing_block(
         }
         child = block;
     }
+}
+
+/// The size of the grid area of `node_id` on the physical axes, when it is an
+/// item of the grid container `container`.
+fn grid_item_area(
+    document: &Document,
+    boxes: BoxTree<'_>,
+    container: usize,
+    node_id: usize,
+) -> Option<Size<f32>> {
+    if !boxes
+        .display(container)
+        .is_some_and(DisplayValue::is_grid_container)
+    {
+        return None;
+    }
+    document
+        .ifc_layout_node(container)?
+        .grid_item_areas
+        .iter()
+        .find_map(|&(item, area)| (item == node_id).then_some(area))
 }
 
 /// Whether `node_id` is a table row, row group, column or column group,

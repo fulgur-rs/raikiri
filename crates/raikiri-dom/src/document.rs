@@ -276,6 +276,11 @@ pub struct Document {
     /// lines. Sorted, like `forced_break_clearance`, and dirties the layout
     /// cache the same way when it changes.
     pub(crate) forced_break_line_clearance: Vec<usize>,
+    /// The boxes right after a float that starts a page, which the last
+    /// paged layout cleared the floats before that float for, but not the
+    /// float itself. Sorted, like `forced_break_clearance`, and dirties the
+    /// layout cache the same way when it changes.
+    pub(crate) forced_break_float_floor: Vec<usize>,
     /// Page values and forced breaks that paged layout gives clearance by in
     /// place of the cascade's, for a relayout whose cascade drops them.
     pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
@@ -521,6 +526,7 @@ impl Document {
             layout_dirty: false,
             forced_break_clearance: Vec::new(),
             forced_break_line_clearance: Vec::new(),
+            forced_break_float_floor: Vec::new(),
             clearance_breaks: None,
             ifc: None,
             normal_line_height: None,
@@ -1867,6 +1873,7 @@ impl Document {
             layout_dirty: _,
             forced_break_clearance: _,
             forced_break_line_clearance: _,
+            forced_break_float_floor: _,
             clearance_breaks: _,
             ifc,
             normal_line_height,

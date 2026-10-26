@@ -1196,9 +1196,11 @@ fn layout_single_page_with_table_projection(
                 }
             } else if !document.forced_break_clearance.is_empty()
                 || !document.forced_break_line_clearance.is_empty()
+                || !document.forced_break_float_floor.is_empty()
             {
                 document.forced_break_clearance.clear();
                 document.forced_break_line_clearance.clear();
+                document.forced_break_float_floor.clear();
                 document.layout_dirty = true;
             }
             document.table_objects.project_explicit_parts = project_explicit_table_parts;
@@ -2676,6 +2678,7 @@ fn clear_floats_at_forced_breaks<'name>(
     // parent's page, and their insides are not walked.
     let mut cleared = Vec::new();
     let mut cleared_lines = Vec::new();
+    let mut cleared_to_float_floor = Vec::new();
     let mut pending = vec![(0_usize, None::<&str>)];
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
@@ -2783,7 +2786,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 }
                 continue;
             }
-            float_after_break = false;
+            // A float right after the break started the new page, so the box
+            // after it lines up beside that float instead of below it.
+            let beside_page_start_float = std::mem::take(&mut float_after_break);
             last_block = Some(child);
             let start_page_name = if has_named_pages {
                 match propagated_start_page_name_with_transposed_axes(
@@ -2800,9 +2805,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 None
             };
             let named_break = changes_page(&previous_page_name, &start_page_name);
-            let forced = after_forced_break
-                || named_break
+            let own_break = named_break
                 || page_break_is_forced(document, child, cascade.computed[child].break_before);
+            let forced = after_forced_break || own_break;
             // A break after the last box inside this one is carried out to
             // the next box, as the paginator does.
             after_forced_break = page_edge_constraint(document, cascade, child, false).0;
@@ -2821,7 +2826,15 @@ fn clear_floats_at_forced_breaks<'name>(
             }
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too.
-            if forced {
+            if forced
+                && beside_page_start_float
+                && !own_break
+                && !document.nodes[parent].used_writing_mode.is_vertical()
+            {
+                // Layout clears the floats before the one that starts the
+                // page, not that float.
+                cleared_to_float_floor.push(child);
+            } else if forced {
                 document.record_pass_override(
                     child,
                     raikiri_layout_style::OwnedPropertyOverride::clear(ClearValue::Both),
@@ -2843,11 +2856,14 @@ fn clear_floats_at_forced_breaks<'name>(
     }
     cleared.sort_unstable();
     cleared_lines.sort_unstable();
+    cleared_to_float_floor.sort_unstable();
     if cleared != document.forced_break_clearance
         || cleared_lines != document.forced_break_line_clearance
+        || cleared_to_float_floor != document.forced_break_float_floor
     {
         document.forced_break_clearance = cleared;
         document.forced_break_line_clearance = cleared_lines;
+        document.forced_break_float_floor = cleared_to_float_floor;
         document.layout_dirty = true;
     }
 }
@@ -3079,9 +3095,51 @@ fn layout_pages_core(
     page_widths: &[f32],
     control: &PageLayoutControl<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    let (slices, moved) = layout_pages_attempt(
+        document,
+        cascade,
+        page_box,
+        page_steps,
+        page_widths,
+        control,
+        false,
+    )?;
+    if !moved {
+        return Ok(slices);
+    }
+    // The columns of a multicol container were filled page by page where the
+    // container began, and the flow then moved the container, so they stand
+    // in the wrong pages. Laying the document out again with the container's
+    // columns left whole keeps them in the pages the flow cuts them into.
+    layout_pages_attempt(
+        document,
+        cascade,
+        page_box,
+        page_steps,
+        page_widths,
+        control,
+        true,
+    )
+    .map(|(slices, _)| slices)
+}
+
+/// Lay out and break `document` into pages once, and whether pagination
+/// moved a multicol container whose columns it had filled page by page, which
+/// leaves `slices` empty. With `unpaged_plain_columns`, no container has its
+/// columns filled that way.
+fn layout_pages_attempt(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    page_steps: &[f32],
+    page_widths: &[f32],
+    control: &PageLayoutControl<'_>,
+    unpaged_plain_columns: bool,
+) -> Result<(Vec<PageSlice>, bool), LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
     let mut session = super::context::LayoutSession::with_cascade(document, cascade);
+    session.context.unpaged_plain_columns = unpaged_plain_columns;
     // A root with `display: none` generates no boxes, so there is nothing to
     // lay out or break into later pages: the document prints as a single
     // blank page.
@@ -3092,11 +3150,14 @@ fn layout_pages_core(
         session.fragment_tree.clear();
         session.column_rules.clear();
         session.page_projection.clear();
-        return Ok(vec![PageSlice {
-            page_index: 0,
-            content_origin_y: 0.0,
-            page_name: None,
-        }]);
+        return Ok((
+            vec![PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            false,
+        ));
     }
     layout_single_page_with_table_projection(&mut session, cascade, page_box, true, true)?;
     control.check_page_index(0)?;
@@ -3108,8 +3169,8 @@ fn layout_pages_core(
     })?;
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    let Some(axes) = transposed_flow::FlowAxes::of_root(&session, cascade) else {
-        return paginate_flow(
+    let slices = match transposed_flow::FlowAxes::of_root(&session, cascade) {
+        None => paginate_flow(
             &mut session,
             cascade,
             body_id,
@@ -3121,35 +3182,39 @@ fn layout_pages_core(
             page_steps,
             page_widths,
             control,
-        );
-    };
-    // The pages of a document whose root lays out its blocks on vertical
-    // axes follow the physical x axis: each page takes the width of its page
-    // area from the flow. The paginator breaks along y, so it runs on the
-    // transposed document. The pages keep the inline size of the first page
-    // area.
-    transposed_flow::TransposedDocument::with_transposed(
-        &mut session,
-        body_id,
-        axes,
-        insets.page_area_width(margins, page_box),
-        |session, transposed| {
-            let transposed_cascade = transposed.cascade(cascade);
-            paginate_flow(
-                session,
-                &transposed_cascade,
+        )?,
+        // The pages of a document whose root lays out its blocks on vertical
+        // axes follow the physical x axis: each page takes the width of its
+        // page area from the flow. The paginator breaks along y, so it runs
+        // on the transposed document. The pages keep the inline size of the
+        // first page area.
+        Some(axes) => {
+            super::multicol::release_unspanned_groups(&mut session);
+            transposed_flow::TransposedDocument::with_transposed(
+                &mut session,
                 body_id,
-                PageFlowGeometry {
-                    page_box: axes.page_box(page_box),
-                    margins: axes.margins(margins),
-                    insets: axes.insets(insets),
+                axes,
+                insets.page_area_width(margins, page_box),
+                |session, transposed| {
+                    let transposed_cascade = transposed.cascade(cascade);
+                    paginate_flow(
+                        session,
+                        &transposed_cascade,
+                        body_id,
+                        PageFlowGeometry {
+                            page_box: axes.page_box(page_box),
+                            margins: axes.margins(margins),
+                            insets: axes.insets(insets),
+                        },
+                        page_widths,
+                        &[],
+                        control,
+                    )
                 },
-                page_widths,
-                &[],
-                control,
-            )
-        },
-    )
+            )?
+        }
+    };
+    Ok((slices, session.context.page_filled_columns_moved))
 }
 
 /// The direction in which the pages of `document` continue, when they follow
@@ -3508,6 +3573,14 @@ fn paginate_flow(
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
+    // Where the columns of each container were filled page by page, from the
+    // position the container has now.
+    let refilled: Vec<_> = document
+        .context
+        .page_filled_columns
+        .iter()
+        .map(|&owner| (owner, current_abs_y(document, owner)))
+        .collect();
     let roots = candidates::FlowRoots::new(document, body_id);
     let mut candidates = Vec::new();
     let mut text_lines = TextLineIndex::default();
@@ -3586,6 +3659,15 @@ fn paginate_flow(
         }
     }
 
+    // A container the walk moved has its columns filled for another place,
+    // and its caller lays the document out again without that.
+    if refilled
+        .iter()
+        .any(|&(owner, y)| (current_abs_y(document, owner) - y).abs() > 1e-3)
+    {
+        document.context.page_filled_columns_moved = true;
+        return Ok(Vec::new());
+    }
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
     update_paginated_block_heights(
@@ -5671,7 +5753,8 @@ impl DeferredShifts {
                     && text_lines
                         .get(node_id)
                         .and_then(|owned| owned.lines.first())
-                        .is_some_and(|line| line.line >= first_moved);
+                        .is_some_and(|line| line.line >= first_moved)
+                || follows_line_of_paragraph(document, node_id, root, first_moved);
             if reached {
                 *flow_shift += shift;
             }
@@ -5730,6 +5813,9 @@ struct CheckedParagraphs {
     block_text: HashSet<usize>,
     /// Blocks whose orphans and widows were checked.
     orphans_widows: HashSet<usize>,
+    /// Runs of lines between the block children of a paragraph that were
+    /// checked against the page end: `(paragraph root, first line)`.
+    lines_after_blocks: HashSet<(usize, usize)>,
 }
 
 impl CheckedParagraphs {
@@ -5819,6 +5905,38 @@ fn flex_line_paragraph(
 /// give or take 0.001, so that moving it whole to a page can hold it.
 fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
     block_height.is_finite() && block_height <= page_step + 0.001
+}
+
+/// Whether in-flow content comes before the box `node_id` in the flow below
+/// `body_id`: a sibling of the box, or of an ancestor of it that is not the
+/// body, which generates an in-flow box (see [`push_in_flow_boxes_rev`]). The
+/// flow can break before such a box, between it and what comes first. A box
+/// that starts the flow, below nothing but margins, cannot be broken from.
+fn follows_flow_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
+    let mut node = node_id;
+    let mut boxes = Vec::new();
+    while node != body_id {
+        let Some(parent) = document.parent_of(node) else {
+            return false;
+        };
+        for &child in document.nodes[parent]
+            .children
+            .iter()
+            .take_while(|&&child| child != node)
+        {
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+        if !boxes.is_empty() {
+            return true;
+        }
+        node = parent;
+    }
+    false
 }
 
 /// Whether the in-flow text of `height` with page type `page_name` opens a
@@ -5961,6 +6079,93 @@ fn lines_can_shift_inside(document: &super::context::LayoutSession<'_>, block_id
             .is_some_and(|ifc| ifc.boxes.is_empty() && ifc.multicol_fragments.is_none())
 }
 
+/// Whether the lines of the paragraph `block_id` that follow its block
+/// children can move down inside it: its height grows with them, it is in one
+/// column, and the only boxes it lays out are those block children, which
+/// follow the moved lines when pagination reaches them.
+fn lines_can_shift_between_blocks(
+    document: &super::context::LayoutSession<'_>,
+    block_id: usize,
+) -> bool {
+    height_follows_content(document, block_id)
+        && document
+            .ifc_layout_node(block_id)
+            .and_then(|node| node.ifc.as_ref())
+            .is_some_and(|ifc| {
+                ifc.multicol_fragments.is_none()
+                    && ifc.boxes.iter().all(|b| b.kind == IfcBoxKind::Block)
+            })
+}
+
+/// The lines of the paragraph `root` that lie between two of its block
+/// children, as line indices, for the run that holds the first line of the
+/// text `node_id`. `None` when no block child comes before that line: the
+/// paragraph's own checks judge such lines.
+fn lines_between_blocks(
+    document: &Document,
+    text_lines: &TextLineIndex,
+    node_id: usize,
+    root: usize,
+) -> Option<std::ops::Range<usize>> {
+    let first = text_lines.get(node_id)?.lines.first()?.line;
+    let lines = document
+        .ifc_layout_node(root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?;
+    let mut start = None;
+    let mut end = lines.lines.len();
+    for &(_, after) in &lines.block_line_starts {
+        if after <= first {
+            start = start.max(Some(after));
+        } else {
+            end = end.min(after);
+        }
+    }
+    Some(start?..end)
+}
+
+/// The first of the lines `line_metrics` (block-start and block-end edges
+/// relative to `effective_y`) that crosses the end of the page from
+/// `page_start` to `page_end` without starting the next page, if it is not the
+/// first thing on its page.
+fn straddling_line(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    page_start: f32,
+    page_end: f32,
+) -> Option<usize> {
+    let line = line_metrics
+        .iter()
+        .position(|&(_, bottom)| effective_y + bottom > page_end + 0.001)?;
+    let top = effective_y + line_metrics[line].0;
+    (top > page_start + 0.001 && top < page_end - 0.001).then_some(line)
+}
+
+/// Whether `node_id` lies in a block child of the paragraph `root` that comes
+/// after line `line`, so that moving the lines from `line` on moves it too.
+fn follows_line_of_paragraph(
+    document: &Document,
+    node_id: usize,
+    root: usize,
+    line: usize,
+) -> bool {
+    let block = std::iter::successors(Some(node_id), |&node| document.layout_parent_of(node))
+        .find(|&node| document.layout_parent_of(node) == Some(root));
+    document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref())
+        .zip(block)
+        .is_some_and(|(lines, block)| {
+            lines
+                .block_line_starts
+                .iter()
+                .any(|&(child, after)| child == block && after > line)
+        })
+}
+
 /// How a paragraph that crosses the page end is repaired so that its break
 /// honors `orphans` and `widows`.
 #[derive(Debug, PartialEq)]
@@ -5997,6 +6202,21 @@ impl ParagraphLineFit {
     /// has lines enough for both `orphans` and `widows`.
     fn has_room_for_both_constraints(&self) -> bool {
         self.starts_on_page && self.orphans + self.widows <= self.total_lines
+    }
+
+    /// Whether a block taller than a page gains from moving whole to the next
+    /// page: the break leaves fewer than `orphans` lines on this page, and
+    /// the first line, `first_line_bottom` below the top of the block, fits a
+    /// page of `page_step`. A line taller than the page gains nothing by
+    /// moving.
+    fn gains_from_moving_tall_block(&self, first_line_bottom: f32, page_step: f32) -> bool {
+        self.leaves_too_few_orphans() && block_fits_page_step(first_line_bottom, page_step)
+    }
+
+    /// Whether the break leaves fewer than `orphans` lines on the page, or
+    /// all the lines of a paragraph shorter than that do not fit it.
+    fn leaves_too_few_orphans(&self) -> bool {
+        self.lines_before_break < self.orphans.min(self.total_lines)
     }
 
     /// The line moves that split a paragraph able to move its lines down
@@ -6038,10 +6258,12 @@ impl ParagraphLineFit {
     }
 
     /// How to repair the break between the paragraph's lines on the page
-    /// `current_page`. Lines move down inside the paragraph when it has
-    /// lines enough for both constraints and `can_move_lines` allows it; else
-    /// the whole block moves when `can_move_block` and the break violates a
-    /// constraint; otherwise the natural break stays.
+    /// `current_page`. A block that can move whole moves whenever the break
+    /// leaves too few orphans, as lines moved down inside it would leave
+    /// its top on this page. Else lines move down inside the paragraph when
+    /// it has lines enough for both constraints and `can_move_lines` allows
+    /// it; else the whole block moves when `can_move_block` and the break
+    /// violates a constraint; otherwise the natural break stays.
     fn fix(
         &self,
         line_metrics: &[(f32, f32)],
@@ -6051,14 +6273,18 @@ impl ParagraphLineFit {
         can_move_block: bool,
         can_move_lines: impl FnOnce() -> bool,
     ) -> LineBreakFix {
-        let moves = if self.has_room_for_both_constraints() && can_move_lines() {
+        let move_block = can_move_block && self.starts_on_page && self.violates_line_constraints;
+        let moves = if !(move_block && self.leaves_too_few_orphans())
+            && self.has_room_for_both_constraints()
+            && can_move_lines()
+        {
             self.line_moves(line_metrics, effective_y, current_page, page_origins)
         } else {
             [None, None]
         };
         if moves.iter().any(Option::is_some) {
             LineBreakFix::MoveLines(moves)
-        } else if can_move_block && self.starts_on_page && self.violates_line_constraints {
+        } else if move_block {
             LineBreakFix::MoveBlock
         } else {
             LineBreakFix::Keep

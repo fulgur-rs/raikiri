@@ -118,3 +118,51 @@ fn a_floated_inline_in_another_writing_mode_is_a_block() {
         ],
     );
 }
+
+/// `depth` nested inline boxes that alternate between the writing modes of the
+/// golden spiral in `css/css-inline/dominant-baseline`, each holding an `X`
+/// and the next box. Box `i` has the id `s{i}`.
+fn spiral(depth: usize) -> String {
+    const MODES: [&str; 4] = [
+        "horizontal-tb",
+        "vertical-lr",
+        "horizontal-tb;direction:rtl",
+        "sideways-rl",
+    ];
+    let mut body = String::new();
+    for i in 0..depth {
+        body.push_str(&format!(
+            r#"<span id="s{i}" style="writing-mode:{}">X"#,
+            MODES[i % MODES.len()]
+        ));
+    }
+    body.push_str(&"</span>".repeat(depth));
+    format!(r#"<div id="line">{body}</div>"#)
+}
+
+#[test]
+fn nested_orthogonal_inline_boxes_match_chromium() {
+    check(
+        &spiral(4),
+        &[
+            ("s0", (8.0, 22.0, 30.0, 10.0)),
+            ("s1", (18.0, 8.0, 20.0, 22.0)),
+            ("s2", (18.0, 18.0, 20.0, 12.0)),
+            ("s3", (18.0, 18.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_deep_chain_of_orthogonal_inline_boxes_is_laid_out() {
+    // Twelve levels laid out the box inside it three times each, and a nested
+    // layout had to be redone for every one of those, so the work doubled with
+    // every level.
+    let boxes = border_boxes(&spiral(12));
+    for i in 0..12 {
+        assert!(
+            boxes.iter().any(|(id, _)| id == &format!("s{i}")),
+            "no fragment for #s{i}"
+        );
+    }
+}

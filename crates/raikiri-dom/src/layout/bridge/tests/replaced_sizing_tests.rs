@@ -2308,3 +2308,32 @@ fn a_grid_item_image_stretched_along_one_axis_takes_the_other_side_through_the_r
         assert_eq!(size(&doc, image), expected, "{css}");
     }
 }
+
+#[test]
+fn an_svg_flex_item_that_fills_the_room_states_no_width_of_its_own() {
+    for (container, css, expected) in [
+        // The viewBox is 2:1. The width the svg fills is no stated main size,
+        // so the maximum height the svg states bounds its width.
+        (
+            "display:flex;align-items:flex-start;height:200px;width:300px",
+            "max-height:50px",
+            (100.0, 50.0),
+        ),
+        (
+            "display:flex;height:200px;width:300px",
+            "max-height:50px",
+            (100.0, 50.0),
+        ),
+        (
+            "display:flex;align-items:flex-start;height:200px;width:300px",
+            "",
+            (300.0, 150.0),
+        ),
+    ] {
+        assert_eq!(
+            child_in_container(container, "svg", css).1,
+            expected,
+            "{container} | {css}"
+        );
+    }
+}

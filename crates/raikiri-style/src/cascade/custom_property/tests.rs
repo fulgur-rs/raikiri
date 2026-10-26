@@ -635,6 +635,14 @@ fn deferred_projection_covers_supported_shorthands() {
             vec![PropertyKey::AlignSelf, PropertyKey::JustifySelf],
         ),
         (
+            "background-position",
+            "right 10px top 20%, center",
+            vec![
+                PropertyKey::BackgroundPositionX,
+                PropertyKey::BackgroundPositionY,
+            ],
+        ),
+        (
             "background",
             "url(a.png) top / cover no-repeat fixed border-box red",
             vec![
@@ -642,7 +650,8 @@ fn deferred_projection_covers_supported_shorthands() {
                 PropertyKey::BackgroundImage,
                 PropertyKey::BackgroundRepeat,
                 PropertyKey::BackgroundAttachment,
-                PropertyKey::BackgroundPosition,
+                PropertyKey::BackgroundPositionX,
+                PropertyKey::BackgroundPositionY,
                 PropertyKey::BackgroundSize,
                 PropertyKey::BackgroundClip,
                 PropertyKey::BackgroundOrigin,

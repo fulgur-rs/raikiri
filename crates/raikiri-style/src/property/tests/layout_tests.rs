@@ -1330,17 +1330,182 @@ fn align_items_rejects_auto() {
     assert_eq!(parse("auto", "align-items"), None);
 }
 
+/// The value that `css` parses to for each of the four self-alignment
+/// properties, as the value of that property.
+fn self_alignments(css: &str) -> [Option<SelfAlignmentValue>; 4] {
+    let items = |value| match value {
+        Some(PropertyValue::AlignItems(value) | PropertyValue::JustifyItems(value)) => Some(value),
+        _ => None,
+    };
+    let own = |value| match value {
+        Some(
+            PropertyValue::AlignSelf(AlignSelfValue::Value(value))
+            | PropertyValue::JustifySelf(AlignSelfValue::Value(value)),
+        ) => Some(value),
+        _ => None,
+    };
+    [
+        items(parse_entire(css, "align-items")),
+        items(parse_entire(css, "justify-items")),
+        own(parse_entire(css, "align-self")),
+        own(parse_entire(css, "justify-self")),
+    ]
+}
+
 #[test]
-fn align_items_rejects_self_start_self_end() {
-    // Scope boundary: writing-mode-relative keywords are unsupported
-    // (see the `SelfAlignmentValue` doc).
+fn self_start_and_self_end_are_kept_apart_from_start_and_end() {
+    for (css, expected) in [
+        ("self-start", SelfAlignmentValue::SelfStart),
+        ("self-end", SelfAlignmentValue::SelfEnd),
+        ("start", SelfAlignmentValue::Start),
+        ("end", SelfAlignmentValue::End),
+        ("SELF-END", SelfAlignmentValue::SelfEnd),
+    ] {
+        assert_eq!(self_alignments(css), [Some(expected); 4], "{css}");
+    }
+}
+
+#[test]
+fn an_overflow_position_stays_with_the_position_it_qualifies() {
+    for position in [
+        SelfPosition::Center,
+        SelfPosition::Start,
+        SelfPosition::End,
+        SelfPosition::SelfStart,
+        SelfPosition::SelfEnd,
+        SelfPosition::FlexStart,
+        SelfPosition::FlexEnd,
+    ] {
+        let name = match position {
+            SelfPosition::Center => "center",
+            SelfPosition::Start => "start",
+            SelfPosition::End => "end",
+            SelfPosition::SelfStart => "self-start",
+            SelfPosition::SelfEnd => "self-end",
+            SelfPosition::FlexStart => "flex-start",
+            _ => "flex-end",
+        };
+        for (prefix, expected) in [
+            ("safe", SelfAlignmentValue::Safe(position)),
+            ("unsafe", SelfAlignmentValue::Unsafe(position)),
+            ("SAFE", SelfAlignmentValue::Safe(position)),
+            ("", position.alignment()),
+        ] {
+            let css = format!("{prefix} {name}");
+            assert_eq!(self_alignments(&css), [Some(expected); 4], "{css:?}");
+            assert_eq!(expected.position(), Some(position), "{css:?}");
+        }
+    }
+}
+
+#[test]
+fn anchor_center_is_a_value_of_align_self_and_justify_self_only() {
+    for css in ["anchor-center", "ANCHOR-Center"] {
+        assert_eq!(
+            self_alignments(css),
+            [
+                None,
+                None,
+                Some(SelfAlignmentValue::AnchorCenter),
+                Some(SelfAlignmentValue::AnchorCenter)
+            ],
+            "{css:?}"
+        );
+    }
+    assert_eq!(SelfAlignmentValue::AnchorCenter.position(), None);
     assert_eq!(
-        parse("self-start", "align-items"),
-        Some(PropertyValue::AlignItems(SelfAlignmentValue::Start))
+        parse_entire("anchor-center", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+        }))
     );
     assert_eq!(
-        parse("self-end", "align-items"),
-        Some(PropertyValue::AlignItems(SelfAlignmentValue::End))
+        parse_entire("center anchor-center", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Value(SelfAlignmentValue::Center),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::AnchorCenter),
+        }))
+    );
+    assert_eq!(parse_entire("anchor-center", "place-items"), None);
+    assert_eq!(parse_entire("center anchor-center", "place-items"), None);
+}
+
+#[test]
+fn anchor_center_is_not_a_self_position() {
+    // It takes no overflow position, and no second position follows it.
+    for css in [
+        "safe anchor-center",
+        "unsafe anchor-center",
+        "anchor-center safe",
+        "anchor-center center",
+        "anchor-center start",
+        "anchor-centre",
+    ] {
+        assert_eq!(self_alignments(css), [None; 4], "{css:?}");
+    }
+}
+
+#[test]
+fn an_overflow_position_qualifies_only_a_position() {
+    for css in [
+        "safe baseline",
+        "unsafe baseline",
+        "safe first baseline",
+        "safe last baseline",
+        "unsafe baseline last",
+        "safe normal",
+        "unsafe stretch",
+        "safe",
+        "unsafe",
+        "safe safe center",
+        "safe unsafe center",
+        "safe auto",
+        "safe center center",
+    ] {
+        assert_eq!(self_alignments(css), [None; 4], "{css:?}");
+    }
+    // `auto` takes none either.
+    assert_eq!(parse_entire("safe auto", "align-self"), None);
+    assert_eq!(parse_entire("safe auto", "justify-self"), None);
+}
+
+#[test]
+fn left_and_right_take_an_overflow_position_in_the_justify_axis() {
+    assert_eq!(
+        parse_entire("safe left", "justify-items"),
+        Some(PropertyValue::JustifyItems(SelfAlignmentValue::Safe(
+            SelfPosition::Start
+        )))
+    );
+    assert_eq!(
+        parse_entire("unsafe right", "justify-self"),
+        Some(PropertyValue::JustifySelf(AlignSelfValue::Value(
+            SelfAlignmentValue::Unsafe(SelfPosition::End)
+        )))
+    );
+}
+
+#[test]
+fn place_shorthands_keep_the_overflow_position_of_each_component() {
+    assert_eq!(
+        parse_entire("safe center unsafe self-end", "place-items"),
+        Some(PropertyValue::PlaceItems(PlaceItemsShorthand {
+            align: SelfAlignmentValue::Safe(SelfPosition::Center),
+            justify: SelfAlignmentValue::Unsafe(SelfPosition::SelfEnd),
+        }))
+    );
+    assert_eq!(
+        parse_entire("self-start safe end", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Value(SelfAlignmentValue::SelfStart),
+            justify: AlignSelfValue::Value(SelfAlignmentValue::Safe(SelfPosition::End)),
+        }))
+    );
+    assert_eq!(
+        parse_entire("safe baseline", "place-items"),
+        None,
+        "a baseline takes no overflow position"
     );
 }
 

@@ -571,16 +571,36 @@ fn apply_computed_to_style_in_session_inner(
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),
             );
         }
-        if let Some(inset) = settled::ignored_vertical_inset(doc, cascade, idx) {
-            doc.record_pass_override(
-                idx,
-                raikiri_layout_style::OwnedPropertyOverride::length(
-                    inset,
-                    ComputedLengthPercentageOrAuto::Auto,
-                    false,
-                )
-                .expect("physical inset"),
-            );
+        match settled::keyword_height_insets(doc, cascade, idx) {
+            Some(settled::KeywordHeightInsets::Ignore(inset)) => {
+                doc.record_pass_override(
+                    idx,
+                    raikiri_layout_style::OwnedPropertyOverride::length(
+                        inset,
+                        ComputedLengthPercentageOrAuto::Auto,
+                        false,
+                    )
+                    .expect("physical inset"),
+                );
+            }
+            Some(settled::KeywordHeightInsets::FitContent { justify }) => {
+                let (alignment, replace) = if justify {
+                    (
+                        &mut settled_styles[idx].justify_self,
+                        raikiri_layout_style::OwnedPropertyOverride::justify_self as fn(_) -> _,
+                    )
+                } else {
+                    (
+                        &mut settled_styles[idx].align_self,
+                        raikiri_layout_style::OwnedPropertyOverride::align_self as fn(_) -> _,
+                    )
+                };
+                if settled::stretches_between_insets(*alignment) {
+                    *alignment = Some(AlignItems::START);
+                    doc.record_pass_override(idx, replace(*alignment));
+                }
+            }
+            None => {}
         }
         if let Some(placeholder) = settled::opposed_baseline_alignment(doc, cascade, idx) {
             settled_styles[idx].align_self = Some(placeholder);
@@ -1186,19 +1206,7 @@ fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<AlignItems> {
 fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<AlignItems> {
     match v {
         SelfAlignmentValue::Normal => None,
-        SelfAlignmentValue::Stretch => Some(AlignItems::STRETCH),
-        SelfAlignmentValue::Center => Some(AlignItems::CENTER),
-        SelfAlignmentValue::Start => Some(AlignItems::START),
-        SelfAlignmentValue::End => Some(AlignItems::END),
-        SelfAlignmentValue::FlexStart => Some(AlignItems::FLEX_START),
-        SelfAlignmentValue::FlexEnd => Some(AlignItems::FLEX_END),
-        SelfAlignmentValue::Baseline | SelfAlignmentValue::LastBaseline => {
-            Some(AlignItems::BASELINE)
-        }
-        // cov:ignore: unreachable while SelfAlignmentValue is the 9
-        // variants matched above only; required for its #[non_exhaustive]
-        // contract.
-        _ => None,
+        v => Some(raikiri_layout_style::align_items_of(v)),
     }
 }
 

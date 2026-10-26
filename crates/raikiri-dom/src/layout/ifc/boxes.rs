@@ -168,6 +168,7 @@ pub(crate) fn layout_with_boxes_in(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
+            block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
@@ -373,6 +374,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
+            block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(),
             fragment_box_placements: Vec::new(),
             fragmentainer_line_ranges: Some(Vec::new()),
@@ -551,6 +553,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         escaping_margin,
         leading_block_margin: None,
         block_line_starts,
+        block_ends: Vec::new(),
         shifts,
         fragment_box_placements,
         fragmentainer_line_ranges: Some(fragmentainer_line_ranges),
@@ -764,6 +767,7 @@ fn run_boxes_segment(
     let mut leading_block_margin = None;
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
+    let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
     let mut continuation = None;
@@ -1140,6 +1144,7 @@ fn run_boxes_segment(
                     ctx.commit_strut();
                 }
                 (y, pending) = (block.next_y, block.pending);
+                block_ends.push((node.0 as usize, lines.len(), y + pending.resolve()));
                 // A forced page break after the block starts the lines after
                 // it on a new page, which the floats before the break do not
                 // reach: the lines get clearance past them, as a block after
@@ -1239,6 +1244,7 @@ fn run_boxes_segment(
             escaping_margin,
             leading_block_margin,
             block_line_starts,
+            block_ends,
             shifts: super::root::LineShifts::default(),
             fragment_box_placements,
             fragmentainer_line_ranges: None,
@@ -1642,12 +1648,17 @@ fn measure_float(
         (margin.left + margin.right, margin.top + margin.bottom)
     };
     let available = (geometry.width - inline_margin).max(0.0);
+    let known_width = if vertical {
+        None
+    } else {
+        keyword_width(tree, node, &geometry, available)
+    };
     let output = perform_box_layout(
         tree,
         node,
         geometry.width,
         geometry.definite_height,
-        None,
+        known_width,
         Size {
             width: AvailableSpace::Definite(available),
             height: AvailableSpace::MaxContent,
@@ -1747,6 +1758,13 @@ pub(crate) fn measure_atomics(
                         )
                     },
                 )
+            })
+            .or_else(|| {
+                if vertical {
+                    None
+                } else {
+                    keyword_width(tree, node, &geometry, available)
+                }
             });
         // The room along the line is the room along the paragraph's inline
         // axis, the physical height of a vertical one.
@@ -1850,6 +1868,17 @@ fn translated_child_oof_candidates(output: &LayoutOutput, location: Point<f32>) 
     candidates
 }
 
+/// How low the floats reach before the float that starts a page, when `node`
+/// is the box after that float, in the coordinates of `ctx`.
+fn page_start_float_floor(
+    tree: &LayoutSession<'_>,
+    ctx: &BlockContext<'_>,
+    node: usize,
+) -> Option<f32> {
+    tree.forced_break_float_floor.binary_search(&node).ok()?;
+    ctx.page_start_float_floor()
+}
+
 /// Lay a block child out below the offset `y`, as wide as the content box
 /// less its side margins, the way the parent's block algorithm lays out an
 /// in-flow block (CSS 2.1 8.3.1): its top margin, with the margins of its
@@ -1926,9 +1955,15 @@ fn layout_block_child(
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
     let clear = tree.physical_style(node).clear();
+    // The box after the float that starts a page is held below the floats
+    // before that float as well.
+    let floor = page_start_float_floor(tree, ctx, node);
     let clear_y = ctx
         .cleared_threshold(clear)
-        .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
+        .into_iter()
+        .chain(floor)
+        .map(|threshold| threshold - geometry.top_edge)
+        .fold(f32::NEG_INFINITY, f32::max);
     let origin_resolved = ctx.origin_resolved();
     let mut guess = if origin_resolved && collapse_top {
         y.max(clear_y)
@@ -1994,7 +2029,7 @@ fn layout_block_child(
         } else {
             y + pending.collapse_with_set(top_set).resolve()
         };
-        let has_clearance = clear != Clear::None
+        let has_clearance = (clear != Clear::None || floor.is_some())
             && ((collapse_top && ctx.has_adjoining_float(clear)) || hypothetical < clear_y);
         let (top, after) = if has_clearance {
             {
@@ -2107,7 +2142,8 @@ fn layout_vertical_block_child(
     };
     let own_inline_size = used_block_height(tree, node, inline_basis)
         .map(OwnWidth::Fixed)
-        .or_else(|| content_keyword_width(tree, node, false, parent_size));
+        .or_else(|| content_keyword_width(tree, node, false, parent_size))
+        .or_else(|| orthogonal_content_height(tree, node, width, parent_size));
     let shares_context = in_the_roots_formatting_context(tree, node)
         && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
         && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
@@ -2474,15 +2510,25 @@ fn layout_formatting_context_child(
         geometry.top_edge + y + top_margin.resolve()
     };
     let adjoining_float = collapse_top && ctx.has_adjoining_float(Clear::Both);
-    let forced_clearance = collapse_top && ctx.has_adjoining_float(clear);
+    // The box after the float that starts a page is held below the floats
+    // before that float as well.
+    let floor = page_start_float_floor(tree, ctx, node);
+    let forced_clearance = collapse_top
+        && (ctx.has_adjoining_float(clear)
+            || floor.is_some_and(|floor| floor > hypothetical + 0.001));
     let min_y = if forced_clearance {
-        ctx.cleared_threshold(clear).unwrap_or(hypothetical)
+        ctx.cleared_threshold(clear)
+            .into_iter()
+            .chain(floor)
+            .reduce(f32::max)
+            .unwrap_or(hypothetical)
     } else if adjoining_float {
         // An adjoining float moves with the escaping margin strut.
         geometry.top_edge + y
     } else {
         hypothetical
     };
+    let min_y = floor.map_or(min_y, |floor| min_y.max(floor));
     // `(stretch width, border-box position, whether floats narrowed it)`.
 
     let own = own_inline_width(tree, node, &geometry);
@@ -2647,6 +2693,79 @@ fn parent_size_of(geometry: &FlowGeometry) -> Size<Option<f32>> {
         width: Some(geometry.width),
         height: geometry.definite_height,
     }
+}
+
+/// The border-box height of the horizontal block child `node` of a vertical
+/// root, when its height is not a length: the extent of its content at the
+/// `width` it is laid out at. The child is an orthogonal flow, so its height
+/// is its block size, not the inline size of the root that a child of the
+/// root's own writing mode fills (CSS Writing Modes 4 §7.3). `None` for a
+/// child that flows vertically.
+fn orthogonal_content_height(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    width: Option<f32>,
+    parent_size: Size<Option<f32>>,
+) -> Option<OwnWidth> {
+    if crate::layout::dispatch::used_writing_mode(tree, node).is_vertical() {
+        return None;
+    }
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width,
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: width.is_some(),
+            height: false,
+        },
+        parent_size,
+        available_space: Size {
+            width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let output = tree.compute_child_layout_with_block_ctx(NodeId::from(node), inputs, None);
+    Some(OwnWidth::Fixed(output.size.height))
+}
+
+/// The border-box width of the float or atomic inline `node`, a paragraph root
+/// or a flex or grid container in a horizontal paragraph, when its `width` is
+/// `min-content` or `max-content`: the size the keyword measures, within the
+/// `min-width` and `max-width` of the box. `None` for any other `width`, which
+/// the box takes from the `available` room by shrinking to fit it (CSS 2.1
+/// §10.3.5).
+///
+/// Such a box reads its `width` as `auto`, so the width is measured here and
+/// handed to it as a known size.
+fn keyword_width(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    geometry: &FlowGeometry,
+    available: f32,
+) -> Option<f32> {
+    let root = &tree.nodes[node];
+    if !(root.is_ifc_root() || root.display().is_flex_or_grid_container()) {
+        return None;
+    }
+    let width = tree.physical_style(node).size().width.expand();
+    if !matches!(
+        width,
+        ExpandedDimension::MinContent | ExpandedDimension::MaxContent
+    ) {
+        return None;
+    }
+    let own = content_keyword_width(tree, node, true, parent_size_of(geometry))?;
+    Some(clamp_block_width(
+        tree,
+        node,
+        geometry.width,
+        own.at(available),
+    ))
 }
 
 /// The border-box width a block child's own size gives along one axis, before
@@ -3127,6 +3246,13 @@ pub(crate) fn commit_float(
     adjoins_top_margin: bool,
 ) -> (f32, OofCandidates) {
     let mut oof_candidates = OofCandidates::new();
+    if tree
+        .forced_break_clearance
+        .binary_search(&float.node)
+        .is_ok()
+    {
+        ctx.record_page_start_float_floor(float.clear);
+    }
     // The context measures block offsets from the border-box top.
     let position = ctx.place_floated_box(
         float.margin_box,
@@ -3242,6 +3368,177 @@ pub(crate) fn commit_child_layout_with_edges(
     tree.set_unrounded_layout(NodeId::from(node), &layout);
 }
 
+/// Whether `line` holds text or an atomic inline ahead of the anchor at
+/// `position` along it. The fragments come in visual order and are compared by
+/// their inline position, as Chromium decides it for text that bidi reorders:
+/// a block-level box that comes after reversed text in the source but lies
+/// before it on the line starts the line.
+fn content_precedes_anchor(line: &shodo::Line, position: f32) -> bool {
+    // Positions are snapped to 1/64 px by the line engine.
+    const SLACK: f32 = 1.0 / 32.0;
+    line.fragments().any(|fragment| match fragment {
+        shodo::Fragment::GlyphRun(run) => {
+            run.inline_size() > 0.0 && run.inline_start() + run.inline_size() <= position + SLACK
+        }
+        shodo::Fragment::Atomic(atomic) => {
+            atomic.margin_rect.inline_start + atomic.margin_rect.inline_size <= position + SLACK
+        }
+        _ => false,
+    })
+}
+
+/// Whether an anchor at `position` along `line` lies at an odd embedding level,
+/// where text reads right to left.
+///
+/// The level of an anchor is not reported. A neutral takes the direction of
+/// the text on both of its sides when they agree and that of the paragraph
+/// otherwise (UAX 9, N1 and N2), so the runs next to the anchor tell it: when
+/// the levels of the runs on both sides have one parity, the anchor has it
+/// too. The paragraph direction decides when the anchor has a run on one side
+/// only, or two runs of different parity at its sides.
+fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) -> bool {
+    // Positions are snapped to 1/64 px by the line engine.
+    const SLACK: f32 = 1.0 / 32.0;
+    // The nearest run on each side, with its distance from the anchor.
+    let mut before: Option<(f32, u8)> = None;
+    let mut after: Option<(f32, u8)> = None;
+    let runs = line.fragments().filter_map(|fragment| match fragment {
+        shodo::Fragment::GlyphRun(run) if run.inline_size() > 0.0 => Some(run),
+        _ => None,
+    });
+    for run in runs {
+        let end = run.inline_start() + run.inline_size();
+        let (side, gap) = if end <= position + SLACK {
+            (&mut before, position - end)
+        } else {
+            (&mut after, run.inline_start() - position)
+        };
+        if side.is_none_or(|(nearest, _)| gap < nearest) {
+            *side = Some((gap, run.bidi_level()));
+        }
+    }
+    match (before, after) {
+        (Some((_, before)), Some((_, after))) if before % 2 == after % 2 => before % 2 == 1,
+        _ => paragraph_rtl,
+    }
+}
+
+/// Where the static position of the out-of-flow box `node` lies along the
+/// block axis of the paragraph, from the content box's block-start edge.
+///
+/// A box that was inline-level starts at the top of the line of its anchor. A
+/// block-level one sits where an in-flow block would be there: below the line
+/// when text or an atomic inline comes before it on the line, and at the top
+/// of the line otherwise (CSS 2.1 10.6.4). One without an anchor has no line
+/// of its own: it follows the block child before it, or starts the paragraph
+/// when nothing comes before it, or else, for the lines and blocks that
+/// `::before` generates, follows all the content. `boxes` are the paragraph's
+/// boxes in document order.
+fn static_block_offset(
+    lines: &IfcLines,
+    boxes: &[(usize, IfcBoxKind)],
+    node: usize,
+    anchor: Option<(usize, f32)>,
+    inline_level: bool,
+) -> f32 {
+    if let Some((index, position)) = anchor {
+        let top = lines.line_top(index);
+        let line = &lines.lines[index];
+        return if inline_level || !content_precedes_anchor(line, position) {
+            top
+        } else {
+            top + line.block_size()
+        };
+    }
+    let mut block_before = None;
+    for &(id, kind) in boxes {
+        if id == node {
+            break;
+        }
+        if kind == IfcBoxKind::Block {
+            block_before = Some(id);
+        }
+    }
+    match block_before {
+        // A fragmenting layout records no block ends: take the end of the
+        // content.
+        Some(block) => lines
+            .block_ends
+            .iter()
+            .find(|&&(id, ..)| id == block)
+            .map_or(lines.height, |&(_, next_line, end)| {
+                end + lines.shift_of(next_line)
+            }),
+        // Nothing comes before the box, but for lines and blocks generated by
+        // `::before`, which are not among the boxes.
+        None if lines.lines.is_empty() && lines.placed_blocks.is_empty() => 0.0,
+        None => lines.height,
+    }
+}
+
+/// The static position of an out-of-flow box in a paragraph of a vertical
+/// writing mode, on physical axes. Its block-start edge lies `block_offset`
+/// from the block-start edge of the content box, which is the right edge in
+/// `vertical-rl` and the left edge in `vertical-lr`.
+///
+/// A box that was inline-level lies at its anchor, `anchor.0` from the
+/// inline-start edge of the content box, and extends the way the text around
+/// it reads: downwards for left-to-right text and upwards for right-to-left
+/// text (`anchor.1`), but the other way round in `sideways-lr`, which lays
+/// the lines out upwards. Any other box starts on the inline-start edge of the
+/// content box. The inline direction is reversed, so that its start is the
+/// bottom edge, by `direction: rtl` or by `sideways-lr`.
+fn vertical_static_position(
+    writing_mode: WritingMode,
+    rtl: bool,
+    anchor: Option<(f32, bool)>,
+    block_offset: f32,
+    (content_left, content_top): (f32, f32),
+    (content_right, inline_extent): (f32, f32),
+) -> Point<AxisStaticPosition> {
+    let x = if matches!(
+        writing_mode,
+        WritingMode::VerticalRl | WritingMode::SidewaysRl
+    ) {
+        AxisStaticPosition::from_edge(content_right - block_offset, AxisStaticEdge::End)
+    } else {
+        AxisStaticPosition::from_edge(content_left + block_offset, AxisStaticEdge::Start)
+    };
+    let reversed = rtl != (writing_mode == WritingMode::SidewaysLr);
+    let y = match anchor {
+        Some((offset, odd_level)) => {
+            let at = if reversed {
+                content_top + inline_extent - offset
+            } else {
+                content_top + offset
+            };
+            let reads_upwards = odd_level != (writing_mode == WritingMode::SidewaysLr);
+            AxisStaticPosition::from_edge(
+                at,
+                if reads_upwards {
+                    AxisStaticEdge::End
+                } else {
+                    AxisStaticEdge::Start
+                },
+            )
+        }
+        None if reversed => {
+            AxisStaticPosition::from_edge(content_top + inline_extent, AxisStaticEdge::End)
+        }
+        None => AxisStaticPosition::from_edge(content_top, AxisStaticEdge::Start),
+    };
+    Point { x, y }
+}
+
+/// The start of a box of `size` along an axis whose static position is `axis`,
+/// with its margins inside the position.
+fn start_of(axis: AxisStaticPosition, size: f32, margin_start: f32, margin_end: f32) -> f32 {
+    match axis.align.keyword {
+        AxisStaticEdge::End => axis.area.end - margin_end - size,
+        _ => axis.area.start + margin_start,
+    }
+}
+
 /// A padding box in the coordinates of the root's border box.
 #[derive(Clone, Copy)]
 struct PaddingBox {
@@ -3256,9 +3553,10 @@ struct PaddingBox {
 /// way taffy's block algorithm places the positioned children of a block
 /// (CSS 2.1 10.3.7, 10.6.4): against the root's padding box, an `auto` inset
 /// pair taking the static position. That position is where the box's anchor
-/// sits in the lines: at the anchor for a box that was inline-level, below
-/// the anchor's line for one that was block-level (as if it were a block
-/// there), and below the last line when it has no anchor.
+/// sits in the lines: at the anchor for a box that was inline-level, and for
+/// one that was block-level where a block would be there (see
+/// [`static_block_offset`]). The axes of a vertical root are laid on the
+/// physical ones by [`vertical_static_position`].
 ///
 /// An absolutely positioned box inside a positioned inline element is placed
 /// against that element instead: the bounding box of the padding boxes of its
@@ -3315,6 +3613,10 @@ pub(crate) fn place_out_of_flow(
     }
     let content_left = border.left + padding.left;
     let content_top = border.top + padding.top;
+    let content_right = border_box.width - border.right - padding.right;
+    // The kinds of the boxes in document order, for the boxes without an
+    // anchor.
+    let mut box_order: Option<Vec<(usize, IfcBoxKind)>> = None;
     let owner = tree.ifc_source_owner(idx);
     // The pieces of the inline elements on the lines, made when a box needs
     // them.
@@ -3364,22 +3666,59 @@ pub(crate) fn place_out_of_flow(
             })
         });
         let inline_level = tree.nodes[node].display().is_inline_level();
-        let (static_x, static_y) = match anchor {
-            Some((index, position)) => {
-                let line = &lines.lines[index];
-                let top = content_top + lines.line_top(index);
-                if inline_level {
-                    let x = if rtl {
-                        lines.width - position
+        // The box's static position along the root's block axis, from the
+        // content box's block-start edge.
+        if anchor.is_none() && box_order.is_none() {
+            box_order = tree.nodes[idx]
+                .ifc
+                .as_ref()
+                .map(|root| root.boxes.iter().map(|b| (b.node, b.kind)).collect());
+        }
+        let block_offset = static_block_offset(
+            &lines,
+            box_order.as_deref().unwrap_or_default(),
+            node,
+            anchor,
+            inline_level,
+        );
+        // A box that was inline-level extends from its anchor the way the
+        // text there reads.
+        let inline_anchor = anchor.filter(|_| inline_level).map(|(index, position)| {
+            (
+                position,
+                anchor_has_odd_level(&lines.lines[index], position, rtl),
+            )
+        });
+        let static_spot = if vertical_root {
+            vertical_static_position(
+                writing_mode,
+                rtl,
+                inline_anchor,
+                block_offset,
+                (content_left, content_top),
+                (content_right, lines.width),
+            )
+        } else {
+            let x = match inline_anchor {
+                Some((position, odd_level)) => AxisStaticPosition::from_edge(
+                    content_left
+                        + if rtl {
+                            lines.width - position
+                        } else {
+                            position
+                        },
+                    if odd_level {
+                        AxisStaticEdge::End
                     } else {
-                        position
-                    };
-                    (content_left + x, top)
-                } else {
-                    (content_left, top + line.block_size())
-                }
+                        AxisStaticEdge::Start
+                    },
+                ),
+                None => AxisStaticPosition::from_edge(content_left, AxisStaticEdge::Start),
+            };
+            Point {
+                x,
+                y: AxisStaticPosition::from_edge(content_top + block_offset, AxisStaticEdge::Start),
             }
-            None => (content_left, content_top + lines.height),
         };
         let Some(cb) = inline_cb else {
             let position = if tree.nodes[node].position() == &PositionValue::Fixed {
@@ -3387,15 +3726,48 @@ pub(crate) fn place_out_of_flow(
             } else {
                 OofPosition::Absolute
             };
-            // A box that was block-level sits below the line of its anchor
+            // A box that was block-level sits where a block would be there
             // and is aligned in the static-position rectangle of the content
-            // box like the children of a block without lines. Boxes that were
-            // inline-level, and those of a vertical root, keep to the start
-            // corner.
-            let static_position = if inline_level || vertical_root {
+            // box like the children of a block without lines. A box that was
+            // inline-level keeps to the point of its anchor.
+            let static_position = if inline_level {
+                static_spot
+            } else if vertical_root {
+                let rl = matches!(
+                    writing_mode,
+                    WritingMode::VerticalRl | WritingMode::SidewaysRl
+                );
+                // The box is aligned by `justify-self` along the inline axis
+                // and by `align-self` along the block axis, as in a
+                // horizontal root, and the block axis is then laid on the
+                // physical x axis.
+                let aligned = crate::layout::dispatch::block_flow::aligned_static_position(
+                    container_style.get_or_insert_with(|| {
+                        crate::layout::dispatch::block_flow::style_input::physical(tree, idx)
+                    }),
+                    &crate::layout::dispatch::block_flow::style_input::physical(tree, node),
+                    if rtl != (writing_mode == WritingMode::SidewaysLr) {
+                        values::Direction::Rtl
+                    } else {
+                        values::Direction::Ltr
+                    },
+                    Line {
+                        start: content_top,
+                        end: content_top + lines.width,
+                    },
+                    if rl {
+                        block_offset
+                    } else {
+                        content_left + block_offset
+                    },
+                );
                 Point {
-                    x: AxisStaticPosition::from_edge(static_x, AxisStaticEdge::Start),
-                    y: AxisStaticPosition::from_edge(static_y, AxisStaticEdge::Start),
+                    x: if rl {
+                        crate::layout::dispatch::reverse_static_position(aligned.y, content_right)
+                    } else {
+                        aligned.y
+                    },
+                    y: aligned.x,
                 }
             } else {
                 crate::layout::dispatch::block_flow::aligned_static_position(
@@ -3412,7 +3784,7 @@ pub(crate) fn place_out_of_flow(
                         start: content_left,
                         end: content_left + lines.width,
                     },
-                    static_y,
+                    content_top + block_offset,
                 )
             };
             candidates.push(OofCandidate {
@@ -3494,7 +3866,7 @@ pub(crate) fn place_out_of_flow(
             }
             (Some(left), _) => cb.x + left + margin.left,
             (None, Some(right)) => cb.x + cb.width - right - output.size.width - margin.right,
-            (None, None) => static_x + margin.left,
+            (None, None) => start_of(static_spot.x, output.size.width, margin.left, margin.right),
         };
         let y = match (top, bottom) {
             (Some(top), Some(bottom)) if auto_vertical_margins => {
@@ -3509,7 +3881,7 @@ pub(crate) fn place_out_of_flow(
             }
             (Some(top), _) => cb.y + top + margin.top,
             (None, Some(bottom)) => cb.y + cb.height - bottom - output.size.height - margin.bottom,
-            (None, None) => static_y + margin.top,
+            (None, None) => start_of(static_spot.y, output.size.height, margin.top, margin.bottom),
         };
         commit_child_layout(tree, node, &output, Point { x, y }, cb.width);
     }
@@ -3630,6 +4002,7 @@ pub(crate) fn intrinsics_of_boxes(
                     basis,
                     percent_height,
                     margin.left + margin.right,
+                    false,
                 );
                 let style = tree.physical_style(b.node);
                 let side = match FloatDirection::from_float(style.float()) {
@@ -3656,6 +4029,10 @@ pub(crate) fn intrinsics_of_boxes(
             IfcBoxKind::OutOfFlow => {}
             IfcBoxKind::Block => {
                 let margin = resolved_margins(tree, b.node, basis);
+                // Only a block in the root's formatting context has margins
+                // that collapse with its content's; the others are laid out
+                // as formatting-context roots.
+                let margins_collapse = in_the_roots_formatting_context(tree, b.node);
                 let (min_content, max_content) = if vertical {
                     content_heights(
                         tree,
@@ -3663,6 +4040,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         physical_width,
                         margin.top + margin.bottom,
+                        margins_collapse,
                     )
                 } else {
                     content_widths(
@@ -3671,6 +4049,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         percent_height,
                         margin.left + margin.right,
+                        margins_collapse,
                     )
                 };
                 intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
@@ -3685,6 +4064,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         physical_width,
                         margin.top + margin.bottom,
+                        false,
                     )
                 } else {
                     content_widths(
@@ -3693,6 +4073,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         percent_height,
                         margin.left + margin.right,
+                        false,
                     )
                 };
                 intrinsics.engine.insert_atomic(
@@ -3709,13 +4090,17 @@ pub(crate) fn intrinsics_of_boxes(
 }
 
 /// Min- and max-content margin-box width of `node`, measured without changing
-/// its layout.
+/// its layout. `margins_collapse` is whether the box's own vertical margins
+/// may collapse with its content's, as they do for a block in the root's
+/// formatting context; floats, atomic inlines and the other blocks establish a
+/// formatting context of their own and do not.
 fn content_widths(
     tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
     percent_height: Option<f32>,
     margins_x: f32,
+    margins_collapse: bool,
 ) -> (f32, f32) {
     let parent_size = Size {
         width: Some(basis),
@@ -3727,6 +4112,7 @@ fn content_widths(
         parent_size,
         margins_x,
         RequestedAxis::Horizontal,
+        margins_collapse,
     )
 }
 
@@ -3736,22 +4122,36 @@ fn content_heights(
     basis: f32,
     physical_width: Option<f32>,
     margins_y: f32,
+    margins_collapse: bool,
 ) -> (f32, f32) {
     let parent_size = Size {
         width: physical_width,
         height: Some(basis),
     };
-    content_sizes_on_axis(tree, node, parent_size, margins_y, RequestedAxis::Vertical)
+    content_sizes_on_axis(
+        tree,
+        node,
+        parent_size,
+        margins_y,
+        RequestedAxis::Vertical,
+        margins_collapse,
+    )
 }
 
 /// Min- and max-content extents of `node` along `axis`, against the
 /// `parent_size` its percentages resolve against.
+///
+/// The box is measured with the margin-collapsing mode its layout runs in:
+/// Taffy keeps the entries of one mode per node and drops them all when a
+/// result of another mode is stored, so a measurement in a mode the layout
+/// does not use empties the cache of a box on every probe.
 fn content_sizes_on_axis(
     tree: &mut LayoutSession<'_>,
     node: usize,
     parent_size: Size<Option<f32>>,
     margins: f32,
     axis: RequestedAxis,
+    margins_collapse: bool,
 ) -> (f32, f32) {
     let vertical = axis == RequestedAxis::Vertical;
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
@@ -3778,7 +4178,10 @@ fn content_sizes_on_axis(
                         height: AvailableSpace::MaxContent,
                     }
                 },
-                vertical_margins_are_collapsible: Line::TRUE,
+                vertical_margins_are_collapsible: Line {
+                    start: margins_collapse,
+                    end: margins_collapse,
+                },
             },
         );
         if vertical {

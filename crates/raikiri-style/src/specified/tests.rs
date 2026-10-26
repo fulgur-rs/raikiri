@@ -444,6 +444,16 @@ fn parent_fixture() -> ComputedValues {
                 ),
             },
         }]),
+        // A list that does not have one item per layer; non-inherited too.
+        background_lists: Some(Arc::new(crate::computed::ComputedBackgroundLists {
+            repeat: Some(Arc::from(
+                [BackgroundRepeat {
+                    x: crate::property::BackgroundRepeatKeyword::Round,
+                    y: crate::property::BackgroundRepeatKeyword::Space,
+                }; 2],
+            )),
+            ..Default::default()
+        })),
         // CSS Backgrounds 3 §6: non-inherited; use a non-initial value.
         border_image: {
             let mut image = crate::computed::ComputedBorderImage::initial();
@@ -891,7 +901,8 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     assert_eq!(child.background_clip, initial.background_clip);
     assert_eq!(child.background_origin, initial.background_origin);
     assert_eq!(child.background_size, initial.background_size);
-    assert_eq!(child.background_position, initial.background_position);
+    assert_eq!(child.background_position_x, initial.background_position_x);
+    assert_eq!(child.background_position_y, initial.background_position_y);
     assert_eq!(child.background_image, initial.background_image);
     assert_eq!(child.border_image_source, initial.border_image_source);
     // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited.

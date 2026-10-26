@@ -680,6 +680,101 @@ fn positioned_boxes_in_clipping_blocks_keep_the_clip() {
     assert_eq!(steps[step_at(&result, Step::Box(b)) - 1], Step::PushClip);
 }
 
+/// A flex or grid container that clips forms no stacking context, so its
+/// items with a stack level paint in the enclosing one: above a later box of
+/// level zero, still inside the container's clip.
+#[test]
+fn z_indexed_items_in_clipping_flex_and_grid_containers_keep_the_clip() {
+    for display in ["flex", "grid"] {
+        for item in ["position: relative; z-index: 1", "z-index: 1"] {
+            let result = same_order(&format!(
+                "<div style=\"display: {display}; overflow: hidden\">\
+                 <div id=p style=\"{item}; width: 30px; height: 20px; background: hotpink\"></div></div>\
+                 <div id=g style=\"position: relative; z-index: 0; height: 20px; \
+                 margin-top: -20px; background: gold\"></div>"
+            ));
+            let [p, g] = ["p", "g"].map(|id| by_id(&result, id));
+            let context = format!("{display} {item}");
+            assert!(
+                step_at(&result, Step::Box(g)) < step_at(&result, Step::Box(p)),
+                "{context}"
+            );
+            let page = result.pages().next().expect("a page");
+            let steps = walker_steps(&page);
+            assert_eq!(
+                steps[step_at(&result, Step::Box(p)) - 1],
+                Step::PushClip,
+                "{context}"
+            );
+        }
+    }
+}
+
+/// A clipping flex container inside another flex container hands its items on
+/// to the enclosing stacking context too, unless it is a stacking context
+/// itself.
+#[test]
+fn clipping_flex_containers_in_flex_containers_hand_their_items_on() {
+    let item = "width: 30px; height: 20px; background: hotpink";
+    let result = same_order(&format!(
+        "<div style=\"display: flex\"><div style=\"display: flex; overflow: hidden\">\
+         <div id=p style=\"z-index: 1; {item}\"></div></div></div>\
+         <div id=g style=\"position: relative; z-index: 0; height: 20px; \
+         margin-top: -20px; background: gold\"></div>"
+    ));
+    let [p, g] = ["p", "g"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(g)) < step_at(&result, Step::Box(p)));
+    // With an integer `z-index` the container is a stacking context, which
+    // keeps the item at its own level, below the later item of level two.
+    let result = same_order(&format!(
+        "<div style=\"display: flex\"><div style=\"display: flex; overflow: hidden; z-index: 1\">\
+         <div id=p style=\"z-index: 5; {item}\"></div></div>\
+         <div id=r style=\"z-index: 2; margin-left: -30px; {item}\"></div></div>"
+    ));
+    let [p, r] = ["p", "r"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(p)) < step_at(&result, Step::Box(r)));
+}
+
+/// A clipping flex or grid container that forms a stacking context keeps its
+/// items in it, below a later box of a higher level.
+#[test]
+fn clipping_flex_and_grid_stacking_contexts_keep_their_items() {
+    for display in ["flex", "grid"] {
+        for context in ["opacity: 0.5", "transform: translateX(5px)"] {
+            let result = same_order(&format!(
+                "<div style=\"display: {display}; overflow: hidden; {context}\">\
+                 <div id=p style=\"z-index: 5; width: 30px; height: 20px; background: hotpink\"></div></div>\
+                 <div id=r style=\"position: relative; z-index: 2; height: 20px; \
+                 margin-top: -20px; background: gold\"></div>"
+            ));
+            let [p, r] = ["p", "r"].map(|id| by_id(&result, id));
+            assert!(
+                step_at(&result, Step::Box(p)) < step_at(&result, Step::Box(r)),
+                "{display} {context}"
+            );
+        }
+    }
+}
+
+/// A positioned box with `z-index: auto` forms no stacking context, so the
+/// items of a clipping flex container inside it sort by stack level with the
+/// boxes before and after it.
+#[test]
+fn z_indexed_items_in_clipping_flex_containers_interleave_by_stack_level() {
+    let result = same_order(
+        "<div><div id=x style=\"position: relative; z-index: 20; height: 5px; background: teal\"></div></div>\
+         <div style=\"position: relative\"><div style=\"display: flex; overflow: hidden\">\
+         <div id=z style=\"z-index: 15; width: 30px; height: 5px; background: lime\"></div></div></div>\
+         <div><div id=y style=\"position: relative; z-index: 10; height: 5px; background: purple\"></div></div>",
+    );
+    let [x, z, y] = ["x", "z", "y"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(y)) < step_at(&result, Step::Box(z)));
+    assert!(step_at(&result, Step::Box(z)) < step_at(&result, Step::Box(x)));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    assert_eq!(steps[step_at(&result, Step::Box(z)) - 1], Step::PushClip);
+}
+
 /// A float paints its own content, but the positioned boxes inside it
 /// belong to the enclosing layer and paint after its text.
 #[test]

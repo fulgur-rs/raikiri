@@ -174,6 +174,11 @@ pub(crate) struct IfcLines {
     /// Each block child of the root with the index of the first line after
     /// it.
     pub(crate) block_line_starts: Vec<(usize, usize)>,
+    /// Each block child of the root with the index of the first line after it
+    /// and the block offset, from the content-box block-start edge, where the
+    /// content after it starts: below its border box and the margins that
+    /// follow it. A fragmenting layout records none.
+    pub(crate) block_ends: Vec<(usize, usize, f32)>,
     /// Block offsets added to the lines by pagination: `(first line, delta)`
     /// moves that line and every later one down by `delta`, when a box of the
     /// paragraph was moved to a later page.

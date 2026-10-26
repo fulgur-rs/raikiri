@@ -2365,18 +2365,18 @@ fn parse_text_shadow_item_with_mode(
 ///
 /// `none` means an empty list (a top-level alternative), as in [`parse_content_with_alt`](super::content::parse_content_with_alt) and
 /// [`parse_counter_property`](super::content::parse_counter_property). Delegate the comma-separated list to
-/// `cssparser::Parser::parse_comma_separated`; unconsumed tokens in any item
-/// are detected by that method's `parse_until_before` → `parse_entirely`
-/// and drop the entire declaration.
+/// [`parse_comma_list_before_important`]; unconsumed tokens in any item
+/// are detected by its `parse_until_before` → `parse_entirely`
+/// and drop the entire declaration, while a trailing `!important` stays in
+/// the input for the caller.
 pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextShadowItem>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());
     }
-    input
-        .parse_comma_separated(|i| -> Result<TextShadowItem, ParseError<'_, ()>> {
-            parse_text_shadow_item(i).ok_or_else(|| i.new_custom_error(()))
-        })
-        .ok()
+    parse_comma_list_before_important(input, |i| -> Result<TextShadowItem, ParseError<'_, ()>> {
+        parse_text_shadow_item(i).ok_or_else(|| i.new_custom_error(()))
+    })
+    .ok()
 }
 
 /// The `font-size` component of the `font` shorthand. [`parse_font_size`] returns

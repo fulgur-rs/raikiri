@@ -41,7 +41,7 @@ fn materialize(query: LayoutStyleView<'_>) -> BoxStyle {
         size: query.size(),
         min_size: query.min_size(),
         max_size: query.max_size(),
-        aspect_ratio: query.aspect_ratio(),
+        aspect_ratio: query.block_aspect_ratio(),
         margin: query.margin(),
         padding: query.padding(),
         border: query.border(),
@@ -49,7 +49,7 @@ fn materialize(query: LayoutStyleView<'_>) -> BoxStyle {
         clear: query.clear(),
         justify_items: query.justify_items(),
         align_content: query.bridge_align_content(),
-        align_self: query.bridge_align_self(),
-        justify_self: query.bridge_justify_self(),
+        align_self: query.static_position_align_self(),
+        justify_self: query.static_position_justify_self(),
     }
 }

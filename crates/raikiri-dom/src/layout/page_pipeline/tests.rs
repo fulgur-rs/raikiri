@@ -13194,6 +13194,76 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
 }
 
 #[test]
+fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // (style of the parent, style of the box after the float, whether it
+    // only clears up to the float that starts the page)
+    for (parent, style, floor) in [
+        ("display:block", "display:block;height:10px", true),
+        (
+            "display:block",
+            "display:block;height:10px;clear:right",
+            true,
+        ),
+        // Its own break starts a page of its own, clear of that float too.
+        (
+            "display:block",
+            "display:block;height:10px;break-before:page",
+            false,
+        ),
+        // A vertical paragraph places its boxes along another axis.
+        (
+            "display:block;writing-mode:vertical-rl",
+            "display:block;height:10px",
+            false,
+        ),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some(&format!("{parent};margin:0")));
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;float:left;width:10px;height:50px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;break-after:page;height:10px"),
+        );
+        let started = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;float:left;width:10px;height:20px"),
+        );
+        let after = doc.append_element(Some(body), "div", Some(style));
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+
+        layout_pages(&mut doc, &cascade, page).expect("paged layout succeeds");
+        let key = doc.nodes.box_key(after).unwrap();
+        let cleared_by_pass = !doc.box_style_data.get(key).unwrap().pass.is_empty();
+        assert_eq!(
+            doc.forced_break_float_floor.contains(&after),
+            floor,
+            "{style}"
+        );
+        assert_eq!(cleared_by_pass, !floor, "{style}");
+        assert!(doc.forced_break_clearance.contains(&started), "{style}");
+
+        // A single page has no break to clear at, so no box keeps a floor and
+        // the cached paged layout is not reused.
+        layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
+        assert!(doc.forced_break_float_floor.is_empty(), "{style}");
+        assert!(doc.forced_break_clearance.is_empty(), "{style}");
+    }
+}
+
+#[test]
 fn a_hidden_root_prints_one_page_without_laying_out_its_body() {
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -18870,6 +18940,214 @@ fn a_fixed_height_block_whose_first_line_straddles_a_page_end_moves_whole() {
             "{spacer_height} {style} {text:?} {page_steps:?}"
         );
     }
+}
+
+/// `lines` letters a 20px-wide block wraps one per line.
+fn lines_of_text(lines: usize) -> String {
+    vec!["X"; lines].join(" ")
+}
+
+#[test]
+fn a_paragraph_taller_than_a_page_that_leaves_too_few_orphans_moves_whole() {
+    // (spacer height, block style, lines, page height, block y). The block y
+    // of each case is where Chromium prints the block's box (`page.pdf`, the
+    // red background of a 20px-wide block read from a 96dpi render).
+    let cases: &[(f32, &str, usize, f32, f32)] = &[
+        // No line, or one line, of the two orphans stays on the page.
+        (80.0, "", 6, 100.0, 100.0),
+        (70.0, "", 6, 100.0, 100.0),
+        (60.0, "", 6, 100.0, 100.0),
+        (70.0, "", 7, 100.0, 100.0),
+        (60.0, "", 7, 100.0, 100.0),
+        (70.0, "height:300px", 6, 100.0, 100.0),
+        // The padding and the border put the first line lower.
+        (60.0, "padding-top:15px", 6, 100.0, 100.0),
+        (55.0, "border-top:10px solid blue", 6, 100.0, 100.0),
+        // Two lines stay, which are the orphans.
+        (40.0, "", 6, 100.0, 40.0),
+        (40.0, "", 7, 100.0, 40.0),
+        (10.0, "", 7, 100.0, 10.0),
+        (40.0, "height:300px", 6, 100.0, 40.0),
+        // The orphans are the number the block asks for, however many that
+        // is, and a break that keeps them is left alone.
+        (70.0, "orphans:1", 6, 100.0, 70.0),
+        (80.0, "orphans:1", 6, 100.0, 100.0),
+        (40.0, "orphans:3", 6, 100.0, 100.0),
+        (30.0, "orphans:3", 6, 100.0, 100.0),
+        (60.0, "orphans:1;widows:1", 6, 100.0, 60.0),
+        (60.0, "widows:1", 6, 100.0, 100.0),
+        // Four lines are taller than the page, and the block moves all the
+        // same, since only the orphans it keeps on a page count.
+        (10.0, "orphans:4", 6, 100.0, 100.0),
+        // A page that holds one line moves a block that starts below its top
+        // and leaves one at its top.
+        (10.0, "", 6, 50.0, 50.0),
+        (20.0, "", 6, 50.0, 50.0),
+        (0.0, "", 6, 50.0, 0.0),
+        // A paragraph that fits a page moves as before.
+        (80.0, "", 2, 100.0, 100.0),
+        (70.0, "", 2, 100.0, 100.0),
+        (80.0, "", 3, 100.0, 100.0),
+    ];
+    for (spacer_height, style, lines, page_height, expected) in cases {
+        let page_steps = vec![*page_height; 12];
+        let ys = paginated_ys(
+            |doc, body| {
+                let spacer = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some(&format!("display:block;height:{spacer_height}px")),
+                );
+                let block = doc.append_element(
+                    Some(body),
+                    "div",
+                    Some(&format!("display:block;width:20px;{style}")),
+                );
+                doc.append_text(block, lines_of_text(*lines));
+                vec![spacer, block]
+            },
+            &page_steps,
+        );
+        assert_eq!(
+            ys[1], *expected,
+            "{spacer_height} {style} {lines} lines {page_height}"
+        );
+    }
+}
+
+/// The absolute y of a block of six lines that follows `before` in a flow of
+/// 100px pages, held by a `<section>` with the style `wrapper` when there is
+/// one, where `before` is the markup that comes first: a tag (`#text` for a
+/// text node of the body, `#comment` for a comment, `#pi` for a processing
+/// instruction, `#contents-spacer` for a `display: contents` wrapper of a
+/// 60px box), its style and its text.
+fn tall_paragraph_y_after(
+    before: &[(&str, &str, Option<&str>)],
+    wrapper: Option<&str>,
+    block_style: &str,
+) -> f32 {
+    let ys = paginated_ys(
+        |doc, body| {
+            for &(tag, style, text) in before {
+                if tag == "#text" {
+                    doc.append_text(body, text.unwrap_or_default());
+                    continue;
+                }
+                if tag == "#comment" {
+                    doc.append_comment(Some(body), text.unwrap_or_default());
+                    continue;
+                }
+                if tag == "#contents-spacer" {
+                    let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
+                    doc.append_element(Some(wrapper), "div", Some("display:block;height:60px"));
+                    continue;
+                }
+                if tag == "#pi" {
+                    doc.append_processing_instruction(Some(body), "target", "data");
+                    continue;
+                }
+                let sibling = doc.append_element(Some(body), tag, Some(style));
+                if let Some(text) = text {
+                    doc.append_text(sibling, text);
+                }
+            }
+            let parent = wrapper.map_or(body, |style| {
+                doc.append_element(
+                    Some(body),
+                    "section",
+                    Some(&format!("display:block;{style}")),
+                )
+            });
+            let paragraph = doc.append_element(
+                Some(parent),
+                "div",
+                Some(&format!("display:block;width:20px;{block_style}")),
+            );
+            doc.append_text(paragraph, lines_of_text(6));
+            vec![paragraph, parent, body]
+        },
+        &[],
+    );
+    // A box is placed in its parent: the section, when there is one, and the
+    // body, which takes the margin that collapses through it.
+    ys[0] + if wrapper.is_some() { ys[1] } else { 0.0 } + ys[2]
+}
+
+#[test]
+fn a_paragraph_taller_than_a_page_moves_only_below_content_the_flow_can_break_after() {
+    let spacer = ("div", "display:block;height:60px", None);
+    // Nothing comes before the block but its margin, which the break cannot
+    // be put in front of: the block stays and fragments.
+    assert_eq!(tall_paragraph_y_after(&[], None, "margin-top:60px"), 60.0);
+    assert_eq!(
+        tall_paragraph_y_after(&[], Some("margin-top:60px"), ""),
+        60.0
+    );
+    // Collapsed white space, comments, processing instructions, boxes
+    // that are not generated, floats, and out-of-flow boxes come before it
+    // as nothing.
+    for before in [
+        ("#text", "", Some("  ")),
+        ("#comment", "", Some("note")),
+        ("#pi", "", None),
+        ("div", "display:contents", None),
+        ("div", "float:left;width:5px;height:5px", None),
+        ("div", "display:none", None),
+        ("div", "position:absolute;height:60px", None),
+        ("div", "position:fixed;height:60px", None),
+    ] {
+        assert_eq!(
+            tall_paragraph_y_after(&[before], None, "margin-top:60px"),
+            60.0,
+            "{before:?}"
+        );
+    }
+    // A box that generates a box, or text, is content to break after, even in
+    // an ancestor of the block.
+    assert_eq!(tall_paragraph_y_after(&[spacer], None, ""), 100.0);
+    // So is a `display: contents` wrapper of a box or text, and a no-break
+    // space, which does not collapse.
+    for before in [
+        ("#contents-spacer", "", None),
+        ("div", "display:contents", Some("a")),
+    ] {
+        assert_eq!(
+            tall_paragraph_y_after(&[before], None, "margin-top:30px"),
+            100.0,
+            "{before:?}"
+        );
+    }
+    assert_eq!(
+        tall_paragraph_y_after(&[("#text", "", Some("\u{a0}"))], None, "margin-top:30px"),
+        100.0
+    );
+    assert_eq!(
+        tall_paragraph_y_after(&[spacer], Some("padding:0"), ""),
+        100.0
+    );
+    assert_eq!(
+        tall_paragraph_y_after(
+            &[("div", "display:block", Some("a"))],
+            None,
+            "margin-top:60px"
+        ),
+        100.0
+    );
+}
+
+#[test]
+fn a_box_outside_the_flow_follows_no_flow_content() {
+    // The walk up from the box never meets the body, so it ends at the root
+    // of the document with nothing before the box.
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block = doc.append_element(Some(body), "div", Some("display:block"));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    assert!(!follows_flow_content(&doc, &cascade, usize::MAX, block));
 }
 
 #[test]

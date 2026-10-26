@@ -59,9 +59,12 @@ pub struct BoxStyle {
     pub justify_items: AlignItems,
     /// The content alignment of the box.
     pub align_content: AlignContent,
-    /// The block-axis alignment of the box as an item.
+    /// The block-axis alignment of the box as an item. An absolutely positioned
+    /// box that asks for `last baseline` reads as `end`, the alignment it takes
+    /// in the static-position rectangle of a block container.
     pub align_self: Option<AlignSelf>,
-    /// The inline-axis alignment of the box as an item.
+    /// The inline-axis alignment of the box as an item, read like
+    /// [`Self::align_self`].
     pub justify_self: Option<AlignSelf>,
 }
 

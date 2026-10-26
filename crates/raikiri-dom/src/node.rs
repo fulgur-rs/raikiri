@@ -644,6 +644,11 @@ pub struct Node {
     /// Taffy's resolved grid column start for each in-flow child, written
     /// with `grid_item_row_starts` and read only for the children it lists.
     pub(crate) grid_item_column_starts: Box<[(usize, u16)]>,
+    /// The size of the grid area of each in-flow child on the physical axes,
+    /// written with `grid_item_row_starts` and read only for the children it
+    /// lists: the containing block of a grid item and the basis of its
+    /// percentages.
+    pub(crate) grid_item_areas: Box<[(usize, Size<f32>)]>,
     /// The in-flow grid items whose block size depends on the size of the
     /// rows they span: a percentage height in an intrinsic or flexible row.
     /// They do not take part in baseline alignment (CSS Grid 1 §6.4).
@@ -810,6 +815,7 @@ impl Node {
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_item_areas: Box::new([]),
             grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,

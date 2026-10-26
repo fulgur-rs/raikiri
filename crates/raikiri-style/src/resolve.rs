@@ -2944,7 +2944,7 @@ fn relative_calc_length_px(
 /// basis). Retain the `Start`/`End` edge and delegate only its
 /// `<length-percentage>` payload to [`resolve_length_percentage`] (see the
 /// reason for retaining edges in [`ComputedCssPositionOffset`]).
-fn resolve_css_position_offset(
+pub(crate) fn resolve_css_position_offset(
     specified: CssPositionOffset,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
@@ -4009,19 +4009,20 @@ pub fn lift_length_percentage_or_calc(
 /// its edge and its percentage, so a lift followed by absolutization gives the
 /// computed value again.
 pub(crate) fn lift_css_position(computed: ComputedCssPosition) -> CssPosition {
-    fn offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
-        match computed {
-            ComputedCssPositionOffset::Start(v) => {
-                CssPositionOffset::Start(lift_length_percentage(v))
-            }
-            ComputedCssPositionOffset::End(v) => CssPositionOffset::End(lift_length_percentage(v)),
-            ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
-            ComputedCssPositionOffset::Compared(compared) => CssPositionOffset::Compared(compared),
-        }
-    }
     CssPosition {
-        horizontal: offset(computed.horizontal),
-        vertical: offset(computed.vertical),
+        horizontal: lift_css_position_offset(computed.horizontal),
+        vertical: lift_css_position_offset(computed.vertical),
+    }
+}
+
+/// Lift one computed offset of a `<position>` back to its specified form, as
+/// [`lift_css_position`] does for both axes.
+pub(crate) fn lift_css_position_offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
+    match computed {
+        ComputedCssPositionOffset::Start(v) => CssPositionOffset::Start(lift_length_percentage(v)),
+        ComputedCssPositionOffset::End(v) => CssPositionOffset::End(lift_length_percentage(v)),
+        ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
+        ComputedCssPositionOffset::Compared(compared) => CssPositionOffset::Compared(compared),
     }
 }
 
