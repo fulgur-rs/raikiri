@@ -388,17 +388,17 @@ pub(super) fn layout(
                 AvailableSpace::Definite((content_width - margin.horizontal_axis_sum()).max(0.0));
             if child_input.known_dimensions.width.is_none() {
                 // Taffy reads a `min-content` or `max-content` width of a flex
-                // or grid container in the room it is offered; the width the
-                // keyword stands for is what the container measures at.
+                // or grid container in the room it is offered, and a paragraph
+                // root shrinks to fit that room; the width the keyword stands
+                // for is what the box measures at.
                 let along = match style.size.width.expand() {
                     ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
                     ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
                     _ => None,
                 };
                 if let Some(along) = along.filter(|_| {
-                    tree.nodes[usize::from(child)]
-                        .display()
-                        .is_flex_or_grid_container()
+                    let node = &tree.nodes[usize::from(child)];
+                    node.display().is_flex_or_grid_container() || node.is_ifc_root()
                 }) {
                     let mut measure = child_input;
                     measure.run_mode = RunMode::ComputeSize;
