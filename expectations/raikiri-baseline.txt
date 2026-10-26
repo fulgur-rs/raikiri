@@ -4249,6 +4249,8 @@ css/css-writing-modes/orthogonal-child-with-border.html
 css/css-writing-modes/orthogonal-child-with-padding.html
 css/css-writing-modes/orthogonal-containing-block-height-changes.html
 css/css-writing-modes/orthogonal-dynamic-size-001.html
+css/css-writing-modes/slr-alongside-vlr-floats.html
+css/css-writing-modes/srl-alongside-vrl-floats.html
 css/css-writing-modes/table-cell-001.html
 css/css-writing-modes/tcy-white-space-processing-002.html
 css/css-writing-modes/text-combine-upright-break-inside-001.html
