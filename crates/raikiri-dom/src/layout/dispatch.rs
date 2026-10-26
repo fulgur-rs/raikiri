@@ -674,6 +674,18 @@ impl LayoutSession<'_> {
     pub(crate) fn cache_clear(&mut self, node_id: NodeId) {
         self.nodes[usize::from(node_id)].cache.clear();
     }
+
+    /// Drop the cached results of the node and of every box inside it. Such a
+    /// result stands for the lines and fragments the boxes held when it was
+    /// kept, and a layout of the subtree that did not store its results has
+    /// replaced them since.
+    pub(crate) fn cache_clear_subtree(&mut self, node_id: NodeId) {
+        let mut pending = vec![usize::from(node_id)];
+        while let Some(idx) = pending.pop() {
+            self.nodes[idx].cache.clear();
+            pending.extend(self.nodes[idx].children.iter().copied());
+        }
+    }
 }
 
 impl LayoutSession<'_> {

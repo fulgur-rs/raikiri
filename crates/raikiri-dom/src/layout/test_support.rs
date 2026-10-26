@@ -18,6 +18,7 @@ thread_local! {
     pub(crate) static IFC_CANDIDATE_BOX_MEMBERSHIP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static IFC_ROOT_BOX_MEMBERSHIP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static LAYOUT_ORIGIN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static MULTICOL_LAYOUTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A `<div>` of Ahem text under `html > body`, with a fixed 10px line height.

@@ -4743,3 +4743,133 @@ fn authored_box_reads_what_the_style_view_reads() {
         }
     }
 }
+
+/// A chain of `depth` column containers with a definite height, each in the
+/// one above, around some text, and the containers from the outermost in.
+fn nested_columns_with_a_height(depth: usize) -> (Document, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let mut parent = body;
+    let mut containers = Vec::new();
+    for _ in 0..depth {
+        parent = doc.append_element(
+            Some(parent),
+            "div",
+            Some("display:block;column-count:2;column-gap:10px;height:5000px"),
+        );
+        containers.push(parent);
+    }
+    doc.append_text(parent, "text");
+    (doc, containers)
+}
+
+/// Lays the document out on a page of the given size in Ahem.
+fn lay_out_in_ahem(doc: &mut Document, width: f32, height: f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
+    let rules = build_rule_tree(doc);
+    let cascade = cascade(doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = width;
+    page.height = height;
+    layout_single_page(doc, &cascade, page).expect("layout Ok");
+}
+
+/// The width the lines of the paragraph were last broken at.
+fn lines_broken_at(doc: &Document, paragraph: usize) -> f32 {
+    doc.nodes[paragraph]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("lines of the paragraph")
+        .width
+}
+
+/// Text that takes several lines of Ahem in a column of 395px.
+const COLUMN_TEXT: &str = "beta zeta sigma xi xi sigma beta beta nu omicron mu mu sigma sigma alpha \
+    lambda gamma theta delta mu mu delta nu delta mu pi lambda beta mu gamma lambda pi eta eta epsilon";
+
+#[test]
+fn nested_columns_with_a_height_are_laid_out_once_per_level() {
+    // Each container with a height laid its children out across its whole
+    // width and again in its columns, once for each layout of the container
+    // above, so the layouts doubled with every level: a chain of twelve took
+    // 1779 of them.
+    let depth = 12;
+    let (mut doc, containers) = nested_columns_with_a_height(depth);
+    crate::layout::test_support::MULTICOL_LAYOUTS.with(|count| count.set(0));
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    let layouts = crate::layout::test_support::MULTICOL_LAYOUTS.with(std::cell::Cell::get);
+    assert!(
+        layouts <= 8 * depth,
+        "{layouts} layouts of {depth} containers"
+    );
+
+    // Every container is as tall as it states, and as wide as a column of the
+    // one above while that is wide enough to tell.
+    let mut width = 800.0;
+    for (level, &container) in containers.iter().enumerate() {
+        let size = doc.nodes[container].layout.size;
+        assert!((size.height - 5000.0).abs() < 0.01, "{size:?}");
+        if level < 5 {
+            assert!((size.width - width).abs() < 0.01, "{size:?} in {width}");
+        }
+        width = (width - 10.0) / 2.0;
+    }
+}
+
+#[test]
+fn text_in_columns_of_a_container_laid_out_again_takes_the_width_of_its_column() {
+    // The columns of the outer container lay the container with a height out
+    // again; the text in it is laid out at the width of its own columns, not
+    // at the one the first layout across the whole width gave it.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let outer = doc.append_element(Some(body), "div", Some("display:block;column-count:1"));
+    let columns = doc.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;column-count:2;column-gap:10px;height:200px"),
+    );
+    let block = doc.append_element(Some(columns), "div", Some("display:block"));
+    doc.append_text(block, COLUMN_TEXT);
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    assert_eq!(doc.nodes[block].layout.size.width, 395.0);
+    assert_eq!(lines_broken_at(&doc, block), 395.0);
+}
+
+#[test]
+fn text_in_columns_laid_out_after_a_skipped_container_is_laid_out_again() {
+    // The container with a height inside the first one is left for the layout
+    // in columns, so the paragraphs beside it were laid out across the whole
+    // width in between: what the caches kept of them for the width of a
+    // column no longer holds, and the lines would keep that width.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;column-count:1;height:500px"),
+    );
+    let wrapper = doc.append_element(Some(outer), "div", Some("display:block"));
+    let middle = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;column-count:2;column-gap:10px"),
+    );
+    doc.append_element(
+        Some(middle),
+        "div",
+        Some("display:block;column-count:2;column-gap:10px;height:60px"),
+    );
+    let paragraph = doc.append_element(Some(middle), "div", Some("display:block"));
+    doc.append_text(paragraph, COLUMN_TEXT);
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    assert_eq!(doc.nodes[paragraph].layout.size.width, 395.0);
+    assert_eq!(lines_broken_at(&doc, paragraph), 395.0);
+}
