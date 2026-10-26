@@ -6,7 +6,10 @@
 //! height. Only when every shown row has an authored height do all of them
 //! share the extra, again in proportion. A row with a percentage `height`
 //! takes that share of the height of the rows' group first, when the table's
-//! own height is authored.
+//! own height is authored. A table with several row groups shares the extra
+//! among the groups first, in proportion to their heights, except that the
+//! header group on top and the footer group at the bottom keep theirs while a
+//! body group can grow; each group then shares what it got among its rows.
 //!
 //! The expected boxes are the ones Chromium computes for the same markup in an
 //! 800px by 600px viewport, with the body margin of 8px: each is the element's
@@ -600,5 +603,540 @@ fn a_percentage_that_cannot_resolve_is_left_to_the_rows() {
             &[("t", 8.0, 200.0), ("r0", 8.0, 66.66), ("r1", 74.66, 133.34)],
         ),
     ];
+    check_rows(cases);
+}
+
+/// Two or more row groups share the extra in proportion to their heights (their rows and the spacing between them) before the rows in each group share what it got.
+#[test]
+fn row_groups_share_the_extra_before_their_rows_do() {
+    let cases: &[Case<'_>] = &[
+        (
+            "two groups of free rows",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:20px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 133.33),
+                ("r0", 8.0, 133.33),
+                ("b1", 141.33, 66.67),
+                ("r1", 141.33, 66.67),
+            ],
+        ),
+        (
+            "a group with an authored row and a group of one row",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='height:40px'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 171.42),
+                ("r0", 8.0, 131.42),
+                ("r1", 139.42, 40.0),
+                ("b1", 179.42, 28.58),
+                ("r2", 179.42, 28.58),
+            ],
+        ),
+        (
+            "a group whose only row is authored grows too",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0 style='height:30px'><td id=c0><div style='height:20px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr><tr id=r2><td id=c2><div style='height:30px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 85.7),
+                ("r0", 8.0, 85.7),
+                ("b1", 93.7, 114.3),
+                ("r1", 93.7, 28.56),
+                ("r2", 122.27, 85.73),
+            ],
+        ),
+        (
+            "all rows authored",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0 style='height:30px'><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1 style='height:20px'><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 120.0),
+                ("r0", 8.0, 120.0),
+                ("b1", 128.0, 80.0),
+                ("r1", 128.0, 80.0),
+            ],
+        ),
+        (
+            "three groups, the middle one authored",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1 style='height:20px'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b2><tr id=r2><td id=c2><div style='height:30px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 33.33),
+                ("r0", 8.0, 33.33),
+                ("b1", 41.33, 66.66),
+                ("r1", 41.33, 66.66),
+                ("b2", 107.98, 100.02),
+                ("r2", 107.98, 100.02),
+            ],
+        ),
+        (
+            "an authored row in each group",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr><tr id=r1 style='height:50px'><td id=c1><div style='height:50px'></div></td></tr></tbody><tbody id=b1><tr id=r2 style='height:20px'><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 150.0),
+                ("r0", 8.0, 100.0),
+                ("r1", 108.0, 50.0),
+                ("b1", 158.0, 50.0),
+                ("r2", 158.0, 50.0),
+            ],
+        ),
+        (
+            "free and authored rows in two groups",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr><tr id=r1 style='height:30px'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2 style='height:30px'><td id=c2><div style='height:10px'></div></td></tr><tr id=r3><td id=c3><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 100.0),
+                ("r0", 8.0, 70.0),
+                ("r1", 78.0, 30.0),
+                ("b1", 108.0, 100.0),
+                ("r2", 108.0, 30.0),
+                ("r3", 138.0, 70.0),
+            ],
+        ),
+        (
+            "three groups of several rows",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr><tr id=r1><td id=c1><div style='height:20px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:30px'></div></td></tr></tbody><tbody id=b2><tr id=r3><td id=c3><div style='height:10px'></div></td></tr><tr id=r4><td id=c4><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 75.0),
+                ("r0", 8.0, 25.0),
+                ("r1", 33.0, 50.0),
+                ("b1", 83.0, 75.0),
+                ("r2", 83.0, 75.0),
+                ("b2", 158.0, 50.0),
+                ("r3", 158.0, 25.0),
+                ("r4", 183.0, 25.0),
+            ],
+        ),
+        (
+            "empty groups share equally",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:0px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:0px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 100.0),
+                ("r0", 8.0, 100.0),
+                ("b1", 108.0, 100.0),
+                ("r1", 108.0, 100.0),
+            ],
+        ),
+        (
+            "an empty group next to one with content",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:0px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 0.0),
+                ("r0", 8.0, 0.0),
+                ("b1", 8.0, 200.0),
+                ("r1", 8.0, 200.0),
+            ],
+        ),
+        (
+            "a min-height shares like a height",
+            "<table id=t style='min-height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='height:40px'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 171.42),
+                ("r0", 8.0, 131.42),
+                ("r1", 139.42, 40.0),
+                ("b1", 179.42, 28.58),
+                ("r2", 179.42, 28.58),
+            ],
+        ),
+        (
+            "border spacing between the rows and the groups",
+            "<table id=t style='height:200px;border-spacing:5px'><tbody id=b0><tr id=r0><td id=c0><div style='height:20px'></div></td></tr><tr id=r1 style='height:40px'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 13.0, 160.33),
+                ("r0", 13.0, 115.33),
+                ("r1", 133.33, 40.0),
+                ("b1", 178.33, 24.67),
+                ("r2", 178.33, 24.67),
+            ],
+        ),
+        (
+            "spacing inside a group counts toward its height",
+            "<table id=t style='height:400px;border-spacing:10px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr><tr id=r1 style='height:25%'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 18.0, 277.5),
+                ("r0", 18.0, 198.13),
+                ("r1", 226.13, 69.38),
+                ("b1", 305.5, 92.5),
+                ("r2", 305.5, 92.5),
+            ],
+        ),
+        (
+            "a group of one big authored row next to a small free one",
+            "<table id=t style='height:400px'><tbody id=b0><tr id=r0 style='height:100px'><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 363.63),
+                ("r0", 8.0, 363.63),
+                ("b1", 371.63, 36.38),
+                ("r1", 371.63, 36.38),
+            ],
+        ),
+        (
+            "the same with a header on top",
+            "<table id=t style='height:400px'><thead id=b0><tr id=r0 style='height:100px'><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 100.0),
+                ("r0", 8.0, 100.0),
+                ("b1", 108.0, 300.0),
+                ("r1", 108.0, 300.0),
+            ],
+        ),
+    ];
+    check_rows(cases);
+}
+
+/// The header group on top and the footer group at the bottom keep the height of their rows while a body group can take the extra; with no body group they share it like any other.
+#[test]
+fn the_header_and_footer_groups_keep_their_height_while_a_body_group_can_grow() {
+    let cases: &[Case<'_>] = &[
+        (
+            "an authored header",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0 style='height:30px'><td id=c0><div style='height:20px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr><tr id=r2><td id=c2><div style='height:30px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 30.0),
+                ("r0", 8.0, 30.0),
+                ("b1", 38.0, 170.0),
+                ("r1", 38.0, 42.5),
+                ("r2", 80.5, 127.5),
+            ],
+        ),
+        (
+            "a free header",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 10.0),
+                ("r0", 8.0, 10.0),
+                ("b1", 18.0, 190.0),
+                ("r1", 18.0, 190.0),
+            ],
+        ),
+        (
+            "a footer",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tfoot id=b1><tr id=r1 style='height:30px'><td id=c1><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 170.0),
+                ("r0", 8.0, 170.0),
+                ("b1", 178.0, 30.0),
+                ("r1", 178.0, 30.0),
+            ],
+        ),
+        (
+            "a header, a body and a footer",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0 style='height:30px'><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody><tfoot id=b2><tr id=r2 style='height:30px'><td id=c2><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 30.0),
+                ("r0", 8.0, 30.0),
+                ("b1", 38.0, 140.0),
+                ("r1", 38.0, 140.0),
+                ("b2", 178.0, 30.0),
+                ("r2", 178.0, 30.0),
+            ],
+        ),
+        (
+            "an authored header and an authored body",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0 style='height:30px'><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1 style='height:20px'><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 30.0),
+                ("r0", 8.0, 30.0),
+                ("b1", 38.0, 170.0),
+                ("r1", 38.0, 170.0),
+            ],
+        ),
+        (
+            "an authored body and a footer",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0 style='height:30px'><td id=c0><div style='height:10px'></div></td></tr></tbody><tfoot id=b1><tr id=r1 style='height:20px'><td id=c1><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 180.0),
+                ("r0", 8.0, 180.0),
+                ("b1", 188.0, 20.0),
+                ("r1", 188.0, 20.0),
+            ],
+        ),
+        (
+            "a header, two bodies and a footer",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b2><tr id=r2><td id=c2><div style='height:30px'></div></td></tr></tbody><tfoot id=b3><tr id=r3><td id=c3><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 10.0),
+                ("r0", 8.0, 10.0),
+                ("b1", 18.0, 45.0),
+                ("r1", 18.0, 45.0),
+                ("b2", 63.0, 135.0),
+                ("r2", 63.0, 135.0),
+                ("b3", 198.0, 10.0),
+                ("r3", 198.0, 10.0),
+            ],
+        ),
+        (
+            "an empty body between them",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:0px'></div></td></tr></tbody><tfoot id=b2><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 10.0),
+                ("r0", 8.0, 10.0),
+                ("b1", 18.0, 180.0),
+                ("r1", 18.0, 180.0),
+                ("b2", 198.0, 10.0),
+                ("r2", 198.0, 10.0),
+            ],
+        ),
+        (
+            "only the first header group stays",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><thead id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></thead><tbody id=b2><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 10.0),
+                ("r0", 8.0, 10.0),
+                ("b1", 18.0, 95.0),
+                ("r1", 18.0, 95.0),
+                ("b2", 113.0, 95.0),
+                ("r2", 113.0, 95.0),
+            ],
+        ),
+        (
+            "only the first footer group stays",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tfoot id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tfoot><tfoot id=b2><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 95.0),
+                ("r0", 8.0, 95.0),
+                ("b1", 198.0, 10.0),
+                ("r1", 198.0, 10.0),
+                ("b2", 103.0, 95.0),
+                ("r2", 103.0, 95.0),
+            ],
+        ),
+        (
+            "a header and a footer without a body",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tfoot id=b1><tr id=r1><td id=c1><div style='height:20px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 66.66),
+                ("r0", 8.0, 66.66),
+                ("b1", 74.66, 133.34),
+                ("r1", 74.66, 133.34),
+            ],
+        ),
+        (
+            "a header alone",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead></table>",
+            &[("t", 8.0, 200.0), ("b0", 8.0, 200.0), ("r0", 8.0, 200.0)],
+        ),
+        (
+            "a footer alone",
+            "<table id=t style='height:200px'><tfoot id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[("t", 8.0, 200.0), ("b0", 8.0, 200.0), ("r0", 8.0, 200.0)],
+        ),
+        (
+            "a header with a hidden body",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1 style='display:none'><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[("t", 8.0, 200.0), ("b0", 8.0, 200.0), ("r0", 8.0, 200.0)],
+        ),
+        (
+            "a header and a footer with the footer hidden",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tfoot id=b1 style='display:none'><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[("t", 8.0, 200.0), ("b0", 8.0, 200.0), ("r0", 8.0, 200.0)],
+        ),
+        (
+            "a percentage row in the header does not grow it",
+            "<table id=t style='height:400px'><thead id=b0><tr id=r0 style='height:50%'><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 10.0),
+                ("r0", 8.0, 10.0),
+                ("b1", 18.0, 390.0),
+                ("r1", 18.0, 390.0),
+            ],
+        ),
+        (
+            "a percentage row in the footer does not grow it",
+            "<table id=t style='height:400px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tfoot id=b1><tr id=r1 style='height:50%'><td id=c1><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 390.0),
+                ("r0", 8.0, 390.0),
+                ("b1", 398.0, 10.0),
+                ("r1", 398.0, 10.0),
+            ],
+        ),
+        (
+            "a percentage row in the body takes its share of the body",
+            "<table id=t style='height:400px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr><tr id=r2 style='height:50%'><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 10.0),
+                ("r0", 8.0, 10.0),
+                ("b1", 18.0, 390.0),
+                ("r1", 18.0, 195.0),
+                ("r2", 213.0, 195.0),
+            ],
+        ),
+        (
+            "an empty first header leaves the second one a body group",
+            "<table id=t style='height:200px'><thead id=b0></thead><thead id=b1><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b2><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b1", 8.0, 100.0),
+                ("r0", 8.0, 100.0),
+                ("b2", 108.0, 100.0),
+                ("r1", 108.0, 100.0),
+            ],
+        ),
+        (
+            "an empty first footer leaves the second one a body group",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tfoot id=b1></tfoot><tfoot id=b2><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tfoot></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 100.0),
+                ("r0", 8.0, 100.0),
+                ("b2", 108.0, 100.0),
+                ("r1", 108.0, 100.0),
+            ],
+        ),
+        (
+            "a header and a body",
+            "<table id=t style='height:200px'><thead id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></thead><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 10.0),
+                ("r0", 8.0, 10.0),
+                ("b1", 18.0, 190.0),
+                ("r1", 18.0, 190.0),
+            ],
+        ),
+    ];
+    check_rows(cases);
+}
+
+/// A percentage row takes that share of the height of its group, which is the table's only when the table has just one.
+#[test]
+fn a_percentage_row_resolves_against_its_group() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a quarter of the first group",
+            "<table id=t style='height:400px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr><tr id=r1 style='height:25%'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 266.66),
+                ("r0", 8.0, 200.0),
+                ("r1", 208.0, 66.66),
+                ("b1", 274.66, 133.34),
+                ("r2", 274.66, 133.34),
+            ],
+        ),
+        (
+            "half of the first group",
+            "<table id=t style='height:400px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr><tr id=r1 style='height:50%'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 266.66),
+                ("r0", 8.0, 133.33),
+                ("r1", 141.33, 133.33),
+                ("b1", 274.66, 133.34),
+                ("r2", 274.66, 133.34),
+            ],
+        ),
+        (
+            "the only row of a group",
+            "<table id=t style='height:400px'><tbody id=b0><tr id=r0 style='height:25%'><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b2><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 133.33),
+                ("r0", 8.0, 133.33),
+                ("b1", 141.33, 133.33),
+                ("r1", 141.33, 133.33),
+                ("b2", 274.66, 133.34),
+                ("r2", 274.66, 133.34),
+            ],
+        ),
+        (
+            "a percentage over the group that holds it",
+            "<table id=t style='height:400px'><tbody id=b0><tr id=r0 style='height:90%'><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 200.0),
+                ("r0", 8.0, 200.0),
+                ("b1", 208.0, 200.0),
+                ("r1", 208.0, 200.0),
+            ],
+        ),
+        (
+            "a percentage in the second group",
+            "<table id=t style='height:400px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr><tr id=r2 style='height:25%'><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 8.0, 133.33),
+                ("r0", 8.0, 133.33),
+                ("b1", 141.33, 266.67),
+                ("r1", 141.33, 200.02),
+                ("r2", 341.34, 66.66),
+            ],
+        ),
+        (
+            "half of a group of two",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr><tr id=r1 style='height:50%'><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 133.33),
+                ("r0", 8.0, 66.67),
+                ("r1", 74.67, 66.66),
+                ("b1", 141.33, 66.67),
+                ("r2", 141.33, 66.67),
+            ],
+        ),
+        (
+            "a percentage next to another group",
+            "<table id=t style='height:200px'><tbody id=b0><tr id=r0 style='height:50%'><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 200.0),
+                ("b0", 8.0, 100.0),
+                ("r0", 8.0, 100.0),
+                ("b1", 108.0, 100.0),
+                ("r1", 108.0, 100.0),
+            ],
+        ),
+        (
+            "padding and a border around the groups",
+            "<table id=t style='height:400px;padding:10px;border:5px solid'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1><tr id=r1 style='height:25%'><td id=c1><div style='height:10px'></div></td></tr></tbody></table>",
+            &[
+                ("t", 8.0, 400.0),
+                ("b0", 23.0, 185.0),
+                ("r0", 23.0, 185.0),
+                ("b1", 208.0, 185.0),
+                ("r1", 208.0, 185.0),
+            ],
+        ),
+    ];
+    check_rows(cases);
+}
+
+/// A group that is not displayed takes no part.
+#[test]
+fn a_hidden_group_takes_no_part_in_the_sharing() {
+    let cases: &[Case<'_>] = &[(
+        "a hidden group between two others",
+        "<table id=t style='height:200px'><tbody id=b0><tr id=r0><td id=c0><div style='height:10px'></div></td></tr></tbody><tbody id=b1 style='display:none'><tr id=r1><td id=c1><div style='height:10px'></div></td></tr></tbody><tbody id=b2><tr id=r2><td id=c2><div style='height:10px'></div></td></tr></tbody></table>",
+        &[
+            ("t", 8.0, 200.0),
+            ("b0", 8.0, 100.0),
+            ("r0", 8.0, 100.0),
+            ("b2", 108.0, 100.0),
+            ("r2", 108.0, 100.0),
+        ],
+    )];
     check_rows(cases);
 }
