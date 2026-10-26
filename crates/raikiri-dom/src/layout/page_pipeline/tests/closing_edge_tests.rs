@@ -451,6 +451,10 @@ fn the_last_lines_that_widows_keep_together_move_with_the_edges() {
     assert_eq!(closed_paragraph(6, "orphans:1;widows:3"), (10.0, 170.0));
     assert_eq!(closed_paragraph(3, "orphans:1;widows:1"), (40.0, 150.0));
     assert_eq!(closed_paragraph(2, "orphans:1;widows:1"), (50.0, 150.0));
+    // A paragraph that avoids breaks inside keeps all its lines.
+    for avoid in ["break-inside:avoid", "break-inside:avoid-page"] {
+        assert_eq!(closed_paragraph(6, avoid), (10.0, 110.0), "{avoid}");
+    }
 }
 
 #[test]

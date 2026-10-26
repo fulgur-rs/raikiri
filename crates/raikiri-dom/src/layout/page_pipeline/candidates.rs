@@ -871,6 +871,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let lines_closing_edges = if closing_edges_shape
                     && can_move_nested
                     && !closing_edges_base
+                    && !avoids_break
                     && node.is_ifc_root()
                 {
                     frame.closing_edges + node.layout.padding.bottom + node.layout.border.bottom
