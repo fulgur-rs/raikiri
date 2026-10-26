@@ -4002,6 +4002,7 @@ pub(crate) fn intrinsics_of_boxes(
                     basis,
                     percent_height,
                     margin.left + margin.right,
+                    false,
                 );
                 let style = tree.physical_style(b.node);
                 let side = match FloatDirection::from_float(style.float()) {
@@ -4028,6 +4029,10 @@ pub(crate) fn intrinsics_of_boxes(
             IfcBoxKind::OutOfFlow => {}
             IfcBoxKind::Block => {
                 let margin = resolved_margins(tree, b.node, basis);
+                // Only a block in the root's formatting context has margins
+                // that collapse with its content's; the others are laid out
+                // as formatting-context roots.
+                let margins_collapse = in_the_roots_formatting_context(tree, b.node);
                 let (min_content, max_content) = if vertical {
                     content_heights(
                         tree,
@@ -4035,6 +4040,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         physical_width,
                         margin.top + margin.bottom,
+                        margins_collapse,
                     )
                 } else {
                     content_widths(
@@ -4043,6 +4049,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         percent_height,
                         margin.left + margin.right,
+                        margins_collapse,
                     )
                 };
                 intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
@@ -4057,6 +4064,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         physical_width,
                         margin.top + margin.bottom,
+                        false,
                     )
                 } else {
                     content_widths(
@@ -4065,6 +4073,7 @@ pub(crate) fn intrinsics_of_boxes(
                         basis,
                         percent_height,
                         margin.left + margin.right,
+                        false,
                     )
                 };
                 intrinsics.engine.insert_atomic(
@@ -4081,13 +4090,17 @@ pub(crate) fn intrinsics_of_boxes(
 }
 
 /// Min- and max-content margin-box width of `node`, measured without changing
-/// its layout.
+/// its layout. `margins_collapse` is whether the box's own vertical margins
+/// may collapse with its content's, as they do for a block in the root's
+/// formatting context; floats, atomic inlines and the other blocks establish a
+/// formatting context of their own and do not.
 fn content_widths(
     tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
     percent_height: Option<f32>,
     margins_x: f32,
+    margins_collapse: bool,
 ) -> (f32, f32) {
     let parent_size = Size {
         width: Some(basis),
@@ -4099,6 +4112,7 @@ fn content_widths(
         parent_size,
         margins_x,
         RequestedAxis::Horizontal,
+        margins_collapse,
     )
 }
 
@@ -4108,22 +4122,36 @@ fn content_heights(
     basis: f32,
     physical_width: Option<f32>,
     margins_y: f32,
+    margins_collapse: bool,
 ) -> (f32, f32) {
     let parent_size = Size {
         width: physical_width,
         height: Some(basis),
     };
-    content_sizes_on_axis(tree, node, parent_size, margins_y, RequestedAxis::Vertical)
+    content_sizes_on_axis(
+        tree,
+        node,
+        parent_size,
+        margins_y,
+        RequestedAxis::Vertical,
+        margins_collapse,
+    )
 }
 
 /// Min- and max-content extents of `node` along `axis`, against the
 /// `parent_size` its percentages resolve against.
+///
+/// The box is measured with the margin-collapsing mode its layout runs in:
+/// Taffy keeps the entries of one mode per node and drops them all when a
+/// result of another mode is stored, so a measurement in a mode the layout
+/// does not use empties the cache of a box on every probe.
 fn content_sizes_on_axis(
     tree: &mut LayoutSession<'_>,
     node: usize,
     parent_size: Size<Option<f32>>,
     margins: f32,
     axis: RequestedAxis,
+    margins_collapse: bool,
 ) -> (f32, f32) {
     let vertical = axis == RequestedAxis::Vertical;
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
@@ -4150,7 +4178,10 @@ fn content_sizes_on_axis(
                         height: AvailableSpace::MaxContent,
                     }
                 },
-                vertical_margins_are_collapsible: Line::TRUE,
+                vertical_margins_are_collapsible: Line {
+                    start: margins_collapse,
+                    end: margins_collapse,
+                },
             },
         );
         if vertical {

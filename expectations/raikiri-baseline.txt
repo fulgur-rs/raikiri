@@ -5305,3 +5305,8 @@ css/css-sizing/aspect-ratio/flex-aspect-ratio-021.html
 css/css-sizing/aspect-ratio/flex-aspect-ratio-022.html
 css/css-sizing/aspect-ratio/flex-aspect-ratio-023.html
 css/css-sizing/aspect-ratio/flex-aspect-ratio-028.html
+# --- css-inline golden spiral (WPT 97ea26e2, 800x600 EXACT, 2026-10-26, RAIKIRI-877) ---
+# audit-vacuous-passes reports VACUOUS-UNSTYLED: the test still matches its reference without its
+# dominant-baseline declaration, so the PASS does not show the property at work. Kept as a guard
+# for twelve nested orthogonal inline boxes, which did not finish laying out.
+css/css-inline/dominant-baseline/dominant-baseline-mixed-writing-modes-002.html
