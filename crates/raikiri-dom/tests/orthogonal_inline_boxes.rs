@@ -118,3 +118,107 @@ fn a_floated_inline_in_another_writing_mode_is_a_block() {
         ],
     );
 }
+
+/// `depth` nested inline boxes that alternate between the writing modes of the
+/// golden spiral in `css/css-inline/dominant-baseline`, each holding an `X`
+/// and the next box. Box `i` has the id `s{i}`.
+fn spiral(depth: usize) -> String {
+    const MODES: [&str; 4] = [
+        "horizontal-tb",
+        "vertical-lr",
+        "horizontal-tb;direction:rtl",
+        "sideways-rl",
+    ];
+    let mut body = String::new();
+    for i in 0..depth {
+        body.push_str(&format!(
+            r#"<span id="s{i}" style="writing-mode:{}">X"#,
+            MODES[i % MODES.len()]
+        ));
+    }
+    body.push_str(&"</span>".repeat(depth));
+    format!(r#"<div id="line">{body}</div>"#)
+}
+
+#[test]
+fn nested_orthogonal_inline_boxes_match_chromium() {
+    check(
+        &spiral(4),
+        &[
+            ("s0", (8.0, 22.0, 30.0, 10.0)),
+            ("s1", (18.0, 8.0, 20.0, 22.0)),
+            ("s2", (18.0, 18.0, 20.0, 12.0)),
+            ("s3", (18.0, 18.0, 10.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_deep_chain_of_orthogonal_inline_boxes_is_laid_out() {
+    // Twelve levels laid out the box inside it three times each, and a nested
+    // layout had to be redone for every one of those, so the work doubled with
+    // every level.
+    let boxes = border_boxes(&spiral(12));
+    for i in 0..12 {
+        assert!(
+            boxes.iter().any(|(id, _)| id == &format!("s{i}")),
+            "no fragment for #s{i}"
+        );
+    }
+}
+
+/// How many times Taffy dropped the cache entries of a box on laying `body`
+/// out, because a result was stored in the other margin-collapsing mode.
+///
+/// Taffy keeps the entries of one mode per box and drops them all when a result
+/// of the other mode is stored, so a box measured in one mode and laid out in
+/// the other loses its cache on every probe. The counter is per thread and
+/// exists in debug builds only; the layout runs on the calling thread.
+#[cfg(debug_assertions)]
+fn evictions(body: &str) -> usize {
+    let before = evictions_so_far();
+    border_boxes(body);
+    evictions_so_far() - before
+}
+
+#[cfg(debug_assertions)]
+fn evictions_so_far() -> usize {
+    taffy::cache_mode_change_evictions() // taffy-boundary-lint:ignore: the counter has no owned name; it exists in Taffy only
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn measuring_an_inline_box_does_not_empty_its_cache() {
+    assert_eq!(evictions(&spiral(6)), 0);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn measuring_a_float_does_not_empty_its_cache() {
+    // The inline-block takes its width from its content, floats included.
+    assert_eq!(
+        evictions(
+            r#"<div style="display:inline-block">a<span style="float:left">b<span style="display:inline-block">c</span></span></div>"#
+        ),
+        0
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn measuring_a_block_does_not_empty_its_cache() {
+    // A block that establishes a formatting context, and one that does not,
+    // in a horizontal and in a vertical root that take their size from their
+    // content.
+    for style in ["overflow:hidden", "margin-top:5px"] {
+        for root in ["", ";writing-mode:vertical-rl"] {
+            assert_eq!(
+                evictions(&format!(
+                    r#"<div style="display:inline-block{root}">x<div style="{style}">y<span style="display:inline-block">z</span></div></div>"#
+                )),
+                0,
+                "{style}{root}"
+            );
+        }
+    }
+}
