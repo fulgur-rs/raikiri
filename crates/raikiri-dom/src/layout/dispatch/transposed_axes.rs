@@ -191,7 +191,10 @@ fn swap_output_axes(
 
 /// Mirror a static position within an axis of length `extent`, swapping the
 /// start and end alignments with it.
-fn reverse_static_position(position: AxisStaticPosition, extent: f32) -> AxisStaticPosition {
+pub(crate) fn reverse_static_position(
+    position: AxisStaticPosition,
+    extent: f32,
+) -> AxisStaticPosition {
     let reverse_edge = |edge| match edge {
         AxisStaticEdge::Start => AxisStaticEdge::End,
         AxisStaticEdge::Center => AxisStaticEdge::Center,

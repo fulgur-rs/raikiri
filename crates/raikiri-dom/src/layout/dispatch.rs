@@ -1218,6 +1218,7 @@ mod transposed_axes;
 mod vertical_block;
 mod vertical_oof;
 pub(crate) use oof::{compute_root_layout_with_content_limits, layout_container_candidates};
+pub(crate) use transposed_axes::reverse_static_position;
 pub(crate) use vertical_block::{
     TransposedBlock, TransposedSizingUndo, TransposedStyleIndex, block_right_to_left, is_table_box,
 };
