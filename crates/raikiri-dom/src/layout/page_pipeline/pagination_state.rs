@@ -12,16 +12,16 @@ use super::{
     block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
     box_sets_page_name, break_margins, collapses_through, collapses_with_previous_block,
     content_overflow_end, current_abs_y, first_line_judged_height, first_owned_line_height,
-    fits_decorated_paper, flex_line_paragraph, forced_line_breaks, forced_line_moves,
-    forced_target_page, grow_ancestors_for_shift, has_explicit_positioned_block_ancestor,
-    has_fixed_height, has_footnote_ancestor, in_row_flex_container, line_block_parent,
-    lines_can_shift_inside, make_room_for_table_header, margin_box_starts_page, materialize_y,
-    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
-    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
-    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
-    place_text_candidate, positioned_text_start_y, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, shift_text_candidate, text_changes_page_name,
-    text_sets_page_name,
+    fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
+    forced_line_moves, forced_target_page, grow_ancestors_for_shift,
+    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
+    in_row_flex_container, line_block_parent, lines_can_shift_inside, make_room_for_table_header,
+    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
+    place_first_table_header, place_text_candidate, positioned_text_start_y, reaches_line,
+    record_candidate_pages, reset_inline_x_for_page_transition, shift_text_candidate,
+    text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 
@@ -1103,10 +1103,12 @@ impl PaginationState {
     /// breaks between block-level children. When the paragraph has lines
     /// enough for both, a break that leaves too few widows moves up between
     /// earlier lines; otherwise a fitting block is moved as a unit when its
-    /// natural split would violate either constraint. Oversized blocks that
-    /// cannot break earlier keep their natural break. A paragraph that is a
-    /// flex item alone on its line cannot move as a unit, but its later lines
-    /// can move down inside it.
+    /// natural split would violate either constraint. A block taller than a
+    /// page is moved as a unit only when its break would leave too few
+    /// orphans, content comes before it on a page it does not start, and its
+    /// first line fits a page; otherwise it keeps its natural break. A
+    /// paragraph that is a flex item alone on its line cannot move as a unit,
+    /// but its later lines can move down inside it.
     pub(super) fn keep_lines_together(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -1150,74 +1152,93 @@ impl PaginationState {
                     );
                 }
             }
-            let page_start = page_origins.origin(self.current_page);
-            let page_end = page_start + page_origins.step_at(self.current_page);
-            let line_fit = ParagraphLineFit::measure(
-                &line_metrics,
-                text.effective_y,
-                page_start,
-                page_end,
-                cascade.computed[block_id].orphans,
-                cascade.computed[block_id].widows,
-            );
             let block_height = document.nodes[block_id].layout.size.height;
-            let can_move_block = blocks.block.is_some()
-                && block_fits_page_step(block_height, page_origins.step_at(self.current_page));
-            let fix = line_fit.fix(
-                &line_metrics,
-                text.effective_y,
-                self.current_page,
-                page_origins,
-                can_move_block,
-                // Lines move down inside the paragraph only when it is
-                // its own inline layout root, has no earlier split
-                // pending, and can shift its lines.
-                || {
-                    blocks.paragraph_root == Some(block_id)
-                        && self.deferred_shifts.line_splits.is_empty()
-                        && lines_can_shift_inside(document, block_id)
-                },
-            );
-            match fix {
-                LineBreakFix::MoveLines(moves) => {
-                    self.move_lines(
-                        document,
-                        env,
-                        candidate,
-                        entry,
-                        blocks,
-                        text,
-                        block_id,
-                        moves.into_iter().flatten(),
-                    )?;
+            let mut page = self.current_page;
+            // A block moved whole to the next page is judged once more from
+            // there, for the lines that break again on the pages after it.
+            let mut moved_whole = false;
+            loop {
+                let page_start = page_origins.origin(page);
+                let page_step = page_origins.step_at(page);
+                let line_fit = ParagraphLineFit::measure(
+                    &line_metrics,
+                    text.effective_y,
+                    page_start,
+                    page_start + page_step,
+                    cascade.computed[block_id].orphans,
+                    cascade.computed[block_id].widows,
+                );
+                // The block is measured from where it is now.
+                let block_effective_y = block_effective_y(
+                    document,
+                    block_id,
+                    candidate.raw_y,
+                    text.effective_y,
+                    root_flow_offset,
+                    self.flow_shift,
+                );
+                // A block taller than a page moves whole only to keep its
+                // orphans, as it fragments on the next page anyway. That
+                // takes content before it on a page it does not start, and a
+                // first line that fits a page.
+                let can_move_block = !moved_whole
+                    && blocks.block.is_some()
+                    && (block_fits_page_step(block_height, page_step)
+                        || (block_effective_y > page_start + 0.001
+                            && follows_flow_content(document, body_id, block_id)
+                            && line_fit.gains_from_moving_tall_block(
+                                text.effective_y - block_effective_y + line_metrics[0].1,
+                                page_step,
+                            )));
+                let fix = line_fit.fix(
+                    &line_metrics,
+                    text.effective_y,
+                    page,
+                    page_origins,
+                    can_move_block,
+                    // Lines move down inside the paragraph only when it is
+                    // its own inline layout root, has no earlier split
+                    // pending, and can shift its lines.
+                    || {
+                        blocks.paragraph_root == Some(block_id)
+                            && self.deferred_shifts.line_splits.is_empty()
+                            && lines_can_shift_inside(document, block_id)
+                    },
+                );
+                match fix {
+                    LineBreakFix::MoveLines(moves) => {
+                        self.move_lines(
+                            document,
+                            env,
+                            candidate,
+                            entry,
+                            blocks,
+                            text,
+                            block_id,
+                            moves.into_iter().flatten(),
+                        )?;
+                        break;
+                    }
+                    LineBreakFix::MoveBlock => {
+                        page = page.saturating_add(1);
+                        reach_page(control, page)?;
+                        let delta = move_line_block(
+                            document,
+                            cascade,
+                            body_id,
+                            block_id,
+                            nested,
+                            block_effective_y,
+                            page_origins.origin(page),
+                            &mut self.subtree_shifts,
+                            entry.page_before_candidate,
+                        );
+                        self.flow_shift += delta;
+                        text.effective_y += delta;
+                        moved_whole = true;
+                    }
+                    LineBreakFix::Keep => break,
                 }
-                LineBreakFix::MoveBlock => {
-                    // The move is measured from where the block is now.
-                    let block_effective_y = block_effective_y(
-                        document,
-                        block_id,
-                        candidate.raw_y,
-                        text.effective_y,
-                        root_flow_offset,
-                        self.flow_shift,
-                    );
-                    let target_page = self.current_page.saturating_add(1);
-                    reach_page(control, target_page)?;
-                    let delta = move_line_block(
-                        document,
-                        cascade,
-                        body_id,
-                        block_id,
-                        nested,
-                        block_effective_y,
-                        page_origins.origin(target_page),
-                        &mut self.subtree_shifts,
-                        entry.page_before_candidate,
-                    );
-                    self.flow_shift += delta;
-                    text.effective_y += delta;
-                }
-                LineBreakFix::Keep => {}
             }
         }
         Ok(())
