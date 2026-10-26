@@ -487,6 +487,220 @@ fn a_spanner_leaves_the_outline_of_a_paragraph_visible_past_its_column_group() {
     );
 }
 
+/// The lines `first` and `second`, `row_height` apart, in the column at `left`
+/// of a container whose first line is `top`.
+fn column_lines(left: i32, top: i32, first: &str, second: &str) -> String {
+    format!("<div style='position:absolute;left:{left}px;top:{top}px'>{first}<br>{second}</div>")
+}
+
+#[test]
+fn bare_lines_around_a_spanner_fill_their_columns_group_by_group() {
+    // The container holds the lines itself, with no paragraph around them: the
+    // lines before and after the spanner fill two columns each, and the whole
+    // fits the page, where one column of all the lines did not.
+    let spanner = "<div style='column-span:all;height:20px;background:lime'></div>";
+    compare(
+        &format!("<div class=mc>A<br>B<br>C<br>D{spanner}E<br>F<br>G<br>H</div>"),
+        "",
+        &format!(
+            "{}{}<div style='position:absolute;left:0;top:40px;width:100px;height:20px;background:lime'></div>{}{}",
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+            column_lines(0, 60, "E", "F"),
+            column_lines(60, 60, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn bare_lines_around_a_spanner_match_the_lines_of_paragraphs() {
+    let spanner = "<div style='column-span:all;height:20px;background:lime'></div>";
+    compare(
+        &format!("<div class=mc>A<br>B<br>C<br>D{spanner}E<br>F<br>G</div>"),
+        "",
+        &format!("<div class=mc><p>A<br>B<br>C<br>D</p>{spanner}<p>E<br>F<br>G</p></div>"),
+    );
+}
+
+#[test]
+fn bare_lines_around_a_spanner_start_inside_the_border_and_padding_of_the_container() {
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D<div style='column-span:all;height:20px;background:yellow'></div>E<br>F<br>G<br>H</div>",
+        ".mc{padding:10px;border:5px solid black;background:lime}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0;box-sizing:border-box;width:130px;height:130px;border:5px solid black;background:lime'></div>{}{}<div style='position:absolute;left:15px;top:55px;width:100px;height:20px;background:yellow'></div>{}{}",
+            column_lines(15, 15, "A", "B"),
+            column_lines(75, 15, "C", "D"),
+            column_lines(15, 75, "E", "F"),
+            column_lines(75, 75, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn bare_lines_before_a_spanner_balance_under_column_fill_auto() {
+    // The lines after the last spanner fill the first column, as they would
+    // without a spanner.
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D<div style='column-span:all;height:20px'></div>E<br>F<br>G<br>H</div>",
+        ".mc{column-fill:auto}",
+        &format!(
+            "{}{}<div style='position:absolute;left:0;top:60px'>E<br>F<br>G<br>H</div>",
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+        ),
+    );
+}
+
+#[test]
+fn bare_lines_between_spanners_follow_their_margins() {
+    // The margins between the two spanners collapse into the larger one.
+    let spanners = "<div style='column-span:all;height:20px;margin-bottom:10px;background:lime'></div><div style='column-span:all;height:20px;margin-top:20px;background:yellow'></div>";
+    compare(
+        &format!("<div class=mc>A<br>B<br>C<br>D{spanners}E<br>F<br>G<br>H</div>"),
+        "",
+        &format!(
+            "{}{}<div style='position:absolute;left:0;top:40px;width:100px;height:20px;background:lime'></div><div style='position:absolute;left:0;top:80px;width:100px;height:20px;background:yellow'></div>{}{}",
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+            column_lines(0, 100, "E", "F"),
+            column_lines(60, 100, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn a_spanner_between_bare_lines_is_laid_out_across_the_columns() {
+    // Its own lines wrap at the width of the container, not of a column.
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D<div style='column-span:all;background:lime'>XX XX XX XX XX XX</div>E<br>F<br>G<br>H</div>",
+        "",
+        &format!(
+            "{}{}<div style='position:absolute;left:0;top:40px;width:100px;background:lime'>XX XX XX XX XX XX</div>{}{}",
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+            column_lines(0, 100, "E", "F"),
+            column_lines(60, 100, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn bare_lines_around_a_spanner_fill_right_to_left_columns_from_the_right() {
+    let rtl = |left: i32, top: i32, first: &str, second: &str| {
+        format!(
+            "<div style='position:absolute;left:{left}px;top:{top}px;width:40px;direction:rtl'>{first}<br>{second}</div>"
+        )
+    };
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D<div style='column-span:all;height:20px;background:lime'></div>E<br>F<br>G<br>H</div>",
+        ".mc{direction:rtl}",
+        &format!(
+            "{}{}<div style='position:absolute;left:0;top:40px;width:100px;height:20px;background:lime'></div>{}{}",
+            rtl(60, 0, "A", "B"),
+            rtl(0, 0, "C", "D"),
+            rtl(60, 60, "E", "F"),
+            rtl(0, 60, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn bare_lines_around_a_spanner_keep_the_boxes_in_their_lines_in_their_columns() {
+    // The box of the second group moves with its line to the column and
+    // the group it is in.
+    let boxed = "<span style='display:inline-block;background:red'>E</span>";
+    compare(
+        &format!(
+            "<div class=mc>A<br>B<br>C<br>D<div style='column-span:all;height:20px'></div>{boxed}<br>F<br>G<br>H</div>"
+        ),
+        "",
+        &format!(
+            "{}{}{}{}",
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+            column_lines(0, 60, boxed, "F"),
+            column_lines(60, 60, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn the_rules_between_the_columns_of_bare_lines_stop_at_a_spanner() {
+    let rule = |top: i32| {
+        format!(
+            "<div style='position:absolute;left:49px;top:{top}px;width:2px;height:40px;background:black'></div>"
+        )
+    };
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D<div style='column-span:all;height:20px'></div>E<br>F<br>G<br>H</div>",
+        ".mc{column-rule:2px solid black}",
+        &format!(
+            "{}{}{}{}{}{}",
+            rule(0),
+            rule(60),
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+            column_lines(0, 60, "E", "F"),
+            column_lines(60, 60, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn the_rules_of_bare_lines_start_inside_the_border_and_padding_of_the_container() {
+    let rule = |top: i32| {
+        format!(
+            "<div style='position:absolute;left:64px;top:{top}px;width:2px;height:40px;background:black'></div>"
+        )
+    };
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D<div style='column-span:all;height:20px'></div>E<br>F<br>G<br>H</div>",
+        ".mc{padding:10px;border:5px solid transparent;column-rule:2px solid black}",
+        &format!(
+            "{}{}{}{}{}{}",
+            rule(15),
+            rule(75),
+            column_lines(15, 15, "A", "B"),
+            column_lines(75, 15, "C", "D"),
+            column_lines(15, 75, "E", "F"),
+            column_lines(75, 75, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn bare_lines_around_a_spanner_stay_in_their_groups_when_a_flex_container_measures_them() {
+    // The flex container sizes the item before it places it.
+    compare(
+        "<div style='display:flex'><div class=mc>A<br>B<br>C<br>D<div style='column-span:all;height:20px;background:lime'></div>E<br>F<br>G<br>H</div></div><p>I</p>",
+        "",
+        &format!(
+            "{}{}<div style='position:absolute;left:0;top:40px;width:100px;height:20px;background:lime'></div>{}{}<div style='position:absolute;left:0;top:100px'>I</div>",
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+            column_lines(0, 60, "E", "F"),
+            column_lines(60, 60, "G", "H"),
+        ),
+    );
+}
+
+#[test]
+fn bare_lines_around_a_spanner_in_a_wrapper_fill_their_columns_group_by_group() {
+    // The wrapper makes no box of its own, so its lines are the container's.
+    compare(
+        "<div class=mc><div>A<br>B<br>C<br>D<div style='column-span:all;height:20px;background:lime'></div>E<br>F<br>G<br>H</div></div>",
+        "",
+        &format!(
+            "{}{}<div style='position:absolute;left:0;top:40px;width:100px;height:20px;background:lime'></div>{}{}",
+            column_lines(0, 0, "A", "B"),
+            column_lines(60, 0, "C", "D"),
+            column_lines(0, 60, "E", "F"),
+            column_lines(60, 60, "G", "H"),
+        ),
+    );
+}
+
 #[test]
 fn a_box_with_a_block_border_slices_it_across_the_columns() {
     // The border is where the box starts or ends, not at the break.

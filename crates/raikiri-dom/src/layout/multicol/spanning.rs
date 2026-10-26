@@ -208,7 +208,7 @@ pub(super) fn layout(
     block_offset + block_end_inset
 }
 
-fn clear_column_state(tree: &mut LayoutSession<'_>, root: usize) {
+pub(super) fn clear_column_state(tree: &mut LayoutSession<'_>, root: usize) {
     let mut pending = vec![root];
     while let Some(node_id) = pending.pop() {
         let node = &mut tree.nodes[node_id];
