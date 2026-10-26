@@ -223,28 +223,49 @@ fn an_anonymous_row_collapses_with_its_row_group() {
     assert_eq!(doc.nodes[table].layout.size.height, 40.0);
 }
 
-#[test]
-fn the_first_remaining_row_carries_the_table_baseline() {
+/// A separated table whose rows take `rows` styles, each holding one Ahem cell
+/// of the given font size, laid out; returns the table's first baseline.
+fn first_baseline_of_rows(rows: &[(&str, u32)]) -> Option<f32> {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let table = doc.append_element(Some(body), "div", Some(SEPARATE));
-    for row_css in [COLLAPSED, ROW] {
+    for &(row_css, size) in rows {
         let row = doc.append_element(Some(table), "div", Some(row_css));
         let cell = doc.append_element(
             Some(row),
             "div",
-            Some("display:table-cell;padding:0;font-family:Ahem;font-size:20px;line-height:20px"),
+            Some(&format!(
+                "display:table-cell;padding:0;font-family:Ahem;font-size:{size}px;line-height:{size}px"
+            )),
         );
         doc.append_text(cell, "X");
     }
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-    // The second row starts one spacing below the grid edge; Ahem's
-    // baseline sits 16px into its 20px line.
-    assert_eq!(doc.nodes[table].table_first_baseline, Some(26.0));
+    doc.nodes[table].table_first_baseline
+}
+
+#[test]
+fn the_first_row_carries_the_table_baseline_even_when_it_collapses() {
+    // One spacing below the grid edge, then Ahem's baseline 0.8em into the
+    // line. The values are Chromium's for the same table.
+    assert_eq!(
+        first_baseline_of_rows(&[(COLLAPSED, 40), (ROW, 20)]),
+        Some(42.0)
+    );
+    assert_eq!(
+        first_baseline_of_rows(&[(ROW, 20), (COLLAPSED, 40)]),
+        Some(26.0)
+    );
+    // Rows that all collapse still have the first one to take it from.
+    assert_eq!(
+        first_baseline_of_rows(&[(COLLAPSED, 40), (COLLAPSED, 20)]),
+        Some(42.0)
+    );
+    assert_eq!(first_baseline_of_rows(&[(ROW, 20), (ROW, 40)]), Some(26.0));
 }
 
 #[test]
@@ -272,8 +293,9 @@ fn a_table_whose_rows_all_collapse_keeps_no_spacing() {
     let group = fixture.doc.nodes[fixture.rows[0]].parent.unwrap();
     let table = fixture.doc.nodes[group].parent.unwrap();
     assert_eq!(fixture.doc.nodes[table].layout.size.height, 0.0);
-    // Without a first row there is no first baseline to expose.
-    assert_eq!(fixture.doc.nodes[table].table_first_baseline, None);
+    // Its first row is collapsed, with no extent for the empty cell's baseline
+    // to sit below, so the baseline is the spacing above that row.
+    assert_eq!(fixture.doc.nodes[table].table_first_baseline, Some(10.0));
 }
 
 #[test]
