@@ -606,7 +606,8 @@ fn a_percentage_width_atomic_counts_as_auto_while_the_root_takes_its_width_from_
         ("r", (8.0, 8.0, 30.0, 100.0)),
     ];
     check_modes(&atomic("width:50%;padding:10%"), &padded, &padded);
-    // A box without content is as wide as its padding.
+    // A box without content is as wide as its padding, whether or not it
+    // states a percentage of the width it does not have yet.
     let empty = |css: &str| {
         format!(
             "<div id=r style=\"float:left;writing-mode:MODE;height:100px\">aa\
@@ -617,7 +618,15 @@ fn a_percentage_width_atomic_counts_as_auto_while_the_root_takes_its_width_from_
         ("a", (8.0, 28.0, 20.0, 20.0)),
         ("r", (8.0, 8.0, 20.0, 100.0)),
     ];
-    check_modes(&empty("padding:10%"), &edges, &edges);
+    for css in [
+        "padding:10%",
+        "width:50%;padding:10%",
+        "min-width:1%;padding:10%",
+        "min-width:50%;padding:10%",
+        "max-width:50%;padding:10%",
+    ] {
+        check_modes(&empty(css), &edges, &edges);
+    }
 }
 
 #[test]

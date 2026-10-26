@@ -21,6 +21,7 @@ use crate::layout::protocol::{
 };
 use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
+use raikiri_layout_style::LengthProperty;
 use raikiri_layout_style::values::{
     self, AlignContentKeyword, BoxSizing, Clear, Display, ExpandedDimension, LengthPercentageAuto,
     MaybeResolve, Overflow, Position, ResolveOrZero,
@@ -1596,12 +1597,11 @@ fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Edges<
 /// content height, and behave as `auto` without one. A vertical root passes
 /// its inline extent as the basis, which its children's edges take their
 /// percentages of, and the width its children's own width percentage
-/// resolves to as `known_width`; without a basis the percentages of the box
-/// resolve to nothing, its edges' to zero.
+/// resolves to as `known_width`.
 fn perform_box_layout(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    basis: Option<f32>,
+    basis: f32,
     height_basis: Option<f32>,
     known_width: Option<f32>,
     available: Size<AvailableSpace>,
@@ -1623,7 +1623,7 @@ fn perform_box_layout(
                 height: true,
             },
             parent_size: Size {
-                width: basis,
+                width: Some(basis),
                 height: height_basis,
             },
             available_space: available,
@@ -1657,7 +1657,7 @@ fn measure_float(
     let output = perform_box_layout(
         tree,
         node,
-        Some(geometry.width),
+        geometry.width,
         geometry.definite_height,
         known_width,
         Size {
@@ -1808,13 +1808,25 @@ pub(crate) fn measure_atomics(
         } else {
             keyword_width(tree, node, &geometry, available)
         };
-        let parent_width =
-            if along_height && width_basis.is_none() && widths_depend_on_basis(tree, node) {
-                None
-            } else {
-                Some(geometry.width)
-            };
-        let output = perform_box_layout(tree, node, parent_width, height_basis, known_width, space);
+        // Without a width to resolve against, the percentages of a box laid
+        // out on the same axes behave as `auto` and as no limit. Its edges
+        // keep the inline extent as their basis, which a single basis for
+        // both would take away, so the percentages are what is set aside.
+        let neutral = if along_height && width_basis.is_none() {
+            percentage_widths(tree, node)
+        } else {
+            Vec::new()
+        };
+        let layout = |tree: &mut LayoutSession<'_>| {
+            perform_box_layout(tree, node, geometry.width, height_basis, known_width, space)
+        };
+        let output = if neutral.is_empty() {
+            layout(tree)
+        } else {
+            crate::layout::dispatch::content_limits::with_neutral_sizes(
+                tree, node, &neutral, layout,
+            )
+        };
         let id = shodo::node::NodeId(node as u64);
         // Only the alphabetic baseline is supplied. shodo measures it from
         // the margin box's line-over edge and falls back to the margin box's
@@ -1864,17 +1876,23 @@ pub(crate) fn measure_atomics(
     AtomicMeasure { sizes, outputs }
 }
 
-/// Whether the `width`, `min-width` or `max-width` of `node` is a percentage,
-/// which resolves to nothing without a basis.
-fn widths_depend_on_basis(tree: &LayoutSession<'_>, node: usize) -> bool {
+/// The `width`, `min-width` and `max-width` of `node` that are percentages,
+/// which resolve to nothing without a basis.
+fn percentage_widths(tree: &LayoutSession<'_>, node: usize) -> Vec<LengthProperty> {
     let style = tree.physical_style(node);
     let in_percentages = |dimension: values::Dimension| {
         dimension.maybe_resolve(None::<f32>).is_none()
             && dimension.maybe_resolve(Some(0.0)).is_some()
     };
-    in_percentages(style.size().width)
-        || in_percentages(style.min_size().width.into())
-        || in_percentages(style.max_size().width.into())
+    [
+        (LengthProperty::Width, style.size().width),
+        (LengthProperty::MinWidth, style.min_size().width.into()),
+        (LengthProperty::MaxWidth, style.max_size().width.into()),
+    ]
+    .into_iter()
+    .filter(|&(_, dimension)| in_percentages(dimension))
+    .map(|(property, _)| property)
+    .collect()
 }
 
 /// What laying out a block child gives the line loop.

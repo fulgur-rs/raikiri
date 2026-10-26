@@ -124,6 +124,17 @@ fn neutral_size_overrides(properties: &[LengthProperty]) -> Vec<OwnedPropertyOve
         .collect()
 }
 
+/// Run `f` with the `properties` of the box `node` standing for `auto` or no
+/// limit, as they do while the size they refer to is not known.
+pub(crate) fn with_neutral_sizes<R>(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    properties: &[LengthProperty],
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    with_size_overrides(tree, node, neutral_size_overrides(properties), f)
+}
+
 fn with_size_overrides<R>(
     tree: &mut LayoutSession<'_>,
     idx: usize,
