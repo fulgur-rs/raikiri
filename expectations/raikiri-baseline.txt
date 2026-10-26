@@ -5309,3 +5309,8 @@ css/css-sizing/aspect-ratio/flex-aspect-ratio-028.html
 # dominant-baseline declaration, so the PASS does not show the property at work. Kept as a guard
 # for twelve nested orthogonal inline boxes, which did not finish laying out.
 css/css-inline/dominant-baseline/dominant-baseline-mixed-writing-modes-002.html
+
+# --- style containment scopes the quote depth (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
+# The `close-quote` or `no-close-quote` of a `contain: style` element moves the quote depth only inside that element, so the `close-quote` of the element around it still closes the quote it opened (the texts AZZ and AZ); both KEEP in two audit-vacuous-passes runs.
+css/css-contain/quote-scoping-002.html
+css/css-contain/quote-scoping-004.html
