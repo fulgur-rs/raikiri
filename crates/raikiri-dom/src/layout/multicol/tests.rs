@@ -2019,6 +2019,19 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     ] {
         assert!(!supported(flex, &[item], true), "{flex}");
     }
+    // A box that stays inside the container is cut with it; content that
+    // reaches past its block end would need columns the container's pieces
+    // do not reach.
+    let relative = "display:flex;height:150px;position:relative";
+    let inside = "display:block;position:absolute;top:0;height:100px";
+    let past = "display:block;position:absolute;top:0;height:250px";
+    assert!(supported(relative, &[inside], true));
+    assert!(!supported(relative, &[past], true));
+    assert!(!supported(
+        sized,
+        &["display:block;width:10px;height:250px"],
+        true
+    ));
     // Too many boxes to look through.
     let many = vec![item; 300];
     assert!(!supported(sized, &many, true));
