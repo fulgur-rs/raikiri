@@ -5838,8 +5838,10 @@ fn follows_flow_content(document: &Document, body_id: usize, node_id: usize) -> 
             .take_while(|&&child| child != node)
             .any(|&child| match &document.nodes[child].data {
                 crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                // Comments and processing instructions are not in the document.
                 _ => {
-                    document.nodes[child].display() != DisplayValue::None
+                    document.nodes[child].is_in_document()
+                        && document.nodes[child].display() != DisplayValue::None
                         && !matches!(
                             document.nodes[child].position(),
                             PositionValue::Absolute | PositionValue::Fixed
