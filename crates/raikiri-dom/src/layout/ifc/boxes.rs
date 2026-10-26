@@ -2712,6 +2712,10 @@ fn layout_formatting_context_child(
     };
     let extra_left = if beside_floats {
         auto_left
+    } else if autos == 0 && geometry.axes.direction() == Direction::Rtl {
+        // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
+        // its used left margin.
+        geometry.width - output.size.width - margin.right
     } else {
         margin.left + auto_left
     };

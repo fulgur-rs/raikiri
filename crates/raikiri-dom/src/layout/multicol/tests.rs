@@ -5436,3 +5436,18 @@ fn a_spanner_in_a_relatively_positioned_inline_stays_across_the_columns() {
         (0.0, 20.0, 100.0, 20.0)
     );
 }
+
+#[test]
+fn a_narrow_spanner_in_right_to_left_columns_sits_against_the_right_edge() {
+    // The columns are 100px wide. An over-constrained spanner in a right to
+    // left container changes its left margin (CSS 2.2 10.3.3), so it ends
+    // 10px from the right edge when it has a margin of 10px there.
+    for (css, left) in [("width:40px", 60.0), ("width:40px;margin-right:10px", 50.0)] {
+        let (mut doc, _, boxes) = column_container(
+            "direction:rtl",
+            &[Part::Lines(2), Part::Spanner(css), Part::Lines(2)],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(doc.nodes[boxes[0]].layout.location.x, left, "{css}");
+    }
+}
