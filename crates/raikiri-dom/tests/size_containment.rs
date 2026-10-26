@@ -278,3 +278,47 @@ fn a_vertical_box_keeps_its_logical_size_under_containment() {
     let (_, _, width, height) = first(body, "c");
     assert_eq!((width, height), (40.0, 100.0));
 }
+
+#[test]
+fn a_vertical_box_with_size_containment_is_laid_out() {
+    // A vertical block box under a horizontal one takes its width from its
+    // content, and a size contained box has none: that width is the one
+    // containment gives it, not a stretched width to measure the content for
+    // again. The layout used to recurse into the box without end.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        for display in ["block", "flex", "grid", "flow-root"] {
+            let body = format!(
+                "<div id=c style=\"display: {display}; writing-mode: {mode}; contain: size\"></div>"
+            );
+            let (_, _, width, height) = first(&body, "c");
+            assert_eq!((width, height), (0.0, 0.0), "{mode} {display}");
+        }
+    }
+}
+
+#[test]
+fn a_vertical_box_with_size_containment_under_a_shrink_to_fit_parent_is_laid_out() {
+    // A parent that shrinks to fit asks the box for its width on its own, with
+    // no width stretched to it, and the box answers with the width containment
+    // gives it.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let body = format!(
+            "<div style=\"width: max-content\"><div id=c style=\"writing-mode: {mode}; \
+             contain: size\"></div></div>"
+        );
+        let (_, _, width, height) = first(&body, "c");
+        assert_eq!((width, height), (0.0, 0.0), "{mode}");
+    }
+}
+
+#[test]
+fn a_vertical_box_with_size_containment_still_holds_its_content() {
+    // The content is laid out inside the box and overflows it; it neither
+    // sizes the box nor is it measured for a width of its own.
+    let body = "<div id=c style=\"writing-mode: vertical-rl; contain: size\">\
+                <p id=p>XX</p><p>XX</p></div>";
+    assert_eq!(first(body, "c").2, 0.0);
+    assert_eq!(first(body, "c").3, 0.0);
+    // One line of the paragraph, as thick as its line height.
+    assert_eq!(first(body, "p").2, 20.0);
+}

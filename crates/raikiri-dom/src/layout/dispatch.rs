@@ -828,6 +828,9 @@ impl LayoutSession<'_> {
             let inputs = with_fit_content_room(tree, idx, inputs);
             let inputs = with_column_flex_keyword_room(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
+            // Size containment may give the box a width the request did not
+            // have; whether the request stretched it is read before that.
+            let stretched_width = inputs.known_dimensions.width.is_some();
             let inputs = if empty {
                 inputs
             } else {
@@ -886,9 +889,12 @@ impl LayoutSession<'_> {
                 }
             }
             // A vertical box under a horizontal block container is sized by
-            // its content on the axis its container stretched it along.
+            // its content on the axis its container stretched it along. Its
+            // own measure of that content asks for no width, and a size
+            // contained box answers that with the width containment gives it;
+            // that answer is not a stretched width to measure again.
             if !empty
-                && inputs.known_dimensions.width.is_some()
+                && stretched_width
                 && inputs.sizing_mode == SizingMode::InherentSize
                 && tree.context.orthogonal_block_in_layout != Some(idx)
                 && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
