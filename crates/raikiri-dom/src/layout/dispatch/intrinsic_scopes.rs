@@ -37,6 +37,13 @@ fn with_saved_probe_caches<R>(
 /// their flex base sizes while the container lays them out
 /// ([`with_flex_item_basis_bounds`]).
 ///
+/// A container with no `max-width` has nothing to drop, and the probe leaves
+/// its style alone: every change of style moves the cache generation, which
+/// makes the sizes of the boxes inside the container, and of the boxes around
+/// it that are being laid out, unreadable and unstorable. A chain of nested
+/// containers would then measure the one inside it again at each of the widths
+/// its parent tries.
+///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-sizes>
 pub(super) fn with_flex_intrinsic_probe<R>(
     tree: &mut LayoutSession<'_>,
@@ -49,10 +56,14 @@ pub(super) fn with_flex_intrinsic_probe<R>(
         .nodes
         .box_key(idx)
         .expect("intrinsic container has a box key");
-    let entries = vec![(
-        key,
-        O::length(P::MaxWidth, L::Auto, false).expect("physical intrinsic maximum"),
-    )];
+    let entries = if tree.physical_style(idx).max_size().width.is_auto() {
+        Vec::new()
+    } else {
+        vec![(
+            key,
+            O::length(P::MaxWidth, L::Auto, false).expect("physical intrinsic maximum"),
+        )]
+    };
     let outer = tree.context.flex_intrinsic_probe.replace(idx);
     let result = catch_unwind(AssertUnwindSafe(|| tree.with_overrides(entries, probe)));
     tree.context.flex_intrinsic_probe = outer;
