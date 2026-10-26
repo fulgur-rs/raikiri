@@ -589,8 +589,9 @@ fn resolves_padding_on_physical_axes(tree: &Document, idx: usize) -> bool {
 /// from the inline size of the container that taffy stretched it to (CSS
 /// Writing Modes 4 §7.3). Its inline size, the physical width, is the
 /// fit-content width of its content in the physical width of the
-/// container's content box, `block_space`, when that is definite (§7.3.1),
-/// so an auto width does not stretch to fill the container.
+/// container's content box, `block_space`, less its margins, when that is
+/// definite (§7.3.1), so an auto width does not stretch to fill the
+/// container.
 fn orthogonal_child_inputs(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -609,7 +610,14 @@ fn orthogonal_child_inputs(
         inputs.known_dimensions.height = None;
     }
     if let Some(space) = block_space {
-        inputs.available_space.width = AvailableSpace::Definite(space);
+        // The margin box has to fit, so the width left for fit-content is
+        // what the margins leave. They resolve against the container's
+        // inline size, its physical height.
+        let margin = style
+            .margin()
+            .map(|margin| margin.resolve_or_zero(inputs.parent_size.height));
+        inputs.available_space.width =
+            AvailableSpace::Definite((space - margin.left - margin.right).max(0.0));
     }
     inputs
 }

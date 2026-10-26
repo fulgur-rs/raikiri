@@ -367,6 +367,85 @@ fn horizontal_child_of_a_vertical_container_is_as_wide_as_its_widest_child() {
     assert_eq!(absolute_rect(&doc, percent), (8.0, 38.0, 40.0, 5.0));
 }
 
+/// The rect of the horizontal child, styled `child_css`, of a vertical
+/// container styled `container_css`, which holds one `display:block` div
+/// styled with each entry of `items`.
+fn horizontal_child_rect(
+    container_css: &str,
+    child_css: &str,
+    items: &[&str],
+) -> (f32, f32, f32, f32) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!("display:block;{container_css}").as_str()),
+    );
+    let child = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("display:block;writing-mode:horizontal-tb;{child_css}").as_str()),
+    );
+    for css in items {
+        doc.append_element(
+            Some(child),
+            "div",
+            Some(format!("display:block;{css}").as_str()),
+        );
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    absolute_rect(&doc, child)
+}
+
+#[test]
+fn horizontal_child_content_wraps_in_the_width_its_margins_leave() {
+    const BOXES: [&str; 5] = ["width:60px;height:10px"; 5];
+    const FLOATS: [&str; 4] = ["float:left;width:70px;height:10px"; 4];
+    // Five 60px boxes wrap two to a row in 160px, three in 200px.
+    for (container, x) in [("vertical-rl", 28.0), ("vertical-lr", 28.0)] {
+        let container_css = format!("writing-mode:{container};width:200px;height:400px");
+        assert_eq!(
+            horizontal_child_rect(
+                &container_css,
+                "display:flex;flex-wrap:wrap;margin:0 20px",
+                &BOXES
+            ),
+            (x, 8.0, 160.0, 30.0),
+            "{container}"
+        );
+        // Four 70px floats wrap two to a row in 160px, and three in 200px.
+        assert_eq!(
+            horizontal_child_rect(&container_css, "margin:0 20px", &FLOATS),
+            (x, 8.0, 160.0, 20.0),
+            "{container}"
+        );
+    }
+    // Margins in percent resolve against the container's 400px inline size.
+    assert_eq!(
+        horizontal_child_rect(
+            "writing-mode:vertical-rl;width:200px;height:400px",
+            "display:flex;flex-wrap:wrap;margin:0 10%",
+            &BOXES
+        ),
+        (48.0, 8.0, 120.0, 30.0)
+    );
+    // Unequal margins.
+    assert_eq!(
+        horizontal_child_rect(
+            "writing-mode:vertical-lr;width:200px;height:400px",
+            "display:flex;flex-wrap:wrap;margin:0 7px 0 30px",
+            &BOXES
+        ),
+        (38.0, 8.0, 163.0, 30.0)
+    );
+}
+
 #[test]
 fn horizontal_child_of_a_vertical_container_keeps_its_max_width() {
     let rects = layout(
