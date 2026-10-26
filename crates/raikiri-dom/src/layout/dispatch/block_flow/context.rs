@@ -78,6 +78,9 @@ struct FlowState {
     leading_adjoining: Option<[bool; 2]>,
     resolved: bool,
     leading_strut: Option<LeadingStrut>,
+    /// How low the floats reached before the float that starts a page, in the
+    /// float storage's own coordinates.
+    page_start_floor: Option<f32>,
 }
 
 impl FlowState {
@@ -88,6 +91,7 @@ impl FlowState {
             leading_adjoining: None,
             resolved: false,
             leading_strut: None,
+            page_start_floor: None,
         }
     }
 }
@@ -427,6 +431,18 @@ impl BlockContext<'_> {
             .floats
             .cleared_threshold(clear)
             .map(|end| end - self.origin)
+    }
+
+    /// Notes how low the floats placed so far reach, as seen by `clear`, for
+    /// the float about to be placed when it starts a page: the box after it
+    /// is held below them but not below that float.
+    pub(crate) fn record_page_start_float_floor(&mut self, clear: Clear) {
+        self.state.page_start_floor = self.owner.floats.cleared_threshold(clear);
+    }
+
+    /// The floor recorded for the last float that started a page.
+    pub(crate) fn page_start_float_floor(&self) -> Option<f32> {
+        self.state.page_start_floor.map(|floor| floor - self.origin)
     }
 
     pub(crate) fn has_adjoining_float(&self, clear: Clear) -> bool {

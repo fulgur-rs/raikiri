@@ -2826,7 +2826,11 @@ fn clear_floats_at_forced_breaks<'name>(
             }
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too.
-            if forced && beside_page_start_float && !own_break {
+            if forced
+                && beside_page_start_float
+                && !own_break
+                && !document.nodes[parent].used_writing_mode.is_vertical()
+            {
                 // Layout clears the floats before the one that starts the
                 // page, not that float.
                 cleared_to_float_floor.push(child);

@@ -287,9 +287,6 @@ pub(super) fn layout(
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut leading = true;
-    // How low the floats reached before the float that starts a page, which
-    // the box after that float clears but not the float itself.
-    let mut page_start_float_floor = None;
     if !collapse_start {
         ctx.commit_strut();
     }
@@ -419,7 +416,7 @@ pub(super) fn layout(
                 .binary_search(&usize::from(child))
                 .is_ok()
             {
-                page_start_float_floor = ctx.cleared_threshold(style.clear);
+                ctx.record_page_start_float_floor(style.clear);
             }
             let position = ctx.place_floated_box(
                 output.size + margin.sum_axes(),
@@ -460,7 +457,7 @@ pub(super) fn layout(
             .forced_break_float_floor
             .binary_search(&usize::from(child))
             .is_ok()
-            .then_some(page_start_float_floor)
+            .then(|| ctx.page_start_float_floor())
             .flatten();
         let stretches = matches!(
             style.size.width.expand(),

@@ -13197,17 +13197,31 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
 fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
     use raikiri_style::{build_rule_tree, cascade};
 
-    // (style of the box after the float, whether it only clears up to the
-    // float that starts the page)
-    for (style, floor) in [
-        ("display:block;height:10px", true),
-        ("display:block;height:10px;clear:right", true),
+    // (style of the parent, style of the box after the float, whether it
+    // only clears up to the float that starts the page)
+    for (parent, style, floor) in [
+        ("display:block", "display:block;height:10px", true),
+        (
+            "display:block",
+            "display:block;height:10px;clear:right",
+            true,
+        ),
         // Its own break starts a page of its own, clear of that float too.
-        ("display:block;height:10px;break-before:page", false),
+        (
+            "display:block",
+            "display:block;height:10px;break-before:page",
+            false,
+        ),
+        // A vertical paragraph places its boxes along another axis.
+        (
+            "display:block;writing-mode:vertical-rl",
+            "display:block;height:10px",
+            false,
+        ),
     ] {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Some("display:block"));
-        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        let body = doc.append_element(Some(html), "body", Some(&format!("{parent};margin:0")));
         doc.append_element(
             Some(body),
             "div",

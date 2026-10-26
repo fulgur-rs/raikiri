@@ -228,3 +228,50 @@ fn a_formatting_context_box_sits_beside_the_page_start_float() {
     );
     assert_eq!(on_page_one(&body), beside);
 }
+
+#[test]
+fn text_beside_the_page_start_float_in_a_paragraph_with_inline_content() {
+    // Text beside the blocks makes the parent a paragraph that places its
+    // blocks and floats itself. The `a` is not reported: it stands for the
+    // text that is there to make the parent such a paragraph.
+    let beside = [(1, 40.0, 5.0), (1, 40.0, 35.0), (1, 0.0, 65.0)];
+    let f = float("left", 40, 50);
+    let e = float("left", 40, 60);
+    let bodies = [
+        format!("{BREAK}{f}<div>{TEXT}</div>a"),
+        format!("a{BREAK}{f}<div>{TEXT}</div>"),
+        // Floats of the earlier page on either side.
+        format!("{e}{SHORT_BREAK}{f}<div>{TEXT}</div>a"),
+        format!(
+            "{}{SHORT_BREAK}{f}<div>{TEXT}</div>a",
+            float("right", 40, 60)
+        ),
+        // The page-start float clears the earlier float, the box after it
+        // does not.
+        format!("{e}{SHORT_BREAK}{f}<div style='clear:right'>{TEXT}</div>a"),
+    ];
+    for body in bodies {
+        assert_eq!(lines(&body), beside, "{body}");
+    }
+    // A short box and a line of text ahead of the second box.
+    let two = lines(&format!(
+        "{e}{SHORT_BREAK}{f}<div>XX</div>a<div>XX XX</div>"
+    ));
+    assert_eq!(two, [(1, 40.0, 5.0), (1, 0.0, 65.0)]);
+    // A box that clears the float goes below it.
+    for clear in ["left", "both"] {
+        let body = format!("{e}{SHORT_BREAK}{f}<div style='clear:{clear}'>{TEXT}</div>a");
+        assert_eq!(
+            lines(&body),
+            [(2, 0.0, 5.0), (2, 0.0, 35.0)],
+            "clear: {clear}"
+        );
+    }
+    // A box that establishes a formatting context sits beside the float.
+    let boxed = format!("{e}{SHORT_BREAK}{f}<div style='overflow:hidden'>{TEXT}</div>a");
+    let on_page_one: Vec<_> = lines(&boxed)
+        .into_iter()
+        .filter(|&(page, _, _)| page <= 1)
+        .collect();
+    assert_eq!(on_page_one, [(1, 40.0, 5.0), (1, 40.0, 35.0)]);
+}
