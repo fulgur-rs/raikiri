@@ -91,6 +91,21 @@ fn a_box_after_the_last_one_keeps_the_edges_from_following_it() {
 }
 
 #[test]
+fn a_float_that_the_parent_encloses_below_the_last_box_ends_the_parent() {
+    // The padding of the flow root follows the 150px float, not the last box:
+    // it is not stranded at the page end below the box.
+    let mut last = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:flow-root;padding-bottom:30px");
+        block(doc, parent, "float:left;width:20px;height:150px");
+        block(doc, parent, "display:block;height:40px");
+        block(doc, parent, "display:block;height:30px");
+        last = block(doc, parent, "display:block;height:20px");
+    });
+    assert_eq!(page_flow_y(&doc, last), 70.0);
+}
+
+#[test]
 fn an_avoided_break_before_the_last_box_keeps_it_with_the_box_before() {
     for css in ["break-before:avoid", "break-before:avoid-page"] {
         let (mut parent, mut last) = (0, 0);

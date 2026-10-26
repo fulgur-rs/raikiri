@@ -988,7 +988,22 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 });
                             // A negative margin pulls the edges up under the
                             // box, and may leave none below it.
-                            (edges + margin).max(0.0)
+                            let edges = (edges + margin).max(0.0);
+                            // Something else, such as a float that the block
+                            // encloses, reaches below the last box: the edges
+                            // follow that, not the box.
+                            let content_end = node.layout.size.height
+                                - node.layout.padding.bottom
+                                - node.layout.border.bottom;
+                            let box_end = flow_flags[index].0.map_or(f32::INFINITY, |last_box| {
+                                let layout = &document.nodes[last_box].layout;
+                                layout.location.y + layout.size.height + margin
+                            });
+                            if content_end > box_end + 0.001 {
+                                0.0
+                            } else {
+                                edges
+                            }
                         });
                     let child_previous_box = previous_box;
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
