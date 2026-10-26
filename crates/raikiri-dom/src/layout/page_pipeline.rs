@@ -5821,6 +5821,38 @@ fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
     block_height.is_finite() && block_height <= page_step + 0.001
 }
 
+/// Whether in-flow content comes before the box `node_id` in the flow below
+/// `body_id`: a sibling of the box, or of an ancestor of it that is not the
+/// body, which generates an in-flow box (see [`push_in_flow_boxes_rev`]). The
+/// flow can break before such a box, between it and what comes first. A box
+/// that starts the flow, below nothing but margins, cannot be broken from.
+fn follows_flow_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
+    let mut node = node_id;
+    let mut boxes = Vec::new();
+    while node != body_id {
+        let Some(parent) = document.parent_of(node) else {
+            return false;
+        };
+        for &child in document.nodes[parent]
+            .children
+            .iter()
+            .take_while(|&&child| child != node)
+        {
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+        if !boxes.is_empty() {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
 /// Whether the in-flow text of `height` with page type `page_name` opens a
 /// page of another type than `comparison_page_name`, the one the flow
 /// compares it against (see [`PageNames::comparison`]). Text that has no
@@ -5999,6 +6031,21 @@ impl ParagraphLineFit {
         self.starts_on_page && self.orphans + self.widows <= self.total_lines
     }
 
+    /// Whether a block taller than a page gains from moving whole to the next
+    /// page: the break leaves fewer than `orphans` lines on this page, and
+    /// the first line, `first_line_bottom` below the top of the block, fits a
+    /// page of `page_step`. A line taller than the page gains nothing by
+    /// moving.
+    fn gains_from_moving_tall_block(&self, first_line_bottom: f32, page_step: f32) -> bool {
+        self.leaves_too_few_orphans() && block_fits_page_step(first_line_bottom, page_step)
+    }
+
+    /// Whether the break leaves fewer than `orphans` lines on the page, or
+    /// all the lines of a paragraph shorter than that do not fit it.
+    fn leaves_too_few_orphans(&self) -> bool {
+        self.lines_before_break < self.orphans.min(self.total_lines)
+    }
+
     /// The line moves that split a paragraph able to move its lines down
     /// inside it: a break moved up between earlier lines, then the break on
     /// the paragraph's last page.
@@ -6038,10 +6085,12 @@ impl ParagraphLineFit {
     }
 
     /// How to repair the break between the paragraph's lines on the page
-    /// `current_page`. Lines move down inside the paragraph when it has
-    /// lines enough for both constraints and `can_move_lines` allows it; else
-    /// the whole block moves when `can_move_block` and the break violates a
-    /// constraint; otherwise the natural break stays.
+    /// `current_page`. A block that can move whole moves whenever the break
+    /// leaves too few orphans, as lines moved down inside it would leave
+    /// its top on this page. Else lines move down inside the paragraph when
+    /// it has lines enough for both constraints and `can_move_lines` allows
+    /// it; else the whole block moves when `can_move_block` and the break
+    /// violates a constraint; otherwise the natural break stays.
     fn fix(
         &self,
         line_metrics: &[(f32, f32)],
@@ -6051,14 +6100,18 @@ impl ParagraphLineFit {
         can_move_block: bool,
         can_move_lines: impl FnOnce() -> bool,
     ) -> LineBreakFix {
-        let moves = if self.has_room_for_both_constraints() && can_move_lines() {
+        let move_block = can_move_block && self.starts_on_page && self.violates_line_constraints;
+        let moves = if !(move_block && self.leaves_too_few_orphans())
+            && self.has_room_for_both_constraints()
+            && can_move_lines()
+        {
             self.line_moves(line_metrics, effective_y, current_page, page_origins)
         } else {
             [None, None]
         };
         if moves.iter().any(Option::is_some) {
             LineBreakFix::MoveLines(moves)
-        } else if can_move_block && self.starts_on_page && self.violates_line_constraints {
+        } else if move_block {
             LineBreakFix::MoveBlock
         } else {
             LineBreakFix::Keep

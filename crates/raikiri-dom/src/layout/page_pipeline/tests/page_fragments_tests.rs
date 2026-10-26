@@ -863,6 +863,86 @@ fn a_padded_paragraph_whose_first_line_overflows_moves() {
     assert_eq!(results[0], (2, vec![1]), "pinned");
 }
 
+/// A paragraph of `lines` lines, one letter each, in a 20px-wide block that
+/// follows a spacer of `spacer_height` and has the style `style`, in a flow of
+/// 100px pages (Ahem 20px, line height 30px). Returns the number of its lines
+/// on each page from the first up to the last it reaches.
+fn lines_on_each_page_after_a_spacer(spacer_height: f32, style: &str, lines: usize) -> Vec<usize> {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;font:20px/30px Ahem"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Some(&format!("display:block;height:{spacer_height}px")),
+    );
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Some(&format!("display:block;width:20px;{style}")),
+    );
+    let text = doc.append_text(block, vec!["X"; lines].join(" "));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    let fragments = text_fragments(&doc, &cascade, page, &slices, text);
+    let last_page = fragments.iter().map(|(page, _)| *page).max().unwrap_or(0);
+    (0..=last_page)
+        .map(|page_index| {
+            fragments
+                .iter()
+                .filter(|(page, _)| *page == page_index)
+                .filter_map(|(_, range)| range.map(|r| (r.end - r.start) as usize))
+                .sum()
+        })
+        .collect()
+}
+
+#[test]
+fn a_paragraph_taller_than_a_page_moved_whole_keeps_its_widows_on_its_last_page() {
+    // (spacer height, block style, lines, lines on each page). The counts are
+    // the lines Chromium prints on each page of `page.pdf`, read with
+    // `pdftotext -bbox`.
+    let cases: &[(f32, &str, usize, &[usize])] = &[
+        // The block moves to page 1, so the break before its last page keeps
+        // the widows.
+        (60.0, "", 6, &[0, 3, 3]),
+        (70.0, "", 6, &[0, 3, 3]),
+        (80.0, "", 6, &[0, 3, 3]),
+        (60.0, "orphans:3", 6, &[0, 3, 3]),
+        (55.0, "border-top:10px solid blue", 6, &[0, 3, 3]),
+        // A block that stays is split as before.
+        (40.0, "", 7, &[2, 3, 2]),
+        (10.0, "", 7, &[3, 2, 2]),
+        (40.0, "", 6, &[2, 2, 2]),
+    ];
+    for (spacer_height, style, lines, expected) in cases {
+        assert_eq!(
+            lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "{spacer_height} {style} {lines} lines"
+        );
+    }
+    // Moved to the top of page 1, a longer paragraph is split exactly as it
+    // is when it starts there.
+    let from_the_top = lines_on_each_page_after_a_spacer(100.0, "", 7);
+    for spacer_height in [60.0, 70.0, 80.0] {
+        assert_eq!(
+            lines_on_each_page_after_a_spacer(spacer_height, "", 7),
+            from_the_top,
+            "{spacer_height} 7 lines"
+        );
+    }
+}
+
 /// `html > body > (15px spacer, root)`: the root holds `<span>aa </span>`
 /// on line 0 and a direct text "bbbb cccc" on lines 1 and 2 (Ahem 10px,
 /// width 40), so the direct text starts 10px below the content box. Returns,

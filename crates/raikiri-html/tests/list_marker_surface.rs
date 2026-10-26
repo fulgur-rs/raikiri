@@ -562,17 +562,39 @@ fn floated_and_positioned_children_do_not_supply_the_first_line() {
 
 #[test]
 fn a_marker_beside_a_line_crossing_the_page_edge_stays_on_its_baseline() {
-    // The line starts on this page, so the marker keeps its baseline even
-    // though the line box reaches past the page edge. The item is taller
-    // than a page, so it is not moved to the next page as a unit.
+    // The line is taller than the page and starts it, so nothing moves it and
+    // the line box reaches past the page edge. The marker keeps its baseline.
+    let document = lay_out(
+        "<ol><li style=\"font:120px/120px Ahem\">A</li></ol>",
+        "li::marker{font-size:70px}",
+    );
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "A")
+    );
+}
+
+#[test]
+fn a_marker_moves_with_its_line_that_does_not_fit_the_page_below_content() {
+    // The item is taller than a page and the line crosses the page edge below
+    // the spacer, so the item moves to the next page whole, as in Chromium,
+    // where "1." and "A" are both printed on the second page.
     let document = lay_out(
         "<div style=\"height:25px\"></div>\
          <ol><li style=\"font:80px/80px Ahem;padding-bottom:30px\">A</li></ol>",
         "li::marker{font-size:70px}",
     );
     assert_eq!(
-        run_baseline(&document, 0, "1."),
-        run_baseline(&document, 0, "A")
+        run_baseline(&document, 1, "1."),
+        run_baseline(&document, 1, "A")
+    );
+    assert!(
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .all(|run| run.text.trim_end() != "A" && run.text.trim_end() != "1.")
     );
 }
 
