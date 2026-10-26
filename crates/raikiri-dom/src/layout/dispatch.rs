@@ -1202,6 +1202,8 @@ mod item_width_tests;
 #[cfg(test)]
 mod self_alignment_tests;
 #[cfg(test)]
+mod shrink_to_fit_keyword_tests;
+#[cfg(test)]
 mod tests;
 
 mod axis_adapter;

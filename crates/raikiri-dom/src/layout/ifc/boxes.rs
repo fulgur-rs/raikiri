@@ -1642,12 +1642,17 @@ fn measure_float(
         (margin.left + margin.right, margin.top + margin.bottom)
     };
     let available = (geometry.width - inline_margin).max(0.0);
+    let known_width = if vertical {
+        None
+    } else {
+        keyword_width(tree, node, &geometry, available)
+    };
     let output = perform_box_layout(
         tree,
         node,
         geometry.width,
         geometry.definite_height,
-        None,
+        known_width,
         Size {
             width: AvailableSpace::Definite(available),
             height: AvailableSpace::MaxContent,
@@ -1747,6 +1752,13 @@ pub(crate) fn measure_atomics(
                         )
                     },
                 )
+            })
+            .or_else(|| {
+                if vertical {
+                    None
+                } else {
+                    keyword_width(tree, node, &geometry, available)
+                }
             });
         // The room along the line is the room along the paragraph's inline
         // axis, the physical height of a vertical one.
@@ -2107,7 +2119,8 @@ fn layout_vertical_block_child(
     };
     let own_inline_size = used_block_height(tree, node, inline_basis)
         .map(OwnWidth::Fixed)
-        .or_else(|| content_keyword_width(tree, node, false, parent_size));
+        .or_else(|| content_keyword_width(tree, node, false, parent_size))
+        .or_else(|| orthogonal_content_height(tree, node, width, parent_size));
     let shares_context = in_the_roots_formatting_context(tree, node)
         && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
         && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
@@ -2647,6 +2660,79 @@ fn parent_size_of(geometry: &FlowGeometry) -> Size<Option<f32>> {
         width: Some(geometry.width),
         height: geometry.definite_height,
     }
+}
+
+/// The border-box height of the horizontal block child `node` of a vertical
+/// root, when its height is not a length: the extent of its content at the
+/// `width` it is laid out at. The child is an orthogonal flow, so its height
+/// is its block size, not the inline size of the root that a child of the
+/// root's own writing mode fills (CSS Writing Modes 4 §7.3). `None` for a
+/// child that flows vertically.
+fn orthogonal_content_height(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    width: Option<f32>,
+    parent_size: Size<Option<f32>>,
+) -> Option<OwnWidth> {
+    if crate::layout::dispatch::used_writing_mode(tree, node).is_vertical() {
+        return None;
+    }
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width,
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: width.is_some(),
+            height: false,
+        },
+        parent_size,
+        available_space: Size {
+            width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let output = tree.compute_child_layout_with_block_ctx(NodeId::from(node), inputs, None);
+    Some(OwnWidth::Fixed(output.size.height))
+}
+
+/// The border-box width of the float or atomic inline `node`, a paragraph root
+/// or a flex or grid container in a horizontal paragraph, when its `width` is
+/// `min-content` or `max-content`: the size the keyword measures, within the
+/// `min-width` and `max-width` of the box. `None` for any other `width`, which
+/// the box takes from the `available` room by shrinking to fit it (CSS 2.1
+/// §10.3.5).
+///
+/// Such a box reads its `width` as `auto`, so the width is measured here and
+/// handed to it as a known size.
+fn keyword_width(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    geometry: &FlowGeometry,
+    available: f32,
+) -> Option<f32> {
+    let root = &tree.nodes[node];
+    if !(root.is_ifc_root() || root.display().is_flex_or_grid_container()) {
+        return None;
+    }
+    let width = tree.physical_style(node).size().width.expand();
+    if !matches!(
+        width,
+        ExpandedDimension::MinContent | ExpandedDimension::MaxContent
+    ) {
+        return None;
+    }
+    let own = content_keyword_width(tree, node, true, parent_size_of(geometry))?;
+    Some(clamp_block_width(
+        tree,
+        node,
+        geometry.width,
+        own.at(available),
+    ))
 }
 
 /// The border-box width a block child's own size gives along one axis, before

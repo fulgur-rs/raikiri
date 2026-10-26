@@ -895,3 +895,75 @@ fn vertical_flex_item_keeps_its_padding_percentages_while_measured() {
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_eq!(absolute_rect(&doc, item).2, 50.0);
 }
+
+#[test]
+fn a_horizontal_paragraph_child_of_a_vertical_container_takes_the_height_of_its_lines() {
+    // The child is an orthogonal flow: its height is its block size, the
+    // extent of its content, not the inline size of the container that a
+    // child of the container's own writing mode fills (CSS Writing Modes 4
+    // §7.3). A height keyword states no length either. The positions are
+    // those of Chromium.
+    let container = "writing-mode:vertical-rl;width:200px;height:300px";
+    for height in ["auto", "min-content", "max-content", "fit-content"] {
+        for (width, expected) in [
+            ("", (118.0, 8.0, 90.0, 10.0)),
+            ("width:50px;", (158.0, 8.0, 50.0, 20.0)),
+            ("width:120px;", (88.0, 8.0, 120.0, 10.0)),
+        ] {
+            let child = format!("writing-mode:horizontal-tb;{width}height:{height}|AAAA BBBB");
+            let rects = layout(container, &[child.as_str()]);
+            assert_eq!(rects[1], expected, "{width} height:{height}");
+        }
+    }
+}
+
+#[test]
+fn horizontal_children_of_a_vertical_container_stack_by_their_own_heights() {
+    let children = [
+        "writing-mode:horizontal-tb;width:50px|AAAA BBBB",
+        "writing-mode:horizontal-tb;width:50px|AAAA BBBB",
+    ];
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:300px",
+        &children,
+    );
+    assert_eq!(rects[1], (158.0, 8.0, 50.0, 20.0));
+    assert_eq!(rects[2], (108.0, 8.0, 50.0, 20.0));
+    let rects = layout(
+        "writing-mode:vertical-lr;width:200px;height:300px",
+        &children,
+    );
+    assert_eq!(rects[1], (8.0, 8.0, 50.0, 20.0));
+    assert_eq!(rects[2], (58.0, 8.0, 50.0, 20.0));
+}
+
+#[test]
+fn a_vertical_child_beside_a_horizontal_one_still_fills_the_inline_size() {
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:300px",
+        &[
+            "writing-mode:horizontal-tb;width:50px|AAAA BBBB",
+            "width:30px|AAAA BBBB",
+        ],
+    );
+    assert_eq!(rects[1], (158.0, 8.0, 50.0, 20.0));
+    assert_eq!(rects[2], (128.0, 8.0, 30.0, 300.0));
+}
+
+#[test]
+fn the_height_of_a_horizontal_child_follows_its_limits_edges_and_margins() {
+    let container = "writing-mode:vertical-rl;width:200px;height:300px";
+    for (child, expected) in [
+        ("min-height:50px", (118.0, 8.0, 90.0, 50.0)),
+        ("max-height:5px", (118.0, 8.0, 90.0, 5.0)),
+        (
+            "padding:3px 4px;border:1px solid",
+            (108.0, 8.0, 100.0, 18.0),
+        ),
+        ("margin:6px 7px", (111.0, 14.0, 90.0, 10.0)),
+    ] {
+        let child = format!("writing-mode:horizontal-tb;{child}|AAAA BBBB");
+        let rects = layout(container, &[child.as_str()]);
+        assert_eq!(rects[1], expected, "{child}");
+    }
+}
