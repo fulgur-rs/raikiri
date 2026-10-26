@@ -1407,25 +1407,55 @@ fn push_wrapped_block(
 /// The block size of the box each piece of a wrapper shows, which is what the
 /// pieces after it are moved up by. A piece that ends where a block moved to
 /// the next column leaves room at the bottom of its column, which is no part
-/// of the box. `stream_pieces` are those of the wrapper's blocks as the
-/// stream placed them, with the wrapper's padding and border that fall in
-/// them, which do fill the column they reach the end of.
-fn consumed_rows(pieces: &[Piece], stream_pieces: &[Vec<Piece>]) -> Vec<f32> {
+/// of the box, and the margin between two blocks that a column break cuts
+/// still is. `stream_pieces` are those of the wrapper's blocks as the stream
+/// placed them, with the wrapper's padding and border that fall in them, which
+/// do fill the column they reach the end of; `items` are the blocks' stream
+/// items.
+fn consumed_rows(pieces: &[Piece], stream_pieces: &[Vec<Piece>], items: &[Item]) -> Vec<f32> {
+    /// The blocks that start and end in a column.
+    struct ColumnBlocks {
+        first: usize,
+        first_top: f32,
+        last: usize,
+        end: f32,
+    }
+    let mut columns = std::collections::HashMap::<usize, ColumnBlocks>::new();
+    for (block, block_pieces) in stream_pieces.iter().enumerate() {
+        for piece in block_pieces.iter().filter(|piece| piece.height > 0.0) {
+            let end = piece.top + piece.height;
+            let blocks = columns.entry(piece.column).or_insert(ColumnBlocks {
+                first: block,
+                first_top: piece.top,
+                last: block,
+                end,
+            });
+            if end >= blocks.end {
+                blocks.last = block;
+                blocks.end = end;
+            }
+        }
+    }
     let last = pieces.len().saturating_sub(1);
     pieces
         .iter()
         .enumerate()
         .map(|(index, piece)| {
-            let content_end = stream_pieces
-                .iter()
-                .flatten()
-                .filter(|leaf| leaf.column == piece.column && leaf.height > 0.0)
-                .map(|leaf| leaf.top + leaf.height)
-                .reduce(f32::max);
-            match content_end {
-                Some(end) if index < last => (end - piece.top).clamp(0.0, piece.height),
-                _ => piece.height,
-            }
+            let Some(blocks) = columns.get(&piece.column).filter(|_| index < last) else {
+                return piece.height;
+            };
+            let shown = (blocks.end - piece.top).clamp(0.0, piece.height);
+            // The next column starts with the block after this column's last
+            // one, whose margin above it is cut by the break.
+            let cut_margin = columns
+                .get(&pieces[index + 1].column)
+                .filter(|next| next.first == blocks.last + 1 && next.first_top <= EPSILON)
+                .map_or(0.0, |next| {
+                    items[blocks.last]
+                        .margin_bottom
+                        .max(items[next.first].margin_top)
+                });
+            shown + cut_margin
         })
         .collect()
 }
@@ -1943,8 +1973,12 @@ pub(super) fn layout(
         let mut shifts = Vec::with_capacity(pieces.len());
         let sliced = pieces.len() > 1 && slices_decorations(tree, child);
         let consumed = match &wrapped_leaf_pieces[order] {
-            Some(_) => consumed_rows(pieces, &placements.pieces[spans[order].clone()]),
-            None => pieces.iter().map(|piece| piece.height).collect(),
+            Some(_) if sliced => consumed_rows(
+                pieces,
+                &placements.pieces[spans[order].clone()],
+                &items[spans[order].clone()],
+            ),
+            _ => pieces.iter().map(|piece| piece.height).collect(),
         };
         let mut taken = 0.0f32;
         for (index, piece) in pieces.iter().enumerate() {

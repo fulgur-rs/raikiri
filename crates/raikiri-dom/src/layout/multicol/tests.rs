@@ -2912,6 +2912,60 @@ fn the_padding_of_a_wrapper_that_fills_a_column_is_part_of_the_box_it_shows() {
 }
 
 #[test]
+fn the_margin_a_column_break_cuts_is_still_part_of_the_box_a_wrapper_shows() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:48px;border-bottom:2px solid"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:40px"));
+    let last = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;height:50px;margin-top:10px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    // The last block fills the rest of the first column and its padding and
+    // border do not fit, so it follows them to the second column, where the
+    // 10px margin above it is cut. The wrapper is 150px tall with the margin,
+    // so its second piece is moved up by the 40px of the first block and the
+    // margin, and the border ends the column.
+    assert_eq!(fragment_rects(&doc, last)[0], (1, 0.0, 0.0, 50.0));
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -50.0, 150.0)]
+    );
+
+    // A block that fits the column exactly leaves the margin to the next
+    // block as well.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:10px"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:100px"));
+    let second = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;height:80px;margin-top:10px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(fragment_rects(&doc, second)[0], (1, 0.0, 0.0, 80.0));
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 200.0), (1, 100.0, -110.0, 200.0)]
+    );
+}
+
+#[test]
 fn an_absolute_box_in_a_sliced_block_stays_in_its_column() {
     let (doc, _, ids) = absolute_fixture(
         DEFINITE_COLUMNS,
