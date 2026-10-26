@@ -3,7 +3,11 @@ use std::cell::OnceCell;
 use std::sync::Arc;
 
 use super::box_style_data::{BoxStyleData, LayoutBase, PreparedStamp, recipes};
-use crate::{Document, layout::context::LayoutSession, node::arena::BoxKey};
+use crate::{
+    Document,
+    layout::context::LayoutSession,
+    node::{FormattingContext, arena::BoxKey},
+};
 use raikiri_layout_style::values::{
     Dimension, Direction as LayoutDirection, LengthPercentageAuto, Position,
 };
@@ -504,11 +508,22 @@ impl LayoutSession<'_> {
         // stands in for an `auto` one, so the svg states no width of its own.
         let width_stands_in = self.nodes[idx].svg_width_follows_available;
         let main_is_stated = states_a_size(main) && (!is_row || !width_stands_in);
-        let cross_is_stated = states_a_size(cross) && (is_row || !width_stands_in);
-        if item.aspect_ratio().is_some() && cross.is_auto() && main_is_stated {
+        // Hiding the ratio leaves the cross size to the box itself, which
+        // only blocks, grids and replaced boxes derive from the main size
+        // they are measured at; a paragraph or a flex container measures
+        // its content instead.
+        let derives_cross_from_ratio = matches!(
+            self.nodes[idx].formatting_context,
+            FormattingContext::Block | FormattingContext::Grid
+        );
+        if item.aspect_ratio().is_some()
+            && cross.is_auto()
+            && main_is_stated
+            && derives_cross_from_ratio
+        {
             FlexItemRatio::CrossFollowsMain
         } else if matches!(item.flex_basis().expand(), ExpandedDimension::Content)
-            && cross_is_stated
+            && states_a_fixed_size(cross)
         {
             FlexItemRatio::BasisFromCross
         } else {
@@ -687,4 +702,15 @@ fn states_a_size(size: raikiri_layout_style::values::Dimension) -> bool {
         size.expand(),
         ExpandedDimension::Length(_) | ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_)
     )
+}
+
+/// Whether `size` is a length or a `calc()` of lengths only: a size that
+/// does not wait for the size of a container to resolve.
+fn states_a_fixed_size(size: raikiri_layout_style::values::Dimension) -> bool {
+    use raikiri_layout_style::values::ExpandedDimension;
+    match size.expand() {
+        ExpandedDimension::Length(_) => true,
+        ExpandedDimension::Calc(calc) => !calc.has_percentage(),
+        _ => false,
+    }
 }

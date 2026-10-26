@@ -845,6 +845,19 @@ fn ratio_box_size_in(parent_css: &str, box_css: &str, child_css: &str) -> (f32, 
     (size.width, size.height)
 }
 
+/// Like [`ratio_box_size_in`], with a line of text in the box instead of a
+/// block.
+fn ratio_box_size_holding_text_in(parent_css: &str, box_css: &str) -> (f32, f32) {
+    let (doc, nodes) = lay_out_in_a_100px_body(|doc, body| {
+        let parent = append_block(doc, body, parent_css);
+        let outer = append_block(doc, parent, box_css);
+        doc.append_text(outer, "x");
+        vec![outer]
+    });
+    let size = doc.nodes[nodes[0]].layout.size;
+    (size.width, size.height)
+}
+
 #[test]
 fn a_percentage_height_that_cannot_resolve_takes_its_height_from_the_ratio() {
     assert_eq!(
@@ -1270,34 +1283,59 @@ fn an_item_that_does_not_ask_for_a_flex_basis_of_content_keeps_the_sizes_it_stat
     }
 }
 
-// PROBE-BEGIN
 #[test]
-fn probe_flex_matrix() {
-    let cases = [
+fn a_flex_item_that_measures_its_own_content_keeps_the_ratio_size_it_states() {
+    for (box_css, expected) in [
+        ("width:50px;aspect-ratio:1/1", (50.0, 50.0)),
+        ("width:50px;aspect-ratio:1/2", (50.0, 100.0)),
+        ("width:50px;aspect-ratio:1/1;overflow:hidden", (50.0, 50.0)),
+        ("width:50px;aspect-ratio:1/1;padding:5px", (60.0, 60.0)),
+    ] {
+        assert_eq!(
+            ratio_box_size_holding_text_in("display:flex;width:100px", box_css),
+            expected,
+            "text | {box_css}"
+        );
+    }
+    for (box_css, child_css, expected) in [
+        ("display:flex;width:50px;aspect-ratio:1/1", "", (50.0, 50.0)),
         (
-            "display:flex;writing-mode:vertical-rl;height:100px",
-            "width:20px;aspect-ratio:1/1;flex-grow:1",
-            "",
+            "display:flex;width:50px;aspect-ratio:1/1",
+            "height:10px",
+            (50.0, 50.0),
         ),
         (
-            "display:flex;writing-mode:vertical-rl;height:100px",
-            "height:20px;aspect-ratio:1/1;flex-grow:1",
-            "",
+            "display:grid;width:50px;aspect-ratio:1/1",
+            "height:10px",
+            (50.0, 50.0),
         ),
         (
-            "display:flex;writing-mode:vertical-rl;height:100px;width:200px",
-            "height:20px;aspect-ratio:1/1;flex-grow:1",
-            "",
+            "display:flow-root;width:50px;aspect-ratio:1/1",
+            "height:10px",
+            (50.0, 50.0),
         ),
-        (
-            "display:flex;flex-direction:column;writing-mode:vertical-rl;height:100px;width:300px",
-            "width:20px;aspect-ratio:1/1;flex-grow:1",
-            "",
-        ),
-    ];
-    for (p, b, c) in cases {
-        let size = ratio_box_size_in(p, b, c);
-        eprintln!("PROBE {p:?} | {b:?} | {c:?} => ({}, {})", size.0, size.1);
+    ] {
+        assert_eq!(
+            ratio_box_size_in("display:flex;width:100px", box_css, child_css),
+            expected,
+            "{box_css}"
+        );
+    }
+}
+
+#[test]
+fn a_percentage_cross_size_that_cannot_resolve_gives_no_flex_base_size() {
+    for cross in ["height:50%", "height:calc(50% + 10px)"] {
+        let box_css = format!("flex-basis:content;{cross};aspect-ratio:1/1;width:20px;min-width:0");
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;width:300px",
+                &box_css,
+                "width:80px;height:80px"
+            ),
+            (80.0, 80.0),
+            "{box_css}"
+        );
     }
 }
 
