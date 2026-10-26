@@ -88,3 +88,34 @@ fn measuring_a_block_does_not_empty_its_cache() {
         }
     }
 }
+
+#[test]
+fn measuring_alternating_vertical_and_horizontal_blocks_does_not_empty_their_caches() {
+    // Each block sits inside one of the other flow, which measures it for its
+    // own size and then lays it out.
+    const PAIRS: [[&str; 2]; 4] = [
+        ["vertical-rl", "horizontal-tb"],
+        ["vertical-lr", "horizontal-tb"],
+        ["horizontal-tb;direction:rtl", "vertical-rl"],
+        ["vertical-rl", "vertical-lr"],
+    ];
+    for pair in PAIRS {
+        for display in ["block", "inline-block"] {
+            assert_eq!(
+                evictions(|doc, root| {
+                    let mut parent = root;
+                    for mode in pair.iter().cycle().take(8) {
+                        parent = doc.append_element(
+                            Some(parent),
+                            "div",
+                            Some(&format!("display:{display};writing-mode:{mode}")),
+                        );
+                    }
+                    doc.append_text(parent, "X");
+                }),
+                0,
+                "{pair:?} {display}"
+            );
+        }
+    }
+}

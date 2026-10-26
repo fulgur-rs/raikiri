@@ -685,6 +685,58 @@ fn nested_vertical_boxes_are_measured_a_few_times_each() {
 }
 
 #[test]
+fn alternating_vertical_and_horizontal_boxes_are_measured_a_few_times_each() {
+    // A box that a parent measures to size itself and then lays out is asked
+    // under the margin collapsing of the layout the second time. Where the
+    // measurement used the other one, the cache of the box was emptied on
+    // every probe, and the boxes inside were measured again for each: the
+    // scans grew by a factor with each level of vertical and horizontal boxes
+    // nested in turn (140 thousand at nine levels). The count follows the
+    // depth now.
+    let depth = 9;
+    for display in ["block", "inline-block"] {
+        let mut chain = vec![];
+        let (mut doc, cascade, root) = ahem_paragraph_with("", |doc, root| {
+            let mut parent = root;
+            for level in 0..depth {
+                let mode = if level % 2 == 0 {
+                    "vertical-rl"
+                } else {
+                    "horizontal-tb"
+                };
+                parent = doc.append_element(
+                    Some(parent),
+                    "div",
+                    Some(format!("display:{display};writing-mode:{mode}").as_str()),
+                );
+                chain.push(parent);
+            }
+            doc.append_text(parent, "X");
+        });
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert!(
+            intrinsic_measurements(&doc) < 40 * depth,
+            "{display}: {} scans",
+            intrinsic_measurements(&doc)
+        );
+        if display == "inline-block" {
+            // The strut of the line each sits in is taller than the `X`.
+            continue;
+        }
+        // Every box holds one `X`, so each is as wide and as tall as it.
+        for node in chain {
+            let size = doc.nodes[node].layout.size;
+            assert_eq!(
+                (size.width, size.height),
+                (10.0, 10.0),
+                "{display}: box {node}"
+            );
+        }
+        assert_eq!(doc.nodes[root].layout.size.height, 10.0, "{display}: root");
+    }
+}
+
+#[test]
 fn a_stretched_vertical_paragraph_is_still_measured_for_intrinsic_widths() {
     // In vertical flow the intrinsic widths still size the block extent.
     let (mut doc, cascade, _root) =
