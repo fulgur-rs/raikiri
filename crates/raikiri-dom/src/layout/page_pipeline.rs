@@ -3095,9 +3095,51 @@ fn layout_pages_core(
     page_widths: &[f32],
     control: &PageLayoutControl<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    let (slices, moved) = layout_pages_attempt(
+        document,
+        cascade,
+        page_box,
+        page_steps,
+        page_widths,
+        control,
+        false,
+    )?;
+    if !moved {
+        return Ok(slices);
+    }
+    // The columns of a multicol container were filled page by page where the
+    // container began, and the flow then moved the container, so they stand
+    // in the wrong pages. Laying the document out again with the container's
+    // columns left whole keeps them in the pages the flow cuts them into.
+    layout_pages_attempt(
+        document,
+        cascade,
+        page_box,
+        page_steps,
+        page_widths,
+        control,
+        true,
+    )
+    .map(|(slices, _)| slices)
+}
+
+/// Lay out and break `document` into pages once, and whether pagination
+/// moved a multicol container whose columns it had filled page by page, which
+/// leaves `slices` empty. With `unpaged_plain_columns`, no container has its
+/// columns filled that way.
+fn layout_pages_attempt(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    page_steps: &[f32],
+    page_widths: &[f32],
+    control: &PageLayoutControl<'_>,
+    unpaged_plain_columns: bool,
+) -> Result<(Vec<PageSlice>, bool), LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
     let mut session = super::context::LayoutSession::with_cascade(document, cascade);
+    session.context.unpaged_plain_columns = unpaged_plain_columns;
     // A root with `display: none` generates no boxes, so there is nothing to
     // lay out or break into later pages: the document prints as a single
     // blank page.
@@ -3108,11 +3150,14 @@ fn layout_pages_core(
         session.fragment_tree.clear();
         session.column_rules.clear();
         session.page_projection.clear();
-        return Ok(vec![PageSlice {
-            page_index: 0,
-            content_origin_y: 0.0,
-            page_name: None,
-        }]);
+        return Ok((
+            vec![PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            false,
+        ));
     }
     layout_single_page_with_table_projection(&mut session, cascade, page_box, true, true)?;
     control.check_page_index(0)?;
@@ -3124,8 +3169,8 @@ fn layout_pages_core(
     })?;
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    let Some(axes) = transposed_flow::FlowAxes::of_root(&session, cascade) else {
-        return paginate_flow(
+    let slices = match transposed_flow::FlowAxes::of_root(&session, cascade) {
+        None => paginate_flow(
             &mut session,
             cascade,
             body_id,
@@ -3137,35 +3182,39 @@ fn layout_pages_core(
             page_steps,
             page_widths,
             control,
-        );
-    };
-    // The pages of a document whose root lays out its blocks on vertical
-    // axes follow the physical x axis: each page takes the width of its page
-    // area from the flow. The paginator breaks along y, so it runs on the
-    // transposed document. The pages keep the inline size of the first page
-    // area.
-    transposed_flow::TransposedDocument::with_transposed(
-        &mut session,
-        body_id,
-        axes,
-        insets.page_area_width(margins, page_box),
-        |session, transposed| {
-            let transposed_cascade = transposed.cascade(cascade);
-            paginate_flow(
-                session,
-                &transposed_cascade,
+        )?,
+        // The pages of a document whose root lays out its blocks on vertical
+        // axes follow the physical x axis: each page takes the width of its
+        // page area from the flow. The paginator breaks along y, so it runs
+        // on the transposed document. The pages keep the inline size of the
+        // first page area.
+        Some(axes) => {
+            super::multicol::release_unspanned_groups(&mut session);
+            transposed_flow::TransposedDocument::with_transposed(
+                &mut session,
                 body_id,
-                PageFlowGeometry {
-                    page_box: axes.page_box(page_box),
-                    margins: axes.margins(margins),
-                    insets: axes.insets(insets),
+                axes,
+                insets.page_area_width(margins, page_box),
+                |session, transposed| {
+                    let transposed_cascade = transposed.cascade(cascade);
+                    paginate_flow(
+                        session,
+                        &transposed_cascade,
+                        body_id,
+                        PageFlowGeometry {
+                            page_box: axes.page_box(page_box),
+                            margins: axes.margins(margins),
+                            insets: axes.insets(insets),
+                        },
+                        page_widths,
+                        &[],
+                        control,
+                    )
                 },
-                page_widths,
-                &[],
-                control,
-            )
-        },
-    )
+            )?
+        }
+    };
+    Ok((slices, session.context.page_filled_columns_moved))
 }
 
 /// The direction in which the pages of `document` continue, when they follow
@@ -3524,6 +3573,14 @@ fn paginate_flow(
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
+    // Where the columns of each container were filled page by page, from the
+    // position the container has now.
+    let refilled: Vec<_> = document
+        .context
+        .page_filled_columns
+        .iter()
+        .map(|&owner| (owner, current_abs_y(document, owner)))
+        .collect();
     let roots = candidates::FlowRoots::new(document, body_id);
     let mut candidates = Vec::new();
     let mut text_lines = TextLineIndex::default();
@@ -3602,6 +3659,15 @@ fn paginate_flow(
         }
     }
 
+    // A container the walk moved has its columns filled for another place,
+    // and its caller lays the document out again without that.
+    if refilled
+        .iter()
+        .any(|&(owner, y)| (current_abs_y(document, owner) - y).abs() > 1e-3)
+    {
+        document.context.page_filled_columns_moved = true;
+        return Ok(Vec::new());
+    }
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
     super::table::headers::finish_boxes(document, &state.table_headers);
     update_paginated_block_heights(

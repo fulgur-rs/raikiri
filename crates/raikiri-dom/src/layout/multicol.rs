@@ -24,7 +24,9 @@ use raikiri_layout_style::values::{
     Overflow, Position,
 };
 
-pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
+pub(super) use paged_spanning::{
+    FragmentEdits, paginate_spanning_columns, release_unspanned_groups,
+};
 
 /// The style `idx` lays out with: its computed values with the overrides the
 /// layout passes have applied.
@@ -1087,7 +1089,9 @@ fn relayout_nested_multicol_children(
             border_box_size,
             content_origin,
             block_end_inset,
-            false,
+            tree.context.fragmentation_stack.len() <= 1
+                && context.available_height.is_none()
+                && !tree.context.unpaged_plain_columns,
         )
     };
     let fragment_height = if tree.nodes[index]

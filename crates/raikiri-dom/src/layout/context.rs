@@ -75,6 +75,17 @@ pub(crate) struct LayoutContext {
     /// The layout being entered is such a child: its size cache is bypassed,
     /// which would answer without laying its lines out in the group.
     pub(crate) group_child_uncached: bool,
+    /// Whether a multicol container of plain paragraphs and a height of
+    /// `auto` is laid out without keeping its groups for pagination, which
+    /// leaves its columns in one tall set that the page walk cuts (see
+    /// its `paged_spanning` module in [`crate::layout::multicol`]).
+    pub(crate) unpaged_plain_columns: bool,
+    /// The multicol containers without a spanner whose columns pagination
+    /// filled page by page.
+    pub(crate) page_filled_columns: Vec<usize>,
+    /// Whether the page walk moved any of those containers from where the
+    /// pagination placed their columns, which are then in the wrong pages.
+    pub(crate) page_filled_columns_moved: bool,
 }
 
 /// The `text-group-align` group the lines being laid out belong to: the
