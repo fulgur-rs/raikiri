@@ -27,7 +27,9 @@ The `WPT vacuity sweep` workflow
 (`.github/workflows/wpt-vacuity-sweep.yml`) runs weekly and on manual
 dispatch. It audits every runnable reftest that none of these files lists with
 `audit-vacuous-passes` (see "Promoting sweep passes") and lists the `KEEP` ids
-in its job summary. It only reports; promotion stays a reviewed change.
+in its job summary. It only reports; promotion stays a reviewed change. A test
+whose audit runs out of memory or never finishes is listed with the verdict
+`CRASH`; the rest of the sweep still completes.
 
 ## Interpreting baseline PASS
 

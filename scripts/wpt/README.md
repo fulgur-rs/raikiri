@@ -245,6 +245,17 @@ with the `KEEP` verdict to `OUTPUT_DIR/keep.txt` (default
 `KEEP` ids in its job summary, and uploads the full audit as an artifact.
 Promote ids as described in `expectations/README.md`.
 
+The sweep hands the ids to `scripts/lib/audit_chunks.py`, which audits them 400
+at a time, each chunk in a process of its own (`WPT_SWEEP_JOBS` sets the
+threads of each). It stops a process that holds more than 4 GB, that prints no
+result for ten minutes, or that exits with an error, keeps the rows that process
+had printed, and runs the unfinished ids again in smaller pieces until the id
+that fails stands alone. That id gets the verdict `CRASH` and the reason in
+`audit.tsv`, and the job summary lists it: a test that cannot be rendered is a
+bug to track (see its reason), not a reason to lose the whole run. A single
+`audit-vacuous-passes` process over every id, as the sweep once ran, wrote no
+report at all when one test ran the runner out of memory.
+
 
 ## Reviewing meta-assert-only tests
 
