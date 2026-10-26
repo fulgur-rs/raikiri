@@ -5451,3 +5451,65 @@ fn a_narrow_spanner_in_right_to_left_columns_sits_against_the_right_edge() {
         assert_eq!(doc.nodes[boxes[0]].layout.location.x, left, "{css}");
     }
 }
+
+#[test]
+fn a_block_level_spanner_of_any_display_spans_the_columns_of_the_lines_around_it() {
+    // Two lines in each column of a group: 40px of columns, the spanner of
+    // 20px, and 40px of columns again, whatever the inner display of the box
+    // is (CSS Multi-column Layout 1, 6.1).
+    for display in ["flow-root", "flex", "grid", "table"] {
+        let (mut doc, container, boxes) = column_container(
+            "",
+            &[
+                Part::Lines(4),
+                Part::Spanner(format!("display:{display}").as_str()),
+                Part::Lines(4),
+            ],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(doc.nodes[container].layout.size.height, 100.0, "{display}");
+        assert_eq!(
+            column_ranges(&doc, container),
+            [
+                (0, 2, 0, 0.0, 0.0),
+                (2, 4, 1, 60.0, 0.0),
+                (4, 6, 0, 0.0, 60.0),
+                (6, 8, 1, 60.0, 60.0),
+            ],
+            "{display}"
+        );
+        let layout = doc.nodes[boxes[0]].layout;
+        assert_eq!(
+            (layout.location.x, layout.location.y, layout.size.height),
+            (0.0, 40.0, 20.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn only_a_block_level_box_that_is_in_the_flow_is_a_spanner() {
+    for (css, spans) in [
+        ("display:block", true),
+        ("display:list-item", true),
+        ("display:flow-root", true),
+        ("display:flex", true),
+        ("display:grid", true),
+        ("display:table", true),
+        ("display:inline-block", false),
+        ("display:inline-flex", false),
+        ("display:inline-grid", false),
+        ("display:inline-table", false),
+        ("display:flow-root;float:left", false),
+        ("display:flex;position:absolute", false),
+    ] {
+        let (mut doc, _, boxes) =
+            column_container("", &[Part::Lines(2), Part::Spanner(css), Part::Lines(2)]);
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| spanning::is_spanner(session, boxes[0])),
+            spans,
+            "{css}"
+        );
+    }
+}
