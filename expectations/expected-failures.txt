@@ -138,5 +138,3 @@ css/css-sizing/stretch/fixed-table-1.html | width: stretch is not parsed, so the
 css/css-viewport/zoom/stroke.html | The zoom property is not implemented | RAIKIRI-918 | 2026-10-26 | 2026-12-26
 css/css-writing-modes/slr-alongside-vlr-floats.html | A vertical box that establishes a formatting context and does not fit beside a float is moved along the inline axis instead of below the float | RAIKIRI-917 | 2026-10-26 | 2026-12-26
 css/css-writing-modes/srl-alongside-vrl-floats.html | A vertical box that establishes a formatting context and does not fit beside a float is moved along the inline axis instead of below the float | RAIKIRI-917 | 2026-10-26 | 2026-12-26
-css/css-writing-modes/wm-propagation-body-033.html | The block ::before and ::after boxes of a vertical paragraph are not painted; the test matched only while the root was laid out horizontally | RAIKIRI-916 | 2026-10-26 | 2026-12-26
-css/css-writing-modes/wm-propagation-body-037.html | The block ::before and ::after boxes of a vertical paragraph are not painted; the test matched only while the root was laid out horizontally | RAIKIRI-916 | 2026-10-26 | 2026-12-26

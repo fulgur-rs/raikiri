@@ -408,13 +408,10 @@ fn push_generated(
             if rtl != images.rtl {
                 super::generated_blocks::align_physically(&mut options, rtl);
             }
-            Some(GeneratedBlock::new(
-                id.0,
-                end,
-                cv,
-                (options, indent),
-                orthogonal,
-            ))
+            Some(
+                GeneratedBlock::new(id.0, end, cv, (options, indent), orthogonal)
+                    .on_root_axes(images.writing_mode, images.rtl),
+            )
         }
         None => None,
     };

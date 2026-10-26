@@ -1020,22 +1020,60 @@ impl Node {
     /// Every box has at least one piece. Their inline pieces on the lines
     /// carry their text, not their boxes. A paragraph split into columns
     /// has none: its generated blocks are painted as their line pieces.
+    ///
+    /// The rectangles are physical. A vertical paragraph places its boxes on
+    /// its own axes, along its lines, and they are mapped back to the page's
+    /// axes here.
     #[doc(hidden)]
     pub fn ifc_generated_block_pieces(&self) -> Vec<crate::layout::GeneratedBlockPiece> {
         // Columns place their lines apart; their boxes stay on the lines.
-        let Some(lines) = self
+        let Some((root, lines)) = self
             .ifc
             .as_ref()
             .filter(|root| root.multicol_fragments.is_none())
-            .and_then(|root| root.lines.as_ref())
+            .and_then(|root| Some((root, root.lines.as_ref()?)))
         else {
             return Vec::new();
         };
-        lines
+        let mut pieces: Vec<_> = lines
             .placed_blocks
             .iter()
             .flat_map(|placed| placed.pieces(&lines.lines, |index| lines.shift_of(index)))
-            .collect()
+            .collect();
+        if root.writing_mode.is_vertical()
+            && let Some(content_size) = self.ifc_physical_content_size()
+        {
+            // A box is only placed in a paragraph whose inline direction
+            // runs along its physical axis, so the direction is not read.
+            let axes = crate::layout::ifc::geometry::IfcAxes::new(
+                root.writing_mode,
+                shodo::geometry::Direction::Ltr,
+            );
+            let physical = |rect: crate::layout::BoxRect| {
+                let rect = axes.rect(
+                    content_size,
+                    shodo::geometry::LogicalRect {
+                        inline_start: rect.x,
+                        block_start: rect.y,
+                        inline_size: rect.width,
+                        block_size: rect.height,
+                    },
+                );
+                crate::layout::BoxRect {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                }
+            };
+            for piece in &mut pieces {
+                piece.border_box = physical(piece.border_box);
+                piece.content_box = physical(piece.content_box);
+                piece.joined_border_box = physical(piece.joined_border_box);
+                piece.joined_content_box = physical(piece.joined_content_box);
+            }
+        }
+        pieces
     }
 
     /// Pieces of the inline elements of an ifc root on its lines, in the

@@ -168,3 +168,55 @@ fn a_page_along_x_paints_the_block_box_of_its_horizontal_paragraph() {
     // starts.
     assert_eq!(pixel(&pixels, 70, 5), [255, 0, 0]);
 }
+
+/// The paragraph is 60px wide and 50px tall with a 20px column of text.
+const VERTICAL_PARAGRAPH: &str = "div { width: 60px; height: 50px } div::before { content: ''; display: block; width: 8px; \
+     background: red } div::after { content: ''; display: block; width: 6px; background: lime }";
+
+#[test]
+fn a_vertical_rl_paragraph_paints_its_block_boxes_from_the_right() {
+    let pixels = paint(&format!(
+        "div {{ writing-mode: vertical-rl }} {VERTICAL_PARAGRAPH}"
+    ));
+    // The block start is the right: the box before the text takes its 8px
+    // from the paragraph's right edge, the 20px column of text follows, and
+    // the box after it takes 6px at its left.
+    for y in [0, 25, 49] {
+        assert_eq!(pixel(&pixels, 56, y), [255, 0, 0], "before at y={y}");
+        assert_eq!(pixel(&pixels, 29, y), [0, 255, 0], "after at y={y}");
+    }
+    assert_eq!(pixel(&pixels, 50, 25), [255, 255, 255], "the text column");
+    assert_eq!(pixel(&pixels, 56, 55), [255, 255, 255], "below the box");
+    assert_eq!(pixel(&pixels, 20, 25), [255, 255, 255], "left of the box");
+}
+
+#[test]
+fn a_vertical_lr_paragraph_paints_its_block_boxes_from_the_left() {
+    let pixels = paint(&format!(
+        "div {{ writing-mode: vertical-lr }} {VERTICAL_PARAGRAPH}"
+    ));
+    for y in [0, 25, 49] {
+        assert_eq!(pixel(&pixels, 4, y), [255, 0, 0], "before at y={y}");
+        assert_eq!(pixel(&pixels, 31, y), [0, 255, 0], "after at y={y}");
+    }
+    assert_eq!(pixel(&pixels, 18, 25), [255, 255, 255], "the text column");
+    assert_eq!(pixel(&pixels, 4, 55), [255, 255, 255], "below the box");
+    assert_eq!(pixel(&pixels, 40, 25), [255, 255, 255], "right of the box");
+}
+
+#[test]
+fn a_vertical_block_box_keeps_its_border_on_the_sides_it_has() {
+    let pixels = paint(
+        "div { writing-mode: vertical-lr; width: 60px; height: 50px } \
+         div::before { content: ''; display: block; width: 10px; margin: 5px 0 0 6px; \
+         border-left: 2px solid lime; border-top: 2px solid blue; background: red }",
+    );
+    // The box is 12px wide, from x=6, and spans 45px down from y=5: its
+    // physical left border is its block-start edge, its top border its
+    // inline-start one.
+    assert_eq!(pixel(&pixels, 7, 30), [0, 255, 0], "left border");
+    assert_eq!(pixel(&pixels, 12, 5), [0, 0, 255], "top border");
+    assert_eq!(pixel(&pixels, 12, 30), [255, 0, 0], "background");
+    assert_eq!(pixel(&pixels, 12, 2), [255, 255, 255], "above the margin");
+    assert_eq!(pixel(&pixels, 3, 30), [255, 255, 255], "left margin");
+}
