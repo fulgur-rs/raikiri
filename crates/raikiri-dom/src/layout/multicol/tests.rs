@@ -2051,6 +2051,38 @@ fn a_flex_container_that_holds_lines_is_not_sliced() {
 }
 
 #[test]
+fn hidden_boxes_and_blank_text_give_a_flex_container_no_lines() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;height:100px;columns:2;column-gap:0"),
+    );
+    let flex = doc.append_element(Some(parent), "div", Some("display:flex;height:150px"));
+    doc.append_element(Some(flex), "div", Some("display:block;width:10px"));
+    // A box that is not rendered holds nothing to break between, whatever
+    // text it carries.
+    let hidden = doc.append_element(Some(flex), "div", Some("display:none"));
+    doc.append_text(hidden, "never shown");
+    // White space between the items is not rendered in a flex container.
+    doc.append_text(flex, " \n ");
+    layout_nested_flex_float_fixture(&mut doc);
+    let supported = |doc: &mut Document| {
+        with_bridged_session(doc, |session| {
+            lineless::supported_with_wrappers(session, parent)
+        })
+        .is_some()
+    };
+    assert!(supported(&mut doc));
+    // Text that renders in the container itself is a line of its own.
+    doc.append_text(flex, "text");
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(!supported(&mut doc));
+}
+
+#[test]
 fn blocks_without_lines_are_balanced_and_keep_break_avoidance() {
     let (doc, parent, children) = lineless_fixture(
         "display:block;width:200px;columns:2;column-gap:0",
