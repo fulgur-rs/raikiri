@@ -1637,6 +1637,25 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
 }
 
 #[test]
+fn a_recursion_failure_is_taken_once_and_marks_the_layout_dirty() {
+    let mut doc = Document::new();
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = super::context::LayoutSession::with_cascade(&mut doc, &cascade);
+    session.layout_dirty = false;
+    assert!(take_recursion_failure(&mut session).is_ok());
+    assert!(!session.layout_dirty);
+
+    session.context.recursion.limit = 40;
+    session.context.recursion.exceeded_at = Some(7);
+    let Err(LayoutError::Internal { message }) = take_recursion_failure(&mut session) else {
+        panic!("expected an internal error");
+    };
+    assert_eq!(message, "layout nested more than 40 levels deep at node 7");
+    assert!(session.layout_dirty);
+    assert!(take_recursion_failure(&mut session).is_ok());
+}
+
+#[test]
 fn layout_single_page_without_body_returns_error() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::{LayoutError, PageBox};

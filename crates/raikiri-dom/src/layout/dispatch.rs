@@ -738,6 +738,9 @@ impl LayoutSession<'_> {
     ) -> LayoutOutput {
         self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
+        if !self.context.recursion.enter(idx) {
+            return LayoutOutput::HIDDEN;
+        }
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
                 .context
@@ -772,6 +775,7 @@ impl LayoutSession<'_> {
             self.context.text_group = group;
             self.context.text_group_shortest = shortest;
         }
+        self.context.recursion.leave();
         output
     }
 

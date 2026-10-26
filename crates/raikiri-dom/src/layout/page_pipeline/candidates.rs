@@ -446,6 +446,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
 
     #[inline(never)]
     fn collect(&mut self, node_id: usize, frame: CandidateFrame<'a>) -> Result<(), LayoutError> {
+        // The walk goes down the children of the tree, whose depth
+        // `validate_layout_depth` has bounded, so it keeps no count of its own.
         stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
             self.collect_inner(node_id, frame)
         })
