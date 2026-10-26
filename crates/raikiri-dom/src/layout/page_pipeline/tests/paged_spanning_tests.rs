@@ -286,3 +286,98 @@ fn a_multicol_owner_without_a_spanner_keeps_no_groups_when_pagination_is_transpo
     // Its columns stay as the source layout made them, for the pages to cut.
     assert!(document.nodes[owner].multicol_groups.is_empty());
 }
+
+/// A two-column owner whose paragraph fills the first 200px, followed by a
+/// spanner of 350px that holds no text: a tall first page that the spanner
+/// starts on, and a tail of 20px pages for it to run into.
+fn spanner_over_a_short_tail() -> (Document, CascadeResult, PageBox) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;font:20px/20px Ahem"),
+    );
+    let owner = document.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    let paragraph = document.append_element(
+        Some(owner),
+        "p",
+        Some("display:block;white-space:pre;margin:0"),
+    );
+    document.append_text(
+        paragraph,
+        std::iter::repeat_n("A", 20).collect::<Vec<_>>().join("\n"),
+    );
+    document.append_element(
+        Some(owner),
+        "div",
+        Some("display:block;column-span:all;height:350px"),
+    );
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    with_ahem(&mut document);
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 20.0;
+    (document, cascade, page)
+}
+
+fn paginate_spanner_over_a_short_tail(
+    control: &PageLayoutControl<'_>,
+) -> (
+    Result<Vec<PageSlice>, LayoutError>,
+    Document,
+    CascadeResult,
+    PageBox,
+) {
+    let (mut document, cascade, page) = spanner_over_a_short_tail();
+    let result = layout_pages_with_options(
+        &mut document,
+        &cascade,
+        page,
+        crate::PageLayoutOptions {
+            page_steps: &[400.0],
+            page_widths: &[],
+            control: Some(control),
+            ..Default::default()
+        },
+    );
+    (result, document, cascade, page)
+}
+
+#[test]
+fn a_spanner_that_runs_into_a_short_tail_is_cut_on_every_page_it_crosses() {
+    let control = PageLayoutControl::new(None);
+    let (result, ..) = paginate_spanner_over_a_short_tail(&control);
+    // The spanner crosses the ends of the tall page and of seven short ones.
+    assert_eq!(result.unwrap().len(), 9);
+}
+
+#[test]
+fn a_spanner_over_a_short_tail_reports_the_page_limit_of_a_strict_control() {
+    let control = PageLayoutControl::new(Some(3));
+    let (result, ..) = paginate_spanner_over_a_short_tail(&control);
+    assert!(
+        matches!(
+            result,
+            Err(LayoutError::PageLimitExceeded {
+                limit: 3,
+                actual: 4
+            })
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn geometry_discovery_keeps_the_pages_a_spanner_reaches_before_the_page_limit() {
+    let control = PageLayoutControl::for_geometry_discovery(Some(3));
+    let (result, ..) = paginate_spanner_over_a_short_tail(&control);
+    assert_eq!(result.unwrap().len(), 3);
+    assert!(control.page_limit_reached());
+}
