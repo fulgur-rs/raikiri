@@ -21,6 +21,11 @@ fn spacer(height: u32) -> String {
 /// The page, left edge and top of every line of text but the lead-in `a`,
 /// read from the first run on the line.
 fn lines(body: &str) -> Vec<(u32, f32, f32)> {
+    lines_of(body, |text| text != "a")
+}
+
+/// The same for the lines whose first run `wanted` accepts.
+fn lines_of(body: &str, wanted: impl Fn(&str) -> bool) -> Vec<(u32, f32, f32)> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -50,7 +55,8 @@ fn lines(body: &str) -> Vec<(u32, f32, f32)> {
         };
         for run in page.text_runs() {
             let line = (index, run.origin.0, run.origin.1 - ASCENT);
-            if run.text.trim_end() != "a" && !lines.iter().any(|l| l.0 == line.0 && l.2 == line.2) {
+            if wanted(run.text.trim_end()) && !lines.iter().any(|l| l.0 == line.0 && l.2 == line.2)
+            {
                 lines.push(line);
             }
         }
@@ -203,4 +209,23 @@ fn an_inline_element_among_the_moved_lines_does_not_move_them_twice() {
         lines(&format!("{}z z <i>z</i> z z z z", spacer(60))),
         [(1, 0.0, 5.0), (1, 0.0, 35.0), (1, 0.0, 65.0)]
     );
+}
+
+#[test]
+fn text_in_a_positioned_box_leaves_the_flow_where_it_is() {
+    // The box takes no room in the flow, so the line after it stays on the
+    // first page.
+    for position in [
+        "position:absolute;top:0;left:0",
+        "position:fixed;top:0;left:0",
+    ] {
+        assert_eq!(
+            lines_of(
+                &format!("<div style='{position};width:100px'>{}x</div>z", spacer(80)),
+                |text| text == "z"
+            ),
+            [(0, 0.0, 5.0)],
+            "{position}"
+        );
+    }
 }

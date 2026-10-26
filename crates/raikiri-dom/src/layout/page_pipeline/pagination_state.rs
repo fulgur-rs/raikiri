@@ -1277,7 +1277,12 @@ impl PaginationState {
             ..
         } = *env;
         let node_id = candidate.node_id;
-        let Some(root) = blocks.paragraph_root else {
+        // Text placed by positioned insets, or inside a float or an
+        // out-of-flow box, is not in the flow that the moved lines push down.
+        let in_flow = !entry.uses_positioned_coordinates
+            && !candidate.context.is_float_descendant()
+            && !candidate.context.is_out_of_flow_descendant();
+        let Some(root) = blocks.paragraph_root.filter(|_| in_flow) else {
             return Ok(0.0);
         };
         if !self.deferred_shifts.line_splits.is_empty()
