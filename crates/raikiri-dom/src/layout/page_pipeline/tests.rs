@@ -13194,6 +13194,62 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
 }
 
 #[test]
+fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // (style of the box after the float, whether it only clears up to the
+    // float that starts the page)
+    for (style, floor) in [
+        ("display:block;height:10px", true),
+        ("display:block;height:10px;clear:right", true),
+        // Its own break starts a page of its own, clear of that float too.
+        ("display:block;height:10px;break-before:page", false),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;float:left;width:10px;height:50px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;break-after:page;height:10px"),
+        );
+        let started = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;float:left;width:10px;height:20px"),
+        );
+        let after = doc.append_element(Some(body), "div", Some(style));
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+
+        layout_pages(&mut doc, &cascade, page).expect("paged layout succeeds");
+        let key = doc.nodes.box_key(after).unwrap();
+        let cleared_by_pass = !doc.box_style_data.get(key).unwrap().pass.is_empty();
+        assert_eq!(
+            doc.forced_break_float_floor.contains(&after),
+            floor,
+            "{style}"
+        );
+        assert_eq!(cleared_by_pass, !floor, "{style}");
+        assert!(doc.forced_break_clearance.contains(&started), "{style}");
+
+        // A single page has no break to clear at, so no box keeps a floor and
+        // the cached paged layout is not reused.
+        layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
+        assert!(doc.forced_break_float_floor.is_empty(), "{style}");
+        assert!(doc.forced_break_clearance.is_empty(), "{style}");
+    }
+}
+
+#[test]
 fn a_hidden_root_prints_one_page_without_laying_out_its_body() {
     use raikiri_style::{build_rule_tree, cascade};
 

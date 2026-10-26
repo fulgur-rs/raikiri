@@ -1196,9 +1196,11 @@ fn layout_single_page_with_table_projection(
                 }
             } else if !document.forced_break_clearance.is_empty()
                 || !document.forced_break_line_clearance.is_empty()
+                || !document.forced_break_float_floor.is_empty()
             {
                 document.forced_break_clearance.clear();
                 document.forced_break_line_clearance.clear();
+                document.forced_break_float_floor.clear();
                 document.layout_dirty = true;
             }
             document.table_objects.project_explicit_parts = project_explicit_table_parts;
@@ -2676,6 +2678,7 @@ fn clear_floats_at_forced_breaks<'name>(
     // parent's page, and their insides are not walked.
     let mut cleared = Vec::new();
     let mut cleared_lines = Vec::new();
+    let mut cleared_to_float_floor = Vec::new();
     let mut pending = vec![(0_usize, None::<&str>)];
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
@@ -2783,7 +2786,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 }
                 continue;
             }
-            float_after_break = false;
+            // A float right after the break started the new page, so the box
+            // after it lines up beside that float instead of below it.
+            let beside_page_start_float = std::mem::take(&mut float_after_break);
             last_block = Some(child);
             let start_page_name = if has_named_pages {
                 match propagated_start_page_name_with_transposed_axes(
@@ -2800,9 +2805,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 None
             };
             let named_break = changes_page(&previous_page_name, &start_page_name);
-            let forced = after_forced_break
-                || named_break
+            let own_break = named_break
                 || page_break_is_forced(document, child, cascade.computed[child].break_before);
+            let forced = after_forced_break || own_break;
             // A break after the last box inside this one is carried out to
             // the next box, as the paginator does.
             after_forced_break = page_edge_constraint(document, cascade, child, false).0;
@@ -2821,7 +2826,11 @@ fn clear_floats_at_forced_breaks<'name>(
             }
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too.
-            if forced {
+            if forced && beside_page_start_float && !own_break {
+                // Layout clears the floats before the one that starts the
+                // page, not that float.
+                cleared_to_float_floor.push(child);
+            } else if forced {
                 document.record_pass_override(
                     child,
                     raikiri_layout_style::OwnedPropertyOverride::clear(ClearValue::Both),
@@ -2843,11 +2852,14 @@ fn clear_floats_at_forced_breaks<'name>(
     }
     cleared.sort_unstable();
     cleared_lines.sort_unstable();
+    cleared_to_float_floor.sort_unstable();
     if cleared != document.forced_break_clearance
         || cleared_lines != document.forced_break_line_clearance
+        || cleared_to_float_floor != document.forced_break_float_floor
     {
         document.forced_break_clearance = cleared;
         document.forced_break_line_clearance = cleared_lines;
+        document.forced_break_float_floor = cleared_to_float_floor;
         document.layout_dirty = true;
     }
 }

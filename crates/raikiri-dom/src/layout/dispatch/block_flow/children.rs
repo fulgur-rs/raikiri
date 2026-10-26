@@ -287,6 +287,9 @@ pub(super) fn layout(
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut pending = CollapsibleMarginSet::ZERO;
     let mut leading = true;
+    // How low the floats reached before the float that starts a page, which
+    // the box after that float clears but not the float itself.
+    let mut page_start_float_floor = None;
     if !collapse_start {
         ctx.commit_strut();
     }
@@ -411,6 +414,13 @@ pub(super) fn layout(
                 }
             }
             let output = tree.compute_child_layout_with_block_ctx(child, child_input, None);
+            if tree
+                .forced_break_clearance
+                .binary_search(&usize::from(child))
+                .is_ok()
+            {
+                page_start_float_floor = ctx.cleared_threshold(style.clear);
+            }
             let position = ctx.place_floated_box(
                 output.size + margin.sum_axes(),
                 if leading && collapse_start {
@@ -444,6 +454,14 @@ pub(super) fn layout(
             continue;
         }
         let same = shares_context(&style);
+        // The box after the float that starts a page lines up beside that
+        // float, but below the floats of the pages before it.
+        let floor = tree
+            .forced_break_float_floor
+            .binary_search(&usize::from(child))
+            .is_ok()
+            .then_some(page_start_float_floor)
+            .flatten();
         let stretches = matches!(
             style.size.width.expand(),
             ExpandedDimension::Auto | ExpandedDimension::Stretch
@@ -508,16 +526,22 @@ pub(super) fn layout(
             // margins escape, so the box is first tried beside that float
             // without its margin. A float the box clears forces clearance.
             let adjoining = joins && ctx.has_adjoining_float(Clear::Both);
-            let forced = joins && adjoining_clearance;
+            let forced = joins
+                && (adjoining_clearance || floor.is_some_and(|floor| floor > hypothetical + 0.001));
             // Moving below this point separates the box from the floats.
             let threshold = if adjoining { flow.end } else { hypothetical };
             let search = if forced {
-                ctx.cleared_threshold(style.clear).unwrap_or(hypothetical)
+                ctx.cleared_threshold(style.clear)
+                    .into_iter()
+                    .chain(floor)
+                    .reduce(f32::max)
+                    .unwrap_or(hypothetical)
             } else if adjoining {
                 flow.end
             } else {
                 hypothetical
             };
+            let search = floor.map_or(search, |floor| search.max(floor));
             if forced || ctx.has_active_floats(search) {
                 let placed = ctx.find_box_slot(
                     search,
@@ -555,9 +579,11 @@ pub(super) fn layout(
         // by a speculative child must never push that same child downward.
         let clear_y = ctx
             .cleared_threshold(style.clear)
-            .unwrap_or(f32::NEG_INFINITY);
+            .into_iter()
+            .chain(floor)
+            .fold(f32::NEG_INFINITY, f32::max);
         let saved = ctx.snapshot();
-        let mut final_pass = resolved && joins && style.clear == Clear::None;
+        let mut final_pass = resolved && joins && style.clear == Clear::None && floor.is_none();
         let mut guess = slot_y
             .unwrap_or(if joins {
                 flow.end
@@ -598,7 +624,7 @@ pub(super) fn layout(
             } else {
                 flow.end + pending.collapse_with_set(top_set).resolve()
             };
-            let clearance = style.clear != Clear::None
+            let clearance = (style.clear != Clear::None || floor.is_some())
                 && ((joins && adjoining_clearance) || hypothetical < clear_y);
             let top = if let Some(slot_y) = slot_y {
                 slot_y
