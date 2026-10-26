@@ -4282,7 +4282,6 @@ css/cssom-view/scrollingElement-quirks-dynamic-002.html
 css/filter-effects/clip-under-filter-001.html
 css/filter-effects/clip-under-filter-002.html
 css/filter-effects/filter-cb-dynamic-1b.html
-css/filter-effects/filter-subregion-01.html
 css/filter-effects/svg-relative-urls-002.html
 css/printing/input-file-print.html
 css/printing/no-resize-event-print.html

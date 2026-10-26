@@ -1117,6 +1117,11 @@ fn content_outside_the_subset_asks_for_the_raster() {
             r##"<rect width="10" height="10" style="mix-blend-mode:multiply"/>"##,
             SvgSceneFeature::BlendMode,
         ),
+        (
+            r##"<filter id="f"><feGaussianBlur stdDeviation="1"/></filter>
+                <rect width="10" height="10" filter="url(#f)"/>"##,
+            SvgSceneFeature::Filter,
+        ),
     ];
     for (body, feature) in cases {
         let error = scene_error(&document(body));
@@ -1171,17 +1176,6 @@ fn nodes_the_document_parser_never_hands_over_are_not_drawn() {
         scene_of(&image, 1.0),
         Err(SvgSceneError::Unsupported(SvgSceneFeature::Image))
     ));
-    // A filter is an error and not a fallback, like it is for the raster.
-    let blurred = raw_tree(
-        r##"<filter id="f"><feGaussianBlur stdDeviation="1"/></filter>
-            <rect width="5" height="5" filter="url(#f)"/>"##,
-    );
-    let error = scene_of(&blurred, 1.0).unwrap_err();
-    assert!(matches!(
-        error,
-        SvgSceneError::Svg(SvgError::UnsupportedFilterEffects)
-    ));
-    assert!(!error.falls_back_to_raster());
 }
 
 #[test]
@@ -1475,6 +1469,7 @@ fn errors_describe_themselves() {
     );
     for feature in [
         SvgSceneFeature::Pattern,
+        SvgSceneFeature::Filter,
         SvgSceneFeature::BlendMode,
         SvgSceneFeature::Image,
         SvgSceneFeature::RootOpacity,

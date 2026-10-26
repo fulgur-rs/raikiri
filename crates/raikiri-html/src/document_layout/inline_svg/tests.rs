@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_svg::{SvgFontRequest, SvgSceneFeature, SvgSceneLimit};
+use raikiri_svg::{SvgFontRequest, SvgSceneLimit};
 use raikiri_traits::vector::FontFace;
 
 const AHEM: &[u8] = include_bytes!(concat!(
@@ -118,6 +118,38 @@ fn a_mask_is_drawn_as_pixels_whatever_the_root_asks_for() {
     assert_eq!((alpha(10), alpha(30)), (255, 0));
 }
 
+const BLURRED: &str = r##"<filter id="f"><feGaussianBlur stdDeviation="2"/></filter>
+    <rect x="10" y="5" width="20" height="10" fill="#c00" filter="url(#f)"/>"##;
+
+#[test]
+fn a_filter_is_drawn_as_pixels_with_its_effect() {
+    let source = document(BLURRED);
+    let raster = pixels(picture(&source, |_| {}));
+    assert_eq!((raster.width, raster.height), (40, 20));
+    let alpha = |x: usize, y: usize| raster.rgba[(y * 40 + x) * 4 + 3];
+    // The middle of the rectangle is nearly solid, its edge is soft, and the blur
+    // reaches beyond the rectangle.
+    assert!(alpha(20, 10) > 240);
+    assert!(alpha(10, 10) > 0 && alpha(10, 10) < 255);
+    assert!(alpha(8, 10) > 0 && alpha(8, 10) < alpha(10, 10));
+}
+
+#[test]
+fn a_filter_over_the_budget_of_the_raster_is_an_error_that_says_so() {
+    let source = document(&format!(
+        "<filter id=\"f\">{}</filter><rect width=\"40\" height=\"20\" filter=\"url(#f)\"/>",
+        "<feOffset dx=\"1\"/>".repeat(40)
+    ));
+    let result = picture(&source, |request| request.raster_scale = 100.0);
+    assert!(
+        matches!(
+            result,
+            Err(SvgSceneError::Svg(SvgError::FilterLimitExceeded { .. }))
+        ),
+        "{result:?}"
+    );
+}
+
 #[test]
 fn a_pattern_is_drawn_as_pixels_at_the_raster_scale() {
     let source = document(PATTERNED);
@@ -166,9 +198,10 @@ fn a_scene_stands_in_when_pixels_are_not_to_be_had() {
 fn a_document_that_has_neither_picture_is_an_error() {
     let hopeless = |request: &mut PictureRequest<'_>| request.raster_scale = 1.0e9;
     let masked = document(MASKED);
+    // The raster is the picture of a mask, so its failure is the error.
     assert!(matches!(
         picture(&masked, hopeless),
-        Err(SvgSceneError::Unsupported(SvgSceneFeature::Mask))
+        Err(SvgSceneError::Svg(SvgError::InvalidViewport))
     ));
 }
 
