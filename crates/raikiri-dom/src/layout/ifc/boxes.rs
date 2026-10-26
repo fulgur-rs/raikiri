@@ -1868,6 +1868,17 @@ fn translated_child_oof_candidates(output: &LayoutOutput, location: Point<f32>) 
     candidates
 }
 
+/// How low the floats reach before the float that starts a page, when `node`
+/// is the box after that float, in the coordinates of `ctx`.
+fn page_start_float_floor(
+    tree: &LayoutSession<'_>,
+    ctx: &BlockContext<'_>,
+    node: usize,
+) -> Option<f32> {
+    tree.forced_break_float_floor.binary_search(&node).ok()?;
+    ctx.page_start_float_floor()
+}
+
 /// Lay a block child out below the offset `y`, as wide as the content box
 /// less its side margins, the way the parent's block algorithm lays out an
 /// in-flow block (CSS 2.1 8.3.1): its top margin, with the margins of its
@@ -1944,9 +1955,15 @@ fn layout_block_child(
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
     let clear = tree.physical_style(node).clear();
+    // The box after the float that starts a page is held below the floats
+    // before that float as well.
+    let floor = page_start_float_floor(tree, ctx, node);
     let clear_y = ctx
         .cleared_threshold(clear)
-        .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
+        .into_iter()
+        .chain(floor)
+        .map(|threshold| threshold - geometry.top_edge)
+        .fold(f32::NEG_INFINITY, f32::max);
     let origin_resolved = ctx.origin_resolved();
     let mut guess = if origin_resolved && collapse_top {
         y.max(clear_y)
@@ -2012,7 +2029,7 @@ fn layout_block_child(
         } else {
             y + pending.collapse_with_set(top_set).resolve()
         };
-        let has_clearance = clear != Clear::None
+        let has_clearance = (clear != Clear::None || floor.is_some())
             && ((collapse_top && ctx.has_adjoining_float(clear)) || hypothetical < clear_y);
         let (top, after) = if has_clearance {
             {
@@ -2493,15 +2510,25 @@ fn layout_formatting_context_child(
         geometry.top_edge + y + top_margin.resolve()
     };
     let adjoining_float = collapse_top && ctx.has_adjoining_float(Clear::Both);
-    let forced_clearance = collapse_top && ctx.has_adjoining_float(clear);
+    // The box after the float that starts a page is held below the floats
+    // before that float as well.
+    let floor = page_start_float_floor(tree, ctx, node);
+    let forced_clearance = collapse_top
+        && (ctx.has_adjoining_float(clear)
+            || floor.is_some_and(|floor| floor > hypothetical + 0.001));
     let min_y = if forced_clearance {
-        ctx.cleared_threshold(clear).unwrap_or(hypothetical)
+        ctx.cleared_threshold(clear)
+            .into_iter()
+            .chain(floor)
+            .reduce(f32::max)
+            .unwrap_or(hypothetical)
     } else if adjoining_float {
         // An adjoining float moves with the escaping margin strut.
         geometry.top_edge + y
     } else {
         hypothetical
     };
+    let min_y = floor.map_or(min_y, |floor| min_y.max(floor));
     // `(stretch width, border-box position, whether floats narrowed it)`.
 
     let own = own_inline_width(tree, node, &geometry);
@@ -3219,6 +3246,13 @@ pub(crate) fn commit_float(
     adjoins_top_margin: bool,
 ) -> (f32, OofCandidates) {
     let mut oof_candidates = OofCandidates::new();
+    if tree
+        .forced_break_clearance
+        .binary_search(&float.node)
+        .is_ok()
+    {
+        ctx.record_page_start_float_floor(float.clear);
+    }
     // The context measures block offsets from the border-box top.
     let position = ctx.place_floated_box(
         float.margin_box,
