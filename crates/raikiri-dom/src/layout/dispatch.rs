@@ -633,6 +633,43 @@ impl LayoutSession<'_> {
         self.layout_cache_context.mark_stored(key);
     }
 
+    /// Whether a result stored now lands in the cache of the node: its own
+    /// cache frame is the innermost one and no override has changed since it
+    /// opened.
+    pub(crate) fn caches_node(&self, node_id: NodeId) -> bool {
+        self.nodes
+            .box_key(usize::from(node_id))
+            .is_some_and(|key| self.layout_cache_context.can_store(key))
+    }
+
+    /// The intrinsic width kept for the node under `inputs`, if the cache
+    /// still holds one that is valid in the current cache context.
+    pub(crate) fn cached_width(&mut self, node_id: NodeId, inputs: &LayoutInput) -> Option<f32> {
+        self.sync_layout_cache_mutations();
+        let idx = usize::from(node_id);
+        let key = self.nodes.box_key(idx)?;
+        self.layout_cache_context
+            .can_read(key)
+            .then(|| self.nodes[idx].cache.width(inputs))
+            .flatten()
+    }
+
+    /// Keep `width` as the intrinsic width of the node under `inputs`, with
+    /// the same rules as [`LayoutSession::cache_store`].
+    pub(crate) fn cache_width(&mut self, node_id: NodeId, inputs: &LayoutInput, width: f32) {
+        self.sync_layout_cache_mutations();
+        let idx = usize::from(node_id);
+        let key = self.nodes.box_key(idx).expect("cached node has a box key");
+        if !self.layout_cache_context.can_store(key) {
+            return;
+        }
+        if !self.layout_cache_context.can_read(key) {
+            self.nodes[idx].cache.clear();
+        }
+        self.nodes[idx].cache.store_width(inputs, width);
+        self.layout_cache_context.mark_stored(key);
+    }
+
     /// Drop everything the cache of the node holds.
     pub(crate) fn cache_clear(&mut self, node_id: NodeId) {
         self.nodes[usize::from(node_id)].cache.clear();
@@ -2487,6 +2524,17 @@ fn compute_inline_block_shrink_wrap(
         );
     }
 
+    // The probes of a box that holds content run that content once each, and
+    // they are asked again whenever the box is laid out at another width. A
+    // parent that tries three widths on a box in a chain of nested ones would
+    // make every level lay out its box three times as often as the one above,
+    // so the answers are kept in the node's cache. Only while the node's own
+    // cache frame is open: a box laid out apart from its cache (in a block
+    // context shared with its parent, say) also measures apart from it. A flex
+    // container measures under a style override, which moves the cache
+    // generation, so its answers are neither found nor kept.
+    let cache_probes = !is_leaf && tree.caches_node(node_id);
+
     // Intrinsic outer width under the given width constraint.
     let intrinsic_width = |tree: &mut LayoutSession<'_>, width: AvailableSpace| -> f32 {
         if is_leaf {
@@ -2532,24 +2580,24 @@ fn compute_inline_block_shrink_wrap(
                 },
                 ..inputs
             };
-            match display {
+            if cache_probes && let Some(cached) = tree.cached_width(node_id, &intrinsic_inputs) {
+                return cached;
+            }
+            let output = match display {
                 DisplayValue::Flex | DisplayValue::InlineFlex => {
-                    flex_layout(tree, node_id, intrinsic_inputs).size.width
+                    flex_layout(tree, node_id, intrinsic_inputs)
                 }
                 DisplayValue::Grid | DisplayValue::InlineGrid => {
-                    grid_layout(tree, node_id, intrinsic_inputs).size.width
+                    grid_layout(tree, node_id, intrinsic_inputs)
                 }
-                _ if ifc_root => {
-                    compute_ifc_root(tree, node_id, intrinsic_inputs, None)
-                        .size
-                        .width
-                }
-                _ => {
-                    block_layout(tree, node_id, intrinsic_inputs, None)
-                        .size
-                        .width
-                }
+                _ if ifc_root => compute_ifc_root(tree, node_id, intrinsic_inputs, None),
+                _ => block_layout(tree, node_id, intrinsic_inputs, None),
+            };
+            let width = output.size.width;
+            if cache_probes {
+                tree.cache_width(node_id, &intrinsic_inputs, width);
             }
+            width
         }
     };
 
