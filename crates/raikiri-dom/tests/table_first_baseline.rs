@@ -205,9 +205,9 @@ fn a_flex_container_aligns_a_table_by_the_baseline_of_its_first_row() {
     check(cases);
 }
 
-/// A cell with no line of its own has no baseline to supply: the table sits on the bottom of the cell's content box, as the row stretched it, so an authored height or padding moves it and a cell with a line wins. A caption below the row does not change it.
+/// A cell with nothing in flow, such as an empty one with an authored height, takes no part in aligning the row, and with no other cell to supply it the table sits on the bottom of the cells' content boxes as the row stretched them, so an authored height or padding moves it. A block gives the bottom edge of its own box, as a line gives its baseline. A caption below the row does not change any of it.
 #[test]
-fn a_cell_without_a_line_gives_the_bottom_of_its_content_box() {
+fn only_a_cell_with_something_in_flow_gives_a_baseline() {
     let cases: &[Case<'_>] = &[
         (
             "empty baseline-aligned cell with an authored height",
@@ -243,6 +243,21 @@ fn a_cell_without_a_line_gives_the_bottom_of_its_content_box() {
             "inline-table with a caption below its row",
             "<div id=table style=\"background:blue;caption-side:bottom;display:inline-table\"><div id=caption style=\"display:table-caption\">Filler Text</div><div id=row style=\"display:table-row\"><div id=cell style=\"background:blue;display:table-cell;height:1in;width:2in\"></div></div></div>",
             &[("caption", 104.0, 10.0), ("cell", 8.0, 96.0)],
+        ),
+        (
+            "a baseline-aligned block beside text: the block gives its bottom edge",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"vertical-align:baseline\"><div style=\"height:96px\"></div></td><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[("y", 96.0, 10.0), ("t", 8.0, 100.0), ("sd", 88.0, 20.0)],
+        ),
+        (
+            "the same block, middle-aligned: only the text gives a baseline",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"vertical-align:middle\"><div style=\"height:96px\"></div></td><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[("y", 16.0, 10.0), ("t", 8.0, 96.0), ("sd", 8.0, 20.0)],
+        ),
+        (
+            "a shorter block beside the text",
+            "<span id=y>Y</span><table id=t style=\"display:inline-table\"><tr id=r0><td id=c style=\"vertical-align:baseline\"><div style=\"height:30px\"></div></td><td id=d style=\"vertical-align:baseline;font:20px/20px Ahem\"><span id=sd>X</span></td></tr></table>",
+            &[("y", 30.0, 10.0), ("t", 8.0, 34.0), ("sd", 22.0, 20.0)],
         ),
     ];
     check(cases);

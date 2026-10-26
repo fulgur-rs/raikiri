@@ -1224,11 +1224,12 @@ fn compute_table_layout_checked(
         )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
         // The row the table starts with carries its baseline, collapsed or not:
         // Chromium reads it before it removes the collapsed rows, where CSS
-        // Tables 3 §3.10.2 only says "first row". The cells that start in it
-        // and align by a baseline of their own supply it, the greatest offset
-        // winning. With none, it is the lowest content edge among the cells,
-        // measured as the row stretched them; a cell in a collapsed row has no
-        // extent, so that edge is the row's top.
+        // Tables 3 §3.10.2 only says "first row". The cells that start in it,
+        // align by a baseline and have something in flow to take one from
+        // (a line, or a box with height of its own) supply it, the greatest
+        // offset winning. With none, it is the lowest content edge among the
+        // cells, measured as the row stretched them; a cell in a collapsed row
+        // has no extent, so that edge is the row's top.
         let first_row_collapsed = collapsed_rows.first() == Some(&true);
         let first_row_hidden = hidden_rows.first() == Some(&true) && !first_row_collapsed;
         let first_row_cells = || {
@@ -1242,19 +1243,15 @@ fn compute_table_layout_checked(
                     doc.ifc_layout_node(cell.node_id)
                         .expect("table cell layout view")
                         .table_vertical_align,
-                ) && first_cell_baseline(doc, cell.node_id, 0.0).is_some()
+                ) && (first_cell_baseline(doc, cell.node_id, 0.0).is_some()
+                    || cell.natural_height > cell_block_edges(doc, cell).0)
             })
             .map(|cell| cell.baseline)
             .reduce(f32::max)
             .unwrap_or_else(|| {
                 first_row_cells()
                     .map(|cell| {
-                        let width = doc.table_layout_node_mut(cell.node_id).layout.size.width;
-                        let style = doc.table_style(cell.node_id);
-                        let padding = style.padding().resolve_or_zero(Some(width));
-                        let border = style.border().resolve_or_zero(Some(width));
-                        let height = doc.table_layout_node_mut(cell.node_id).layout.size.height;
-                        height - padding.bottom - border.bottom
+                        doc.nodes[cell.node_id].layout.size.height - cell_block_edges(doc, cell).1
                     })
                     .fold(0.0, f32::max)
             });
@@ -2801,6 +2798,21 @@ fn without_collapsed_columns(
             .map(|(&sizing, _)| sizing)
             .collect(),
     }
+}
+
+/// The block-axis padding and border of a placed cell, resolved against the
+/// width it was placed at: their total, and the part at the block end. The
+/// edges the layout stores on a cell also hold the room that aligning its
+/// content added, so they cannot stand in for these.
+fn cell_block_edges(doc: &LayoutSession<'_>, cell: &CellPlacement) -> (f32, f32) {
+    let width = doc.nodes[cell.node_id].layout.size.width;
+    let style = doc.table_style(cell.node_id);
+    let padding = style.padding().resolve_or_zero(Some(width));
+    let border = style.border().resolve_or_zero(Some(width));
+    (
+        padding.top + padding.bottom + border.top + border.bottom,
+        padding.bottom + border.bottom,
+    )
 }
 
 fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
