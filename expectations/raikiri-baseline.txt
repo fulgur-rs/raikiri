@@ -5293,6 +5293,10 @@ css/css-align/abspos/justify-self-static-position-001.html
 # An absolutely positioned box that asks for `last baseline` aligns to the end of the static-position rectangle of a block container, a line of no height, as `end` does, where `safe end` would put it at the start; the purple boxes of all thirteen items match Chromium's pixel for pixel (the dotted container borders are drawn differently); KEEP in two audit-vacuous-passes runs.
 css/css-align/abspos/align-self-static-position-008.html
 
+# --- an absolute block before inline content takes the top-left of its container (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
+# An absolutely positioned block with no insets, followed by a line that holds inline-blocks, stays at the start of the line instead of below it, so it covers the red squares as in the reference. The audit reports it VACUOUS-UNSTYLED because the probe also removes the red squares' own declarations, which leaves the green square alone; it is a negative test that failed before the static position fix (20000 mismatched pixels), and without its `all: inherit` the squares stack and show red (5000 mismatched pixels), so it stays as a guard.
+css/css-cascade/all-prop-002.html
+
 # --- flex items with an aspect-ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
 # An item that states its main size and leaves its cross size auto takes the cross size from the main size it ends up with once it has flexed (011, 013, 023, 028), and an item with a flex basis of content gets its flex base size from the cross size it states through the ratio, ignoring the main size it states (021, 022); the green squares match Chromium's pixel for pixel (the paragraph text is drawn differently); all KEEP in two audit-vacuous-passes runs.
 css/css-sizing/aspect-ratio/flex-aspect-ratio-011.html
