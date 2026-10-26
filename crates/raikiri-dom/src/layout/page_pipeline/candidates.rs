@@ -9,10 +9,11 @@ use super::{
     TextLineIndex, breaks_only_around, candidate_ancestor_constraints, clears_float_side,
     closing_edges_of, first_owned_text_line_top, in_inset_out_of_flow_subtree,
     is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination_with_transposed_axes, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
+    is_monolithic_for_pagination_with_transposed_axes, layout_relative_offset_y,
+    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
+    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -995,9 +996,14 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             let content_end = node.layout.size.height
                                 - node.layout.padding.bottom
                                 - node.layout.border.bottom;
+                            // The box sits at its normal-flow position, less
+                            // the relative offset that layout applied.
                             let box_end = flow_flags[index].0.map_or(f32::INFINITY, |last_box| {
                                 let layout = &document.nodes[last_box].layout;
-                                layout.location.y + layout.size.height + margin
+                                layout.location.y
+                                    - layout_relative_offset_y(document, cascade, body_id, last_box)
+                                    + layout.size.height
+                                    + margin
                             });
                             if content_end > box_end + 0.001 {
                                 0.0
