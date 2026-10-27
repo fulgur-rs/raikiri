@@ -5681,8 +5681,14 @@ fn avoided_box_moves(
 /// moves along with the edges. The next page must hold the box with the
 /// edges, or moving it gains nothing; and a box that its page starts with
 /// would break from the edges on any page.
+///
+/// A block that holds one box has the edges at its own end: its last
+/// `closing_edges_inside` of block size follow that box, and the page breaks
+/// before the block rather than between the box and them (see
+/// [`lone_box_tail`]).
 fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let edges = candidate.context.closing_edges();
+    let inside = candidate.context.closing_edges_inside();
     let BoxFit {
         flow_y,
         margin_top,
@@ -5692,8 +5698,8 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
         ..
     } = *fit;
     let box_end = flow_y + candidate.height;
-    edges > 0.0
-        && box_end <= page_end + 0.001
+    edges + inside > 0.0
+        && box_end - inside <= page_end + 0.001
         && candidate.height + edges <= next_page_step + 0.001
         && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
 }
@@ -5714,6 +5720,94 @@ fn closing_edges_of(
         && moves_later_siblings(document, node_id)
         && height_follows_content(document, node_id))
     .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+}
+
+/// Where the block `node_id` sits in its parent along the block axis at its
+/// normal-flow position: its layout location, less the relative offset that
+/// layout applied.
+fn normal_flow_y(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    document.nodes[node_id].layout.location.y
+        - layout_relative_offset_y(document, cascade, body_id, node_id)
+}
+
+/// The block size at the end of the block `node_id` that follows its one box:
+/// the bottom padding and border of `node_id` and of the blocks that box ends,
+/// and the margin below the box where it does not collapse out of `node_id`.
+/// `None` unless `node_id` holds one box in its flow, which holds one in turn,
+/// down to a box that the page cannot break inside: one without a box in its
+/// flow, or a paragraph of one line.
+///
+/// With no box before it in the block, a break that would leave this tail
+/// alone on the next page falls before the block instead (CSS Break 3 §4.1
+/// prefers a break between boxes to one between a box and the edges of its
+/// parent), as browsers do. A paragraph of more lines breaks between them and
+/// leaves the tail to its last lines, which is not this block's to move.
+fn lone_box_tail(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    let mut current = node_id;
+    // Where the box ends, from the top of `node_id`.
+    let mut content_end = 0.0;
+    loop {
+        let node = &document.nodes[current];
+        // Generated boxes are not among the children, and the columns of a
+        // multicol container break on their own.
+        if node.multicol.is_some() || node.has_before_or_after_content {
+            return None;
+        }
+        if current != node_id && node.is_ifc_root() {
+            let lines = document
+                .ifc_layout_node(current)
+                .and_then(|node| node.ifc.as_ref())
+                .and_then(|ifc| ifc.lines.as_ref())?;
+            if !lines.block_line_starts.is_empty() || lines.lines.len() > 1 {
+                return None;
+            }
+            break;
+        }
+        let mut boxes = Vec::new();
+        for &child in &node.children {
+            if is_floating_box_for_pagination(document, cascade, child) {
+                return None;
+            }
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+            if boxes.len() > 1 {
+                return None;
+            }
+        }
+        match boxes[..] {
+            [] if current != node_id => break,
+            [only]
+                if closing_edges_of(document, current, body_id).is_some()
+                    && document.nodes[only].kind() == NodeKind::Element
+                    && matches!(
+                        document.nodes[only].display(),
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    )
+                    && matches!(
+                        document.nodes[only].position(),
+                        PositionValue::Static | PositionValue::Relative
+                    )
+                    && !document.nodes[only].used_writing_mode.is_vertical() =>
+            {
+                // The box sits at its normal-flow position, less the
+                // relative offset that layout applied.
+                content_end += normal_flow_y(document, cascade, body_id, only);
+                current = only;
+            }
+            _ => return None,
+        }
+    }
+    content_end += document.nodes[current].layout.size.height;
+    Some(document.nodes[node_id].layout.size.height - content_end)
 }
 
 /// The break that keeps a paragraph's last `widows` lines with the `edges` of
