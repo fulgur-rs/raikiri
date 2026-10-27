@@ -67,6 +67,11 @@ fn cold_table_border_benchmark() {
             last_counts = (TABLE_CELL_LOOKUP_STEPS.get(), BORDER_RESOLUTIONS.get());
             let mut actual = Vec::new();
             for node in &doc.nodes {
+                actual.extend(
+                    format!("{:?}", node.collapsed_border)
+                        .bytes()
+                        .map(u32::from),
+                );
                 actual.extend([
                     node.layout.location.x.to_bits(),
                     node.layout.location.y.to_bits(),
