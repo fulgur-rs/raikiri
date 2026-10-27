@@ -437,3 +437,88 @@ fn only_the_boxes_that_clip_their_overflow_are_kept_as_clip_sources() {
     );
     assert!(clip.is_repeat);
 }
+
+#[test]
+fn paginating_one_long_paragraph_avoids_a_full_line_scan_per_page() {
+    for count in [64, 128, 256] {
+        let mut text = source(0.0, count as f32 * 10.0);
+        text.node_kind = NodeKind::Text;
+        text.line_metrics = Some(
+            (0..count)
+                .map(|index| (index as f32 * 10.0, index as f32 * 10.0 + 10.0))
+                .collect(),
+        );
+        let ranges: Vec<_> = (0..count / 4)
+            .map(|page| Some((page as f32 * 40.0, (page + 1) as f32 * 40.0)))
+            .collect();
+        let mut pages = pages_with_ranges(&ranges);
+        LINE_CENTER_EVALUATIONS.with(|value| value.set(0));
+        place(&mut pages, &[text]);
+        let evaluated = LINE_CENTER_EVALUATIONS.with(std::cell::Cell::get);
+        for (page, fragment) in pages.iter().enumerate() {
+            assert_eq!(fragment.items.len(), 1);
+            assert_eq!(
+                fragment.items[0].line_range,
+                Some(PageFragmentLineRange::new(
+                    (page * 4) as u32,
+                    ((page + 1) * 4) as u32
+                ))
+            );
+        }
+        assert!(
+            evaluated <= count * 16,
+            "{count} lines evaluated {evaluated} centers"
+        );
+    }
+}
+
+#[test]
+fn indexed_line_ranges_match_original_scanning_for_unusual_metrics_and_bounds() {
+    let cases = [
+        vec![],
+        vec![(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)],
+        vec![(20.0, 30.0), (0.0, 10.0), (10.0, 20.0)],
+        vec![(0.0, 10.0), (f32::NAN, 20.0), (20.0, 30.0)],
+        vec![(f32::NEG_INFINITY, 0.0), (0.0, 10.0), (20.0, f32::INFINITY)],
+        vec![(-0.0, 0.0), (0.0, -0.0), (0.0, 0.0)],
+        vec![(f32::MAX, f32::MAX), (0.0, 10.0)],
+        vec![(0.0, 10.0); 5],
+    ];
+    let bounds = [
+        (-100.0, 100.0),
+        (0.0, 10.0),
+        (5.001, 15.001),
+        (10.0, 10.0),
+        (20.0, 0.0),
+        (f32::NAN, 10.0),
+        (0.0, f32::NAN),
+        (f32::NEG_INFINITY, f32::INFINITY),
+        (f32::INFINITY, f32::INFINITY),
+        (f32::NEG_INFINITY, f32::NEG_INFINITY),
+    ];
+    for metrics in cases {
+        for abs_y in [-10.0, -0.0, 1.25, f32::MAX, f32::NAN] {
+            let index = line_ranges::LineRanges::new(&metrics, abs_y);
+            for (start, end) in bounds {
+                assert_eq!(
+                    index.range(start, end),
+                    line_range_for_page(&metrics, abs_y, start, end)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn repeated_or_nonintersecting_sources_do_not_inspect_line_centers() {
+    for repeat in [false, true] {
+        let mut text = source(if repeat { 0.0 } else { 1000.0 }, 30.0);
+        text.node_kind = NodeKind::Text;
+        text.is_repeat = repeat;
+        text.line_metrics = Some(vec![(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)]);
+        let mut pages = three_pages();
+        LINE_CENTER_EVALUATIONS.with(|value| value.set(0));
+        place(&mut pages, &[text]);
+        assert_eq!(LINE_CENTER_EVALUATIONS.with(std::cell::Cell::get), 0);
+    }
+}

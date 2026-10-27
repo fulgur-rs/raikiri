@@ -6,6 +6,7 @@ pub(crate) mod column_projection;
 mod footnotes;
 mod fragment_sources;
 mod leading_margins;
+mod line_ranges;
 mod link_events;
 mod pagination_state;
 mod sibling_shifts;
@@ -2528,6 +2529,8 @@ fn line_range_for_page(
     let mut first = None;
     let mut end = 0_u32;
     for (index, (line_top, line_bottom)) in line_metrics.iter().copied().enumerate() {
+        #[cfg(test)]
+        tests::LINE_CENTER_EVALUATIONS.with(|count| count.set(count.get() + 1));
         let top = text_abs_y + line_top;
         let bottom = text_abs_y + line_bottom;
         if !line_center_on_page(top, bottom, page_start, page_end) {
