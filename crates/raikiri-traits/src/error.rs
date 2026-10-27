@@ -242,21 +242,22 @@ pub enum LimitKind {
     /// Exceeded the element nesting depth that `raikiri_html::parse_xhtml`
     /// accepts.
     DomDepth,
-    /// Exceeded `max_target_slots`.
+    /// Reserved classification for [`crate::RenderLimits::max_target_slots`].
+    /// Built-in stages do not enforce that field or emit this kind.
     TargetSlots,
-    /// Exceeded `max_layout_buffer_entries`.
+    /// Reserved classification for [`crate::RenderLimits::max_layout_buffer_entries`].
+    /// Built-in stages do not enforce that field or emit this kind.
     LayoutBufferEntries,
-    /// Exceeded `max_aggregate_bytes` (approximate post-parse memory footprint,
-    /// including DOM node arena, cascade table, etc.).
+    /// Reserved classification for [`crate::RenderLimits::max_aggregate_bytes`].
+    /// Built-in stages do not enforce that field or emit this kind; it does
+    /// not represent an active post-parse memory bound.
     AggregateBytes,
     /// Exceeded `max_input_bytes`.
     ///
-    /// Semantic distinction from [`AggregateBytes`](Self::AggregateBytes):
-    /// `InputBytes` checks the **parse-time** raw input byte stream, allowing
-    /// fail-closed early return (`parse_html_with_limits` enforces it when reading).
-    /// `AggregateBytes` measures approximate **post-parse** memory usage.
-    /// Thus `InputBytes` more directly prevents an attacker from inducing OOM
-    /// by sending huge HTML.
+    /// Checks the **parse-time** raw input byte stream, allowing fail-closed
+    /// early return (`parse_html_with_limits` enforces it when reading).
+    /// Unlike this active bound, [`Self::AggregateBytes`] is reserved and
+    /// provides no post-parse memory protection.
     InputBytes,
     /// Exceeded the hard cumulative estimated-memory budget for counter snapshots.
     CounterSnapshots,
