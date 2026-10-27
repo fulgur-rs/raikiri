@@ -71,8 +71,14 @@ pub(in crate::layout) fn paginate_spanning_columns(
 ) -> Result<f32, LayoutError> {
     let old_groups = tree.nodes[owner].multicol_groups.clone();
     // A multicol container is not broken when pagination runs on transposed
-    // axes: its columns lay out on the horizontal axes of the page.
-    if old_groups.is_empty() || tree.context.pagination_on_transposed_axes {
+    // axes: its columns lay out on the horizontal axes of the page. The groups
+    // of a container that is a paragraph of its own are kept for the rules
+    // between its columns; the pages cut its columns as they cut those of a
+    // container without spanners.
+    if old_groups.is_empty()
+        || tree.context.pagination_on_transposed_axes
+        || tree.nodes[owner].is_ifc_root()
+    {
         return Ok(0.0);
     }
     let children = tree.children_through_contents(owner);

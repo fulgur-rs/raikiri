@@ -63,16 +63,266 @@ fn a_last_box_that_the_next_page_cannot_hold_with_the_edges_stays() {
     assert_eq!(closed_parent("padding-bottom:90px"), (70.0, 180.0, 180.0));
 }
 
+/// `body > [div(60px), div(parent_css) > div(30px)]` on 100px pages. Returns
+/// the page-flow y of the parent and of its one box.
+fn lone_box_parent(parent_css: &str) -> (f32, f32) {
+    let (mut parent, mut only) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(doc, body, &format!("display:block;{parent_css}"));
+        only = block(doc, parent, "display:block;height:30px");
+    });
+    (page_flow_y(&doc, parent), page_flow_y(&doc, only))
+}
+
 #[test]
-fn a_box_with_no_box_before_it_stays_with_its_parent() {
-    let (mut only, mut parent) = (0, 0);
+fn a_block_that_holds_one_box_moves_whole_with_the_padding_below_it() {
+    // The box ends at 90 and fits the page, the 30px of padding below it do
+    // not, and no box before the one in the block is there to break from. The
+    // page breaks before the block: the padding is not left alone on the next
+    // page, nor the box left alone on this one.
+    assert_eq!(lone_box_parent("padding-bottom:30px"), (100.0, 100.0));
+    assert_eq!(lone_box_parent("border-bottom:30px solid"), (100.0, 100.0));
+    // The padding and border above the box move with it.
+    assert_eq!(
+        lone_box_parent("padding-top:10px;padding-bottom:30px"),
+        (100.0, 110.0)
+    );
+    assert_eq!(
+        lone_box_parent("border-top:5px solid;border-bottom:30px solid"),
+        (100.0, 105.0)
+    );
+}
+
+#[test]
+fn a_block_that_holds_one_box_stays_when_its_edges_fit_the_page() {
+    assert_eq!(lone_box_parent("padding-bottom:10px"), (60.0, 60.0));
+    assert_eq!(lone_box_parent(""), (60.0, 60.0));
+    // The padding above the box counts as part of the content that fits.
+    assert_eq!(
+        lone_box_parent("padding-top:5px;padding-bottom:5px"),
+        (60.0, 65.0)
+    );
+}
+
+#[test]
+fn a_block_that_holds_one_box_stays_when_the_box_does_not_fit_the_page() {
+    // The box runs past the page end on its own, so the page breaks in it, or
+    // not at all, and the padding follows it.
+    let (mut parent, mut only) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:60px");
         parent = block(doc, body, "display:block;padding-bottom:30px");
+        only = block(doc, parent, "display:block;height:50px");
+    });
+    assert_eq!(page_flow_y(&doc, parent), 60.0);
+    assert_eq!(page_flow_y(&doc, only), 60.0);
+}
+
+#[test]
+fn a_block_that_holds_one_box_stays_when_the_next_page_cannot_hold_it() {
+    // 30px of box and 80px of padding make 110px, more than a page: moving
+    // gains nothing.
+    assert_eq!(lone_box_parent("padding-bottom:80px"), (60.0, 60.0));
+}
+
+#[test]
+fn a_block_that_starts_its_page_stays() {
+    // Nothing before it on the page is a box to break from.
+    let (mut parent, mut only) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        parent = block(doc, body, "display:block;padding-bottom:30px");
+        only = block(doc, parent, "display:block;height:80px");
+    });
+    assert_eq!(page_flow_y(&doc, parent), 0.0);
+    assert_eq!(page_flow_y(&doc, only), 0.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 110.0);
+}
+
+#[test]
+fn the_margin_below_the_one_box_of_a_block_counts_with_its_edges() {
+    // The box ends at 70 and the 30px of padding below it end at 100, which
+    // fits, but not with 10px of margin between them.
+    for (margin, expected) in [(0, 40.0), (10, 100.0)] {
+        let mut parent = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            block(doc, body, "display:block;height:40px");
+            parent = block(doc, body, "display:block;padding-bottom:30px");
+            block(
+                doc,
+                parent,
+                &format!("display:block;height:30px;margin-bottom:{margin}px"),
+            );
+        });
+        assert_eq!(page_flow_y(&doc, parent), expected, "{margin}");
+    }
+}
+
+#[test]
+fn a_block_that_holds_one_box_through_wrappers_moves_whole() {
+    // The wrappers have nothing of their own that the page breaks at, with
+    // edges below the box or none.
+    for (inner_css, outer_css) in [
+        ("", "padding-bottom:30px"),
+        ("padding-bottom:30px", ""),
+        ("padding-bottom:15px", "padding-bottom:15px"),
+    ] {
+        let (mut outer, mut only) = (0, 0);
+        let (doc, _) = paged_body(|doc, body| {
+            block(doc, body, "display:block;height:60px");
+            outer = block(doc, body, &format!("display:block;{outer_css}"));
+            let inner = block(doc, outer, &format!("display:block;{inner_css}"));
+            only = block(doc, inner, "display:block;height:30px");
+        });
+        assert_eq!(page_flow_y(&doc, outer), 100.0, "{inner_css} {outer_css}");
+        assert_eq!(page_flow_y(&doc, only), 100.0, "{inner_css} {outer_css}");
+    }
+}
+
+#[test]
+fn a_block_that_ends_the_blocks_around_it_moves_with_their_edges() {
+    // The inner block holds one box and is after a box in the outer block,
+    // which ends in 20px of padding: the box ends at 70 and fits, and the two
+    // paddings after it, which end at 110, do not.
+    let (mut inner, mut only, mut outer) = (0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        outer = block(doc, body, "display:block;padding-bottom:20px");
+        block(doc, outer, "display:block;height:50px");
+        inner = block(doc, outer, "display:block;padding-bottom:20px");
+        only = block(doc, inner, "display:block;height:20px");
+    });
+    assert_eq!(page_flow_y(&doc, inner), 100.0);
+    assert_eq!(page_flow_y(&doc, only), 100.0);
+    assert_eq!(doc.nodes[outer].layout.size.height, 160.0);
+}
+
+#[test]
+fn a_block_that_holds_one_box_in_a_container_moves_after_the_box_before_it() {
+    // The container has no edges and starts the page; the box before the block
+    // in it is the one to break from.
+    let (mut container, mut parent, mut only) = (0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        container = block(doc, body, "display:block");
+        block(doc, container, "display:block;height:60px");
+        parent = block(doc, container, "display:block;padding-bottom:30px");
         only = block(doc, parent, "display:block;height:30px");
     });
-    assert_eq!(page_flow_y(&doc, only), 60.0);
-    assert_eq!(doc.nodes[parent].layout.size.height, 60.0);
+    assert_eq!(page_flow_y(&doc, container), 0.0);
+    assert_eq!(page_flow_y(&doc, parent), 100.0);
+    assert_eq!(page_flow_y(&doc, only), 100.0);
+}
+
+#[test]
+fn a_block_that_holds_one_box_stays_when_a_break_before_it_is_avoided() {
+    for (before_css, parent_css, only_css) in [
+        ("break-after:avoid", "", ""),
+        ("", "break-before:avoid", ""),
+        ("", "", "break-before:avoid"),
+    ] {
+        let (mut parent, mut only) = (0, 0);
+        let (doc, _) = paged_body(|doc, body| {
+            block(
+                doc,
+                body,
+                &format!("display:block;height:60px;{before_css}"),
+            );
+            parent = block(
+                doc,
+                body,
+                &format!("display:block;padding-bottom:30px;{parent_css}"),
+            );
+            only = block(
+                doc,
+                parent,
+                &format!("display:block;height:30px;{only_css}"),
+            );
+        });
+        assert_eq!(
+            page_flow_y(&doc, parent),
+            60.0,
+            "{before_css} {parent_css} {only_css}"
+        );
+        assert_eq!(
+            page_flow_y(&doc, only),
+            60.0,
+            "{before_css} {parent_css} {only_css}"
+        );
+    }
+}
+
+#[test]
+fn a_forced_break_or_a_page_name_in_a_block_that_holds_one_box_is_left_to_its_own_rules() {
+    // The break already puts the block on the page it asks for; moving the
+    // block as well for its padding would add a page.
+    for only_css in ["break-before:always", "break-after:always", "page:foo"] {
+        let pages = |padding: u32| {
+            paged_body(|doc, body| {
+                block(doc, body, "display:block;height:60px");
+                let parent = block(
+                    doc,
+                    body,
+                    &format!("display:block;padding-bottom:{padding}px"),
+                );
+                block(
+                    doc,
+                    parent,
+                    &format!("display:block;height:30px;{only_css}"),
+                );
+                block(doc, body, "display:block;height:10px");
+            })
+            .1
+        };
+        assert_eq!(pages(30), pages(0), "{only_css}");
+    }
+}
+
+/// The page-flow y of the div with 30px of padding below it, after a 60px
+/// block, when `build` fills it.
+fn parent_with(build: impl FnOnce(&mut Document, usize)) -> f32 {
+    let mut parent = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        parent = block(doc, body, "display:block;padding-bottom:30px");
+        build(doc, parent);
+    });
+    page_flow_y(&doc, parent)
+}
+
+#[test]
+fn a_block_that_holds_one_box_with_something_to_break_at_stays() {
+    // A float beside the box is a flow of its own.
+    assert_eq!(
+        parent_with(|doc, parent| {
+            block(doc, parent, "float:left;width:10px;height:5px");
+            block(doc, parent, "display:block;height:30px");
+        }),
+        60.0
+    );
+    // A box that is not a block container.
+    assert_eq!(
+        parent_with(|doc, parent| {
+            block(doc, parent, "display:grid;height:30px");
+        }),
+        60.0
+    );
+    // A box with boxes of its own: the last of them moves with the edges, and
+    // the block stays where it starts.
+    assert_eq!(
+        parent_with(|doc, parent| {
+            let inner = block(doc, parent, "display:block");
+            block(doc, inner, "display:block;height:10px");
+            block(doc, inner, "display:block;height:20px");
+        }),
+        60.0
+    );
+    // A multicol container breaks into its columns on its own.
+    assert_eq!(
+        parent_with(|doc, parent| {
+            let columns = block(doc, parent, "display:block;columns:2;column-gap:0");
+            block(doc, columns, "display:block;height:30px");
+        }),
+        60.0
+    );
 }
 
 #[test]
@@ -198,9 +448,6 @@ fn a_multicol_container_breaks_into_its_columns_and_stays() {
 #[test]
 fn a_wrapper_that_has_something_to_break_at_stays() {
     for (css, inner_css) in [
-        // Padding or a border separates the wrapper from its box.
-        ("padding-top:5px", ""),
-        ("border-bottom:1px solid", ""),
         // A float beside the box is a flow of its own.
         ("", "float:left;width:10px;height:5px"),
         // A wrapper that is not a block container of its own.
@@ -230,6 +477,24 @@ fn a_wrapper_that_has_something_to_break_at_stays() {
     });
     assert_eq!(page_flow_y(&doc, wrapper), 70.0);
     assert_eq!(page_flow_y(&doc, grid), 70.0);
+}
+
+#[test]
+fn a_wrapper_with_padding_or_a_border_around_its_one_box_moves_with_the_edges() {
+    // The wrapper's own edges move with it as one box, like a wrapper without
+    // any.
+    for css in ["padding-top:5px", "border-bottom:1px solid"] {
+        let (mut wrapper, mut inner) = (0, 0);
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:30px");
+            block(doc, parent, "display:block;height:40px");
+            block(doc, parent, "display:block;height:30px");
+            wrapper = block(doc, parent, &format!("display:block;{css}"));
+            inner = block(doc, wrapper, "display:block;height:15px");
+        });
+        assert_eq!(page_flow_y(&doc, wrapper), 100.0, "{css}");
+        assert!(page_flow_y(&doc, inner) >= 100.0, "{css}");
+    }
 }
 
 #[test]
@@ -470,9 +735,10 @@ fn lines_that_the_next_page_cannot_hold_with_the_edges_stay() {
     assert_eq!(closed_paragraph_with(6, 90, ""), (10.0, 160.0));
 }
 
-#[test]
-fn a_paragraph_alone_in_its_parent_keeps_its_last_lines() {
-    // Nothing before the paragraph in the div is a box to break from.
+/// `body > [div(10px), div(padding-bottom:40px) > paragraph]` where the
+/// paragraph is `lines` lines of 10px Ahem text, 30px wide. Returns the height
+/// of the div and the page-flow y of the paragraph's first line.
+fn lone_paragraph(lines: usize) -> (f32, f32) {
     let (mut parent, mut paragraph) = (0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
         block(doc, body, "display:block;height:10px");
@@ -482,9 +748,41 @@ fn a_paragraph_alone_in_its_parent_keeps_its_last_lines() {
             parent,
             "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
         );
-        doc.append_text(paragraph, ["aaa"; 6].join(" "));
+        doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
     });
-    assert_eq!(doc.nodes[parent].layout.size.height, 100.0);
+    (
+        doc.nodes[parent].layout.size.height,
+        page_flow_y(&doc, paragraph),
+    )
+}
+
+#[test]
+fn a_paragraph_alone_in_its_parent_moves_its_last_lines_with_the_edges() {
+    // No box before the paragraph in the div is there to break from, but its
+    // lines are: the last two move to the next page with the padding, which
+    // would otherwise be left alone there. Six lines end at 70.
+    assert_eq!(lone_paragraph(6), (150.0, 10.0));
+    // Four lines end at 50 and fit with the padding.
+    assert_eq!(lone_paragraph(4), (80.0, 10.0));
+}
+
+#[test]
+fn a_paragraph_of_one_line_alone_in_its_parent_moves_whole_with_the_edges() {
+    // The line ends at 100 and the padding below it does not fit. There is no
+    // place to break in the line, and the page breaks before the div.
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:90px");
+        parent = block(doc, body, "display:block;padding-bottom:40px");
+        paragraph = block(
+            doc,
+            parent,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "aaa");
+    });
+    assert_eq!(page_flow_y(&doc, parent), 100.0);
+    assert_eq!(page_flow_y(&doc, paragraph), 100.0);
 }
 
 #[test]

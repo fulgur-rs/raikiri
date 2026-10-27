@@ -1152,3 +1152,127 @@ fn a_max_height_spanning_owner_keeps_its_short_intrinsic_box() {
             .any(|fragment| fragment.rect().width == 100.0 && fragment.rect().height == 40.0)
     );
 }
+
+/// The rectangle of the first `div` of the page that lies `y` below its top.
+fn div_rect_at(document: &DocumentLayout, y: f32) -> (f32, f32, f32, f32) {
+    let page = document.page(0).unwrap();
+    let rect = page
+        .fragments()
+        .find(|fragment| {
+            page.dom().local_name(fragment.node()) == Some("div") && fragment.rect().y == y
+        })
+        .expect("div fragment")
+        .rect();
+    (rect.x, rect.y, rect.width, rect.height)
+}
+
+#[test]
+fn a_spanner_may_be_any_block_level_box() {
+    // `column-span: all` applies to every block-level box, not only to a plain
+    // block (CSS Multi-column Layout 1, 6.1). Each display below spans both
+    // columns and ends the rules between them, as a block does. A table is as
+    // wide as its content, like any table.
+    for (display, width) in [
+        ("block", 100.0),
+        ("flow-root", 100.0),
+        ("flex", 100.0),
+        ("grid", 100.0),
+        ("table", 20.0),
+    ] {
+        let document = lay_out(
+            &format!(
+                "<div class=mc><p>A<br>B</p><div class=span style='display:{display}'>E</div><p>C<br>D</p></div>"
+            ),
+            "",
+        );
+        assert_eq!(document.page_count(), 1, "{display}");
+        assert_runs(
+            &document,
+            &[
+                ("A", (0.0, 16.0)),
+                ("B", (60.0, 16.0)),
+                ("E", (0.0, 36.0)),
+                ("C", (0.0, 56.0)),
+                ("D", (60.0, 56.0)),
+            ],
+        );
+        assert_eq!(
+            rule_rects(&document),
+            [(49.0, 0.0, 2.0, 20.0), (49.0, 40.0, 2.0, 20.0)],
+            "{display}"
+        );
+        assert_eq!(
+            div_rect_at(&document, 20.0),
+            (0.0, 20.0, width, 20.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn the_auto_margins_of_a_spanner_centre_it_whatever_its_display() {
+    // The spanner is 50px wide in the 100px of the container: 25px on each
+    // side, with the lines around it and without them.
+    for display in ["block", "flow-root", "flex", "grid"] {
+        for lines in ["<p>A<br>B</p>{}<p>C<br>D</p>", "A<br>B<br>{}C<br>D"] {
+            let spanner = format!(
+                "<div class=span style='display:{display};width:50px;margin:0 auto'>E</div>"
+            );
+            let document = lay_out(
+                &format!("<div class=mc>{}</div>", lines.replace("{}", &spanner)),
+                "",
+            );
+            assert_eq!(
+                div_rect_at(&document, 20.0),
+                (25.0, 20.0, 50.0, 20.0),
+                "{display} {lines}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_block_level_spanner_between_bare_lines_spans_the_columns() {
+    // The lines are the content of the container itself, so the spanner is a
+    // box of their paragraph.
+    for display in ["flow-root", "flex", "grid", "table"] {
+        let document = lay_out(
+            &format!(
+                "<div class=mc>A<br>B<br><div class=span style='display:{display}'>E</div>C<br>D</div>"
+            ),
+            "",
+        );
+        assert_eq!(document.page_count(), 1, "{display}");
+        assert_runs(
+            &document,
+            &[
+                ("A", (0.0, 16.0)),
+                ("B", (60.0, 16.0)),
+                ("E", (0.0, 36.0)),
+                ("C", (0.0, 56.0)),
+                ("D", (60.0, 56.0)),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_flow_root_spanner_contains_its_floats() {
+    // The spanner is a formatting context of its own, so it is as tall as the
+    // 40px float in it and the lines below it start under the float.
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><div class=span style='display:flow-root'>\
+         <div style='float:left;width:20px;height:40px'></div></div><p>C<br>D</p></div>",
+        "",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(
+        &document,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (60.0, 16.0)),
+            ("C", (0.0, 76.0)),
+            ("D", (60.0, 76.0)),
+        ],
+    );
+}

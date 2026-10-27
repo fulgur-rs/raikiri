@@ -12,7 +12,7 @@ use crate::generated_content::{QuoteDepth, format_counter};
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
 use crate::paint_rules::OverflowClipGeometry;
-use crate::running::element_string_value;
+use crate::running::{element_string_value, string_set_text, string_set_value};
 use crate::{
     Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneImage, StandaloneStyle,
     StandaloneText, TextShadow,
@@ -966,10 +966,16 @@ fn margin_counter_value(
 /// a laid-out document. It is built on first use, with a single pass over
 /// the cascade, so documents whose margin boxes reference neither function
 /// never pay for it. Keep one per `(document, cascade)` pair.
+///
+/// A table made with [`Self::with_page_index`] also knows where the running
+/// elements and `string-set` assignments sit in the page sequence, so
+/// `string()` shows the value of the page it is on. Without that index every
+/// page shows the last `string-set` value of the document.
 #[derive(Debug, Default)]
 #[doc(hidden)]
 pub struct MarginBoxNamedValues {
     table: std::sync::OnceLock<NamedValues>,
+    pages: Option<Arc<crate::RunningIndex>>,
 }
 
 #[derive(Debug, Default)]
@@ -985,14 +991,24 @@ impl MarginBoxNamedValues {
         Self::default()
     }
 
+    /// An empty table whose `string()` values follow the pages of `index`.
+    pub fn with_page_index(index: Arc<crate::RunningIndex>) -> Self {
+        Self {
+            table: std::sync::OnceLock::new(),
+            pages: Some(index),
+        }
+    }
+
     fn table(&self, document: &Document, cascade: &CascadeResult) -> &NamedValues {
         self.table
-            .get_or_init(|| NamedValues::build(document, cascade))
+            .get_or_init(|| NamedValues::build(document, cascade, self.pages.is_none()))
     }
 }
 
 impl NamedValues {
-    fn build(document: &Document, cascade: &CascadeResult) -> Self {
+    /// `with_strings` also collects the document-wide `string-set` values,
+    /// which a table that follows a page index does not use.
+    fn build(document: &Document, cascade: &CascadeResult, with_strings: bool) -> Self {
         // The last element in document order with a running template of a
         // name, and the last `string-set` entry of a name.
         let mut last_elements = std::collections::HashMap::<&SmolStr, usize>::new();
@@ -1011,8 +1027,10 @@ impl NamedValues {
             for template in &computed.running_templates {
                 last_elements.insert(&template.name, idx);
             }
-            for (name, components) in computed.string_set.iter() {
-                last_strings.insert(name, (idx, components.as_slice()));
+            if with_strings {
+                for (name, components) in computed.string_set.iter() {
+                    last_strings.insert(name, (idx, components.as_slice()));
+                }
             }
         }
         let elements = last_elements
@@ -1022,17 +1040,7 @@ impl NamedValues {
         let strings = last_strings
             .into_iter()
             .map(|(name, (idx, components))| {
-                let mut value = String::new();
-                for component in components {
-                    match component {
-                        ContentComponent::Literal(text) => value.push_str(text.as_str()),
-                        ContentComponent::Content { .. } => {
-                            value.push_str(&element_string_value(document, idx));
-                        }
-                        _ => {}
-                    }
-                }
-                (name.clone(), value)
+                (name.clone(), string_set_value(document, idx, components))
             })
             .collect();
         Self { elements, strings }
@@ -1054,20 +1062,34 @@ fn running_element_value<'v>(
         .map_or("", String::as_str)
 }
 
-/// Resolve the last document-order `string-set` value for a page-margin
-/// `string()` reference. This is the minimal single-page bridge; paginated
-/// first/start/last scoping remains a PageContext follow-up.
+/// The value a page-margin `string(<name>, <fetch>)` reference shows on page
+/// `page` (CSS GCPM 3 §1.1.2).
+///
+/// With the page index of [`MarginBoxNamedValues::with_page_index`] the
+/// assignment is chosen by `fetch` among those of the page, falling back to
+/// the entry value carried over from the earlier pages. Without it the pages
+/// are unknown, and this is the last `string-set` value in document order.
 fn named_string_value<'v>(
     document: &Document,
     cascade: &CascadeResult,
     values: &'v MarginBoxNamedValues,
     name: &str,
-) -> &'v str {
-    values
-        .table(document, cascade)
-        .strings
-        .get(name)
-        .map_or("", String::as_str)
+    fetch: StringFetchMode,
+    page: u32,
+) -> Cow<'v, str> {
+    if let Some(index) = &values.pages {
+        return index
+            .select_string(name, fetch, page)
+            .and_then(|node| string_set_text(document, cascade, node.0 as usize, name))
+            .map_or(Cow::Borrowed(""), Cow::Owned);
+    }
+    Cow::Borrowed(
+        values
+            .table(document, cascade)
+            .strings
+            .get(name)
+            .map_or("", String::as_str),
+    )
 }
 
 /// How many characters per decimal digit a deferred page count placeholder
@@ -1149,8 +1171,15 @@ fn resolved_margin_content(
                     name.as_str(),
                 ));
             }
-            ContentComponent::String { name, .. } => {
-                text.push_str(named_string_value(document, cascade, values, name.as_str()));
+            ContentComponent::String { name, fetch } => {
+                text.push_str(&named_string_value(
+                    document,
+                    cascade,
+                    values,
+                    name.as_str(),
+                    *fetch,
+                    context.page_index,
+                ));
             }
             ContentComponent::Quote(keyword) => {
                 text.push_str(quote_depth.apply(*keyword, quotes, quotes_auto));

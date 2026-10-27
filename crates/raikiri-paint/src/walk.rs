@@ -3845,24 +3845,32 @@ fn angular_stop_offset(position: Option<AnglePercentage>) -> Option<f32> {
     }
 }
 
-/// Fill missing conic offsets per the color-stop fixup rule.
+/// Fill missing color-stop offsets per the color-stop fixup rule, for the
+/// stops and transition hints of any gradient kind.
 ///
 /// CSS Images 3 section 3.4.3: a missing first stop means 0, a missing last
-/// stop means 1, interior runs spread evenly between their defined
-/// neighbors, then every offset clamps up to its predecessor so the sweep
-/// never runs backward. The pinned quadrant cases arrive fully defined, so
-/// this mostly passes offsets through.
-fn fixup_conic_offsets(stops: &[Option<f32>]) -> Vec<f32> {
+/// stop means 1, a defined offset before an earlier one moves up to it,
+/// interior runs spread evenly between their defined neighbors, then every
+/// offset clamps up to its predecessor so the sweep never runs backward. The
+/// pinned quadrant cases arrive fully defined, so this mostly passes offsets
+/// through.
+fn fixup_stop_offsets(stops: &[Option<f32>]) -> Vec<f32> {
     let count = stops.len();
     let mut offsets: Vec<f32> = stops.iter().map(|slot| slot.unwrap_or(f32::NAN)).collect();
     if count == 0 {
         return Vec::new();
     }
+    // The ends are placed first so that the clamp below runs against them.
     if offsets[0].is_nan() {
         offsets[0] = 0.0;
     }
     if offsets[count - 1].is_nan() {
         offsets[count - 1] = 1.0;
+    }
+    let mut largest = f32::NEG_INFINITY;
+    for offset in offsets.iter_mut().filter(|offset| !offset.is_nan()) {
+        largest = largest.max(*offset);
+        *offset = largest;
     }
     let mut index = 0;
     while index < count {
@@ -3949,16 +3957,20 @@ fn conic_to_peniko(
     if conic.stops.len() < 2 {
         return None;
     }
-    let raw: Vec<Option<f32>> = conic
+    let raw: Vec<gradient::RawStop> = conic
         .stops
         .iter()
-        .map(|stop| angular_stop_offset(stop.position))
+        .map(|stop| gradient::RawStop {
+            position: angular_stop_offset(stop.position),
+            hint: angular_stop_offset(stop.hint),
+            color: gradient_stop_dynamic(stop.color, current_color),
+        })
         .collect();
-    let offsets = fixup_conic_offsets(&raw);
-    let mut peniko_stops: Vec<(f32, DynamicColor)> = Vec::with_capacity(conic.stops.len());
-    for (stop, offset) in conic.stops.iter().zip(offsets.iter()) {
-        peniko_stops.push((*offset, gradient_stop_dynamic(stop.color, current_color)));
-    }
+    let peniko_stops: Vec<(f32, DynamicColor)> =
+        gradient::fixed_up_stops(&raw, &conic.interpolation)
+            .into_iter()
+            .map(|(offset, color)| (offset as f32, color))
+            .collect();
     let from_degrees = if conic.angle.0.is_finite() {
         conic.angle.0
     } else {
@@ -3977,10 +3989,11 @@ fn conic_to_peniko(
     let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle).with_extend(extend);
     // A renderer clips each stop to the sRGB gamut before interpolating, so
     // a sweep with a stop outside it gets clipped sRGB stops sampled from
-    // the ramp in its own space instead.
-    if gradient::any_out_of_gamut(&peniko_stops) {
+    // the ramp in its own space instead. It also takes no stop outside the
+    // turn it draws, so those are cut from the sampled ramp the same way.
+    if gradient::any_out_of_gamut(&peniko_stops) || gradient::any_outside_turn(&peniko_stops) {
         let stops = gradient::expand_stops(&peniko_stops, space, direction, false);
-        return Some(gradient.with_stops(stops.as_slice()));
+        return Some(gradient.with_stops(gradient::clip_to_one_turn(stops).as_slice()));
     }
     Some(
         gradient
