@@ -268,6 +268,24 @@ fn insert_annotation_pieces(
     line_start: usize,
     annotations: Vec<(usize, Vec<InlineBoxPiece>)>,
 ) {
+    if annotations.is_empty() {
+        return;
+    }
+    #[cfg(test)]
+    let allow_batch = !work::legacy_requested();
+    #[cfg(not(test))]
+    let allow_batch = true;
+    if annotations.len() > 1
+        && allow_batch
+        && let Some(batch) = annotation_batch::plan(&pieces[line_start..], &annotations)
+    {
+        batch.insert(pieces, line_start, annotations);
+        return;
+    }
+    #[cfg(test)]
+    if !annotations.is_empty() {
+        work::record(|work| work.fallback_lines += 1);
+    }
     // Where the next annotation of each segment goes.
     let mut ends: HashMap<usize, usize> = HashMap::new();
     for (container, own) in annotations {
@@ -275,6 +293,8 @@ fn insert_annotation_pieces(
             Some(&at) => at,
             None => {
                 let line = &pieces[line_start..];
+                #[cfg(test)]
+                work::record(|work| work.parent_entries += line.len());
                 let parents: HashMap<usize, Option<usize>> = line
                     .iter()
                     .map(|piece| (piece.node, piece.parent))
@@ -307,6 +327,11 @@ fn insert_annotation_pieces(
             }
         };
         let count = own.len();
+        #[cfg(test)]
+        work::record(|work| {
+            work.moved_pieces += pieces.len() - at;
+            work.end_updates += ends.len();
+        });
         pieces.splice(at..at, own);
         for end in ends.values_mut() {
             if *end >= at {
@@ -470,3 +495,8 @@ pub(crate) fn forced_break_boxes(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod work;
+
+mod annotation_batch;
