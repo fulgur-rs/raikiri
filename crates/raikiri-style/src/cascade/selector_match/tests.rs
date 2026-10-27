@@ -6,6 +6,7 @@ use crate::property::BorderStyle;
 use crate::ruletree::{Origin, RuleTree, build_rule_tree};
 use crate::test_dom::TestDoc;
 
+mod budget_boundary_tests;
 mod filtered_nth_tests;
 mod has_cache_tests;
 mod later_sibling_tests;

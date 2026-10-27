@@ -101,7 +101,7 @@ fn find_in_tree_bounded<T>(
 ) -> Result<Option<T>, CascadeError> {
     budget.charge(1)?;
     let Some(root_node) = doc.get_node(root) else {
-        return Ok(None);
+        return Ok(None); // cov:ignore: query entrypoints validate the ParentNode handle with kind_of before borrowing this immutable Document
     };
     let mut ancestors = bounded_ancestors(doc, root, budget)?;
     if root_node.kind() == NodeKind::Element {
@@ -117,7 +117,7 @@ fn find_in_tree_bounded<T>(
         budget.charge(1)?;
         ancestors.truncate(depth);
         let Some(n) = doc.get_node(node) else {
-            continue;
+            continue; // cov:ignore: pending ids come from children of resolved nodes in this immutably borrowed arena
         };
         let child_depth = if n.kind() == NodeKind::Element {
             if let Some(found) = visit(node, &ancestors)? {

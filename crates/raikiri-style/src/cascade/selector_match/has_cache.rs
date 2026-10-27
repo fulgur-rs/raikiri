@@ -48,7 +48,7 @@ impl ListRecord {
         work: &SelectorWork,
     ) -> Result<bool, CascadeError> {
         if self.selectors.len() != relative_selectors.len() {
-            return Ok(false);
+            return Ok(false); // cov:ignore: current_generation looks up ListKey including the live length; records retain exactly that many selectors
         }
         for (kept, live) in self.selectors.iter().zip(relative_selectors) {
             work.charge(1)?;

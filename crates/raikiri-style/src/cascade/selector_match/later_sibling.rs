@@ -92,7 +92,7 @@ pub(super) fn plan<D: StyleDom>(
     relative_anchor: Option<StyleNodeId>,
 ) -> Result<Option<LaterSiblingPlan>, CascadeError> {
     let Some(compound) = iter.clone().next() else {
-        return Ok(None);
+        return Ok(None); // cov:ignore: pending_candidates_for receives an iterator advanced across a parsed combinator, which always has a nonempty left compound
     };
     let Some(info) = ctx
         .caches
@@ -101,7 +101,7 @@ pub(super) fn plan<D: StyleDom>(
         return Ok(None);
     };
     let Some(&end) = info.index_of.get(&current_id) else {
-        return Ok(None);
+        return Ok(None); // cov:ignore: cascade subjects and chain candidates pass the same element eligibility filter as SiblingInfo; query subjects allow detached elements
     };
     let key = LaterSiblingKey {
         parent: parent_id,

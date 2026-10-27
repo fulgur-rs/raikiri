@@ -325,3 +325,29 @@ fn single_adjacent_has_miss_does_not_index_a_wide_parent() {
         counted.visits.get()
     );
 }
+
+#[test]
+fn different_length_has_argument_lists_keep_independent_results() {
+    let (doc, body, cards, paragraphs) = cards(2, 1);
+    let caches = MatchCaches::default();
+    let sources = [
+        (".card:has(video) p", false),
+        (".card:has(video, img) p", true),
+        (".card:has(video, audio, canvas) p", false),
+    ];
+    let lists = sources.map(|(source, _)| crate::parse_selector_list(source).unwrap());
+    let ancestors = [
+        StyleNodeId::new(body as u64),
+        StyleNodeId::new(cards[0] as u64),
+    ];
+    for index in [0, 1, 2, 2, 1, 0] {
+        assert_eq!(
+            matches_with(&doc, &caches, &lists[index], paragraphs[0].0, &ancestors),
+            sources[index].1,
+            "{}",
+            sources[index].0
+        );
+    }
+    assert_eq!(caches.has_lists(), 3);
+    assert_eq!(caches.has_entries(), 3);
+}
