@@ -189,7 +189,7 @@ fn repaired_xhtml_streams_like_the_batch_layout() {
     // A stray end tag, an element the end tag of its parent closes, and a
     // mismatched end tag, all before the pages that are delivered early.
     let mut xhtml = format!(
-        "<html xmlns=\"{NAMESPACE}\"><head><style><![CDATA[p {{ margin: 0 }}]]></style></head><body>\
+        "<html xmlns=\"{NAMESPACE}\"><head><style><![CDATA[p {{ margin: 0; line-height: 24px }}]]></style></head><body>\
          </p><div class=\"unclosed\"><b>bold</i> text</div>"
     );
     for paragraph in 0..120 {
