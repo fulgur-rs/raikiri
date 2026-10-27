@@ -279,11 +279,10 @@ fn initialization_memory_cap_is_an_abort() {
 
 #[test]
 fn hostile_regex_call_tree_parser_and_report_getter_are_contained() {
-    let cases=vec![
+    let cases = vec![
         "/(a+)+$/.test('a'.repeat(100)+'!')".to_owned(),
         "function f(n){if(n){f(n-1);f(n-1);}} f(50)".to_owned(),
         format!("{}0{}", "[".repeat(20000), "]".repeat(20000)),
-        "var sink=globalThis[Object.getOwnPropertySymbols(globalThis).find(s=>s.description==='raikiri testharness report sink')]; sink([{get name(){ Array.prototype.forEach.call({length:1e15},()=>{});},status:0}],{status:0})".to_owned(),
     ];
     for source in cases {
         let mut p = page();
@@ -294,6 +293,17 @@ fn hostile_regex_call_tree_parser_and_report_getter_are_contained() {
             .evaluate_preamble("document.title='survived'")
             .unwrap();
     }
+    // The report sink exists only while the document's scripts are running.
+    let (mut p, _) = scripted_page(
+        "var sink=globalThis[Object.getOwnPropertySymbols(globalThis).find(s=>s.description==='raikiri testharness report sink')]; sink([{get name(){ Array.prototype.forEach.call({length:1e15},()=>{});},status:0}],{status:0})",
+        Default::default(),
+    );
+    let error = p.run_document().unwrap_err();
+    assert!(error.aborted, "{error}");
+    assert!(p.run_document().is_err());
+    page()
+        .evaluate_preamble("document.title='survived'")
+        .unwrap();
 }
 
 struct FailHost {
@@ -511,4 +521,70 @@ fn budgeted_fragment_preserves_typed_node_failure() {
     )
     .unwrap();
     assert!(matches!(result, HostValue::FragmentNodes));
+}
+
+fn scripted_page(source: &str, options: raikiri_js::runtime::RunOptions) -> (WasmtimePage, usize) {
+    let mut doc = Document::new();
+    let html = doc.create_detached_element("html").unwrap();
+    doc.attach_child(doc.root_index(), html);
+    let body = doc.create_detached_element("body").unwrap();
+    doc.append_child(html, body).unwrap();
+    let script = doc.create_detached_element("script").unwrap();
+    doc.append_text(script, source);
+    doc.append_child(body, script).unwrap();
+    doc.mark_in_document_flags();
+    let page = WasmtimePage::new(
+        Box::new(TestHost {
+            doc,
+            flushes: Rc::new(Cell::new(0)),
+        }),
+        options,
+        Default::default(),
+    )
+    .unwrap();
+    (page, body)
+}
+
+#[test]
+fn real_guest_enqueued_job_limit_returns_typed_abort() {
+    let mut options = raikiri_js::runtime::RunOptions::default();
+    options.limits.max_enqueued_jobs = 1;
+    let (mut page, body) = scripted_page(
+        "queueMicrotask(()=>{}); queueMicrotask(()=>{}); document.body.setAttribute('data-after','yes')",
+        options,
+    );
+    let report = page.run_document().unwrap();
+    assert!(matches!(report.aborted, Some(AbortDto::EnqueuedJobs)));
+    page.synchronize_final_document().unwrap();
+    assert_eq!(page.document().element_attribute(body, "data-after"), None);
+}
+
+#[test]
+fn real_guest_selector_work_limit_returns_typed_abort() {
+    let mut options = raikiri_js::runtime::RunOptions::default();
+    options.limits.max_selector_work = Some(0);
+    let (mut page, body) = scripted_page(
+        "document.querySelectorAll('body'); document.body.setAttribute('data-after','yes')",
+        options,
+    );
+    let report = page.run_document().unwrap();
+    assert!(matches!(report.aborted, Some(AbortDto::SelectorWork)));
+    page.synchronize_final_document().unwrap();
+    assert_eq!(page.document().element_attribute(body, "data-after"), None);
+}
+
+#[test]
+fn real_guest_fragment_budget_returns_typed_abort() {
+    let mut options = raikiri_js::runtime::RunOptions::default();
+    options.limits.max_nodes = 12;
+    let (mut page, body) = scripted_page(
+        "document.body.innerHTML='node-overflow'; document.body.setAttribute('data-after','yes')",
+        options,
+    );
+    let report = page.run_document().unwrap();
+    assert!(matches!(report.aborted, Some(AbortDto::Nodes)));
+    assert!(report.host_failures.is_empty());
+    page.synchronize_final_document().unwrap();
+    assert_eq!(page.document().element_attribute(body, "data-after"), None);
+    assert_eq!(page.document().node_count(), 5);
 }
