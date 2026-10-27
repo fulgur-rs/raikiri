@@ -3989,10 +3989,11 @@ fn conic_to_peniko(
     let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle).with_extend(extend);
     // A renderer clips each stop to the sRGB gamut before interpolating, so
     // a sweep with a stop outside it gets clipped sRGB stops sampled from
-    // the ramp in its own space instead.
-    if gradient::any_out_of_gamut(&peniko_stops) {
+    // the ramp in its own space instead. It also takes no stop outside the
+    // turn it draws, so those are cut from the sampled ramp the same way.
+    if gradient::any_out_of_gamut(&peniko_stops) || gradient::any_outside_turn(&peniko_stops) {
         let stops = gradient::expand_stops(&peniko_stops, space, direction, false);
-        return Some(gradient.with_stops(stops.as_slice()));
+        return Some(gradient.with_stops(gradient::clip_to_one_turn(stops).as_slice()));
     }
     Some(
         gradient

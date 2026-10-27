@@ -1192,16 +1192,22 @@ pub(super) fn expand_stops(
         // Equal colors still turn a full circle with `longer hue`.
         if span < MIN_EXPANDED_SEGMENT || (from == to && direction != HueDirection::Longer) {
             expanded.push((from_offset, from));
+            // A segment of one color that crosses an end of the turn holds
+            // its color to that end.
+            if from == to {
+                for end in [0.0, 1.0] {
+                    if from_offset < end && end < to_offset {
+                        expanded.push((end, from));
+                    }
+                }
+            }
             continue;
         }
         let exact = from.interpolate(to, space, direction);
         let sample = |t: f32| clamp_srgb(exact.eval(t).to_alpha_color::<Srgb>());
         let mut push_samples = |samples: Vec<(f32, AlphaColor<Srgb>)>| {
-            for (t, color) in samples {
-                expanded.push((
-                    from_offset + span * t,
-                    DynamicColor::from_alpha_color(color),
-                ));
+            for (offset, color) in samples {
+                expanded.push((offset, DynamicColor::from_alpha_color(color)));
             }
         };
         // Sample the clipped ramp exactly at brush offsets that do not
@@ -1209,13 +1215,19 @@ pub(super) fn expand_stops(
         // grid, refined by halving its cells. A segment split by a stop that
         // lies on the ramp is then sampled where the whole one is, except in
         // the one cell holding the split.
-        let mut samples = vec![(0.0, sample(0.0))];
+        let mut samples = vec![(from_offset, sample(0.0))];
+        // Samples keep their brush offset, since one rebuilt from a fraction
+        // of a segment that starts far outside 0 to 1 is off by many units.
         let at = |offset: f32| {
             let t = ((offset - from_offset) / span).clamp(0.0, 1.0);
-            (t, sample(t))
+            (offset, sample(t))
         };
         // Only offsets 0 to 1 are drawn. A conic stop authored far outside
-        // that range would otherwise make this walk billions of cells.
+        // that range would otherwise make this walk billions of cells, and the
+        // cut ends of the range get their own exact samples.
+        if from_offset < 0.0 && to_offset > 0.0 {
+            samples.push(at(0.0));
+        }
         let first = ((from_offset * BRUSH_GRID_STEPS as f32).floor() as i64).max(0);
         let last =
             ((to_offset * BRUSH_GRID_STEPS as f32).ceil() as i64).min(BRUSH_GRID_STEPS as i64);
@@ -1236,4 +1248,39 @@ pub(super) fn expand_stops(
         }
     }
     expanded
+}
+
+/// Some stop lies outside the offsets 0 to 1 that a sweep draws.
+pub(super) fn any_outside_turn(stops: &[(f32, DynamicColor)]) -> bool {
+    stops
+        .iter()
+        .any(|(offset, _)| !(0.0..=1.0).contains(offset))
+}
+
+/// The part of `stops`, sorted by offset, that a sweep draws, offsets 0 to 1.
+///
+/// A brush takes no stop outside that range. [`expand_stops`] samples the ramp
+/// at both ends of the range where a segment crosses one, so cutting the stops
+/// outside keeps what is drawn. When every stop lies before the range the
+/// last color fills it, and when every stop lies after, the first one does:
+/// the cut list is then a single stop, which is held to the other end.
+pub(super) fn clip_to_one_turn(stops: Vec<(f32, DynamicColor)>) -> Vec<(f32, DynamicColor)> {
+    if !any_outside_turn(&stops) {
+        return stops;
+    }
+    let mut clipped: Vec<_> = stops
+        .into_iter()
+        .filter(|(offset, _)| (0.0..=1.0).contains(offset))
+        .collect();
+    if let Some(&(offset, color)) = clipped.first()
+        && offset > 0.0
+    {
+        clipped.insert(0, (0.0, color));
+    }
+    if let Some(&(offset, color)) = clipped.last()
+        && offset < 1.0
+    {
+        clipped.push((1.0, color));
+    }
+    clipped
 }
