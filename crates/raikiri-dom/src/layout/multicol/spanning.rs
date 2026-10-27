@@ -19,10 +19,20 @@ pub(crate) fn is_spanner_in(doc: &Document, cascade: &CascadeResult, child: usiz
         && !AuthoredBox::new(doc, cascade, child).is_floated()
 }
 
+/// `column-span: all` applies to the block-level boxes that are in the flow
+/// (CSS Multi-column Layout 1, 6.1), whatever their inner display is.
 fn spans_all_columns(node: &crate::node::Node) -> bool {
     node.column_span_all
         && node.is_in_document()
-        && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        && matches!(
+            node.display(),
+            DisplayValue::Block
+                | DisplayValue::ListItem
+                | DisplayValue::FlowRoot
+                | DisplayValue::Flex
+                | DisplayValue::Grid
+                | DisplayValue::Table
+        )
         && !node.is_display_none()
         && node.layout_position() != Position::Absolute
 }
