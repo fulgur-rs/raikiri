@@ -814,9 +814,9 @@ pub(crate) type SharedCounterSnapshots =
     Result<std::sync::Arc<CounterSnapshots>, CounterSnapshotLimitExceeded>;
 
 impl Document {
-    /// The `counter_snapshots` of this document for `cascade`, built once
-    /// and shared by layout, page projection, paint and generated-content
-    /// resolution until the tree changes.
+    /// Legacy owned counter snapshots for `cascade`, built once and shared
+    /// by explicit owned callers until the tree changes. Built-in rendering
+    /// uses [`Document::shared_compact_counter_snapshots`] instead.
     ///
     /// Counters read only the element cascade, so the snapshots are reused
     /// for every cascade with the same

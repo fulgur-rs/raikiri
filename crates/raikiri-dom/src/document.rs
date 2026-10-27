@@ -250,10 +250,10 @@ pub struct Document {
     /// outlives the preparation of the other generated images.
     pub(crate) margin_box_images:
         std::collections::HashMap<String, raikiri_traits::ImageRasterSize>,
-    /// Named-counter snapshots of the tree, built once for the element
-    /// cascade whose [`CascadeResult::element_generation`] is stored beside
-    /// them and shared by layout, page projection and paint (see
-    /// [`Document::shared_counter_snapshots`]). Tree mutations clear it.
+    /// Legacy owned counter snapshots, cached for explicit callers of
+    /// [`Document::shared_counter_snapshots`] by the element cascade's
+    /// [`CascadeResult::element_generation`]. Tree mutations clear it;
+    /// built-in rendering uses the independent compact cache below.
     ///
     /// [`CascadeResult::element_generation`]: raikiri_style::CascadeResult::element_generation
     pub(crate) counter_snapshot_cache:
