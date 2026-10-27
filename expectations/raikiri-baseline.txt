@@ -5338,3 +5338,12 @@ css/css-sizing/div-orthogonal-left-and-non-auto-margin.tentative.html
 # --- an out-of-flow inline alone on a line after a break (WPT pin 97ea26e2, EXACT, Linux, 2026-10-26) ---
 # An absolutely positioned inline that is the only thing on the line after a `<br>` has no anchor in the lines, so it takes the position below the last line before it instead of the end of the block above that line, and the second line sits just below the first, as in Chromium. The audit reports VACUOUS-UNSTYLED because the reference sets the second line in flow and never repeats `position: absolute`; it is a negative test that failed before the fix (the box sat one line too high), so it stays as a guard.
 css/CSS2/abspos/hypothetical-inline-alone-on-second-line.html
+
+# --- the automatic minimum size of a flex item with an aspect-ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-10-27) ---
+# A flex item that has an aspect-ratio and states its size across the main axis was held at the size the ratio gives, instead of growing to the size of its content, or kept the size it states when the container is narrower. These tests render a green square whatever the ratio does once the item is at least as large as its content, so the audit reports VACUOUS-UNSTYLED; they failed before the fix (the item was 50px wide, or 0px; 053 and 054 were never registered as expected failures), so they stay as guards.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-002.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-004.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-051.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-052.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-053.html
+css/css-sizing/aspect-ratio/flex-aspect-ratio-054.html

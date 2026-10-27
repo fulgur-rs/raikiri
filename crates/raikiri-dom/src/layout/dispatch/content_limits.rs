@@ -721,6 +721,222 @@ pub(super) fn with_grid_item_content_limits(
     output
 }
 
+/// The sizes of a flex or grid item `idx` that its container resolves before
+/// reading the item's style.
+struct ItemLimits {
+    /// The keyword `min-*` and `max-*` sizes the item states, and the
+    /// `min-content` minimum a flex item with an aspect ratio stands for when
+    /// it states none ([`RatioMinimum`]).
+    limits: ContentLimits,
+    ratio_minimum: Option<RatioMinimum>,
+}
+
+impl ItemLimits {
+    fn new(
+        tree: &LayoutSession<'_>,
+        container: usize,
+        idx: usize,
+        parent_size: Size<Option<f32>>,
+    ) -> Self {
+        let mut limits = tree.nodes[idx].content_limits;
+        let ratio_minimum = (tree.nodes[container].formatting_context == FormattingContext::Flex)
+            .then(|| ratio_minimum(tree, container, idx, parent_size, &limits))
+            .flatten();
+        match ratio_minimum {
+            Some(RatioMinimum { width: true, .. }) => limits.min.width = Dimension::min_content(),
+            Some(RatioMinimum { width: false, .. }) => limits.min.height = Dimension::min_content(),
+            None => {}
+        }
+        Self {
+            limits,
+            ratio_minimum,
+        }
+    }
+}
+
+/// The automatic minimum size of a flex item that has a preferred aspect ratio
+/// and states its size across the main axis of its container.
+///
+/// Such an item takes its size along the main axis from the ratio, and the
+/// layout library holds its automatic minimum size down to that size. The
+/// minimum is the min-content size of the item along the main axis, which
+/// grows past the size the ratio gives when the content is larger (CSS
+/// Flexbox 1 §4.5, CSS Sizing 4 §5.1). The item is therefore given a
+/// `min-content` minimum along the main axis, capped by the size it states
+/// there and by its `max-*` (and, along a column, by what the limits across
+/// the item carry over the ratio), and a minimum of zero across it so that
+/// the first does not carry across the ratio.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RatioMinimum {
+    /// Whether the main axis of the container is the width.
+    width: bool,
+    /// Whether the item leaves its minimum across the main axis `auto`.
+    cross_is_auto: bool,
+    /// The border-box size along the main axis that the ratio gives the size
+    /// the item states across it, within its `min-*` and `max-*` there.
+    transferred: f32,
+    /// The same for the `min-*` and the `max-*` across the item alone. They
+    /// bound the height of the content of a column item, but not the width of
+    /// the content of a row item, which is laid out wider than the ratio gives.
+    transferred_bounds: (Option<f32>, Option<f32>),
+    /// The size the item states along the main axis and its `max-*` there, in
+    /// the box-sizing box of the style, where they resolve.
+    stated: Option<f32>,
+    max: Option<f32>,
+}
+
+/// The [`RatioMinimum`] of the flex item `idx` of `container`, if the item
+/// has one. `limits` are the keyword sizes the item states.
+fn ratio_minimum(
+    tree: &LayoutSession<'_>,
+    container: usize,
+    idx: usize,
+    parent_size: Size<Option<f32>>,
+    limits: &ContentLimits,
+) -> Option<RatioMinimum> {
+    if tree.nodes[idx].layout_display() == Display::None || is_oof_box(tree, idx) {
+        return None;
+    }
+    let item = tree.physical_style(idx);
+    let ratio = item.stated_aspect_ratio()?;
+    if is_replaced_content(tree, idx) || tree.container_is_vertical(idx) {
+        return None;
+    }
+    // A scroll container has no content-based minimum size.
+    if super::is_scroll_container(item.overflow()) {
+        return None;
+    }
+    let width = tree.physical_style(container).flex_direction_is_row();
+    let (size, min_size, max_size) = (item.size(), item.min_size(), item.max_size());
+    let (main, cross, cross_bounds, main_minimum, cross_minimum, bases) = if width {
+        (
+            (size.width, max_size.width, limits.max.width),
+            size.height,
+            (min_size.height, max_size.height),
+            (min_size.width.is_auto(), limits.min.width.is_auto()),
+            (min_size.height.is_auto(), limits.min.height.is_auto()),
+            (parent_size.width, parent_size.height),
+        )
+    } else {
+        (
+            (size.height, max_size.height, limits.max.height),
+            size.width,
+            (min_size.width, max_size.width),
+            (min_size.height.is_auto(), limits.min.height.is_auto()),
+            (min_size.width.is_auto(), limits.min.width.is_auto()),
+            (parent_size.height, parent_size.width),
+        )
+    };
+    let (main_basis, cross_basis) = bases;
+    let (main, main_max, main_max_keyword) = main;
+    let states_main = matches!(
+        main.expand(),
+        ExpandedDimension::Auto
+            | ExpandedDimension::Length(_)
+            | ExpandedDimension::Percent(_)
+            | ExpandedDimension::Calc(_)
+    );
+    // A keyword `max-*` is measured with the box, which the minimum would
+    // have to be capped by.
+    if !states_main || main_minimum != (true, true) || !main_max_keyword.is_auto() {
+        return None;
+    }
+    let mut cross = cross.maybe_resolve(cross_basis)?;
+    let bounds = (
+        cross_bounds.0.maybe_resolve(cross_basis),
+        cross_bounds.1.maybe_resolve(cross_basis),
+    );
+    if let Some(max) = bounds.1 {
+        cross = cross.min(max);
+    }
+    if let Some(min) = bounds.0 {
+        cross = cross.max(min);
+    }
+    // The ratio relates the content boxes when the box sizes its content, or
+    // the ratio says `auto`, and the border boxes otherwise.
+    let content_sized = item.box_sizing() == BoxSizing::ContentBox;
+    let relates_content = content_sized || tree.nodes[idx].ratio_in_content_box;
+    let basis = Some(parent_size.width.unwrap_or(0.0));
+    let edges =
+        (item.padding().resolve_or_zero(basis) + item.border().resolve_or_zero(basis)).sum_axes();
+    let (edges_main, edges_cross) = if width {
+        (edges.width, edges.height)
+    } else {
+        (edges.height, edges.width)
+    };
+    let carry = |cross: f32| {
+        let border_box = cross + if content_sized { edges_cross } else { 0.0 };
+        let related = if relates_content {
+            (border_box - edges_cross).max(0.0)
+        } else {
+            border_box
+        };
+        let main = if width {
+            related * ratio
+        } else {
+            related / ratio
+        };
+        if relates_content {
+            main + edges_main
+        } else {
+            main
+        }
+    };
+    let box_sizing_edges = if content_sized { edges_main } else { 0.0 };
+    Some(RatioMinimum {
+        width,
+        cross_is_auto: cross_minimum == (true, true),
+        stated: main
+            .maybe_resolve(main_basis)
+            .map(|stated| stated + box_sizing_edges),
+        max: main_max
+            .maybe_resolve(main_basis)
+            .map(|max| max + box_sizing_edges),
+        transferred: carry(cross),
+        transferred_bounds: if width {
+            (None, None)
+        } else {
+            (bounds.0.map(carry), bounds.1.map(carry))
+        },
+    })
+}
+
+/// `minimum`, the content-based automatic minimum size of a flex item along
+/// its main axis, no larger than the size the item states there or its
+/// `max-*` (CSS Flexbox 1 §4.5). Sizes are border-box sizes.
+///
+/// An item that states both its sizes gets no size from the ratio, but its
+/// content is still at least the size the ratio carries across from the size
+/// it states there, as browsers lay it out.
+fn capped_ratio_minimum(ratio_minimum: RatioMinimum, minimum: Option<f32>) -> Option<f32> {
+    let minimum = match ratio_minimum.stated {
+        Some(_) => minimum.map(|minimum| minimum.max(ratio_minimum.transferred)),
+        None => minimum,
+    };
+    let (transferred_min, transferred_max) = ratio_minimum.transferred_bounds;
+    // The content is bounded by what the limits across the item carry over the
+    // ratio to the main axis; the lower bound wins.
+    let minimum = minimum.map(|minimum| {
+        let minimum = transferred_max.map_or(minimum, |max| minimum.min(max));
+        transferred_min.map_or(minimum, |min| minimum.max(min))
+    });
+    [ratio_minimum.stated, ratio_minimum.max]
+        .into_iter()
+        .flatten()
+        .fold(minimum, |minimum, cap| {
+            minimum.map(|minimum| minimum.min(cap))
+        })
+}
+
+fn zero_length(property: LengthProperty) -> OwnedPropertyOverride {
+    OwnedPropertyOverride::length(
+        property,
+        raikiri_style::ComputedLengthPercentageOrAuto::Px(0.0),
+        true,
+    )
+    .expect("resolved pixel bound")
+}
+
 fn with_item_content_limits_for_parent_sizes(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -728,26 +944,26 @@ fn with_item_content_limits_for_parent_sizes(
     mut parent_size_for_item: impl FnMut(usize) -> Size<Option<f32>>,
     mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
-    let has_item_limits = tree.child_ids(node_id).any(|child| {
-        let idx = usize::from(child);
-        applies_to_parent_item(tree, idx, &tree.nodes[idx].content_limits)
-    });
-    if !has_item_limits {
+    let items = tree
+        .child_ids(node_id)
+        .filter_map(|child| {
+            let idx = usize::from(child);
+            let parent_size = parent_size_for_item(idx);
+            let item = ItemLimits::new(tree, usize::from(node_id), idx, parent_size);
+            applies_to_parent_item(tree, idx, &item.limits).then_some((child, parent_size, item))
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
         return dispatch(tree, node_id, inputs);
     }
-    let children = tree.child_ids(node_id).collect::<Vec<_>>();
 
     scoped(tree, |tree| {
-        let mut saved_caches = Vec::with_capacity(children.len());
+        let mut saved_caches = Vec::with_capacity(items.len());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             tree.with_overrides(Vec::new(), |tree| {
-                for child in children {
+                for (child, parent_size, item) in items {
                     let idx = usize::from(child);
-                    let limits = tree.nodes[idx].content_limits;
-                    if !applies_to_parent_item(tree, idx, &limits) {
-                        continue;
-                    }
-                    let parent_size = parent_size_for_item(idx);
+                    let limits = item.limits;
                     let item_inputs = LayoutInput {
                         run_mode: RunMode::ComputeSize,
                         sizing_mode: SizingMode::InherentSize,
@@ -771,7 +987,7 @@ fn with_item_content_limits_for_parent_sizes(
                         vertical_margins_are_collapsible: Line::FALSE,
                     };
 
-                    let width = if limits.has_width()
+                    let mut width = if limits.has_width()
                         || (is_replaced_content(tree, idx) && limits.has_height())
                     {
                         resolved_width_bounds(tree, child, &limits, &item_inputs)
@@ -780,17 +996,35 @@ fn with_item_content_limits_for_parent_sizes(
                     };
                     let width_adjustment =
                         box_sizing_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
+                    if let Some(minimum) = item.ratio_minimum.filter(|minimum| minimum.width) {
+                        width.min = capped_ratio_minimum(minimum, width.min);
+                    }
                     push_size_overrides(tree, idx, width.overrides(true, width_adjustment));
 
                     if limits.has_height() {
-                        let height =
+                        let mut height =
                             resolved_height_bounds(tree, child, &limits, &item_inputs, width);
                         let height_adjustment = box_sizing_height_adjustment(
                             tree,
                             idx,
                             parent_size.width.unwrap_or(0.0),
                         );
+                        if let Some(minimum) = item.ratio_minimum.filter(|minimum| !minimum.width) {
+                            height.min = capped_ratio_minimum(minimum, height.min);
+                        }
                         push_size_overrides(tree, idx, height.overrides(false, height_adjustment));
+                    }
+                    if let Some(minimum) =
+                        item.ratio_minimum.filter(|minimum| minimum.cross_is_auto)
+                    {
+                        // Left `auto`, the minimum along the main axis would be
+                        // carried across the aspect ratio into this one.
+                        let cross = if minimum.width {
+                            LengthProperty::MinHeight
+                        } else {
+                            LengthProperty::MinWidth
+                        };
+                        push_size_overrides(tree, idx, vec![zero_length(cross)]);
                     }
 
                     let cache = tree.take_layout_cache(idx);
