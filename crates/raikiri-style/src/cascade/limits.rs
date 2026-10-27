@@ -49,12 +49,13 @@ pub struct CascadeLimits {
     pub max_selector_tests: Option<u64>,
     /// The most logical selector operations in one cascade: component
     /// evaluations, candidate/ancestor/child visits, cursor/frame steps and
-    /// cache selector-list entries. This includes cache construction,
+    /// cache selector-list entries, and source bytes admitted to a class-token
+    /// index (charged before scanning/allocation). This includes cache construction,
     /// `:has()` searches and filtered nth fallback scans.
     /// An operation is charged before its node is inspected or queued;
     /// exceeding the limit returns a terminal error, never partial styles.
     ///
-    /// This does not bound string bytes, arbitrary DOM trait implementations
+    /// Other string bytes are not counted; neither are arbitrary DOM trait implementations
     /// or total CPU time. Bounded DOM queries use a separate
     /// [`crate::SelectorWorkBudget`]; compatibility bool methods are unlimited.
     /// `None` disables this limit. Defaults to `Some(2^26)`.

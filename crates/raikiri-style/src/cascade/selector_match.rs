@@ -21,6 +21,8 @@ use super::collect::{Specificity, specificity_of};
 use super::lang::{effective_language, lang_pseudo_matches};
 use super::resolve_directionality;
 
+mod class_index;
+use class_index::ClassLookup;
 mod filtered_nth;
 use filtered_nth::FilteredNthCache;
 mod later_sibling;
@@ -531,6 +533,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     use selectors::parser::Component;
 
     let dom = ctx.dom;
+    let mut classes = ClassLookup::default();
 
     for component in iter {
         ctx.caches.work.charge(1)?;
@@ -562,12 +565,12 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     elem.id() == Some(id.0.as_str())
                 }
             },
-            Component::Class(class) => match ctx.quirks_mode {
-                StyleQuirksMode::Quirks => elem.has_class_ascii_case_insensitive(class.0.as_str()),
-                StyleQuirksMode::NoQuirks | StyleQuirksMode::LimitedQuirks => {
-                    elem.has_class(class.0.as_str())
-                }
-            },
+            Component::Class(class) => classes.matches(
+                elem,
+                class.0.as_str(),
+                ctx.quirks_mode == StyleQuirksMode::Quirks,
+                &ctx.caches.work,
+            )?,
             Component::AttributeInNoNamespaceExists {
                 local_name,
                 local_name_lower,

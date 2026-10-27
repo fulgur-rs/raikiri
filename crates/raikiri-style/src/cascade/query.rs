@@ -32,7 +32,8 @@ pub struct SelectorQuery {
 /// its first error permanently: unused remaining work cannot be spent after
 /// failure, and rejected bulk work is never reported as executed.
 /// The units match cascade selector work. Callers may additionally charge
-/// their outer traversal before inspecting or enqueueing nodes. String bytes,
+/// their outer traversal before inspecting or enqueueing nodes. Class-token
+/// index source bytes are reserved before construction. Other string bytes,
 /// selector parsing and arbitrary DOM implementations are outside this bound.
 pub struct SelectorWorkBudget {
     work: Rc<SelectorWork>,
