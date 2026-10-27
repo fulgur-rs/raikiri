@@ -222,6 +222,7 @@ struct PreparedImage {
 pub struct Document {
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
+    pub(crate) inline_svg_cache: crate::inline_svg_cache::InlineSvgCache,
     pub(crate) nodes: crate::node::arena::NodeArena,
     /// The style facts pagination reads, by layout key, while it runs on
     /// transposed axes (see `LayoutSession::block_axis`); empty otherwise.
@@ -513,6 +514,7 @@ impl Document {
         Self {
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
+            inline_svg_cache: Default::default(),
             nodes: nodes.into(),
             pagination_block_styles: Vec::new(),
             box_style_data: Default::default(),
@@ -1013,6 +1015,7 @@ impl Document {
         prefix: Option<SmolStr>,
     ) {
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let (namespace_changed, affects_tree_flags, affects_layout) = {
             let e = self.nodes[id]
                 .data
@@ -1051,6 +1054,7 @@ impl Document {
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -1082,6 +1086,7 @@ impl Document {
         }
         let value = value.into();
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -1154,6 +1159,7 @@ impl Document {
             return Err(format!("invalid attribute name: {local}"));
         }
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("set_element_attribute called on non-Element");
         };
@@ -1247,6 +1253,7 @@ impl Document {
             attribute.namespace.as_deref() == namespace && attribute.local == local
         })?;
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -1277,6 +1284,7 @@ impl Document {
             return Err(format!("invalid attribute name: {local}"));
         }
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("remove_element_attribute called on non-Element");
         };
@@ -1820,6 +1828,7 @@ impl Document {
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -1836,6 +1845,7 @@ impl Document {
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_animation_style(&mut self, id: usize, animation_style: Option<SmolStr>) {
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -1864,6 +1874,7 @@ impl Document {
         let Document {
             table_objects: _,
             page_projection: _,
+            inline_svg_cache: _,
             nodes: arena,
             resolved_image_urls,
             selected_image_urls,
@@ -2866,6 +2877,7 @@ impl Document {
     pub(crate) fn invalidate_layout_cache(&mut self) {
         self.box_style_data.invalidate_source();
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         self.counter_snapshot_cache.take();
         self.compact_counter_snapshot_cache.take();
         self.drop_retained_paragraphs();

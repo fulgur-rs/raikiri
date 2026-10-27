@@ -53,6 +53,8 @@ pub mod image_geometry;
 mod image_resolve;
 mod image_url;
 #[doc(hidden)]
+pub mod inline_svg_cache;
+#[doc(hidden)]
 pub mod inline_svg_style;
 mod margin_boxes;
 mod node;
