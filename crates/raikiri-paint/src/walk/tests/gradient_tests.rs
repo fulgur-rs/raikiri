@@ -2000,3 +2000,262 @@ fn a_transition_hint_is_left_out_under_longer_hue() {
     );
     assert_eq!(hinted, plain);
 }
+
+/// Pixels of a 200x200 conic gradient a little way in from the middle of each
+/// edge, clockwise from the top, then the one just before the top: the end
+/// of the turn.
+fn turn_probes(style: &str) -> [[u8; 3]; 5] {
+    let rgba = raster_conic(style, 200, 200);
+    [(100, 20), (180, 100), (100, 180), (20, 100), (99, 20)].map(|(x, y)| {
+        let [red, green, blue, _] = pixel(&rgba, 200, x, y);
+        [red, green, blue]
+    })
+}
+
+/// Assert that [`turn_probes`] of `style` are within `slack` levels of
+/// `expected`, the colors Chromium draws.
+fn assert_turn_probes(style: &str, expected: [[u8; 3]; 5], slack: u8) {
+    let probes = turn_probes(style);
+    for (index, (got, want)) in probes.iter().zip(expected).enumerate() {
+        for channel in 0..3 {
+            assert!(
+                got[channel].abs_diff(want[channel]) <= slack,
+                "{style}: probe {index} is {got:?}, expected {want:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_conic_ramp_running_past_the_end_of_the_turn_is_cut_there() {
+    // The ramp takes 150% of a turn, so the turn ends two thirds along it.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red, blue 150%)",
+        [
+            [254, 0, 0],
+            [212, 0, 42],
+            [170, 0, 84],
+            [127, 0, 127],
+            [86, 0, 170],
+        ],
+        2,
+    );
+    // A stop in the middle of the turn and the last one beyond it.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red, blue 50%, lime 150%)",
+        [
+            [254, 0, 0],
+            [127, 0, 128],
+            [0, 0, 254],
+            [0, 63, 191],
+            [0, 128, 128],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_conic_ramp_starting_before_the_turn_is_cut_there() {
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, blue)",
+        [
+            [169, 0, 85],
+            [127, 0, 127],
+            [85, 0, 169],
+            [42, 0, 212],
+            [1, 0, 255],
+        ],
+        2,
+    );
+    // Angles count the same as percentages: -90deg is -25% of a turn.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -90deg, blue 450deg)",
+        [
+            [212, 0, 42],
+            [169, 0, 85],
+            [127, 0, 127],
+            [85, 0, 169],
+            [43, 0, 213],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_conic_ramp_covering_the_turn_on_both_sides_shows_its_middle() {
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, blue 150%)",
+        [
+            [191, 0, 63],
+            [159, 0, 95],
+            [127, 0, 127],
+            [95, 0, 159],
+            [64, 0, 192],
+        ],
+        2,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, lime 50%, blue 150%)",
+        [
+            [127, 127, 0],
+            [63, 191, 0],
+            [0, 254, 0],
+            [0, 191, 63],
+            [0, 128, 128],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn conic_stops_all_on_one_side_of_the_turn_fill_it_with_one_color() {
+    // After the turn only the first color shows, before it only the last.
+    for style in [
+        "background-image: conic-gradient(in srgb, red 120%, blue 150%)",
+        "background-image: conic-gradient(in srgb, red 99.9999%, blue 100.0001%)",
+    ] {
+        assert_turn_probes(style, [[255, 0, 0]; 5], 0);
+    }
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, blue -20%)",
+        [[0, 0, 255]; 5],
+        0,
+    );
+}
+
+#[test]
+fn a_conic_segment_of_one_color_crossing_an_end_of_the_turn_holds_its_color_there() {
+    // Nothing of the segment is sampled, so the cut list would be empty.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -90deg, red 450deg)",
+        [[255, 0, 0]; 5],
+        0,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch, blue -10deg, blue 400deg)",
+        [
+            [0, 0, 254],
+            [0, 0, 254],
+            [0, 0, 254],
+            [0, 0, 254],
+            [0, 1, 255],
+        ],
+        2,
+    );
+    // The segment crosses the start of the turn and a ramp follows it, or a
+    // ramp precedes it and it crosses the end.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, red 50%, blue)",
+        [
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [128, 0, 127],
+            [1, 0, 255],
+        ],
+        2,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red, blue 50%, blue 150%)",
+        [
+            [254, 0, 0],
+            [127, 0, 128],
+            [0, 0, 254],
+            [0, 0, 255],
+            [0, 0, 255],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_cut_conic_ramp_keeps_the_color_space_and_hue_path_of_the_whole_ramp() {
+    // Cutting after sampling keeps the arc round the hue wheel of the whole
+    // ramp: joining the cut ends again with `longer hue` would draw another.
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch longer hue, red -50%, blue 150%)",
+        [
+            [188, 99, 0],
+            [110, 130, 0],
+            [0, 146, 0],
+            [0, 147, 97],
+            [0, 131, 178],
+        ],
+        5,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch, red -50%, blue 150%)",
+        [
+            [232, 0, 123],
+            [211, 0, 160],
+            [186, 0, 193],
+            [156, 0, 222],
+            [123, 0, 244],
+        ],
+        3,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklab, red -50%, blue 150%)",
+        [
+            [197, 73, 109],
+            [169, 81, 137],
+            [140, 83, 162],
+            [111, 79, 186],
+            [81, 72, 210],
+        ],
+        3,
+    );
+}
+
+#[test]
+fn a_cut_conic_ramp_keeps_its_hint_and_its_gamut_clipping() {
+    // A hint inside the turn, and one out of it, bend the part that shows.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, 20%, blue 150%)",
+        [
+            [153, 0, 101],
+            [121, 0, 133],
+            [93, 0, 161],
+            [68, 0, 186],
+            [46, 0, 210],
+        ],
+        4,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, -20%, blue 150%)",
+        [
+            [101, 0, 153],
+            [76, 0, 178],
+            [57, 0, 197],
+            [41, 0, 213],
+            [28, 0, 228],
+        ],
+        4,
+    );
+    // A stop outside the sRGB gamut and outside the turn.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, color(srgb 2 0 0) -50%, blue 50%)",
+        [
+            [254, 0, 127],
+            [127, 0, 191],
+            [0, 0, 254],
+            [0, 0, 255],
+            [0, 0, 255],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn conic_stops_millions_of_turns_away_are_cut_without_walking_the_range() {
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -1000000000%, blue 1000000000%)",
+        [[127, 0, 127]; 5],
+        2,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch longer hue, red -1000000000%, blue 1000000000%)",
+        [[0, 146, 0]; 5],
+        2,
+    );
+}
