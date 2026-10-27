@@ -6,7 +6,7 @@ use raikiri_js::runtime::{
 pub use raikiri_js::runtime::{DecodedImage, ImagePixels};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -207,6 +207,7 @@ pub mod base64 {
 pub struct LimitsDto {
     pub virtual_time: f64,
     pub tasks: u64,
+    pub enqueued_jobs: u64,
     pub loops: u64,
     pub recursion: usize,
     pub nodes: usize,
@@ -217,6 +218,7 @@ impl From<RunOptions> for LimitsDto {
         Self {
             virtual_time: l.max_virtual_time_ms,
             tasks: l.max_tasks,
+            enqueued_jobs: l.max_enqueued_jobs,
             loops: l.max_loop_iterations,
             recursion: l.max_recursion,
             nodes: l.max_nodes,
@@ -229,6 +231,7 @@ impl LimitsDto {
             limits: Limits {
                 max_virtual_time_ms: self.virtual_time,
                 max_tasks: self.tasks,
+                max_enqueued_jobs: self.enqueued_jobs,
                 max_loop_iterations: self.loops,
                 max_recursion: self.recursion,
                 max_nodes: self.nodes,
@@ -293,6 +296,7 @@ fn serialize_harness_status<S: serde::Serializer>(
 pub enum AbortDto {
     VirtualTime,
     Tasks,
+    EnqueuedJobs,
     LoopIterations,
     Recursion,
     Nodes,
@@ -315,6 +319,7 @@ impl From<RunReport> for ReportDto {
             aborted: r.aborted.map(|a| match a {
                 Abort::VirtualTime => AbortDto::VirtualTime,
                 Abort::Tasks => AbortDto::Tasks,
+                Abort::EnqueuedJobs => AbortDto::EnqueuedJobs,
                 Abort::LoopIterations => AbortDto::LoopIterations,
                 Abort::Recursion => AbortDto::Recursion,
                 Abort::Nodes => AbortDto::Nodes,
@@ -333,6 +338,7 @@ impl ReportDto {
             aborted: self.aborted.map(|a| match a {
                 AbortDto::VirtualTime => Abort::VirtualTime,
                 AbortDto::Tasks => Abort::Tasks,
+                AbortDto::EnqueuedJobs => Abort::EnqueuedJobs,
                 AbortDto::LoopIterations => Abort::LoopIterations,
                 AbortDto::Recursion => Abort::Recursion,
                 AbortDto::Nodes => Abort::Nodes,

@@ -969,9 +969,10 @@ fn schedule_finish(animation: &JsObject, context: &mut Context) -> JsResult<()> 
             with_state(context, |state| {
                 let token = state
                     .event_loop
-                    .queue_cancellable_native_task(remaining, job);
+                    .queue_cancellable_native_task(remaining, job)?;
                 state.animations[id].finish_task = Some(token);
-            })?;
+                Ok::<_, boa_engine::JsError>(())
+            })??;
         }
     }
     Ok(())

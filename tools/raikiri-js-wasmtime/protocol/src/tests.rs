@@ -88,6 +88,7 @@ fn limits_and_report_abort_variants_roundtrip() {
         limits: Limits {
             max_virtual_time_ms: 123.5,
             max_tasks: 7,
+            max_enqueued_jobs: 19,
             max_loop_iterations: 11,
             max_recursion: 13,
             max_nodes: 17,
@@ -96,6 +97,7 @@ fn limits_and_report_abort_variants_roundtrip() {
     let dto = LimitsDto::from(options.clone());
     let back = dto.clone().into_options();
     assert_eq!(back.limits.max_tasks, 7);
+    assert_eq!(back.limits.max_enqueued_jobs, 19);
     assert_eq!(back.limits.max_nodes, 17);
     let bytes = encode(&dto).unwrap();
     let decoded: LimitsDto = decode(&bytes).unwrap();
@@ -104,6 +106,7 @@ fn limits_and_report_abort_variants_roundtrip() {
     for abort in [
         AbortDto::VirtualTime,
         AbortDto::Tasks,
+        AbortDto::EnqueuedJobs,
         AbortDto::LoopIterations,
         AbortDto::Recursion,
         AbortDto::Nodes,

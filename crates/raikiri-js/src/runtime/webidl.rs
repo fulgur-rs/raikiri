@@ -278,7 +278,7 @@ pub(crate) struct DeferredHostFailure(pub String);
 /// [`DomRuntime::evaluate`]: super::DomRuntime::evaluate
 pub(crate) fn take_host_failure(context: &mut Context) -> Option<String> {
     let deferred = context.remove_data::<DeferredHostFailure>().map(|f| f.0);
-    let recorded = with_state(context, |s| s.host_failure.take())
+    let recorded = with_state_unchecked(context, |s| s.host_failure.take())
         .ok()
         .flatten();
     recorded.or(deferred)
@@ -286,8 +286,23 @@ pub(crate) fn take_host_failure(context: &mut Context) -> Option<String> {
 
 /// Run `f` with the shared state borrowed. A re-entrant borrow (a binding
 /// called while another holds the state) is recorded as a host failure and
-/// thrown as an `Error` rather than panicking.
+/// thrown as an `Error` rather than panicking. After a resource abort,
+/// refuse the operation before calling `f`.
 pub(crate) fn with_state<T>(context: &mut Context, f: impl FnOnce(&mut State) -> T) -> JsResult<T> {
+    with_state_unchecked(context, |state| {
+        if let Some(reason) = &state.event_loop.aborted {
+            return Err(event_loop::abort_error(reason.clone()));
+        }
+        Ok(f(state))
+    })?
+}
+
+/// Borrow shared state for host cleanup and inspection, including after abort.
+/// Script bindings must use [`with_state`] so they cannot mutate an aborted run.
+pub(crate) fn with_state_unchecked<T>(
+    context: &mut Context,
+    f: impl FnOnce(&mut State) -> T,
+) -> JsResult<T> {
     let shared = shared(context);
     let Ok(mut state) = shared.0.try_borrow_mut() else {
         const MESSAGE: &str = "re-entrant DOM runtime access";

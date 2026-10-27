@@ -10,7 +10,7 @@ use super::{Executor, RunReport, is_classic_script_type, resolve_script_url};
 use crate::runtime::host::{BoxGeometry, DocumentHost, HostError};
 use crate::runtime::interfaces::wrap;
 use crate::runtime::test_host::StubHost;
-use crate::runtime::webidl::with_state;
+use crate::runtime::webidl::with_state_unchecked as with_state;
 use crate::runtime::{Abort, DomRuntime, Limits, RunOptions};
 
 fn runtime_with(limits: Limits, host: StubHost) -> DomRuntime {
