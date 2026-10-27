@@ -2090,6 +2090,7 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:grid",
         "display:inline-block",
         "display:block;columns:2",
+        "display:block;transform:translateX(80px)",
     ] {
         assert!(!supported(sized, &[held], true), "{held}");
     }
@@ -2098,6 +2099,7 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:flex;height:150px;float:left",
         "display:flex;height:150px;position:relative;top:5px",
         "display:flex;height:150px;margin-left:5px",
+        "display:flex;height:150px;transform:translateX(5px)",
         "display:grid;height:150px",
     ] {
         assert!(!supported(flex, &[item], true), "{flex}");
