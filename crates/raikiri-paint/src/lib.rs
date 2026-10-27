@@ -12,7 +12,7 @@
 //!   (Node.layout() and the paragraph lines have been populated).
 //! - `cascade.computed.len() == document.node_count()` (caller responsibility).
 //! - The caller must call `scene.reset()` (as in blitz-paint).
-//! - Counter snapshots come from [`Document::shared_counter_snapshots`], built
+//! - Counter snapshots come from [`Document::shared_compact_counter_snapshots`], built
 //!   once per document and cascade and shared by every page slice. Exceeding
 //!   their limit returns `RenderError::LimitExceeded` before commands are
 //!   emitted.
@@ -407,7 +407,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
         walk::paint_blank_paper(scene, page_box);
         return Ok(());
     }
-    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
+    let counter_snapshots = shared_compact_counter_snapshots(document, cascade)?;
     let image_cache = walk::ImageBrushCache::for_document(document)
         .with_device_scale(cascade.border_width_device_scale());
     let layers = PageLayers::new(document, cascade, page_box, pixel_source);
@@ -485,17 +485,17 @@ fn debug_assert_cascade_matches_document(document: &Document, cascade: &CascadeR
 
 /// The document's shared counter snapshots, or the paint error for a document
 /// whose snapshots exceed their memory limit.
-fn shared_counter_snapshots(
+fn shared_compact_counter_snapshots(
     document: &Document,
     cascade: &CascadeResult,
-) -> Result<std::sync::Arc<raikiri_dom::CounterSnapshots>, raikiri_traits::RenderError> {
-    document.shared_counter_snapshots(cascade).map_err(|error| {
-        raikiri_traits::RenderError::LimitExceeded {
+) -> Result<std::sync::Arc<raikiri_dom::CompactCounterSnapshots>, raikiri_traits::RenderError> {
+    document
+        .shared_compact_counter_snapshots(cascade)
+        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
             kind: raikiri_traits::LimitKind::CounterSnapshots,
             limit: error.limit,
             actual: error.actual,
-        }
-    })
+        })
 }
 
 /// One step of the body walk, recorded in paint order.
@@ -532,7 +532,7 @@ pub fn trace_paint_order(
     if root_generates_no_box(cascade) {
         return Ok(Vec::new());
     }
-    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
+    let counter_snapshots = shared_compact_counter_snapshots(document, cascade)?;
     let mut scene = anyrender::Scene::new();
     let mut warnings = Vec::new();
     let mut events = Vec::new();
@@ -589,7 +589,7 @@ pub fn paint_single_page_with_images_and_warnings(
         walk::paint_blank_paper(scene, page_box);
         return Ok(Vec::new());
     }
-    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
+    let counter_snapshots = shared_compact_counter_snapshots(document, cascade)?;
     // Single-page only (no pagination integration, see this crate's design
     // non-goals) — mirrors `paint_single_page`'s own single-page defaults
     // (page 0 of 1, no named-page filtering, unpaired) rather than joining

@@ -332,7 +332,7 @@ fn element_text_value(document: &raikiri_dom::Document, node_id: usize) -> Strin
 /// §1.1.2).
 struct ConsumerTextContext<'a> {
     cascade: &'a raikiri_style::CascadeResult,
-    counters: Option<Option<std::sync::Arc<raikiri_dom::CounterSnapshots>>>,
+    counters: Option<Option<std::sync::Arc<raikiri_dom::CompactCounterSnapshots>>>,
     strings: std::collections::HashMap<smol_str::SmolStr, String>,
 }
 
@@ -351,9 +351,9 @@ impl<'a> ConsumerTextContext<'a> {
         &mut self,
         document: &raikiri_dom::Document,
         node_id: usize,
-    ) -> Option<&raikiri_dom::CounterSnapshot> {
+    ) -> Option<raikiri_dom::generated_content::CounterSnapshotView<'_>> {
         self.counters
-            .get_or_insert_with(|| document.shared_counter_snapshots(self.cascade).ok())
+            .get_or_insert_with(|| document.shared_compact_counter_snapshots(self.cascade).ok())
             .as_ref()?
             .get(node_id)
     }
@@ -418,7 +418,7 @@ impl<'a> ConsumerTextContext<'a> {
                 ContentComponent::Counter { name, style } => {
                     let registry = &self.cascade.counter_styles;
                     let counters = self.counters_at(document, node_id)?;
-                    output.push_str(&format_counter_component(counters, name, style, registry));
+                    output.push_str(&format_counter_component(&counters, name, style, registry));
                 }
                 ContentComponent::Counters {
                     name,
@@ -428,7 +428,7 @@ impl<'a> ConsumerTextContext<'a> {
                     let registry = &self.cascade.counter_styles;
                     let counters = self.counters_at(document, node_id)?;
                     output.push_str(&format_counters_component(
-                        counters, name, separator, style, registry,
+                        &counters, name, separator, style, registry,
                     ));
                 }
                 ContentComponent::String { name, .. } => {

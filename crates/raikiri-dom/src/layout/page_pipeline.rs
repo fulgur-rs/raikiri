@@ -1200,6 +1200,13 @@ fn layout_single_page_with_table_projection(
     {
         document.counter_snapshot_cache.take();
     }
+    if document
+        .compact_counter_snapshot_cache
+        .get()
+        .is_some_and(|(generation, _)| *generation != cascade.element_generation())
+    {
+        document.compact_counter_snapshot_cache.take();
+    }
     // Fonts are only read when a document is laid out: one that was given
     // none takes the installed fonts here, not when it is created.
     if document.ifc.is_none() {

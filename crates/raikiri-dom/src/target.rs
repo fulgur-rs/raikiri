@@ -51,6 +51,12 @@ use smol_str::SmolStr;
 use crate::document::Document;
 use crate::generated_content::QuoteDepth;
 
+mod compact;
+pub(crate) use compact::SharedCompactCounterSnapshots;
+pub use compact::{
+    CompactCounterSnapshots, compact_counter_snapshots, compact_counter_snapshots_with_budget,
+};
+
 /// The counter that list items increment implicitly (CSS Lists 3 §4.6).
 const LIST_ITEM_COUNTER: &str = "list-item";
 
@@ -206,9 +212,13 @@ impl CounterSnapshotBudget {
     }
 
     fn charge(&mut self, additional: Option<u64>) -> Result<(), CounterSnapshotLimitExceeded> {
-        let actual = additional
-            .and_then(|bytes| self.estimated_bytes.checked_add(bytes))
-            .unwrap_or(u64::MAX);
+        let Some(actual) = additional.and_then(|bytes| self.estimated_bytes.checked_add(bytes))
+        else {
+            return Err(CounterSnapshotLimitExceeded {
+                limit: self.limit,
+                actual: u64::MAX,
+            });
+        };
         if actual > self.limit {
             return Err(CounterSnapshotLimitExceeded {
                 limit: self.limit,
@@ -256,6 +266,7 @@ impl CounterSnapshotBudget {
 /// [`Self::apply`]'s own doc for the mechanism.
 #[derive(Debug, Default)]
 struct CounterScopes {
+    compact: Option<std::cell::RefCell<compact::CompactBuilder>>,
     /// counter name → currently active nested stack (outermost first, leaf
     /// last) — the [`CounterSnapshot`] shape directly, so
     /// [`Self::snapshot`] is a plain clone.
@@ -464,7 +475,12 @@ impl CounterScopes {
                 // unbounded `+=` bug. `counter-reset: c 2147483647; counter-increment:
                 // c 1` is spec-legal CSS and would panic (debug) or
                 // silently wrap to `i32::MIN` (release) on plain `+=`.
-                Some(top) => *top = top.saturating_add(*delta),
+                Some(top) => {
+                    *top = top.saturating_add(*delta);
+                    if let Some(builder) = &self.compact {
+                        builder.borrow_mut().change(&sym, Some(*top), false);
+                    }
+                }
                 None => {
                     // No active scope for `name` yet anywhere in scope —
                     // local auto-instantiation (CSS Lists 3 §4.4.2), tracked
@@ -482,7 +498,12 @@ impl CounterScopes {
             let sym = Symbol::new(name.clone());
             let stack = self.stacks.entry(sym.clone()).or_default();
             match stack.last_mut() {
-                Some(top) => *top = *value,
+                Some(top) => {
+                    *top = *value;
+                    if let Some(builder) = &self.compact {
+                        builder.borrow_mut().change(&sym, Some(*top), false);
+                    }
+                }
                 None => {
                     self.push_level(sym.clone(), *value, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
@@ -554,6 +575,9 @@ impl CounterScopes {
 
     /// Push one new innermost level for `name`.
     fn push_level(&mut self, name: Symbol, value: i32, level: CounterLevel) {
+        if let Some(builder) = &self.compact {
+            builder.borrow_mut().change(&name, Some(value), true);
+        }
         self.stacks.entry(name.clone()).or_default().push(value);
         self.levels.entry(name).or_default().push(level);
     }
@@ -575,6 +599,9 @@ impl CounterScopes {
     /// method's doc) also calls directly for the one name it evicts.
     fn pop_one(&mut self, name: &Symbol) {
         if let Some(stack) = self.stacks.get_mut(name) {
+            if let Some(builder) = &self.compact {
+                builder.borrow_mut().change(name, None, false);
+            }
             stack.pop();
             if stack.is_empty() {
                 self.stacks.remove(name);
@@ -830,20 +857,7 @@ pub fn counter_snapshots_with_budget(
     budget: &mut CounterSnapshotBudget,
 ) -> Result<CounterSnapshots, CounterSnapshotLimitExceeded> {
     budget.charge_base(doc.node_count())?;
-    let mut scopes = CounterScopes::default();
-    if has_calculated_reversed_reset(cascade) {
-        let mut collect = CounterScopes::default();
-        walk_counter_scopes(doc, cascade, &mut collect, |_, _| Ok(()))?;
-        if let ReversedStarts::Collect(tallies) = collect.reversed {
-            scopes.reversed = ReversedStarts::Resolved {
-                starts: tallies
-                    .into_iter()
-                    .map(ReversedStartTally::starting_value)
-                    .collect(),
-                next: 0,
-            };
-        }
-    }
+    let mut scopes = resolved_scopes(doc, cascade)?;
     let mut snapshots = CounterSnapshots::from(vec![HashMap::new(); doc.node_count()]);
     walk_counter_scopes(doc, cascade, &mut scopes, |target, scopes| {
         match target {
@@ -861,6 +875,27 @@ pub fn counter_snapshots_with_budget(
         Ok(())
     })?;
     Ok(snapshots)
+}
+
+fn resolved_scopes(
+    doc: &Document,
+    cascade: &CascadeResult,
+) -> Result<CounterScopes, CounterSnapshotLimitExceeded> {
+    let mut scopes = CounterScopes::default();
+    if has_calculated_reversed_reset(cascade) {
+        let mut collect = CounterScopes::default();
+        walk_counter_scopes(doc, cascade, &mut collect, |_, _| Ok(()))?;
+        if let ReversedStarts::Collect(tallies) = collect.reversed {
+            scopes.reversed = ReversedStarts::Resolved {
+                starts: tallies
+                    .into_iter()
+                    .map(ReversedStartTally::starting_value)
+                    .collect(),
+                next: 0,
+            };
+        }
+    }
+    Ok(scopes)
 }
 
 /// Whether any style instantiates a reversed counter without a starting

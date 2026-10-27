@@ -46,23 +46,22 @@ fn cloned_projection_keeps_marker_text_after_the_original_is_dropped() {
 }
 
 #[test]
-fn marker_projection_propagates_the_fixed_counter_snapshot_budget() {
+fn marker_projection_propagates_a_cached_counter_snapshot_budget_error() {
     let mut document = Document::new();
-    let names = (0..1024)
-        .map(|index| format!("part{index} 0"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let parent = document.append_element(
-        Some(0),
-        "ol",
-        Some(&format!("display:block;counter-reset:{names}")),
-    );
-    let mut owner = 0;
-    for _ in 0..1100 {
-        owner = document.append_element(Some(parent), "li", Some("display:list-item"));
-    }
+    let owner = document.append_element(Some(0), "li", Some("display:list-item"));
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let limit = crate::MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES;
+    document
+        .compact_counter_snapshot_cache
+        .set((
+            cascade.element_generation(),
+            Err(crate::CounterSnapshotLimitExceeded {
+                limit,
+                actual: limit + 1,
+            }),
+        ))
+        .unwrap();
     let roots = [ProjectedTextRoot {
         node: crate::generated_content::generated_node_id(owner, PseudoElem::Marker),
         x: 0.0,

@@ -15,7 +15,7 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use peniko::Mix;
 use raikiri_dom::paint_rules::{self, LeavingParagraphs};
-use raikiri_dom::{CounterSnapshots, Document};
+use raikiri_dom::{CompactCounterSnapshots, Document};
 use raikiri_style::CascadeResult;
 use raikiri_traits::{ImagePixelSource, PageBox, PaintClip, RenderWarning};
 use std::collections::{HashMap, HashSet};
@@ -47,7 +47,7 @@ pub(super) struct PaintWalk<'w, S> {
     pub(super) image_cache: &'w ImageBrushCache,
     pub(super) document: &'w Document,
     pub(super) cascade: &'w CascadeResult,
-    pub(super) counter_snapshots: &'w CounterSnapshots,
+    pub(super) counter_snapshots: &'w CompactCounterSnapshots,
     pub(super) page_box: PageBox,
     /// The page name that `@page` rules are matched against, if any.
     pub(super) active_page_name: Option<Option<&'w str>>,

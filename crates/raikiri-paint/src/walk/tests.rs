@@ -149,7 +149,7 @@ fn generated_pseudo_metrics_preserve_before_after_order() {
         "display: list-item",
         Some(r##"li::before { content: "A " } li::after { content: "B" }"##),
     );
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
+    let snapshots = raikiri_dom::compact_counter_snapshots(&document, &cascade)
         .expect("test counter snapshots stay within budget");
     assert!(
         generated_pseudo_text_height(
@@ -204,7 +204,7 @@ fn generated_pseudo_metrics_preserve_before_after_order() {
         "display: list-item",
         Some(r##"li::before { display: none; content: "hidden" }"##),
     );
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
+    let snapshots = raikiri_dom::compact_counter_snapshots(&document, &cascade)
         .expect("test counter snapshots stay within budget");
     assert_eq!(
         generated_pseudo_text_height(
@@ -373,7 +373,7 @@ fn paint_generated_pseudo_emits_counter_content() {
         "display: list-item",
         Some(r##"li::before { content: counter(marker) }"##),
     );
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
+    let snapshots = raikiri_dom::compact_counter_snapshots(&document, &cascade)
         .expect("test counter snapshots stay within budget");
     let mut scene = Scene::new();
     paint_generated_pseudo(
@@ -865,7 +865,7 @@ fn paint_laid_out_document_decorations(
     }
     raikiri_dom::layout_single_page(document, cascade, page).expect("layout");
     let snapshots = document
-        .shared_counter_snapshots(cascade)
+        .shared_compact_counter_snapshots(cascade)
         .expect("counters");
     paint_document_impl(
         image_cache,
@@ -5787,7 +5787,7 @@ fn a_generated_run_is_measured_with_the_document_font() {
             doc.append_text(div, "x");
         },
     );
-    let snapshots = raikiri_dom::CounterSnapshots::default();
+    let snapshots = raikiri_dom::CompactCounterSnapshots::default();
     let height = generated_pseudo_text_height(
         &document,
         &cascade,
@@ -5869,7 +5869,7 @@ fn explicit_marker_content_suppresses_legacy_image_paint() {
             30.0,
             0.0,
             (0.0, f32::INFINITY, false),
-            &raikiri_dom::CounterSnapshots::default(),
+            &raikiri_dom::CompactCounterSnapshots::default(),
             Some(&Pixels),
         );
         assert!(!scene.commands.iter().any(|command| matches!(command,
@@ -6011,7 +6011,7 @@ fn generated_flow_height_skips_a_node_already_queued_from_a_duplicate_child() {
             &document,
             &cascade,
             parent,
-            &raikiri_dom::CounterSnapshots::default(),
+            &raikiri_dom::CompactCounterSnapshots::default(),
             &mut cache
         ),
         0.0
@@ -6030,7 +6030,7 @@ fn generated_flow_height_caches_zero_for_an_unknown_node_id() {
             &document,
             &cascade,
             usize::MAX,
-            &raikiri_dom::CounterSnapshots::default(),
+            &raikiri_dom::CompactCounterSnapshots::default(),
             &mut cache
         ),
         0.0

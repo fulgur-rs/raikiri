@@ -968,3 +968,38 @@ fn quote_starts_of_a_marker_and_an_after_count_against_the_budget() {
         "aside",
     );
 }
+
+#[test]
+fn compact_construction_shares_nested_stack_and_name_prefixes() {
+    for distinct_names in [false, true] {
+        let mut document = Document::new();
+        let mut parent = document.root_index();
+        for depth in 0..512 {
+            let name = if distinct_names {
+                format!("c{depth}")
+            } else {
+                "nested".into()
+            };
+            parent = document.append_element(
+                Some(parent),
+                "div",
+                Some(format!("counter-reset: {name} {depth}")),
+            );
+        }
+        document.mark_in_document_flags();
+        let rules = build_rule_tree(&document);
+        let computed = cascade(&document, &rules).expect("cascade");
+        let snapshots = compact_counter_snapshots_with_budget(
+            &document,
+            &computed,
+            &mut CounterSnapshotBudget::new(512 * 1024),
+        )
+        .expect("prefix sharing fits a budget proportional to nodes and mutations");
+        let name = if distinct_names { "c511" } else { "nested" };
+        use crate::generated_content::CounterSnapshotLookup;
+        assert_eq!(
+            snapshots.get(parent).expect("node").values_for(name).last(),
+            Some(511)
+        );
+    }
+}

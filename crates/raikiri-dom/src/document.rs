@@ -258,6 +258,10 @@ pub struct Document {
     /// [`CascadeResult::element_generation`]: raikiri_style::CascadeResult::element_generation
     pub(crate) counter_snapshot_cache:
         std::sync::OnceLock<(u64, crate::target::SharedCounterSnapshots)>,
+    /// Compact counters shared by built-in layout, projection and paint.
+    /// The legacy owned cache above remains independently budgeted.
+    pub(crate) compact_counter_snapshot_cache:
+        std::sync::OnceLock<(u64, crate::target::SharedCompactCounterSnapshots)>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -522,6 +526,7 @@ impl Document {
             content_images: Default::default(),
             margin_box_images: Default::default(),
             counter_snapshot_cache: std::sync::OnceLock::new(),
+            compact_counter_snapshot_cache: std::sync::OnceLock::new(),
             root: 0,
             layout_dirty: false,
             forced_break_clearance: Vec::new(),
@@ -1869,6 +1874,7 @@ impl Document {
             content_images,
             margin_box_images,
             counter_snapshot_cache: _,
+            compact_counter_snapshot_cache: _,
             root: _,
             layout_dirty: _,
             forced_break_clearance: _,
@@ -2051,6 +2057,7 @@ impl Document {
         // Counter snapshots skip nodes outside the document, so ones taken
         // before the bits below were refreshed are stale.
         self.counter_snapshot_cache.take();
+        self.compact_counter_snapshot_cache.take();
         // Step 1: Clear every arena node's bit. Node::new_* constructors set
         // true by default as an optimistic "attached" value; clearing here
         // makes detached and unreachable nodes false.
@@ -2860,6 +2867,7 @@ impl Document {
         self.box_style_data.invalidate_source();
         self.page_projection.clear();
         self.counter_snapshot_cache.take();
+        self.compact_counter_snapshot_cache.take();
         self.drop_retained_paragraphs();
         self.oof_coordinates.clear();
         self.layout_dirty = true;

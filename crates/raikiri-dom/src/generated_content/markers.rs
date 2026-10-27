@@ -1,10 +1,10 @@
 //! Shared marker content resolution for inline layout and outside painting.
 
 use super::{
-    CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, QuoteDepth, format_counter,
-    format_counter_component, format_counters_component,
+    CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, QuoteDepth,
+    SnapshotCollection, format_counter, format_counter_component, format_counters_component,
 };
-use crate::{CounterSnapshots, Document};
+use crate::{CompactCounterSnapshots, CounterSnapshots, Document};
 use raikiri_style::property::{ContentComponent, CounterStyle, DisplayValue, ListStyleType};
 use raikiri_style::{CascadeResult, CounterStyleRegistry, PseudoElem, resolve_custom_counter};
 
@@ -268,6 +268,26 @@ pub fn marker_render_info_with_snapshots<'a>(
     node_id: usize,
     snapshots: &CounterSnapshots,
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
+    marker_render_info_impl(document, cascade, node_id, snapshots)
+}
+
+/// Resolve marker content from compact counter snapshots.
+#[doc(hidden)]
+pub fn marker_render_info_with_compact_snapshots<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    node_id: usize,
+    snapshots: &CompactCounterSnapshots,
+) -> Option<(&'a raikiri_style::ComputedValues, String)> {
+    marker_render_info_impl(document, cascade, node_id, snapshots)
+}
+
+pub(super) fn marker_render_info_impl<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    node_id: usize,
+    snapshots: &impl SnapshotCollection,
+) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     // cov:ignore: signature close has no executable mapping
     let computed = cascade.computed.get(node_id)?;
     let marker_computed = cascade
@@ -281,29 +301,24 @@ pub fn marker_render_info_with_snapshots<'a>(
     if style.display == DisplayValue::None {
         return None;
     }
-    let base = snapshots.get(node_id).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
-    let fallback_snapshots = if base
-        .get(&raikiri_traits::Symbol::new("list-item"))
-        .is_none_or(Vec::is_empty)
-    {
-        document.shared_counter_snapshots(cascade).ok()
+    let mut counters = snapshots
+        .node_view(node_id)
+        .unwrap_or_else(|| CounterSnapshotView::new(&EMPTY_COUNTER_SNAPSHOT, None));
+    let fallback_snapshots = if counters.stack("list-item").is_empty() {
+        document.shared_compact_counter_snapshots(cascade).ok()
     } else {
         None
     };
-    let fallback_list_item = fallback_snapshots
+    counters.list_item_fallback = fallback_snapshots
         .as_ref()
         .and_then(|shared| shared.get(node_id))
-        .and_then(|snapshot| snapshot.get(&raikiri_traits::Symbol::new("list-item")))
-        .map(Vec::as_slice);
-    // The quotes open before the marker come from the same walk as its
-    // list-item counter.
+        .map(|view| view.stack("list-item"));
+    counters.computed = marker_computed;
     let open_quotes = fallback_snapshots.as_ref().map_or_else(
-        || snapshots.quote_depth(node_id, PseudoElem::Marker),
+        || snapshots.quote_start(node_id, PseudoElem::Marker),
         |shared| shared.quote_depth(node_id, PseudoElem::Marker),
     );
-    let counters =
-        CounterSnapshotView::with_list_item_fallback(base, marker_computed, fallback_list_item)
-            .starting_quotes_at(open_quotes);
+    let counters = counters.starting_quotes_at(open_quotes);
     // Use the shared counter walk when a caller's snapshot omits the list
     // item counter, keeping repeated marker resolution linear for a list.
     let ordinal = if counters.values_for("list-item").is_empty() {

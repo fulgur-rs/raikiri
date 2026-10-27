@@ -469,8 +469,11 @@ impl<'a> Page<'a> {
             _ => return None,
         };
         let element = usize::try_from(owner.0).ok()?;
-        let snapshots = self.document.shared_counter_snapshots(self.cascade).ok()?;
-        raikiri_dom::generated_content::generated_alt_text(
+        let snapshots = self
+            .document
+            .shared_compact_counter_snapshots(self.cascade)
+            .ok()?;
+        raikiri_dom::generated_content::generated_alt_text_compact(
             self.document,
             self.cascade,
             element,
