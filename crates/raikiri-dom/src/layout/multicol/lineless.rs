@@ -112,6 +112,13 @@ fn supported_with_wrapped_blocks(
     (sized || sized_flex || holds_absolute_boxes).then_some(children)
 }
 
+/// Whether `c` is white space that collapses away, as opposed to the other
+/// characters Unicode counts as white space, such as a no-break space, which
+/// render.
+fn is_collapsible_whitespace(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
+}
+
 /// Whether `style` gives its box a block size of its own to slice: a height, a
 /// minimum height, or an aspect ratio, which makes the height follow from the
 /// width.
@@ -287,7 +294,9 @@ fn sliceable_flex_container(
         let contained = contained || layout_node(tree, id).contains_absolute_boxes;
         let style = style_of(tree, id);
         sized |= has_block_size(&style);
-        // Text that renders gives a box lines.
+        // Text that renders gives a box lines, and a flex container makes an
+        // anonymous item of text that is more than white space that collapses,
+        // a no-break space included.
         for held in tree.children_through_contents(id) {
             let held_node = layout_node(tree, held);
             if !held_node.is_in_document() || held_node.is_display_none() {
@@ -295,7 +304,8 @@ fn sliceable_flex_container(
             }
             match &held_node.data {
                 NodeData::Element(_) => pending.push((held, contained)),
-                NodeData::Text(text) if text.text_content.trim().is_empty() => {}
+                NodeData::Text(text)
+                    if text.text_content.chars().all(is_collapsible_whitespace) => {}
                 _ => return None,
             }
         }

@@ -2341,6 +2341,34 @@ fn hidden_boxes_and_blank_text_give_a_flex_container_no_lines() {
 }
 
 #[test]
+fn text_that_does_not_collapse_gives_a_flex_container_an_item_with_a_line() {
+    let supported = |text: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:100px;height:100px;columns:2;column-gap:0"),
+        );
+        let flex = doc.append_element(Some(parent), "div", Some("display:flex;height:150px"));
+        doc.append_element(Some(flex), "div", Some("display:block;width:10px"));
+        doc.append_text(flex, text);
+        layout_nested_flex_float_fixture(&mut doc);
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported_with_wrappers(session, parent)
+        })
+        .is_some()
+    };
+    // White space that collapses makes no item.
+    assert!(supported(" \t\n\r\u{000c}"));
+    // Any other white space renders, in an anonymous item of its own whose
+    // line has no element above it to tell.
+    assert!(!supported("\u{a0}"));
+    assert!(!supported("\u{2003}"));
+}
+
+#[test]
 fn blocks_without_lines_are_balanced_and_keep_break_avoidance() {
     let (doc, parent, children) = lineless_fixture(
         "display:block;width:200px;columns:2;column-gap:0",
