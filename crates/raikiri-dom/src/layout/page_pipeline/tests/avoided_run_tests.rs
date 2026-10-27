@@ -206,3 +206,109 @@ fn a_heading_moves_with_a_box_that_starts_with_something_the_lines_do_not_hold()
         (100.0, 110.0)
     );
 }
+
+#[test]
+fn a_heading_moves_with_a_box_whose_closing_edges_would_be_alone_on_the_next_page() {
+    // The heading ends at 80 and the line at 90, but the 30px of padding or
+    // border that close the box do not fit: they would start the next page.
+    for edges in ["padding-bottom:30px", "border-bottom:30px solid black"] {
+        let wrapped = heading_then(70, |doc, body| {
+            let wrapper = block(doc, body, &format!("display:block;{edges}"));
+            paragraph(doc, wrapper, "", 1);
+            wrapper
+        });
+        assert_eq!(wrapped, (100.0, 110.0), "{edges}");
+        // A paragraph holds them as well, and so does one too short to break
+        // between its lines.
+        for lines in [1, 2] {
+            assert_eq!(
+                heading_then(70, |doc, body| paragraph(doc, body, edges, lines)),
+                (100.0, 110.0),
+                "{edges} {lines}"
+            );
+        }
+    }
+    // The first box of a wrapper holds them too.
+    assert_eq!(
+        heading_then(70, |doc, body| {
+            let wrapper = block(doc, body, "display:block");
+            let inner = block(doc, wrapper, "display:block;padding-bottom:30px");
+            paragraph(doc, inner, "", 1);
+            block(doc, wrapper, "display:block;height:10px");
+            wrapper
+        }),
+        (100.0, 110.0)
+    );
+    // The same holds when the wrapper that holds the box has edges of its
+    // own, and when a definite height is just the line and the padding.
+    assert_eq!(
+        heading_then(70, |doc, body| {
+            let wrapper = block(doc, body, "display:block;padding-bottom:30px");
+            let inner = block(doc, wrapper, "display:block;padding-bottom:30px");
+            paragraph(doc, inner, "", 1);
+            wrapper
+        }),
+        (100.0, 110.0)
+    );
+    assert_eq!(
+        heading_then(70, |doc, body| paragraph(
+            doc,
+            body,
+            "height:10px;padding-bottom:30px",
+            1
+        )),
+        (100.0, 110.0)
+    );
+    // Padding that fits after the line is no reason to move, and neither is
+    // a paragraph that breaks between its lines.
+    assert_eq!(
+        heading_then(70, |doc, body| paragraph(
+            doc,
+            body,
+            "padding-bottom:10px",
+            1
+        )),
+        (70.0, 80.0)
+    );
+    assert_eq!(
+        heading_then(70, |doc, body| paragraph(
+            doc,
+            body,
+            "padding-bottom:30px",
+            6
+        )),
+        (70.0, 80.0)
+    );
+}
+
+#[test]
+fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() {
+    // Three of the four lines fit after the heading, which ends at 70, and
+    // `widows` is 2. A paragraph that can move lines down splits two and two.
+    assert_eq!(
+        heading_then(60, |doc, body| paragraph(doc, body, "", 4)),
+        (60.0, 70.0)
+    );
+    // One with a definite height cannot: the page breaks where its lines
+    // fall, or it moves whole.
+    for css in ["height:50px", "min-height:50px"] {
+        assert_eq!(
+            heading_then(60, |doc, body| paragraph(doc, body, css, 4)),
+            (100.0, 110.0),
+            "{css}"
+        );
+    }
+    // Nor can one that lays out a box of its own among the lines.
+    assert_eq!(
+        heading_then(60, |doc, body| {
+            let mixed = paragraph(doc, body, "", 3);
+            doc.append_element(
+                Some(mixed),
+                "span",
+                Some("display:inline-block;width:10px;height:10px"),
+            );
+            mixed
+        }),
+        (100.0, 110.0)
+    );
+}

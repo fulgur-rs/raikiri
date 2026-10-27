@@ -3915,7 +3915,7 @@ fn avoided_row_groups(
 /// Returns the block end of each run, including its last box's block-end
 /// margin, keyed by its first box.
 fn avoided_run_ends(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     candidates: &[PageCandidate],
     body_id: usize,
@@ -4009,12 +4009,15 @@ fn avoided_run_ends(
 /// first `orphans` of them, and one with too few lines for `orphans` and
 /// `widows` to let a break fall between them moves whole, so it holds all of
 /// them; what follows the last held line, such as the rest of a box taller than
-/// its lines, flows on to the next page. The first box of a block of boxes
-/// holds the same. A box that avoids breaks inside it, a box that is not a
-/// plain block, and anything with a break, a float or generated content at
-/// its start is kept whole.
+/// its lines, flows on to the next page, but not the padding and border that
+/// close the box right below it, which would be alone there. The first box of
+/// a block of boxes holds the same. A box that avoids breaks inside it, a box
+/// that is not a plain block, a paragraph that cannot move its lines down
+/// inside it, a block that moves whole with its closing edges (see
+/// [`lone_box_tail`]), and anything with a break, a float or generated content
+/// at its start is kept whole.
 fn avoided_run_head(
-    document: &Document,
+    document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
@@ -4038,6 +4041,12 @@ fn avoided_run_head(
                 return None;
             }
         }
+        // A block whose box is followed by closing edges alone moves whole
+        // rather than leave them on the next page (see `lone_box_tail`), and
+        // takes the box before it along.
+        if lone_box_tail(document, cascade, body_id, current).is_some_and(|tail| tail > 0.001) {
+            return Some(offset + node.layout.size.height);
+        }
         if node.is_ifc_root() {
             let lines_node = document.ifc_layout_node(current)?;
             let ifc = lines_node.ifc.as_ref()?;
@@ -4052,6 +4061,13 @@ fn avoided_run_head(
             let breaks_between = i64::try_from(total).is_ok_and(|total| {
                 total >= i64::from(computed.orphans) + i64::from(computed.widows)
             });
+            // A paragraph that cannot move its lines down inside it breaks
+            // where they naturally fall, or moves whole when that break
+            // leaves too few of them on a side: the box before it cannot
+            // tell which, so it stays with the whole paragraph.
+            if breaks_between && !lines_can_shift_inside(document, current) {
+                return None;
+            }
             let held = if breaks_between {
                 usize::try_from(computed.orphans)
                     .unwrap_or(1)
@@ -4060,13 +4076,21 @@ fn avoided_run_head(
                 total
             };
             let line = lines.lines.get(held.checked_sub(1)?)?;
-            return Some(
-                offset
-                    + lines_node.layout.border.top
-                    + lines_node.layout.padding.top
-                    + line.block_offset()
-                    + line.block_size(),
-            );
+            let held_end = lines_node.layout.border.top
+                + lines_node.layout.padding.top
+                + line.block_offset()
+                + line.block_size();
+            // The padding and border below the last line of a paragraph held
+            // whole stay with it, as they would be alone on the next page.
+            let closing_edges = lines_node.layout.padding.bottom + lines_node.layout.border.bottom;
+            let whole = !breaks_between
+                && held_end + closing_edges >= lines_node.layout.size.height - 0.001;
+            let end = if whole {
+                lines_node.layout.size.height
+            } else {
+                held_end
+            };
+            return Some(offset + end);
         }
         // A block of boxes holds its first box.
         let mut first = None;
@@ -4159,7 +4183,7 @@ impl AvoidedBreaks {
     /// Finds the avoided breaks of `candidates`, whose flow starts at
     /// `root_flow_offset` and whose class-A boxes sit in `contents_box`.
     fn collect(
-        document: &Document,
+        document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         candidates: &[PageCandidate],
         table_headers: &HeaderRepeats,
