@@ -698,6 +698,7 @@ struct AbsolutePiece {
 /// the box's pieces in the columns after it. `None` when a box starts above
 /// the columns or its containing block, or when its pieces would not fit in
 /// `budget` fragments.
+#[allow(clippy::too_many_arguments)]
 fn absolute_pieces(
     tree: &LayoutSession<'_>,
     children: &[usize],
