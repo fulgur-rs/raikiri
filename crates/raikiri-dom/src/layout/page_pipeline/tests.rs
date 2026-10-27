@@ -5,6 +5,7 @@ use raikiri_layout_style::values::Clear;
 
 mod ancestor_walk_tests;
 mod avoid_followup_tests;
+mod avoided_run_tests;
 mod candidate_context_tests;
 mod candidate_text_tests;
 mod closing_edge_tests;
