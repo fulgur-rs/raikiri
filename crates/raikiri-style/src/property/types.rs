@@ -8474,14 +8474,6 @@ pub struct CssPosition {
 ///   time into two single-position stops sharing the color (see
 ///   [`AngularColorStop`] docs), which preserves the solid-band meaning
 ///   without a two-position type.
-/// - `<linear-color-hint>` (a transition hint between two stops) is
-///   unsupported: `<color-stop-list>` is parsed as `<linear-color-stop>#`
-///   with no hint elements. **This is already part of the CSS Images 3
-///   §3.4.1 baseline grammar (`<color-stop-list> = <linear-color-stop> ,
-///   [ <linear-color-hint>? , <linear-color-stop> ]#`), not a Level 4
-///   addition.** Level 4 §3.5.1 carries over that same production. Thus,
-///   this crate does not fully implement the Level 3 baseline while merely
-///   deferring Level 4 extensions; it also defers the baseline hint.
 /// - A color stop list requires at least two stops (CSS Images 3 §3.4.1
 ///   baseline grammar `<linear-color-stop> , [ … ]#`: the first stop plus
 ///   a `#` group containing at least one, not three or more). The
@@ -8843,17 +8835,13 @@ pub struct UnboundedColor {
 /// `<radial-gradient-syntax>` (CSS Images 3 §3.4.1 "Color Stop Lists";
 /// Level 4 §3.5.1 retains the same production).
 ///
-/// This crate implements only the CSS Images 3 baseline grammar
-/// `<linear-color-stop> =
-/// <color> <length-percentage>?`. It does not
-/// support the Level 4 addition `<color-stop-length> = <length-percentage>{1,2}`
-/// (two positions for one stop, producing a band of the same color).
-/// It **also** does not support `<linear-color-hint>` (a transition hint
-/// between stops). This is not a Level 4 extension; it is already present
-/// in the Level 3 §3.4.1 baseline grammar (`<color-stop-list> = <linear-color-stop> , [
-/// <linear-color-hint>? , <linear-color-stop> ]#`). This crate defers that
-/// part of the baseline too (see the scope-carving section in
-/// [`BackgroundImage`] docs).
+/// This crate implements the CSS Images 3 baseline grammar
+/// `<color-stop-list> = <linear-color-stop> , [ <linear-color-hint>? ,
+/// <linear-color-stop> ]#` with `<linear-color-stop> = <color>
+/// <length-percentage>?`. A transition hint is stored on the stop that
+/// follows it ([`Self::hint`]). It does not support the Level 4 addition
+/// `<color-stop-length> = <length-percentage>{1,2}` (two positions for one
+/// stop, producing a band of the same color).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GradientColorStop {
@@ -8865,6 +8853,11 @@ pub struct GradientColorStop {
     /// to the used-value layer (paint); this crate retains `None`. A
     /// mixed-unit `calc()` keeps its percentage for the same reason.
     pub position: Option<LengthPercentageOrCalc>,
+    /// The `<linear-color-hint>` written between the previous stop and this
+    /// one: the position where the color halfway between the two stops is
+    /// reached (CSS Images 3 §3.4.1 "Color Stop Lists"). Always `None` for the
+    /// first stop, and kept unresolved like [`Self::position`].
+    pub hint: Option<LengthPercentageOrCalc>,
 }
 
 /// `<angular-color-stop>` — the conic-gradient counterpart to
@@ -8873,8 +8866,8 @@ pub struct GradientColorStop {
 /// optional position; an authored double position such as `red 0 25%`
 /// expands at parse time into two stops (`red 0`, `red 25%`) with the same
 /// color, which keeps the solid-band meaning while this type stays
-/// single-position. `<angular-color-hint>` remains unsupported, as for
-/// [`GradientColorStop`].
+/// single-position. An `<angular-color-hint>` is stored on the stop that
+/// follows it, as for [`GradientColorStop`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AngularColorStop {
@@ -8883,6 +8876,10 @@ pub struct AngularColorStop {
     /// Position of the stop (`<angle-percentage>`). Omission is handled
     /// as for [`GradientColorStop::position`].
     pub position: Option<AnglePercentage>,
+    /// The `<angular-color-hint>` written between the previous stop and this
+    /// one (see [`GradientColorStop::hint`]). For a stop with two authored
+    /// positions the hint belongs to the first of the two entries.
+    pub hint: Option<AnglePercentage>,
 }
 
 /// Keyword for one axis of `<repeat-style>` (CSS Backgrounds and Borders 3 §2.4

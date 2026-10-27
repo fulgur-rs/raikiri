@@ -1640,3 +1640,321 @@ fn scaled_down_border_image_edges_meet_on_device_pixels() {
     let exact = raster_scaled_border_image(style, None, 2.0);
     assert!(pixel(&exact, 40, 10, 20)[3] < 255);
 }
+
+/// Rasterize a conic gradient layer over a `width` by `height` box.
+fn raster_conic(style: &str, width: u32, height: u32) -> Vec<u8> {
+    let cv = computed_for(style);
+    let Gradient::Conic(conic) = gradient_of(&cv) else {
+        panic!("expected a conic gradient");
+    };
+    let area = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    let mut scene = Scene::new();
+    paint_conic_gradient(&mut scene, &conic, area, area, cv.color);
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        width,
+        height,
+    )
+}
+
+/// Assert that the red channel of a red-to-blue ramp at `x` is within `slack`
+/// of `expected`.
+fn assert_red_near(rgba: &[u8], width: u32, x: u32, expected: f64, slack: f64) {
+    let red = f64::from(pixel(rgba, width, x, 0)[0]);
+    assert!(
+        (red - expected).abs() <= slack,
+        "red at x={x} is {red}, expected {expected} +- {slack}"
+    );
+}
+
+/// The red of the ramp `red -> blue` that a hint at the fraction `hint` bends
+/// (CSS Images 3 §3.4.2) at the fraction `t` of the line.
+fn hinted_red(hint: f64, t: f64) -> f64 {
+    255.0 * (1.0 - t.powf(0.5f64.ln() / hint.ln()))
+}
+
+#[test]
+fn a_transition_hint_bends_the_ramp_so_the_hint_gets_the_middle_color() {
+    // The pixel at x holds the color of (x + 0.5) / 100 of the line.
+    for hint in [0.25, 0.75, 0.05, 0.95] {
+        let rgba = raster_layer(
+            &format!(
+                "background-image: linear-gradient(to right in srgb, red, {}%, blue)",
+                hint * 100.0
+            ),
+            100,
+            1,
+        );
+        for x in (0..100).step_by(7) {
+            let t = (f64::from(x) + 0.5) / 100.0;
+            assert_red_near(&rgba, 100, x, hinted_red(hint, t), 4.0);
+        }
+    }
+}
+
+#[test]
+fn a_transition_hint_in_the_middle_draws_the_plain_ramp() {
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 50%, blue)",
+        100,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, blue)",
+        100,
+        1,
+    );
+    assert_eq!(hinted, plain);
+}
+
+#[test]
+fn a_transition_hint_gets_the_middle_color_in_the_default_interpolation_space() {
+    // Oklab: the hint position holds the same color as the plain ramp's middle.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right, red, 25%, blue)",
+        100,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right, red, blue)",
+        100,
+        1,
+    );
+    let at_hint = pixel(&hinted, 100, 25, 0);
+    let at_middle = pixel(&plain, 100, 50, 0);
+    for channel in 0..3 {
+        assert!(
+            at_hint[channel].abs_diff(at_middle[channel]) <= 4,
+            "{at_hint:?} vs {at_middle:?}"
+        );
+    }
+}
+
+#[test]
+fn a_transition_hint_at_a_stop_makes_a_hard_transition() {
+    // At the first stop the second color starts at once.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 20%, 20%, blue 80%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 10, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 22, 0), BLUE);
+    // At the second stop the first color lasts up to it.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 20%, 80%, blue 80%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 78, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 82, 0), BLUE);
+}
+
+#[test]
+fn a_transition_hint_between_stops_at_one_position_draws_nothing() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 50%, 20%, blue 50%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 40, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 60, 0), BLUE);
+}
+
+#[test]
+fn transition_hints_anchor_the_stops_without_a_position_next_to_them() {
+    // Browsers space the middle stop between the first stop and the hint,
+    // which puts blue at 15% of the line rather than at 50%.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, blue, 30%, lime)",
+        100,
+        1,
+    );
+    let just_before_blue = pixel(&rgba, 100, 14, 0);
+    assert!(
+        just_before_blue[2] >= 240 && just_before_blue[0] <= 12,
+        "{just_before_blue:?}"
+    );
+}
+
+#[test]
+fn a_hint_lifts_the_stops_after_it_up_to_its_position() {
+    // Blue sits at 50% but follows a hint at 80%, so it moves to 80%.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 0%, 80%, blue 50%, lime 100%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 40, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 79, 0), RED);
+    // Lime follows blue at 100%: 7.5% of the way from blue at x = 81.
+    assert!(pixel(&rgba, 100, 81, 0)[2].abs_diff(236) <= 3);
+}
+
+#[test]
+fn a_hint_given_as_a_length_or_calc_resolves_against_the_line() {
+    let by_length = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 0px, 25px, blue 100px)",
+        100,
+        1,
+    );
+    let by_calc = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, calc(10px + 15%), blue)",
+        100,
+        1,
+    );
+    let by_percent = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 25%, blue)",
+        100,
+        1,
+    );
+    assert_eq!(by_length, by_percent);
+    assert_eq!(by_calc, by_percent);
+}
+
+#[test]
+fn a_transition_hint_mixes_translucent_stops_with_premultiplied_alpha() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, transparent, 25%, blue)",
+        100,
+        1,
+    );
+    // Half of the blue is there at the hint, where the mix is even.
+    let at_hint = pixel(&rgba, 100, 25, 0);
+    assert!(at_hint[3].abs_diff(128) <= 4, "{at_hint:?}");
+    assert!(pixel(&rgba, 100, 99, 0)[3] >= 253);
+}
+
+#[test]
+fn a_transition_hint_bends_each_period_of_a_repeating_gradient() {
+    let rgba = raster_layer(
+        "background-image: repeating-linear-gradient(to right in srgb, red 0px, 5px, blue 20px)",
+        40,
+        1,
+    );
+    for x in [0, 3, 10, 19, 20, 23, 30, 39] {
+        let t = (f64::from(x % 20) + 0.5) / 20.0;
+        assert_red_near(&rgba, 40, x, hinted_red(0.25, t), 6.0);
+    }
+}
+
+#[test]
+fn a_transition_hint_bends_a_radial_gradient() {
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle farthest-side in srgb, red, 25%, blue)",
+        100,
+        100,
+    );
+    // The ray is 50px long and the pixel at distance d holds the color of d / 50.
+    for dx in [2.0f64, 6.0, 12.5, 25.0, 40.0] {
+        let x = (50.0 + dx) as u32;
+        let t = (f64::from(x) + 0.5 - 50.0) / 50.0;
+        let red = f64::from(pixel(&rgba, 100, x, 50)[0]);
+        assert!(
+            (red - hinted_red(0.25, t)).abs() <= 6.0,
+            "red at {x} is {red}, expected {}",
+            hinted_red(0.25, t)
+        );
+    }
+}
+
+#[test]
+fn a_transition_hint_bends_a_conic_gradient() {
+    // A quarter turn clockwise from the top is the right edge.
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in srgb, red, 25%, blue)",
+        100,
+        100,
+    );
+    let right = f64::from(pixel(&rgba, 100, 98, 50)[0]);
+    assert!((right - 127.5).abs() <= 6.0, "{right}");
+    let angled = raster_conic(
+        "background-image: conic-gradient(in srgb, red, 90deg, blue)",
+        100,
+        100,
+    );
+    assert_eq!(rgba, angled);
+    // Half a turn in, the curve is at 0.5 ^ 0.5 of the way to blue.
+    let bottom = f64::from(pixel(&rgba, 100, 50, 98)[0]);
+    assert!((bottom - hinted_red(0.25, 0.5)).abs() <= 6.0, "{bottom}");
+}
+
+#[test]
+fn a_transition_hint_of_a_conic_gradient_stays_with_the_first_of_two_positions() {
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in srgb, red, 10%, blue 25% 50%, lime)",
+        100,
+        100,
+    );
+    // The band from 25% to 50% is solid blue on the right and bottom edges.
+    assert_eq!(pixel(&rgba, 100, 98, 60)[..3], BLUE[..3]);
+}
+
+#[test]
+fn a_transition_hint_very_far_from_its_stops_is_drawn_without_hanging() {
+    let rgba = raster_layer(
+        "background-image: radial-gradient(green -1540359700%, 0px, darkgrey 2%)",
+        100,
+        100,
+    );
+    // Past the 2% ray the last color is solid.
+    assert_eq!(pixel(&rgba, 100, 99, 99), [169, 169, 169, 255]);
+}
+
+#[test]
+fn a_transition_hint_next_to_a_stop_squeezes_the_curve_against_it() {
+    // A hint a hair from the end holds the first color almost to the end,
+    // and a hint a hair from the start leaves the second color almost at once.
+    let late = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 99.99%, blue)",
+        200,
+        1,
+    );
+    assert_red_near(&late, 200, 150, hinted_red(0.9999, 0.7525), 4.0);
+    let early = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 0.01%, blue)",
+        200,
+        1,
+    );
+    assert_red_near(&early, 200, 100, hinted_red(0.0001, 0.5025), 4.0);
+}
+
+#[test]
+fn a_transition_hint_follows_the_hue_arc_of_an_increasing_hue_method() {
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in oklch increasing hue, #43a047, 25%, #fdd835)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in oklch increasing hue, #43a047, #fdd835)",
+        200,
+        1,
+    );
+    // The hint position, a quarter of the way along, holds the plain ramp's middle.
+    let at_hint = pixel(&hinted, 200, 50, 0);
+    let at_middle = pixel(&plain, 200, 100, 0);
+    for channel in 0..3 {
+        assert!(
+            at_hint[channel].abs_diff(at_middle[channel]) <= 4,
+            "{at_hint:?} vs {at_middle:?}"
+        );
+    }
+}
+
+#[test]
+fn a_transition_hint_is_left_out_under_longer_hue() {
+    // Joining the samples of the curve with ramps would send each of them
+    // round the hue wheel the long way, so the plain ramp is drawn instead.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, #e53935, 25%, #1e88e5)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, #e53935, #1e88e5)",
+        200,
+        1,
+    );
+    assert_eq!(hinted, plain);
+}

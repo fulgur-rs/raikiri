@@ -3848,15 +3848,21 @@ fn angular_stop_offset(position: Option<AnglePercentage>) -> Option<f32> {
 /// Fill missing conic offsets per the color-stop fixup rule.
 ///
 /// CSS Images 3 section 3.4.3: a missing first stop means 0, a missing last
-/// stop means 1, interior runs spread evenly between their defined
-/// neighbors, then every offset clamps up to its predecessor so the sweep
-/// never runs backward. The pinned quadrant cases arrive fully defined, so
-/// this mostly passes offsets through.
+/// stop means 1, a defined offset before an earlier one moves up to it,
+/// interior runs spread evenly between their defined neighbors, then every
+/// offset clamps up to its predecessor so the sweep never runs backward. The
+/// pinned quadrant cases arrive fully defined, so this mostly passes offsets
+/// through.
 fn fixup_conic_offsets(stops: &[Option<f32>]) -> Vec<f32> {
     let count = stops.len();
     let mut offsets: Vec<f32> = stops.iter().map(|slot| slot.unwrap_or(f32::NAN)).collect();
     if count == 0 {
         return Vec::new();
+    }
+    let mut largest = f32::NEG_INFINITY;
+    for offset in offsets.iter_mut().filter(|offset| !offset.is_nan()) {
+        largest = largest.max(*offset);
+        *offset = largest;
     }
     if offsets[0].is_nan() {
         offsets[0] = 0.0;
@@ -3949,16 +3955,20 @@ fn conic_to_peniko(
     if conic.stops.len() < 2 {
         return None;
     }
-    let raw: Vec<Option<f32>> = conic
+    let raw: Vec<gradient::RawStop> = conic
         .stops
         .iter()
-        .map(|stop| angular_stop_offset(stop.position))
+        .map(|stop| gradient::RawStop {
+            position: angular_stop_offset(stop.position),
+            hint: angular_stop_offset(stop.hint),
+            color: gradient_stop_dynamic(stop.color, current_color),
+        })
         .collect();
-    let offsets = fixup_conic_offsets(&raw);
-    let mut peniko_stops: Vec<(f32, DynamicColor)> = Vec::with_capacity(conic.stops.len());
-    for (stop, offset) in conic.stops.iter().zip(offsets.iter()) {
-        peniko_stops.push((*offset, gradient_stop_dynamic(stop.color, current_color)));
-    }
+    let peniko_stops: Vec<(f32, DynamicColor)> =
+        gradient::fixed_up_stops(&raw, &conic.interpolation)
+            .into_iter()
+            .map(|(offset, color)| (offset as f32, color))
+            .collect();
     let from_degrees = if conic.angle.0.is_finite() {
         conic.angle.0
     } else {

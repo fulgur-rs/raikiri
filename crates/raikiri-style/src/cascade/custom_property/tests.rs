@@ -2636,6 +2636,37 @@ fn mixed_calc_in_a_position_is_measured_from_the_start_edge() {
 }
 
 #[test]
+fn gradient_transition_hints_absolutize_font_terms() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "font-size: 10px; background-image: linear-gradient(red, 2em, blue, calc(50% + 1em), lime)",
+        ),
+    );
+    let crate::property::BackgroundImage::Gradient(gradient) = &cv.background_layers[0].image
+    else {
+        panic!("expected a gradient"); // cov:ignore: the declaration sets a gradient
+    };
+    let crate::property::Gradient::Linear(linear) = gradient.as_ref() else {
+        panic!("expected a linear gradient"); // cov:ignore: the declaration sets a linear gradient
+    };
+    assert_eq!(
+        linear.stops[1].hint,
+        Some(LengthPercentageOrCalc::Length(crate::property::Length::Px(
+            20.0
+        )))
+    );
+    assert_eq!(
+        linear.stops[2].hint,
+        Some(LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 10.0
+        }))
+    );
+}
+
+#[test]
 fn gradient_mixed_calc_stops_and_radii_absolutize_font_terms() {
     let calc = |percent, px| LengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
     let gradient = |declarations: &str| {
