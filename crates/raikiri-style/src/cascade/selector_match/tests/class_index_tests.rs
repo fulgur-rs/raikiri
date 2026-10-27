@@ -7,6 +7,7 @@ struct CountingClasses {
     calls: Cell<usize>,
     attributes: Cell<usize>,
     tokens: Cell<usize>,
+    sources: Cell<usize>,
 }
 
 impl StyleElement for CountingClasses {
@@ -26,6 +27,7 @@ impl StyleElement for CountingClasses {
         self.check(class, true)
     }
     fn class_attribute_for_matching(&self) -> Option<&str> {
+        self.sources.set(self.sources.get() + 1);
         self.opt_in.then(|| self.attr("class").unwrap_or(""))
     }
 }
@@ -48,6 +50,7 @@ impl CountingClasses {
             calls: Cell::new(0),
             attributes: Cell::new(0),
             tokens: Cell::new(0),
+            sources: Cell::new(0),
         }
     }
     fn check(&self, class: &str, folded: bool) -> bool {
@@ -135,6 +138,7 @@ fn custom_class_methods_and_short_or_failing_compounds_keep_their_path() {
             .is_some()
     );
     assert_eq!(elem.calls.get(), 128);
+    assert_eq!(elem.sources.get(), 1);
     assert_eq!(elem.attributes.get(), 128 * 33);
     for c in [1, 2, 3] {
         let elem = CountingClasses::new(128, 32, true);
@@ -145,6 +149,7 @@ fn custom_class_methods_and_short_or_failing_compounds_keep_their_path() {
                 .is_some()
         );
         assert_eq!(elem.calls.get(), c);
+        assert_eq!(elem.sources.get(), 0);
         assert_eq!(elem.attributes.get(), c * 33);
     }
     let elem = CountingClasses::new(128, 32, true);
@@ -160,6 +165,7 @@ fn custom_class_methods_and_short_or_failing_compounds_keep_their_path() {
         .is_none()
     );
     assert_eq!(elem.calls.get(), 1);
+    assert_eq!(elem.sources.get(), 0);
     assert_eq!(elem.attributes.get(), 33);
 }
 
@@ -222,8 +228,8 @@ fn indexed_class_comparison_preserves_whitespace_and_quirks_and_mutations() {
 #[test]
 fn class_index_reservation_has_exact_and_rejected_bulk_work_boundaries() {
     let elem = CountingClasses::new(128, 0, true);
-    let source = compound(128);
-    let expected = 128 + elem.attrs[0].1.len() as u64;
+    let source = ".c127".repeat(16);
+    let expected = 16 + elem.attrs[0].1.len() as u64;
     assert_eq!(
         match_classes(&elem, &source, StyleQuirksMode::NoQuirks, Some(expected)).1,
         expected
@@ -239,9 +245,9 @@ fn class_index_reservation_has_exact_and_rejected_bulk_work_boundaries() {
         .is_err()
     );
     let elem = CountingClasses::new(128, 0, true);
-    let (result, used) = match_classes(&elem, &source, StyleQuirksMode::NoQuirks, Some(8));
+    let (result, used) = match_classes(&elem, &source, StyleQuirksMode::NoQuirks, Some(16));
     assert!(result.is_err());
-    assert_eq!(used, 4);
+    assert_eq!(used, 9);
     assert_eq!(elem.calls.get(), 3);
     assert_eq!(elem.attributes.get(), 4);
     let elem = CountingClasses::new(128, 0, true);
@@ -264,7 +270,7 @@ fn byte_or_token_oversize_falls_back_without_missing_late_tokens() {
                 .unwrap()
                 .is_some()
         );
-        assert_eq!(elem.calls.get(), if count == 512 { 3 } else { count });
+        assert_eq!(elem.calls.get(), 3);
     }
     for bytes in [63, 64, 65_536, 65_537] {
         let mut elem = CountingClasses::new(4, 0, true);
@@ -276,10 +282,7 @@ fn byte_or_token_oversize_falls_back_without_missing_late_tokens() {
                 .unwrap()
                 .is_some()
         );
-        assert_eq!(
-            elem.calls.get(),
-            if (64..=65_536).contains(&bytes) { 3 } else { 4 }
-        );
+        assert_eq!(elem.calls.get(), 3);
     }
 }
 
@@ -303,21 +306,76 @@ fn actual_class_operations_scale_with_tokens_instead_of_compound_squared() {
                     .is_some()
             );
             let (tokens, hashed_bytes, comparisons) = class_index::stats();
+            let (raw_tokens, raw_bytes) = class_index::raw_stats();
             assert_eq!(fallback.tokens.get(), c * (c + 1) / 2);
             if c >= 32 {
                 assert_eq!(tokens, c);
-                assert!(indexed.tokens.get() + tokens + comparisons < c * 4);
+                assert!(indexed.tokens.get() + raw_tokens + tokens + comparisons < c * 10);
                 assert_eq!(indexed.attributes.get(), 4 * (a + 1));
             } else {
                 assert_eq!(tokens, 0);
             }
             println!(
-                "CLASS_OPS c={c} a={a} old_attrs={} new_attrs={} old_tokens={} new_fallback_tokens={} index_tokens={tokens} index_hash_bytes={hashed_bytes} index_equalities={comparisons}",
+                "CLASS_OPS c={c} a={a} old_attrs={} new_attrs={} old_tokens={} new_fallback_tokens={} index_tokens={tokens} index_hash_bytes={hashed_bytes} index_equalities={comparisons} raw_tokens={raw_tokens} raw_bytes={raw_bytes}",
                 fallback.attributes.get(),
                 indexed.attributes.get(),
                 fallback.tokens.get(),
                 indexed.tokens.get()
             );
+        }
+    }
+}
+
+#[test]
+fn adaptive_short_compounds_skip_unamortized_index() {
+    for a in [0, 128] {
+        for required in [4, 8] {
+            for source in [compound(required), ".c127".repeat(required)] {
+                let elem = CountingClasses::new(128, a, true);
+                class_index::reset_stats();
+                let (result, work) = match_classes(&elem, &source, StyleQuirksMode::NoQuirks, None);
+                assert!(result.unwrap().is_some());
+                assert_eq!(work, required as u64);
+                assert_eq!(class_index::stats().0, 0);
+                assert_eq!(elem.calls.get(), 3);
+                assert_eq!(elem.attributes.get(), 4 * (a + 1));
+            }
+        }
+    }
+}
+
+#[test]
+fn adaptive_short_compounds_stay_unindexed_inside_long_chains() {
+    let mut doc = TestDoc::new();
+    let mut parent = 0;
+    let mut ancestors = Vec::new();
+    for _ in 0..20 {
+        parent = doc.push_element(parent, "p", None);
+        ancestors.push(StyleNodeId::new(parent as u64));
+    }
+    let subject = doc.push_element(parent, "p", None);
+    for required in [4, 8] {
+        for source in [compound(required), ".c127".repeat(required)] {
+            let elem = CountingClasses::new(128, 128, true);
+            let list =
+                crate::parse_selector_list(&format!("{}{source}", "p > ".repeat(20))).unwrap();
+            let caches = MatchCaches::with_work_limit(None);
+            let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &caches);
+            class_index::reset_stats();
+            assert!(
+                match_complex_selector_list(
+                    &list,
+                    ctx,
+                    &elem,
+                    StyleNodeId::new(subject as u64),
+                    &ancestors
+                )
+                .unwrap()
+                .is_some()
+            );
+            assert_eq!(class_index::stats().0, 0);
+            assert_eq!(elem.calls.get(), 3);
+            assert_eq!(elem.attributes.get(), 4 * 129);
         }
     }
 }

@@ -351,7 +351,7 @@ pub trait StyleElement {
             .is_some_and(|value| class_token_matches(value, class, true))
     }
 
-    /// Opts into standard class-token indexing for repeated compound checks.
+    /// Opts into standard class-token matching for repeated compound checks.
     ///
     /// `Some(value)` promises that both [`Self::has_class`] and
     /// [`Self::has_class_ascii_case_insensitive`] agree exactly with splitting
@@ -361,7 +361,8 @@ pub trait StyleElement {
     /// does not mean an empty set. The default does not opt in.
     ///
     /// The matcher borrows the value only for the current immutable compound
-    /// match; no token index survives it or a subsequent attribute mutation.
+    /// match. Repeated checks may scan that borrow before indexing it; no
+    /// borrowed state survives the compound or a subsequent attribute mutation.
     fn class_attribute_for_matching(&self) -> Option<&str> {
         None
     }

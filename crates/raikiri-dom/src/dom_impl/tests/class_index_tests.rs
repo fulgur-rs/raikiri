@@ -34,9 +34,8 @@ fn native_class_index_reflects_attribute_replacement_and_removal() {
 fn native_class_index_bulk_failure_is_sticky_on_reusable_public_budget() {
     let (doc, _, ids) = fixture(1, 128, 0, false);
     let id = StyleNodeId::new(ids[0] as u64);
-    let query =
-        SelectorQuery::parse(&(0..128).map(|i| format!(".c{i}")).collect::<String>()).unwrap();
-    let budget = raikiri_style::SelectorWorkBudget::new(Some(8));
+    let query = SelectorQuery::parse(&".c127".repeat(16)).unwrap();
+    let budget = raikiri_style::SelectorWorkBudget::new(Some(16));
     let matcher = query.bounded_matcher(&doc, None, &budget);
     let first = matcher.try_matches(id, &[]).unwrap_err();
     assert!(matches!(
@@ -46,7 +45,7 @@ fn native_class_index_bulk_failure_is_sticky_on_reusable_public_budget() {
             ..
         }
     ));
-    assert_eq!(budget.count(), 5);
+    assert_eq!(budget.count(), 10);
     assert_eq!(
         matcher.try_matches(id, &[]).unwrap_err().to_string(),
         first.to_string()
@@ -60,5 +59,5 @@ fn native_class_index_bulk_failure_is_sticky_on_reusable_public_budget() {
             .to_string(),
         first.to_string()
     );
-    assert_eq!(budget.count(), 5);
+    assert_eq!(budget.count(), 10);
 }

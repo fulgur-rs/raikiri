@@ -58,7 +58,8 @@ pub struct CascadeLimits {
     /// An operation is charged before its node is inspected or queued;
     /// exceeding the limit returns a terminal error, never partial styles.
     ///
-    /// Other string bytes are not counted; neither are arbitrary DOM trait implementations
+    /// Other string bytes, including repeated borrowed class-token scans, are not
+    /// counted; neither are arbitrary DOM trait implementations
     /// or total CPU time. Bounded DOM queries use a separate
     /// [`crate::SelectorWorkBudget`]; compatibility bool methods are unlimited.
     /// `None` disables this limit. Defaults to `Some(2^26)`.
