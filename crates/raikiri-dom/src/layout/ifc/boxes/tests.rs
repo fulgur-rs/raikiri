@@ -3,12 +3,22 @@ use crate::Document;
 pub(super) mod clear_break_tests;
 mod group_align_tests;
 mod intrinsic_block_size_tests;
+mod oof_index_tests;
 mod orthogonal_baseline_tests;
 mod percent_edge_tests;
 mod rtl_margin_tests;
 mod static_position_tests;
 mod vertical_atomic_tests;
 mod vertical_bfc_tests;
+thread_local! {
+    pub(super) static OOF_ANCHOR_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_FALLBACK_INDEX_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_ANCHOR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_BOX_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_METADATA_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static OOF_PLACE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::test_support::{
     absolute_rect, ahem_paragraph, ahem_paragraph_with_atomic, ahem_paragraph_with_float,
