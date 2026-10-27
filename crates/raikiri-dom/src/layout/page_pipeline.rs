@@ -208,6 +208,7 @@ fn content_overflow_end(
                 roots,
                 y,
                 |node_id| element_clips_overflow(document, cascade, node_id),
+                |node_id| painted_relative_offset_y(document, cascade, body_id, node_id),
             ));
         }
         let in_columns = if let Some(outside) = in_columns {
@@ -258,12 +259,16 @@ fn clip_block_end(document: &Document, cascade: &CascadeResult, node_id: usize, 
 /// fragmentainer clip, intersected with the clips of the enclosing
 /// fragments, hides what extends past its column. A fragment whose element
 /// `clips_overflow` also hides what its descendants paint past its own box.
+/// The relative offset that layout left to the painter, `painted_offset` of
+/// the element, moves the fragment with its clip and everything inside it; the
+/// roots are placed at `y`, which has the offset of their elements already.
 fn fragment_tree_end(
     fragments: &[crate::fragment::LayoutFragment],
     fragment_children: &HashMap<usize, Vec<usize>>,
     roots: &[usize],
     y: f32,
     clips_overflow: impl Fn(usize) -> bool,
+    painted_offset: impl Fn(usize) -> f32,
 ) -> f32 {
     let mut end = f32::NEG_INFINITY;
     let mut pending: Vec<(usize, f32, f32)> = roots
@@ -272,6 +277,11 @@ fn fragment_tree_end(
         .collect();
     while let Some((index, parent_origin, inherited_clip_end)) = pending.pop() {
         let rect = fragments[index].rect;
+        let parent_origin = if fragments[index].parent.is_some() {
+            parent_origin + painted_offset(fragments[index].node_id)
+        } else {
+            parent_origin
+        };
         let origin = parent_origin + rect.y;
         let clip_end = fragments[index]
             .fragmentainer_clip

@@ -238,6 +238,13 @@ pub(crate) fn compute_multicol_layout(
     tree.context.columns_relayout_pending = deferred || relays_out_children;
     let mut output = crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     tree.context.columns_relayout_pending = deferred;
+    // Block layout has placed the children again, with the offsets of their
+    // insets, which a column strategy below leaves out when it places them.
+    if inputs.run_mode == RunMode::PerformLayout {
+        for child in tree.children_through_contents(index) {
+            tree.nodes[child].needs_relative_block_paint_offset = false;
+        }
+    }
     if tree.fragment_tree.limit_exceeded {
         tree.context.fragmentation_stack.truncate(stack_depth);
         return output;
@@ -859,7 +866,7 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
                     .into_iter()
                     .all(|edge| edge == zero_margin)
                 && node.layout_position() != Position::Absolute
-                && insets_are_a_relative_inline_offset(tree, child)
+                && insets_are_a_relative_offset(tree, child)
                 && !style.float().is_floated()
                 && style.size().height.is_auto()
                 && style.min_size().height.is_auto()
@@ -870,15 +877,43 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
 /// Whether the insets of `child` can be left to the painter once the columns
 /// place the box: it has none, or it is `position: relative` with only inline
 /// insets, whose offset the painter adds to the location the column strategy
-/// gives it. A block-axis inset moves the box across pages, which pagination
-/// measures from the location layout gave it, and the offset of any other
-/// positioned box is already part of that location.
+/// gives it.
+///
+/// This is the rule for a box that a strategy derives from the location block
+/// flow gave it, as the boxes of a chain of single children are: a block-axis
+/// inset is part of that location and moves the box across pages, which
+/// pagination measures from it. A box that a strategy places itself takes
+/// [`insets_are_a_relative_offset`].
 fn insets_are_a_relative_inline_offset(tree: &LayoutSession<'_>, child: usize) -> bool {
     let inset = style_of(tree, child).inset();
     inset.top.is_auto()
         && inset.bottom.is_auto()
         && (inset.left.is_auto() && inset.right.is_auto()
             || tree.nodes[child].layout_position() == Position::Relative)
+}
+
+/// Whether the insets of `child`, a box that the columns place themselves, can
+/// be left to the painter: it has none, or it is `position: relative`. The
+/// painter adds the whole offset to the location the column strategy gives it,
+/// and [`leave_block_offset_to_painter`] tells pagination so.
+fn insets_are_a_relative_offset(tree: &LayoutSession<'_>, child: usize) -> bool {
+    tree.nodes[child].layout_position() == Position::Relative
+        || insets_are_a_relative_inline_offset(tree, child)
+}
+
+/// Record that the columns placed `child` without the block offset of its
+/// `position: relative` insets, which the painter adds. Pagination measures
+/// that offset from the location layout gave the box unless it is told so.
+/// A box on a line is placed with its offset, so it is left as it is.
+fn leave_block_offset_to_painter(tree: &mut LayoutSession<'_>, child: usize) {
+    let inset = style_of(tree, child).inset();
+    let node = &tree.nodes[child];
+    if node.layout_position() == Position::Relative
+        && !node.display().is_inline_level()
+        && !(inset.top.is_auto() && inset.bottom.is_auto())
+    {
+        tree.nodes[child].needs_relative_block_paint_offset = true;
+    }
 }
 
 // A logical non-auto child minimum paired with break avoidance participates
@@ -1450,6 +1485,7 @@ fn layout_column_group(
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(NodeId::from(child), &child_layout);
+        leave_block_offset_to_painter(tree, child);
         if let Some(placement) = planned {
             if let Some(root) = tree.nodes[child].ifc.as_mut() {
                 root.multicol_fragments = Some(placement.fragments.clone());
@@ -2068,6 +2104,7 @@ fn apply_nested_continuation(
                 x: origin.x + rect.x,
                 y: origin.y + rect.y,
             };
+            leave_block_offset_to_painter(tree, child);
         }
     }
     // Column rules are drawn in each row's box, which the row's group names
@@ -2125,6 +2162,7 @@ fn apply_nested_continuation(
             root.multicol_fragments = Some(fragments);
             root.multicol_fragment_origins_recorded = true;
         }
+        leave_block_offset_to_painter(tree, child);
     }
     Some(())
 }

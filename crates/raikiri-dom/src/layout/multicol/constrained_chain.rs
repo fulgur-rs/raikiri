@@ -30,6 +30,8 @@ pub(super) fn supported(tree: &LayoutSession<'_>, parent: usize) -> Option<Vec<u
         let node = layout_node(tree, child);
         let style = style_of(tree, child);
         let overflow = style.overflow();
+        // The chain is placed from the locations block flow gave its boxes,
+        // so a block-axis offset stays with block flow.
         if node.display() != DisplayValue::Block
             || style.direction() != direction
             || style.float().is_floated()

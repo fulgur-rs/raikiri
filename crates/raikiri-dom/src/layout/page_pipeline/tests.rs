@@ -13964,18 +13964,65 @@ fn fragment_tree_end_intersects_nested_fragments_with_ancestor_clips() {
     ];
     let children = HashMap::from([(0, vec![1]), (1, vec![2])]);
     assert_eq!(
-        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false, |_| 0.0),
         150.0
     );
     // Without the outer clip, the deepest fragment paints to its own end.
     let fragments = [fragment(None, 0.0, 300.0, None), fragments[1], fragments[2]];
     assert_eq!(
-        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false, |_| 0.0),
         520.0
     );
     assert_eq!(
-        fragment_tree_end(&fragments, &children, &[], 100.0, |_| false),
+        fragment_tree_end(&fragments, &children, &[], 100.0, |_| false, |_| 0.0),
         f32::NEG_INFINITY
+    );
+}
+
+#[test]
+fn fragment_tree_end_moves_fragments_by_the_offset_the_painter_adds() {
+    let fragment =
+        |node_id, parent, y, height, clip_height: Option<f32>| crate::fragment::LayoutFragment {
+            node_id,
+            parent,
+            fragmentainer: 0,
+            rect: crate::fragment::FragmentRect {
+                x: 0.0,
+                y,
+                width: 10.0,
+                height,
+            },
+            fragmentainer_clip: clip_height.map(|height| crate::fragment::FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height,
+            }),
+            fragment_index: 0,
+            fragment_count: 1,
+            line_start: None,
+            line_end: None,
+        };
+    // A column holds a 40px box cut at the column end, which holds a 30px box
+    // 10px down. The painter moves the box 5px down with its clip and
+    // everything inside it, but not the column, which stands where its
+    // element was placed.
+    let fragments = [
+        fragment(1, None, 0.0, 10.0, None),
+        fragment(2, Some(0), 0.0, 40.0, Some(40.0)),
+        fragment(3, Some(1), 10.0, 30.0, None),
+    ];
+    let children = HashMap::from([(0, vec![1]), (1, vec![2])]);
+    let offset = |node_id| if matches!(node_id, 1 | 2) { 5.0 } else { 0.0 };
+    // The box ends at 100 + 5 + 40, and so does the clip that moved with it;
+    // the inner box reaches 100 + 5 + 10 + 30.
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false, offset),
+        145.0
+    );
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false, |_| 0.0),
+        140.0
     );
 }
 
@@ -14001,11 +14048,18 @@ fn fragment_tree_end_caps_descendants_of_overflow_clipping_fragments() {
     let fragments = [fragment(1, None, 30.0), fragment(2, Some(0), 400.0)];
     let children = HashMap::from([(0, vec![1])]);
     assert_eq!(
-        fragment_tree_end(&fragments, &children, &[0], 0.0, |node_id| node_id == 1),
+        fragment_tree_end(
+            &fragments,
+            &children,
+            &[0],
+            0.0,
+            |node_id| node_id == 1,
+            |_| 0.0
+        ),
         30.0
     );
     assert_eq!(
-        fragment_tree_end(&fragments, &children, &[0], 0.0, |_| false),
+        fragment_tree_end(&fragments, &children, &[0], 0.0, |_| false, |_| 0.0),
         400.0
     );
 }

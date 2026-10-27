@@ -1292,9 +1292,20 @@ fn manually_placed_roots_floats_and_multicol_children_keep_relative_offsets() {
             "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid;position:relative;left:10px;top:12px;width:20px;background:green'></div></div>",
             Point::new(10.0, 12.0),
         ),
+        // The rounded box cannot be sliced, so the children are spaced apart
+        // instead, and only the block offset is left to paint.
         (
-            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid'></div><div style='position:relative;left:10px;top:12px;width:20px;height:10px;background:green'></div></div>",
-            Point::new(10.0, 92.0),
+            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid'></div><div style='height:70px;border:2px solid;border-radius:2px'></div><div style='position:relative;left:10px;top:12px;width:20px;height:10px;background:green'></div></div>",
+            Point::new(10.0, 172.0),
+        ),
+        // The columns place these boxes, and paint adds the whole offset.
+        (
+            "<body style='margin:0'><div style='column-count:2;column-fill:auto;width:200px;height:60px'><div style='height:60px'></div><div style='position:relative;left:10px;top:12px;width:20px;height:10px;background:green'></div></div>",
+            Point::new(118.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='column-count:2;column-fill:auto;width:200px;height:60px'><div style='height:30px'></div><div style='position:relative;left:10px;bottom:-12px;width:20px;height:10px;background:green'></div></div>",
+            Point::new(10.0, 42.0),
         ),
     ] {
         let scene = transform_markup_scene(markup);
