@@ -43,7 +43,10 @@ pub struct CascadeLimits {
     /// declarations, costs its tests without adding candidates. This counts
     /// tests, not their cost: a `:has()` test searches the element's
     /// subtree or following siblings, and rules the index rules out by
-    /// ancestor hashes are not counted.
+    /// ancestor hashes are not counted. This conservative legacy estimate
+    /// still charges the whole candidate rule list when individual selectors
+    /// are skipped by the index. Actual matching operations are counted by
+    /// [`Self::max_selector_work`].
     ///
     /// Defaults to `Some(2^30)`.
     pub max_selector_tests: Option<u64>,

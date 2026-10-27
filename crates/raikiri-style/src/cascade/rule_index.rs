@@ -241,7 +241,8 @@ pub(crate) struct RuleIndex<'a> {
 impl<'a> RuleIndex<'a> {
     /// Builds the index. `rules` must already be in the order candidates are
     /// to be pushed (ascending source order); [`Self::candidate_selectors`]
-    /// returns rule indices in that same order. `layers` is the cascade's
+    /// returns selector positions grouped in that same rule order and then
+    /// in selector-list order. `layers` is the cascade's
     /// layer order, which gives each rule its layer position.
     ///
     /// Candidates refer to a declaration by the `u32` positions of its rule
@@ -320,7 +321,7 @@ impl<'a> RuleIndex<'a> {
         self.pseudo_targets & pseudo_bit(pseudo) != 0
     }
 
-    /// The active rules, at the positions [`Self::candidate_selectors`] returns.
+    /// The active rules, indexed by the rule field of [`Self::candidate_selectors`].
     pub(crate) fn rules(&self) -> &[IndexedRule<'a>] {
         &self.rules
     }
