@@ -491,6 +491,10 @@ impl JobExecutor for RaikiriJobExecutor {
     }
 }
 
+/// How many focus fixups one settling of the page runs with events before
+/// it drops a still-invalid focus silently.
+const MAX_IDLE_FOCUS_FIXUPS: u32 = 16;
+
 /// Native stack guaranteed to everything a [`super::DomRuntime`] entry point
 /// runs: parsing, script, callbacks, and the microtasks and tasks that
 /// follow.
@@ -501,10 +505,6 @@ impl JobExecutor for RaikiriJobExecutor {
 /// is reserved as address space and only touched as deep as the run
 /// actually recurses.
 #[cfg(not(target_arch = "wasm32"))]
-/// How many focus fixups one settling of the page runs with events before
-/// it drops a still-invalid focus silently.
-const MAX_IDLE_FOCUS_FIXUPS: u32 = 16;
-
 const ENGINE_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 /// Run `f` with at least [`ENGINE_STACK_BYTES`] of native stack, switching
