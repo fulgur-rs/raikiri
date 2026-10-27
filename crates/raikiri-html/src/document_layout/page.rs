@@ -942,9 +942,9 @@ impl<'a> Page<'a> {
     /// others after [`Self::paint_order`], in front of it.
     ///
     /// Generated content is resolved for this page: `counter(page)`,
-    /// `counter(pages)`, quotes, and the document-wide values of `string()`
-    /// and `element()`. Each box's text is available as glyph runs through
-    /// [`MarginBox::text_runs`].
+    /// `counter(pages)`, quotes, `string()` as the value on this page, and
+    /// the document-wide value of `element()`. Each box's text is available
+    /// as glyph runs through [`MarginBox::text_runs`].
     ///
     /// On a page streamed before the number of pages is known,
     /// `counter(pages)` shows a placeholder and each box lists it in

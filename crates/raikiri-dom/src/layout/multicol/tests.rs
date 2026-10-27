@@ -2861,6 +2861,136 @@ fn the_padding_of_a_block_in_a_wrapper_resolves_against_the_wrapper() {
 }
 
 #[test]
+fn the_last_block_of_a_padded_wrapper_moves_with_the_padding_that_would_break_away() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:50px"),
+    );
+    let first = doc.append_element(Some(wrapper), "div", Some("display:block;height:50px"));
+    let last = doc.append_element(Some(wrapper), "div", Some("display:block;height:50px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    // The second block fills the rest of the first column and the padding
+    // does not fit, so the block follows the padding to the second column
+    // instead of leaving it alone there.
+    assert_eq!(fragment_rects(&doc, first), vec![(0, 0.0, 0.0, 50.0)]);
+    assert_eq!(fragment_rects(&doc, last), vec![(1, 0.0, 0.0, 50.0)]);
+    // The wrapper's second piece shows the last 100px of its 150px, the
+    // block and the padding, not the 50px of padding that the gap above the
+    // block would leave.
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -50.0, 150.0)]
+    );
+}
+
+#[test]
+fn the_padding_of_a_wrapper_that_fills_a_column_is_part_of_the_box_it_shows() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:100px;border-bottom:2px solid"),
+    );
+    let block = doc.append_element(Some(wrapper), "div", Some("display:block;height:50px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    // The padding runs from the end of the block to the end of the first
+    // column and on into the second, so the second piece is moved up by the
+    // whole 100px the first one shows, not by the 50px of the block.
+    assert_eq!(fragment_rects(&doc, block)[0], (0, 0.0, 0.0, 50.0));
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 152.0), (1, 100.0, -100.0, 152.0)]
+    );
+}
+
+#[test]
+fn the_margin_a_column_break_cuts_is_still_part_of_the_box_a_wrapper_shows() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:48px;border-bottom:2px solid"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:40px"));
+    let last = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;height:50px;margin-top:10px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    // The last block fills the rest of the first column and its padding and
+    // border do not fit, so it follows them to the second column, where the
+    // 10px margin above it is cut. The wrapper is 150px tall with the margin,
+    // so its second piece is moved up by the 40px of the first block and the
+    // margin, and the border ends the column.
+    assert_eq!(fragment_rects(&doc, last)[0], (1, 0.0, 0.0, 50.0));
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -50.0, 150.0)]
+    );
+
+    // Blocks with no block size between the two let their margins collapse
+    // with it.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:48px;border-bottom:2px solid"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:40px"));
+    doc.append_element(Some(wrapper), "div", Some("display:block;margin-top:10px"));
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;margin-bottom:5px"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:50px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -50.0, 150.0)]
+    );
+
+    // A block that fits the column exactly leaves the margin to the next
+    // block as well.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:block;padding-bottom:10px"),
+    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;height:100px"));
+    let second = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;height:80px;margin-top:10px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(fragment_rects(&doc, second)[0], (1, 0.0, 0.0, 80.0));
+    assert_eq!(
+        fragment_rects(&doc, wrapper),
+        vec![(0, 0.0, 0.0, 200.0), (1, 100.0, -110.0, 200.0)]
+    );
+}
+
+#[test]
 fn an_absolute_box_in_a_sliced_block_stays_in_its_column() {
     let (doc, _, ids) = absolute_fixture(
         DEFINITE_COLUMNS,
@@ -4741,5 +4871,686 @@ fn authored_box_reads_what_the_style_view_reads() {
                 "max-width of {ctx} against {basis}"
             );
         }
+    }
+}
+
+/// A chain of `depth` column containers with a definite height, each in the
+/// one above, around some text, and the containers from the outermost in.
+fn nested_columns_with_a_height(depth: usize) -> (Document, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let mut parent = body;
+    let mut containers = Vec::new();
+    for _ in 0..depth {
+        parent = doc.append_element(
+            Some(parent),
+            "div",
+            Some("display:block;column-count:2;column-gap:10px;height:5000px"),
+        );
+        containers.push(parent);
+    }
+    doc.append_text(parent, "text");
+    (doc, containers)
+}
+
+/// Lays the document out on a page of the given size in Ahem.
+fn lay_out_in_ahem(doc: &mut Document, width: f32, height: f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
+    let rules = build_rule_tree(doc);
+    let cascade = cascade(doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = width;
+    page.height = height;
+    layout_single_page(doc, &cascade, page).expect("layout Ok");
+}
+
+/// The width the lines of the paragraph were last broken at.
+fn lines_broken_at(doc: &Document, paragraph: usize) -> f32 {
+    doc.nodes[paragraph]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("lines of the paragraph")
+        .width
+}
+
+/// Text that takes several lines of Ahem in a column of 395px.
+const COLUMN_TEXT: &str = "beta zeta sigma xi xi sigma beta beta nu omicron mu mu sigma sigma alpha \
+    lambda gamma theta delta mu mu delta nu delta mu pi lambda beta mu gamma lambda pi eta eta epsilon";
+
+#[test]
+fn nested_columns_with_a_height_are_laid_out_once_per_level() {
+    // Each container with a height laid its children out across its whole
+    // width and again in its columns, once for each layout of the container
+    // above, so the layouts doubled with every level: a chain of twelve took
+    // 1779 of them.
+    let depth = 12;
+    let (mut doc, containers) = nested_columns_with_a_height(depth);
+    crate::layout::test_support::MULTICOL_LAYOUTS.with(|count| count.set(0));
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    let layouts = crate::layout::test_support::MULTICOL_LAYOUTS.with(std::cell::Cell::get);
+    assert!(
+        layouts <= 8 * depth,
+        "{layouts} layouts of {depth} containers"
+    );
+
+    // Every container is as tall as it states, and as wide as a column of the
+    // one above while that is wide enough to tell.
+    let mut width = 800.0;
+    for (level, &container) in containers.iter().enumerate() {
+        let size = doc.nodes[container].layout.size;
+        assert!((size.height - 5000.0).abs() < 0.01, "{size:?}");
+        if level < 5 {
+            assert!((size.width - width).abs() < 0.01, "{size:?} in {width}");
+        }
+        width = (width - 10.0) / 2.0;
+    }
+}
+
+#[test]
+fn text_in_columns_of_a_container_laid_out_again_takes_the_width_of_its_column() {
+    // The columns of the outer container lay the container with a height out
+    // again; the text in it is laid out at the width of its own columns, not
+    // at the one the first layout across the whole width gave it.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let outer = doc.append_element(Some(body), "div", Some("display:block;column-count:1"));
+    let columns = doc.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;column-count:2;column-gap:10px;height:200px"),
+    );
+    let block = doc.append_element(Some(columns), "div", Some("display:block"));
+    doc.append_text(block, COLUMN_TEXT);
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    assert_eq!(doc.nodes[block].layout.size.width, 395.0);
+    assert_eq!(lines_broken_at(&doc, block), 395.0);
+}
+
+#[test]
+fn text_in_columns_laid_out_after_a_skipped_container_is_laid_out_again() {
+    // The container with a height inside the first one is left for the layout
+    // in columns, so the paragraphs beside it were laid out across the whole
+    // width in between: what the caches kept of them for the width of a
+    // column no longer holds, and the lines would keep that width.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;column-count:1;height:500px"),
+    );
+    let wrapper = doc.append_element(Some(outer), "div", Some("display:block"));
+    let middle = doc.append_element(
+        Some(wrapper),
+        "div",
+        Some("display:block;column-count:2;column-gap:10px"),
+    );
+    doc.append_element(
+        Some(middle),
+        "div",
+        Some("display:block;column-count:2;column-gap:10px;height:60px"),
+    );
+    let paragraph = doc.append_element(Some(middle), "div", Some("display:block"));
+    doc.append_text(paragraph, COLUMN_TEXT);
+    lay_out_in_ahem(&mut doc, 800.0, 600.0);
+    assert_eq!(doc.nodes[paragraph].layout.size.width, 395.0);
+    assert_eq!(lines_broken_at(&doc, paragraph), 395.0);
+}
+
+/// A part of the content of a column container: lines of text in Ahem 20px
+/// high, a paragraph of that many lines, a column spanner of 20px with more
+/// style, or a box with a style.
+enum Part<'a> {
+    Lines(usize),
+    Paragraph(usize),
+    Spanner(&'a str),
+    Box(&'a str),
+}
+
+/// A column container of 100px with two columns whose own content is `parts`,
+/// in a document of its own. The container, and the boxes among the parts in
+/// order.
+fn column_container(container_css: &str, parts: &[Part<'_>]) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            format!(
+                "display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1;{container_css}"
+            )
+            .as_str(),
+        ),
+    );
+    let mut boxes = Vec::new();
+    for part in parts {
+        match part {
+            Part::Lines(count) => {
+                for line in 0..*count {
+                    doc.append_text(container, "x");
+                    if line + 1 < *count {
+                        doc.append_element(Some(container), "br", None::<&str>);
+                    }
+                }
+            }
+            Part::Paragraph(count) => {
+                let paragraph = doc.append_element(Some(container), "div", Some("display:block"));
+                for line in 0..*count {
+                    doc.append_text(paragraph, "x");
+                    if line + 1 < *count {
+                        doc.append_element(Some(paragraph), "br", None::<&str>);
+                    }
+                }
+            }
+            Part::Spanner(css) => boxes.push(doc.append_element(
+                Some(container),
+                "div",
+                Some(format!("display:block;column-span:all;height:20px;{css}").as_str()),
+            )),
+            Part::Box(css) => {
+                boxes.push(doc.append_element(Some(container), "div", Some(*css)));
+            }
+        }
+    }
+    (doc, container, boxes)
+}
+
+/// The line ranges of the paragraph of `container` in its columns, as
+/// `(first line, end, column, x, y)`.
+fn column_ranges(doc: &Document, container: usize) -> Vec<(usize, usize, usize, f32, f32)> {
+    doc.nodes[container]
+        .ifc_multicol_fragments()
+        .expect("lines in columns")
+        .iter()
+        .map(|range| {
+            (
+                range.line_start,
+                range.line_end,
+                range.fragmentainer,
+                range.x,
+                range.y,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_lines_around_a_spanner_fill_the_columns_group_by_group() {
+    // Two lines in each column of a group: 40px of columns, the spanner, and
+    // 40px of columns again. The lines used to stay in one column.
+    let (mut doc, container, boxes) =
+        column_container("", &[Part::Lines(4), Part::Spanner(""), Part::Lines(4)]);
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 100.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 2, 0, 0.0, 0.0),
+            (2, 4, 1, 60.0, 0.0),
+            (4, 6, 0, 0.0, 60.0),
+            (6, 8, 1, 60.0, 60.0),
+        ]
+    );
+    let layout = doc.nodes[boxes[0]].layout;
+    assert_eq!(layout.location.x, 0.0);
+    assert_eq!(layout.location.y, 40.0);
+    assert_eq!(layout.size.width, 100.0);
+    assert_eq!(layout.size.height, 20.0);
+}
+
+#[test]
+fn a_group_with_one_line_fills_one_column() {
+    let (mut doc, container, boxes) =
+        column_container("", &[Part::Lines(1), Part::Spanner(""), Part::Lines(3)]);
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 1, 0, 0.0, 0.0),
+            (1, 3, 0, 0.0, 40.0),
+            (3, 4, 1, 60.0, 40.0),
+        ]
+    );
+    assert_eq!(doc.nodes[boxes[0]].layout.location.y, 20.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 80.0);
+}
+
+#[test]
+fn a_spanner_at_either_end_of_the_lines_has_no_group_on_that_side() {
+    let (mut doc, container, boxes) = column_container("", &[Part::Spanner(""), Part::Lines(4)]);
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 20.0), (2, 4, 1, 60.0, 20.0)]
+    );
+    assert_eq!(doc.nodes[boxes[0]].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 60.0);
+
+    let (mut doc, container, boxes) = column_container("", &[Part::Lines(4), Part::Spanner("")]);
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [(0, 2, 0, 0.0, 0.0), (2, 4, 1, 60.0, 0.0)]
+    );
+    assert_eq!(doc.nodes[boxes[0]].layout.location.y, 40.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 60.0);
+}
+
+#[test]
+fn the_margins_of_spanners_separate_them_from_the_groups_around_them() {
+    // The margins between two spanners collapse; the ones next to a group stay.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[
+            Part::Lines(4),
+            Part::Spanner("margin-bottom:10px"),
+            Part::Spanner("margin-top:20px"),
+            Part::Lines(4),
+        ],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(doc.nodes[boxes[0]].layout.location.y, 40.0);
+    assert_eq!(doc.nodes[boxes[1]].layout.location.y, 80.0);
+    assert_eq!(column_ranges(&doc, container)[2], (4, 6, 0, 0.0, 100.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 140.0);
+}
+
+#[test]
+fn only_the_group_after_the_last_spanner_fills_its_first_column_under_column_fill_auto() {
+    // The group above a spanner is balanced; the last one is filled as
+    // it would be without a spanner.
+    let (mut doc, container, _) = column_container(
+        "column-fill:auto",
+        &[Part::Lines(4), Part::Spanner(""), Part::Lines(4)],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(
+        column_ranges(&doc, container),
+        [
+            (0, 2, 0, 0.0, 0.0),
+            (2, 4, 1, 60.0, 0.0),
+            (4, 8, 0, 0.0, 60.0),
+        ]
+    );
+}
+
+#[test]
+fn the_groups_around_spanners_are_kept_for_the_rules_between_their_columns() {
+    let (mut doc, container, _) =
+        column_container("", &[Part::Lines(4), Part::Spanner(""), Part::Lines(4)]);
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    let groups: Vec<_> = doc.nodes[container]
+        .multicol_groups
+        .iter()
+        .map(|group| {
+            (
+                group.context.origin_y,
+                group.height,
+                group.occupied.iter().copied().collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    assert_eq!(groups, [(0.0, 40.0, vec![0, 1]), (60.0, 40.0, vec![0, 1])]);
+}
+
+#[test]
+fn a_paragraph_with_other_boxes_than_spanners_is_not_split_in_groups() {
+    // A float, an absolutely positioned box and a plain block each keep the
+    // paragraph in one column.
+    for css in [
+        "display:block;float:left;width:20px;height:20px",
+        "display:block;position:absolute;width:20px;height:20px",
+        "display:block;height:20px",
+    ] {
+        let (mut doc, container, _) = column_container(
+            "",
+            &[
+                Part::Lines(4),
+                Part::Box(css),
+                Part::Spanner(""),
+                Part::Lines(4),
+            ],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert!(
+            doc.nodes[container].multicol_groups.is_empty(),
+            "groups with {css}"
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_in_the_columns_of_another_container_is_not_split_in_groups() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:300px;column-count:2;column-gap:20px"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Some("display:block;column-count:2;column-gap:20px"),
+    );
+    doc.append_text(inner, "x");
+    doc.append_element(Some(inner), "br", None::<&str>);
+    doc.append_text(inner, "x");
+    doc.append_element(
+        Some(inner),
+        "div",
+        Some("display:block;column-span:all;height:20px"),
+    );
+    doc.append_text(inner, "x");
+    lay_out_in_ahem(&mut doc, 400.0, 160.0);
+    assert!(doc.nodes[inner].multicol_groups.is_empty());
+}
+
+#[test]
+fn a_container_with_a_height_is_not_split_in_groups() {
+    let (mut doc, container, _) = column_container(
+        "height:200px",
+        &[Part::Lines(4), Part::Spanner(""), Part::Lines(4)],
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 400.0);
+    assert!(doc.nodes[container].multicol_groups.is_empty());
+}
+
+/// A flex container that aligns its items by their baselines: a box of one
+/// line, and a column container whose own content `fill` adds. The offset the
+/// box ends up below the top of the column container is how far its baseline
+/// lies below the first baseline of the columns.
+fn baseline_offset_of_columns(fill: impl FnOnce(&mut Document, usize)) -> f32 {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:flex;align-items:baseline;width:300px"),
+    );
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
+    doc.append_text(item, "x");
+    let columns = doc.append_element(
+        Some(flex),
+        "div",
+        Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    fill(&mut doc, columns);
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    doc.nodes[item].layout.location.y - doc.nodes[columns].layout.location.y
+}
+
+/// A spanner of the column container `columns` with the line "s" in it.
+fn text_spanner(doc: &mut Document, columns: usize, css: &str) {
+    let spanner = doc.append_element(
+        Some(columns),
+        "div",
+        Some(format!("display:block;column-span:all;{css}").as_str()),
+    );
+    doc.append_text(spanner, "s");
+}
+
+fn bare_line(doc: &mut Document, columns: usize) {
+    doc.append_text(columns, "x");
+    doc.append_element(Some(columns), "br", None::<&str>);
+}
+
+#[test]
+fn the_first_baseline_of_columns_is_that_of_a_line_before_the_first_spanner() {
+    let offset = baseline_offset_of_columns(|doc, columns| {
+        bare_line(doc, columns);
+        bare_line(doc, columns);
+        text_spanner(doc, columns, "");
+        bare_line(doc, columns);
+    });
+    assert_eq!(offset, 0.0);
+}
+
+#[test]
+fn the_first_baseline_of_columns_is_that_of_a_spanner_before_the_first_line() {
+    // The spanner is 30px below the top of the columns, and the lines are 20px
+    // below it.
+    let offset = baseline_offset_of_columns(|doc, columns| {
+        text_spanner(doc, columns, "margin-top:30px;margin-bottom:20px");
+        bare_line(doc, columns);
+        bare_line(doc, columns);
+    });
+    assert_eq!(offset, 30.0);
+}
+
+#[test]
+fn a_spanner_without_a_baseline_leaves_the_first_baseline_to_the_lines_below_it() {
+    let offset = baseline_offset_of_columns(|doc, columns| {
+        doc.append_element(
+            Some(columns),
+            "div",
+            Some("display:block;column-span:all;height:30px"),
+        );
+        bare_line(doc, columns);
+        bare_line(doc, columns);
+    });
+    assert_eq!(offset, 30.0);
+}
+
+#[test]
+fn an_inline_block_of_columns_sits_on_the_baseline_of_its_last_line() {
+    // Two lines in each group, one in each column, around a spanner of 20px:
+    // the last line stands 40px below the top, so its baseline lies 56px
+    // below it, and the box beside the columns drops by as much less than
+    // that as its own baseline is high.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let columns = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:inline-block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    bare_line(&mut doc, columns);
+    doc.append_text(columns, "x");
+    text_spanner(&mut doc, columns, "");
+    bare_line(&mut doc, columns);
+    doc.append_text(columns, "x");
+    let beside = doc.append_element(Some(body), "div", Some("display:inline-block"));
+    doc.append_text(beside, "x");
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    assert_eq!(doc.nodes[columns].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[beside].layout.location.y, 40.0);
+}
+
+#[test]
+fn a_spanner_contains_its_floats() {
+    // The spanner is a formatting context of its own, so it is as tall as the
+    // float in it and the lines below it start under the float.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[Part::Lines(1), Part::Spanner("height:auto"), Part::Lines(2)],
+    );
+    doc.append_element(
+        Some(boxes[0]),
+        "div",
+        Some("float:left;width:50px;height:40px"),
+    );
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    assert_eq!(doc.nodes[boxes[0]].layout.size.height, 40.0);
+    assert_eq!(doc.nodes[container].layout.size.height, 80.0);
+    assert_eq!(
+        column_ranges(&doc, container)
+            .iter()
+            .map(|range| range.4)
+            .collect::<Vec<_>>(),
+        [0.0, 60.0, 60.0]
+    );
+}
+
+#[test]
+fn the_margins_of_the_children_of_a_spanner_stay_inside_it() {
+    // The 10px above the child does not collapse through the top of the
+    // spanner, which stays 20px below the top of the columns.
+    let (mut doc, container, boxes) = column_container(
+        "",
+        &[Part::Lines(1), Part::Spanner("height:auto"), Part::Lines(2)],
+    );
+    doc.append_element(Some(boxes[0]), "div", Some("margin-top:10px;height:20px"));
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    let spanner = doc.nodes[boxes[0]].layout;
+    assert_eq!((spanner.location.y, spanner.size.height), (20.0, 30.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 70.0);
+}
+
+#[test]
+fn a_spanner_in_a_relatively_positioned_inline_stays_across_the_columns() {
+    // The lines move with the inline element, but the spanner is hoisted out
+    // of it and spans the columns where it is, as in Chromium.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let columns = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    let inline = doc.append_element(
+        Some(columns),
+        "span",
+        Some("position:relative;left:10px;top:5px"),
+    );
+    bare_line(&mut doc, inline);
+    doc.append_text(inline, "x");
+    let spanner = doc.append_element(
+        Some(inline),
+        "div",
+        Some("display:block;column-span:all;height:20px"),
+    );
+    bare_line(&mut doc, inline);
+    doc.append_text(inline, "x");
+    lay_out_in_ahem(&mut doc, 180.0, 160.0);
+    let layout = doc.nodes[spanner].layout;
+    assert_eq!(
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height
+        ),
+        (0.0, 20.0, 100.0, 20.0)
+    );
+}
+
+#[test]
+fn a_narrow_spanner_in_columns_sits_where_the_direction_puts_it() {
+    // The columns are 100px wide. An over-constrained spanner in a right to
+    // left container changes its left margin (CSS 2.2 10.3.3), so it ends
+    // 10px from the right edge when it has a margin of 10px there. A spanner
+    // that overflows counts its auto margins as zero, so it is over-constrained
+    // too and ends at the right edge. In a left to right container it starts
+    // at the left one. The same holds with paragraphs around the spanner and
+    // with lines of text around it.
+    for (direction, css, left) in [
+        ("rtl", "width:40px", 60.0),
+        ("rtl", "width:40px;margin-right:10px", 50.0),
+        ("rtl", "width:40px;margin-left:10px", 60.0),
+        ("rtl", "width:40px;margin:0 auto", 30.0),
+        ("rtl", "width:40px;margin-left:auto", 60.0),
+        ("rtl", "width:40px;margin-right:auto", 0.0),
+        ("rtl", "width:140px", -40.0),
+        ("rtl", "width:140px;margin:0 auto", -40.0),
+        ("ltr", "width:40px", 0.0),
+        ("ltr", "width:40px;margin-left:10px", 10.0),
+        ("ltr", "width:40px;margin:0 auto", 30.0),
+        ("ltr", "width:140px;margin:0 auto", 0.0),
+    ] {
+        let container_css = format!("direction:{direction}");
+        let (mut doc, _, boxes) = column_container(
+            &container_css,
+            &[Part::Lines(2), Part::Spanner(css), Part::Lines(2)],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(
+            doc.nodes[boxes[0]].layout.location.x, left,
+            "lines {direction} {css}"
+        );
+        let (mut doc, _, boxes) = column_container(
+            &container_css,
+            &[Part::Paragraph(2), Part::Spanner(css), Part::Paragraph(2)],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(
+            doc.nodes[boxes[0]].layout.location.x, left,
+            "paragraphs {direction} {css}"
+        );
+    }
+}
+
+#[test]
+fn a_block_level_spanner_of_any_display_spans_the_columns_of_the_lines_around_it() {
+    // Two lines in each column of a group: 40px of columns, the spanner of
+    // 20px, and 40px of columns again, whatever the inner display of the box
+    // is (CSS Multi-column Layout 1, 6.1).
+    for display in ["flow-root", "flex", "grid", "table"] {
+        let (mut doc, container, boxes) = column_container(
+            "",
+            &[
+                Part::Lines(4),
+                Part::Spanner(format!("display:{display}").as_str()),
+                Part::Lines(4),
+            ],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(doc.nodes[container].layout.size.height, 100.0, "{display}");
+        assert_eq!(
+            column_ranges(&doc, container),
+            [
+                (0, 2, 0, 0.0, 0.0),
+                (2, 4, 1, 60.0, 0.0),
+                (4, 6, 0, 0.0, 60.0),
+                (6, 8, 1, 60.0, 60.0),
+            ],
+            "{display}"
+        );
+        let layout = doc.nodes[boxes[0]].layout;
+        assert_eq!(
+            (layout.location.x, layout.location.y, layout.size.height),
+            (0.0, 40.0, 20.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn only_a_block_level_box_that_is_in_the_flow_is_a_spanner() {
+    for (css, spans) in [
+        ("display:block", true),
+        ("display:list-item", true),
+        ("display:flow-root", true),
+        ("display:flex", true),
+        ("display:grid", true),
+        ("display:table", true),
+        ("display:inline-block", false),
+        ("display:inline-flex", false),
+        ("display:inline-grid", false),
+        ("display:inline-table", false),
+        ("display:flow-root;float:left", false),
+        ("display:flex;position:absolute", false),
+    ] {
+        let (mut doc, _, boxes) =
+            column_container("", &[Part::Lines(2), Part::Spanner(css), Part::Lines(2)]);
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| spanning::is_spanner(session, boxes[0])),
+            spans,
+            "{css}"
+        );
     }
 }

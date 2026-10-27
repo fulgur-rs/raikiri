@@ -1114,11 +1114,31 @@ pub(super) fn layout_single_page_in_session(
     layout_single_page_with_table_projection(session, cascade, page_box, false, false)
 }
 
+/// The error of a layout that nested deeper than the limit, if the session
+/// recorded one. The boxes it left unlaid are zero-sized stand-ins, which the
+/// cache must not keep.
+fn take_recursion_failure(
+    document: &mut super::context::LayoutSession<'_>,
+) -> Result<(), LayoutError> {
+    if let Some(node) = document.context.recursion.exceeded_at.take() {
+        document.layout_dirty = true;
+        return Err(LayoutError::Internal {
+            message: format!(
+                "layout nested more than {} levels deep at node {node}",
+                document.context.recursion.limit
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// The error a layout pass recorded in the session while taffy ran: a
-/// rejected table or an exhausted fragment budget.
+/// layout that nested too deeply, a rejected table or an exhausted fragment
+/// budget.
 fn take_layout_failure(
     document: &mut super::context::LayoutSession<'_>,
 ) -> Result<(), LayoutError> {
+    take_recursion_failure(document)?;
     if let Some(message) = document.context.table_layout_error.take() {
         // A rejected pass must not cache its temporary zero-sized fallback.
         document.layout_dirty = true;
@@ -3214,6 +3234,9 @@ fn layout_pages_attempt(
             )?
         }
     };
+    // The pages were cut from layouts run since the first pass, which take the
+    // same limit.
+    take_recursion_failure(&mut session)?;
     Ok((slices, session.context.page_filled_columns_moved))
 }
 
@@ -3998,7 +4021,8 @@ struct BoxFit {
 
 /// The ways, besides a forced break, in which a box moves to the next page.
 struct BoxOverflow {
-    /// The box avoids breaks inside it and would cross the page edge.
+    /// The box avoids breaks inside it and would cross the page edge, or it
+    /// ends its parent and the parent's closing edges would break away from it.
     page: bool,
     /// The box starts a run of boxes joined by avoided breaks that would
     /// cross the page edge.
@@ -5644,6 +5668,238 @@ fn avoided_box_moves(
 ) -> bool {
     flow_y - margin_top.max(0.0) > page_start + 0.001
         && starts_on_page_and_runs_past_it(flow_y, box_end, page_start, page_end)
+}
+
+/// Whether a box ending the blocks around it with `edges` of bottom padding
+/// and border below it moves to the next page, so that those edges do not
+/// break away from it.
+///
+/// When the last box of a block fits its page but the block's closing edges
+/// do not, a break between the two would leave the edges alone at the top of
+/// the next page. A break between boxes (a class A break point) is preferred
+/// to that one (class C, CSS Break 3 §4.1), as browsers do, so the last box
+/// moves along with the edges. The next page must hold the box with the
+/// edges, or moving it gains nothing; and a box that its page starts with
+/// would break from the edges on any page.
+///
+/// A block that holds one box has the edges at its own end: its last
+/// `closing_edges_inside` of block size follow that box, and the page breaks
+/// before the block rather than between the box and them (see
+/// [`lone_box_tail`]).
+fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
+    let edges = candidate.context.closing_edges();
+    let inside = candidate.context.closing_edges_inside();
+    let BoxFit {
+        flow_y,
+        margin_top,
+        page_start,
+        page_end,
+        next_page_step,
+        ..
+    } = *fit;
+    let box_end = flow_y + candidate.height;
+    edges + inside > 0.0
+        && box_end - inside <= page_end + 0.001
+        && candidate.height + edges <= next_page_step + 0.001
+        && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
+}
+
+/// The block size of the bottom padding and border of the block `node_id`
+/// that close it below its last box, when they follow that box: the block is
+/// not the body, stacks its boxes in block flow, and has a height that is that
+/// of its content.
+fn closing_edges_of(
+    document: &super::context::LayoutSession<'_>,
+    node_id: usize,
+    body_id: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    (node_id != body_id
+        && node.kind() == NodeKind::Element
+        && !node.used_writing_mode.is_vertical()
+        && moves_later_siblings(document, node_id)
+        && height_follows_content(document, node_id))
+    .then_some(node.layout.padding.bottom + node.layout.border.bottom)
+}
+
+/// Where the block `node_id` sits in its parent along the block axis at its
+/// normal-flow position: its layout location, less the relative offset that
+/// layout applied.
+fn normal_flow_y(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    document.nodes[node_id].layout.location.y
+        - layout_relative_offset_y(document, cascade, body_id, node_id)
+}
+
+/// The block size at the end of the block `node_id` that follows its one box:
+/// the bottom padding and border of `node_id` and of the blocks that box ends,
+/// and the margin below the box where it does not collapse out of `node_id`.
+/// `None` unless `node_id` holds one box in its flow, which holds one in turn,
+/// down to a box that the page cannot break inside: one without a box in its
+/// flow, or a paragraph of one line.
+///
+/// With no box before it in the block, a break that would leave this tail
+/// alone on the next page falls before the block instead (CSS Break 3 §4.1
+/// prefers a break between boxes to one between a box and the edges of its
+/// parent), as browsers do. A paragraph of more lines breaks between them and
+/// leaves the tail to its last lines, which is not this block's to move.
+fn lone_box_tail(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> Option<f32> {
+    let mut current = node_id;
+    // Where the box ends, from the top of `node_id`.
+    let mut content_end = 0.0;
+    loop {
+        let node = &document.nodes[current];
+        // Generated boxes are not among the children, and the columns of a
+        // multicol container break on their own.
+        if node.multicol.is_some() || node.has_before_or_after_content {
+            return None;
+        }
+        if current != node_id && node.is_ifc_root() {
+            let lines = document
+                .ifc_layout_node(current)
+                .and_then(|node| node.ifc.as_ref())
+                .and_then(|ifc| ifc.lines.as_ref())?;
+            if !lines.block_line_starts.is_empty() || lines.lines.len() > 1 {
+                return None;
+            }
+            break;
+        }
+        let mut boxes = Vec::new();
+        for &child in &node.children {
+            if is_floating_box_for_pagination(document, cascade, child) {
+                return None;
+            }
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+            if boxes.len() > 1 {
+                return None;
+            }
+        }
+        match boxes[..] {
+            [] if current != node_id => break,
+            [only]
+                if closing_edges_of(document, current, body_id).is_some()
+                    && document.nodes[only].kind() == NodeKind::Element
+                    && matches!(
+                        document.nodes[only].display(),
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    )
+                    && matches!(
+                        document.nodes[only].position(),
+                        PositionValue::Static | PositionValue::Relative
+                    )
+                    && !document.nodes[only].used_writing_mode.is_vertical() =>
+            {
+                // The box sits at its normal-flow position, less the
+                // relative offset that layout applied.
+                content_end += normal_flow_y(document, cascade, body_id, only);
+                current = only;
+            }
+            _ => return None,
+        }
+    }
+    content_end += document.nodes[current].layout.size.height;
+    Some(document.nodes[node_id].layout.size.height - content_end)
+}
+
+/// The break that keeps a paragraph's last `widows` lines with the `edges` of
+/// bottom padding and border that close the blocks around it, when the lines
+/// fit the page but the edges do not. A break between the last line and the
+/// edges (class C) is not taken while one between lines (class B) honors
+/// `orphans` and `widows`, as in [`closing_edges_move`]. `line_metrics` is as
+/// for [`widows_break_on_next_page`]. `None` when the lines or the edges do
+/// not run past the page end the way that needs, there are too few lines for
+/// both constraints, or the next page cannot hold the lines with the edges.
+fn closing_edges_line_move(
+    line_metrics: &[(f32, f32)],
+    edges: f32,
+    effective_y: f32,
+    current_page: u32,
+    orphans: usize,
+    widows: usize,
+    page_origins: &PageOrigins,
+) -> Option<LineBreakMove> {
+    let page_start = page_origins.origin(current_page);
+    let page_end = page_start + page_origins.step_at(current_page);
+    let first_top = effective_y + line_metrics.first()?.0;
+    let last_bottom = effective_y + line_metrics.last()?.1;
+    let fits_lines = first_top >= page_start - 0.001
+        && first_top < page_end
+        && last_bottom <= page_end + 0.001
+        && line_metrics.len() >= orphans + widows;
+    if !fits_lines || last_bottom + edges <= page_end + 0.001 {
+        return None;
+    }
+    let mut with_edges = line_metrics.to_vec();
+    with_edges.last_mut()?.1 += edges;
+    widows_break_on_next_page(&with_edges, effective_y, current_page, widows, page_origins)
+}
+
+/// Whether the page cannot break inside the block `node_id` at a better place
+/// than before it: it has no box in its flow, or its lines are too few for
+/// `orphans` and `widows` to let a break fall between them, or it is a block
+/// without padding or border around one box that is as unbreakable.
+fn breaks_only_around(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let mut current = node_id;
+    loop {
+        let node = &document.nodes[current];
+        if node.multicol.is_some() {
+            return false;
+        }
+        if node.is_ifc_root() {
+            let computed = &cascade.computed[current];
+            return document
+                .ifc_layout_node(current)
+                .and_then(|node| node.ifc.as_ref())
+                .and_then(|ifc| ifc.lines.as_ref())
+                .is_some_and(|lines| {
+                    // Block boxes between the lines are breakable places too.
+                    lines.block_line_starts.is_empty()
+                        && i64::try_from(lines.lines.len()).unwrap_or(i64::MAX)
+                            < i64::from(computed.orphans) + i64::from(computed.widows)
+                });
+        }
+        let mut boxes = Vec::new();
+        for &child in &node.children {
+            if is_floating_box_for_pagination(document, cascade, child) {
+                return false;
+            }
+            push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        }
+        let layout = &node.layout;
+        match boxes[..] {
+            [] => return true,
+            // Nothing separates the block from its one box, so it breaks as
+            // that box does.
+            [only]
+                if layout.padding.top
+                    + layout.padding.bottom
+                    + layout.border.top
+                    + layout.border.bottom
+                    == 0.0
+                    && document.nodes[only].kind() == NodeKind::Element
+                    && matches!(
+                        document.nodes[only].display(),
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    ) =>
+            {
+                current = only;
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// Whether a table row group of `group_height` at `flow_y` that avoids

@@ -4,6 +4,7 @@ mod constrained_chain;
 mod lineless;
 mod paged_spanning;
 mod paragraph_group;
+pub(super) mod paragraph_spanners;
 pub(super) mod spanning;
 
 use authored::AuthoredBox;
@@ -127,6 +128,8 @@ pub(crate) fn compute_multicol_layout(
     let Some(style) = tree.nodes[index].multicol else {
         return crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
     };
+    #[cfg(test)]
+    crate::layout::test_support::MULTICOL_LAYOUTS.with(|count| count.set(count.get() + 1));
     let inputs = with_keyword_width(tree, node_id, inputs);
 
     // Taffy supplies the used border-box width to a block child. Do not fall
@@ -224,11 +227,36 @@ pub(crate) fn compute_multicol_layout(
     let outer_height = stack_depth
         .checked_sub(1)
         .and_then(|outer| tree.context.fragmentation_stack[outer].available_height);
+    // A container with a column container inside it lays its children out
+    // again in its columns after the pass across its whole width below.
+    let relays_out_children = custom_scope
+        && inputs.run_mode == RunMode::PerformLayout
+        && multicol_has_nested_descendant(tree, index);
+    let deferred = tree.context.columns_relayout_pending;
+    let deferred_before = tree.context.columns_deferred_layouts;
     tree.context.fragmentation_stack.push(context);
+    tree.context.columns_relayout_pending = deferred || relays_out_children;
     let mut output = crate::layout::dispatch::block_layout(tree, node_id, inputs, block_ctx);
+    tree.context.columns_relayout_pending = deferred;
     if tree.fragment_tree.limit_exceeded {
         tree.context.fragmentation_stack.truncate(stack_depth);
         return output;
+    }
+    // The size of a box with a definite height does not depend on its
+    // columns, and the container that lays it out again settles them then.
+    // What the caches of the boxes inside hold was laid out before the pass
+    // above, which has replaced their lines and fragments. A layout that does
+    // not go through the cache of this box leaves it to this call to drop them.
+    if deferred && inputs.run_mode == RunMode::PerformLayout && available_height.is_some() {
+        tree.context.fragmentation_stack.truncate(stack_depth);
+        tree.context.columns_deferred_layouts += 1;
+        tree.cache_clear_subtree(NodeId::from(index));
+        return output;
+    }
+    // The columns below are settled by the end of this layout if it lays its
+    // children out again.
+    if relays_out_children {
+        tree.context.columns_deferred_layouts = deferred_before;
     }
     // Columns sliced here are not cut again at the end of an outer column,
     // so such a container keeps the nested strategies from the start unless
@@ -3388,8 +3416,19 @@ pub(crate) fn root_column_fragments(
     lines: &crate::layout::ifc::root::IfcLines,
     context: FragmentationContext,
 ) -> (Vec<MulticolTextFragment>, f32) {
-    let extents: Vec<(f32, f32)> = lines
-        .lines
+    group_column_fragments(lines, 0..lines.lines.len(), context, 0.0)
+}
+
+/// [`root_column_fragments`] for the lines `range` of the paragraph, which
+/// stand with their first line at the block offset `y` of the root's content
+/// box: a group of lines between two column spanners.
+pub(crate) fn group_column_fragments(
+    lines: &crate::layout::ifc::root::IfcLines,
+    range: std::ops::Range<usize>,
+    context: FragmentationContext,
+    y: f32,
+) -> (Vec<MulticolTextFragment>, f32) {
+    let extents: Vec<(f32, f32)> = lines.lines[range.clone()]
         .iter()
         .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
         .collect();
@@ -3423,11 +3462,11 @@ pub(crate) fn root_column_fragments(
     let fragments = ranges
         .into_iter()
         .map(|(start, end, column)| MulticolTextFragment {
-            line_start: start,
-            line_end: end,
+            line_start: range.start + start,
+            line_end: range.start + end,
             fragmentainer: column,
             x: context.column_offset_x(column),
-            y: 0.0,
+            y,
         })
         .collect();
     (fragments, height)

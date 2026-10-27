@@ -10,19 +10,19 @@ use super::{
     PendingBreak, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
     block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
-    box_sets_page_name, break_margins, collapses_through, collapses_with_previous_block,
-    content_overflow_end, current_abs_y, first_line_judged_height, first_owned_line_height,
-    fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
-    forced_line_moves, forced_target_page, grow_ancestors_for_shift,
-    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
-    in_row_flex_container, line_block_parent, lines_between_blocks, lines_can_shift_between_blocks,
-    lines_can_shift_inside, make_room_for_table_header, margin_box_starts_page, materialize_y,
-    move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
-    move_line_block, move_paragraph_lines, page_break_is_forced, page_type_leaves_local_flow,
-    paragraph_line_bounds, participates_in_margin_adjacency, place_first_table_header,
-    place_text_candidate, positioned_text_start_y, reaches_line, record_candidate_pages,
-    reset_inline_x_for_page_transition, shift_text_candidate, straddling_line,
-    text_changes_page_name, text_sets_page_name,
+    box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
+    collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
+    first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
+    follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
+    grow_ancestors_for_shift, has_explicit_positioned_block_ancestor, has_fixed_height,
+    has_footnote_ancestor, in_row_flex_container, line_block_parent, lines_between_blocks,
+    lines_can_shift_between_blocks, lines_can_shift_inside, make_room_for_table_header,
+    margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
+    move_flex_line_siblings, move_line_block, move_paragraph_lines, page_break_is_forced,
+    page_type_leaves_local_flow, paragraph_line_bounds, participates_in_margin_adjacency,
+    place_first_table_header, place_text_candidate, positioned_text_start_y, reaches_line,
+    record_candidate_pages, reset_inline_x_for_page_transition, shift_text_candidate,
+    straddling_line, text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
 
@@ -762,22 +762,24 @@ impl PaginationState {
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
         let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
-        let overflow = avoided_breaks.measure(
+        let fit = BoxFit {
+            effective_y,
+            flow_y: effective_y - relative_offset,
+            margin_top,
+            trailing_margin,
+            page_start,
+            page_end,
+            next_page_step: page_origins.step_at(self.current_page.saturating_add(1)),
+        };
+        let mut overflow = avoided_breaks.measure(
             document,
             cascade,
             candidate,
-            &BoxFit {
-                effective_y,
-                flow_y: effective_y - relative_offset,
-                margin_top,
-                trailing_margin,
-                page_start,
-                page_end,
-                next_page_step: page_origins.step_at(self.current_page.saturating_add(1)),
-            },
+            &fit,
             &self.table_headers,
             &mut self.trailing_flex_children,
         );
+        overflow.page |= closing_edges_move(candidate, &fit);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -1155,6 +1157,28 @@ impl PaginationState {
                 if !moves.is_empty() {
                     return self.move_lines(
                         document, env, candidate, entry, blocks, text, block_id, moves,
+                    );
+                }
+                // The padding and border that close the blocks around the
+                // paragraph stay with its last lines.
+                if let Some(moved) = closing_edges_line_move(
+                    &line_metrics,
+                    candidate.context.lines_closing_edges(),
+                    text.effective_y,
+                    self.current_page,
+                    cascade.computed[block_id].orphans.max(1) as usize,
+                    cascade.computed[block_id].widows.max(1) as usize,
+                    page_origins,
+                ) {
+                    return self.move_lines(
+                        document,
+                        env,
+                        candidate,
+                        entry,
+                        blocks,
+                        text,
+                        block_id,
+                        [moved],
                     );
                 }
             }

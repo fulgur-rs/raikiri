@@ -852,6 +852,39 @@ fn quote_depth_follows_the_generated_text_in_document_order() {
 }
 
 #[test]
+fn style_containment_scopes_the_quote_depth() {
+    use raikiri_style::PseudoElem::{After, Before};
+    let mut doc = styled_document(
+        "div::before { content: open-quote } \
+         span::before, i::before, strong::before, em::before, u::before { content: open-quote } \
+         span::after { content: close-quote close-quote } \
+         span { contain: style } strong { contain: layout } em { contain: content }",
+    );
+    let outer = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+    let scoped = doc.append_element(Some(outer), "span", None::<&str>);
+    let plain = doc.append_element(Some(outer), "i", None::<&str>);
+    let layout_only = doc.append_element(Some(outer), "strong", None::<&str>);
+    let content = doc.append_element(Some(outer), "em", None::<&str>);
+    let probe = doc.append_element(Some(outer), "u", None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    let depth = |element, pseudo| snapshots.quote_depth(element, pseudo);
+    // The scoped element starts at the depth the outer quote left, and its
+    // two closes take it to zero inside.
+    assert_eq!(depth(scoped, Before), 1);
+    assert_eq!(depth(scoped, After), 2);
+    // The depth is back at one after it, so the next quote starts there.
+    assert_eq!(depth(plain, Before), 1);
+    // Layout containment alone leaves the depth open to the elements after
+    // it, as style containment of `contain: content` does not.
+    assert_eq!(depth(layout_only, Before), 2);
+    assert_eq!(depth(content, Before), 3);
+    assert_eq!(depth(probe, Before), 3);
+}
+
+#[test]
 fn quotes_of_a_box_that_is_not_generated_do_not_count() {
     use raikiri_style::PseudoElem::{Before, Marker};
     let mut doc = styled_document(

@@ -2219,6 +2219,7 @@ fn fixed_cell(row: u16, col_start: u16, col_span: u16, width: Dimension) -> supe
         resolved: None,
         natural_height: 0.0,
         baseline: 0.0,
+        baseline_from_flow: false,
         row_pass: None,
     }
 }
@@ -2853,6 +2854,7 @@ fn make_cell(
         resolved: None,
         natural_height: 0.0,
         baseline: 0.0,
+        baseline_from_flow: false,
         row_pass: None,
     }
 }

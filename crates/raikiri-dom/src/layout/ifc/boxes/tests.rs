@@ -5,6 +5,7 @@ mod group_align_tests;
 mod intrinsic_block_size_tests;
 mod orthogonal_baseline_tests;
 mod percent_edge_tests;
+mod rtl_margin_tests;
 mod static_position_tests;
 mod vertical_atomic_tests;
 mod vertical_bfc_tests;

@@ -19,10 +19,20 @@ pub(crate) fn is_spanner_in(doc: &Document, cascade: &CascadeResult, child: usiz
         && !AuthoredBox::new(doc, cascade, child).is_floated()
 }
 
+/// `column-span: all` applies to the block-level boxes that are in the flow
+/// (CSS Multi-column Layout 1, 6.1), whatever their inner display is.
 fn spans_all_columns(node: &crate::node::Node) -> bool {
     node.column_span_all
         && node.is_in_document()
-        && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
+        && matches!(
+            node.display(),
+            DisplayValue::Block
+                | DisplayValue::ListItem
+                | DisplayValue::FlowRoot
+                | DisplayValue::Flex
+                | DisplayValue::Grid
+                | DisplayValue::Table
+        )
         && !node.is_display_none()
         && node.layout_position() != Position::Absolute
 }
@@ -151,8 +161,24 @@ pub(super) fn layout(
             let adjoining = previous_margin.map_or(margin_top, |bottom| {
                 bottom.max(margin_top).max(0.0) + bottom.min(margin_top).min(0.0) - bottom
             });
+            // CSS 2.2 10.3.3: a box that overflows its container counts auto
+            // margins as zero, and a box with no auto margin is
+            // over-constrained. Either way the margin on the end side of the
+            // container's direction gives, so in a right-to-left container the
+            // box keeps its right margin and sits against the right edge.
+            let room = context.available_width
+                - output.size.width
+                - child_layout.margin.left
+                - child_layout.margin.right;
+            let over_constrained =
+                (!margin.left.is_auto() && !margin.right.is_auto()) || room < 0.0;
+            let left = if context.rtl && over_constrained {
+                context.available_width - output.size.width - child_layout.margin.right
+            } else {
+                child_layout.margin.left
+            };
             child_layout.location = Point {
-                x: content_origin.x + child_layout.margin.left,
+                x: content_origin.x + left,
                 y: block_offset + adjoining,
             };
             tree.set_unrounded_layout(NodeId::from(child), &child_layout);
@@ -208,7 +234,7 @@ pub(super) fn layout(
     block_offset + block_end_inset
 }
 
-fn clear_column_state(tree: &mut LayoutSession<'_>, root: usize) {
+pub(super) fn clear_column_state(tree: &mut LayoutSession<'_>, root: usize) {
     let mut pending = vec![root];
     while let Some(node_id) = pending.pop() {
         let node = &mut tree.nodes[node_id];

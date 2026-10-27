@@ -47,6 +47,10 @@ pub(crate) struct FlowGeometry {
     /// the basis for the percentage widths of its empty atomic `::before`
     /// and `::after` boxes. `None` when the width depends on the content.
     pub(crate) vertical_width: Option<f32>,
+    /// The blocks of the paragraph are not laid out with its lines: the lines
+    /// stand as if the blocks took no room, and the caller places the blocks
+    /// once it knows where the lines end up.
+    pub(crate) blocks_apart: bool,
 }
 
 impl FlowGeometry {
@@ -65,6 +69,7 @@ impl FlowGeometry {
             top_edge,
             definite_height: None,
             vertical_width: None,
+            blocks_apart: false,
         }
     }
 
@@ -288,6 +293,7 @@ pub(crate) fn place_lines(
         escaping_margin: CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
         block_line_starts: Vec::new(),
+        generated_block_starts: Vec::new(),
         block_ends: Vec::new(),
         shifts: super::root::LineShifts::default(),
         fragment_box_placements: Vec::new(),

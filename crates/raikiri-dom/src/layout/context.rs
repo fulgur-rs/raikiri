@@ -18,6 +18,15 @@ pub(crate) struct LayoutContext {
     pub(super) table_cache: super::table::cache::TableCache,
     pub(crate) ifc_width_probe: bool,
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
+    /// Whether the column container whose children are being laid out across
+    /// its whole width lays them out again in its columns afterwards, so that
+    /// whatever a column container inside them settles is redone and is not
+    /// worked out now (see `compute_multicol_layout`).
+    pub(crate) columns_relayout_pending: bool,
+    /// How many column containers were left unsettled for the layout that
+    /// follows (see `compute_multicol_layout`). A layout that moves it is not
+    /// kept in the caches.
+    pub(crate) columns_deferred_layouts: usize,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// Whether the out-of-flow boxes being positioned have a containing block
     /// on vertical axes, whose alignment properties name the other physical
@@ -58,6 +67,11 @@ pub(crate) struct LayoutContext {
     /// far. Only reports of grid layouts are stored.
     pub(crate) grid_layout_info: HashMap<usize, GridInfo>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<protocol::NodeId>>,
+    /// The block extent each vertical paragraph root with an auto block size
+    /// settled on, by root and inline size (the bits of the physical height).
+    /// It is a first guess for the next layout of the same root, and a wrong
+    /// one is corrected like any other.
+    pub(crate) vertical_block_size_seeds: HashMap<(usize, u32), f32>,
     /// The static positions of the boxes hoisted to a containing block on
     /// vertical axes that align `safe` in an axis, which that block aligns
     /// again once the library has positioned them (see
@@ -86,6 +100,63 @@ pub(crate) struct LayoutContext {
     /// Whether the page walk moved any of those containers from where the
     /// pagination placed their columns, which are then in the wrong pages.
     pub(crate) page_filled_columns_moved: bool,
+    /// How deeply the child layouts of this pass are nested, and whether that
+    /// passed its limit.
+    pub(crate) recursion: LayoutRecursion,
+}
+
+/// The nesting of the child layouts running at a moment (see
+/// `compute_child_layout_with_block_ctx` in [`crate::layout::dispatch`]).
+///
+/// The stack grows on demand while a layout recurses, so a cycle that never
+/// ends does not overflow it; it takes memory until the process is gone. Past
+/// `limit` nested layouts the pass stops descending and `exceeded_at` names the
+/// box it stopped at, which ends the pass with an error.
+#[derive(Debug)]
+pub(crate) struct LayoutRecursion {
+    pub(crate) depth: usize,
+    pub(crate) limit: usize,
+    pub(crate) exceeded_at: Option<usize>,
+    /// The deepest nesting so far, for the tests that size the limit.
+    #[cfg(test)]
+    pub(crate) peak: usize,
+}
+
+impl Default for LayoutRecursion {
+    fn default() -> Self {
+        Self {
+            depth: 0,
+            limit: super::MAX_LAYOUT_RECURSION,
+            exceeded_at: None,
+            #[cfg(test)]
+            peak: 0,
+        }
+    }
+}
+
+impl LayoutRecursion {
+    /// Count one more nested layout of the box `idx`, or refuse it: `false`
+    /// when the limit is passed (now or earlier in this pass), and the layout
+    /// must not run. The layout that is let in is left with [`Self::leave`].
+    pub(crate) fn enter(&mut self, idx: usize) -> bool {
+        if self.exceeded_at.is_some() {
+            return false;
+        }
+        if self.depth >= self.limit {
+            self.exceeded_at = Some(idx);
+            return false;
+        }
+        self.depth += 1;
+        #[cfg(test)]
+        {
+            self.peak = self.peak.max(self.depth);
+        }
+        true
+    }
+
+    pub(crate) fn leave(&mut self) {
+        self.depth -= 1;
+    }
 }
 
 /// The `text-group-align` group the lines being laid out belong to: the
@@ -154,6 +225,7 @@ impl<'doc> LayoutSession<'doc> {
             self.context.grid_layout_info.clear();
             self.context.taffy_hoisted_children.clear();
             self.context.safe_static_positions.clear();
+            self.context.vertical_block_size_seeds.clear();
             self.document.layout_dirty = false;
         }
     }

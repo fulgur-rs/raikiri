@@ -1365,3 +1365,497 @@ fn a_flex_item_in_a_vertical_container_keeps_the_ratio_it_states() {
         );
     }
 }
+
+/// Lay out a 100px wide `<body>` holding a block with `parent_css` that holds
+/// a block with `box_css` that holds a block with `child_css`, followed by the
+/// blocks `siblings` hold, and return the sizes of the middle block and the
+/// siblings.
+fn ratio_item_sizes_among(
+    parent_css: &str,
+    box_css: &str,
+    child_css: &str,
+    siblings: &[&str],
+) -> Vec<(f32, f32)> {
+    let (doc, nodes) = lay_out_in_a_100px_body(|doc, body| {
+        let parent = append_block(doc, body, parent_css);
+        let outer = append_block(doc, parent, box_css);
+        append_block(doc, outer, child_css);
+        let mut nodes = vec![outer];
+        nodes.extend(siblings.iter().map(|css| append_block(doc, parent, css)));
+        nodes
+    });
+    nodes
+        .into_iter()
+        .map(|node| {
+            let size = doc.nodes[node].layout.size;
+            (size.width, size.height)
+        })
+        .collect()
+}
+
+#[test]
+fn the_automatic_minimum_of_a_ratio_flex_item_is_the_width_of_its_content() {
+    // The item states its height and takes 50px of width from the ratio; a
+    // box in it wider than that keeps the item at the width of the box.
+    for (parent_css, box_css, child_width, expected) in [
+        ("width:0", "", "0", (50.0, 100.0)),
+        ("width:0", "", "50px", (50.0, 100.0)),
+        ("width:0", "", "100px", (100.0, 100.0)),
+        ("width:0", "", "200px", (200.0, 100.0)),
+        ("width:30px", "", "100px", (100.0, 100.0)),
+        ("width:300px", "", "200px", (200.0, 100.0)),
+        ("width:0", "flex-basis:0", "100px", (100.0, 100.0)),
+        ("width:0", "flex-basis:content", "100px", (100.0, 100.0)),
+        ("width:0", "flex-basis:20px", "100px", (100.0, 100.0)),
+        ("width:0", "flex-shrink:0", "200px", (200.0, 100.0)),
+        (
+            "width:0;flex-direction:row-reverse",
+            "",
+            "100px",
+            (100.0, 100.0),
+        ),
+        ("width:0;flex-wrap:wrap", "", "100px", (100.0, 100.0)),
+        ("width:0;align-items:center", "", "100px", (100.0, 100.0)),
+        (
+            "width:0",
+            "height:calc(50px + 50px)",
+            "100px",
+            (100.0, 100.0),
+        ),
+        ("width:0", "display:flex", "100px", (100.0, 100.0)),
+        ("width:0", "display:grid", "100px", (100.0, 100.0)),
+        ("width:0", "display:inline-block", "100px", (100.0, 100.0)),
+        ("width:0", "margin:0 7px", "100px", (100.0, 100.0)),
+        ("width:0", "overflow:clip", "100px", (100.0, 100.0)),
+        ("width:0", "min-width:auto", "100px", (100.0, 100.0)),
+    ] {
+        let box_css = format!("height:100px;aspect-ratio:1/2;{box_css}");
+        assert_eq!(
+            ratio_box_size_in(
+                &format!("display:flex;height:100px;{parent_css}"),
+                &box_css,
+                &format!("width:{child_width};height:10px")
+            ),
+            expected,
+            "{parent_css} | {box_css} | {child_width}"
+        );
+    }
+}
+
+#[test]
+fn the_automatic_minimum_of_a_ratio_flex_item_is_the_height_of_its_content_in_a_column() {
+    for (parent_css, child_height, expected) in [
+        ("height:0", "0", (100.0, 50.0)),
+        ("height:0", "50px", (100.0, 50.0)),
+        ("height:0", "100px", (100.0, 100.0)),
+        ("height:0", "200px", (100.0, 200.0)),
+        ("height:30px", "100px", (100.0, 100.0)),
+        ("height:300px", "200px", (100.0, 200.0)),
+        (
+            "height:0;flex-direction:column-reverse",
+            "100px",
+            (100.0, 100.0),
+        ),
+    ] {
+        assert_eq!(
+            ratio_box_size_in(
+                &format!("display:flex;flex-direction:column;width:100px;{parent_css}"),
+                "width:100px;aspect-ratio:2/1",
+                &format!("height:{child_height};width:10px")
+            ),
+            expected,
+            "{parent_css} | {child_height}"
+        );
+    }
+}
+
+#[test]
+fn a_percentage_cross_size_that_resolves_leaves_the_content_of_a_ratio_flex_item_its_room() {
+    assert_eq!(
+        ratio_box_size_in(
+            "display:flex;width:0;height:100px",
+            "aspect-ratio:1/2;height:100%",
+            "width:100px;height:10px"
+        ),
+        (100.0, 100.0)
+    );
+    assert_eq!(
+        ratio_box_size_in(
+            "display:flex;flex-direction:column;width:100px;height:0",
+            "aspect-ratio:2/1;width:100%",
+            "height:100px;width:10px"
+        ),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn a_ratio_flex_item_stretched_across_the_container_keeps_the_width_of_its_content() {
+    // The item states no height; the container's height, which it is
+    // stretched to, gives the ratio its cross size.
+    assert_eq!(
+        ratio_box_size_in(
+            "display:flex;width:0;height:100px",
+            "aspect-ratio:1/2",
+            "width:100px;height:10px"
+        ),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn the_automatic_minimum_of_a_ratio_flex_item_counts_its_padding_and_border() {
+    for (box_css, expected) in [
+        ("padding:10px", (120.0, 120.0)),
+        ("padding:10px;box-sizing:border-box", (120.0, 100.0)),
+        ("border:5px solid red", (110.0, 110.0)),
+        ("border:5px solid red;box-sizing:border-box", (110.0, 100.0)),
+        ("padding:10%", (140.0, 140.0)),
+    ] {
+        let box_css = format!("height:100px;aspect-ratio:1/2;{box_css}");
+        let width = if box_css.contains("10%") {
+            "200px"
+        } else {
+            "0"
+        };
+        assert_eq!(
+            ratio_box_size_in(
+                &format!("display:flex;width:{width};height:100px"),
+                &box_css,
+                "width:100px;height:10px"
+            ),
+            expected,
+            "{box_css}"
+        );
+    }
+    for (box_css, expected) in [
+        ("padding:10px", (120.0, 120.0)),
+        ("padding:10px;box-sizing:border-box", (100.0, 120.0)),
+    ] {
+        let box_css = format!("width:100px;aspect-ratio:2/1;{box_css}");
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;flex-direction:column;width:100px;height:0",
+                &box_css,
+                "height:100px;width:10px"
+            ),
+            expected,
+            "{box_css}"
+        );
+    }
+}
+
+#[test]
+fn the_automatic_minimum_of_a_ratio_flex_item_is_capped_by_its_maximum_width() {
+    for (max_width, expected) in [("70px", (70.0, 100.0)), ("300px", (100.0, 100.0))] {
+        let box_css = format!("height:100px;aspect-ratio:1/2;max-width:{max_width}");
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;width:0;height:100px",
+                &box_css,
+                "width:100px;height:10px"
+            ),
+            expected,
+            "{box_css}"
+        );
+    }
+}
+
+#[test]
+fn a_ratio_flex_item_that_does_not_use_the_automatic_minimum_shrinks_below_its_content() {
+    for (box_css, expected) in [
+        ("min-width:0", (0.0, 100.0)),
+        ("min-width:20px", (20.0, 100.0)),
+        ("overflow:hidden", (0.0, 100.0)),
+        ("overflow:scroll", (0.0, 100.0)),
+        ("overflow:auto", (0.0, 100.0)),
+        ("overflow-x:hidden", (0.0, 100.0)),
+        ("overflow-y:hidden", (0.0, 100.0)),
+    ] {
+        let box_css = format!("height:100px;aspect-ratio:1/2;{box_css}");
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;width:0;height:100px",
+                &box_css,
+                "width:100px;height:10px"
+            ),
+            expected,
+            "{box_css}"
+        );
+    }
+    assert_eq!(
+        ratio_box_size_in(
+            "display:flex;flex-direction:column;width:100px;height:0",
+            "width:100px;aspect-ratio:2/1;overflow:hidden",
+            "height:100px;width:10px"
+        ),
+        (100.0, 0.0)
+    );
+}
+
+#[test]
+fn a_ratio_flex_item_stating_both_sizes_is_not_shrunk_below_the_size_its_ratio_gives() {
+    // The ratio gives the item no size of its own, but what its content is
+    // at least: the size across the item, carried over, and no more than the
+    // size the item states.
+    for (box_css, expected) in [
+        ("width:100px;height:100px;aspect-ratio:1", (100.0, 100.0)),
+        ("width:100px;height:50px;aspect-ratio:1", (50.0, 50.0)),
+        ("width:50px;height:100px;aspect-ratio:1", (50.0, 100.0)),
+        ("width:100px;height:100px;aspect-ratio:2/1", (100.0, 100.0)),
+        ("width:300px;height:100px;aspect-ratio:1/2", (50.0, 100.0)),
+        (
+            "width:100px;height:100px;aspect-ratio:1;padding:10px",
+            (120.0, 120.0),
+        ),
+        (
+            "width:100px;height:100px;aspect-ratio:1;padding:10px;box-sizing:border-box",
+            (100.0, 100.0),
+        ),
+        // The size across the item is within its bounds before the ratio
+        // carries it over.
+        (
+            "width:100px;height:100px;max-height:50px;aspect-ratio:1",
+            (50.0, 50.0),
+        ),
+        (
+            "width:100px;height:100px;max-height:50px;aspect-ratio:1/2",
+            (25.0, 50.0),
+        ),
+        (
+            "width:300px;height:100px;min-height:150px;aspect-ratio:1/2",
+            (75.0, 150.0),
+        ),
+        (
+            "width:30px;height:100px;min-height:150px;aspect-ratio:1/2",
+            (30.0, 150.0),
+        ),
+    ] {
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;width:0;height:100px",
+                box_css,
+                "width:0;height:0"
+            ),
+            expected,
+            "{box_css}"
+        );
+    }
+    // The content, wider than the ratio gives, is held to the size the item
+    // states.
+    for (box_css, child_width, expected) in [
+        ("width:100px", "80px", (80.0, 100.0)),
+        ("width:300px", "100px", (100.0, 100.0)),
+        ("width:300px", "400px", (300.0, 100.0)),
+    ] {
+        let box_css = format!("{box_css};height:100px;aspect-ratio:1/2");
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;width:0;height:100px",
+                &box_css,
+                &format!("width:{child_width};height:10px")
+            ),
+            expected,
+            "{box_css} | {child_width}"
+        );
+    }
+    for (box_css, child_css, expected) in [
+        (
+            "width:100px;height:100px;aspect-ratio:2",
+            "height:10px;width:10px",
+            (100.0, 50.0),
+        ),
+        (
+            "width:100px;height:80px;aspect-ratio:2",
+            "height:90px;width:10px",
+            (100.0, 80.0),
+        ),
+    ] {
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;flex-direction:column;width:100px;height:0",
+                box_css,
+                child_css
+            ),
+            expected,
+            "{box_css}"
+        );
+    }
+}
+
+#[test]
+fn a_ratio_flex_item_wider_than_its_ratio_gives_takes_the_room_it_needs_from_its_siblings() {
+    assert_eq!(
+        ratio_item_sizes_among(
+            "display:flex;width:200px;height:100px",
+            "height:100px;aspect-ratio:1/2",
+            "width:120px;height:10px",
+            &["height:100px;width:200px"]
+        ),
+        [(120.0, 100.0), (80.0, 100.0)]
+    );
+    assert_eq!(
+        ratio_item_sizes_among(
+            "display:flex;width:200px;height:100px",
+            "height:100px;aspect-ratio:1/2",
+            "width:100px;height:10px",
+            &["height:100px;width:200px"]
+        ),
+        [(100.0, 100.0), (100.0, 100.0)]
+    );
+    assert_eq!(
+        ratio_item_sizes_among(
+            "display:flex;width:300px;height:100px",
+            "height:100px;aspect-ratio:1/2;flex-grow:1",
+            "width:200px;height:10px",
+            &["height:100px;width:100px;flex-grow:1"]
+        ),
+        [(200.0, 100.0), (100.0, 100.0)]
+    );
+}
+
+#[test]
+fn boxes_that_take_no_part_in_the_flex_layout_leave_a_ratio_flex_item_its_minimum() {
+    for sibling in [
+        "display:none;height:100px;aspect-ratio:1/2",
+        "position:absolute",
+    ] {
+        assert_eq!(
+            ratio_item_sizes_among(
+                "display:flex;position:relative;width:0;height:100px",
+                "height:100px;aspect-ratio:1/2",
+                "width:100px;height:10px",
+                &[sibling]
+            )[0],
+            (100.0, 100.0),
+            "{sibling}"
+        );
+    }
+}
+
+#[test]
+fn a_flex_item_that_states_a_keyword_width_keeps_the_width_its_ratio_gives() {
+    for width in ["max-content", "min-content", "fit-content"] {
+        let box_css = format!("width:{width};height:100px;aspect-ratio:1/2");
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;width:0;height:100px",
+                &box_css,
+                "width:100px;height:10px"
+            ),
+            (50.0, 100.0),
+            "{box_css}"
+        );
+    }
+}
+
+#[test]
+fn the_height_of_a_column_ratio_item_is_bounded_by_the_width_limits_carried_over_the_ratio() {
+    let edges = "padding-left:15px;padding-top:10px;box-sizing:border-box";
+    for (box_css, child_height, expected) in [
+        (
+            "width:100px;max-width:25px;aspect-ratio:1/8",
+            "500px",
+            (25.0, 200.0),
+        ),
+        (
+            "width:100px;max-width:25px;aspect-ratio:1/1",
+            "500px",
+            (25.0, 25.0),
+        ),
+        (
+            "width:10px;min-width:25px;aspect-ratio:1/8",
+            "500px",
+            (25.0, 500.0),
+        ),
+        (
+            "width:10px;min-width:25px;aspect-ratio:1/8",
+            "100px",
+            (25.0, 200.0),
+        ),
+        (
+            &format!("width:25px;aspect-ratio:1/1;{edges}"),
+            "190px",
+            (25.0, 200.0),
+        ),
+        (
+            &format!("width:25px;aspect-ratio:auto 1/1;{edges}"),
+            "190px",
+            (25.0, 200.0),
+        ),
+        (
+            &format!("width:100px;max-width:25px;aspect-ratio:1/8;{edges}"),
+            "500px",
+            (25.0, 200.0),
+        ),
+        (
+            &format!("width:100px;max-width:25px;aspect-ratio:auto 1/19;{edges}"),
+            "500px",
+            (25.0, 200.0),
+        ),
+    ] {
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;flex-direction:column;width:100px;height:1px",
+                box_css,
+                &format!("height:{child_height}")
+            ),
+            expected,
+            "{box_css} | {child_height}"
+        );
+    }
+}
+
+#[test]
+fn the_width_of_a_row_ratio_item_is_not_bounded_by_the_height_limits_carried_over_the_ratio() {
+    for (box_css, child_width, expected) in [
+        (
+            "height:100px;max-height:25px;aspect-ratio:8/1",
+            "500px",
+            (500.0, 25.0),
+        ),
+        (
+            "height:100px;max-height:80px;aspect-ratio:1/2",
+            "100px",
+            (100.0, 80.0),
+        ),
+        (
+            "height:100px;max-height:20px;aspect-ratio:2/1",
+            "100px",
+            (100.0, 20.0),
+        ),
+        (
+            "height:100px;max-height:20px;aspect-ratio:2/1",
+            "10px",
+            (40.0, 20.0),
+        ),
+        (
+            "height:10px;min-height:25px;aspect-ratio:8/1",
+            "100px",
+            (200.0, 25.0),
+        ),
+    ] {
+        assert_eq!(
+            ratio_box_size_in(
+                "display:flex;width:1px;height:100px",
+                box_css,
+                &format!("width:{child_width};height:10px")
+            ),
+            expected,
+            "{box_css} | {child_width}"
+        );
+    }
+}
+
+#[test]
+fn a_flex_item_with_a_keyword_maximum_keeps_the_width_its_ratio_gives() {
+    let box_css = "height:100px;aspect-ratio:1/2;max-width:max-content";
+    assert_eq!(
+        ratio_box_size_in(
+            "display:flex;width:0;height:100px",
+            box_css,
+            "width:100px;height:10px"
+        ),
+        (50.0, 100.0)
+    );
+}

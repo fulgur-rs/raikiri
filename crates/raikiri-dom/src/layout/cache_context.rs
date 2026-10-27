@@ -336,6 +336,13 @@ impl LayoutCacheContext {
 
     pub(crate) fn override_changed(&mut self, key: BoxKey) {
         self.invalidate();
+        self.local_override_changed(key);
+    }
+
+    /// A style of `key` changes, or changes back, without the generation
+    /// moving: the change of a scope that sets the box apart from the caches of
+    /// the others, see [`LayoutSession::push_local_overrides`].
+    pub(crate) fn local_override_changed(&mut self, key: BoxKey) {
         let state = self.entries.get_mut().get_or_insert(key);
         state.overrides = state.overrides.wrapping_add(1);
         state.context = None;

@@ -37,6 +37,23 @@ fn shares_context(style: &Style) -> bool {
         && style.align_content.keyword == AlignContentKeyword::Normal
 }
 
+/// Whether the block `child` of `parent`, whose style is `style`, shares the
+/// float context of `parent`. A box with another writing mode than its
+/// container's roots a context of its own, even when it flows in the
+/// container's block direction, as `sideways-lr` does in a `vertical-lr`
+/// container (CSS Writing Modes 4 §3.1).
+fn shares_parent_context(
+    tree: &LayoutSession<'_>,
+    parent: NodeId,
+    child: NodeId,
+    style: &Style,
+) -> bool {
+    use crate::layout::dispatch::used_writing_mode;
+    shares_context(style)
+        && used_writing_mode(tree, usize::from(parent))
+            == used_writing_mode(tree, usize::from(child))
+}
+
 fn child_style(tree: &LayoutSession<'_>, child: NodeId) -> Style {
     style_input::child(tree, usize::from(child))
 }
@@ -69,15 +86,19 @@ fn child_inputs(parent: Size<Option<f32>>, width: Option<f32>, run_mode: RunMode
 fn contains_spanner(tree: &LayoutSession<'_>, node: NodeId) -> bool {
     tree.child_ids(node).any(|child| {
         let style = child_style(tree, child);
-        shares_context(&style)
+        shares_parent_context(tree, node, child, &style)
             && (crate::layout::is_spanner(tree, usize::from(child))
                 || contains_spanner(tree, child))
     })
 }
 
 /// The width of the margin box of `child` under `space`, measured as a whole.
+///
+/// The box is measured with the margin collapsing its layout runs in, so that
+/// measuring it does not empty the cache of the sizes it is laid out with.
 fn outer_width(
     tree: &mut LayoutSession<'_>,
+    parent: NodeId,
     child: NodeId,
     margin: f32,
     space: AvailableSpace,
@@ -89,6 +110,11 @@ fn outer_width(
     };
     let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
     inputs.available_space.width = space;
+    let margins_collapse = shares_parent_context(tree, parent, child, &child_style(tree, child));
+    inputs.vertical_margins_are_collapsible = Line {
+        start: margins_collapse,
+        end: margins_collapse,
+    };
     let measured =
         measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
             tree.compute_child_layout_with_block_ctx(child, inputs, None)
@@ -125,7 +151,7 @@ fn intrinsic_widths(
             .map(|edge| edge.resolve(Some(0.0)).unwrap_or(0.0));
         let spans = multicol && style.float == Float::None;
         if spans
-            && shares_context(&style)
+            && shares_parent_context(tree, node, child, &style)
             && !crate::layout::is_spanner(tree, usize::from(child))
             && contains_spanner(tree, child)
         {
@@ -141,6 +167,7 @@ fn intrinsic_widths(
             } else {
                 outer_width(
                     tree,
+                    node,
                     child,
                     margin.horizontal_axis_sum(),
                     space,
@@ -153,6 +180,7 @@ fn intrinsic_widths(
         }
         let child_width = outer_width(
             tree,
+            node,
             child,
             margin.horizontal_axis_sum(),
             space,

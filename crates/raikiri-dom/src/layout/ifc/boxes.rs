@@ -169,6 +169,7 @@ pub(crate) fn layout_with_boxes_in(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
+            generated_block_starts: Vec::new(),
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
@@ -375,6 +376,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
+            generated_block_starts: Vec::new(),
             block_ends: Vec::new(),
             shifts: super::root::LineShifts::default(),
             fragment_box_placements: Vec::new(),
@@ -554,6 +556,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         escaping_margin,
         leading_block_margin: None,
         block_line_starts,
+        generated_block_starts: Vec::new(),
         block_ends: Vec::new(),
         shifts,
         fragment_box_placements,
@@ -721,10 +724,7 @@ fn run_boxes_segment(
     start: LineStart,
 ) -> RunBoxesOutcome {
     let FlowGeometry {
-        width,
-        edges,
-        top_edge,
-        ..
+        width, top_edge, ..
     } = geometry;
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
@@ -768,6 +768,7 @@ fn run_boxes_segment(
     let mut leading_block_margin = None;
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
+    let mut generated_block_starts = Vec::new();
     let mut block_ends = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut oof_candidates = OofCandidates::new();
@@ -1054,10 +1055,16 @@ fn run_boxes_segment(
                     generated_blocks::token(&root.generated_blocks, node.0, block_cursor)
                 {
                     block_cursor = index;
-                    // A generated block is laid out along a horizontal
-                    // root's block axis only; a vertical root breaks its
-                    // lines at the tokens.
-                    if horizontal {
+                    if matches!(edge, generated_blocks::Token::Start(_)) {
+                        generated_block_starts.push((block_line_starts.len(), lines.len()));
+                    }
+                    // A generated block is laid out along the block axis of
+                    // a horizontal root, and of a vertical one when the box
+                    // is on its axes; a vertical root breaks its lines at the
+                    // tokens of the others.
+                    let (generated_blocks::Token::Start(block)
+                    | generated_blocks::Token::End(block)) = edge;
+                    if horizontal || block.on_root_axes {
                         let at_start = leading_margin_open
                             && lines.is_empty()
                             && y == 0.0
@@ -1069,12 +1076,16 @@ fn run_boxes_segment(
                             lines: &lines,
                             ctx,
                             width,
-                            content_left: edges.0,
+                            content_left: inline_insets.0,
                             top_edge,
-                            definite_height: geometry.definite_height,
+                            definite_height: if horizontal {
+                                geometry.definite_height
+                            } else {
+                                geometry.vertical_width
+                            },
                             at_start,
                             top_margin_escapes,
-                            rtl: root.rtl,
+                            rtl: root.rtl && horizontal,
                         };
                         match edge {
                             generated_blocks::Token::Start(block) => {
@@ -1095,11 +1106,17 @@ fn run_boxes_segment(
                                 block_cursor += 1;
                                 if let Some(open) = open_block.take() {
                                     let placed = generated_blocks::close(block, open, flow);
-                                    forced_breaks.extend(block.forced_breaks(
-                                        &open,
-                                        placed.as_ref(),
-                                        lines.len(),
-                                    ));
+                                    // Pagination moves the lines of a paragraph
+                                    // down at a forced break; a vertical
+                                    // paragraph's lines are columns it does not
+                                    // break between.
+                                    if horizontal {
+                                        forced_breaks.extend(block.forced_breaks(
+                                            &open,
+                                            placed.as_ref(),
+                                            lines.len(),
+                                        ));
+                                    }
                                     if let Some(placed) = placed {
                                         leading_margin_open = false;
                                         ctx.commit_strut();
@@ -1123,16 +1140,20 @@ fn run_boxes_segment(
                     && y == 0.0
                     && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
-                let mut block = layout_block_child(
-                    tree,
-                    ctx,
-                    node.0 as usize,
-                    y,
-                    pending,
-                    geometry,
-                    perform,
-                    top_margin_escapes && starts_paragraph,
-                );
+                let mut block = if geometry.blocks_apart {
+                    BlockChild::apart(y, pending)
+                } else {
+                    layout_block_child(
+                        tree,
+                        ctx,
+                        node.0 as usize,
+                        y,
+                        pending,
+                        geometry,
+                        perform,
+                        top_margin_escapes && starts_paragraph,
+                    )
+                };
                 oof_candidates.append(&mut block.oof_candidates);
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
@@ -1245,6 +1266,7 @@ fn run_boxes_segment(
             escaping_margin,
             leading_block_margin,
             block_line_starts,
+            generated_block_starts,
             block_ends,
             shifts: super::root::LineShifts::default(),
             fragment_box_placements,
@@ -1919,6 +1941,25 @@ struct BlockChild {
     top_margin: Option<CollapsibleMarginSet>,
     /// No content or formatting boundary separates the margins through it.
     collapses_through: bool,
+    /// The first baseline of the block, from the content-box top of the root,
+    /// when it has one and the root lays out horizontal lines.
+    first_baseline: Option<f32>,
+}
+
+impl BlockChild {
+    /// A block that is not laid out with the lines: it takes no room in them.
+    fn apart(y: f32, pending: CollapsibleMarginSet) -> Self {
+        Self {
+            oof_candidates: OofCandidates::new(),
+            top: y,
+            next_y: y,
+            pending,
+            floats_bottom: f32::NEG_INFINITY,
+            top_margin: None,
+            collapses_through: true,
+            first_baseline: None,
+        }
+    }
 }
 
 fn translated_child_oof_candidates(output: &LayoutOutput, location: Point<f32>) -> OofCandidates {
@@ -1997,16 +2038,20 @@ fn layout_block_child(
     // as in taffy's block algorithm: both auto centre the block, one auto
     // takes all of it.
     let style_margin = tree.physical_style(node).margin();
-    let free = (geometry.width - width - margin.left - margin.right).max(0.0);
-    match (style_margin.left.is_auto(), style_margin.right.is_auto()) {
-        (true, true) => margin.left = free / 2.0,
-        (true, false) => margin.left = free,
-        (false, false) if geometry.axes.direction() == Direction::Rtl => {
-            // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
-            // its used left margin. Apply it before creating the child BFC.
-            margin.left = geometry.width - width - margin.right;
+    let room = geometry.width - width - margin.left - margin.right;
+    let free = room.max(0.0);
+    let (left_auto, right_auto) = (style_margin.left.is_auto(), style_margin.right.is_auto());
+    if geometry.axes.direction() == Direction::Rtl && (room < 0.0 || (!left_auto && !right_auto)) {
+        // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
+        // its used left margin, and a block that overflows counts auto margins
+        // as zero. Apply it before creating the child BFC.
+        margin.left = geometry.width - width - margin.right;
+    } else {
+        match (left_auto, right_auto) {
+            (true, true) => margin.left = free / 2.0,
+            (true, false) => margin.left = free,
+            _ => {}
         }
-        _ => {}
     }
     // The first pass discovers margins that escape the child. Retry against
     // its final normal-flow origin before committing shared float geometry.
@@ -2165,6 +2210,46 @@ fn layout_block_child(
             }
         }),
         collapses_through: !has_clearance && output.margins_can_collapse_through,
+        first_baseline: output.baselines.first.map(|baseline| top + baseline),
+    }
+}
+
+/// Where [`place_block_across`] left the content that follows the block.
+pub(crate) struct PlacedBlock {
+    /// Where the content after the block starts, before `pending`.
+    pub(crate) next_y: f32,
+    /// Margins below the block that collapse with what follows.
+    pub(crate) pending: CollapsibleMarginSet,
+    /// The first baseline of the block, from the content-box top of the root.
+    pub(crate) first_baseline: Option<f32>,
+}
+
+/// Lay out the block box `node` of the root on its own, as a box of a
+/// formatting context of its own that spans `geometry.width`, with the content
+/// above it ending at `y` and the margins of `pending` below that.
+///
+/// A column spanner is placed this way: the lines around it were broken at the
+/// width of a column, and it spans all of them. It establishes a formatting
+/// context, which keeps the margins and the floats of its children inside it
+/// (CSS Multi-column Layout 1, 6.1).
+pub(crate) fn place_block_across(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    y: f32,
+    pending: CollapsibleMarginSet,
+    geometry: FlowGeometry,
+    perform: bool,
+) -> PlacedBlock {
+    let mut bfc = BlockFormattingContext::new();
+    let mut ctx = bfc.root_block_context();
+    let inline_insets = geometry.inline_axis_insets();
+    ctx.set_width(geometry.width + inline_insets.0 + inline_insets.1);
+    let block =
+        layout_formatting_context_child(tree, &mut ctx, node, y, pending, geometry, perform, false);
+    PlacedBlock {
+        next_y: block.next_y,
+        pending: block.pending,
+        first_baseline: block.first_baseline,
     }
 }
 
@@ -2199,19 +2284,11 @@ fn layout_vertical_block_child(
         width: Some(geometry.content_size.width),
         height: Some(inline_basis),
     };
+    let shares_context = shares_vertical_root_context(tree, node, geometry.axes.writing_mode());
     let own_inline_size = used_block_height(tree, node, inline_basis)
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size))
-        .or_else(|| orthogonal_content_height(tree, node, width, parent_size));
-    let shares_context = in_the_roots_formatting_context(tree, node)
-        && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
-        && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
-            node_direction
-                == matches!(
-                    geometry.axes.writing_mode(),
-                    WritingMode::VerticalRl | WritingMode::SidewaysRl
-                )
-        });
+        .or_else(|| orthogonal_content_height(tree, node, width, parent_size, shares_context));
     let clear = tree.physical_style(node).clear();
     let clear_y = ctx
         .cleared_threshold(clear)
@@ -2524,6 +2601,7 @@ fn layout_vertical_block_child(
             }
         }),
         collapses_through,
+        first_baseline: None,
     }
 }
 
@@ -2539,6 +2617,35 @@ fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> boo
         && !overflow.x.is_scroll_container()
         && !overflow.y.is_scroll_container()
         && !style.contain().establishes_independent_formatting_context()
+}
+
+/// Whether the block child `node` of a vertical root laid out in
+/// `root_writing_mode` takes part in the root's block formatting context: it
+/// does when it has the root's writing mode and does not align its content. A
+/// child with another writing mode, even one that flows in the same block
+/// direction as `sideways-lr` does in a `vertical-lr` root (CSS Writing Modes
+/// 4 §3.1), or that flows the other way, across or against the root, is laid
+/// out as the root of a context of its own, whose margins do not collapse with
+/// its content's and which does not overlap the root's floats.
+fn shares_vertical_root_context(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    root_writing_mode: WritingMode,
+) -> bool {
+    in_the_roots_formatting_context(tree, node)
+        && super::style::shodo_writing_mode(
+            crate::layout::dispatch::used_writing_mode(tree, node),
+            node,
+        )
+        .is_ok_and(|writing_mode| writing_mode == root_writing_mode)
+        && tree.physical_style(node).align_content().keyword == AlignContentKeyword::Normal
+        && crate::layout::dispatch::block_right_to_left(tree, node).is_some_and(|node_direction| {
+            node_direction
+                == matches!(
+                    root_writing_mode,
+                    WritingMode::VerticalRl | WritingMode::SidewaysRl
+                )
+        })
 }
 
 /// Lay out a block child that establishes a formatting context of its own
@@ -2668,6 +2775,13 @@ fn layout_formatting_context_child(
     };
     let extra_left = if beside_floats {
         auto_left
+    } else if (autos == 0 || output.size.width > stretch)
+        && geometry.axes.direction() == Direction::Rtl
+    {
+        // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
+        // its used left margin. A block that overflows counts auto margins as
+        // zero, so it is over-constrained as well.
+        geometry.width - output.size.width - margin.right
     } else {
         margin.left + auto_left
     };
@@ -2710,6 +2824,7 @@ fn layout_formatting_context_child(
         // Specifying clear introduces no clearance without relevant floats.
         top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
+        first_baseline: output.baselines.first.map(|baseline| top + baseline),
     }
 }
 
@@ -2765,6 +2880,7 @@ fn orthogonal_content_height(
     node: usize,
     width: Option<f32>,
     parent_size: Size<Option<f32>>,
+    shares_context: bool,
 ) -> Option<OwnWidth> {
     if crate::layout::dispatch::used_writing_mode(tree, node).is_vertical() {
         return None;
@@ -2786,7 +2902,10 @@ fn orthogonal_content_height(
             width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
             height: AvailableSpace::MaxContent,
         },
-        vertical_margins_are_collapsible: Line::FALSE,
+        vertical_margins_are_collapsible: Line {
+            start: shares_context,
+            end: shares_context,
+        },
     };
     let output = tree.compute_child_layout_with_block_ctx(NodeId::from(node), inputs, None);
     Some(OwnWidth::Fixed(output.size.height))
@@ -3489,7 +3608,9 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
 /// block-level one sits where an in-flow block would be there: below the line
 /// when text or an atomic inline comes before it on the line, and at the top
 /// of the line otherwise (CSS 2.1 10.6.4). One without an anchor has no line
-/// of its own: it follows the block child before it, or starts the paragraph
+/// of its own: it follows the lines that come after the block child before it
+/// and before the next block child or block-level `::after` (or that block
+/// itself when no line does), or starts the paragraph
 /// when nothing comes before it, or else, for the lines and blocks that
 /// `::before` generates, follows all the content. `boxes` are the paragraph's
 /// boxes in document order.
@@ -3510,11 +3631,16 @@ fn static_block_offset(
         };
     }
     let mut block_before = None;
+    let mut block_after = None;
+    let mut reached = false;
     for &(id, kind) in boxes {
         if id == node {
-            break;
-        }
-        if kind == IfcBoxKind::Block {
+            reached = true;
+        } else if kind == IfcBoxKind::Block {
+            if reached {
+                block_after = Some(id);
+                break;
+            }
             block_before = Some(id);
         }
     }
@@ -3526,7 +3652,32 @@ fn static_block_offset(
             .iter()
             .find(|&&(id, ..)| id == block)
             .map_or(lines.height, |&(_, next_line, end)| {
-                end + lines.shift_of(next_line)
+                // A line holding nothing but the box is dropped, so the box
+                // has no anchor and the lines after the block are all before
+                // it: it follows the last of them, up to the next block or the
+                // `::after` block, whose lines come after the box.
+                let next_block = block_after
+                    .and_then(|id| lines.block_line_starts.iter().find(|&&(b, _)| b == id))
+                    .map(|&(_, first)| first);
+                let blocks_before = lines
+                    .block_line_starts
+                    .iter()
+                    .position(|&(id, _)| id == block)
+                    .map_or(0, |index| index + 1);
+                let generated_block = lines
+                    .generated_block_starts
+                    .iter()
+                    .find(|&&(count, _)| count >= blocks_before)
+                    .map(|&(_, first)| first);
+                let lines_end = next_block
+                    .into_iter()
+                    .chain(generated_block)
+                    .min()
+                    .unwrap_or(lines.lines.len());
+                match lines_end.checked_sub(1).filter(|&last| last >= next_line) {
+                    Some(last) => lines.line_top(last) + lines.lines[last].block_size(),
+                    None => end + lines.shift_of(next_line),
+                }
             }),
         // Nothing comes before the box, but for lines and blocks generated by
         // `::before`, which are not among the boxes.
@@ -3772,6 +3923,11 @@ pub(crate) fn place_out_of_flow(
                         AxisStaticEdge::Start
                     },
                 ),
+                // Without an anchor the box starts at the inline-start edge
+                // of the content box: the right one in a right-to-left root.
+                None if rtl => {
+                    AxisStaticPosition::from_edge(content_left + lines.width, AxisStaticEdge::End)
+                }
                 None => AxisStaticPosition::from_edge(content_left, AxisStaticEdge::Start),
             };
             Point {
@@ -4002,15 +4158,17 @@ pub(crate) fn intrinsics_of_boxes(
     physical_width: Option<f32>,
 ) -> BoxIntrinsics {
     let basis = inline_basis.unwrap_or(0.0);
-    let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
-        matches!(
-            root.writing_mode,
-            WritingMode::VerticalRl
-                | WritingMode::VerticalLr
-                | WritingMode::SidewaysRl
-                | WritingMode::SidewaysLr
-        )
-    });
+    let writing_mode = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .map_or(WritingMode::HorizontalTb, |root| root.writing_mode);
+    let vertical = matches!(
+        writing_mode,
+        WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr
+    );
     let boxes = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -4021,15 +4179,12 @@ pub(crate) fn intrinsics_of_boxes(
         blocks: (0.0, 0.0),
     };
     if let Some(root) = tree.nodes[idx].ifc.as_ref() {
-        // Generated blocks set in only horizontal lines, so a vertical
-        // paragraph's inline extent takes nothing from them.
-        let blocks = if vertical {
-            &[][..]
-        } else {
-            &root.generated_blocks[..]
-        };
-        for width in blocks
+        // The generated blocks that a vertical paragraph does not set in
+        // take nothing from its inline extent.
+        for width in root
+            .generated_blocks
             .iter()
+            .filter(|block| !vertical || block.on_root_axes)
             .map(generated_blocks::GeneratedBlock::intrinsic_width)
         {
             intrinsics.blocks.0 = intrinsics.blocks.0.max(width);
@@ -4098,7 +4253,11 @@ pub(crate) fn intrinsics_of_boxes(
                 // Only a block in the root's formatting context has margins
                 // that collapse with its content's; the others are laid out
                 // as formatting-context roots.
-                let margins_collapse = in_the_roots_formatting_context(tree, b.node);
+                let margins_collapse = if vertical {
+                    shares_vertical_root_context(tree, b.node, writing_mode)
+                } else {
+                    in_the_roots_formatting_context(tree, b.node)
+                };
                 let (min_content, max_content) = if vertical {
                     content_heights(
                         tree,

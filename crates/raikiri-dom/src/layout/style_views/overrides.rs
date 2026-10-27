@@ -23,6 +23,9 @@ pub(crate) struct ScopedOverrides {
 struct ScopeUndo {
     token: OverrideToken,
     transposed: Vec<crate::layout::dispatch::TransposedSizingUndo>,
+    /// Whether the scope left the cache generation alone; see
+    /// [`LayoutSession::push_local_overrides`].
+    local: bool,
 }
 
 impl ScopedOverrides {
@@ -66,11 +69,69 @@ impl LayoutSession<'_> {
         }
     }
 
+    /// [`LayoutSession::with_overrides`] for a scope that
+    /// [`LayoutSession::push_local_overrides`] describes.
+    pub(crate) fn with_local_overrides<R>(
+        &mut self,
+        entries: Vec<(BoxKey, OwnedPropertyOverride)>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let checkpoint = self.override_checkpoint();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.push_local_overrides(entries);
+            f(self)
+        }));
+        self.restore_overrides_to(checkpoint);
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
     pub(crate) fn override_checkpoint(&self) -> usize {
         self.scoped_overrides.journal.len()
     }
 
     pub(crate) fn push_overrides(&mut self, entries: Vec<(BoxKey, OwnedPropertyOverride)>) {
+        self.push_scoped_overrides(entries, false);
+    }
+
+    /// Push overrides for a probe that must not discard what has been cached
+    /// so far.
+    ///
+    /// [`LayoutSession::push_overrides`] moves the cache generation, on the way
+    /// in and again on the way out. Every cached size becomes unreadable and
+    /// every box being laid out becomes unable to store its own, so a probe
+    /// that overrides a box once for each width its parent tries measures
+    /// everything inside the box again for each of them, and a chain of such
+    /// boxes takes time exponential in its length.
+    ///
+    /// A scope pushed here leaves the generation alone. That is sound when the
+    /// override changes only the inputs the boxes inside the overridden box are
+    /// asked with: a cached size is a function of the box's style and of those
+    /// inputs, so it stays right for the inputs it was cached for. What does
+    /// depend on the override is the sizes of the overridden box itself, which
+    /// the caller keeps apart for as long as the scope lasts (see
+    /// `with_saved_probe_caches`).
+    pub(crate) fn push_local_overrides(&mut self, entries: Vec<(BoxKey, OwnedPropertyOverride)>) {
+        self.push_scoped_overrides(entries, true);
+    }
+
+    fn note_override_changed(&mut self, key: BoxKey, local: bool) {
+        if local {
+            self.document
+                .layout_cache_context
+                .local_override_changed(key);
+        } else {
+            self.document.layout_cache_context.override_changed(key);
+        }
+    }
+
+    fn push_scoped_overrides(
+        &mut self,
+        entries: Vec<(BoxKey, OwnedPropertyOverride)>,
+        local: bool,
+    ) {
         self.sync_layout_cache_mutations();
         if entries.is_empty() {
             return;
@@ -115,7 +176,7 @@ impl LayoutSession<'_> {
                 // A primitive can outlive both the late override and its frame.
                 self.retain_snapshot_calcs(entry.calc_owner().cloned());
             }
-            self.document.layout_cache_context.override_changed(key);
+            self.note_override_changed(key, local);
             let state = self
                 .scoped_overrides
                 .boxes
@@ -129,9 +190,11 @@ impl LayoutSession<'_> {
             };
             state.depth += 1;
             state.entries.push(entry);
-            self.scoped_overrides
-                .journal
-                .push(ScopeUndo { token, transposed });
+            self.scoped_overrides.journal.push(ScopeUndo {
+                token,
+                transposed,
+                local,
+            });
             let undo = self
                 .scoped_overrides
                 .journal
@@ -162,9 +225,7 @@ impl LayoutSession<'_> {
                 .journal
                 .pop()
                 .expect("active override");
-            self.document
-                .layout_cache_context
-                .override_changed(saved.token.key);
+            self.note_override_changed(saved.token.key, saved.local);
             for snapshot in saved.transposed.into_iter().rev() {
                 snapshot.restore(&mut self.context.transposed_blocks);
             }
@@ -266,6 +327,7 @@ impl LayoutSession<'_> {
         self.scoped_overrides.journal.push(ScopeUndo {
             token,
             transposed: Vec::new(),
+            local: false,
         });
         state.depth += 1;
         state.entries.extend(entries);

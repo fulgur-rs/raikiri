@@ -1037,3 +1037,59 @@ fn a_box_in_a_container_on_other_axes_than_its_containing_block_keeps_the_assume
     );
     assert_eq!(rect.2, 0.0);
 }
+
+/// The border box of an absolutely positioned vertical box stretched between
+/// all four insets of the 800x600 page, holding one child with a block size
+/// of 200px. `css` styles the box after a physical height of 100px and a 5px
+/// border.
+fn inset_box_holding_a_200px_block(css: &str) -> (f32, f32, f32, f32) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            format!(
+                "display:block;position:absolute;inset:0;writing-mode:vertical-rl;\
+                 inline-size:100px;border:5px solid red;{css}"
+            )
+            .as_str(),
+        ),
+    );
+    doc.append_element(Some(outer), "div", Some("display:block;block-size:200px"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    absolute_rect(&doc, outer)
+}
+
+#[test]
+fn a_keyword_block_size_sizes_a_vertical_box_by_its_content_between_its_insets() {
+    // The block size of a vertical box is its physical width. A keyword is no
+    // `auto`, so the box does not stretch between `left` and `right`, and
+    // the end inset is the one the over-constrained box ignores.
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        assert_eq!(
+            inset_box_holding_a_200px_block(&format!("block-size:{keyword}")),
+            (0.0, 0.0, 210.0, 110.0),
+            "{keyword}"
+        );
+        assert_eq!(
+            inset_box_holding_a_200px_block(&format!("width:{keyword}")),
+            (0.0, 0.0, 210.0, 110.0),
+            "{keyword}"
+        );
+    }
+    assert_eq!(
+        inset_box_holding_a_200px_block("block-size:200px"),
+        (0.0, 0.0, 210.0, 110.0)
+    );
+    // An `auto` block size stretches between the insets.
+    assert_eq!(
+        inset_box_holding_a_200px_block("block-size:auto"),
+        (0.0, 0.0, 800.0, 110.0)
+    );
+}

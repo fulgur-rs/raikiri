@@ -281,8 +281,9 @@ fn vertical_rtl_float_stays_on_the_recorded_inline_side() {
     assert_eq!(float.1, 0.0, "float={float:?}");
 }
 
-#[test]
-fn vertical_independent_bfc_child_avoids_ancestor_float() {
+/// The top of the block child of a `vertical-rl` paragraph root, styled
+/// `child_style`, after a float of the root that takes 10px of the block axis.
+fn vertical_child_top_after_float(child_style: &str) -> f32 {
     let mut child = 0;
     let (mut doc, _cascade, _root) = ahem_paragraph_with(
         "writing-mode:vertical-rl;width:100px;height:40px",
@@ -290,7 +291,7 @@ fn vertical_independent_bfc_child_avoids_ancestor_float() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                Some("display:flow-root;width:100px;height:40px"),
+                Some(format!("width:100px;height:40px;{child_style}").as_str()),
             );
         },
     );
@@ -312,7 +313,7 @@ fn vertical_independent_bfc_child_avoids_ancestor_float() {
         false,
     );
 
-    let child = super::super::layout_vertical_block_child(
+    super::super::layout_vertical_block_child(
         &mut session,
         &mut ctx,
         child,
@@ -321,9 +322,28 @@ fn vertical_independent_bfc_child_avoids_ancestor_float() {
         geometry,
         false,
         false,
-    );
+    )
+    .top
+}
 
-    assert_eq!(child.top, 10.0);
+#[test]
+fn vertical_independent_bfc_child_avoids_ancestor_float() {
+    assert_eq!(vertical_child_top_after_float("display:flow-root"), 10.0);
+}
+
+#[test]
+fn vertical_child_with_another_writing_mode_of_the_same_block_direction_avoids_ancestor_float() {
+    // `sideways-rl` flows in the block direction of `vertical-rl`, but is a
+    // writing mode of its own, which roots a context beside the float.
+    assert_eq!(
+        vertical_child_top_after_float("writing-mode:sideways-rl"),
+        10.0
+    );
+    // The root's own writing mode shares its context, so it overlaps the float.
+    assert_eq!(
+        vertical_child_top_after_float("writing-mode:vertical-rl"),
+        0.0
+    );
 }
 
 fn layout_vertical_rtl_independent_bfc_child(margins: &str) -> BoxRect {
@@ -762,4 +782,71 @@ fn vertical_block_retries_when_a_collapsing_child_margin_moves_it() {
 
     assert_eq!(child.top, 30.0);
     assert_eq!(child.next_y, 70.0);
+}
+
+/// The boxes of two floats of a vertical root and the block after them,
+/// whose style is `child_style`, as a vertical-lr / vertical-rl document
+/// lays them out: a float taking half of the root's inline extent, one that
+/// clears it and takes a quarter, and a block of three quarters.
+fn layout_block_alongside_vertical_floats(
+    writing_mode: &str,
+    child_style: &str,
+) -> (BoxRect, BoxRect, BoxRect) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Some(
+            format!("display:block;margin:0;writing-mode:{writing_mode};width:200px;height:100px")
+                .as_str(),
+        ),
+    );
+    let first = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;float:left;width:20px;height:50%"),
+    );
+    let second = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;float:left;clear:left;width:20px;height:25%"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!("display:block;width:20px;height:75%;{child_style}").as_str()),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    (
+        absolute_rect(&doc, first),
+        absolute_rect(&doc, second),
+        absolute_rect(&doc, child),
+    )
+}
+
+#[test]
+fn a_child_with_another_writing_mode_of_the_same_block_direction_flows_beside_the_floats() {
+    for (root, child) in [
+        ("vertical-lr", "sideways-lr"),
+        ("vertical-rl", "sideways-rl"),
+        ("sideways-lr", "vertical-lr"),
+        ("sideways-rl", "vertical-rl"),
+    ] {
+        let (first, second, beside) =
+            layout_block_alongside_vertical_floats(root, &format!("writing-mode:{child}"));
+        // A flow root of the root's own writing mode is the reference.
+        let (_, _, expected) = layout_block_alongside_vertical_floats(root, "display:flow-root");
+        assert_eq!(beside, expected, "{root} root, {child} child");
+        // It does not fit beside the first float, the half that is left, but
+        // does beside the second, and goes below it.
+        assert!(
+            beside.1 >= second.1 + second.3,
+            "{root}: first={first:?}, second={second:?}, beside={beside:?}"
+        );
+    }
 }

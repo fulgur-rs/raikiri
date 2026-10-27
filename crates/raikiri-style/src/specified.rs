@@ -648,7 +648,7 @@ pub struct SpecifiedValues {
     /// background layers; `None` is the initial single `none` layer. `None`
     /// and `Url(String)` items are computed-equivalent. Phase 3 absolutizes
     /// the font-relative part of `<length-percentage>` in `Gradient(..)` (CSS
-    /// Images 4 §3), including `GradientColorStop::position`,
+    /// Images 4 §3), including `GradientColorStop::position` and `hint`,
     /// `RadialSize::Circle` / `Ellipse`, and `CssPosition` in
     /// `RadialGradient` / `ConicGradient`. Percentages pass through because
     /// they need the gradient box dimensions at paint / used-value time (see
@@ -2042,7 +2042,9 @@ impl SpecifiedValues {
     /// (<https://www.w3.org/TR/css-logical-1/#dimension-properties>): the
     /// inline size is the physical height. A logical size and the physical
     /// size on the same axis compete in cascade order, as `min-block-size`
-    /// does below.
+    /// does below. The block size keeps `min-content`, `max-content` and
+    /// `fit-content` as the physical width, where `height` and the horizontal
+    /// mapping compute them to `auto`.
     fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
         let declared_height = self.height;
         let declared_block_size = self.block_size;
@@ -2078,12 +2080,15 @@ impl SpecifiedValues {
                 LengthOrAuto::Auto,
             )
         };
+        // The block size of a vertical box is its physical width, which keeps its sizing
+        // keywords as `width` does: only an `auto` width is stretched between the `left` and
+        // `right` of an out-of-flow box.
         let vertical = self.writing_mode.is_vertical().then(|| {
             (
                 pick(
                     self.width,
                     precedence.width,
-                    block_size,
+                    declared_block_size,
                     precedence.block_size,
                 ),
                 pick(

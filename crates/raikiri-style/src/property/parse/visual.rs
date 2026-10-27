@@ -1704,32 +1704,92 @@ fn parse_gradient_stop_color(input: &mut Parser<'_, '_>) -> Option<GradientStopC
     })
 }
 
+/// The `<length-percentage>` of a linear or radial color stop or transition
+/// hint, including a `calc()` that keeps its percentage for paint.
+fn parse_gradient_stop_position<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthPercentageOrCalc, ParseError<'i, ()>> {
+    match crate::cascade::parse_relative_calc_function(input) {
+        Some(calc) => Ok(LengthPercentageOrCalc::from_relative_calc(calc)),
+        None => parse_length_percentage_res(input).map(LengthPercentageOrCalc::Length),
+    }
+}
+
 /// `<linear-color-stop> = <color> <length-percentage>?`
-/// (see [`GradientColorStop`]).
+/// (see [`GradientColorStop`]). The hint in front of the stop is filled in by
+/// [`parse_gradient_color_stop_list`].
 fn parse_gradient_color_stop<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorStop, ParseError<'i, ()>> {
     let color = parse_gradient_stop_color(input).ok_or_else(|| input.new_custom_error(()))?;
-    let position = match crate::cascade::parse_relative_calc_function(input) {
-        Some(calc) => Some(LengthPercentageOrCalc::from_relative_calc(calc)),
-        None => input
-            .try_parse(parse_length_percentage_res)
-            .ok()
-            .map(LengthPercentageOrCalc::Length),
-    };
-    Ok(GradientColorStop { color, position })
+    let position = input.try_parse(parse_gradient_stop_position).ok();
+    Ok(GradientColorStop {
+        color,
+        position,
+        hint: None,
+    })
 }
 
-/// `<color-stop-list>` (see the scope carving in [`GradientColorStop`]:
-/// no hints, at least two stops). Shared by `linear-gradient()` and `radial-gradient()`.
-fn parse_gradient_color_stop_list<'i>(
+/// One comma-separated entry of a color stop list: a stop, or the transition
+/// hint between two stops.
+enum StopListEntry<Stop, Hint> {
+    Stop(Stop),
+    Hint(Hint),
+}
+
+/// A color stop list `<stop> , [ <hint>? , <stop> ]#` (CSS Images 3 §3.4.1):
+/// a hint only between two stops and never two hints in a row. Each hint is
+/// returned with the stop that follows it. How many stops the list needs is
+/// left to the caller, because a conic stop with two positions counts twice.
+fn parse_stop_list_with_hints<'i, Stop, Hint>(
     input: &mut Parser<'i, '_>,
-) -> Result<Vec<GradientColorStop>, ParseError<'i, ()>> {
-    let stops = input.parse_comma_separated(parse_gradient_color_stop)?;
-    if stops.len() < 2 {
+    parse_stop: fn(&mut Parser<'i, '_>) -> Result<Stop, ParseError<'i, ()>>,
+    parse_hint: fn(&mut Parser<'i, '_>) -> Result<Hint, ParseError<'i, ()>>,
+) -> Result<Vec<(Option<Hint>, Stop)>, ParseError<'i, ()>> {
+    let entries = input.parse_comma_separated(|entry| {
+        // A hint is a bare position, which no stop can start with.
+        match entry.try_parse(parse_stop) {
+            Ok(stop) => Ok(StopListEntry::Stop(stop)),
+            Err(_) => parse_hint(entry).map(StopListEntry::Hint),
+        }
+    })?;
+    let mut stops = Vec::with_capacity(entries.len());
+    let mut hint = None;
+    for entry in entries {
+        match entry {
+            StopListEntry::Stop(stop) => stops.push((hint.take(), stop)),
+            // The first entry has no stop before it, and a second hint in a
+            // row has no stop after the first.
+            StopListEntry::Hint(_) if stops.is_empty() || hint.is_some() => {
+                return Err(input.new_custom_error(()));
+            }
+            StopListEntry::Hint(position) => hint = Some(position),
+        }
+    }
+    if stops.is_empty() || hint.is_some() {
         return Err(input.new_custom_error(()));
     }
     Ok(stops)
+}
+
+/// `<color-stop-list>` (see the scope carving in [`GradientColorStop`]: at
+/// least two stops, with a transition hint allowed between two of them).
+/// Shared by `linear-gradient()` and `radial-gradient()`.
+fn parse_gradient_color_stop_list<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<Vec<GradientColorStop>, ParseError<'i, ()>> {
+    let stops = parse_stop_list_with_hints(
+        input,
+        parse_gradient_color_stop,
+        parse_gradient_stop_position,
+    )?;
+    if stops.len() < 2 {
+        return Err(input.new_custom_error(()));
+    }
+    Ok(stops
+        .into_iter()
+        .map(|(hint, stop)| GradientColorStop { hint, ..stop })
+        .collect())
 }
 
 /// Authored `<angular-color-stop> = <color> <color-stop-angle>{1,2}?`
@@ -1769,31 +1829,41 @@ fn parse_angular_color_stop_authored<'i>(
 }
 
 /// `<angular-color-stop-list>`: conic version of [`parse_gradient_color_stop_list`]
-/// (with the same two-stop minimum). Double positions expand into two
-/// single-position [`AngularColorStop`] entries (see [`AngularStopAuthored`]).
+/// (with the same two-stop minimum and the same rules for hints). Double
+/// positions expand into two single-position [`AngularColorStop`] entries (see
+/// [`AngularStopAuthored`]); the hint in front of such a stop stays with the
+/// first of the two.
 fn parse_angular_color_stop_list<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Vec<AngularColorStop>, ParseError<'i, ()>> {
-    let authored = input.parse_comma_separated(parse_angular_color_stop_authored)?;
+    let authored = parse_stop_list_with_hints(
+        input,
+        parse_angular_color_stop_authored,
+        parse_angle_percentage,
+    )?;
     let mut stops = Vec::with_capacity(authored.len() * 2);
-    for stop in authored {
+    for (hint, stop) in authored {
         match (stop.first, stop.second) {
             (None, None) => stops.push(AngularColorStop {
                 color: stop.color,
                 position: None,
+                hint,
             }),
             (Some(first), None) => stops.push(AngularColorStop {
                 color: stop.color,
                 position: Some(first),
+                hint,
             }),
             (Some(first), Some(second)) => {
                 stops.push(AngularColorStop {
                     color: stop.color,
                     position: Some(first),
+                    hint,
                 });
                 stops.push(AngularColorStop {
                     color: stop.color,
                     position: Some(second),
+                    hint: None,
                 });
             }
             // cov:ignore: unreachable by construction, second is only parsed when first matched

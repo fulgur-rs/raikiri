@@ -674,6 +674,18 @@ impl LayoutSession<'_> {
     pub(crate) fn cache_clear(&mut self, node_id: NodeId) {
         self.nodes[usize::from(node_id)].cache.clear();
     }
+
+    /// Drop the cached results of the node and of every box inside it. Such a
+    /// result stands for the lines and fragments the boxes held when it was
+    /// kept, and a layout of the subtree that did not store its results has
+    /// replaced them since.
+    pub(crate) fn cache_clear_subtree(&mut self, node_id: NodeId) {
+        let mut pending = vec![usize::from(node_id)];
+        while let Some(idx) = pending.pop() {
+            self.nodes[idx].cache.clear();
+            pending.extend(self.nodes[idx].children.iter().copied());
+        }
+    }
 }
 
 impl LayoutSession<'_> {
@@ -738,6 +750,9 @@ impl LayoutSession<'_> {
     ) -> LayoutOutput {
         self.assert_style_queries_allowed();
         let idx = usize::from(node_id);
+        if !self.context.recursion.enter(idx) {
+            return LayoutOutput::HIDDEN;
+        }
         if let Some(parent) = self.nodes[idx].parent
             && let Some((_, height)) = self
                 .context
@@ -772,6 +787,7 @@ impl LayoutSession<'_> {
             self.context.text_group = group;
             self.context.text_group_shortest = shortest;
         }
+        self.context.recursion.leave();
         output
     }
 
@@ -1973,11 +1989,16 @@ fn measure_ifc_root(
             .boxes
             .iter()
             .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic);
+    // Column spanners among the boxes split the paragraph in groups of lines,
+    // each of which fills the columns on its own.
+    let spanner_groups = !vertical
+        && nested_fragmentation.is_none()
+        && crate::layout::multicol::paragraph_spanners::supports(tree, idx, &probe);
     let fragmentation = if vertical {
         None
     } else if nested_fragmentation.is_some() {
         nested_fragmentation
-    } else if !atomics_only {
+    } else if !atomics_only && !spanner_groups {
         None
     } else {
         tree.nodes[idx]
@@ -2038,8 +2059,22 @@ fn measure_ifc_root(
         let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
         geometry.definite_height = measure.definite_height;
         geometry.vertical_width = vertical_width;
+        // The spanners are laid out across the columns once the lines are
+        // placed in them.
+        geometry.blocks_apart = spanner_groups && fragmentation.is_some();
         geometry
     };
+    // The block extent a vertical root with an auto block size settled on
+    // last time at the same inline size starts the search for it, so that
+    // the first pass is the last one. From its intrinsic inline size, which is
+    // not an extent along the block axis, the search lays the children out a
+    // second time to confirm the extent, and that doubles the work for every
+    // level of vertical roots nested in each other.
+    let seed_key = (vertical && !measure.stretched_width && known_width.is_none())
+        .then(|| (idx, content_size.height.to_bits()));
+    if let Some(seed) = seed_key.and_then(|key| tree.context.vertical_block_size_seeds.get(&key)) {
+        content_size.width = *seed;
+    }
     let mut geometry = geometry_of(content_size);
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
@@ -2111,6 +2146,12 @@ fn measure_ifc_root(
                 );
             }
         }
+        // Only an extent the search settled on is worth starting from.
+        if let Some(key) = seed_key.filter(|_| !needs_final_probe) {
+            tree.context
+                .vertical_block_size_seeds
+                .insert(key, block_size);
+        }
         (lines, block_size)
     } else {
         let lines = if let Some(context) = nested_fragmentation {
@@ -2145,13 +2186,30 @@ fn measure_ifc_root(
             .min(measure.width_bounds.1)
             .max(measure.width_bounds.0);
     }
+    // The baselines of the groups of lines around the column spanners.
+    let mut group_baselines = None;
     let fragments = lines
         .fragmentainer_line_ranges
         .clone()
         .map(|fragments| (fragments, lines.height))
         .or_else(|| {
-            fragmentation.map(|context| crate::layout::root_column_fragments(&lines, context))
+            fragmentation.map(|context| {
+                if !spanner_groups {
+                    return crate::layout::root_column_fragments(&lines, context);
+                }
+                let groups = crate::layout::multicol::paragraph_spanners::arrange(
+                    tree, idx, &lines, context, geometry, width, perform,
+                );
+                group_baselines = Some((groups.first_baseline, groups.last_baseline));
+                (groups.fragments, groups.height)
+            })
         });
+    // The groups of an earlier layout of this root no longer apply when it
+    // is not laid out in groups now, for instance inside the columns of
+    // another container.
+    if perform && group_baselines.is_none() {
+        tree.nodes[idx].multicol_groups.clear();
+    }
     // The fragments of a paragraph laid out across the columns by the engine
     // come with its lines; only the ones split here still hold the boxes where
     // the lines stand in one tall column.
@@ -2189,12 +2247,15 @@ fn measure_ifc_root(
     // 10.8.1); every other box exposes its first. The lines of a vertical
     // root sit on the central baseline unless its text is set sideways.
     let kind = dominant_baseline(tree, idx);
-    let baseline =
-        if tree.nodes[idx].display() == raikiri_style::property::DisplayValue::InlineBlock {
-            flow::last_baseline_of(&lines, kind)
-        } else {
-            flow::first_baseline_of(&lines, kind)
-        };
+    let inline_block =
+        tree.nodes[idx].display() == raikiri_style::property::DisplayValue::InlineBlock;
+    let baseline = match group_baselines {
+        // The lines stand apart from the spanners between them.
+        Some((first, last)) if inline_block => last.or(first),
+        Some((first, _)) => first,
+        None if inline_block => flow::last_baseline_of(&lines, kind),
+        None => flow::first_baseline_of(&lines, kind),
+    };
     let leading_margin = if measure.top_margin_escapes {
         lines
             .leading_block_margin

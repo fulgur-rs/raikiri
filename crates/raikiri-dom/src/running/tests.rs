@@ -326,6 +326,155 @@ fn a_child_that_inherits_position_is_a_running_element_of_the_same_name() {
     assert_eq!(nodes, [NodeId(outer as u64), NodeId(inner as u64)]);
 }
 
+fn string_pool(placements: &[(u64, u32, bool)]) -> Pool {
+    let placements: Vec<_> = placements
+        .iter()
+        .map(|&(node, page, starts_page)| Placement {
+            node: NodeId(node),
+            page,
+            starts_page,
+        })
+        .collect();
+    let by_page = placements.is_sorted_by_key(|placement| placement.page);
+    Pool {
+        placements,
+        by_page,
+    }
+}
+
+#[test]
+fn string_keywords_pick_from_the_assignments_of_the_page() {
+    let mut index = RunningIndex::default();
+    index.strings.insert(
+        SmolStr::new("title"),
+        string_pool(&[(1, 0, true), (2, 1, false), (3, 1, false)]),
+    );
+    let picks: Vec<_> = ALL
+        .iter()
+        .map(|&fetch| index.select_string("title", fetch, 1).map(|node| node.0))
+        .collect();
+    // first, start (2 does not start page 1), last, first-except.
+    assert_eq!(picks, vec![Some(2), Some(1), Some(3), None]);
+    // The assignments of a name do not select running elements, and the
+    // other way round.
+    assert_eq!(index.select("title", StringFetchMode::First, 1), None);
+    assert_eq!(index.select_string("hdr", StringFetchMode::First, 1), None);
+}
+
+/// `body > p, h2, div.hide > h2, div.contents, h2, p`, where the second
+/// `h2` and the `div.contents` set `title`, and the document's first `h2`
+/// sets it twice. Returns the node ids of the first paragraph, the first
+/// heading, the hidden heading, the `display: contents` element,
+/// the second heading, the second paragraph and the body.
+fn string_document() -> (Document, CascadeResult, [usize; 7]) {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", None::<&str>);
+    doc.append_text(
+        style,
+        "h2 { string-set: title content(), title 'Last ' attr(id) content() } \
+         .hide { display: none } \
+         .contents { display: contents; string-set: title 'Contents' }",
+    );
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let first = doc.append_element(Some(body), "p", None::<&str>);
+    let heading = doc.append_element(Some(body), "h2", None::<&str>);
+    doc.set_element_attributes(heading, vec![(SmolStr::new("id"), SmolStr::new("intro"))]);
+    doc.append_text(heading, "Alpha");
+    let hide = doc.append_element(Some(body), "div", None::<&str>);
+    doc.set_element_attributes(hide, vec![(SmolStr::new("class"), SmolStr::new("hide"))]);
+    let hidden = doc.append_element(Some(hide), "h2", None::<&str>);
+    let contents = doc.append_element(Some(body), "div", None::<&str>);
+    doc.set_element_attributes(
+        contents,
+        vec![(SmolStr::new("class"), SmolStr::new("contents"))],
+    );
+    let unrendered = doc.append_element(Some(body), "h2", None::<&str>);
+    let second = doc.append_element(Some(body), "p", None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+    (
+        doc,
+        cascade,
+        [first, heading, hidden, contents, unrendered, second, body],
+    )
+}
+
+#[test]
+fn string_assignments_take_the_page_where_their_element_begins() {
+    let (doc, cascade, [first, heading, _, _, unrendered, second, _]) = string_document();
+    // The first heading is rendered on page 1; the paragraphs on pages 0 and
+    // 2. The second heading has no box fragments of its own.
+    let rendered = HashMap::from([(first, (0, 0)), (heading, (1, 1)), (second, (2, 2))]);
+    let index = RunningIndex::from_rendered_pages(&doc, &cascade, &rendered);
+    // The heading inside the `display: none` element and the `display:
+    // contents` element assign nothing. An element with no fragments takes
+    // the page of the content after it. An element that sets a name twice
+    // assigns it once.
+    assert_eq!(
+        index.strings["title"].placements,
+        [
+            Placement {
+                node: NodeId(heading as u64),
+                page: 1,
+                starts_page: true,
+            },
+            Placement {
+                node: NodeId(unrendered as u64),
+                page: 2,
+                starts_page: true,
+            },
+        ]
+    );
+    assert!(index.strings["title"].by_page);
+    // Named strings are not running elements.
+    assert_eq!(index.nodes().count(), 0);
+}
+
+#[test]
+fn a_string_assignment_begins_on_the_first_page_of_its_content() {
+    let (doc, cascade, [first, heading, _, _, _, second, _]) = string_document();
+    // The first heading has no fragments of its own, but its text, a
+    // descendant, is rendered from page 1 to 2; the paragraph before it ends
+    // on page 1, so nothing starts that page.
+    let text = heading + 1;
+    let rendered = HashMap::from([(first, (0, 1)), (text, (1, 2)), (second, (2, 2))]);
+    let index = RunningIndex::from_rendered_pages(&doc, &cascade, &rendered);
+    let placements = &index.strings["title"].placements;
+    assert_eq!(placements[0].node, NodeId(heading as u64));
+    assert_eq!(placements[0].page, 1);
+    assert!(!placements[0].starts_page);
+    // With no content after it and none before it, an element is on page 0.
+    let alone = HashMap::new();
+    let index = RunningIndex::from_rendered_pages(&doc, &cascade, &alone);
+    assert_eq!(index.strings["title"].placements[0].page, 0);
+}
+
+#[test]
+fn the_text_of_a_string_assignment_is_its_last_value_for_the_name() {
+    let (doc, cascade, [_, heading, hidden, ..]) = string_document();
+    assert_eq!(
+        string_set_text(&doc, &cascade, heading, "title").as_deref(),
+        Some("Last Alpha")
+    );
+    // `attr()` needs more than the element's text and adds nothing yet.
+    // An element that does not set the name, or does not exist, gives nothing.
+    assert_eq!(string_set_text(&doc, &cascade, heading, "other"), None);
+    assert_eq!(string_set_text(&doc, &cascade, usize::MAX, "title"), None);
+    // The text is the element's, whether or not it has a box.
+    assert_eq!(
+        string_set_text(&doc, &cascade, hidden, "title").as_deref(),
+        Some("Last ")
+    );
+}
+
+#[test]
+fn string_assignments_alone_build_the_index() {
+    let (doc, cascade, _) = string_document();
+    let index = RunningIndex::build(&doc, &cascade, [(&doc, 0)]);
+    assert!(index.strings.contains_key("title"));
+}
+
 #[test]
 fn a_document_without_running_elements_has_an_empty_index() {
     let mut doc = Document::new();

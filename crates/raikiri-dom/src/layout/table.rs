@@ -133,6 +133,11 @@ struct CellPlacement {
     resolved: Option<BoxLayout>,
     natural_height: f32,
     baseline: f32,
+    /// Whether the cell has something in flow to take its baseline from: a
+    /// line, or a box with height of its own. A baseline-aligned cell without
+    /// one (an empty cell, even with an authored height or padding) takes no
+    /// part in choosing the row's baseline, as in Chromium.
+    baseline_from_flow: bool,
     /// The row-height pass's layout, kept when the final layout at the row
     /// height would only repeat it (see [`row_pass_is_final`]).
     row_pass: Option<RowPassLayout>,
@@ -1222,17 +1227,24 @@ fn compute_table_layout_checked(
             },
             &mut oof_candidates,
         )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
-        // The first row the table still shows carries its baseline.
-        let baseline_row = collapsed_rows
-            .iter()
-            .position(|collapsed| !collapsed)
-            .unwrap_or(0);
-        let first_row_baseline = grid
-            .cells
-            .iter()
+        // The row the table starts with carries its baseline, collapsed or not:
+        // Chromium reads it before it removes the collapsed rows, where CSS
+        // Tables 3 §3.10.2 only says "first row". The cells that start in it,
+        // align by a baseline and have something in flow to take one from
+        // (a line, or a box with height of its own) supply it, the greatest
+        // offset winning. With none, it is the lowest content edge among the
+        // cells, measured as the row stretched them; a cell in a collapsed row
+        // has no extent, so that edge is the row's top.
+        let first_row_collapsed = collapsed_rows.first() == Some(&true);
+        let first_row_hidden = hidden_rows.first() == Some(&true) && !first_row_collapsed;
+        let first_row_cells = || {
+            grid.cells
+                .iter()
+                .filter(|cell| cell.row == 0 && !first_row_hidden)
+        };
+        let first_row_baseline = first_row_cells()
             .filter(|cell| {
-                first_shown_row(cell, collapsed_rows) == baseline_row
-                    && !hidden_rows[baseline_row]
+                cell.baseline_from_flow
                     && cell_baseline_aligned(
                         doc.ifc_layout_node(cell.node_id)
                             .expect("table cell layout view")
@@ -1242,24 +1254,15 @@ fn compute_table_layout_checked(
             .map(|cell| cell.baseline)
             .reduce(f32::max)
             .unwrap_or_else(|| {
-                grid.cells
-                    .iter()
-                    .filter(|cell| {
-                        first_shown_row(cell, collapsed_rows) == baseline_row
-                            && !hidden_rows[baseline_row]
-                    })
+                first_row_cells()
                     .map(|cell| {
-                        let layout = doc.table_layout_node_mut(cell.node_id).layout;
-                        layout.size.height - layout.padding.bottom - layout.border.bottom
+                        doc.nodes[cell.node_id].layout.size.height - cell_block_end_edges(doc, cell)
                     })
                     .fold(0.0, f32::max)
             });
-        // With every row collapsed the table has no first row, so it has no
-        // first baseline, like an empty table (CSS Tables 3 §3.10.2).
-        doc.nodes[table_idx].table_first_baseline = collapsed_rows
-            .iter()
-            .any(|collapsed| !collapsed)
-            .then(|| row_origins[baseline_row] + first_row_baseline);
+        // A table without rows has no first baseline (CSS Tables 3 §3.10.2).
+        doc.nodes[table_idx].table_first_baseline =
+            (!collapsed_rows.is_empty()).then(|| row_origins[0] + first_row_baseline);
         if vertical_writing {
             reposition_cells_for_vertical_writing(
                 doc,
@@ -1315,6 +1318,12 @@ fn table_layout_output(
     let mut output = LayoutOutput::from_outer_size(size);
     if run_mode != RunMode::PerformLayout {
         return output;
+    }
+    // An inline-level table sits on the baseline of its first row (CSS 2.1
+    // §10.8.1), and a flex or grid container aligns it by that baseline too.
+    // The rows of a vertical table run across the line, so it has none.
+    if !table_writing_mode(doc, table).is_vertical() {
+        output.baselines.first = doc.nodes[table].table_first_baseline;
     }
     append_direct_table_oof_candidates(doc, table, &mut candidates);
     if candidates.is_empty() {
@@ -1768,6 +1777,7 @@ fn build_table_grid(
                     resolved: None,
                     natural_height: 0.0,
                     baseline: 0.0,
+                    baseline_from_flow: false,
                     row_pass: None,
                 });
                 col = next_col;
@@ -2104,6 +2114,7 @@ fn push_row(
             resolved: None,
             natural_height: 0.0,
             baseline: 0.0,
+            baseline_from_flow: false,
             row_pass: None,
         });
         col = next_col;
@@ -2796,14 +2807,15 @@ fn without_collapsed_columns(
     }
 }
 
-/// The first row a cell shows in once collapsed rows are removed, or the
-/// row it starts in when its whole span is collapsed. Only the table's first
-/// baseline reads it: `place_cells` leaves a cell that starts in a collapsed
-/// row in that row, with no extent.
-fn first_shown_row(cell: &CellPlacement, collapsed: &[bool]) -> usize {
-    let start = cell.row as usize;
-    let end = (start + cell.row_span as usize).min(collapsed.len());
-    (start..end).find(|&row| !collapsed[row]).unwrap_or(start)
+/// The block-end padding and border of a placed cell, resolved against the
+/// width it was placed at. The edges the layout stores on a cell also hold the
+/// room that aligning its content added, so they cannot stand in for these.
+fn cell_block_end_edges(doc: &LayoutSession<'_>, cell: &CellPlacement) -> f32 {
+    let width = doc.nodes[cell.node_id].layout.size.width;
+    let style = doc.table_style(cell.node_id);
+    let padding = style.padding().resolve_or_zero(Some(width));
+    let border = style.border().resolve_or_zero(Some(width));
+    padding.bottom + border.bottom
 }
 
 fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
@@ -3186,11 +3198,13 @@ fn resolve_row_heights(
         if end_row - start > 1 {
             // The first spanned row must contain the cell's baseline
             // before the remaining span height is distributed (CSS 2.2 17.5.3).
-            if cell_baseline_aligned(
-                doc.ifc_layout_node(cell.node_id)
-                    .expect("table cell layout view")
-                    .table_vertical_align,
-            ) {
+            if cell.baseline_from_flow
+                && cell_baseline_aligned(
+                    doc.ifc_layout_node(cell.node_id)
+                        .expect("table cell layout view")
+                        .table_vertical_align,
+                )
+            {
                 row_heights[start] = row_heights[start].max(cell.baseline);
             }
             spanning.push((start..end_row, h));
@@ -3220,17 +3234,20 @@ fn resolve_row_heights(
     // cell: the maximum ascent and descent need not belong to the same cell.
     let mut row_baselines = vec![0.0f32; grid.rows.len()];
     for cell in &grid.cells {
-        if cell_baseline_aligned(
-            doc.ifc_layout_node(cell.node_id)
-                .expect("table cell layout view")
-                .table_vertical_align,
-        ) {
+        if cell.baseline_from_flow
+            && cell_baseline_aligned(
+                doc.ifc_layout_node(cell.node_id)
+                    .expect("table cell layout view")
+                    .table_vertical_align,
+            )
+        {
             let row = cell.row as usize;
             row_baselines[row] = row_baselines[row].max(cell.baseline);
         }
     }
     for cell in &grid.cells {
         if cell.row_span == 1
+            && cell.baseline_from_flow
             && cell_baseline_aligned(
                 doc.ifc_layout_node(cell.node_id)
                     .expect("table cell layout view")
@@ -3371,6 +3388,10 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
     let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
     cell.baseline =
         baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
+    let block_edges = padding.top + padding.bottom + border.top + border.bottom;
+    // A tolerance, since an empty cell's height is the same edges summed in
+    // another order.
+    cell.baseline_from_flow = baseline.is_some() || output.size.height > block_edges + 1e-3;
     h
 }
 
@@ -3471,6 +3492,7 @@ fn place_cells(
     for cell in &grid.cells {
         let row = cell.row as usize;
         if !collapsed_rows[row]
+            && cell.baseline_from_flow
             && cell_baseline_aligned(
                 doc.ifc_layout_node(cell.node_id)
                     .expect("table cell layout view")
@@ -3615,7 +3637,17 @@ fn place_cells(
             VerticalAlign::Top => 0.0,
             VerticalAlign::Middle => extra / 2.0,
             VerticalAlign::Bottom => extra,
-            _ if !vertical_cell => (row_baselines[start_row] - cell.baseline).max(0.0),
+            _ if !vertical_cell => {
+                let shift = (row_baselines[start_row] - cell.baseline).max(0.0);
+                // The row's baseline does not account for a cell without
+                // anything in flow, so aligning it by one must not push it
+                // past its row.
+                if cell.baseline_from_flow {
+                    shift
+                } else {
+                    shift.min(extra)
+                }
+            }
             _ => 0.0,
         };
         padding.top += shift;

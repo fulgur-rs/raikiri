@@ -235,3 +235,51 @@ fn a_list_marker_counts_before_the_content_of_its_item() {
         "<a[b[w]"
     );
 }
+
+#[test]
+fn style_containment_scopes_the_quote_depth_to_the_element() {
+    // The close quote of the contained element cannot close the quote the
+    // outer one opened (quote-scoping-002), so the outer one still does.
+    let css = ".o::before{content:open-quote}\
+               .o::after,.s::after{content:close-quote}.s{contain:style}";
+    assert_eq!(
+        paired("<span class=o><span class=s></span></span>", css),
+        "<>>"
+    );
+    // Without containment the first close takes the depth to zero and the
+    // second one has nothing to close.
+    assert_eq!(
+        paired(
+            "<span class=o><span class=s></span></span>",
+            &css.replace("contain:style", "contain:layout")
+        ),
+        "<>"
+    );
+    // `contain: content` includes style containment.
+    assert_eq!(
+        paired(
+            "<span class=o><span class=s></span></span>",
+            &css.replace("contain:style", "contain:content")
+        ),
+        "<>>"
+    );
+}
+
+#[test]
+fn a_no_close_quote_of_a_contained_element_does_not_leave_it() {
+    // quote-scoping-004: the contained `no-close-quote` takes the depth to
+    // zero only inside the element, so the outer close quote still prints.
+    let css = ".o::before{content:open-quote}.o::after{content:close-quote}\
+               .s::after{content:no-close-quote}.s{contain:style}";
+    assert_eq!(
+        paired("<span class=o><span class=s></span></span>", css),
+        "<>"
+    );
+    assert_eq!(
+        paired(
+            "<span class=o><span class=s></span></span>",
+            &css.replace("contain:style", "")
+        ),
+        "<"
+    );
+}

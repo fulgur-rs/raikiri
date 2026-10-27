@@ -1640,3 +1640,622 @@ fn scaled_down_border_image_edges_meet_on_device_pixels() {
     let exact = raster_scaled_border_image(style, None, 2.0);
     assert!(pixel(&exact, 40, 10, 20)[3] < 255);
 }
+
+/// Rasterize a conic gradient layer over a `width` by `height` box.
+fn raster_conic(style: &str, width: u32, height: u32) -> Vec<u8> {
+    let cv = computed_for(style);
+    let Gradient::Conic(conic) = gradient_of(&cv) else {
+        panic!("expected a conic gradient");
+    };
+    let area = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    let mut scene = Scene::new();
+    paint_conic_gradient(&mut scene, &conic, area, area, cv.color);
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        width,
+        height,
+    )
+}
+
+/// Assert that the red channel of a red-to-blue ramp at `x` is within `slack`
+/// of `expected`.
+fn assert_red_near(rgba: &[u8], width: u32, x: u32, expected: f64, slack: f64) {
+    let red = f64::from(pixel(rgba, width, x, 0)[0]);
+    assert!(
+        (red - expected).abs() <= slack,
+        "red at x={x} is {red}, expected {expected} +- {slack}"
+    );
+}
+
+/// The red of the ramp `red -> blue` that a hint at the fraction `hint` bends
+/// (CSS Images 3 §3.4.2) at the fraction `t` of the line.
+fn hinted_red(hint: f64, t: f64) -> f64 {
+    255.0 * (1.0 - t.powf(0.5f64.ln() / hint.ln()))
+}
+
+#[test]
+fn a_transition_hint_bends_the_ramp_so_the_hint_gets_the_middle_color() {
+    // The pixel at x holds the color of (x + 0.5) / 100 of the line.
+    for hint in [0.25, 0.75, 0.05, 0.95] {
+        let rgba = raster_layer(
+            &format!(
+                "background-image: linear-gradient(to right in srgb, red, {}%, blue)",
+                hint * 100.0
+            ),
+            100,
+            1,
+        );
+        for x in (0..100).step_by(7) {
+            let t = (f64::from(x) + 0.5) / 100.0;
+            assert_red_near(&rgba, 100, x, hinted_red(hint, t), 4.0);
+        }
+    }
+}
+
+#[test]
+fn a_transition_hint_in_the_middle_draws_the_plain_ramp() {
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 50%, blue)",
+        100,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, blue)",
+        100,
+        1,
+    );
+    assert_eq!(hinted, plain);
+}
+
+#[test]
+fn a_transition_hint_gets_the_middle_color_in_the_default_interpolation_space() {
+    // Oklab: the hint position holds the same color as the plain ramp's middle.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right, red, 25%, blue)",
+        100,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right, red, blue)",
+        100,
+        1,
+    );
+    let at_hint = pixel(&hinted, 100, 25, 0);
+    let at_middle = pixel(&plain, 100, 50, 0);
+    for channel in 0..3 {
+        assert!(
+            at_hint[channel].abs_diff(at_middle[channel]) <= 4,
+            "{at_hint:?} vs {at_middle:?}"
+        );
+    }
+}
+
+#[test]
+fn a_transition_hint_at_a_stop_makes_a_hard_transition() {
+    // At the first stop the second color starts at once.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 20%, 20%, blue 80%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 10, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 22, 0), BLUE);
+    // At the second stop the first color lasts up to it.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 20%, 80%, blue 80%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 78, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 82, 0), BLUE);
+}
+
+#[test]
+fn a_transition_hint_between_stops_at_one_position_draws_nothing() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 50%, 20%, blue 50%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 40, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 60, 0), BLUE);
+}
+
+#[test]
+fn transition_hints_anchor_the_stops_without_a_position_next_to_them() {
+    // Browsers space the middle stop between the first stop and the hint,
+    // which puts blue at 15% of the line rather than at 50%.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, blue, 30%, lime)",
+        100,
+        1,
+    );
+    let just_before_blue = pixel(&rgba, 100, 14, 0);
+    assert!(
+        just_before_blue[2] >= 240 && just_before_blue[0] <= 12,
+        "{just_before_blue:?}"
+    );
+}
+
+#[test]
+fn a_hint_lifts_the_stops_after_it_up_to_its_position() {
+    // Blue sits at 50% but follows a hint at 80%, so it moves to 80%.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 0%, 80%, blue 50%, lime 100%)",
+        100,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 100, 40, 0), RED);
+    assert_eq!(pixel(&rgba, 100, 79, 0), RED);
+    // Lime follows blue at 100%: 7.5% of the way from blue at x = 81.
+    assert!(pixel(&rgba, 100, 81, 0)[2].abs_diff(236) <= 3);
+}
+
+#[test]
+fn a_hint_given_as_a_length_or_calc_resolves_against_the_line() {
+    let by_length = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 0px, 25px, blue 100px)",
+        100,
+        1,
+    );
+    let by_calc = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, calc(10px + 15%), blue)",
+        100,
+        1,
+    );
+    let by_percent = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 25%, blue)",
+        100,
+        1,
+    );
+    assert_eq!(by_length, by_percent);
+    assert_eq!(by_calc, by_percent);
+}
+
+#[test]
+fn a_transition_hint_mixes_translucent_stops_with_premultiplied_alpha() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, transparent, 25%, blue)",
+        100,
+        1,
+    );
+    // Half of the blue is there at the hint, where the mix is even.
+    let at_hint = pixel(&rgba, 100, 25, 0);
+    assert!(at_hint[3].abs_diff(128) <= 4, "{at_hint:?}");
+    assert!(pixel(&rgba, 100, 99, 0)[3] >= 253);
+}
+
+#[test]
+fn a_transition_hint_bends_each_period_of_a_repeating_gradient() {
+    let rgba = raster_layer(
+        "background-image: repeating-linear-gradient(to right in srgb, red 0px, 5px, blue 20px)",
+        40,
+        1,
+    );
+    for x in [0, 3, 10, 19, 20, 23, 30, 39] {
+        let t = (f64::from(x % 20) + 0.5) / 20.0;
+        assert_red_near(&rgba, 40, x, hinted_red(0.25, t), 6.0);
+    }
+}
+
+#[test]
+fn a_transition_hint_bends_a_radial_gradient() {
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle farthest-side in srgb, red, 25%, blue)",
+        100,
+        100,
+    );
+    // The ray is 50px long and the pixel at distance d holds the color of d / 50.
+    for dx in [2.0f64, 6.0, 12.5, 25.0, 40.0] {
+        let x = (50.0 + dx) as u32;
+        let t = (f64::from(x) + 0.5 - 50.0) / 50.0;
+        let red = f64::from(pixel(&rgba, 100, x, 50)[0]);
+        assert!(
+            (red - hinted_red(0.25, t)).abs() <= 6.0,
+            "red at {x} is {red}, expected {}",
+            hinted_red(0.25, t)
+        );
+    }
+}
+
+#[test]
+fn a_transition_hint_bends_a_conic_gradient() {
+    // A quarter turn clockwise from the top is the right edge.
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in srgb, red, 25%, blue)",
+        100,
+        100,
+    );
+    let right = f64::from(pixel(&rgba, 100, 98, 50)[0]);
+    assert!((right - 127.5).abs() <= 6.0, "{right}");
+    let angled = raster_conic(
+        "background-image: conic-gradient(in srgb, red, 90deg, blue)",
+        100,
+        100,
+    );
+    assert_eq!(rgba, angled);
+    // Half a turn in, the curve is at 0.5 ^ 0.5 of the way to blue.
+    let bottom = f64::from(pixel(&rgba, 100, 50, 98)[0]);
+    assert!((bottom - hinted_red(0.25, 0.5)).abs() <= 6.0, "{bottom}");
+}
+
+#[test]
+fn a_transition_hint_of_a_conic_gradient_stays_with_the_first_of_two_positions() {
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in srgb, red, 10%, blue 25% 50%, lime)",
+        100,
+        100,
+    );
+    // The band from 25% to 50% is solid blue on the right and bottom edges.
+    assert_eq!(pixel(&rgba, 100, 98, 60)[..3], BLUE[..3]);
+}
+
+#[test]
+fn a_transition_hint_very_far_from_its_stops_is_drawn_without_hanging() {
+    let rgba = raster_layer(
+        "background-image: radial-gradient(green -1540359700%, 0px, darkgrey 2%)",
+        100,
+        100,
+    );
+    // Past the 2% ray the last color is solid.
+    assert_eq!(pixel(&rgba, 100, 99, 99), [169, 169, 169, 255]);
+}
+
+#[test]
+fn a_transition_hint_next_to_a_stop_squeezes_the_curve_against_it() {
+    // A hint a hair from the end holds the first color almost to the end,
+    // and a hint a hair from the start leaves the second color almost at once.
+    let late = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 99.99%, blue)",
+        200,
+        1,
+    );
+    assert_red_near(&late, 200, 150, hinted_red(0.9999, 0.7525), 4.0);
+    let early = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, 0.01%, blue)",
+        200,
+        1,
+    );
+    assert_red_near(&early, 200, 100, hinted_red(0.0001, 0.5025), 4.0);
+}
+
+#[test]
+fn a_transition_hint_follows_the_hue_arc_of_an_increasing_hue_method() {
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in oklch increasing hue, #43a047, 25%, #fdd835)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in oklch increasing hue, #43a047, #fdd835)",
+        200,
+        1,
+    );
+    // The hint position, a quarter of the way along, holds the plain ramp's middle.
+    let at_hint = pixel(&hinted, 200, 50, 0);
+    let at_middle = pixel(&plain, 200, 100, 0);
+    for channel in 0..3 {
+        assert!(
+            at_hint[channel].abs_diff(at_middle[channel]) <= 4,
+            "{at_hint:?} vs {at_middle:?}"
+        );
+    }
+}
+
+#[test]
+fn a_conic_hint_far_outside_the_turn_paints_without_sampling_the_whole_range() {
+    // The hint samples of an increasing-hue ramp leave the sRGB gamut, which
+    // sends the sweep through the sampled-stops path with offsets of millions
+    // of turns.
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in oklch increasing hue, red -1000000000%, -750000000%, blue 100%)",
+        20,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 20, 10, 1)[3], 255);
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in oklch increasing hue, red, 25%, blue 1000000000%)",
+        20,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 20, 10, 1)[3], 255);
+}
+
+#[test]
+fn a_transition_hint_between_equal_colors_adds_no_stops() {
+    // The curve between two equal colors is one solid color, so only the
+    // hint between red and blue is sampled.
+    let cv = computed_for("background-image: conic-gradient(red, 25%, red, blue)");
+    let Gradient::Conic(conic) = gradient_of(&cv) else {
+        panic!("expected a conic gradient");
+    };
+    let raw: Vec<gradient::RawStop> = conic
+        .stops
+        .iter()
+        .map(|stop| gradient::RawStop {
+            position: angular_stop_offset(stop.position),
+            hint: angular_stop_offset(stop.hint),
+            color: gradient_stop_dynamic(stop.color, cv.color),
+        })
+        .collect();
+    assert_eq!(
+        gradient::fixed_up_stops(&raw, &conic.interpolation).len(),
+        3
+    );
+}
+
+#[test]
+fn a_transition_hint_is_left_out_under_longer_hue() {
+    // Joining the samples of the curve with ramps would send each of them
+    // round the hue wheel the long way, so the plain ramp is drawn instead.
+    let hinted = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, #e53935, 25%, #1e88e5)",
+        200,
+        1,
+    );
+    let plain = raster_layer(
+        "background-image: linear-gradient(to right in oklch longer hue, #e53935, #1e88e5)",
+        200,
+        1,
+    );
+    assert_eq!(hinted, plain);
+}
+
+/// Pixels of a 200x200 conic gradient a little way in from the middle of each
+/// edge, clockwise from the top, then the one just before the top: the end
+/// of the turn.
+fn turn_probes(style: &str) -> [[u8; 3]; 5] {
+    let rgba = raster_conic(style, 200, 200);
+    [(100, 20), (180, 100), (100, 180), (20, 100), (99, 20)].map(|(x, y)| {
+        let [red, green, blue, _] = pixel(&rgba, 200, x, y);
+        [red, green, blue]
+    })
+}
+
+/// Assert that [`turn_probes`] of `style` are within `slack` levels of
+/// `expected`, the colors Chromium draws.
+fn assert_turn_probes(style: &str, expected: [[u8; 3]; 5], slack: u8) {
+    let probes = turn_probes(style);
+    for (index, (got, want)) in probes.iter().zip(expected).enumerate() {
+        for channel in 0..3 {
+            assert!(
+                got[channel].abs_diff(want[channel]) <= slack,
+                "{style}: probe {index} is {got:?}, expected {want:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_conic_ramp_running_past_the_end_of_the_turn_is_cut_there() {
+    // The ramp takes 150% of a turn, so the turn ends two thirds along it.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red, blue 150%)",
+        [
+            [254, 0, 0],
+            [212, 0, 42],
+            [170, 0, 84],
+            [127, 0, 127],
+            [86, 0, 170],
+        ],
+        2,
+    );
+    // A stop in the middle of the turn and the last one beyond it.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red, blue 50%, lime 150%)",
+        [
+            [254, 0, 0],
+            [127, 0, 128],
+            [0, 0, 254],
+            [0, 63, 191],
+            [0, 128, 128],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_conic_ramp_starting_before_the_turn_is_cut_there() {
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, blue)",
+        [
+            [169, 0, 85],
+            [127, 0, 127],
+            [85, 0, 169],
+            [42, 0, 212],
+            [1, 0, 255],
+        ],
+        2,
+    );
+    // Angles count the same as percentages: -90deg is -25% of a turn.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -90deg, blue 450deg)",
+        [
+            [212, 0, 42],
+            [169, 0, 85],
+            [127, 0, 127],
+            [85, 0, 169],
+            [43, 0, 213],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_conic_ramp_covering_the_turn_on_both_sides_shows_its_middle() {
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, blue 150%)",
+        [
+            [191, 0, 63],
+            [159, 0, 95],
+            [127, 0, 127],
+            [95, 0, 159],
+            [64, 0, 192],
+        ],
+        2,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, lime 50%, blue 150%)",
+        [
+            [127, 127, 0],
+            [63, 191, 0],
+            [0, 254, 0],
+            [0, 191, 63],
+            [0, 128, 128],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn conic_stops_all_on_one_side_of_the_turn_fill_it_with_one_color() {
+    // After the turn only the first color shows, before it only the last.
+    for style in [
+        "background-image: conic-gradient(in srgb, red 120%, blue 150%)",
+        "background-image: conic-gradient(in srgb, red 99.9999%, blue 100.0001%)",
+    ] {
+        assert_turn_probes(style, [[255, 0, 0]; 5], 0);
+    }
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, blue -20%)",
+        [[0, 0, 255]; 5],
+        0,
+    );
+}
+
+#[test]
+fn a_conic_segment_of_one_color_crossing_an_end_of_the_turn_holds_its_color_there() {
+    // Nothing of the segment is sampled, so the cut list would be empty.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -90deg, red 450deg)",
+        [[255, 0, 0]; 5],
+        0,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch, blue -10deg, blue 400deg)",
+        [
+            [0, 0, 254],
+            [0, 0, 254],
+            [0, 0, 254],
+            [0, 0, 254],
+            [0, 1, 255],
+        ],
+        2,
+    );
+    // The segment crosses the start of the turn and a ramp follows it, or a
+    // ramp precedes it and it crosses the end.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, red 50%, blue)",
+        [
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [128, 0, 127],
+            [1, 0, 255],
+        ],
+        2,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red, blue 50%, blue 150%)",
+        [
+            [254, 0, 0],
+            [127, 0, 128],
+            [0, 0, 254],
+            [0, 0, 255],
+            [0, 0, 255],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_cut_conic_ramp_keeps_the_color_space_and_hue_path_of_the_whole_ramp() {
+    // Cutting after sampling keeps the arc round the hue wheel of the whole
+    // ramp: joining the cut ends again with `longer hue` would draw another.
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch longer hue, red -50%, blue 150%)",
+        [
+            [188, 99, 0],
+            [110, 130, 0],
+            [0, 146, 0],
+            [0, 147, 97],
+            [0, 131, 178],
+        ],
+        5,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch, red -50%, blue 150%)",
+        [
+            [232, 0, 123],
+            [211, 0, 160],
+            [186, 0, 193],
+            [156, 0, 222],
+            [123, 0, 244],
+        ],
+        3,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklab, red -50%, blue 150%)",
+        [
+            [197, 73, 109],
+            [169, 81, 137],
+            [140, 83, 162],
+            [111, 79, 186],
+            [81, 72, 210],
+        ],
+        3,
+    );
+}
+
+#[test]
+fn a_cut_conic_ramp_keeps_its_hint_and_its_gamut_clipping() {
+    // A hint inside the turn, and one out of it, bend the part that shows.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, 20%, blue 150%)",
+        [
+            [153, 0, 101],
+            [121, 0, 133],
+            [93, 0, 161],
+            [68, 0, 186],
+            [46, 0, 210],
+        ],
+        4,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -50%, -20%, blue 150%)",
+        [
+            [101, 0, 153],
+            [76, 0, 178],
+            [57, 0, 197],
+            [41, 0, 213],
+            [28, 0, 228],
+        ],
+        4,
+    );
+    // A stop outside the sRGB gamut and outside the turn.
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, color(srgb 2 0 0) -50%, blue 50%)",
+        [
+            [254, 0, 127],
+            [127, 0, 191],
+            [0, 0, 254],
+            [0, 0, 255],
+            [0, 0, 255],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn conic_stops_millions_of_turns_away_are_cut_without_walking_the_range() {
+    assert_turn_probes(
+        "background-image: conic-gradient(in srgb, red -1000000000%, blue 1000000000%)",
+        [[127, 0, 127]; 5],
+        2,
+    );
+    assert_turn_probes(
+        "background-image: conic-gradient(in oklch longer hue, red -1000000000%, blue 1000000000%)",
+        [[0, 146, 0]; 5],
+        2,
+    );
+}
