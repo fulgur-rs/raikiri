@@ -70,8 +70,9 @@ fn image_bytes(image: &DecodedImage) -> u64 {
 /// their sum plus concurrent decoder slots process-wide. Reconfigured
 /// [`RenderResources`](super::RenderResources) clones keep sharing the same budget object while their
 /// caches, provider budgets, and in-flight maps are replaced, so cache and
-/// policy isolation holds while decoder concurrency and retained peak stay
-/// bounded across independent contexts.
+/// policy isolation holds while decoder concurrency and cache reservations stay
+/// bounded across independent contexts. Caller-held allocations after eviction
+/// or cache drop are outside this accounting.
 #[derive(Debug)]
 pub(crate) struct ProcessImageBudget {
     retained: Mutex<u64>,
@@ -394,7 +395,9 @@ impl DecodedImageCache {
         // Charge metadata even for an empty scene, so entry count stays bounded.
         u64::try_from(scene.estimated_heap_bytes())
             .unwrap_or(u64::MAX)
-            .saturating_add(std::mem::size_of::<CachedScene>() as u64)
+            .saturating_add(
+                (std::mem::size_of::<CachedScene>() + 2 * std::mem::size_of::<usize>()) as u64,
+            )
             .saturating_add(url.as_str().len() as u64)
     }
 
