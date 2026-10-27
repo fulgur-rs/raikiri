@@ -55,7 +55,8 @@ pub struct CascadeLimits {
     /// exceeding the limit returns a terminal error, never partial styles.
     ///
     /// This does not bound string bytes, arbitrary DOM trait implementations
-    /// or total CPU time. DOM query APIs use unlimited matching contexts.
+    /// or total CPU time. Bounded DOM queries use a separate
+    /// [`crate::SelectorWorkBudget`]; compatibility bool methods are unlimited.
     /// `None` disables this limit. Defaults to `Some(2^26)`.
     pub max_selector_work: Option<u64>,
     /// The most bytes of candidate declarations the result may keep, for the

@@ -14,7 +14,7 @@
 //! source location, etc.) do not leak into the trait layer. Add variants as
 //! needed under `#[non_exhaustive]`.
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum CascadeError {
     /// An unrecoverable internal error in raikiri-style (a bug, or input
     /// disallowed by an explicit strict mode). raikiri-style constructs the

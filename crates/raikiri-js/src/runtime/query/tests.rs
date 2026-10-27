@@ -502,3 +502,28 @@ fn query_selector_all_nth_child_sees_mutations_between_queries() {
              && ul.querySelector('li:nth-child(2)') === ul.children[1]",
     );
 }
+
+#[test]
+fn selector_native_work_zero_budget_stops_before_later_script_effects() {
+    let (host, _, _, body) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        crate::runtime::RunOptions {
+            limits: crate::runtime::Limits {
+                max_selector_work: Some(0),
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    expose(&mut rt, "subject", body);
+    let result = rt.evaluate("var reached=false; subject.matches('*'); reached=true");
+    assert!(
+        result.is_err(),
+        "native selector work must obey a zero budget"
+    );
+}
+
+mod budget_tests;
+mod native_budget_probe_tests;
+mod native_work_probe_tests;

@@ -230,3 +230,31 @@ fn oversized_budgeted_fragment_response_is_a_node_abort() {
         Err(raikiri_js::runtime::FragmentParseError::Nodes)
     ));
 }
+
+#[test]
+fn selector_budget_and_sticky_abort_cross_the_guest_protocol() {
+    use raikiri_js::runtime::{Abort, DomRuntime, Limits, RunOptions, RuntimeError};
+    let mut document = Document::new();
+    let root = document.root_index();
+    document.append_element(Some(root), "html", None::<&str>);
+    let native = RunOptions {
+        limits: Limits {
+            max_selector_work: Some(0),
+            ..Limits::default()
+        },
+    };
+    let dto: LimitsDto = decode(&encode(&LimitsDto::from(native)).unwrap()).unwrap();
+    let host = RpcDocumentHost::new(document, None, 100, Box::new(|_| Ok(HostValue::Unit)));
+    let mut runtime = DomRuntime::with_options(host, dto.into_options()).unwrap();
+    assert_eq!(
+        runtime.evaluate("document.querySelector('*')"),
+        Err(RuntimeError::Aborted(Abort::SelectorWork))
+    );
+    let report: ReportDto =
+        decode(&encode(&ReportDto::from(runtime.run_document())).unwrap()).unwrap();
+    assert_eq!(report.into_native().aborted, Some(Abort::SelectorWork));
+    assert_eq!(
+        runtime.evaluate("true"),
+        Err(RuntimeError::Aborted(Abort::SelectorWork))
+    );
+}

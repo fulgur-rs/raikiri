@@ -317,3 +317,6 @@ fn matcher_agrees_with_per_call_matching_across_a_wide_list() {
         assert_eq!(matcher.cached_sibling_parents(), 1, "{source}");
     }
 }
+
+mod budget_tests;
+mod legacy_probe_tests;

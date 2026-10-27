@@ -818,3 +818,35 @@ fn directionality_auto_and_empty_child_walks_propagate_budget_errors() {
         assert!(caches.directions.borrow().is_empty());
     }
 }
+
+#[test]
+fn early_probe_gate_limits_filtered_fallback_class_and_child_work() {
+    let n = 128;
+    let (doc, parent, children) = fixture(n);
+    let counted = ChildCountingDoc {
+        doc: &doc,
+        child_reads: Cell::new(0),
+    };
+    let caches = MatchCaches::default();
+    *caches.filtered_nth.borrow_mut() = FilteredNthCache::with_limits(0, 0);
+    let source = "li:nth-child(-n+64):nth-child(n of .visible)";
+    let list = crate::parse_selector_list(source).unwrap();
+    let mut hits = 0;
+    for &child in &children {
+        hits += usize::from(
+            limited_match(&counted, &list, &caches, child, &[parent])
+                .unwrap()
+                .is_some(),
+        );
+    }
+    eprintln!(
+        "SELECTOR_GATE source={source} n={n} class_reads={} child_reads={} work={} hits={hits}",
+        doc.class_reads.get(),
+        counted.child_reads.get(),
+        caches.work_count()
+    );
+    assert_eq!(hits, 22);
+    assert_eq!(doc.class_reads.get(), n * 64);
+    assert_eq!(counted.child_reads.get(), n * 64 + n + 8);
+    assert_eq!(caches.work_count(), 16_840);
+}

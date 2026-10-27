@@ -61,6 +61,13 @@ pub struct Limits {
     /// entries, including canceled entries, but not JavaScript heap bytes.
     /// Use `u64::MAX` to effectively disable the registration limit.
     pub max_enqueued_jobs: u64,
+    /// Logical native selector operations accumulated over this runtime's
+    /// entire lifetime, including repeated evaluations and all four CSS
+    /// query methods. `None` disables the limit. Defaults to the cascade's
+    /// selector work default; this is a separate budget. Outer DOM/ancestor
+    /// walks and result entries count. Parsing, string bytes and dirty-gated
+    /// connectivity flag maintenance are excluded; this is not a CPU limit.
+    pub max_selector_work: Option<u64>,
     /// Boa's per-frame loop iteration limit.
     pub max_loop_iterations: u64,
     /// Boa's call recursion limit. Native bindings that call back into
@@ -77,6 +84,7 @@ impl Default for Limits {
             max_virtual_time_ms: 30_000.0,
             max_tasks: 100_000,
             max_enqueued_jobs: 100_000,
+            max_selector_work: raikiri_style::CascadeLimits::default().max_selector_work,
             max_loop_iterations: 10_000_000,
             max_recursion: 512,
             max_nodes: 1_000_000,
@@ -100,6 +108,8 @@ pub enum Abort {
     Tasks,
     /// More than [`Limits::max_enqueued_jobs`] registrations.
     EnqueuedJobs,
+    /// More than [`Limits::max_selector_work`] native selector operations.
+    SelectorWork,
     /// Boa's loop iteration limit ([`Limits::max_loop_iterations`]).
     LoopIterations,
     /// Boa's recursion or stack size limit ([`Limits::max_recursion`]).
@@ -114,6 +124,7 @@ impl std::fmt::Display for Abort {
             Self::VirtualTime => "virtual time limit reached",
             Self::Tasks => "task limit reached",
             Self::EnqueuedJobs => "enqueued job limit reached",
+            Self::SelectorWork => "selector work limit reached",
             Self::LoopIterations => "loop iteration limit reached",
             Self::Recursion => "recursion limit reached",
             Self::Nodes => "node limit reached",
@@ -159,6 +170,7 @@ pub(crate) fn abort_error(reason: Abort) -> JsError {
         | Abort::VirtualTime
         | Abort::Tasks
         | Abort::EnqueuedJobs
+        | Abort::SelectorWork
         | Abort::Nodes => RuntimeLimitError::Recursion,
     })
 }
@@ -231,6 +243,7 @@ enum Microtask {
 /// Event loop state, kept in [`super::State`].
 pub(crate) struct EventLoop {
     pub limits: Limits,
+    pub selector_work: raikiri_style::SelectorWorkBudget,
     /// Virtual time in milliseconds.
     pub now: f64,
     next_seq: u64,
@@ -275,6 +288,7 @@ enum Next {
 impl EventLoop {
     pub(crate) fn new(limits: Limits) -> Self {
         Self {
+            selector_work: raikiri_style::SelectorWorkBudget::new(limits.max_selector_work),
             limits,
             now: 0.0,
             next_seq: 0,

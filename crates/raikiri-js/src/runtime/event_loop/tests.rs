@@ -33,6 +33,10 @@ fn limits_defaults() {
     assert_eq!(limits.max_virtual_time_ms, 30_000.0);
     assert_eq!(limits.max_tasks, 100_000);
     assert_eq!(limits.max_enqueued_jobs, 100_000);
+    assert_eq!(
+        limits.max_selector_work,
+        raikiri_style::CascadeLimits::default().max_selector_work
+    );
     assert_eq!(limits.max_loop_iterations, 10_000_000);
     assert_eq!(limits.max_recursion, 512);
     assert_eq!(limits.max_nodes, 1_000_000);
@@ -444,6 +448,7 @@ fn abort_display() {
         (Abort::VirtualTime, "virtual time limit"),
         (Abort::Tasks, "task limit"),
         (Abort::EnqueuedJobs, "enqueued job limit"),
+        (Abort::SelectorWork, "selector work limit"),
         (Abort::LoopIterations, "loop iteration limit"),
         (Abort::Recursion, "recursion limit"),
         (Abort::Nodes, "node limit"),

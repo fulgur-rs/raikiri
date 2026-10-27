@@ -109,7 +109,7 @@ const SIBLING_CACHE_MIN_CHILDREN: usize = 8;
 pub(crate) struct MatchCaches {
     /// A single-candidate query cannot amortize indexing a wide sibling list.
     single_match: bool,
-    work: SelectorWork,
+    work: Rc<SelectorWork>,
     /// Filtered sibling ranks, bounded per immutable match operation.
     filtered_nth: RefCell<FilteredNthCache>,
     /// Left-side results of `~` frames; see [`LaterSiblingCache`].
@@ -143,7 +143,7 @@ struct HasScratch {
 
 /// Shared deterministic work count for one immutable matching operation.
 /// Keep the remaining count separate so the hot path updates just one word.
-struct SelectorWork {
+pub(super) struct SelectorWork {
     left: Cell<u64>,
     limit: Cell<Option<u64>>,
 }
@@ -155,7 +155,7 @@ impl Default for SelectorWork {
 }
 
 impl SelectorWork {
-    fn new(limit: Option<u64>) -> Self {
+    pub(super) fn new(limit: Option<u64>) -> Self {
         Self {
             left: Cell::new(limit.unwrap_or(u64::MAX)),
             limit: Cell::new(limit),
@@ -163,7 +163,7 @@ impl SelectorWork {
     }
 
     #[inline]
-    fn charge(&self, amount: u64) -> Result<(), CascadeError> {
+    pub(super) fn charge(&self, amount: u64) -> Result<(), CascadeError> {
         let left = self.left.get();
         if amount > left {
             return self.overflow(amount, left);
@@ -172,7 +172,7 @@ impl SelectorWork {
         Ok(())
     }
 
-    fn count(&self) -> u64 {
+    pub(super) fn count(&self) -> u64 {
         self.limit.get().unwrap_or(u64::MAX) - self.left.get()
     }
 
@@ -199,9 +199,24 @@ impl SelectorWork {
 
 impl MatchCaches {
     pub(crate) fn with_work_limit(limit: Option<u64>) -> Self {
+        Self::with_query_work(Rc::new(SelectorWork::new(limit)), false)
+    }
+
+    pub(super) fn with_query_work(work: Rc<SelectorWork>, single_match: bool) -> Self {
         Self {
-            work: SelectorWork::new(limit),
-            ..Self::default()
+            single_match,
+            work,
+            filtered_nth: RefCell::new(if single_match {
+                FilteredNthCache::with_limits(0, 0)
+            } else {
+                FilteredNthCache::default()
+            }),
+            later_siblings: RefCell::default(),
+            siblings: RefCell::default(),
+            languages: RefCell::default(),
+            directions: RefCell::default(),
+            has: RefCell::default(),
+            has_scratch: RefCell::default(),
         }
     }
 
@@ -212,11 +227,7 @@ impl MatchCaches {
     /// One-shot queries scan filtered ranks and `:has()` sibling roots directly
     /// rather than building indexes intended for repeated candidates.
     pub(super) fn for_single_match() -> Self {
-        Self {
-            single_match: true,
-            filtered_nth: RefCell::new(FilteredNthCache::with_limits(0, 0)),
-            ..Self::default()
-        }
+        Self::with_query_work(Rc::default(), true)
     }
 
     /// Takes a cleared [`HasScratch`] from the pool (or a new one).

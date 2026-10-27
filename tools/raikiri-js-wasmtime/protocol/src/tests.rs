@@ -89,6 +89,7 @@ fn limits_and_report_abort_variants_roundtrip() {
             max_virtual_time_ms: 123.5,
             max_tasks: 7,
             max_enqueued_jobs: 19,
+            max_selector_work: Some(23),
             max_loop_iterations: 11,
             max_recursion: 13,
             max_nodes: 17,
@@ -98,6 +99,7 @@ fn limits_and_report_abort_variants_roundtrip() {
     let back = dto.clone().into_options();
     assert_eq!(back.limits.max_tasks, 7);
     assert_eq!(back.limits.max_enqueued_jobs, 19);
+    assert_eq!(back.limits.max_selector_work, Some(23));
     assert_eq!(back.limits.max_nodes, 17);
     let bytes = encode(&dto).unwrap();
     let decoded: LimitsDto = decode(&bytes).unwrap();
@@ -107,6 +109,7 @@ fn limits_and_report_abort_variants_roundtrip() {
         AbortDto::VirtualTime,
         AbortDto::Tasks,
         AbortDto::EnqueuedJobs,
+        AbortDto::SelectorWork,
         AbortDto::LoopIterations,
         AbortDto::Recursion,
         AbortDto::Nodes,
@@ -210,5 +213,17 @@ fn base64_roundtrips_every_tail_length_and_rejects_malformed_text() {
     assert_eq!(base64::encode(b"fo"), "Zm8=");
     for bad in ["Zm8", "Zm=v", "Z===", "Zm8=Zm8=", "Zm9*"] {
         assert!(base64::decode(bad).is_none(), "{bad}");
+    }
+}
+
+#[test]
+fn selector_work_none_and_exact_limits_keep_version_eight_wire_roundtrip() {
+    assert_eq!(VERSION, 8);
+    for limit in [None, Some(0), Some(1), Some(u64::MAX)] {
+        let mut options = raikiri_js::runtime::RunOptions::default();
+        options.limits.max_selector_work = limit;
+        let encoded = encode(&LimitsDto::from(options.clone())).unwrap();
+        let decoded: LimitsDto = decode(&encoded).unwrap();
+        assert_eq!(decoded.into_options(), options);
     }
 }
