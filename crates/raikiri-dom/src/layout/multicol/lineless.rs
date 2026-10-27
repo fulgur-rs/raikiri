@@ -21,8 +21,8 @@ use raikiri_style::property::BreakInside;
 /// Inline margins, generated content, forced or avoided breaks between
 /// boxes, absolutely positioned or floated boxes, scroll containers and
 /// replaced elements need their own handling at a break, so containers with
-/// them keep the other strategies. A `position: relative` box with inline insets
-/// is sliced like any other: its column location carries no offset, which the
+/// them keep the other strategies. A `position: relative` box with insets is
+/// sliced like any other: its column location carries no offset, which the
 /// painter adds. That holds only for a box with nothing rendered inside it, so
 /// one that holds blocks or absolutely positioned boxes keeps the other
 /// strategies when it has insets, and so does a box inside a wrapper.
@@ -82,7 +82,7 @@ fn supported_with_wrapped_blocks(
             && has_rendered_content(tree, child, false);
         if !(plain_block || plain_wrapper)
             || has_inset
-                && (!super::insets_are_a_relative_inline_offset(tree, child)
+                && (!super::insets_are_a_relative_offset(tree, child)
                     || has_rendered_content(tree, child, false))
         {
             return None;
@@ -2278,6 +2278,11 @@ pub(super) fn layout(
                 line_end: None,
             })?;
         }
+    }
+    // The boxes are placed for good, without the block offset of their
+    // insets.
+    for &child in children {
+        super::leave_block_offset_to_painter(tree, child);
     }
     Some(used_height)
 }

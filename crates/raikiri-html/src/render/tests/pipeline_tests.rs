@@ -1248,6 +1248,66 @@ fn pipeline_moves_overflowing_column_boxes_by_their_relative_offset_when_countin
 }
 
 #[test]
+fn pipeline_counts_the_pages_relative_column_boxes_paint_on() {
+    // The columns place these boxes without their relative offset, which the
+    // painter adds to every piece, so they reach the pages they paint on.
+    for (content, pages) in [
+        (
+            "<div style='columns:2;height:50px'>\
+             <div style='height:20px;position:relative;top:150px'></div></div>",
+            2,
+        ),
+        (
+            "<div style='columns:2;height:50px'>\
+             <div style='height:20px;position:relative;bottom:-150px'></div></div>",
+            2,
+        ),
+        // A percentage resolves against the 50px container.
+        (
+            "<div style='columns:2;height:50px'>\
+             <div style='height:20px;position:relative;top:50%'></div></div>",
+            1,
+        ),
+        (
+            "<div style='columns:2;height:50px'>\
+             <div style='height:20px;position:relative;top:150px'></div></div>\
+             <div style='height:10px'></div>",
+            2,
+        ),
+        // A box cut at the column end is moved in both of its pieces.
+        (
+            "<div style='columns:2;column-fill:auto;height:50px'>\
+             <div style='height:90px;position:relative;top:100px'></div></div>",
+            2,
+        ),
+        (
+            "<div style='columns:2;column-fill:auto;height:50px'>\
+             <div style='height:90px;position:relative;top:170px'></div></div>",
+            3,
+        ),
+        (
+            "<div style='columns:2;height:50px;font:10px/10px sans-serif'>\
+             <p style='margin:0;position:relative;top:150px'>a b c</p>\
+             <p style='margin:0'>d e f</p></div>",
+            2,
+        ),
+        // A box moved up from the second page stays on it.
+        (
+            "<div style='height:90px'></div>\
+             <div style='columns:2;height:50px;font:10px/10px sans-serif'>\
+             <p style='margin:0;position:relative;top:-100px'>a b c</p>\
+             <p style='margin:0'>d e f</p></div>",
+            2,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content}");
+    }
+}
+
+#[test]
 fn pipeline_clamps_body_height_by_max_height_when_counting_pages() {
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} body{margin:0;height:500px;max-height:150px}</style>\

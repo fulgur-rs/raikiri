@@ -2671,13 +2671,15 @@ fn only_a_relative_leaf_block_keeps_its_insets_in_the_stream() {
     assert!(!supported(
         "display:block;height:50px;position:sticky;left:5px"
     ));
-    // A block-axis offset moves the box across pages, which pagination
-    // measures from the location the columns gave it.
-    assert!(!supported(
+    // The painter adds a block-axis offset as well, and pagination is told so.
+    assert!(supported(
         "display:block;height:50px;position:relative;top:5px"
     ));
-    assert!(!supported(
+    assert!(supported(
         "display:block;height:50px;position:relative;bottom:5px"
+    ));
+    assert!(!supported(
+        "display:block;height:50px;position:static;top:5px"
     ));
 }
 
@@ -2796,6 +2798,74 @@ fn a_nested_multicol_taller_than_the_outer_column_continues_in_the_next_one() {
     );
     assert!(records.iter().all(|fragment| fragment.fragmentainer == 0
         || fragment.fragment_index > 0 && fragment.fragment_count == records.len()));
+}
+
+#[test]
+fn a_relative_child_of_a_continued_nested_multicol_is_placed_without_its_block_inset() {
+    // The boxes that continue in the rows of the outer overflow columns are
+    // placed by the rows, and the painter adds the offset of their insets.
+    let continued = |child_css: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:200px;height:300px;column-count:1"),
+        );
+        let inner = doc.append_element(
+            Some(outer),
+            "div",
+            Some("display:block;height:500px;column-count:1"),
+        );
+        let child = doc.append_element(
+            Some(inner),
+            "div",
+            Some(&format!("display:block;height:600px;{child_css}")),
+        );
+        layout_nested_flex_float_fixture(&mut doc);
+        (doc, child)
+    };
+    let (plain, plain_child) = continued("");
+    let (doc, child) = continued("position:relative;top:5px");
+    assert_eq!(
+        fragment_rects(&doc, child),
+        fragment_rects(&plain, plain_child)
+    );
+    assert_eq!(doc.nodes[child].layout.location.y, 0.0);
+    assert!(doc.nodes[child].needs_relative_block_paint_offset());
+    assert!(!plain.nodes[plain_child].needs_relative_block_paint_offset());
+}
+
+#[test]
+fn a_relative_paragraph_of_a_continued_nested_multicol_is_placed_without_its_block_inset() {
+    let rows = |paragraph_css: &str| {
+        let (mut doc, _, paragraph) =
+            styled_nested_paragraph_document(2, 0.0, "", paragraph_css, 25);
+        layout_nested_flex_float_fixture(&mut doc);
+        (doc, paragraph)
+    };
+    let (plain, plain_paragraph) = rows("");
+    let (doc, paragraph) = rows("position:relative;top:5px");
+    let ranges = |doc: &Document, paragraph: usize| {
+        doc.nodes[paragraph]
+            .ifc_multicol_fragments()
+            .map(|ranges| {
+                ranges
+                    .iter()
+                    .map(|range| (range.line_start, range.line_end, range.fragmentainer))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    assert_eq!(ranges(&doc, paragraph).len(), 3);
+    assert_eq!(ranges(&doc, paragraph), ranges(&plain, plain_paragraph));
+    assert_eq!(
+        doc.nodes[paragraph].layout.location.y,
+        plain.nodes[plain_paragraph].layout.location.y
+    );
+    assert!(doc.nodes[paragraph].needs_relative_block_paint_offset());
+    assert!(!plain.nodes[plain_paragraph].needs_relative_block_paint_offset());
 }
 
 /// A 300px outer column holding a nested column container with `inner_css`,
@@ -4761,6 +4831,9 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     assert!(paragraphs(
         "display:block;margin:0;position:relative;left:10px;right:-10px"
     ));
+    assert!(paragraphs(
+        "display:block;margin:0;position:relative;top:5px"
+    ));
     for style in [
         "display:grid",
         "display:list-item",
@@ -4775,7 +4848,7 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;margin-bottom:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
         "display:block;margin:0;position:sticky;left:10px",
-        "display:block;margin:0;position:relative;top:5px",
+        "display:block;margin:0;position:sticky;top:5px",
     ] {
         assert!(!paragraphs(style), "{style}");
     }
@@ -4872,6 +4945,116 @@ fn a_relative_column_child_is_placed_without_its_inset() {
         assert_eq!(layout.location.x, 0.0, "{inset}");
         assert_eq!(layout.size.width, 40.0, "{inset}");
     }
+}
+
+#[test]
+fn a_relative_column_child_with_a_block_inset_is_placed_in_its_column() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    for inset in ["top:5px", "bottom:-5px", "left:5px;top:5px", "top:10%"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px"),
+        );
+        let style = format!("display:block;height:40px;position:relative;{inset}");
+        let children =
+            [(); 2].map(|()| doc.append_element(Some(container), "div", Some(style.as_str())));
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+
+        // The columns give the location without the offset, which the painter
+        // adds, and pagination is told so.
+        for (child, x) in children.into_iter().zip([0.0, 60.0]) {
+            let layout = doc.nodes[child].layout;
+            assert_eq!(
+                (layout.location.x, layout.location.y, layout.size.width),
+                (x, 0.0, 40.0),
+                "{inset}"
+            );
+            assert!(
+                doc.nodes[child].needs_relative_block_paint_offset(),
+                "{inset}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_relative_paragraph_with_a_block_inset_is_placed_in_its_column() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px"),
+    );
+    let paragraphs = ["A", "B"].map(|text| {
+        let paragraph = doc.append_element(
+            Some(container),
+            "p",
+            Some("display:block;margin:0;position:relative;top:5px"),
+        );
+        doc.append_text(paragraph, text);
+        paragraph
+    });
+    let plain = doc.append_element(Some(container), "p", Some("display:block;margin:0"));
+    doc.append_text(plain, "C");
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+
+    // The planner gives the location of the column, without the offset.
+    let first = doc.nodes[paragraphs[0]].layout;
+    assert_eq!(
+        (first.location.x, first.location.y, first.size.width),
+        (0.0, 0.0, 40.0)
+    );
+    for paragraph in paragraphs {
+        assert!(doc.nodes[paragraph].needs_relative_block_paint_offset());
+    }
+    assert!(!doc.nodes[plain].needs_relative_block_paint_offset());
+}
+
+#[test]
+fn a_relative_column_child_keeps_its_block_inset_when_the_columns_do_not_place_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px"),
+    );
+    // A rounded box taller than a column would be cut, and painting cannot
+    // slice its corners, so the boxes stay in block flow, where layout moves
+    // them by their offset.
+    let child = doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;height:70px;border:2px solid;border-radius:2px;position:relative;top:5px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+
+    assert_eq!(doc.nodes[child].layout.location.y, 5.0);
+    assert!(!doc.nodes[child].needs_relative_block_paint_offset());
 }
 
 #[test]
