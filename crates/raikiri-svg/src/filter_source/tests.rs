@@ -241,6 +241,31 @@ fn the_element_of_a_shape_is_left_as_it_is_but_for_its_style() {
 }
 
 #[test]
+fn an_attribute_that_a_selector_tests_is_left_alone() {
+    // A new `style` attribute would make `circle[style] + rect` match.
+    for test in ["[style]", "[ STYLE ^= \"x\"]", "[style|=\"x\"]"] {
+        let source = flooded(&format!(
+            "<style>circle{test} + rect{{fill:blue}}</style>\
+             <circle r=\"0\" filter=\"url(#f)\"/><rect width=\"1\" height=\"1\"/>"
+        ));
+        assert!(matches!(like_browsers(&source), Cow::Borrowed(_)), "{test}");
+    }
+    // Nor does a zero divisor go where a selector tests it.
+    let source = flooded(
+        "<style>feConvolveMatrix[divisor]{x:y}</style>\
+         <filter id=\"g\"><feConvolveMatrix divisor=\"0\"/></filter>",
+    );
+    assert!(matches!(like_browsers(&source), Cow::Borrowed(_)));
+    // Another attribute, or one that only starts with the name, says nothing.
+    for test in ["[class]", "[styled]", "[style-x=\"1\"]", "[x=\"style\"]"] {
+        let source = flooded(&format!(
+            "<style>circle{test}{{fill:blue}}</style><circle r=\"0\" filter=\"url(#f)\"/>"
+        ));
+        assert!(matches!(like_browsers(&source), Cow::Owned(_)), "{test}");
+    }
+}
+
+#[test]
 fn a_stylesheet_that_takes_too_much_to_match_leaves_the_shape_to_usvg() {
     // Matching the attribute costs as much as its value is long.
     let long = "a".repeat(1_100_000);

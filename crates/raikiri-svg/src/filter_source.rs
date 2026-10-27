@@ -55,6 +55,10 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     // are read as a browser reads them: whatever its text holds counts, even
     // when `usvg` stops at a comment or at an empty `type`.
     let mut sheet = simplecss::StyleSheet::new();
+    // What a selector tests is left as it is: the edits below change the
+    // `style` and `divisor` attributes, and with them what such a selector
+    // matches.
+    let (mut tests_style, mut tests_divisor) = (false, false);
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
         if node
             .attribute("type")
@@ -62,6 +66,8 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
         {
             for css in node.children().filter_map(|child| child.text()) {
                 sheet.parse_more(css);
+                tests_style |= tests_attribute(css, "style");
+                tests_divisor |= tests_attribute(css, "divisor");
             }
         }
     }
@@ -73,7 +79,8 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
             continue;
         }
         if name.name() == "feConvolveMatrix" {
-            if let Some(divisor) = node.attribute_node("divisor")
+            if !tests_divisor
+                && let Some(divisor) = node.attribute_node("divisor")
                 && svgtypes::Number::from_str(divisor.value())
                     .is_ok_and(|number| is_zero_divisor(number.0))
             {
@@ -83,7 +90,7 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
                     .len();
                 edits.push((start..divisor.range().end, ""));
             }
-        } else if is_not_rendered(node, &[]) {
+        } else if !tests_style && is_not_rendered(node, &[]) {
             // The attributes leave nothing to render, but the declarations
             // that apply to the shape may still give it something to render,
             // or a filter.
@@ -100,6 +107,18 @@ pub(crate) fn like_browsers(source: &str) -> Cow<'_, str> {
     } else {
         Cow::Owned(apply(source, edits))
     }
+}
+
+/// Whether a selector in the stylesheet `css` tests the attribute `name`,
+/// which is the name that follows a `[`.
+fn tests_attribute(css: &str, name: &str) -> bool {
+    css.match_indices('[').any(|(at, _)| {
+        let rest = css[at + 1..].trim_start();
+        rest.get(..name.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(name))
+            && !rest[name.len()..]
+                .starts_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_')
+    })
 }
 
 /// Whether `usvg` takes `number` for a zero: it reads a single precision float
