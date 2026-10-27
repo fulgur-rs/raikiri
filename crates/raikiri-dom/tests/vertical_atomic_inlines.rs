@@ -403,3 +403,274 @@ fn a_float_around_a_vertical_atomic_measures_its_min_content_size() {
         );
     }
 }
+
+/// Checks `body`, where `MODE` stands for the vertical writing mode, against
+/// `lr` under `vertical-lr` and against `rl` under `vertical-rl`.
+fn check_modes(body: &str, lr: &[(&str, Rect)], rl: &[(&str, Rect)]) {
+    check(&body.replace("MODE", "vertical-lr"), lr);
+    check(&body.replace("MODE", "vertical-rl"), rl);
+}
+
+/// A float whose `aa` and inline-block `bbbb` (styled by `atomic_css`) set the
+/// 20px and 40px they take along the line.
+fn float_with_atomic(root_css: &str, atomic_css: &str) -> String {
+    format!(
+        "<div id=r style=\"float:left;writing-mode:MODE;{root_css}\">aa\
+         <div id=a style=\"display:inline-block;{atomic_css}\">bbbb</div></div>"
+    )
+}
+
+#[test]
+fn a_percentage_height_atomic_is_measured_as_auto_and_resolved_against_the_lines() {
+    // The float's height is not known while it is measured: the 50% counts as
+    // `auto`, the 40px of text, and the float takes 20 + 40px. The percentage
+    // then resolves against that height.
+    let same = [
+        ("a", (8.0, 28.0, 10.0, 30.0)),
+        ("r", (8.0, 8.0, 10.0, 60.0)),
+    ];
+    check_modes(&float_with_atomic("", "height:50%"), &same, &same);
+    // A float of a known height resolves it against that height.
+    let known = [
+        ("a", (8.0, 28.0, 10.0, 50.0)),
+        ("r", (8.0, 8.0, 10.0, 100.0)),
+    ];
+    check_modes(
+        &float_with_atomic("height:100px", "height:50%"),
+        &known,
+        &known,
+    );
+}
+
+#[test]
+fn a_percentage_height_block_child_is_measured_as_auto_in_a_vertical_paragraph() {
+    // The block child of the paragraph is its inline extent tall; the 20px
+    // is half of the 40px the text asks for.
+    let content = |root_css: &str| {
+        format!(
+            "<div id=r style=\"float:left;writing-mode:MODE;{root_css}\">aa\
+             <div id=a style=\"height:50%\">bbbb</div></div>"
+        )
+    };
+    check_modes(
+        &content(""),
+        &[
+            ("a", (18.0, 8.0, 10.0, 20.0)),
+            ("r", (8.0, 8.0, 20.0, 40.0)),
+        ],
+        &[("a", (8.0, 8.0, 10.0, 20.0)), ("r", (8.0, 8.0, 20.0, 40.0))],
+    );
+    check_modes(
+        &content("height:100px"),
+        &[
+            ("a", (18.0, 8.0, 10.0, 50.0)),
+            ("r", (8.0, 8.0, 20.0, 100.0)),
+        ],
+        &[
+            ("a", (8.0, 8.0, 10.0, 50.0)),
+            ("r", (8.0, 8.0, 20.0, 100.0)),
+        ],
+    );
+}
+
+/// A root of `root_css` with the text `aa` and a horizontal inline-block
+/// styled by `atomic_css` that holds `content`.
+fn horizontal_atomic(root_css: &str, atomic_css: &str, content: &str) -> String {
+    format!(
+        "<div id=r style=\"writing-mode:MODE;{root_css}\">aa<div id=a \
+         style=\"display:inline-block;writing-mode:horizontal-tb;{atomic_css}\">{content}</div></div>"
+    )
+}
+
+#[test]
+fn a_horizontal_atomic_in_a_vertical_root_fits_the_width_of_the_root() {
+    // The 140px of text fit the 100px root in two lines, and so do they in a
+    // 50px one in three.
+    let words = "bb cc dd ee ff";
+    let fits = [
+        ("a", (8.0, 28.0, 100.0, 20.0)),
+        ("r", (8.0, 8.0, 100.0, 300.0)),
+    ];
+    check_modes(
+        &horizontal_atomic("width:100px;height:300px", "", words),
+        &fits,
+        &fits,
+    );
+    let narrow = [
+        ("a", (8.0, 28.0, 50.0, 30.0)),
+        ("r", (8.0, 8.0, 50.0, 300.0)),
+    ];
+    check_modes(
+        &horizontal_atomic("width:50px;height:300px", "", words),
+        &narrow,
+        &narrow,
+    );
+    // The root's width follows the box when it is not known, and the box
+    // takes all 140px.
+    let auto = [
+        ("a", (8.0, 28.0, 140.0, 10.0)),
+        ("r", (8.0, 8.0, 140.0, 300.0)),
+    ];
+    check_modes(
+        &horizontal_atomic("float:left;height:300px", "", words),
+        &auto,
+        &auto,
+    );
+}
+
+#[test]
+fn a_horizontal_atomic_in_a_vertical_root_leaves_room_for_its_horizontal_margins() {
+    // The 5px and 11px to the sides are taken off the 100px, not the 3px and
+    // 7px above and below, which lie along the line.
+    let margins = [("a", (19.0, 31.0, 84.0, 20.0))];
+    check_modes(
+        &horizontal_atomic(
+            "width:100px;height:300px",
+            "margin:3px 5px 7px 11px",
+            "bb cc dd ee ff",
+        ),
+        &margins,
+        &margins,
+    );
+}
+
+#[test]
+fn a_horizontal_atomic_in_a_vertical_root_of_unknown_width_fits_the_page() {
+    // The width of the root follows its content, so the page area stands in
+    // for it: 800px of the 3000px of text, whatever the ancestors are, and
+    // half of it for a 50% width.
+    let long = "bb ".repeat(100);
+    let page = [
+        ("a", (8.0, 28.0, 800.0, 40.0)),
+        ("r", (8.0, 8.0, 800.0, 100.0)),
+    ];
+    check_modes(
+        &format!(
+            "<div style=\"width:300px\">{}</div>",
+            horizontal_atomic("float:left;height:100px", "", &long)
+        ),
+        &page,
+        &page,
+    );
+    let half = [
+        ("a", (8.0, 28.0, 400.0, 10.0)),
+        ("r", (8.0, 8.0, 400.0, 100.0)),
+    ];
+    check_modes(
+        &horizontal_atomic("float:left;height:100px", "width:50%", "bb cc dd"),
+        &half,
+        &half,
+    );
+}
+
+#[test]
+fn a_horizontal_atomic_resolves_a_percentage_width_against_the_width_of_the_root() {
+    // The padding takes its 5% of the 200px the lines run along, the width
+    // its 50% of the root's 100px.
+    check_modes(
+        &horizontal_atomic("width:100px;height:100px", "width:50%", "bb cc dd"),
+        &[("a", (8.0, 28.0, 50.0, 20.0))],
+        &[("a", (58.0, 28.0, 50.0, 20.0))],
+    );
+    check_modes(
+        &horizontal_atomic(
+            "width:100px;height:200px",
+            "width:50%;padding:5%",
+            "bb cc dd",
+        ),
+        &[("a", (8.0, 28.0, 50.0, 50.0))],
+        &[("a", (58.0, 28.0, 50.0, 50.0))],
+    );
+}
+
+#[test]
+fn a_percentage_width_atomic_counts_as_auto_while_the_root_takes_its_width_from_its_lines() {
+    let atomic = |css: &str| {
+        format!(
+            "<div id=r style=\"float:left;writing-mode:MODE;height:100px\">aa\
+             <div id=a style=\"display:inline-block;{css}\">bb</div></div>"
+        )
+    };
+    // The width of the line is that of the text, 10px, whatever the box asks
+    // of it; its 50% does not become half the 100px height.
+    let text = [
+        ("a", (8.0, 28.0, 10.0, 20.0)),
+        ("r", (8.0, 8.0, 10.0, 100.0)),
+    ];
+    for css in ["width:50%", "min-width:50%", "max-width:50%", ""] {
+        check_modes(&atomic(css), &text, &text);
+    }
+    // The padding of the same box takes its percentage of the 100px.
+    let padded = [
+        ("a", (8.0, 28.0, 30.0, 40.0)),
+        ("r", (8.0, 8.0, 30.0, 100.0)),
+    ];
+    check_modes(&atomic("width:50%;padding:10%"), &padded, &padded);
+    // A box without content is as wide as its padding, whether or not it
+    // states a percentage of the width it does not have yet.
+    let empty = |css: &str| {
+        format!(
+            "<div id=r style=\"float:left;writing-mode:MODE;height:100px\">aa\
+             <div id=a style=\"display:inline-block;height:10px;{css}\"></div></div>"
+        )
+    };
+    let edges = [
+        ("a", (8.0, 28.0, 20.0, 20.0)),
+        ("r", (8.0, 8.0, 20.0, 100.0)),
+    ];
+    for css in [
+        "padding:10%",
+        "width:50%;padding:10%",
+        "min-width:1%;padding:10%",
+        "min-width:50%;padding:10%",
+        "max-width:50%;padding:10%",
+    ] {
+        check_modes(&empty(css), &edges, &edges);
+    }
+}
+
+#[test]
+fn a_percentage_width_atomic_resolves_against_the_known_width_of_a_vertical_root() {
+    let content = "<div id=r style=\"float:left;writing-mode:MODE;height:100px;width:80px\">aa\
+                   <div id=a style=\"display:inline-block;width:50%;height:10px\"></div></div>";
+    check_modes(
+        content,
+        &[("a", (8.0, 28.0, 40.0, 10.0))],
+        &[("a", (48.0, 28.0, 40.0, 10.0))],
+    );
+}
+
+#[test]
+fn the_percentage_margins_of_an_atomic_in_a_vertical_root_follow_the_lines() {
+    // 10% of the 100px height, whatever the width of the root.
+    let content = "<div id=r style=\"float:left;writing-mode:MODE;height:100px\">aa\
+                   <div id=a style=\"display:inline-block;width:10px;height:10px;margin:10%\"></div></div>";
+    let same = [
+        ("a", (18.0, 38.0, 10.0, 10.0)),
+        ("r", (8.0, 8.0, 30.0, 100.0)),
+    ];
+    check_modes(content, &same, &same);
+}
+
+#[test]
+fn a_percentage_height_horizontal_atomic_resolves_against_the_height_the_lines_gave() {
+    // The 20px of text and the 10px of the box make the float 30px tall, and
+    // the box takes half of that. With a known height of 100px it takes 50px.
+    check_modes(
+        &horizontal_atomic("float:left", "height:50%", "bb"),
+        &[
+            ("a", (18.0, 8.0, 20.0, 15.0)),
+            ("r", (8.0, 8.0, 30.0, 30.0)),
+        ],
+        &[("a", (8.0, 8.0, 20.0, 15.0)), ("r", (8.0, 8.0, 30.0, 30.0))],
+    );
+    let known = [
+        ("a", (8.0, 28.0, 20.0, 50.0)),
+        ("r", (8.0, 8.0, 20.0, 100.0)),
+    ];
+    check_modes(
+        &horizontal_atomic("float:left;height:100px", "height:50%", "bb"),
+        &known,
+        &known,
+    );
+}
