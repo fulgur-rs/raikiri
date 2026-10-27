@@ -20,7 +20,7 @@ use std::collections::HashMap;
 
 use raikiri_style::computed::ComputedValues;
 use raikiri_style::property::{
-    BreakBetween, DisplayValue, FloatValue, PositionValue, StringFetchMode,
+    BreakBetween, ContentComponent, DisplayValue, FloatValue, PositionValue, StringFetchMode,
 };
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, PageCascadeResult};
 use raikiri_traits::{LayoutError, NodeId, PageBox, PaintRect};
@@ -47,14 +47,17 @@ struct Placement {
     starts_page: bool,
 }
 
-/// The running elements of one document, by name, in document order.
+/// The running elements and the `string-set` assignments of one document, by
+/// name, in document order.
 #[derive(Debug, Default)]
 #[doc(hidden)]
 pub struct RunningIndex {
     pools: HashMap<SmolStr, Pool>,
+    /// The elements that assign each named string.
+    strings: HashMap<SmolStr, Pool>,
 }
 
-/// The running elements of one name, in document order.
+/// The elements of one name, in document order.
 #[derive(Debug, Default)]
 struct Pool {
     placements: Vec<Placement>,
@@ -63,12 +66,13 @@ struct Pool {
     by_page: bool,
 }
 
-/// Whether any element of `cascade` is a running element.
-fn has_running_elements(cascade: &CascadeResult) -> bool {
+/// Whether any element of `cascade` is a running element or sets a named
+/// string.
+fn has_placed_elements(cascade: &CascadeResult) -> bool {
     cascade
         .computed
         .iter()
-        .any(|computed| !computed.running_templates.is_empty())
+        .any(|computed| !computed.running_templates.is_empty() || !computed.string_set.is_empty())
 }
 
 impl RunningIndex {
@@ -86,7 +90,7 @@ impl RunningIndex {
         cascade: &CascadeResult,
         pages: impl IntoIterator<Item = (&'d Document, u32)>,
     ) -> Self {
-        if !has_running_elements(cascade) {
+        if !has_placed_elements(cascade) {
             return Self::default();
         }
         let mut rendered_pages = HashMap::<usize, (u32, u32)>::new();
@@ -104,8 +108,14 @@ impl RunningIndex {
         Self::from_rendered_pages(document, cascade, &rendered_pages)
     }
 
-    /// Index the running elements of `document`, given for each node that
-    /// has fragments the first and last page they are on.
+    /// Index the running elements and the named string assignments of
+    /// `document`, given for each node that has fragments the first and last
+    /// page they are on.
+    ///
+    /// An element that sets a named string is placed on the first page of its
+    /// own content, since GCPM 3 §1.1.1 assigns the string when the element's
+    /// box is created. An element that generates no box (`display: none`, or
+    /// inside such an element, or `display: contents`) assigns nothing.
     fn from_rendered_pages(
         document: &Document,
         cascade: &CascadeResult,
@@ -113,14 +123,24 @@ impl RunningIndex {
     ) -> Self {
         let mut index = Self::default();
         let order = preorder(document);
+        // Positions before this one lie inside a `display: none` subtree.
+        let mut hidden_until = 0;
         for (position, &(node, subtree_end)) in order.iter().enumerate() {
-            let Some(template) = cascade
-                .computed
-                .get(node)
-                .and_then(|computed| computed.running_templates.first())
-            else {
+            let computed = &cascade.computed[node];
+            let in_hidden_subtree = position < hidden_until;
+            if computed.display == DisplayValue::None {
+                hidden_until = hidden_until.max(subtree_end);
+            }
+            let generates_box = !in_hidden_subtree
+                && !matches!(
+                    computed.display,
+                    DisplayValue::None | DisplayValue::Contents
+                );
+            let template = computed.running_templates.first();
+            let sets_strings = generates_box && !computed.string_set.is_empty();
+            if template.is_none() && !sets_strings {
                 continue;
-            };
+            }
             let next = order[subtree_end..]
                 .iter()
                 .find_map(|(id, _)| rendered_pages.get(id).map(|(first, _)| *first));
@@ -130,19 +150,36 @@ impl RunningIndex {
                 .rev()
                 .filter(|(_, end)| *end <= position)
                 .find_map(|(id, _)| rendered_pages.get(id).map(|(_, last)| *last));
-            let page = next.or(previous).unwrap_or(0);
-            index
-                .pools
-                .entry(template.name.clone())
-                .or_default()
-                .placements
-                .push(Placement {
-                    node: NodeId(node as u64),
-                    page,
-                    starts_page: previous.is_none_or(|last| last < page),
-                });
+            let place = |page: u32| Placement {
+                node: NodeId(node as u64),
+                page,
+                starts_page: previous.is_none_or(|last| last < page),
+            };
+            if let Some(template) = template {
+                let page = next.or(previous).unwrap_or(0);
+                index
+                    .pools
+                    .entry(template.name.clone())
+                    .or_default()
+                    .placements
+                    .push(place(page));
+            }
+            if sets_strings {
+                let own = order[position..subtree_end]
+                    .iter()
+                    .find_map(|(id, _)| rendered_pages.get(id).map(|(first, _)| *first));
+                let placement = place(own.or(next).or(previous).unwrap_or(0));
+                for (name, _) in computed.string_set.iter() {
+                    let pool = index.strings.entry(name.clone()).or_default();
+                    // An element that sets a name twice assigns it once, with
+                    // the later value.
+                    if pool.placements.last() != Some(&placement) {
+                        pool.placements.push(placement);
+                    }
+                }
+            }
         }
-        for pool in index.pools.values_mut() {
+        for pool in index.pools.values_mut().chain(index.strings.values_mut()) {
             pool.by_page = pool.placements.is_sorted_by_key(|placement| placement.page);
         }
         index
@@ -169,10 +206,29 @@ impl RunningIndex {
     /// - `first-except`: nothing on a page that has an assignment, else the
     ///   entry value.
     pub fn select(&self, name: &str, fetch: StringFetchMode, page: u32) -> Option<NodeId> {
-        let Pool {
+        self.pools.get(name)?.select(fetch, page)
+    }
+
+    /// The element whose `string-set` value `string(<name>, <fetch>)` shows
+    /// on page `page` (CSS GCPM 3 §1.1.2,
+    /// <https://www.w3.org/TR/css-gcpm-3/#string-function>).
+    ///
+    /// The keywords read the assignments of the name on the page and the
+    /// entry value, the last assignment on an earlier page, as
+    /// [`Self::select`] does for running elements. The text the element
+    /// gives the string is [`string_set_text`].
+    pub fn select_string(&self, name: &str, fetch: StringFetchMode, page: u32) -> Option<NodeId> {
+        self.strings.get(name)?.select(fetch, page)
+    }
+}
+
+impl Pool {
+    /// The element of the pool that `fetch` picks on page `page`.
+    fn select(&self, fetch: StringFetchMode, page: u32) -> Option<NodeId> {
+        let Self {
             placements: pool,
             by_page,
-        } = self.pools.get(name)?;
+        } = self;
         let (before, on_page) = if *by_page {
             let start = pool.partition_point(|placement| placement.page < page);
             let end = start + pool[start..].partition_point(|placement| placement.page == page);
@@ -466,6 +522,43 @@ pub fn element_string_value(doc: &Document, idx: usize) -> String {
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The text that the `string-set` value `components` of element `idx` gives a
+/// named string: its literals and its `content()` as the element's string
+/// value. Components that need more than the element's text add nothing.
+pub(crate) fn string_set_value(
+    doc: &Document,
+    idx: usize,
+    components: &[ContentComponent],
+) -> String {
+    let mut value = String::new();
+    for component in components {
+        match component {
+            ContentComponent::Literal(text) => value.push_str(text.as_str()),
+            ContentComponent::Content { .. } => value.push_str(&element_string_value(doc, idx)),
+            _ => {}
+        }
+    }
+    value
+}
+
+/// The text element `idx` gives the named string `name`, or `None` when it
+/// does not set that name. An element that sets a name more than once gives
+/// the value of the last assignment.
+pub(crate) fn string_set_text(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    name: &str,
+) -> Option<String> {
+    let (_, components) = cascade
+        .computed
+        .get(idx)?
+        .string_set
+        .iter()
+        .rfind(|(set, _)| set == name)?;
+    Some(string_set_value(doc, idx, components))
 }
 
 /// The predicate behind [`element_string_value`]'s whitespace
