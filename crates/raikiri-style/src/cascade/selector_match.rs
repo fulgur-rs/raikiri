@@ -1088,8 +1088,19 @@ pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
 ) -> Result<Option<Specificity>, CascadeError> {
+    match_complex_selectors(list.slice().iter(), ctx, elem, elem_id, ancestors)
+}
+
+/// Returns the maximum specificity among the supplied conservative candidates.
+pub(crate) fn match_complex_selectors<'s, D: StyleDom, E: StyleElement>(
+    selectors: impl IntoIterator<Item = &'s Selector<RaikiriSelectorImpl>>,
+    ctx: MatchContext<'_, D>,
+    elem: &E,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+) -> Result<Option<Specificity>, CascadeError> {
     let mut best: Option<Specificity> = None;
-    for selector in list.slice() {
+    for selector in selectors {
         if selector_matches(ctx, selector, elem, elem_id, ancestors)? {
             let spec = specificity_of(selector);
             best = Some(match best {

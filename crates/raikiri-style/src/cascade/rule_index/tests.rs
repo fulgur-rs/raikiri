@@ -354,3 +354,123 @@ fn the_index_records_which_pseudo_elements_its_selectors_target() {
         assert!(!index.targets(pseudo), "{pseudo:?}");
     }
 }
+
+#[test]
+fn candidate_positions_preserve_full_list_matching_and_specificity() {
+    let css = format!(
+        "{DIFFERENTIAL_CSS} .note, p.note, #main, p::before, .note::before, .missing {{color: blue}} :is(p), *, p {{color: green}}"
+    );
+    let tree = rule_tree(&css);
+    let rules = sorted_rules(&tree);
+    let index = RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).unwrap();
+    for quirks in [
+        StyleQuirksMode::NoQuirks,
+        StyleQuirksMode::LimitedQuirks,
+        StyleQuirksMode::Quirks,
+    ] {
+        let doc = differential_doc(quirks);
+        walk(&doc, |id, path, filter| {
+            let node = doc.node(id).unwrap();
+            let elem = node.as_element().unwrap();
+            let caches = MatchCaches::default();
+            let ctx = MatchContext::new(&doc, quirks, None, false, &caches);
+            let mut candidates = Vec::new();
+            index.candidate_selectors(&elem, filter, &mut candidates);
+            assert!(candidates.windows(2).all(|w| w[0] < w[1]));
+            for (rule_id, rule) in rules.iter().enumerate() {
+                let positions: Vec<_> = candidates
+                    .iter()
+                    .filter(|c| c.rule as usize == rule_id)
+                    .map(|c| &rule.selectors.slice()[c.selector as usize])
+                    .collect();
+                let full =
+                    match_complex_selector_list(&rule.selectors, ctx, &elem, id, path).unwrap();
+                let narrowed = crate::cascade::selector_match::match_complex_selectors(
+                    positions.iter().copied(),
+                    ctx,
+                    &elem,
+                    id,
+                    path,
+                )
+                .unwrap();
+                assert_eq!(full, narrowed);
+                let pseudo_matches = |selectors: &[&selectors::parser::Selector<
+                    RaikiriSelectorImpl,
+                >]| {
+                    selectors
+                        .iter()
+                        .filter_map(|s| {
+                            selector_matches_pseudo_element(ctx, s, &elem, id, path)
+                                .unwrap()
+                                .map(|pseudo| (pseudo, crate::cascade::collect::specificity_of(s)))
+                        })
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    pseudo_matches(&rule.selectors.slice().iter().collect::<Vec<_>>()),
+                    pseudo_matches(&positions)
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn repeated_class_buckets_deduplicate_selector_positions() {
+    let tree = rule_tree(".a, .a.a, *, :is(.a) {color:red}");
+    let rules = sorted_rules(&tree);
+    let index = RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).unwrap();
+    let mut doc = TestDoc::new();
+    let id = doc.push_element_with_attrs(0, "p", None, &[("class", "a a a")]);
+    let node = doc.node(StyleNodeId::new(id as u64)).unwrap();
+    let mut candidates = Vec::new();
+    index.candidate_selectors(
+        &node.as_element().unwrap(),
+        &AncestorFilter::new(),
+        &mut candidates,
+    );
+    assert_eq!(
+        candidates,
+        (0..4)
+            .map(|selector| CandidateSelector { rule: 0, selector })
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn bloom_false_positive_keeps_positions_but_does_not_invent_matches() {
+    let tree = rule_tree(".missing p, p.note {color:red}");
+    let rules = sorted_rules(&tree);
+    let index = RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).unwrap();
+    let mut doc = TestDoc::new();
+    let id =
+        StyleNodeId::new(doc.push_element_with_attrs(0, "p", None, &[("class", "note")]) as u64);
+    let node = doc.node(id).unwrap();
+    let elem = node.as_element().unwrap();
+    let mut filter = AncestorFilter::new();
+    // Force a conservative false positive without adding a real ancestor.
+    filter.bloom.insert_hash(class_hash("missing"));
+    let mut positions = Vec::new();
+    index.candidate_selectors(&elem, &filter, &mut positions);
+    assert_eq!(positions.len(), 2);
+    let caches = MatchCaches::default();
+    let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &caches);
+    let selected = crate::cascade::selector_match::match_complex_selectors(
+        positions
+            .iter()
+            .map(|p| &rules[p.rule as usize].selectors.slice()[p.selector as usize]),
+        ctx,
+        &elem,
+        id,
+        &[],
+    )
+    .unwrap();
+    let full = match_complex_selector_list(&rules[0].selectors, ctx, &elem, id, &[]).unwrap();
+    assert_eq!(selected, full);
+    assert_eq!(
+        full,
+        Some(crate::cascade::collect::specificity_of(
+            &rules[0].selectors.slice()[1]
+        ))
+    );
+}
