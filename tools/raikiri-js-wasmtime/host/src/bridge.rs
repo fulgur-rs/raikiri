@@ -76,6 +76,7 @@ impl Bridge {
                 .parse_fragment(&tag, &namespace, &markup)
                 .map(|d| HostValue::Document(d.logical_snapshot()))
                 .map_err(|e| e.to_string()),
+            // cov:ignore: exercised by the separate host workspace, including the real-AOT typed fragment test.
             HostOperation::BudgetedFragment {
                 tag,
                 namespace,

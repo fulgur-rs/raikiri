@@ -65,6 +65,7 @@ pub use font_collection::{
     BundledFont, FontCollectionBuildError, FontCollectionBuilder, MAX_BUNDLED_FONT_BYTES,
     RenderFonts,
 };
+// cov:ignore: public re-exports have no executable body; API tests and rustdoc resolve them.
 pub use parse::{
     effective_document_base_url, parse, parse_fragment, parse_fragment_with_limits, parse_with_sink,
 };

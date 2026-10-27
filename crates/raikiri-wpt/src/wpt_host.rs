@@ -687,7 +687,7 @@ impl DocumentHost for WptDocumentHost {
     ) -> Result<raikiri_dom::Document, HostError> {
         self.parse_fragment_with_budget(context_tag, context_ns, markup, usize::MAX)
             .map_err(|error| match error {
-                FragmentParseError::Nodes => HostError("fragment node limit exceeded".into()),
+                FragmentParseError::Nodes => HostError("fragment node limit exceeded".into()), // cov:ignore: this legacy entry fixes the node cap at one million; small-budget Nodes is exercised through the budgeted entry.
                 FragmentParseError::Host(error) => error,
             })
     }

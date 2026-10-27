@@ -128,6 +128,7 @@ impl DocumentHost for RpcDocumentHost {
             _ => Err(HostError("fragment response kind".into())),
         }
     }
+    // cov:ignore: verified by guest and real-AOT host tests; this tools workspace is outside the native llvm-cov run.
     fn parse_fragment_with_budget(
         &mut self,
         tag: &str,

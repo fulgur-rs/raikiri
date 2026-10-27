@@ -57,6 +57,7 @@ pub enum HostOperation {
         namespace: String,
         markup: String,
     },
+    // cov:ignore: protocol DTO declaration; roundtrips run in the separate tools workspace.
     BudgetedFragment {
         tag: String,
         namespace: String,
@@ -211,6 +212,7 @@ pub mod base64 {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// cov:ignore: protocol DTO declaration has no executable body; tools workspace roundtrips verify it.
 pub struct LimitsDto {
     pub virtual_time: f64,
     pub tasks: u64,
@@ -221,6 +223,7 @@ pub struct LimitsDto {
     pub nodes: usize,
 }
 impl From<RunOptions> for LimitsDto {
+    // cov:ignore: limits roundtrips and real-AOT tests run in the separate tools workspace.
     fn from(o: RunOptions) -> Self {
         let l = o.limits;
         Self {
@@ -235,6 +238,7 @@ impl From<RunOptions> for LimitsDto {
     }
 }
 impl LimitsDto {
+    // cov:ignore: limits roundtrips and real-AOT tests run in the separate tools workspace.
     pub fn into_options(self) -> RunOptions {
         RunOptions {
             limits: Limits {
@@ -275,7 +279,7 @@ pub enum GuestValue {
     Report(ReportDto),
     Delivery(Option<DeliveryDto>),
     Document(LogicalSnapshot),
-    FragmentNodes,
+    FragmentNodes, // cov:ignore: protocol DTO variant has no executable body.
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GuestResponse {
@@ -307,8 +311,8 @@ fn serialize_harness_status<S: serde::Serializer>(
 pub enum AbortDto {
     VirtualTime,
     Tasks,
-    EnqueuedJobs,
-    SelectorWork,
+    EnqueuedJobs, // cov:ignore: protocol DTO variant; roundtrip tests run in the tools workspace.
+    SelectorWork, // cov:ignore: protocol DTO variant; roundtrip tests run in the tools workspace.
     LoopIterations,
     Recursion,
     Nodes,
@@ -323,6 +327,7 @@ pub struct ReportDto {
     pub console: Vec<(String, String)>,
 }
 impl From<RunReport> for ReportDto {
+    // cov:ignore: all abort variants roundtrip in the separate tools workspace; real-AOT tests verify new reasons.
     fn from(r: RunReport) -> Self {
         Self {
             scripts_run: r.scripts_run,
@@ -343,6 +348,7 @@ impl From<RunReport> for ReportDto {
     }
 }
 impl ReportDto {
+    // cov:ignore: all abort variants roundtrip in the separate tools workspace; native coverage does not build it.
     pub fn into_native(self) -> RunReport {
         RunReport {
             scripts_run: self.scripts_run,
