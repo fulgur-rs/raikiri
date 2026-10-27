@@ -526,4 +526,4 @@ fn inline_box_geometry_matches_shodo_when_spaces_hang() {
     }
 }
 
-mod ruby_batching;
+mod ruby_batching_tests;
