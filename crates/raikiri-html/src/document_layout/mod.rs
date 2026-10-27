@@ -260,7 +260,7 @@ pub(crate) fn layout_resumed<'r>(
     let svg_faces = std::sync::Arc::<crate::svg_fonts::FaceCache>::default();
     let running_layouts = running::LayoutCache::new(&running, svg_faces.clone());
     let caches = (0..=out.continuations.len())
-        .map(|_| DocumentCaches::new(svg_faces.clone()))
+        .map(|_| DocumentCaches::new(svg_faces.clone(), running.clone()))
         .collect();
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(Some(LayoutStatus::Aborted)); // cov:ignore: needs the abort signal to fire while the running elements are indexed
@@ -280,7 +280,7 @@ pub struct DocumentLayout {
     out: Box<PipelineOutput>,
     anchors: AnchorIndex,
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,
-    running: raikiri_dom::RunningIndex,
+    running: std::sync::Arc<raikiri_dom::RunningIndex>,
     running_layouts: running::LayoutCache,
     /// Caches shared by the pages of each laid-out document, in
     /// [`crate::render::PipelineOutput::layout_slot_for_page`] order.
@@ -297,26 +297,30 @@ struct DocumentCaches {
 }
 
 impl DocumentCaches {
-    /// Empty caches whose SVG text takes its faces from `svg_faces`.
-    fn new(svg_faces: std::sync::Arc<crate::svg_fonts::FaceCache>) -> Self {
+    /// Empty caches whose SVG text takes its faces from `svg_faces` and whose
+    /// named strings follow the pages of `running`.
+    fn new(
+        svg_faces: std::sync::Arc<crate::svg_fonts::FaceCache>,
+        running: std::sync::Arc<raikiri_dom::RunningIndex>,
+    ) -> Self {
         Self {
             svg_sources: inline_svg::InlineSvgCache::new(svg_faces),
-            margin_values: raikiri_dom::MarginBoxNamedValues::default(),
+            margin_values: raikiri_dom::MarginBoxNamedValues::with_page_index(running),
         }
     }
 }
 
-/// Index the running elements by the pages the rendered content around them
-/// is on.
-fn build_running_index(out: &PipelineOutput) -> raikiri_dom::RunningIndex {
-    raikiri_dom::RunningIndex::build(
+/// Index the running elements and named string assignments by the pages the
+/// rendered content around them is on.
+fn build_running_index(out: &PipelineOutput) -> std::sync::Arc<raikiri_dom::RunningIndex> {
+    std::sync::Arc::new(raikiri_dom::RunningIndex::build(
         &out.document,
         &out.cascade,
         out.slices.iter().map(|slice| {
             let (document, _) = out.layout_for_page(slice.page_index);
             (document, slice.page_index)
         }),
-    )
+    ))
 }
 
 impl DocumentLayout {
