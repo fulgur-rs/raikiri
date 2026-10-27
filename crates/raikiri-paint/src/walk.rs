@@ -3845,7 +3845,8 @@ fn angular_stop_offset(position: Option<AnglePercentage>) -> Option<f32> {
     }
 }
 
-/// Fill missing conic offsets per the color-stop fixup rule.
+/// Fill missing color-stop offsets per the color-stop fixup rule, for the
+/// stops and transition hints of any gradient kind.
 ///
 /// CSS Images 3 section 3.4.3: a missing first stop means 0, a missing last
 /// stop means 1, a defined offset before an earlier one moves up to it,
@@ -3853,22 +3854,23 @@ fn angular_stop_offset(position: Option<AnglePercentage>) -> Option<f32> {
 /// offset clamps up to its predecessor so the sweep never runs backward. The
 /// pinned quadrant cases arrive fully defined, so this mostly passes offsets
 /// through.
-fn fixup_conic_offsets(stops: &[Option<f32>]) -> Vec<f32> {
+fn fixup_stop_offsets(stops: &[Option<f32>]) -> Vec<f32> {
     let count = stops.len();
     let mut offsets: Vec<f32> = stops.iter().map(|slot| slot.unwrap_or(f32::NAN)).collect();
     if count == 0 {
         return Vec::new();
     }
-    let mut largest = f32::NEG_INFINITY;
-    for offset in offsets.iter_mut().filter(|offset| !offset.is_nan()) {
-        largest = largest.max(*offset);
-        *offset = largest;
-    }
+    // The ends are placed first so that the clamp below runs against them.
     if offsets[0].is_nan() {
         offsets[0] = 0.0;
     }
     if offsets[count - 1].is_nan() {
         offsets[count - 1] = 1.0;
+    }
+    let mut largest = f32::NEG_INFINITY;
+    for offset in offsets.iter_mut().filter(|offset| !offset.is_nan()) {
+        largest = largest.max(*offset);
+        *offset = largest;
     }
     let mut index = 0;
     while index < count {

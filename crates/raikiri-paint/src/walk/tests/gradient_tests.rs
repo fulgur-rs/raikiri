@@ -1962,6 +1962,29 @@ fn a_conic_hint_far_outside_the_turn_paints_without_sampling_the_whole_range() {
 }
 
 #[test]
+fn a_transition_hint_between_equal_colors_adds_no_stops() {
+    // The curve between two equal colors is one solid color, so only the
+    // hint between red and blue is sampled.
+    let cv = computed_for("background-image: conic-gradient(red, 25%, red, blue)");
+    let Gradient::Conic(conic) = gradient_of(&cv) else {
+        panic!("expected a conic gradient");
+    };
+    let raw: Vec<gradient::RawStop> = conic
+        .stops
+        .iter()
+        .map(|stop| gradient::RawStop {
+            position: angular_stop_offset(stop.position),
+            hint: angular_stop_offset(stop.hint),
+            color: gradient_stop_dynamic(stop.color, cv.color),
+        })
+        .collect();
+    assert_eq!(
+        gradient::fixed_up_stops(&raw, &conic.interpolation).len(),
+        3
+    );
+}
+
+#[test]
 fn a_transition_hint_is_left_out_under_longer_hue() {
     // Joining the samples of the curve with ramps would send each of them
     // round the hue wheel the long way, so the plain ramp is drawn instead.

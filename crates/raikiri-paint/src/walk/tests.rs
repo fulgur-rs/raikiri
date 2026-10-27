@@ -5472,15 +5472,21 @@ fn conic_angular_offsets_cover_missing_angle_and_percent() {
 
 #[test]
 fn conic_fixup_covers_empty_first_last_interior_and_clamp() {
-    assert!(fixup_conic_offsets(&[]).is_empty());
-    assert_eq!(fixup_conic_offsets(&[None, None]), vec![0.0, 1.0]);
-    assert_eq!(fixup_conic_offsets(&[Some(0.2), None]), vec![0.2, 1.0]);
-    assert_eq!(fixup_conic_offsets(&[None, Some(0.8)]), vec![0.0, 0.8]);
+    assert!(fixup_stop_offsets(&[]).is_empty());
+    assert_eq!(fixup_stop_offsets(&[None, None]), vec![0.0, 1.0]);
+    assert_eq!(fixup_stop_offsets(&[Some(0.2), None]), vec![0.2, 1.0]);
+    assert_eq!(fixup_stop_offsets(&[None, Some(0.8)]), vec![0.0, 0.8]);
     assert_eq!(
-        fixup_conic_offsets(&[Some(0.0), None, None, Some(1.0)]),
+        fixup_stop_offsets(&[Some(0.0), None, None, Some(1.0)]),
         vec![0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
     );
-    assert_eq!(fixup_conic_offsets(&[Some(0.8), Some(0.2)]), vec![0.8, 0.8]);
+    assert_eq!(fixup_stop_offsets(&[Some(0.8), Some(0.2)]), vec![0.8, 0.8]);
+    // The first stop is placed at 0 before a later negative stop is moved up
+    // to it, so the stop between that one and 0.3 lands halfway.
+    assert_eq!(
+        fixup_stop_offsets(&[None, Some(-0.5), None, Some(0.3)]),
+        vec![0.0, 0.0, 0.15, 0.3]
+    );
 }
 
 #[test]

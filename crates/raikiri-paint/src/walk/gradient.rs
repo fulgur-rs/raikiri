@@ -736,18 +736,17 @@ pub(super) fn fixed_up_stops(
         positions.push(stop.position);
         slots.push((hint, positions.len() - 1));
     }
-    let offsets = fixup_conic_offsets(&positions);
+    let offsets = fixup_stop_offsets(&positions);
     let mut fixed: Vec<(f64, DynamicColor)> = Vec::with_capacity(raw.len());
     for (stop, (hint, at)) in raw.iter().zip(slots) {
         let offset = f64::from(offsets[at]);
         if let (Some(hint), Some(&before)) = (hint, fixed.last()) {
-            // A stop moved up after the hint was placed can leave the hint
-            // outside the pair it sits between.
-            let hint = f64::from(offsets[hint]).clamp(before.0, offset.max(before.0));
+            // The fixup never lets offsets run backward, so the hint lies
+            // between the two stops it is written between.
             expand_hint(
                 before,
                 (offset, stop.color),
-                hint,
+                f64::from(offsets[hint]),
                 interpolation,
                 &mut fixed,
             );
@@ -786,7 +785,11 @@ fn expand_hint(
     out: &mut Vec<(f64, DynamicColor)>,
 ) {
     let span = after.0 - before.0;
-    if span <= 0.0 || interpolation.hue_method == HueInterpolationMethod::Longer {
+    // Between equal colors every curve draws the same solid color.
+    if span <= 0.0
+        || before.1 == after.1
+        || interpolation.hue_method == HueInterpolationMethod::Longer
+    {
         return;
     }
     let h = ((hint - before.0) / span).clamp(0.0, 1.0);
