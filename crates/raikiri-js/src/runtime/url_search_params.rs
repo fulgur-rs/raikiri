@@ -8,7 +8,7 @@ use boa_engine::{
     js_string,
 };
 
-use super::interfaces::{function, set_to_string_tag};
+use super::interfaces::{function, guarded_native, set_to_string_tag};
 
 #[derive(Debug, Trace, Finalize, JsData)]
 struct UrlSearchParamsData {
@@ -51,8 +51,9 @@ fn url_search_params_constructor(
         .ok_or_else(|| {
             JsNativeError::typ().with_message("constructor prototype is not an object")
         })?;
+    super::webidl::guard_active(context)?;
     let init = match args.first() {
-        Some(value) => value.to_string(context)?.to_std_string_escaped(),
+        Some(_) => super::webidl::dom_string(args, 0, context)?,
         None => String::new(),
     };
     Ok(params_object(prototype, &init).into())
@@ -136,7 +137,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<JsObject> {
     let get_all = function(context, "getAll", 1, url_search_params_get_all)?;
     let mut builder = ConstructorBuilder::new(
         context,
-        NativeFunction::from_fn_ptr(url_search_params_constructor),
+        guarded_native(NativeFunction::from_fn_ptr(url_search_params_constructor)),
     );
     builder.name("URLSearchParams").length(1).constructor(true);
     let operation = Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE;

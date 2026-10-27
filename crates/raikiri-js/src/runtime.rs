@@ -254,6 +254,7 @@ fn callback_trampoline(
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
+    webidl::guard_active(context)?;
     let Some(slot) = context.get_data::<CallbackSlot>().cloned() else {
         return Err(JsNativeError::typ()
             .with_message("native callback is no longer installed")
@@ -479,6 +480,9 @@ impl DomRuntime {
             Err(reason) => RuntimeError::Aborted(reason),
         });
         let failure = webidl::take_host_failure(&mut self.context);
+        if let Some(reason) = event_loop::aborted(&mut self.context) {
+            return Err(RuntimeError::Aborted(reason));
+        }
         if let Err(reason) = checkpoint {
             return Err(RuntimeError::Aborted(reason));
         }
@@ -750,13 +754,25 @@ pub(crate) fn error_message(
     error: &boa_engine::JsError,
     context: &mut Context,
 ) -> Result<String, Abort> {
-    if let Ok(native) = error.try_native(context) {
+    if let Some(reason) = event_loop::aborted(context) {
+        return Err(reason);
+    }
+    let native = error.try_native(context);
+    // Reading an Error's message/cause can execute getters that silently
+    // exhaust the enqueue budget, even when native conversion succeeds.
+    if let Some(reason) = event_loop::aborted(context) {
+        return Err(reason);
+    }
+    if let Ok(native) = native {
         return Ok(native.to_string());
     }
     if let Some(value) = error.as_opaque()
         && value.is_object()
     {
         let to_string_result = value.to_string(context);
+        if let Some(reason) = event_loop::aborted(context) {
+            return Err(reason);
+        }
         if let Ok(message) = &to_string_result {
             return Ok(message.to_std_string_escaped());
         }

@@ -994,3 +994,136 @@ fn effectively_unlimited_enqueue_budget_keeps_cancelled_task_execution_semantics
     })
     .unwrap();
 }
+
+#[test]
+fn silent_enqueue_abort_blocks_public_native_callbacks() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = calls.clone();
+    let result = rt.evaluate_with_callback(
+        "Promise.resolve().then(()=>{}); notify();",
+        "notify",
+        move |_, _, _| {
+            seen.set(seen.get() + 1);
+            Ok(JsValue::undefined())
+        },
+    );
+    assert_eq!(calls.get(), 0);
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+}
+
+#[test]
+fn silent_enqueue_abort_during_error_conversion_is_reported_immediately() {
+    for source in [
+        "throw {toString(){Promise.resolve().then(()=>{}); return 'x'}};",
+        "var e=new Error('x'); Object.defineProperty(e,'message',{get(){Promise.resolve().then(()=>{}); return 'x'}}); throw e;",
+    ] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 0,
+            ..Limits::default()
+        });
+        assert_eq!(
+            rt.evaluate(source),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+    }
+}
+
+#[test]
+fn silent_enqueue_abort_stops_animation_iterator_callbacks() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(rt.evaluate("var nextCalls=0; document.body.animate({[Symbol.iterator](){Promise.resolve().then(()=>{});return{next(){nextCalls++;return{done:true}}}}},20);"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+    let context = rt.context_mut();
+    assert_eq!(
+        context
+            .global_object()
+            .get(boa_engine::js_string!("nextCalls"), context)
+            .unwrap()
+            .as_number(),
+        Some(0.0)
+    );
+}
+
+#[test]
+fn silent_enqueue_abort_blocks_constructor_argument_callbacks() {
+    for constructor in ["DOMRect", "URL", "URLSearchParams"] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 0,
+            ..Limits::default()
+        });
+        let source = format!(
+            "var converted=false; Promise.resolve().then(()=>{{}}); new {constructor}({{valueOf(){{converted=true;return 1}},toString(){{converted=true;return 'https://example.test'}}}});"
+        );
+        assert_eq!(
+            rt.evaluate(&source),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+        let context = rt.context_mut();
+        assert!(
+            !context
+                .global_object()
+                .get(boa_engine::js_string!("converted"), context)
+                .unwrap()
+                .to_boolean()
+        );
+    }
+}
+
+#[test]
+fn silent_enqueue_abort_during_native_error_getters_is_reported_immediately() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(rt.evaluate("var e=new Error('x'); Object.defineProperty(e,'message',{get(){Promise.resolve().then(()=>{});return 'x'}}); throw e;"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+}
+
+#[test]
+fn silent_enqueue_abort_stops_later_constructor_conversions() {
+    for source in [
+        "new DOMRect({valueOf(){Promise.resolve().then(()=>{});return 1}},{valueOf(){later=true;return 2}});",
+        "new URL({toString(){Promise.resolve().then(()=>{});return 'https://example.test'}},{toString(){later=true;return 'https://base.test'}});",
+    ] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 0,
+            ..Limits::default()
+        });
+        rt.evaluate("var later=false;").unwrap();
+        assert_eq!(
+            rt.evaluate(source),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+        let context = rt.context_mut();
+        assert!(
+            !context
+                .global_object()
+                .get(boa_engine::js_string!("later"), context)
+                .unwrap()
+                .to_boolean()
+        );
+    }
+}
+
+#[test]
+fn silent_enqueue_abort_in_iterator_getter_blocks_iterator_method() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(rt.evaluate("var iteratorCalls=0; document.body.animate({get [Symbol.iterator](){Promise.resolve().then(()=>{});return function(){iteratorCalls++;return{next(){return{done:true}}}}}},20);"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+    let context = rt.context_mut();
+    assert_eq!(
+        context
+            .global_object()
+            .get(boa_engine::js_string!("iteratorCalls"), context)
+            .unwrap()
+            .as_number(),
+        Some(0.0)
+    );
+}

@@ -496,3 +496,40 @@ fn get_client_rects_lists_the_border_box_or_nothing() {
          return false; } catch (e) { return e instanceof TypeError; } })()",
     );
 }
+
+#[test]
+fn silent_enqueue_abort_during_rect_number_conversion_does_not_mutate_rect() {
+    use crate::runtime::{Abort, Limits, RunOptions};
+    for field in ["x", "y", "width", "height"] {
+        let (host, ..) = StubHost::page();
+        let mut runtime = DomRuntime::with_options(
+            host,
+            RunOptions {
+                limits: Limits {
+                    max_enqueued_jobs: 0,
+                    ..Limits::default()
+                },
+            },
+        )
+        .unwrap();
+        let rect = runtime
+            .evaluate("var rect=new DOMRect(1,2,3,4); rect")
+            .unwrap()
+            .as_object()
+            .unwrap();
+        let result = runtime.evaluate(&format!(
+            "rect.{field}={{valueOf(){{Promise.resolve().then(()=>{{}});return 99}}}};"
+        ));
+        assert_eq!(result, Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+        let data = rect.downcast_ref::<super::DomRectData>().unwrap();
+        assert_eq!(
+            (
+                data.x.get(),
+                data.y.get(),
+                data.width.get(),
+                data.height.get()
+            ),
+            (1.0, 2.0, 3.0, 4.0)
+        );
+    }
+}

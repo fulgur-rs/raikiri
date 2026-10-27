@@ -19,7 +19,7 @@ use super::indexed::{IndexedSource, indexed_object_retaining, this_indexed, this
 use super::interfaces::{HTML_NS, Members, protos, wrap_optional};
 use super::node::first_element_child;
 use super::style::ensure_flushed;
-use super::webidl::{arg_unsigned_long, host_failure, this_element, with_state};
+use super::webidl::{arg_unsigned_long, guard_active, host_failure, this_element, with_state};
 use super::window::clamp_viewport_scroll;
 
 /// Native data behind a `DOMRect`/`DOMRectReadOnly` instance. `x`/`y`/
@@ -60,7 +60,11 @@ fn arg_or(args: &[JsValue], i: usize, default: f64, context: &mut Context) -> Js
     match args.get(i) {
         None => Ok(default),
         Some(v) if v.is_undefined() => Ok(default),
-        Some(v) => v.to_number(context),
+        Some(v) => {
+            let value = v.to_number(context)?;
+            guard_active(context)?;
+            Ok(value)
+        }
     }
 }
 
@@ -252,6 +256,7 @@ fn set_x(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
         .cloned()
         .unwrap_or_default()
         .to_number(context)?;
+    guard_active(context)?;
     with_data(this, |d| d.x.set(value))?;
     Ok(JsValue::undefined())
 }
@@ -261,6 +266,7 @@ fn set_y(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
         .cloned()
         .unwrap_or_default()
         .to_number(context)?;
+    guard_active(context)?;
     with_data(this, |d| d.y.set(value))?;
     Ok(JsValue::undefined())
 }
@@ -270,6 +276,7 @@ fn set_width(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
         .cloned()
         .unwrap_or_default()
         .to_number(context)?;
+    guard_active(context)?;
     with_data(this, |d| d.width.set(value))?;
     Ok(JsValue::undefined())
 }
@@ -279,6 +286,7 @@ fn set_height(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         .cloned()
         .unwrap_or_default()
         .to_number(context)?;
+    guard_active(context)?;
     with_data(this, |d| d.height.set(value))?;
     Ok(JsValue::undefined())
 }

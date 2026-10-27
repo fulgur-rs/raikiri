@@ -1078,3 +1078,32 @@ fn animation_id_comes_from_options_and_is_writable() {
         .unwrap();
     assert!(result.to_boolean());
 }
+
+#[test]
+fn silent_enqueue_abort_during_animation_id_conversion_preserves_native_data() {
+    use crate::runtime::{Abort, DomRuntime, Limits, RunOptions, RuntimeError};
+    let (host, ..) = crate::runtime::test_host::StubHost::page();
+    let mut runtime = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_enqueued_jobs: 0,
+                ..Limits::default()
+            },
+        },
+    )
+    .unwrap();
+    let animation = runtime
+        .evaluate("var animation=document.body.animate({opacity:[0,1]},20); animation")
+        .unwrap()
+        .as_object()
+        .unwrap();
+    let before = super::animation_data(&animation).animation_id.clone();
+    assert_eq!(
+        runtime.evaluate(
+            "animation.id={toString(){Promise.resolve().then(()=>{});return 'changed'}};"
+        ),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    assert_eq!(super::animation_data(&animation).animation_id, before);
+}
