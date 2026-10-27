@@ -20,6 +20,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
+mod filter_source;
 mod filters;
 mod fonts;
 mod images;
@@ -1037,7 +1038,7 @@ fn parse_tree_with(
         font_resolver,
         ..usvg::Options::default()
     };
-    usvg::Tree::from_str(source, &options)
+    usvg::Tree::from_str(&filter_source::like_browsers(source), &options)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))
 }
 

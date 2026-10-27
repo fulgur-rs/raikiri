@@ -5352,3 +5352,8 @@ css/css-sizing/aspect-ratio/flex-aspect-ratio-054.html
 # A conic gradient with a stop before 0% or after 100% shows the part of its ramp inside the turn, as in Chromium, instead of the first color alone. One test has every stop before the turn and draws solid blue; the other has hard-stop bands from -50% to 150% and draws four quadrants. Both failed before the fix and both KEEP in two audit-vacuous-passes runs.
 css/css-images/normalization-conic.html
 css/css-images/out-of-range-color-stop-conic.html
+
+# --- filters of shapes that are not rendered, and a zero convolution divisor (WPT pin 97ea26e2, EXACT, Linux, 2026-10-27) ---
+# A shape with nothing to render (a `rect` of no width, a `path` without segments, an `image` of no height) draws nothing, and its filter draws nothing either; a zero `divisor` on an `feConvolveMatrix` asks for the default divisor, the sum of the kernel. The divisor test KEEPs in two audit-vacuous-passes runs. The empty-shape test has a blank reference, so the audit reports VACUOUS-BLANK; it failed before the fix (the filter flooded a red 100px box), so it stays as a guard.
+css/filter-effects/feconvolve-divisor.html
+css/filter-effects/svg-empty-element-with-filter-001.html
