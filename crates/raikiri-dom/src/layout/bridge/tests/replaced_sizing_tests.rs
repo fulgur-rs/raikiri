@@ -492,7 +492,7 @@ fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_agai
                     crate::layout::ifc::boxes::intrinsics_of_boxes(
                         &mut session,
                         parent,
-                        100.0,
+                        Some(100.0),
                         percent_height,
                         None,
                     )
@@ -536,7 +536,7 @@ fn the_width_of_a_percentage_height_container_follows_the_height_it_is_measured_
                 crate::layout::ifc::boxes::intrinsics_of_boxes(
                     &mut session,
                     parent,
-                    100.0,
+                    Some(100.0),
                     percent_height,
                     None,
                 )
