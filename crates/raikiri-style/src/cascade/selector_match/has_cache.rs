@@ -42,13 +42,21 @@ struct ListRecord {
 }
 
 impl ListRecord {
-    fn describes(&self, relative_selectors: &[RelativeSelector<RaikiriSelectorImpl>]) -> bool {
-        self.selectors.len() == relative_selectors.len()
-            && self
-                .selectors
-                .iter()
-                .zip(relative_selectors)
-                .all(|(kept, live)| kept.thin_arc_heap_ptr() == live.selector.thin_arc_heap_ptr())
+    fn describes(
+        &self,
+        relative_selectors: &[RelativeSelector<RaikiriSelectorImpl>],
+        work: &SelectorWork,
+    ) -> Result<bool, CascadeError> {
+        if self.selectors.len() != relative_selectors.len() {
+            return Ok(false);
+        }
+        for (kept, live) in self.selectors.iter().zip(relative_selectors) {
+            work.charge(1)?;
+            if kept.thin_arc_heap_ptr() != live.selector.thin_arc_heap_ptr() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -86,11 +94,14 @@ impl HasCache {
         &self,
         list: ListKey,
         relative_selectors: &[RelativeSelector<RaikiriSelectorImpl>],
-    ) -> Option<u64> {
-        self.lists
-            .get(&list)
-            .filter(|record| record.describes(relative_selectors))
-            .map(|record| record.generation)
+        work: &SelectorWork,
+    ) -> Result<Option<u64>, CascadeError> {
+        let Some(record) = self.lists.get(&list) else {
+            return Ok(None);
+        };
+        Ok(record
+            .describes(relative_selectors, work)?
+            .then_some(record.generation))
     }
 }
 
@@ -101,7 +112,7 @@ pub(super) fn matches<D: StyleDom>(
     relative_selectors: &[RelativeSelector<RaikiriSelectorImpl>],
     anchor_id: StyleNodeId,
     anchor_ancestors: &[StyleNodeId],
-) -> bool {
+) -> Result<bool, CascadeError> {
     let list = ListKey {
         address: relative_selectors.as_ptr() as usize,
         len: relative_selectors.len(),
@@ -115,23 +126,25 @@ pub(super) fn matches<D: StyleDom>(
     };
     {
         let cache = ctx.caches.has.borrow();
-        if let Some(generation) = cache.current_generation(list, relative_selectors)
+        if let Some(generation) =
+            cache.current_generation(list, relative_selectors, &ctx.caches.work)?
             && let Some(entry) = cache.entries.get(&key)
             && entry.generation == generation
         {
-            return entry.matched;
+            return Ok(entry.matched);
         }
     }
     // No cache borrow is held across the search, which re-enters the matcher.
     let matched =
-        has_relative_selector_matches(ctx, relative_selectors, anchor_id, anchor_ancestors);
+        has_relative_selector_matches(ctx, relative_selectors, anchor_id, anchor_ancestors)?;
     let mut cache = ctx.caches.has.borrow_mut();
     if cache.entries.len() >= cache.max_entries && !cache.entries.contains_key(&key) {
-        return matched;
+        return Ok(matched);
     }
-    let generation = match cache.current_generation(list, relative_selectors) {
+    let generation = match cache.current_generation(list, relative_selectors, &ctx.caches.work)? {
         Some(generation) => generation,
         None => {
+            ctx.caches.work.charge(relative_selectors.len() as u64)?;
             let generation = cache.next_generation;
             cache.next_generation = cache.next_generation.wrapping_add(1);
             cache.lists.insert(
@@ -154,7 +167,7 @@ pub(super) fn matches<D: StyleDom>(
             matched,
         },
     );
-    matched
+    Ok(matched)
 }
 
 #[cfg(test)]

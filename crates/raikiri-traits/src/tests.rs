@@ -148,6 +148,7 @@ fn render_limits_defaults() {
     );
     assert_eq!(d.max_cascade_declarations, cascade.max_declarations_visited);
     assert_eq!(d.max_cascade_selector_tests, cascade.max_selector_tests);
+    assert_eq!(d.max_cascade_selector_work, cascade.max_selector_work);
     assert_eq!(d.max_cascade_retained_bytes, cascade.max_retained_bytes);
     assert_eq!(d.max_cascade_output_bytes, cascade.max_output_bytes);
     assert_eq!(d.cascade_limits(), cascade);
@@ -179,6 +180,7 @@ fn render_limits_configure_the_cascade() {
         .max_cascade_candidates_per_element(Some(1))
         .max_cascade_declarations(Some(2))
         .max_cascade_selector_tests(None)
+        .max_cascade_selector_work(Some(17))
         .max_cascade_retained_bytes(Some(3))
         .max_cascade_output_bytes(Some(5))
         .build();
@@ -186,6 +188,15 @@ fn render_limits_configure_the_cascade() {
     assert_eq!(cascade.max_candidates_per_element, Some(1));
     assert_eq!(cascade.max_declarations_visited, Some(2));
     assert_eq!(cascade.max_selector_tests, None);
+    assert_eq!(cascade.max_selector_work, Some(17));
+    assert_eq!(
+        RenderLimits::builder()
+            .max_cascade_selector_work(None)
+            .build()
+            .cascade_limits()
+            .max_selector_work,
+        None
+    );
     assert_eq!(cascade.max_retained_bytes, Some(3));
     // The aggregate footprint does not bound the cascade.
     assert_eq!(cascade.max_output_bytes, Some(5));

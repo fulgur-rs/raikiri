@@ -35,7 +35,9 @@ fn matches_with(
     let node = doc.node(id).unwrap();
     let elem = node.as_element().unwrap();
     let ctx = MatchContext::new(doc, StyleQuirksMode::NoQuirks, None, false, caches);
-    match_complex_selector_list(list, ctx, &elem, id, ancestors).is_some()
+    match_complex_selector_list(list, ctx, &elem, id, ancestors)
+        .unwrap()
+        .is_some()
 }
 
 fn has(class: &str, token: &str) -> bool {

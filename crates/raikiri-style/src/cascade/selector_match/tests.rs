@@ -878,7 +878,8 @@ fn next_sibling_combinator_does_not_match_parent_child_relationship() {
             &elem,
             StyleNodeId::new(p as u64),
             &[StyleNodeId::new(div as u64)],
-        ),
+        )
+        .unwrap(),
         None,
         "div + p must not match a p that is div's child, not its sibling"
     );
@@ -1356,7 +1357,8 @@ fn descendant_combinator_deep_unsatisfiable_chain_does_not_explode() {
         &elem,
         target_id,
         &ancestors,
-    );
+    )
+    .unwrap();
     let elapsed = start.elapsed();
 
     assert_eq!(
@@ -1407,7 +1409,8 @@ fn later_sibling_combinator_deep_unsatisfiable_run_does_not_explode() {
         &elem,
         target_id,
         &[],
-    );
+    )
+    .unwrap();
     let elapsed = start.elapsed();
 
     assert_eq!(
@@ -1461,7 +1464,8 @@ fn match_complex_selector_list_rejects_unsupported_component_via_safety_net() {
             &elem,
             StyleNodeId::new(p as u64),
             &[],
-        ),
+        )
+        .unwrap(),
         None,
         "NonTSPseudoClass component must fall through the safety net"
     );
@@ -2782,6 +2786,7 @@ fn assert_structural_selectors_match_brute_force(
                 let elem = node.as_element().unwrap();
                 let matched =
                     match_complex_selector_list(&list, ctx, &elem, node_id(child), &ancestors)
+                        .unwrap()
                         .is_some();
                 let Some(pos) = candidates.iter().position(|&id| id == child) else {
                     // A non-candidate subject has no sibling position, so no
@@ -2870,13 +2875,20 @@ fn sibling_info_is_built_once_per_parent() {
     let caches = MatchCaches::default();
     let first = caches
         .sibling_info(&doc, node_id(parent), false)
+        .unwrap()
         .expect("a 39-child parent is cached");
     for _ in 0..3 {
-        let again = caches.sibling_info(&doc, node_id(parent), false).unwrap();
+        let again = caches
+            .sibling_info(&doc, node_id(parent), false)
+            .unwrap()
+            .unwrap();
         assert!(Rc::ptr_eq(&first, &again), "sibling info must be reused");
     }
     // `allow_detached` is part of the key.
-    let detached = caches.sibling_info(&doc, node_id(parent), true).unwrap();
+    let detached = caches
+        .sibling_info(&doc, node_id(parent), true)
+        .unwrap()
+        .unwrap();
     assert!(!Rc::ptr_eq(&first, &detached));
     assert_eq!(caches.siblings.borrow().len(), 2);
     assert_eq!(
@@ -2938,14 +2950,17 @@ fn lang_and_dir_memo_agree_with_direct_resolution() {
             let ancestors: Vec<StyleNodeId> = chain.iter().map(|&a| node_id(a)).collect();
             let node = doc.node(node_id(*id)).unwrap();
             let elem = node.as_element().unwrap();
-            let (direct_lang, _) = effective_language(&doc, &elem, &ancestors, |_| None);
-            let direct_dir = resolve_directionality(&doc, &elem, node_id(*id), &ancestors);
+            let (direct_lang, _) =
+                effective_language(&doc, &elem, &ancestors, |_| None, || Ok(())).unwrap();
+            let direct_dir =
+                resolve_directionality(&doc, &elem, node_id(*id), &ancestors, || Ok(())).unwrap();
             assert_eq!(&*direct_lang, lang, "direct language of {id}");
             assert_eq!(direct_dir, dir, "direct direction of {id}");
             for source in selectors {
                 let list = crate::parse_selector_list(source).expect("selector parses");
                 let matched =
                     match_complex_selector_list(&list, ctx, &elem, node_id(*id), &ancestors)
+                        .unwrap()
                         .is_some();
                 let want = match source {
                     ":lang(en)" => lang == "en",
@@ -2957,11 +2972,15 @@ fn lang_and_dir_memo_agree_with_direct_resolution() {
                 assert_eq!(matched, want, "{source} on element {id}");
             }
             assert_eq!(
-                &*caches.content_language(&doc, &elem, node_id(*id), &ancestors),
+                &*caches
+                    .content_language(&doc, &elem, node_id(*id), &ancestors)
+                    .unwrap(),
                 &*direct_lang
             );
             assert_eq!(
-                caches.directionality(&doc, &elem, node_id(*id), &ancestors),
+                caches
+                    .directionality(&doc, &elem, node_id(*id), &ancestors)
+                    .unwrap(),
                 direct_dir
             );
         }
@@ -3006,10 +3025,30 @@ fn has_search_reuses_one_scratch_buffer_across_evaluations() {
                 StyleNodeId::new(id as u64),
                 &ancestors,
             )
+            .unwrap()
             .is_some();
             assert_eq!(matched, expect[i], "{selector} on item {i}");
         }
     }
     // Every evaluation returned its buffers, so one pooled entry served all.
     assert_eq!(caches.has_scratch.borrow().len(), 1);
+}
+
+#[test]
+fn unlimited_selector_work_count_saturates() {
+    let work = SelectorWork::new(None);
+    work.charge(u64::MAX).unwrap();
+    work.charge(1).unwrap();
+    assert_eq!(work.count(), u64::MAX);
+    let bounded = SelectorWork::new(Some(1));
+    bounded.charge(1).unwrap();
+    assert!(matches!(
+        bounded.charge(1),
+        Err(CascadeError::LimitExceeded {
+            kind: CascadeLimitKind::SelectorWork,
+            limit: 1,
+            actual: 2
+        })
+    ));
+    assert_eq!(bounded.count(), 1);
 }

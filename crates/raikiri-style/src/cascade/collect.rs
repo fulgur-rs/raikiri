@@ -539,6 +539,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         counts.max_element_candidates = self.candidates.max_element();
         counts.declarations_visited = self.candidates.visited();
         counts.selector_tests = self.selector_tests.count();
+        counts.selector_work = self.match_ctx.caches.work_count();
     }
 
     /// Collects the input of element `id` into the empty `input`.
@@ -695,7 +696,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                     elem,
                     id,
                     ancestor_path,
-                )
+                )?
             {
                 // The declarations were expanded when the rule was
                 // parsed (`crate::rule::expand_shorthand_into`), and the
@@ -730,7 +731,8 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                     elem,
                     id,
                     ancestor_path,
-                ) else {
+                )?
+                else {
                     continue;
                 };
                 let spec = specificity_of(selector);

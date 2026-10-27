@@ -47,6 +47,17 @@ pub struct CascadeLimits {
     ///
     /// Defaults to `Some(2^30)`.
     pub max_selector_tests: Option<u64>,
+    /// The most logical selector operations in one cascade: component
+    /// evaluations, candidate/ancestor/child visits, cursor/frame steps and
+    /// cache selector-list entries. This includes cache construction,
+    /// `:has()` searches and filtered nth fallback scans.
+    /// An operation is charged before its node is inspected or queued;
+    /// exceeding the limit returns a terminal error, never partial styles.
+    ///
+    /// This does not bound string bytes, arbitrary DOM trait implementations
+    /// or total CPU time. DOM query APIs use unlimited matching contexts.
+    /// `None` disables this limit. Defaults to `Some(2^26)`.
+    pub max_selector_work: Option<u64>,
     /// The most bytes of candidate declarations the result may keep, for the
     /// first-line and first-letter styles recomputed from them later. Counted
     /// by the inline size of each kept record, not the heap its values own.
@@ -85,6 +96,7 @@ impl Default for CascadeLimits {
             max_candidates_per_element: Some(1 << 16),
             max_declarations_visited: Some(1 << 28),
             max_selector_tests: Some(1 << 30),
+            max_selector_work: Some(1 << 26),
             max_retained_bytes: Some(256 << 20),
             max_output_bytes: Some(8 << 30),
         }
@@ -253,6 +265,7 @@ pub(crate) struct WalkCounts {
     pub(crate) max_element_candidates: u64,
     pub(crate) declarations_visited: u64,
     pub(crate) selector_tests: u64,
+    pub(crate) selector_work: u64,
     pub(crate) retained_bytes: u64,
     pub(crate) output_bytes: u64,
 }

@@ -57,9 +57,13 @@ fn brute_force_matches(
     let ctx = MatchContext::new(doc, doc.quirks_mode(), None, false, &caches);
     let mut matched = Vec::new();
     for (idx, rule) in rules.iter().enumerate() {
-        let direct = match_complex_selector_list(&rule.selectors, ctx, &elem, id, path).is_some();
+        let direct = match_complex_selector_list(&rule.selectors, ctx, &elem, id, path)
+            .unwrap()
+            .is_some();
         let pseudo = rule.selectors.slice().iter().any(|selector| {
-            selector_matches_pseudo_element(ctx, selector, &elem, id, path).is_some()
+            selector_matches_pseudo_element(ctx, selector, &elem, id, path)
+                .unwrap()
+                .is_some()
         });
         if direct || pseudo {
             matched.push(idx as u32);

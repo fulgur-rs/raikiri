@@ -195,6 +195,7 @@ fn render_limit_kind(kind: CascadeLimitKind) -> Option<LimitKind> {
         CascadeLimitKind::CandidatesPerElement => LimitKind::CascadeCandidatesPerElement,
         CascadeLimitKind::DeclarationsVisited => LimitKind::CascadeDeclarations,
         CascadeLimitKind::SelectorTests => LimitKind::CascadeSelectorTests,
+        CascadeLimitKind::SelectorWork => LimitKind::CascadeSelectorWork,
         CascadeLimitKind::RetainedBytes => LimitKind::CascadeRetainedBytes,
         CascadeLimitKind::OutputBytes => LimitKind::CascadeOutputBytes,
         CascadeLimitKind::StyleRules => LimitKind::StyleRules,
@@ -267,6 +268,8 @@ pub enum LimitKind {
     CascadeDeclarations,
     /// Exceeded `max_cascade_selector_tests`.
     CascadeSelectorTests,
+    /// Exceeded `max_cascade_selector_work`.
+    CascadeSelectorWork,
     /// Exceeded `max_cascade_retained_bytes`.
     CascadeRetainedBytes,
     /// Exceeded `max_cascade_output_bytes`.

@@ -36,7 +36,7 @@ fn retained_filter_identity_survives_source_selector_drop() {
     let original = filter(":nth-child(n of .visible)");
     let identity = original.selectors().as_ptr() as usize;
     assert_eq!(
-        position(ctx, parent, child, &original, &[parent]),
+        position(ctx, parent, child, &original, &[parent]).unwrap(),
         Some((1, 16, 16))
     );
     drop(original);
@@ -48,7 +48,7 @@ fn retained_filter_identity_survives_source_selector_drop() {
     }
     let other = filter(":nth-child(n of .absent)");
     assert_eq!(
-        position(ctx, parent, child, &other, &[parent]),
+        position(ctx, parent, child, &other, &[parent]).unwrap(),
         Some((0, 1, 0))
     );
     assert_eq!(caches.filtered_nth.borrow().entries.len(), 2);
@@ -64,7 +64,7 @@ fn recursive_construction_rechecks_both_budget_limits() {
         let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &caches);
         let data = filter(":nth-child(n of :nth-child(2n of .visible))");
         assert_eq!(
-            position(ctx, parent, child, &data, &[parent]),
+            position(ctx, parent, child, &data, &[parent]).unwrap(),
             Some((0, 9, 8))
         );
         let cache = caches.filtered_nth.borrow();
@@ -86,15 +86,18 @@ fn negative_parent_entries_are_bounded_and_do_not_disable_smaller_parents() {
     *caches.filtered_nth.borrow_mut() = FilteredNthCache::with_limits(4, 16);
     let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &caches);
     let large = StyleNodeId::new(large as u64);
-    assert_eq!(position(ctx, large, child, &data, &[large]), None);
+    assert_eq!(position(ctx, large, child, &data, &[large]).unwrap(), None);
     assert_eq!(
-        position(ctx, parent, child, &data, &[parent]),
+        position(ctx, parent, child, &data, &[parent]).unwrap(),
         Some((1, 16, 16))
     );
     let other = filter(":nth-child(n of .absent)");
-    assert_eq!(position(ctx, parent, child, &other, &[parent]), None);
     assert_eq!(
-        position(ctx, parent, child, &data, &[parent]),
+        position(ctx, parent, child, &other, &[parent]).unwrap(),
+        None
+    );
+    assert_eq!(
+        position(ctx, parent, child, &data, &[parent]).unwrap(),
         Some((1, 16, 16))
     );
     let cache = caches.filtered_nth.borrow();
@@ -107,7 +110,7 @@ fn negative_parent_entries_are_bounded_and_do_not_disable_smaller_parents() {
     *limited.filtered_nth.borrow_mut() = FilteredNthCache::with_limits(1, 7);
     let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &limited);
     for id in [parent, large, StyleNodeId::new(0)] {
-        assert_eq!(position(ctx, id, child, &data, &[id]), None);
+        assert_eq!(position(ctx, id, child, &data, &[id]).unwrap(), None);
     }
     assert_eq!(limited.filtered_nth.borrow().over_budget_parents.len(), 1);
 }

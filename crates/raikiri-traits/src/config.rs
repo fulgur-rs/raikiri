@@ -119,6 +119,9 @@ pub struct RenderLimits {
     /// whose default this takes. Exceeding it yields
     /// `LimitExceeded { kind: CascadeSelectorTests }`.
     pub max_cascade_selector_tests: Option<u64>,
+    /// Logical selector component evaluations and DOM exploration visits.
+    /// See [`CascadeLimits::max_selector_work`]. `None` disables the limit.
+    pub max_cascade_selector_work: Option<u64>,
     /// The most bytes of candidate declarations the cascade's result may keep;
     /// see
     /// [`CascadeLimits::max_retained_bytes`](raikiri_style::CascadeLimits::max_retained_bytes),
@@ -180,6 +183,7 @@ impl Default for RenderLimits {
             max_cascade_candidates_per_element: cascade.max_candidates_per_element,
             max_cascade_declarations: cascade.max_declarations_visited,
             max_cascade_selector_tests: cascade.max_selector_tests,
+            max_cascade_selector_work: cascade.max_selector_work,
             max_cascade_retained_bytes: cascade.max_retained_bytes,
             max_cascade_output_bytes: cascade.max_output_bytes,
             max_style_rules: rule_tree.max_rules,
@@ -207,6 +211,7 @@ impl RenderLimits {
         limits.max_candidates_per_element = self.max_cascade_candidates_per_element;
         limits.max_declarations_visited = self.max_cascade_declarations;
         limits.max_selector_tests = self.max_cascade_selector_tests;
+        limits.max_selector_work = self.max_cascade_selector_work;
         limits.max_retained_bytes = self.max_cascade_retained_bytes;
         limits.max_output_bytes = self.max_cascade_output_bytes;
         limits
@@ -236,6 +241,7 @@ pub struct RenderLimitsBuilder {
     max_cascade_candidates_per_element: Option<Option<u32>>,
     max_cascade_declarations: Option<Option<u64>>,
     max_cascade_selector_tests: Option<Option<u64>>,
+    max_cascade_selector_work: Option<Option<u64>>,
     max_cascade_retained_bytes: Option<Option<u64>>,
     max_cascade_output_bytes: Option<Option<u64>>,
     max_style_rules: Option<Option<u64>>,
@@ -301,6 +307,12 @@ impl RenderLimitsBuilder {
         self
     }
 
+    /// Set `max_cascade_selector_work` (`None` disables the limit).
+    pub fn max_cascade_selector_work(mut self, v: Option<u64>) -> Self {
+        self.max_cascade_selector_work = Some(v);
+        self
+    }
+
     /// Set `max_cascade_selector_tests` (`None` disables the limit).
     pub fn max_cascade_selector_tests(mut self, v: Option<u64>) -> Self {
         self.max_cascade_selector_tests = Some(v);
@@ -356,6 +368,9 @@ impl RenderLimitsBuilder {
             max_cascade_declarations: self
                 .max_cascade_declarations
                 .unwrap_or(d.max_cascade_declarations),
+            max_cascade_selector_work: self
+                .max_cascade_selector_work
+                .unwrap_or(d.max_cascade_selector_work),
             max_cascade_selector_tests: self
                 .max_cascade_selector_tests
                 .unwrap_or(d.max_cascade_selector_tests),

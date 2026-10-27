@@ -10,6 +10,9 @@ use super::selector_match::{MatchCaches, MatchContext, match_complex_selector_li
 use crate::{RaikiriSelectorImpl, StyleDom, StyleNode, StyleNodeId, parse_selector_list};
 
 /// A parsed selector list ready to test elements of a [`StyleDom`].
+///
+/// Query matching has no cumulative selector work limit. Cascade work
+/// limits apply only to stylesheet cascade entry points.
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub struct SelectorQuery {
@@ -154,7 +157,9 @@ impl<D: StyleDom> SelectorMatcher<'_, D> {
             true,
             &self.caches,
         );
-        match_complex_selector_list(&self.query.list, ctx, &elem, elem_id, ancestors).is_some()
+        match_complex_selector_list(&self.query.list, ctx, &elem, elem_id, ancestors)
+            .expect("query matching has no selector work limit")
+            .is_some()
     }
 
     #[cfg(test)]

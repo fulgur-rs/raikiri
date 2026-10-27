@@ -110,6 +110,10 @@ fn a_cascade_limit_converts_to_the_render_limit_it_comes_from() {
             LimitKind::CascadeSelectorTests,
         ),
         (
+            CascadeLimitKind::SelectorWork,
+            LimitKind::CascadeSelectorWork,
+        ),
+        (
             CascadeLimitKind::RetainedBytes,
             LimitKind::CascadeRetainedBytes,
         ),

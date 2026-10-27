@@ -13,6 +13,7 @@ fn unlimited() -> CascadeLimits {
         max_candidates_per_element: None,
         max_declarations_visited: None,
         max_selector_tests: None,
+        max_selector_work: None,
         max_retained_bytes: None,
         max_output_bytes: None,
     }
@@ -115,6 +116,7 @@ fn limits_at_what_the_document_needs_change_nothing() {
         ("candidates of one element", counts.max_element_candidates),
         ("declarations", counts.declarations_visited),
         ("selector tests", counts.selector_tests),
+        ("selector work", counts.selector_work),
         ("retained bytes", counts.retained_bytes),
         ("output bytes", counts.output_bytes),
     ] {
@@ -126,6 +128,7 @@ fn limits_at_what_the_document_needs_change_nothing() {
         ),
         max_declarations_visited: Some(counts.declarations_visited),
         max_selector_tests: Some(counts.selector_tests),
+        max_selector_work: Some(counts.selector_work),
         max_retained_bytes: Some(counts.retained_bytes),
         max_output_bytes: Some(counts.output_bytes),
     };
@@ -165,6 +168,14 @@ fn one_less_than_the_document_needs_fails() {
             counts.selector_tests,
             CascadeLimits {
                 max_selector_tests: Some(counts.selector_tests - 1),
+                ..unlimited()
+            },
+        ),
+        (
+            CascadeLimitKind::SelectorWork,
+            counts.selector_work,
+            CascadeLimits {
+                max_selector_work: Some(counts.selector_work - 1),
                 ..unlimited()
             },
         ),
@@ -691,4 +702,97 @@ fn first_line_styles_count_the_heap_they_resolve_again() {
         actual
             >= inline_bytes + 2 * std::mem::size_of::<crate::resolve::ComputedTextShadow>() as u64
     );
+}
+
+#[test]
+fn selector_work_stops_before_the_first_component() {
+    let doc = limits_doc();
+    let tree = build_rule_tree(&doc);
+    let mut limits = unlimited();
+    limits.max_selector_work = Some(0);
+    assert_eq!(
+        exceeded(walk_within(&doc, &tree, limits, false)),
+        (CascadeLimitKind::SelectorWork, 0, 1),
+    );
+}
+
+#[test]
+fn selector_work_failure_propagates_through_pseudo_and_negative_matches() {
+    for css in [
+        "section:has(.absent) { color:red }",
+        "section:not(:has(.absent)) { color:red }",
+        "section:has(.absent)::before { content:'x' }",
+        "section:not(:has(.absent))::after { content:'x' }",
+        "section, section:not(:has(.absent))::before { color:red }",
+    ] {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(style, css);
+        let parent = doc.push_element(0, "section", None);
+        for _ in 0..128 {
+            doc.push_element(parent, "p", None);
+        }
+        let tree = build_rule_tree(&doc);
+        let mut limits = unlimited();
+        limits.max_selector_tests = Some(100);
+        limits.max_selector_work = Some(24);
+        assert_eq!(
+            exceeded(walk_within(&doc, &tree, limits, false)),
+            (CascadeLimitKind::SelectorWork, 24, 25),
+            "{css}"
+        );
+        assert!(
+            walk_within(&doc, &tree, unlimited(), false).is_ok(),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "manual default calibration on ordinary indexed/structural workloads"]
+fn selector_work_default_calibration_probe() {
+    for (name, n, css, deep) in [
+        (
+            "wide_mixed_4000",
+            4000,
+            "li:nth-child(2n) {color:red} li + li {margin:1px} section:has(> li) {padding:2px} li:lang(en) {opacity:.5}",
+            false,
+        ),
+        (
+            "child_chain_5000",
+            5000,
+            "div > div > div > div > div {color:red} div:has(> span) {padding:1px}",
+            true,
+        ),
+        (
+            "ordinary_sparse_2000",
+            2000,
+            ".visible {color:red} .other {color:blue} section .visible {padding:1px}",
+            false,
+        ),
+    ] {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(style, css);
+        let root = doc.push_element(0, "section", None);
+        let mut parent = root;
+        for i in 0..n {
+            let child = doc.push_element(parent, if deep { "div" } else { "li" }, None);
+            doc.set_attr(child, "class", if i % 3 == 0 { "visible" } else { "other" });
+            if deep {
+                parent = child;
+            }
+        }
+        let tree = build_rule_tree(&doc);
+        let start = std::time::Instant::now();
+        let out = walk_within(&doc, &tree, CascadeLimits::default(), false).unwrap();
+        eprintln!(
+            "SELECTOR_CALIBRATION name={name} nodes={} work={} selector_tests={} default={:?} elapsed_ns={}",
+            doc.node_count(),
+            out.counts.selector_work,
+            out.counts.selector_tests,
+            CascadeLimits::default().max_selector_work,
+            start.elapsed().as_nanos()
+        );
+    }
 }

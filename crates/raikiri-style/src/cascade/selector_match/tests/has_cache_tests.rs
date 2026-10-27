@@ -39,7 +39,9 @@ fn matches_with(
     let node = doc.node(id).unwrap();
     let elem = node.as_element().unwrap();
     let ctx = MatchContext::new(doc, StyleQuirksMode::NoQuirks, None, false, caches);
-    match_complex_selector_list(list, ctx, &elem, id, ancestors).is_some()
+    match_complex_selector_list(list, ctx, &elem, id, ancestors)
+        .unwrap()
+        .is_some()
 }
 
 #[test]
@@ -134,7 +136,12 @@ fn content_language_records_the_ancestors_it_walks() {
         let id = StyleNodeId::new(span as u64);
         let node = doc.node(id).unwrap();
         let elem = node.as_element().unwrap();
-        assert_eq!(&*caches.content_language(&doc, &elem, id, &ancestors), "en");
+        assert_eq!(
+            &*caches
+                .content_language(&doc, &elem, id, &ancestors)
+                .unwrap(),
+            "en"
+        );
     }
     // The three divs and both spans; `html` has its own `lang`.
     assert_eq!(caches.languages.borrow().len(), 5);
@@ -161,7 +168,12 @@ fn content_language_without_any_lang_records_the_empty_tag() {
     let id = StyleNodeId::new(span as u64);
     let node = doc.node(id).unwrap();
     let elem = node.as_element().unwrap();
-    assert_eq!(&*caches.content_language(&doc, &elem, id, &ancestors), "");
+    assert_eq!(
+        &*caches
+            .content_language(&doc, &elem, id, &ancestors)
+            .unwrap(),
+        ""
+    );
     assert_eq!(caches.languages.borrow().len(), 3);
 }
 

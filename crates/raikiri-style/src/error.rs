@@ -54,6 +54,8 @@ pub enum CascadeLimitKind {
     DeclarationsVisited,
     /// [`crate::CascadeLimits::max_selector_tests`].
     SelectorTests,
+    /// [`crate::CascadeLimits::max_selector_work`].
+    SelectorWork,
     /// [`crate::CascadeLimits::max_retained_bytes`].
     RetainedBytes,
     /// [`crate::CascadeLimits::max_output_bytes`].

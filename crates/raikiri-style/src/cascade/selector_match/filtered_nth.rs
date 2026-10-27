@@ -74,7 +74,7 @@ pub(super) fn position<D: StyleDom>(
     elem: StyleNodeId,
     data: &NthOfSelectorData<RaikiriSelectorImpl>,
     ancestors: &[StyleNodeId],
-) -> Option<(i32, i32, i32)> {
+) -> Result<Option<(i32, i32, i32)>, CascadeError> {
     let key = FilterKey {
         parent,
         filter: data.selectors().as_ptr() as usize,
@@ -85,35 +85,35 @@ pub(super) fn position<D: StyleDom>(
     let remaining = {
         let cache = ctx.caches.filtered_nth.borrow();
         if cache.last_narrow_parent == Some(parent) {
-            return None;
+            return Ok(None);
         }
         if let Some(ranks) = cache.entries.get(&key) {
-            return Some(ranks.position(elem));
+            return Ok(Some(ranks.position(elem)));
         }
         if cache.over_budget_parents.contains(&parent)
             || cache.entries.len() + cache.over_budget_parents.len() >= cache.max_entries
         {
-            return None;
+            return Ok(None);
         }
         cache.max_children - cache.charged_children
     };
     // Stop counting at the budget boundary, before allocating or matching.
-    let children = ctx
-        .dom
-        .child_ids(parent)
-        .take(remaining.saturating_add(1))
-        .count();
+    let mut children = 0;
+    for _ in ctx.dom.child_ids(parent).take(remaining.saturating_add(1)) {
+        ctx.caches.work.charge(1)?;
+        children += 1;
+    }
     if children > remaining {
         ctx.caches
             .filtered_nth
             .borrow_mut()
             .over_budget_parents
             .insert(parent);
-        return None;
+        return Ok(None);
     }
     if children < SIBLING_CACHE_MIN_CHILDREN {
         ctx.caches.filtered_nth.borrow_mut().last_narrow_parent = Some(parent);
-        return None;
+        return Ok(None);
     }
 
     let mut ranks = FilterRanks {
@@ -122,12 +122,13 @@ pub(super) fn position<D: StyleDom>(
         total: 0,
     };
     for child in ctx.dom.child_ids(parent) {
+        ctx.caches.work.charge(1)?;
         if !is_candidate_element(ctx.dom, child, ctx.allow_detached) {
             continue;
         }
         if let Some(node) = ctx.dom.node(child)
             && let Some(element) = node.as_element()
-            && selector_slice_matches(data.selectors(), ctx, &element, child, ancestors)
+            && selector_slice_matches(data.selectors(), ctx, &element, child, ancestors)?
         {
             ranks.total += 1;
             ranks.from_start.insert(child, ranks.total);
@@ -143,8 +144,19 @@ pub(super) fn position<D: StyleDom>(
         cache.charged_children += children;
         cache.entries.insert(key, ranks);
     }
-    Some(result)
+    Ok(Some(result))
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+impl MatchCaches {
+    pub(crate) fn filtered_nth_entries(&self) -> usize {
+        self.filtered_nth.borrow().entries.len()
+    }
+
+    pub(crate) fn filtered_nth_slots(&self) -> usize {
+        self.filtered_nth.borrow().charged_children
+    }
+}

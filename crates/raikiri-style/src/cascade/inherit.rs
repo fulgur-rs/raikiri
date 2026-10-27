@@ -486,7 +486,7 @@ pub(crate) fn walk_from<D: StyleDom>(
         media_context.viewport_width() as f32,
         media_context.viewport_height() as f32,
     ));
-    let match_caches = MatchCaches::default();
+    let match_caches = MatchCaches::with_work_limit(options.limits.max_selector_work);
     let mut collector = Collector::new(
         dom,
         rule_tree,

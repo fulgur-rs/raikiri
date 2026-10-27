@@ -128,13 +128,15 @@ pub(crate) fn effective_language<D: StyleDom, E: StyleElement>(
     elem: &E,
     ancestors: &[StyleNodeId],
     mut known: impl FnMut(StyleNodeId) -> Option<Rc<str>>,
-) -> (Rc<str>, usize) {
+    mut visit: impl FnMut() -> Result<(), crate::CascadeError>,
+) -> Result<(Rc<str>, usize), crate::CascadeError> {
     if let Some(lang) = own_html_or_svg_lang_attribute(elem) {
-        return (lang.into(), ancestors.len());
+        return Ok((lang.into(), ancestors.len()));
     }
     for (index, &ancestor_id) in ancestors.iter().enumerate().rev() {
+        visit()?;
         if let Some(lang) = known(ancestor_id) {
-            return (lang, index + 1);
+            return Ok((lang, index + 1));
         }
         // `node`'s borrow must outlive `ancestor_elem`'s — a `.and_then`
         // chain would try to return a `&str` borrowed from a `node` that
@@ -144,14 +146,14 @@ pub(crate) fn effective_language<D: StyleDom, E: StyleElement>(
             && let Some(ancestor_elem) = node.as_element()
             && let Some(lang) = own_html_or_svg_lang_attribute(&ancestor_elem)
         {
-            return (lang.into(), index + 1);
+            return Ok((lang.into(), index + 1));
         }
     }
     // Ancestor chain exhausted with no pragma-set default / protocol-level
     // language available (both out of scope, see this function's doc).
     // HTML LS §3.2.6.2's final fallback: "the language of the node is
     // unknown, and the corresponding language tag is the empty string."
-    (Rc::from(""), 0)
+    Ok((Rc::from(""), 0))
 }
 
 /// The **own**-attribute half of HTML LS §3.2.6.2's "determine the language
