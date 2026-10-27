@@ -1958,7 +1958,8 @@ fn a_flex_container_without_lines_is_sliced_with_its_items() {
 
 #[test]
 fn a_flex_container_whose_boxes_reach_past_it_once_laid_out_stays_one_box() {
-    let fragments = |item: &str| {
+    let sliced = vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -100.0, 150.0)];
+    let fragments = |flex: &str, item: &str| {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(Some(html), "body", Some("margin:0"));
@@ -1970,21 +1971,83 @@ fn a_flex_container_whose_boxes_reach_past_it_once_laid_out_stays_one_box() {
                  column-fill:auto",
             ),
         );
-        let flex = doc.append_element(Some(parent), "div", Some("display:flex;height:150px"));
+        let flex = doc.append_element(Some(parent), "div", Some(flex));
         doc.append_element(Some(flex), "div", Some(item));
         layout_nested_flex_float_fixture(&mut doc);
         fragment_rects(&doc, flex)
     };
+    let sized = "display:flex;height:150px";
+    let relative = "display:flex;height:150px;position:relative";
     // Before layout there is no geometry to tell that the item is taller than
     // the container, so the container starts out as sliceable. Once its boxes
     // are laid out it is left to the other strategies, and no piece of it
     // shows what the first one does.
-    assert!(fragments("display:block;width:10px;height:250px").is_empty());
+    assert!(fragments(sized, "display:block;width:10px;height:250px").is_empty());
+    // Likewise a box that starts above the block start of the container, and
+    // an absolutely positioned one that reaches past its block end.
+    assert!(
+        fragments(
+            sized,
+            "display:block;width:10px;height:100px;margin-top:-20px"
+        )
+        .is_empty()
+    );
+    assert_ne!(
+        fragments(
+            relative,
+            "display:block;position:absolute;top:0;height:250px"
+        ),
+        sliced
+    );
+    assert_ne!(
+        fragments(
+            relative,
+            "display:block;position:absolute;top:-50px;height:100px"
+        ),
+        sliced
+    );
     // An item that stays inside the container is sliced with it.
     assert_eq!(
-        fragments("display:block;width:10px;height:100px"),
-        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -100.0, 150.0)]
+        fragments(sized, "display:block;width:10px;height:100px"),
+        sliced
     );
+    assert_eq!(
+        fragments(
+            relative,
+            "display:block;position:absolute;top:0;height:100px"
+        ),
+        sliced
+    );
+}
+
+#[test]
+fn a_flex_container_judged_by_an_earlier_layout_is_judged_again_on_the_next() {
+    let sliced = vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -100.0, 150.0)];
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let flex = doc.append_element(Some(parent), "div", Some("display:flex;height:150px"));
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Some("display:block;width:10px;height:250px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(fragment_rects(&doc, flex).is_empty());
+    // The boxes are laid out again before the container is judged on the
+    // geometry, so what the earlier layout left behind does not decide it.
+    doc.set_element_inline_style(item, Some("display:block;width:10px;height:100px".into()));
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(fragment_rects(&doc, flex), sliced);
+    // And the other way round.
+    doc.set_element_inline_style(item, Some("display:block;width:10px;height:250px".into()));
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(fragment_rects(&doc, flex).is_empty());
 }
 
 #[test]
@@ -2124,27 +2187,25 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     ] {
         assert!(!supported(flex, &[item], true), "{flex}");
     }
-    // A box that stays inside the container is cut with it; content that
-    // reaches past its block end would need columns the container's pieces
-    // do not reach.
+    // Whether the boxes stay inside the container is judged once they are laid
+    // out (see `a_flex_container_whose_boxes_reach_past_it_once_laid_out_
+    // stays_one_box`). Here the geometry is that of an earlier layout, or none,
+    // so content that reaches past the container, or starts above it, does not
+    // decide the strategy yet.
     let relative = "display:flex;height:150px;position:relative";
-    let inside = "display:block;position:absolute;top:0;height:100px";
-    let past = "display:block;position:absolute;top:0;height:250px";
-    assert!(supported(relative, &[inside], true));
-    assert!(!supported(relative, &[past], true));
-    assert!(!supported(
-        sized,
-        &["display:block;width:10px;height:250px"],
-        true
-    ));
-    // Likewise content that starts above the block start of the container.
-    let above = "display:block;position:absolute;top:-50px;height:100px";
-    assert!(!supported(relative, &[above], true));
-    assert!(!supported(
-        sized,
-        &["display:block;width:10px;height:100px;margin-top:-20px"],
-        true
-    ));
+    for held in [
+        "display:block;position:absolute;top:0;height:100px",
+        "display:block;position:absolute;top:0;height:250px",
+        "display:block;position:absolute;top:-50px;height:100px",
+    ] {
+        assert!(supported(relative, &[held], true), "{held}");
+    }
+    for held in [
+        "display:block;width:10px;height:250px",
+        "display:block;width:10px;height:100px;margin-top:-20px",
+    ] {
+        assert!(supported(sized, &[held], true), "{held}");
+    }
     // Too many boxes to look through.
     let many = vec![item; 300];
     assert!(!supported(sized, &many, true));
