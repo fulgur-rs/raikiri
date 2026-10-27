@@ -9,7 +9,8 @@ pub(super) fn run(options: RunOptions, label: &str) -> DomRuntime {
             .map(|s| s.parse().unwrap())
             .unwrap_or(default)
     };
-    let n = number("SELECTOR_NATIVE_N", 65_537usize);
+    // Keep the default ignored-test run small; opt into cache-threshold stress explicitly.
+    let n = number("SELECTOR_NATIVE_N", 1_024usize);
     let parents = number("SELECTOR_NATIVE_PARENTS", 1);
     let candidates = number("SELECTOR_NATIVE_MATCH_CANDIDATES", n);
     let filters = number("SELECTOR_NATIVE_FILTERS", 1);
