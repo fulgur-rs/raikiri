@@ -1957,6 +1957,89 @@ fn a_flex_container_without_lines_is_sliced_with_its_items() {
 }
 
 #[test]
+fn a_flex_container_whose_boxes_reach_past_it_once_laid_out_stays_one_box() {
+    let fragments = |item: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Some(
+                "display:block;width:200px;height:100px;columns:2;column-gap:0;\
+                 column-fill:auto",
+            ),
+        );
+        let flex = doc.append_element(Some(parent), "div", Some("display:flex;height:150px"));
+        doc.append_element(Some(flex), "div", Some(item));
+        layout_nested_flex_float_fixture(&mut doc);
+        fragment_rects(&doc, flex)
+    };
+    // Before layout there is no geometry to tell that the item is taller than
+    // the container, so the container starts out as sliceable. Once its boxes
+    // are laid out it is left to the other strategies, and no piece of it
+    // shows what the first one does.
+    assert!(fragments("display:block;width:10px;height:250px").is_empty());
+    // An item that stays inside the container is sliced with it.
+    assert_eq!(
+        fragments("display:block;width:10px;height:100px"),
+        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -100.0, 150.0)]
+    );
+}
+
+#[test]
+fn the_clip_of_a_sliced_flex_container_admits_what_reaches_past_it_inline() {
+    let clips = |item: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Some(
+                "display:block;width:200px;height:100px;columns:2;column-gap:0;\
+                 column-fill:auto",
+            ),
+        );
+        let flex = doc.append_element(
+            Some(parent),
+            "div",
+            Some("display:flex;height:150px;position:relative"),
+        );
+        doc.append_element(Some(flex), "div", Some(item));
+        layout_nested_flex_float_fixture(&mut doc);
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.node_id == flex)
+            .map(|fragment| {
+                let clip = fragment
+                    .fragmentainer_clip
+                    .expect("a sliced box is clipped");
+                (clip.x - fragment.rect.x, clip.width)
+            })
+            .collect::<Vec<_>>()
+    };
+    let held = "display:block;position:absolute;top:0;height:150px;width:100px";
+    // The box reaches 80px past the column, so each clip is as wide as the
+    // box ends: 100px for the column and the rest for the box.
+    assert_eq!(
+        clips(&format!("{held};left:80px")),
+        vec![(0.0, 180.0), (0.0, 180.0)]
+    );
+    // Past the start of the column.
+    assert_eq!(
+        clips(&format!("{held};left:-30px")),
+        vec![(-30.0, 130.0), (-30.0, 130.0)]
+    );
+    // A box inside the column leaves the clip at the column.
+    assert_eq!(
+        clips(&format!("{held};left:0")),
+        vec![(0.0, 100.0), (0.0, 100.0)]
+    );
+}
+
+#[test]
 fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
     let supported = |flex: &str, held: &[&str], outermost: bool| {
         let mut doc = Document::new();

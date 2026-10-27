@@ -1918,6 +1918,16 @@ pub(super) fn layout(
         );
         sizes.push(output.size);
     }
+    // Whether a flex container is sliced was settled before its boxes were
+    // laid out, when there was no geometry to compare with its block end. A
+    // container whose boxes reach past it after all is left to the other
+    // strategies, as it would have been.
+    if children.iter().any(|&child| {
+        layout_node(tree, child).display() == DisplayValue::Flex
+            && sliceable_flex_container(tree, child).is_none()
+    }) {
+        return None;
+    }
     // A wrapper that holds blocks puts them in the stream in its place, so
     // each child has a range of stream items.
     let mut wrapped: Vec<Option<WrappedBlockTree>> = children
@@ -2105,8 +2115,19 @@ pub(super) fn layout(
         let mut shifts = Vec::with_capacity(pieces.len());
         // A flex container shows its items in each piece, so its pieces are
         // the whole box moved up, like those that slice their decorations.
-        let sliced = pieces.len() > 1
-            && (slices_decorations(tree, child) || sliceable_flex_container(tree, child).is_some());
+        let flex = sliceable_flex_container(tree, child).is_some();
+        let sliced = pieces.len() > 1 && (flex || slices_decorations(tree, child));
+        // What a flex container holds paints with it, so the clip of a piece
+        // admits what reaches past the box inline, as the clips of the
+        // absolutely positioned boxes of other children do.
+        let (held_left, held_right) = if flex {
+            (
+                (layout.border.left + layout.scrollable_overflow_rect.left).min(0.0),
+                layout.border.left + layout.scrollable_overflow_rect.right,
+            )
+        } else {
+            (0.0, 0.0)
+        };
         let consumed = match &wrapped_leaf_pieces[order] {
             Some(_) if sliced => consumed_rows(
                 pieces,
@@ -2140,7 +2161,10 @@ pub(super) fn layout(
                         .iter()
                         .filter(|absolute| absolute.parent_piece == index)
                         .fold(
-                            (0.0f32, size.width.max(context.column_width)),
+                            (
+                                held_left,
+                                size.width.max(context.column_width).max(held_right),
+                            ),
                             |(left, right), absolute| {
                                 (
                                     left.min(absolute.clip.x),
