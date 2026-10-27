@@ -141,14 +141,12 @@ fn legacy_matches(elem: &impl StyleElement, class: &str, folded: bool) -> bool {
     }
 }
 
+#[inline]
 fn scan_matches(source: &str, class: &str, folded: bool) -> (bool, usize) {
     if class.is_empty() {
         return (false, 0);
     }
-    for token in source
-        .split([' ', '\t', '\n', '\r', '\x0c'])
-        .filter(|token| !token.is_empty())
-    {
+    for token in source.split([' ', '\t', '\n', '\r', '\x0c']) {
         #[cfg(test)]
         RAW_STATS.with(|stats| {
             let (tokens, bytes) = stats.get();

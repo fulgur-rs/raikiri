@@ -161,3 +161,20 @@ fn rejected_promotion_reserves_before_construction_and_stays_terminal() {
     assert_eq!(work.count(), 7);
     assert_eq!(stats().0, 0);
 }
+
+#[test]
+fn raw_scan_statistics_count_empty_split_segments_actually_visited() {
+    let source = " \talpha  beta ";
+    for (class, matched, segments, scanned) in [
+        ("beta", true, 5, source.len() - 1),
+        ("missing", false, 6, source.len()),
+        ("", false, 0, 0),
+    ] {
+        reset_stats();
+        assert_eq!(scan_matches(source, class, false), (matched, scanned));
+        assert_eq!(raw_stats(), (segments, scanned));
+    }
+    reset_stats();
+    assert_eq!(scan_matches("", "missing", false), (false, 0));
+    assert_eq!(raw_stats(), (1, 0));
+}
