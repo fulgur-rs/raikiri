@@ -355,7 +355,8 @@ impl std::error::Error for SvgError {}
 #[derive(Debug)]
 #[doc(hidden)]
 pub struct SvgDocument {
-    tree: usvg::Tree,
+    tree: Option<usvg::Tree>,
+    tree_size: (f32, f32),
     source: String,
     intrinsic: SvgIntrinsicSize,
     has_view_box: bool,
@@ -445,12 +446,51 @@ impl SvgDocument {
         }
 
         Ok(Self {
-            tree,
+            tree_size: (tree.size().width(), tree.size().height()),
+            tree: Some(tree),
             source: normalized.into_owned(),
             intrinsic,
             has_view_box,
             root_has_color,
             has_images,
+        })
+    }
+
+    /// Drops the initial backend tree for a source-only resource cache.
+    ///
+    /// Scene and raster misses parse the validated source again. A shared
+    /// document is copied without its backend tree; existing callers retain
+    /// their original document. Calling this on an already compact document
+    /// preserves its allocation identity.
+    #[doc(hidden)]
+    pub fn into_source_only(mut self: std::sync::Arc<Self>) -> std::sync::Arc<Self> {
+        if self.tree.is_none() {
+            return self;
+        }
+        if let Some(document) = std::sync::Arc::get_mut(&mut self) {
+            document.tree = None;
+            return self;
+        }
+        std::sync::Arc::new(Self {
+            tree: None,
+            tree_size: self.tree_size,
+            source: self.source.clone(),
+            intrinsic: self.intrinsic,
+            has_view_box: self.has_view_box,
+            root_has_color: self.root_has_color,
+            has_images: self.has_images,
+        })
+    }
+
+    /// Retained source allocation and fixed document/Arc storage, excluding
+    /// allocator overhead. Returns `None` when a backend tree is still kept:
+    /// its allocations cannot be bounded by the source length.
+    #[doc(hidden)]
+    pub fn source_only_retained_bytes(&self) -> Option<u64> {
+        self.tree.is_none().then(|| {
+            self.source.capacity() as u64
+                + std::mem::size_of::<Self>() as u64
+                + (2 * std::mem::size_of::<usize>()) as u64
         })
     }
 
@@ -616,8 +656,8 @@ impl SvgDocument {
         source_style: SourceRootStyle<'_>,
         exact_viewport: bool,
     ) -> Result<String, SvgError> {
-        let viewport_matches = viewport_matches_tree(
-            &self.tree,
+        let viewport_matches = viewport_matches_size(
+            self.tree_size,
             viewport.width,
             viewport.height,
             self.has_view_box && !exact_viewport,
@@ -883,7 +923,9 @@ impl SvgDocument {
         let parsed_tree = self.prepared_tree_with(viewport, root_style, prepared, resources, 0)?;
         let tree = parsed_tree
             .as_ref()
-            .map_or(&self.tree, |parsed| &parsed.tree);
+            .map(|parsed| &parsed.tree)
+            .or(self.tree.as_ref())
+            .expect("source-only documents always prepare a tree");
         let raster_opacity = if root_style.neutralize_root_opacity {
             1.0
         } else {
@@ -941,7 +983,7 @@ impl SvgDocument {
         if sets_text || draws_images {
             return parse_tree_with_resources(&source, resources, image_bytes).map(Some);
         }
-        (source != self.source)
+        (self.tree.is_none() || source != self.source)
             .then(|| {
                 parse_tree(&source).map(|tree| ParsedTree {
                     tree,
@@ -2701,12 +2743,11 @@ fn positive_ratio(width: f32, height: f32) -> Option<f32> {
     (ratio.is_finite() && ratio > 0.0).then_some(ratio)
 }
 
-fn viewport_matches_tree(tree: &usvg::Tree, width: f32, height: f32, has_view_box: bool) -> bool {
-    let size = tree.size();
+fn viewport_matches_size(size: (f32, f32), width: f32, height: f32, has_view_box: bool) -> bool {
     let requested_width = f64::from(width);
     let requested_height = f64::from(height);
-    let source_width = f64::from(size.width());
-    let source_height = f64::from(size.height());
+    let source_width = f64::from(size.0);
+    let source_height = f64::from(size.1);
     if !has_view_box {
         return (requested_width - source_width).abs() <= source_width.max(1.0) * 1.0e-6
             && (requested_height - source_height).abs() <= source_height.max(1.0) * 1.0e-6;

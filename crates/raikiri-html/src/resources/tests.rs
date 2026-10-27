@@ -1242,21 +1242,27 @@ fn cache_insert_paths_cover_per_context_and_replace_branches() {
         )
         .expect("same-size replace succeeds");
     assert_eq!(budget.retained(), 4);
-    cache.insert_source(
-        url.clone(),
-        CachedBackgroundSource::Svg(Arc::new(
-            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
-        )),
-    );
+    cache
+        .insert_source(
+            url.clone(),
+            CachedBackgroundSource::Svg(Arc::new(
+                SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+            )),
+        )
+        .unwrap();
     assert_eq!(cache.prior_bytes(&url), 0);
-    assert_eq!(budget.retained(), 0);
-    cache.insert_source(
-        Url::parse("https://images.test/fresh.svg").unwrap(),
-        CachedBackgroundSource::Svg(Arc::new(
-            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
-        )),
-    );
-    assert_eq!(budget.retained(), 0);
+    assert_eq!(budget.retained(), cache.decoded_bytes);
+    assert!(cache.decoded_bytes > 0);
+    cache
+        .insert_source(
+            Url::parse("https://images.test/fresh.svg").unwrap(),
+            CachedBackgroundSource::Svg(Arc::new(
+                SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+            )),
+        )
+        .unwrap();
+    assert_eq!(budget.retained(), cache.decoded_bytes);
+    assert!(cache.decoded_bytes > 0);
     let mut tight = DecodedImageCache::new(Arc::new(ProcessImageBudget::new(1024 * 1024, 4)));
     tight.max_bytes = 10;
     let big = Arc::new(DecodedImage::new(4, 4, vec![0; 64]));
@@ -2009,12 +2015,14 @@ fn svg_raster_zero_timeout_via_direct_cache_returns_none() {
     let policy = ZeroDecodeTimeoutPolicy;
     let resources = RenderResources::new().network_policy(&policy);
     let url = Url::parse("https://images.test/direct-timeout.svg").unwrap();
-    resources.cache_image_source(
-        url.clone(),
-        CachedBackgroundSource::Svg(Arc::new(
-            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
-        )),
-    );
+    resources
+        .cache_image_source(
+            url.clone(),
+            CachedBackgroundSource::Svg(Arc::new(
+                SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+            )),
+        )
+        .unwrap();
     let raster = resources.get_decoded_at_size(
         &url,
         ImageRasterSize {
@@ -2029,12 +2037,14 @@ fn svg_raster_zero_timeout_via_direct_cache_returns_none() {
     );
     let allow = AllowAllPolicy;
     let allowed = RenderResources::new().network_policy(&allow);
-    allowed.cache_image_source(
-        url.clone(),
-        CachedBackgroundSource::Svg(Arc::new(
-            SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
-        )),
-    );
+    allowed
+        .cache_image_source(
+            url.clone(),
+            CachedBackgroundSource::Svg(Arc::new(
+                SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"),
+            )),
+        )
+        .unwrap();
     let ok = allowed.get_decoded_at_size(
         &url,
         ImageRasterSize {
@@ -2154,10 +2164,13 @@ fn cache_keeps_svg_rasters_of_several_sizes_within_the_budget() {
     let mut cache = DecodedImageCache::new(Arc::clone(&budget));
     let url = Url::parse("https://images.test/icon.svg").unwrap();
     let document = Arc::new(SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"));
-    cache.insert_source(
-        url.clone(),
-        CachedBackgroundSource::Svg(Arc::clone(&document)),
-    );
+    cache
+        .insert_source(
+            url.clone(),
+            CachedBackgroundSource::Svg(Arc::clone(&document)),
+        )
+        .unwrap();
+    let source_bytes = cache.decoded_bytes;
     let raster = |side: u32| {
         (
             ImageRasterSize {
@@ -2185,7 +2198,7 @@ fn cache_keeps_svg_rasters_of_several_sizes_within_the_budget() {
     let entry = cache.entries[&url].clone();
     assert!(entry.raster(raster(1).0).is_some());
     assert!(entry.raster(raster(2).0).is_some());
-    assert_eq!(budget.retained(), 4 + 16);
+    assert_eq!(budget.retained(), source_bytes + 4 + 16);
 
     // Past the size limit the oldest raster goes.
     for side in 3..=5 {
@@ -2194,24 +2207,31 @@ fn cache_keeps_svg_rasters_of_several_sizes_within_the_budget() {
     let entry = cache.entries[&url].clone();
     assert!(entry.raster(raster(1).0).is_none());
     assert_eq!(cache.prior_bytes(&url), (4 + 9 + 16 + 25) * 4);
-    assert_eq!(budget.retained(), (4 + 9 + 16 + 25) * 4);
+    assert_eq!(budget.retained(), source_bytes + (4 + 9 + 16 + 25) * 4);
 
     // A raster that only fits without the older ones evicts them.
-    cache.max_bytes = 29 * 29 * 4 + 10;
+    cache.max_bytes = source_bytes + 29 * 29 * 4 + 10;
     insert(&mut cache, 29).unwrap();
     let entry = cache.entries[&url].clone();
     assert_eq!(entry.rasters.len(), 1);
-    assert_eq!(budget.retained(), 29 * 29 * 4);
+    assert_eq!(budget.retained(), source_bytes + 29 * 29 * 4);
     assert!(insert(&mut cache, 31).is_err());
     assert!(cache.entries[&url].raster(raster(29).0).is_some());
 }
 
 #[test]
 fn cache_evicts_svg_rasters_for_the_process_budget() {
-    let budget = Arc::new(ProcessImageBudget::new(100, 4));
+    let source = Arc::new(SvgDocument::parse(TWO_COLOR_SVG).unwrap()).into_source_only();
+    let source_url = Url::parse("https://images.test/process.svg").unwrap();
+    let mut probe = DecodedImageCache::new(Arc::new(ProcessImageBudget::new(u64::MAX, 4)));
+    probe
+        .insert_source(source_url, CachedBackgroundSource::Svg(Arc::clone(&source)))
+        .unwrap();
+    let source_bytes = probe.decoded_bytes;
+    let budget = Arc::new(ProcessImageBudget::new(source_bytes + 100, 4));
     let mut cache = DecodedImageCache::new(Arc::clone(&budget));
     let url = Url::parse("https://images.test/process.svg").unwrap();
-    let document = Arc::new(SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"));
+    let document = source;
     let insert = |cache: &mut DecodedImageCache, side: u32| {
         cache.insert_raster(
             url.clone(),
@@ -2229,17 +2249,17 @@ fn cache_evicts_svg_rasters_for_the_process_budget() {
     };
     insert(&mut cache, 3).unwrap();
     insert(&mut cache, 4).unwrap();
-    assert_eq!(budget.retained(), 36 + 64);
+    assert_eq!(budget.retained(), source_bytes + 36 + 64);
     // 4x4 alone fits the process budget once the 3x3 raster goes.
     insert(&mut cache, 4).unwrap();
     insert(&mut cache, 2).unwrap();
-    assert_eq!(budget.retained(), 64 + 16);
+    assert_eq!(budget.retained(), source_bytes + 64 + 16);
     insert(&mut cache, 5).unwrap();
     assert_eq!(cache.entries[&url].rasters.len(), 1);
-    assert_eq!(budget.retained(), 100);
+    assert_eq!(budget.retained(), source_bytes + 100);
     // Too large even alone: the process budget is reported, nothing changes.
     assert_eq!(insert(&mut cache, 6), Err((100, 144)));
-    assert_eq!(budget.retained(), 100);
+    assert_eq!(budget.retained(), source_bytes + 100);
     // Replacing the only raster with a smaller one releases the difference.
     let small = |cache: &mut DecodedImageCache| {
         let image = Arc::new(DecodedImage::new(1, 1, vec![0; 4]));
@@ -2254,7 +2274,7 @@ fn cache_evicts_svg_rasters_for_the_process_budget() {
         )
     };
     small(&mut cache).unwrap();
-    assert_eq!(budget.retained(), 4);
+    assert_eq!(budget.retained(), source_bytes + 4);
 }
 
 /// Policy that denies one host and one scheme for images and restricts the

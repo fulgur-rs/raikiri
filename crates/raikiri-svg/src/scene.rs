@@ -377,11 +377,18 @@ impl SvgDocument {
             Err(error) => return Err(error.into()),
         };
         let (no_faces, no_images) = (FaceMap::default(), ImageMap::default());
-        let (tree, faces, images) = parsed
-            .as_ref()
-            .map_or((&self.tree, &no_faces, &no_images), |parsed| {
-                (&parsed.tree, &parsed.faces, &parsed.images)
-            });
+        let (tree, faces, images) = parsed.as_ref().map_or_else(
+            || {
+                (
+                    self.tree
+                        .as_ref()
+                        .expect("source-only documents always prepare a tree"),
+                    &no_faces,
+                    &no_images,
+                )
+            },
+            |parsed| (&parsed.tree, &parsed.faces, &parsed.images),
+        );
         if images.overflowed() {
             return Err(SvgSceneError::LimitExceeded {
                 limit: SvgSceneLimit::Images,

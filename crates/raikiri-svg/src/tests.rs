@@ -1789,8 +1789,8 @@ fn styled_source_resolves_absolute_viewport_even_with_matching_view_box_ratio() 
         )
         .unwrap();
     let reparsed = SvgDocument::parse(source.as_bytes()).unwrap();
-    assert_eq!(reparsed.tree.size().width(), 200.0);
-    assert_eq!(reparsed.tree.size().height(), 100.0);
+    assert_eq!(reparsed.tree.as_ref().unwrap().size().width(), 200.0);
+    assert_eq!(reparsed.tree.as_ref().unwrap().size().height(), 100.0);
 }
 
 #[test]
@@ -3155,3 +3155,4 @@ mod selector_freeze_performance_tests;
 thread_local! {
     pub(super) static SELECTOR_FREEZE_STATS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
+mod retained_source_tests;
