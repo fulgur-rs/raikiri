@@ -1149,6 +1149,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 &child_order,
                                 &flow_flags,
                                 last,
+                                |id| {
+                                    self.has_named_pages
+                                        && named_page_subtree_has_name(
+                                            document,
+                                            cascade,
+                                            id,
+                                            document.context.pagination_on_transposed_axes,
+                                            &mut self.named_page_subtree_cache,
+                                        )
+                                },
                             )
                         });
                 // Where the run starts, the block size from the bottom of its

@@ -625,6 +625,28 @@ fn a_float_between_the_tied_boxes_leaves_them_alone() {
 }
 
 #[test]
+fn a_page_name_change_between_the_tied_boxes_leaves_them_alone() {
+    // The named page already starts the last box on a page of its own, so the
+    // run does not move ahead of it: the second box stays and the last box
+    // takes the padding to the next page.
+    assert_eq!(
+        tied_boxes(
+            "padding-bottom:30px",
+            &[(40, ""), (30, "break-after:avoid"), (20, "page:foo")]
+        ),
+        (vec![0.0, 40.0, 100.0], 150.0)
+    );
+    // The same when the named page is on the box before the last.
+    assert_eq!(
+        tied_boxes(
+            "padding-bottom:30px",
+            &[(40, ""), (30, "break-after:avoid;page:foo"), (20, "")]
+        ),
+        (vec![0.0, 100.0, 130.0], 180.0)
+    );
+}
+
+#[test]
 fn a_box_around_which_a_better_break_exists_stays() {
     // The last box has boxes of its own, and the last of them is the one that
     // moves: breaking inside the box comes later than breaking before it.

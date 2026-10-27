@@ -5865,8 +5865,11 @@ enum AvoidChain {
 /// The avoided breaks that tie the last box of a block to the boxes before it.
 /// `children` and `flow_flags` are the children of the block and, for each, its
 /// last box in the flow and whether it floats, and `last` is the index of the
-/// last child that has a box in the flow. `None` when no break before the last
-/// box is avoided, or the boxes around it are not plain blocks in the flow.
+/// last child that has a box in the flow. `names_page` tells whether a box or
+/// anything in it has a named page. `None` when no break before the last box is
+/// avoided, or the boxes around it are not plain blocks in the flow, or a named
+/// page may start between the boxes the avoided breaks tie: that boundary is
+/// mandatory, so the boxes do not move together.
 ///
 /// The edges of the block that fall on the next page alone are kept with its
 /// last box by a break before that box (CSS Break 3 §4.1). When the break is
@@ -5880,6 +5883,7 @@ fn avoid_chain_before_last_box(
     children: &[usize],
     flow_flags: &[(Option<usize>, bool)],
     last: usize,
+    mut names_page: impl FnMut(usize) -> bool,
 ) -> Option<AvoidChain> {
     // A block box in the flow that takes block space. Anything else between
     // the boxes, such as a float or text, is left to the rules for it.
@@ -5913,6 +5917,12 @@ fn avoid_chain_before_last_box(
             page_edge_constraint(document, cascade, children[first], true);
         if forced_after || forced_before || !(avoided_after || avoided_before) {
             break false;
+        }
+        // A named page on either side may start a new page between the
+        // boxes, avoided break or not. Telling that from one name on both
+        // sides is not tried: such boxes keep the placement they had before.
+        if names_page(children[before]) || names_page(children[first]) {
+            return None;
         }
         first = before;
     };
