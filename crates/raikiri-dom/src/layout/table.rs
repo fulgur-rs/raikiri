@@ -58,6 +58,7 @@ use raikiri_layout_style::LayoutStyleView;
 pub(crate) mod anonymous;
 mod border_scopes;
 mod border_state;
+mod boundaries;
 pub(super) mod cache;
 use border_state::BorderState;
 mod cell_index;
@@ -4257,6 +4258,43 @@ fn resolve_collapsed_cell_borders(
         keep_stronger_side(doc, state, trailing_id, trailing_side, winner);
     };
 
+    if let Some(segments) = index.boundary_segments(grid) {
+        for segment in &segments.vertical {
+            if segment.boundary == 0 || segment.boundary == usize::from(grid.n_cols) {
+                continue;
+            }
+            let left = &grid.cells[segment.leading];
+            let right = &grid.cells[segment.trailing];
+            if usize::from(left.col_start + left.col_span) == segment.boundary
+                && usize::from(right.col_start) == segment.boundary
+            {
+                resolve(
+                    state,
+                    left.node_id,
+                    CellBorderSide::Right,
+                    right.node_id,
+                    CellBorderSide::Left,
+                );
+            }
+        }
+        for segment in &segments.horizontal {
+            let above = &grid.cells[segment.leading];
+            let below = &grid.cells[segment.trailing];
+            if usize::from(above.row.saturating_add(above.row_span)) == segment.boundary
+                && usize::from(below.row) == segment.boundary
+            {
+                resolve(
+                    state,
+                    above.node_id,
+                    CellBorderSide::Bottom,
+                    below.node_id,
+                    CellBorderSide::Top,
+                );
+            }
+        }
+        return;
+    }
+
     let column_count = grid.n_cols as usize;
     for boundary in 1..column_count {
         for row in 0..grid.rows.len() {
@@ -4643,6 +4681,60 @@ fn compute_collapsed_lines(
                 .map(|width| resolve_length(width, basis))
         })
         .collect();
+
+    if let Some(segments) = index.boundary_segments(grid) {
+        let mut lines = CollapsedLines {
+            col_overlaps: vec![0.0; n.saturating_sub(1)],
+            row_overlaps: vec![0.0; m.saturating_sub(1)],
+            outer_left: table_border.left,
+            outer_right: table_border.right,
+            outer_top: table_border.top,
+            outer_bottom: table_border.bottom,
+        };
+        for segment in &segments.vertical {
+            let a = segment.leading;
+            let b = segment.trailing;
+            let left = &grid.cells[a];
+            let right = &grid.cells[b];
+            if segment.boundary == 0 {
+                if left.col_start == 0 {
+                    lines.outer_left = f32_max_compat(lines.outer_left, borders[a].left);
+                }
+            } else if segment.boundary == n {
+                if usize::from(left.col_start + left.col_span) == n {
+                    lines.outer_right = f32_max_compat(lines.outer_right, borders[a].right);
+                }
+            } else if usize::from(left.col_start + left.col_span) == segment.boundary
+                && usize::from(right.col_start) == segment.boundary
+            {
+                let overlap = &mut lines.col_overlaps[segment.boundary - 1];
+                *overlap = f32_max_compat(*overlap, borders[a].right.min(borders[b].left));
+            }
+        }
+        for segment in &segments.horizontal {
+            let a = segment.leading;
+            let b = segment.trailing;
+            if usize::from(grid.cells[a].row) + usize::from(grid.cells[a].row_span)
+                == segment.boundary
+                && usize::from(grid.cells[b].row) == segment.boundary
+            {
+                let overlap = &mut lines.row_overlaps[segment.boundary - 1];
+                *overlap = f32_max_compat(*overlap, borders[a].bottom.min(borders[b].top));
+            }
+        }
+        // Keep the original placement order and visibility rules at these edges.
+        for (pos, cell) in grid.cells.iter().enumerate() {
+            if cell.row == 0 {
+                lines.outer_top = f32_max_compat(lines.outer_top, borders[pos].top);
+            }
+        }
+        for (pos, cell) in grid.cells.iter().enumerate() {
+            if m > 0 && usize::from(cell.row) + usize::from(cell.row_span) == m {
+                lines.outer_bottom = f32_max_compat(lines.outer_bottom, borders[pos].bottom);
+            }
+        }
+        return lines;
+    }
 
     // Vertical boundaries 0..=n. Boundary i separates column i-1 and i;
     // the collapsed line is the max of adjoining borders, and the overlap
