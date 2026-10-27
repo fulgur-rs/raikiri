@@ -63,7 +63,17 @@ fn supported_with_wrapped_blocks(
     }
     let mut children = Vec::new();
     let mut boxes = Vec::new();
+    let mut sized_flex = false;
     for child in rendered_elements(tree, parent) {
+        // A flex container is sliced whole, with the boxes it holds.
+        if let Some(sized) = allow_wrapped_blocks
+            .then(|| sliceable_flex_container(tree, child, None))
+            .flatten()
+        {
+            sized_flex |= sized;
+            children.push(child);
+            continue;
+        }
         let node = layout_node(tree, child);
         let has_inset = style_of(tree, child).inset() != Edges::splat(LengthPercentageAuto::auto());
         let plain_block = is_plain_block_ignoring_insets(tree, child);
@@ -88,13 +98,9 @@ fn supported_with_wrapped_blocks(
         }
         children.push(child);
     }
-    let sized = boxes.iter().any(|&child| {
-        let style = style_of(tree, child);
-        style_dimension_length(style.size().height).is_some()
-            || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
-            // The height of a box with an aspect ratio follows from its width.
-            || style.aspect_ratio().is_some()
-    });
+    let sized = boxes
+        .iter()
+        .any(|&child| has_block_size(&style_of(tree, child)));
     // An empty containing block has no block size, but the absolutely
     // positioned boxes it holds still break across the columns, past the
     // last one if they start there.
@@ -103,7 +109,23 @@ fn supported_with_wrapped_blocks(
             layout_node(tree, child).contains_absolute_boxes
                 && !absolute_children(tree, child).is_empty()
         });
-    (sized || holds_absolute_boxes).then_some(children)
+    (sized || sized_flex || holds_absolute_boxes).then_some(children)
+}
+
+/// Whether `c` is white space that collapses away, as opposed to the other
+/// characters Unicode counts as white space, such as a no-break space, which
+/// render.
+fn is_collapsible_whitespace(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
+}
+
+/// Whether `style` gives its box a block size of its own to slice: a height, a
+/// minimum height, or an aspect ratio, which makes the height follow from the
+/// width.
+fn has_block_size(style: &LayoutStyleView<'_>) -> bool {
+    style_dimension_length(style.size().height).is_some()
+        || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
+        || style.aspect_ratio().is_some()
 }
 
 /// The rendered element children of `parent`, with those of a `display:
@@ -201,6 +223,136 @@ fn is_plain_block_with_display(
         || is_right_aligned_in_parent(tree, child))
 }
 
+/// The most boxes a flex container may hold and still be sliced whole, so
+/// that checking a very large one stays cheap.
+const MAX_SLICED_FLEX_BOXES: usize = 256;
+
+/// Whether `child` is a flex container that the stream slices as one box:
+/// it and the boxes inside it hold no lines, so there is nowhere to break
+/// between lines, and nothing that breaks on its own terms. The container is
+/// laid out whole, and each column shows the part of it that falls in the
+/// column (CSS Flexbox 1, 12). `Some(sized)` says whether any of them has a
+/// block size of its own to slice.
+///
+/// `block_size` is the block size of the container in this layout, once the
+/// boxes it holds are laid out. Their geometry then tells whether a box
+/// reaches past the container. The check that settles which strategy takes
+/// the container runs before they are laid out, with the geometry of an
+/// earlier layout or none, so it passes `None` and judges the structure only.
+///
+/// Boxes that need handling at a break of their own keep the other
+/// strategies: forced or avoided breaks, absolutely positioned or floated
+/// boxes whose containing block is not inside the container, scroll
+/// containers, replaced elements, boxes that paint past their own box (a
+/// transform, shadow, outline or filter) or as a whole group, boxes whose
+/// block edges repeat at each break, containers that are not block or flex,
+/// and containers whose content overflows their block start or end.
+fn sliceable_flex_container(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    block_size: Option<f32>,
+) -> Option<bool> {
+    let node = layout_node(tree, child);
+    let style = style_of(tree, child);
+    if node.display() != DisplayValue::Flex
+        || style.inset() != Edges::splat(LengthPercentageAuto::auto())
+        || style.float().is_floated()
+        || style.clear() != Clear::None
+        || block_margins(&style).is_none()
+        || is_right_aligned_in_parent(tree, child)
+    {
+        return None;
+    }
+    // Boxes that reach past the block end of the container, absolutely
+    // positioned or not, would continue in columns the container's own pieces
+    // do not reach, and those that start above its block start would be cut
+    // off by the clip of its first piece.
+    let bounds = match block_size {
+        Some(height) => {
+            let top = tree.layout_origin_of(child)?.y;
+            Some((top, top + height))
+        }
+        None => None,
+    };
+    let mut boxes = 0usize;
+    let mut sized = false;
+    // Whether a box on the way down is the containing block of the absolutely
+    // positioned boxes below it, so that they are cut with the container.
+    let mut pending = vec![(child, false)];
+    while let Some((id, contained)) = pending.pop() {
+        boxes += 1;
+        if boxes > MAX_SLICED_FLEX_BOXES || !is_sliceable_flex_box(tree, id, contained) {
+            return None;
+        }
+        if let Some((top, bottom)) = bounds {
+            let start = tree.layout_origin_of(id)?.y;
+            if start < top - EPSILON || start + tree.nodes[id].layout.size.height > bottom + EPSILON
+            {
+                return None;
+            }
+        }
+        let contained = contained || layout_node(tree, id).contains_absolute_boxes;
+        let style = style_of(tree, id);
+        sized |= has_block_size(&style);
+        // Text that renders gives a box lines, and a flex container makes an
+        // anonymous item of text that is more than white space that collapses,
+        // a no-break space included.
+        for held in tree.children_through_contents(id) {
+            let held_node = layout_node(tree, held);
+            if !held_node.is_in_document() || held_node.is_display_none() {
+                continue;
+            }
+            match &held_node.data {
+                NodeData::Element(_) => pending.push((held, contained)),
+                NodeData::Text(text)
+                    if text.text_content.chars().all(is_collapsible_whitespace) => {}
+                _ => return None,
+            }
+        }
+    }
+    Some(sized)
+}
+
+/// Whether `id`, a flex container or a box inside one, can be sliced with
+/// the rest of the container (see [`sliceable_flex_container`]).
+fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize, contained: bool) -> bool {
+    let node = layout_node(tree, id);
+    let style = style_of(tree, id);
+    matches!(
+        node.display(),
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex
+    ) && is_horizontal(node)
+        && !node.size_containment.height
+        && (matches!(
+            node.layout_position(),
+            Position::Relative | Position::Static
+        ) || contained && is_absolute_box(node))
+        && !style.float().is_floated()
+        && style.overflow()
+            == (Point {
+                x: TaffyOverflow::Visible,
+                y: TaffyOverflow::Visible,
+            })
+        && !node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+        })
+        && node.break_before == BreakBetween::Auto
+        && node.break_after == BreakBetween::Auto
+        && node.break_inside == BreakInside::Auto
+        && !node.has_before_or_after_content
+        && !node.column_span_all
+        && node.multicol.is_none()
+        && node.ifc.is_none()
+        // The painter draws a transform, a shadow, an outline or a filter
+        // inside the clip of the piece, past the overflow that layout reports.
+        && !node.paints_whole_box_effects
+        // The pieces are cut from one whole box, so block edges that repeat at
+        // each break have neither a place to be drawn nor space reserved.
+        && !(node.clones_box_decorations && has_block_edge_decorations(&style))
+}
+
 /// A block-only wrapper tree whose leaves can be placed in the column stream.
 struct WrappedBlockTree {
     node: usize,
@@ -284,6 +436,10 @@ fn wrapped_block_tree(
     }
     let node = layout_node(tree, wrapper);
     let style = style_of(tree, wrapper);
+    // The blocks a flex container holds are not stacked.
+    if !matches!(node.display(), DisplayValue::Block | DisplayValue::FlowRoot) {
+        return None;
+    }
     if in_multicol_context && node.column_span_all {
         return None;
     }
@@ -542,9 +698,11 @@ struct AbsolutePiece {
 /// the box's pieces in the columns after it. `None` when a box starts above
 /// the columns or its containing block, or when its pieces would not fit in
 /// `budget` fragments.
+#[allow(clippy::too_many_arguments)]
 fn absolute_pieces(
     tree: &LayoutSession<'_>,
     children: &[usize],
+    sliced_flex: &[bool],
     placements: &[Vec<Piece>],
     context: FragmentationContext,
     column_height: f32,
@@ -557,10 +715,16 @@ fn absolute_pieces(
     };
     let mut count = 0usize;
     let mut all = Vec::with_capacity(children.len());
-    for (&child, pieces) in children.iter().zip(placements) {
+    for ((&child, &flex), pieces) in children.iter().zip(sliced_flex).zip(placements) {
         let mut own = Vec::new();
         let first = pieces.first()?;
         let last = pieces.last()?;
+        // A flex container is sliced whole, with the absolutely positioned
+        // boxes it holds.
+        if flex {
+            all.push(own);
+            continue;
+        }
         // The containing block's block offset in the columns laid end to end.
         let flow_top = first.column as f32 * column_height + first.top;
         for node in absolute_children(tree, child) {
@@ -1782,6 +1946,9 @@ pub(super) fn layout(
     let definite_height =
         definite.then(|| (border_box.height - origin.y - block_end_inset).max(0.0));
     let mut sizes = Vec::with_capacity(children.len());
+    // What each box lays out past itself, for the column width it was laid out
+    // at; the overflow its node kept is that of the pass before.
+    let mut overflows = Vec::with_capacity(children.len());
     for &child in children {
         tree.nodes[child].cache.clear();
         let output = tree.compute_child_layout(
@@ -1795,6 +1962,26 @@ pub(super) fn layout(
             ),
         );
         sizes.push(output.size);
+        overflows.push(output.scrollable_overflow_rect);
+    }
+    // Whether a flex container is sliced was settled before its boxes were
+    // laid out, with no geometry to compare with its block end, or with that
+    // of an earlier layout. Now that they have it, a container whose boxes
+    // reach past it is left to the other strategies.
+    let sliced_flex: Vec<bool> = children
+        .iter()
+        .zip(&sizes)
+        .map(|(&child, size)| {
+            layout_node(tree, child).display() == DisplayValue::Flex
+                && sliceable_flex_container(tree, child, Some(size.height)).is_some()
+        })
+        .collect();
+    if children
+        .iter()
+        .zip(&sliced_flex)
+        .any(|(&child, &flex)| layout_node(tree, child).display() == DisplayValue::Flex && !flex)
+    {
+        return None;
     }
     // A wrapper that holds blocks puts them in the stream in its place, so
     // each child has a range of stream items.
@@ -1912,6 +2099,7 @@ pub(super) fn layout(
     let absolute = absolute_pieces(
         tree,
         children,
+        &sliced_flex,
         &child_pieces,
         context,
         column_height,
@@ -1981,7 +2169,21 @@ pub(super) fn layout(
         let mut records = Vec::with_capacity(pieces.len());
         // How far each piece of a sliced box is moved up.
         let mut shifts = Vec::with_capacity(pieces.len());
-        let sliced = pieces.len() > 1 && slices_decorations(tree, child);
+        // A flex container shows its items in each piece, so its pieces are
+        // the whole box moved up, like those that slice their decorations.
+        let flex = sliced_flex[order];
+        let sliced = pieces.len() > 1 && (flex || slices_decorations(tree, child));
+        // What a flex container holds paints with it, so the clip of a piece
+        // admits what reaches past the box inline, as the clips of the
+        // absolutely positioned boxes of other children do.
+        let (held_left, held_right) = if flex {
+            (
+                (layout.border.left + overflows[order].left).min(0.0),
+                layout.border.left + overflows[order].right,
+            )
+        } else {
+            (0.0, 0.0)
+        };
         let consumed = match &wrapped_leaf_pieces[order] {
             Some(_) if sliced => consumed_rows(
                 pieces,
@@ -2015,7 +2217,10 @@ pub(super) fn layout(
                         .iter()
                         .filter(|absolute| absolute.parent_piece == index)
                         .fold(
-                            (0.0f32, size.width.max(context.column_width)),
+                            (
+                                held_left,
+                                size.width.max(context.column_width).max(held_right),
+                            ),
                             |(left, right), absolute| {
                                 (
                                     left.min(absolute.clip.x),
