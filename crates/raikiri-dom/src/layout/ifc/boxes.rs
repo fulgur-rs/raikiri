@@ -1979,16 +1979,20 @@ fn layout_block_child(
     // as in taffy's block algorithm: both auto centre the block, one auto
     // takes all of it.
     let style_margin = tree.physical_style(node).margin();
-    let free = (geometry.width - width - margin.left - margin.right).max(0.0);
-    match (style_margin.left.is_auto(), style_margin.right.is_auto()) {
-        (true, true) => margin.left = free / 2.0,
-        (true, false) => margin.left = free,
-        (false, false) if geometry.axes.direction() == Direction::Rtl => {
-            // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
-            // its used left margin. Apply it before creating the child BFC.
-            margin.left = geometry.width - width - margin.right;
+    let room = geometry.width - width - margin.left - margin.right;
+    let free = room.max(0.0);
+    let (left_auto, right_auto) = (style_margin.left.is_auto(), style_margin.right.is_auto());
+    if geometry.axes.direction() == Direction::Rtl && (room < 0.0 || (!left_auto && !right_auto)) {
+        // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
+        // its used left margin, and a block that overflows counts auto margins
+        // as zero. Apply it before creating the child BFC.
+        margin.left = geometry.width - width - margin.right;
+    } else {
+        match (left_auto, right_auto) {
+            (true, true) => margin.left = free / 2.0,
+            (true, false) => margin.left = free,
+            _ => {}
         }
-        _ => {}
     }
     // The first pass discovers margins that escape the child. Retry against
     // its final normal-flow origin before committing shared float geometry.
@@ -2712,9 +2716,12 @@ fn layout_formatting_context_child(
     };
     let extra_left = if beside_floats {
         auto_left
-    } else if autos == 0 && geometry.axes.direction() == Direction::Rtl {
+    } else if (autos == 0 || output.size.width > stretch)
+        && geometry.axes.direction() == Direction::Rtl
+    {
         // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
-        // its used left margin.
+        // its used left margin. A block that overflows counts auto margins as
+        // zero, so it is over-constrained as well.
         geometry.width - output.size.width - margin.right
     } else {
         margin.left + auto_left

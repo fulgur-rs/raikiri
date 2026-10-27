@@ -161,8 +161,24 @@ pub(super) fn layout(
             let adjoining = previous_margin.map_or(margin_top, |bottom| {
                 bottom.max(margin_top).max(0.0) + bottom.min(margin_top).min(0.0) - bottom
             });
+            // CSS 2.2 10.3.3: a box that overflows its container counts auto
+            // margins as zero, and a box with no auto margin is
+            // over-constrained. Either way the margin on the end side of the
+            // container's direction gives, so in a right-to-left container the
+            // box keeps its right margin and sits against the right edge.
+            let room = context.available_width
+                - output.size.width
+                - child_layout.margin.left
+                - child_layout.margin.right;
+            let over_constrained =
+                (!margin.left.is_auto() && !margin.right.is_auto()) || room < 0.0;
+            let left = if context.rtl && over_constrained {
+                context.available_width - output.size.width - child_layout.margin.right
+            } else {
+                child_layout.margin.left
+            };
             child_layout.location = Point {
-                x: content_origin.x + child_layout.margin.left,
+                x: content_origin.x + left,
                 y: block_offset + adjoining,
             };
             tree.set_unrounded_layout(NodeId::from(child), &child_layout);
