@@ -226,9 +226,9 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// strategies: forced or avoided breaks, absolutely positioned or floated
 /// boxes whose containing block is not inside the container, scroll
 /// containers, replaced elements, boxes that paint past their own box (a
-/// transform, shadow, outline or filter) or as a whole group, containers that
-/// are not block or flex, and containers whose content overflows their block
-/// start or end.
+/// transform, shadow, outline or filter) or as a whole group, boxes whose
+/// block edges repeat at each break, containers that are not block or flex,
+/// and containers whose content overflows their block start or end.
 fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bool> {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
@@ -317,6 +317,9 @@ fn is_sliceable_flex_box(tree: &LayoutSession<'_>, id: usize, contained: bool) -
         // The painter draws a transform, a shadow, an outline or a filter
         // inside the clip of the piece, past the overflow that layout reports.
         && !node.paints_whole_box_effects
+        // The pieces are cut from one whole box, so block edges that repeat at
+        // each break have neither a place to be drawn nor space reserved.
+        && !(node.clones_box_decorations && has_block_edge_decorations(&style))
 }
 
 /// A block-only wrapper tree whose leaves can be placed in the column stream.

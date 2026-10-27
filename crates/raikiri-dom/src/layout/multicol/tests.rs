@@ -2095,15 +2095,21 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:block;box-shadow:20px 0 0 red",
         "display:block;outline:4px solid blue",
         "display:block;filter:drop-shadow(20px 0 0 red)",
+        // Block edges that repeat at each break.
+        "display:block;border-top:5px solid red;border-bottom:5px solid red;\
+         box-decoration-break:clone",
     ] {
         assert!(!supported(sized, &[held], true), "{held}");
     }
-    // A background inside the box stays inside the clip.
-    assert!(supported(
-        sized,
-        &["display:block;width:10px;background-color:red"],
-        true
-    ));
+    // A background inside the box stays inside the clip, and so do block
+    // edges that are cut with the box, or that have nothing to repeat.
+    for held in [
+        "display:block;width:10px;background-color:red",
+        "display:block;width:10px;border-top:5px solid red;border-bottom:5px solid red",
+        "display:block;width:10px;box-decoration-break:clone",
+    ] {
+        assert!(supported(sized, &[held], true), "{held}");
+    }
     // The container itself.
     for flex in [
         "display:flex;height:150px;float:left",
@@ -2112,6 +2118,8 @@ fn only_a_flex_container_of_empty_boxes_with_a_block_size_is_sliced() {
         "display:flex;height:150px;transform:translateX(5px)",
         "display:flex;height:150px;box-shadow:20px 0 0 red",
         "display:flex;height:150px;outline:4px solid blue",
+        "display:flex;height:150px;border-top:5px solid red;border-bottom:5px solid red;\
+         box-decoration-break:clone",
         "display:grid;height:150px",
     ] {
         assert!(!supported(flex, &[item], true), "{flex}");
