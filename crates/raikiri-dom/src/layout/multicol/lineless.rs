@@ -226,7 +226,7 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// strategies: forced or avoided breaks, absolutely positioned or floated
 /// boxes whose containing block is not inside the container, scroll
 /// containers, replaced elements, containers that are not block or flex, and
-/// containers whose content overflows their block end.
+/// containers whose content overflows their block start or end.
 fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bool> {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
@@ -241,7 +241,8 @@ fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bo
     }
     // Boxes that reach past the block end of the container, absolutely
     // positioned or not, would continue in columns the container's own pieces
-    // do not reach.
+    // do not reach, and those that start above its block start would be cut
+    // off by the clip of its first piece.
     let top = tree.layout_origin_of(child)?.y;
     let bottom = top + tree.nodes[child].layout.size.height;
     let mut boxes = 0usize;
@@ -254,8 +255,8 @@ fn sliceable_flex_container(tree: &LayoutSession<'_>, child: usize) -> Option<bo
         if boxes > MAX_SLICED_FLEX_BOXES || !is_sliceable_flex_box(tree, id, contained) {
             return None;
         }
-        let reach = tree.layout_origin_of(id)?.y + tree.nodes[id].layout.size.height;
-        if reach > bottom + EPSILON {
+        let start = tree.layout_origin_of(id)?.y;
+        if start < top - EPSILON || start + tree.nodes[id].layout.size.height > bottom + EPSILON {
             return None;
         }
         let contained = contained || layout_node(tree, id).contains_absolute_boxes;
