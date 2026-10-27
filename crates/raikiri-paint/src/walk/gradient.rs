@@ -1211,8 +1211,11 @@ pub(super) fn expand_stops(
             let t = ((offset - from_offset) / span).clamp(0.0, 1.0);
             (t, sample(t))
         };
-        let first = (from_offset * BRUSH_GRID_STEPS as f32).floor() as i64;
-        let last = (to_offset * BRUSH_GRID_STEPS as f32).ceil() as i64;
+        // Only offsets 0 to 1 are drawn. A conic stop authored far outside
+        // that range would otherwise make this walk billions of cells.
+        let first = ((from_offset * BRUSH_GRID_STEPS as f32).floor() as i64).max(0);
+        let last =
+            ((to_offset * BRUSH_GRID_STEPS as f32).ceil() as i64).min(BRUSH_GRID_STEPS as i64);
         for cell in first..last {
             let lo = cell as f32 / BRUSH_GRID_STEPS as f32;
             let hi = (cell + 1) as f32 / BRUSH_GRID_STEPS as f32;

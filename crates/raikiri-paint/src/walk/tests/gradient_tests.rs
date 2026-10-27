@@ -1943,6 +1943,25 @@ fn a_transition_hint_follows_the_hue_arc_of_an_increasing_hue_method() {
 }
 
 #[test]
+fn a_conic_hint_far_outside_the_turn_paints_without_sampling_the_whole_range() {
+    // The hint samples of an increasing-hue ramp leave the sRGB gamut, which
+    // sends the sweep through the sampled-stops path with offsets of millions
+    // of turns.
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in oklch increasing hue, red -1000000000%, -750000000%, blue 100%)",
+        20,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 20, 10, 1)[3], 255);
+    let rgba = raster_conic(
+        "background-image: conic-gradient(in oklch increasing hue, red, 25%, blue 1000000000%)",
+        20,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 20, 10, 1)[3], 255);
+}
+
+#[test]
 fn a_transition_hint_is_left_out_under_longer_hue() {
     // Joining the samples of the curve with ramps would send each of them
     // round the hue wheel the long way, so the plain ramp is drawn instead.
