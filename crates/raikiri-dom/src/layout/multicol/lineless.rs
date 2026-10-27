@@ -67,7 +67,7 @@ fn supported_with_wrapped_blocks(
     for child in rendered_elements(tree, parent) {
         // A flex container is sliced whole, with the boxes it holds.
         if let Some(sized) = allow_wrapped_blocks
-            .then(|| sliceable_flex_container(tree, child, false))
+            .then(|| sliceable_flex_container(tree, child, None))
             .flatten()
         {
             sized_flex |= sized;
@@ -98,13 +98,9 @@ fn supported_with_wrapped_blocks(
         }
         children.push(child);
     }
-    let sized = boxes.iter().any(|&child| {
-        let style = style_of(tree, child);
-        style_dimension_length(style.size().height).is_some()
-            || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
-            // The height of a box with an aspect ratio follows from its width.
-            || style.aspect_ratio().is_some()
-    });
+    let sized = boxes
+        .iter()
+        .any(|&child| has_block_size(&style_of(tree, child)));
     // An empty containing block has no block size, but the absolutely
     // positioned boxes it holds still break across the columns, past the
     // last one if they start there.
@@ -114,6 +110,15 @@ fn supported_with_wrapped_blocks(
                 && !absolute_children(tree, child).is_empty()
         });
     (sized || sized_flex || holds_absolute_boxes).then_some(children)
+}
+
+/// Whether `style` gives its box a block size of its own to slice: a height, a
+/// minimum height, or an aspect ratio, which makes the height follow from the
+/// width.
+fn has_block_size(style: &LayoutStyleView<'_>) -> bool {
+    style_dimension_length(style.size().height).is_some()
+        || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
+        || style.aspect_ratio().is_some()
 }
 
 /// The rendered element children of `parent`, with those of a `display:
@@ -222,11 +227,11 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 /// column (CSS Flexbox 1, 12). `Some(sized)` says whether any of them has a
 /// block size of its own to slice.
 ///
-/// `laid_out` says that the boxes have their geometry for this layout, which
-/// is what tells whether a box reaches past the container. The check that
-/// settles which strategy takes the container runs before the boxes are laid
-/// out, with the geometry of an earlier layout or none, so it judges the
-/// structure only; the geometry is judged again once the boxes are laid out.
+/// `block_size` is the block size of the container in this layout, once the
+/// boxes it holds are laid out. Their geometry then tells whether a box
+/// reaches past the container. The check that settles which strategy takes
+/// the container runs before they are laid out, with the geometry of an
+/// earlier layout or none, so it passes `None` and judges the structure only.
 ///
 /// Boxes that need handling at a break of their own keep the other
 /// strategies: forced or avoided breaks, absolutely positioned or floated
@@ -238,7 +243,7 @@ const MAX_SLICED_FLEX_BOXES: usize = 256;
 fn sliceable_flex_container(
     tree: &LayoutSession<'_>,
     child: usize,
-    laid_out: bool,
+    block_size: Option<f32>,
 ) -> Option<bool> {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
@@ -255,11 +260,12 @@ fn sliceable_flex_container(
     // positioned or not, would continue in columns the container's own pieces
     // do not reach, and those that start above its block start would be cut
     // off by the clip of its first piece.
-    let bounds = if laid_out {
-        let top = tree.layout_origin_of(child)?.y;
-        Some((top, top + tree.nodes[child].layout.size.height))
-    } else {
-        None
+    let bounds = match block_size {
+        Some(height) => {
+            let top = tree.layout_origin_of(child)?.y;
+            Some((top, top + height))
+        }
+        None => None,
     };
     let mut boxes = 0usize;
     let mut sized = false;
@@ -280,9 +286,7 @@ fn sliceable_flex_container(
         }
         let contained = contained || layout_node(tree, id).contains_absolute_boxes;
         let style = style_of(tree, id);
-        sized |= style_dimension_length(style.size().height).is_some()
-            || style_dimension_length(style.min_size().height.into()).is_some_and(|px| px > 0.0)
-            || style.aspect_ratio().is_some();
+        sized |= has_block_size(&style);
         // Text that renders gives a box lines.
         for held in tree.children_through_contents(id) {
             let held_node = layout_node(tree, held);
@@ -687,6 +691,7 @@ struct AbsolutePiece {
 fn absolute_pieces(
     tree: &LayoutSession<'_>,
     children: &[usize],
+    sliced_flex: &[bool],
     placements: &[Vec<Piece>],
     context: FragmentationContext,
     column_height: f32,
@@ -699,13 +704,13 @@ fn absolute_pieces(
     };
     let mut count = 0usize;
     let mut all = Vec::with_capacity(children.len());
-    for (&child, pieces) in children.iter().zip(placements) {
+    for ((&child, &flex), pieces) in children.iter().zip(sliced_flex).zip(placements) {
         let mut own = Vec::new();
         let first = pieces.first()?;
         let last = pieces.last()?;
         // A flex container is sliced whole, with the absolutely positioned
         // boxes it holds.
-        if sliceable_flex_container(tree, child, true).is_some() {
+        if flex {
             all.push(own);
             continue;
         }
@@ -1930,6 +1935,9 @@ pub(super) fn layout(
     let definite_height =
         definite.then(|| (border_box.height - origin.y - block_end_inset).max(0.0));
     let mut sizes = Vec::with_capacity(children.len());
+    // What each box lays out past itself, for the column width it was laid out
+    // at; the overflow its node kept is that of the pass before.
+    let mut overflows = Vec::with_capacity(children.len());
     for &child in children {
         tree.nodes[child].cache.clear();
         let output = tree.compute_child_layout(
@@ -1943,15 +1951,25 @@ pub(super) fn layout(
             ),
         );
         sizes.push(output.size);
+        overflows.push(output.scrollable_overflow_rect);
     }
     // Whether a flex container is sliced was settled before its boxes were
     // laid out, with no geometry to compare with its block end, or with that
     // of an earlier layout. Now that they have it, a container whose boxes
     // reach past it is left to the other strategies.
-    if children.iter().any(|&child| {
-        layout_node(tree, child).display() == DisplayValue::Flex
-            && sliceable_flex_container(tree, child, true).is_none()
-    }) {
+    let sliced_flex: Vec<bool> = children
+        .iter()
+        .zip(&sizes)
+        .map(|(&child, size)| {
+            layout_node(tree, child).display() == DisplayValue::Flex
+                && sliceable_flex_container(tree, child, Some(size.height)).is_some()
+        })
+        .collect();
+    if children
+        .iter()
+        .zip(&sliced_flex)
+        .any(|(&child, &flex)| layout_node(tree, child).display() == DisplayValue::Flex && !flex)
+    {
         return None;
     }
     // A wrapper that holds blocks puts them in the stream in its place, so
@@ -2070,6 +2088,7 @@ pub(super) fn layout(
     let absolute = absolute_pieces(
         tree,
         children,
+        &sliced_flex,
         &child_pieces,
         context,
         column_height,
@@ -2141,15 +2160,15 @@ pub(super) fn layout(
         let mut shifts = Vec::with_capacity(pieces.len());
         // A flex container shows its items in each piece, so its pieces are
         // the whole box moved up, like those that slice their decorations.
-        let flex = sliceable_flex_container(tree, child, true).is_some();
+        let flex = sliced_flex[order];
         let sliced = pieces.len() > 1 && (flex || slices_decorations(tree, child));
         // What a flex container holds paints with it, so the clip of a piece
         // admits what reaches past the box inline, as the clips of the
         // absolutely positioned boxes of other children do.
         let (held_left, held_right) = if flex {
             (
-                (layout.border.left + layout.scrollable_overflow_rect.left).min(0.0),
-                layout.border.left + layout.scrollable_overflow_rect.right,
+                (layout.border.left + overflows[order].left).min(0.0),
+                layout.border.left + overflows[order].right,
             )
         } else {
             (0.0, 0.0)

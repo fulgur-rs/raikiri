@@ -2100,6 +2100,77 @@ fn the_clip_of_a_sliced_flex_container_admits_what_reaches_past_it_inline() {
         clips(&format!("{held};left:0")),
         vec![(0.0, 100.0), (0.0, 100.0)]
     );
+    // A box placed by a percentage is measured against the column, not
+    // against the container the document was first laid out in (200px wide).
+    assert_eq!(
+        clips("display:block;position:absolute;top:0;height:150px;width:50px;left:100%"),
+        vec![(0.0, 150.0), (0.0, 150.0)]
+    );
+}
+
+#[test]
+fn a_flex_container_is_judged_by_the_size_it_has_in_a_column() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    // The two items share a row at the width of the container, 200px, and
+    // wrap into two rows at the width of a column, 100px.
+    let flex = doc.append_element(
+        Some(parent),
+        "div",
+        Some("display:flex;flex-wrap:wrap;align-content:flex-start"),
+    );
+    for _ in 0..2 {
+        doc.append_element(
+            Some(flex),
+            "div",
+            Some("display:block;width:60px;height:80px"),
+        );
+    }
+    layout_nested_flex_float_fixture(&mut doc);
+    // The second row lies inside the container once it has its height of
+    // 160px, so the container is sliced rather than left to the other
+    // strategies for reaching past the 80px of the first layout.
+    assert_eq!(
+        fragment_rects(&doc, flex),
+        vec![(0, 0.0, 0.0, 160.0), (1, 100.0, -100.0, 160.0)]
+    );
+}
+
+#[test]
+fn a_no_break_space_gives_a_flex_item_a_line() {
+    let fragments = |text: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+        );
+        let flex = doc.append_element(Some(parent), "div", Some("display:flex;height:150px"));
+        let item = doc.append_element(
+            Some(flex),
+            "div",
+            Some("display:block;width:10px;height:100px"),
+        );
+        doc.append_text(item, text);
+        layout_nested_flex_float_fixture(&mut doc);
+        fragment_rects(&doc, flex)
+    };
+    // White space that collapses leaves the item without a line.
+    assert_eq!(
+        fragments(" "),
+        vec![(0, 0.0, 0.0, 150.0), (1, 100.0, -100.0, 150.0)]
+    );
+    // A no-break space renders, so the item has a line to break between and
+    // the container is left to the other strategies.
+    assert!(fragments("\u{a0}").is_empty());
 }
 
 #[test]
