@@ -5005,9 +5005,11 @@ fn text_in_columns_laid_out_after_a_skipped_container_is_laid_out_again() {
 }
 
 /// A part of the content of a column container: lines of text in Ahem 20px
-/// high, a column spanner of 20px with more style, or a box with a style.
+/// high, a paragraph of that many lines, a column spanner of 20px with more
+/// style, or a box with a style.
 enum Part<'a> {
     Lines(usize),
+    Paragraph(usize),
     Spanner(&'a str),
     Box(&'a str),
 }
@@ -5037,6 +5039,15 @@ fn column_container(container_css: &str, parts: &[Part<'_>]) -> (Document, usize
                     doc.append_text(container, "x");
                     if line + 1 < *count {
                         doc.append_element(Some(container), "br", None::<&str>);
+                    }
+                }
+            }
+            Part::Paragraph(count) => {
+                let paragraph = doc.append_element(Some(container), "div", Some("display:block"));
+                for line in 0..*count {
+                    doc.append_text(paragraph, "x");
+                    if line + 1 < *count {
+                        doc.append_element(Some(paragraph), "br", None::<&str>);
                     }
                 }
             }
@@ -5438,17 +5449,47 @@ fn a_spanner_in_a_relatively_positioned_inline_stays_across_the_columns() {
 }
 
 #[test]
-fn a_narrow_spanner_in_right_to_left_columns_sits_against_the_right_edge() {
+fn a_narrow_spanner_in_columns_sits_where_the_direction_puts_it() {
     // The columns are 100px wide. An over-constrained spanner in a right to
     // left container changes its left margin (CSS 2.2 10.3.3), so it ends
-    // 10px from the right edge when it has a margin of 10px there.
-    for (css, left) in [("width:40px", 60.0), ("width:40px;margin-right:10px", 50.0)] {
+    // 10px from the right edge when it has a margin of 10px there. A spanner
+    // that overflows counts its auto margins as zero, so it is over-constrained
+    // too and ends at the right edge. In a left to right container it starts
+    // at the left one. The same holds with paragraphs around the spanner and
+    // with lines of text around it.
+    for (direction, css, left) in [
+        ("rtl", "width:40px", 60.0),
+        ("rtl", "width:40px;margin-right:10px", 50.0),
+        ("rtl", "width:40px;margin-left:10px", 60.0),
+        ("rtl", "width:40px;margin:0 auto", 30.0),
+        ("rtl", "width:40px;margin-left:auto", 60.0),
+        ("rtl", "width:40px;margin-right:auto", 0.0),
+        ("rtl", "width:140px", -40.0),
+        ("rtl", "width:140px;margin:0 auto", -40.0),
+        ("ltr", "width:40px", 0.0),
+        ("ltr", "width:40px;margin-left:10px", 10.0),
+        ("ltr", "width:40px;margin:0 auto", 30.0),
+        ("ltr", "width:140px;margin:0 auto", 0.0),
+    ] {
+        let container_css = format!("direction:{direction}");
         let (mut doc, _, boxes) = column_container(
-            "direction:rtl",
+            &container_css,
             &[Part::Lines(2), Part::Spanner(css), Part::Lines(2)],
         );
         lay_out_in_ahem(&mut doc, 180.0, 160.0);
-        assert_eq!(doc.nodes[boxes[0]].layout.location.x, left, "{css}");
+        assert_eq!(
+            doc.nodes[boxes[0]].layout.location.x, left,
+            "lines {direction} {css}"
+        );
+        let (mut doc, _, boxes) = column_container(
+            &container_css,
+            &[Part::Paragraph(2), Part::Spanner(css), Part::Paragraph(2)],
+        );
+        lay_out_in_ahem(&mut doc, 180.0, 160.0);
+        assert_eq!(
+            doc.nodes[boxes[0]].layout.location.x, left,
+            "paragraphs {direction} {css}"
+        );
     }
 }
 
