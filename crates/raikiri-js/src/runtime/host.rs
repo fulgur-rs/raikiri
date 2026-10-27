@@ -73,6 +73,15 @@ pub struct BoxGeometry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostError(pub String);
 
+/// A fragment parser failure, distinguishing the runtime's sticky node abort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FragmentParseError {
+    /// The parser exhausted the supplied fragment-node budget.
+    Nodes,
+    /// Another host failure, including an input-byte limit.
+    Host(HostError),
+}
+
 /// The pixels [`DocumentHost::image_pixels`] returns for one image.
 #[derive(Debug, Clone)]
 pub struct ImagePixels {
@@ -185,6 +194,23 @@ pub trait DocumentHost: 'static {
         context_ns: &str,
         markup: &str,
     ) -> Result<Document, HostError>;
+    /// Parse with at most `remaining_nodes` newly allocated fragment nodes,
+    /// including template-content roots but excluding parser-only wrappers.
+    /// Implementations should stop allocating and consuming input on overflow.
+    ///
+    /// The compatibility default calls [`Self::parse_fragment`]; it cannot
+    /// bound temporary parsing work. The runtime always validates the returned
+    /// fragment before changing the live arena, even for overriding hosts.
+    fn parse_fragment_with_budget(
+        &mut self,
+        context_tag: &str,
+        context_ns: &str,
+        markup: &str,
+        _remaining_nodes: usize,
+    ) -> Result<Document, FragmentParseError> {
+        self.parse_fragment(context_tag, context_ns, markup)
+            .map_err(FragmentParseError::Host)
+    }
     /// The document's own URL, already a valid absolute URL string (the
     /// serialization the WHATWG URL Standard would produce), or `None` when
     /// the embedder has no URL for it -- `window.location` and

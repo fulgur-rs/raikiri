@@ -57,6 +57,12 @@ pub enum HostOperation {
         namespace: String,
         markup: String,
     },
+    BudgetedFragment {
+        tag: String,
+        namespace: String,
+        markup: String,
+        remaining_nodes: u64,
+    },
     Fetch(String),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol users; tools/ is outside the workspace llvm-cov run.
     LoadImage(String),
@@ -85,6 +91,7 @@ pub enum HostValue {
     Geometry(Option<GeometryDto>),
     Text(Option<String>),
     Document(LogicalSnapshot),
+    FragmentNodes,
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Flag(bool),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
@@ -265,6 +272,7 @@ pub enum GuestValue {
     Report(ReportDto),
     Delivery(Option<DeliveryDto>),
     Document(LogicalSnapshot),
+    FragmentNodes,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GuestResponse {

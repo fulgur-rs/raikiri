@@ -28,6 +28,20 @@ impl DocumentHost for TestHost {
     fn parse_fragment(&mut self, _: &str, _: &str, _: &str) -> Result<Document, HostError> {
         Ok(Document::new())
     }
+    fn parse_fragment_with_budget(
+        &mut self,
+        tag: &str,
+        namespace: &str,
+        markup: &str,
+        remaining: usize,
+    ) -> Result<Document, raikiri_js::runtime::FragmentParseError> {
+        if markup == "node-overflow" {
+            assert_eq!(remaining, 7);
+            return Err(raikiri_js::runtime::FragmentParseError::Nodes);
+        }
+        self.parse_fragment(tag, namespace, markup)
+            .map_err(raikiri_js::runtime::FragmentParseError::Host)
+    }
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -481,4 +495,20 @@ fn hostile_code_publisher_rejects_out_of_bounds_ranges() {
     assert!(publisher.publish_executable(base, usize::MAX).is_err());
     let outside = usize::MAX as *const u8;
     assert!(publisher.publish_executable(outside, 4096).is_err());
+}
+
+#[test]
+fn budgeted_fragment_preserves_typed_node_failure() {
+    let mut bridge = bridge();
+    let result = roundtrip_response(
+        &mut bridge,
+        HostOperation::BudgetedFragment {
+            tag: "div".into(),
+            namespace: "".into(),
+            markup: "node-overflow".into(),
+            remaining_nodes: 7,
+        },
+    )
+    .unwrap();
+    assert!(matches!(result, HostValue::FragmentNodes));
 }

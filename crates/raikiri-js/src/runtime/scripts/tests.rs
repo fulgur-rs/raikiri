@@ -1552,3 +1552,154 @@ fn external_script_load_and_error_listeners_write_after_their_script() {
         "NotSupportedError"
     );
 }
+
+#[test]
+fn write_budget_failure_does_not_allocate_the_holder() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(&mut host.document, body, &[], "document.write('blocked');");
+    let before = host.document.node_count();
+    let children = host.document.get_node(body).unwrap().children.clone();
+    let mut rt = DomRuntime::with_options(
+        WriteHost(host),
+        RunOptions {
+            limits: Limits {
+                max_nodes: before + 1,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let report = rt.run_document();
+    assert_eq!(report.aborted, Some(Abort::Nodes));
+    with_state(rt.context_mut(), |s| {
+        assert_eq!(s.host.document().node_count(), before);
+        assert_eq!(s.host.document().get_node(body).unwrap().children, children);
+    })
+    .unwrap();
+}
+
+struct BudgetFragmentHost {
+    host: StubHost,
+    remaining: usize,
+    node_error: bool,
+}
+
+impl DocumentHost for BudgetFragmentHost {
+    fn document(&self) -> &Document {
+        self.host.document()
+    }
+    fn document_mut(&mut self) -> &mut Document {
+        self.host.document_mut()
+    }
+    fn flush(&mut self) -> Result<(), HostError> {
+        self.host.flush()
+    }
+    fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+        self.host.box_geometry(node)
+    }
+    fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
+        self.host.computed_value(node, property)
+    }
+    fn parse_fragment(&mut self, _: &str, _: &str, _: &str) -> Result<Document, HostError> {
+        panic!("runtime must call the budget-aware method")
+    }
+    fn parse_fragment_with_budget(
+        &mut self,
+        _: &str,
+        _: &str,
+        _: &str,
+        remaining: usize,
+    ) -> Result<Document, crate::runtime::FragmentParseError> {
+        assert_eq!(remaining, self.remaining);
+        if self.node_error {
+            Err(crate::runtime::FragmentParseError::Nodes)
+        } else {
+            Err(crate::runtime::FragmentParseError::Host(HostError(
+                "byte limit".into(),
+            )))
+        }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+#[test]
+fn fragment_parser_receives_remaining_budget_and_distinguishes_host_errors() {
+    for (source, reserved) in [
+        ("document.body.innerHTML = 'huge';", 0),
+        ("document.write('huge');", 1),
+    ] {
+        for node_error in [false, true] {
+            let (mut host, _, _, body) = StubHost::page();
+            append_script(
+                &mut host.document,
+                body,
+                &[],
+                &format!(
+                    "try {{ {source} }} catch (_) {{}} document.body.setAttribute('after', 'yes');"
+                ),
+            );
+            let before = host.document.node_count();
+            let mut rt = DomRuntime::with_options(
+                BudgetFragmentHost {
+                    host,
+                    remaining: 2 - reserved,
+                    node_error,
+                },
+                RunOptions {
+                    limits: Limits {
+                        max_nodes: before + 2,
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+            let report = rt.run_document();
+            assert_eq!(report.aborted, node_error.then_some(Abort::Nodes));
+            assert_eq!(report.host_failures.len(), usize::from(!node_error));
+            with_state(rt.context_mut(), |s| {
+                assert_eq!(s.host.document().node_count(), before);
+                assert_eq!(
+                    s.host.document().element_attribute(body, "after"),
+                    if node_error { None } else { Some("yes") }
+                );
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn write_budget_exact_boundary_includes_the_reserved_holder() {
+    for extra in 0..=3 {
+        let (mut host, _, _, body) = StubHost::page();
+        append_script(&mut host.document, body, &[], "document.write('x');");
+        let before = host.document.node_count();
+        let mut rt = DomRuntime::with_options(
+            WriteHost(host),
+            RunOptions {
+                limits: Limits {
+                    max_nodes: before + extra,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+        let report = rt.run_document();
+        assert_eq!(report.aborted, (extra < 2).then_some(Abort::Nodes));
+        with_state(rt.context_mut(), |s| {
+            assert_eq!(
+                s.host.document().node_count(),
+                before + if extra < 2 { 0 } else { 2 }
+            );
+        })
+        .unwrap();
+    }
+}

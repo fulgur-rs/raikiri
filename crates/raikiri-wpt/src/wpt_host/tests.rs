@@ -1504,3 +1504,27 @@ fn document_write_parses_markup_after_the_script_with_the_real_parser() {
     );
     assert_eq!(written, "script|\u{2685}\u{2685}\u{2685}|bold|script|[out]");
 }
+
+#[test]
+fn fragment_parser_budget_counts_templates_and_keeps_live_arena_unchanged() {
+    use raikiri_js::runtime::FragmentParseError;
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = host_at(dir.path(), dir.path());
+    let before = host.document().node_count();
+    for (markup, count) in [("<b>x</b>", 2), ("<template>x</template>", 3)] {
+        assert!(
+            host.parse_fragment_with_budget("div", "http://www.w3.org/1999/xhtml", markup, count)
+                .is_ok()
+        );
+        assert!(matches!(
+            host.parse_fragment_with_budget(
+                "div",
+                "http://www.w3.org/1999/xhtml",
+                markup,
+                count - 1
+            ),
+            Err(FragmentParseError::Nodes)
+        ));
+    }
+    assert_eq!(host.document().node_count(), before);
+}

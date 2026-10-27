@@ -1,10 +1,14 @@
 //! Public parse entrypoints.
 
+mod fragment;
+
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::io::Read;
 
-use html5ever::driver::{ParseOpts, parse_document, parse_fragment as parse_html_fragment};
+#[cfg(test)]
+use html5ever::driver::parse_fragment as parse_html_fragment;
+use html5ever::driver::{ParseOpts, parse_document};
 use html5ever::interface::QualName;
 use html5ever::tendril::{TendrilSink, fmt::UTF8};
 use html5ever::tree_builder::TreeSink;
@@ -150,24 +154,64 @@ pub fn parse_fragment<R: Read>(
     context_namespace: &str,
     context_element_allows_scripting: bool,
 ) -> Result<UncascadedDocument, ParseError> {
+    parse_fragment_with_limits(
+        input,
+        options,
+        context_local_name,
+        context_namespace,
+        context_element_allows_scripting,
+        &RenderLimits::default(),
+        None,
+    )
+}
+
+/// Parse an HTML fragment with explicit input-byte, warning, and node limits.
+///
+/// `limits.max_dom_nodes` retains its total-arena meaning, including the
+/// virtual document root and all parser wrappers. `remaining_nodes` supplies
+/// a separate fragment allocation budget: it includes template-content roots,
+/// but excludes the parser's document, context element (and its template
+/// contents), and synthetic HTML root. Both limits apply when supplied.
+/// Detached nodes discarded during error recovery still consume both budgets.
+/// Arena allocation stops at the cap; tree building stops after the current
+/// token, and input processing stops by the next tag or bounded read chunk.
+/// This is a node-count bound, not a byte-memory bound.
+pub fn parse_fragment_with_limits<R: Read>(
+    input: R,
+    options: &ParseOptions<'_>,
+    context_local_name: &str,
+    context_namespace: &str,
+    context_element_allows_scripting: bool,
+    limits: &RenderLimits,
+    remaining_nodes: Option<u64>,
+) -> Result<UncascadedDocument, ParseError> {
     let context_name = QualName::new(
         None,
         Namespace::from(context_namespace),
         LocalName::from(context_local_name),
     );
-    let limits = RenderLimits::default();
-    let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes);
-    let node_limit_signal = sink.dom_node_limit_signal();
-    let parser = parse_html_fragment(
-        sink,
-        ParseOpts::default(),
-        context_name,
-        Vec::new(),
-        context_element_allows_scripting,
+    // html5ever allocates these wrappers before consuming any input.
+    let overhead = 3 + u64::from(
+        context_local_name == "template" && context_namespace == "http://www.w3.org/1999/xhtml",
     );
+    let fragment_arena_limit = remaining_nodes.map(|limit| limit.saturating_add(overhead));
+    let arena_limit = match (limits.max_dom_nodes, fragment_arena_limit) {
+        (Some(total), Some(fragment)) => Some(total.min(fragment)),
+        (total, fragment) => total.or(fragment),
+    };
+    let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, arena_limit);
+    let node_limit_signal = sink.dom_node_limit_signal();
+    let parser =
+        fragment::BudgetedFragmentParser::new(sink, context_name, context_element_allows_scripting);
     let mut doc =
         parse_with_budgets_and_parser(input, parser, options, limits.max_input_bytes, || {
-            dom_node_budget_error(limits.max_dom_nodes, &node_limit_signal)
+            node_limit_signal
+                .get()
+                .map(|actual| ParseError::LimitExceeded {
+                    kind: LimitKind::DomNodes,
+                    limit: arena_limit.unwrap_or(u64::MAX),
+                    actual,
+                })
         })?;
     flatten_fragment_root(&mut doc.dom);
     Ok(doc)

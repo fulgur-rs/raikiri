@@ -7,10 +7,13 @@ use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::NodeKind;
 
 use super::interfaces::{HTML_NS, wrap, wrap_optional};
-use super::node::{first_element_child, guard_fragment_budget, js_str, mark_dirty};
+use super::node::{
+    first_element_child, fragment_node_budget, fragment_parse_failure, guard_fragment_budget,
+    js_str, mark_dirty,
+};
 use super::webidl::{
-    dom_string, guard_node_budget, host_failure, this_document, throw_dom_exception,
-    unreachable_mutation_error, with_state,
+    dom_string, guard_node_budget, this_document, throw_dom_exception, unreachable_mutation_error,
+    with_state,
 };
 
 // ---- createElementNS ("validate and extract", DOM §4.5) ------------------
@@ -401,17 +404,18 @@ fn write_markup(
     let Some((parent, next, tag, namespace)) = place else {
         return Ok(JsValue::undefined());
     };
+    let remaining = fragment_node_budget(context, 1)?;
     let fragment = match with_state(context, |s| {
-        s.host.parse_fragment(&tag, &namespace, &markup)
+        s.host
+            .parse_fragment_with_budget(&tag, &namespace, &markup, remaining)
     })? {
         Ok(fragment) => fragment,
-        Err(error) => return Err(host_failure(context, error)),
+        Err(error) => return Err(fragment_parse_failure(context, error)),
     };
-    guard_node_budget(context)?;
+    guard_fragment_budget(context, &fragment, 1)?;
     let holder = with_state(context, |s| {
         s.host.document_mut().create_detached_fragment()
     })?;
-    guard_fragment_budget(context, &fragment)?;
     let written = with_state(context, |s| {
         let document = s.host.document_mut();
         document.replace_children_from(holder, &fragment, fragment.root_index());

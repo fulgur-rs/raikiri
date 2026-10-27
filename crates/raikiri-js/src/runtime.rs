@@ -45,7 +45,9 @@ pub use selection::CustomHighlightRange;
 pub(crate) mod test_host;
 
 pub use event_loop::{Abort, Limits, RunOptions};
-pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, ImagePixels, PositionKind};
+pub use host::{
+    BoxGeometry, DocumentHost, DomRect, FragmentParseError, HostError, ImagePixels, PositionKind,
+};
 /// The decoded pixels an [`ImagePixels`] holds.
 pub use raikiri_traits::DecodedImage;
 pub use scripts::RunReport;

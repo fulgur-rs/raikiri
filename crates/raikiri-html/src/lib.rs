@@ -65,7 +65,9 @@ pub use font_collection::{
     BundledFont, FontCollectionBuildError, FontCollectionBuilder, MAX_BUNDLED_FONT_BYTES,
     RenderFonts,
 };
-pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
+pub use parse::{
+    effective_document_base_url, parse, parse_fragment, parse_fragment_with_limits, parse_with_sink,
+};
 #[doc(hidden)]
 // Lets a caller that runs its own pagination lay later pages of another
 // content width out again the way `layout` does.
