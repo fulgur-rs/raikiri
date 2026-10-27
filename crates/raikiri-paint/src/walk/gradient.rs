@@ -439,7 +439,13 @@ fn linear_fill(
     let center = tile.center();
     let start = center - direction * (length / 2.0);
     let line = direction * length;
-    let stops = resolved_stops(&linear.stops, length, length, current_color);
+    let stops = resolved_stops(
+        &linear.stops,
+        length,
+        length,
+        current_color,
+        &linear.interpolation,
+    );
     let (first, last, stops) =
         match normalize_stops(stops, linear.repeating, length, &linear.interpolation)? {
             Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
@@ -561,7 +567,7 @@ fn radial_fill(
     } else {
         // A zero-height ellipse is as wide as any distance in the tile, so
         // only its last color, or the average of a repeating one, shows.
-        let stops = resolved_stops(&radial.stops, rx, rx, current_color);
+        let stops = resolved_stops(&radial.stops, rx, rx, current_color, &radial.interpolation);
         let color = if radial.repeating {
             ramp_average_color(&stops, &radial.interpolation)
         } else {
@@ -570,7 +576,13 @@ fn radial_fill(
         };
         return Some(GradientFill::Solid(color));
     };
-    let mut stops = resolved_stops(&radial.stops, rx, percent_basis, current_color);
+    let mut stops = resolved_stops(
+        &radial.stops,
+        rx,
+        percent_basis,
+        current_color,
+        &radial.interpolation,
+    );
     if radial.repeating {
         // The pattern is periodic, so shifting it by whole periods keeps every
         // radius at or above zero without changing the colors.
@@ -623,8 +635,37 @@ const DEFAULT_FONT_SIZE: f32 = 16.0;
 /// that vertical distances inside the tile do not change its colors.
 const DEGENERATE_ELLIPSE_RATIO: f64 = 1e4;
 
+/// A length-percentage stop position or transition hint as a fraction of the
+/// gradient line or ray.
+///
+/// `length` is the drawn line or ray and `percent_basis` the length its
+/// percentages resolve against, which differ only for a degenerate radial
+/// gradient.
+fn position_fraction(position: LengthPercentageOrCalc, length: f64, percent_basis: f64) -> f32 {
+    // The cascade has resolved every other unit to pixels.
+    let percent = match position {
+        LengthPercentageOrCalc::Length(Length::Percent(percent)) => f64::from(percent),
+        LengthPercentageOrCalc::Calc(calc) => f64::from(calc.percent),
+        _ => 0.0,
+    };
+    let px = match position {
+        LengthPercentageOrCalc::Length(Length::Px(px)) => f64::from(px),
+        LengthPercentageOrCalc::Calc(calc) => f64::from(calc.px),
+        _ => 0.0,
+    };
+    let fraction = if length > 0.0 {
+        (px + percent / 100.0 * percent_basis) / length
+    } else {
+        percent / 100.0
+    };
+    Some(fraction)
+        .filter(|fraction| fraction.is_finite())
+        .map_or(0.0, |fraction| fraction as f32)
+}
+
 /// Stop positions as fractions of the gradient line or ray, after the color
-/// stop fixup (CSS Images 3 §3.4.3).
+/// stop fixup (CSS Images 3 §3.4.3), with each transition hint replaced by
+/// the stops that draw its curve (see [`expand_hint`]).
 ///
 /// `length` is the drawn line or ray and `percent_basis` the length its
 /// percentages resolve against, which differ only for a degenerate radial
@@ -634,67 +675,157 @@ fn resolved_stops(
     length: f64,
     percent_basis: f64,
     current_color: CssColor,
+    interpolation: &GradientColorInterpolation,
 ) -> Vec<(f64, DynamicColor)> {
-    let raw: Vec<Option<f32>> = stops
+    let mut raw: Vec<RawStop> = stops
         .iter()
-        .map(|stop| {
-            stop.position.map(|position| {
-                let fraction = match position {
-                    LengthPercentageOrCalc::Length(Length::Percent(percent)) if length > 0.0 => {
-                        f64::from(percent) / 100.0 * percent_basis / length
-                    }
-                    LengthPercentageOrCalc::Length(Length::Percent(percent)) => {
-                        f64::from(percent) / 100.0
-                    }
-                    LengthPercentageOrCalc::Length(Length::Px(px)) if length > 0.0 => {
-                        f64::from(px) / length
-                    }
-                    LengthPercentageOrCalc::Length(other) if length > 0.0 => {
-                        f64::from(length_to_px(other, 0.0, DEFAULT_FONT_SIZE)) / length
-                    }
-                    LengthPercentageOrCalc::Calc(calc) if length > 0.0 => {
-                        (f64::from(calc.px) + f64::from(calc.percent) / 100.0 * percent_basis)
-                            / length
-                    }
-                    LengthPercentageOrCalc::Calc(calc) => f64::from(calc.percent) / 100.0,
-                    _ => 0.0,
-                };
-                if fraction.is_finite() {
-                    fraction as f32
-                } else {
-                    0.0
-                }
-            })
+        .map(|stop| RawStop {
+            position: stop
+                .position
+                .map(|position| position_fraction(position, length, percent_basis)),
+            hint: stop
+                .hint
+                .map(|hint| position_fraction(hint, length, percent_basis)),
+            color: gradient_stop_dynamic(stop.color, current_color),
         })
         .collect();
-    let mut raw = raw;
     // An unpositioned last stop sits at 100%, which a degenerate radial
     // gradient also resolves to zero.
-    if let Some(last @ None) = raw.last_mut()
+    if let Some(last) = raw.last_mut()
+        && last.position.is_none()
         && length > 0.0
     {
-        *last = Some((percent_basis / length) as f32);
+        last.position = Some((percent_basis / length) as f32);
     }
-    if let Some(first @ None) = raw.first_mut() {
-        *first = Some(0.0);
+    if let Some(first) = raw.first_mut()
+        && first.position.is_none()
+    {
+        first.position = Some(0.0);
     }
-    // Positioned stops clamp up to the largest position before them before
-    // the unpositioned ones are spread between them (CSS Images 3 §3.4.3).
-    let mut largest = f32::NEG_INFINITY;
-    for position in raw.iter_mut().flatten() {
-        largest = largest.max(*position);
-        *position = largest;
+    fixed_up_stops(&raw, interpolation)
+}
+
+/// A color stop as authored, with the transition hint written before it. A
+/// position of `None` is filled in by [`fixed_up_stops`].
+pub(super) struct RawStop {
+    pub(super) position: Option<f32>,
+    pub(super) hint: Option<f32>,
+    pub(super) color: DynamicColor,
+}
+
+/// The offsets of authored stops after the color stop fixup (CSS Images 3
+/// §3.4.3), with each transition hint replaced by the stops that draw its
+/// curve.
+///
+/// A stop or hint that lies before an earlier one is moved up to it, then
+/// the stops without a position are spread evenly between the stops and hints
+/// around them, as browsers do: a hint always has a position, so it anchors
+/// the run of stops next to it.
+pub(super) fn fixed_up_stops(
+    raw: &[RawStop],
+    interpolation: &GradientColorInterpolation,
+) -> Vec<(f64, DynamicColor)> {
+    // One list in authored order: each hint, if any, then its stop.
+    let mut positions: Vec<Option<f32>> = Vec::with_capacity(raw.len() * 2);
+    let mut slots: Vec<(Option<usize>, usize)> = Vec::with_capacity(raw.len());
+    for stop in raw {
+        let hint = stop.hint.map(|hint| {
+            positions.push(Some(hint));
+            positions.len() - 1
+        });
+        positions.push(stop.position);
+        slots.push((hint, positions.len() - 1));
     }
-    fixup_conic_offsets(&raw)
-        .into_iter()
-        .zip(stops)
-        .map(|(offset, stop)| {
-            (
-                f64::from(offset),
-                gradient_stop_dynamic(stop.color, current_color),
-            )
+    let offsets = fixup_stop_offsets(&positions);
+    let mut fixed: Vec<(f64, DynamicColor)> = Vec::with_capacity(raw.len());
+    for (stop, (hint, at)) in raw.iter().zip(slots) {
+        let offset = f64::from(offsets[at]);
+        if let (Some(hint), Some(&before)) = (hint, fixed.last()) {
+            // The fixup never lets offsets run backward, so the hint lies
+            // between the two stops it is written between.
+            expand_hint(
+                before,
+                (offset, stop.color),
+                f64::from(offsets[hint]),
+                interpolation,
+                &mut fixed,
+            );
+        }
+        fixed.push((offset, stop.color));
+    }
+    fixed
+}
+
+/// Number of samples in each of the two grids that sample a hint's curve.
+const HINT_SAMPLES: usize = 16;
+
+/// How far from the middle a hint may lie and still draw a straight line.
+const HINT_MIDDLE_TOLERANCE: f64 = 1e-6;
+
+/// Push the stops that draw the color transition hint between two stops
+/// (CSS Images 3 §3.4.2): the color at the fraction `t` of the way from
+/// `before` to `after` is the mix of the two at `t` raised to
+/// `ln(1/2) / ln(h)`, where `h` is the hint's fraction of the way, so the
+/// mix is even at the hint. A hint in the middle draws the plain ramp. One
+/// at either end holds a color up to the hint and jumps to the other there.
+///
+/// The curve is sampled at the multiples of 1/[`HINT_SAMPLES`] along the
+/// stops and at the same multiples along the mix, which finds the places it
+/// bends sharply, near whichever end the hint lies closer to.
+///
+/// The samples are joined by ramps again when the brush is built, and a ramp
+/// between two neighboring samples takes the hue the long way round under
+/// `longer hue`, so that method draws the plain ramp and leaves the hint out.
+/// The other hue methods follow the samples.
+fn expand_hint(
+    before: (f64, DynamicColor),
+    after: (f64, DynamicColor),
+    hint: f64,
+    interpolation: &GradientColorInterpolation,
+    out: &mut Vec<(f64, DynamicColor)>,
+) {
+    let span = after.0 - before.0;
+    // Between equal colors every curve draws the same solid color.
+    if span <= 0.0
+        || before.1 == after.1
+        || interpolation.hue_method == HueInterpolationMethod::Longer
+    {
+        return;
+    }
+    let h = ((hint - before.0) / span).clamp(0.0, 1.0);
+    if (h - 0.5).abs() < HINT_MIDDLE_TOLERANCE {
+        return;
+    }
+    if h <= 0.0 {
+        out.push((before.0, after.1));
+        return;
+    }
+    if h >= 1.0 {
+        out.push((after.0, before.1));
+        return;
+    }
+    let exponent = 0.5f64.ln() / h.ln();
+    let mut fractions: Vec<f64> = (1..HINT_SAMPLES)
+        .flat_map(|step| {
+            let t = step as f64 / HINT_SAMPLES as f64;
+            [t, t.powf(exponent.recip())]
         })
-        .collect()
+        .collect();
+    fractions.sort_by(f64::total_cmp);
+    fractions.dedup();
+    let ramp = before.1.interpolate(
+        after.1,
+        conic_interpolation_tag(interpolation.color_space),
+        conic_hue_direction(interpolation.hue_method),
+    );
+    for t in fractions {
+        // A hint very close to a stop packs its curve against that stop in a
+        // range as narrow as the float precision allows.
+        let offset = before.0 + span * t;
+        if offset > before.0 && offset < after.0 {
+            out.push((offset, ramp.eval(t.powf(exponent) as f32)));
+        }
+    }
 }
 
 /// Drop stops below zero from a radial gradient, keeping the color the line
@@ -1083,8 +1214,11 @@ pub(super) fn expand_stops(
             let t = ((offset - from_offset) / span).clamp(0.0, 1.0);
             (t, sample(t))
         };
-        let first = (from_offset * BRUSH_GRID_STEPS as f32).floor() as i64;
-        let last = (to_offset * BRUSH_GRID_STEPS as f32).ceil() as i64;
+        // Only offsets 0 to 1 are drawn. A conic stop authored far outside
+        // that range would otherwise make this walk billions of cells.
+        let first = ((from_offset * BRUSH_GRID_STEPS as f32).floor() as i64).max(0);
+        let last =
+            ((to_offset * BRUSH_GRID_STEPS as f32).ceil() as i64).min(BRUSH_GRID_STEPS as i64);
         for cell in first..last {
             let lo = cell as f32 / BRUSH_GRID_STEPS as f32;
             let hi = (cell + 1) as f32 / BRUSH_GRID_STEPS as f32;

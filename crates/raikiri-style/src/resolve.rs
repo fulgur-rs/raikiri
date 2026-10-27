@@ -3088,7 +3088,7 @@ pub fn resolve_background_size(
 ///
 /// Pass `None` / `Url(String)` through: they already have computed form.
 /// For a `Gradient(..)`, absolutize only font-relative parts of its
-/// `<length-percentage>` payloads (`GradientColorStop::position`,
+/// `<length-percentage>` payloads (`GradientColorStop::position` and `hint`,
 /// `RadialSize::Circle`/`Ellipse`, and `CssPosition` in
 /// `RadialGradient`/`ConicGradient`) using font-size, root-font-size, and
 /// `own_line_height`. Retain `<percentage>` in the computed layer (CSS Values
@@ -3157,19 +3157,21 @@ fn resolve_gradient_color_stops(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> Arc<Vec<GradientColorStop>> {
+    let absolutize = |l| {
+        lift_length_percentage_or_calc(resolve_length_percentage_or_calc(
+            l,
+            font_size,
+            own_line_height,
+            ctx,
+        ))
+    };
     Arc::new(
         stops
             .iter()
             .map(|stop| GradientColorStop {
                 color: stop.color,
-                position: stop.position.map(|l| {
-                    lift_length_percentage_or_calc(resolve_length_percentage_or_calc(
-                        l,
-                        font_size,
-                        own_line_height,
-                        ctx,
-                    ))
-                }),
+                position: stop.position.map(absolutize),
+                hint: stop.hint.map(absolutize),
             })
             .collect(),
     )

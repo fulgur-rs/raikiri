@@ -648,7 +648,7 @@ pub struct SpecifiedValues {
     /// background layers; `None` is the initial single `none` layer. `None`
     /// and `Url(String)` items are computed-equivalent. Phase 3 absolutizes
     /// the font-relative part of `<length-percentage>` in `Gradient(..)` (CSS
-    /// Images 4 §3), including `GradientColorStop::position`,
+    /// Images 4 §3), including `GradientColorStop::position` and `hint`,
     /// `RadialSize::Circle` / `Ellipse`, and `CssPosition` in
     /// `RadialGradient` / `ConicGradient`. Percentages pass through because
     /// they need the gradient box dimensions at paint / used-value time (see

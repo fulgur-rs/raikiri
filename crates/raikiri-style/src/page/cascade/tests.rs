@@ -6661,7 +6661,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             }
                         };
                         let stop_residue = |s: &crate::property::GradientColorStop| {
-                            s.position.and_then(value_residue)
+                            s.position
+                                .and_then(value_residue)
+                                .or_else(|| s.hint.and_then(value_residue))
                         };
                         let offset_residue = |o: crate::property::CssPositionOffset| match o {
                             crate::property::CssPositionOffset::Start(l)
@@ -6737,7 +6739,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             Some("LengthPercentageOrCalc::RelativeCalc")
                         }
                     };
-                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(value_residue);
+                    let stop_residue = |s: &crate::property::GradientColorStop| {
+                        s.position
+                            .and_then(value_residue)
+                            .or_else(|| s.hint.and_then(value_residue))
+                    };
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
@@ -6779,7 +6785,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             Some("LengthPercentageOrCalc::RelativeCalc")
                         }
                     };
-                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(value_residue);
+                    let stop_residue = |s: &crate::property::GradientColorStop| {
+                        s.position
+                            .and_then(value_residue)
+                            .or_else(|| s.hint.and_then(value_residue))
+                    };
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),

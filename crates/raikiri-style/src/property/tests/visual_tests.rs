@@ -1321,7 +1321,12 @@ fn gradient_stop(color: CssColor, position: Option<Length>) -> GradientColorStop
     GradientColorStop {
         color: GradientStopColor::Resolved(color),
         position: position.map(LengthPercentageOrCalc::Length),
+        hint: None,
     }
+}
+
+fn percent(value: f32) -> LengthPercentageOrCalc {
+    LengthPercentageOrCalc::Length(Length::Percent(value))
 }
 
 fn oklab_shorter() -> GradientColorInterpolation {
@@ -1562,12 +1567,111 @@ fn background_image_rejects_linear_gradient_single_stop() {
 }
 
 #[test]
-fn background_image_rejects_linear_gradient_transition_hint() {
-    // `<linear-color-hint>` between stops is unimplemented scope — the
-    // bare `50%` token isn't a valid `<color>`, so the whole
-    // comma-separated stop list fails to parse.
+fn background_image_parses_a_linear_gradient_transition_hint_onto_the_next_stop() {
+    let g = expect_linear_gradient(parse(
+        "linear-gradient(red 0%, 25%, blue 100%)",
+        "background-image",
+    ));
+    let hint = Some(percent(25.0));
+    assert_eq!(g.stops.len(), 2);
+    assert_eq!(g.stops[0].hint, None);
+    assert_eq!(g.stops[1].hint, hint);
+    assert_eq!(g.stops[1].position, Some(percent(100.0)));
+}
+
+#[test]
+fn background_image_parses_hints_between_unpositioned_stops_and_in_every_gap() {
+    let g = expect_linear_gradient(parse(
+        "linear-gradient(red, 25%, blue, 4px, lime, green)",
+        "background-image",
+    ));
+    let hints: Vec<_> = g.stops.iter().map(|stop| stop.hint).collect();
     assert_eq!(
-        parse("linear-gradient(red, 50%, blue)", "background-image"),
+        hints,
+        [
+            None,
+            Some(percent(25.0)),
+            Some(LengthPercentageOrCalc::Length(Length::Px(4.0))),
+            None
+        ]
+    );
+    assert!(g.stops.iter().all(|stop| stop.position.is_none()));
+}
+
+#[test]
+fn background_image_parses_a_calc_transition_hint() {
+    let g = expect_linear_gradient(super::box_model_tests::parse_grammar(
+        "linear-gradient(red, calc(10% + 20px), blue)",
+        "background-image",
+    ));
+    assert_eq!(
+        g.stops[1].hint,
+        Some(LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: 20.0
+        }))
+    );
+}
+
+#[test]
+fn background_image_parses_a_transition_hint_of_a_radial_gradient() {
+    let g = expect_radial_gradient(parse(
+        "radial-gradient(circle, red 0%, 25%, blue 100%)",
+        "background-image",
+    ));
+    assert_eq!(g.stops[1].hint, Some(percent(25.0)));
+}
+
+#[test]
+fn background_image_parses_a_transition_hint_of_a_conic_gradient() {
+    let g = expect_conic_gradient(parse(
+        "conic-gradient(red, 25%, blue 50%, 270deg, lime)",
+        "background-image",
+    ));
+    assert_eq!(g.stops[0].hint, None);
+    assert_eq!(g.stops[1].hint, Some(AnglePercentage::Percent(25.0)));
+    assert_eq!(g.stops[2].hint, Some(AnglePercentage::Angle(Angle(270.0))));
+}
+
+#[test]
+fn background_image_keeps_the_conic_hint_on_the_first_of_two_positions() {
+    let g = expect_conic_gradient(parse(
+        "conic-gradient(red, 10%, blue 20% 40%, lime)",
+        "background-image",
+    ));
+    let hints: Vec<_> = g.stops.iter().map(|stop| stop.hint).collect();
+    assert_eq!(
+        hints,
+        [None, Some(AnglePercentage::Percent(10.0)), None, None]
+    );
+}
+
+#[test]
+fn background_image_rejects_a_transition_hint_without_a_stop_on_both_sides() {
+    for gradient in [
+        // First and last entries must be stops.
+        "linear-gradient(50%, red, blue)",
+        "linear-gradient(red, blue, 50%)",
+        // Two hints in a row.
+        "linear-gradient(red, 30%, 60%, blue)",
+        // A hint is a bare position, not a stop that lost its color.
+        "linear-gradient(red, 30% 60%, blue)",
+        "linear-gradient(red, blue 30%, 60%)",
+        "conic-gradient(50%, red, blue)",
+        "conic-gradient(red, blue, 50%)",
+        "conic-gradient(red, 10%, 20%, blue)",
+        // A single stop with a hint is still a single stop.
+        "linear-gradient(red, 50%)",
+        "conic-gradient(red, 50%)",
+    ] {
+        assert_eq!(parse(gradient, "background-image"), None, "{gradient}");
+    }
+}
+
+#[test]
+fn background_image_rejects_a_conic_hint_that_is_not_an_angle_or_percentage() {
+    assert_eq!(
+        parse("conic-gradient(red, 10px, blue)", "background-image"),
         None
     );
 }
@@ -1963,10 +2067,12 @@ fn background_image_parses_conic_gradient_with_default_angle_and_position() {
                     AngularColorStop {
                         color: GradientStopColor::Resolved(RED),
                         position: None,
+                        hint: None,
                     },
                     AngularColorStop {
                         color: GradientStopColor::Resolved(BLUE),
                         position: None,
+                        hint: None,
                     },
                 ]),
             })))
