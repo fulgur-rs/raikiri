@@ -164,3 +164,152 @@ fn content_language_without_any_lang_records_the_empty_tag() {
     assert_eq!(&*caches.content_language(&doc, &elem, id, &ancestors), "");
     assert_eq!(caches.languages.borrow().len(), 3);
 }
+
+struct SiblingCountingDoc<'a> {
+    doc: &'a TestDoc,
+    visits: std::cell::Cell<usize>,
+}
+
+struct SiblingCountingIter<'a> {
+    inner: <TestDoc as StyleDom>::ChildIter<'a>,
+    visits: &'a std::cell::Cell<usize>,
+}
+
+impl Iterator for SiblingCountingIter<'_> {
+    type Item = StyleNodeId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let child = self.inner.next()?;
+        self.visits.set(self.visits.get() + 1);
+        Some(child)
+    }
+}
+
+impl StyleDom for SiblingCountingDoc<'_> {
+    type NodeRef<'a>
+        = <TestDoc as StyleDom>::NodeRef<'a>
+    where
+        Self: 'a;
+    type ChildIter<'a>
+        = SiblingCountingIter<'a>
+    where
+        Self: 'a;
+
+    fn root_id(&self) -> StyleNodeId {
+        self.doc.root_id()
+    }
+    fn node(&self, id: StyleNodeId) -> Option<Self::NodeRef<'_>> {
+        self.doc.node(id)
+    }
+    fn child_ids(&self, id: StyleNodeId) -> Self::ChildIter<'_> {
+        SiblingCountingIter {
+            inner: self.doc.child_ids(id),
+            visits: &self.visits,
+        }
+    }
+    fn node_count(&self) -> usize {
+        self.doc.node_count()
+    }
+    fn parent_id(&self, id: StyleNodeId) -> Option<StyleNodeId> {
+        self.doc.parent_id(id)
+    }
+}
+
+#[test]
+fn adjacent_has_visits_wide_sibling_lists_linearly() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "main", None);
+    let items: Vec<_> = (0..512)
+        .map(|_| doc.push_element(parent, "div", None))
+        .collect();
+    doc.set_attr(*items.last().unwrap(), "class", "next");
+    let counted = SiblingCountingDoc {
+        doc: &doc,
+        visits: std::cell::Cell::new(0),
+    };
+    let query = crate::SelectorQuery::parse("div:has(+ .next)").unwrap();
+    let matcher = query.matcher(&counted, None);
+    let ancestors = [StyleNodeId::new(parent as u64)];
+    let matched: Vec<_> = items
+        .iter()
+        .copied()
+        .filter(|&id| matcher.matches(StyleNodeId::new(id as u64), &ancestors))
+        .collect();
+    assert_eq!(matched, [items[items.len() - 2]]);
+    assert!(
+        counted.visits.get() <= 8 * items.len(),
+        "visited {} children",
+        counted.visits.get()
+    );
+}
+
+#[test]
+fn adjacent_has_skips_non_elements_and_respects_detached_candidates() {
+    for filler in [0, 8] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "main", None);
+        for _ in 0..filler {
+            doc.push_element(parent, "i", None);
+        }
+        let anchor = doc.push_element(parent, "div", None);
+        doc.push_text(parent, "text");
+        doc.push_comment(parent, "comment");
+        let inert = doc.push_element(parent, "div", None);
+        doc.set_in_document(inert, false);
+        let next = doc.push_element(parent, "div", None);
+        doc.set_attr(next, "class", "next");
+        let leaf = doc.push_element(next, "span", None);
+        doc.set_attr(leaf, "class", "leaf");
+        let tail = doc.push_element(parent, "div", None);
+        doc.set_attr(tail, "class", "tail");
+        let ancestors = [StyleNodeId::new(parent as u64)];
+        let caches = MatchCaches::default();
+        for source in [
+            "div:has(+ .next)",
+            "div:has(+ .next > .leaf)",
+            "div:has(+ .next + .tail)",
+        ] {
+            let list = crate::parse_selector_list(source).unwrap();
+            assert!(
+                matches_with(&doc, &caches, &list, anchor, &ancestors),
+                "{source}, filler {filler}"
+            );
+            assert!(
+                !matches_with(&doc, &caches, &list, tail, &ancestors),
+                "{source}, filler {filler}"
+            );
+            let query = crate::SelectorQuery::parse(source).unwrap();
+            assert!(
+                !query
+                    .matcher(&doc, None)
+                    .matches(StyleNodeId::new(anchor as u64), &ancestors),
+                "{source}, filler {filler}"
+            );
+        }
+    }
+}
+
+#[test]
+fn single_adjacent_has_miss_does_not_index_a_wide_parent() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "main", None);
+    let anchor = doc.push_element(parent, "div", None);
+    for _ in 0..511 {
+        doc.push_element(parent, "div", None);
+    }
+    let counted = SiblingCountingDoc {
+        doc: &doc,
+        visits: std::cell::Cell::new(0),
+    };
+    let query = crate::SelectorQuery::parse("div:has(+ .missing)").unwrap();
+    assert!(!query.matches(
+        &counted,
+        StyleNodeId::new(anchor as u64),
+        &[StyleNodeId::new(parent as u64)]
+    ));
+    assert!(
+        counted.visits.get() <= 8,
+        "visited {} children",
+        counted.visits.get()
+    );
+}

@@ -105,6 +105,8 @@ const SIBLING_CACHE_MIN_CHILDREN: usize = 8;
 /// again afterwards. No borrow is ever held across a matcher recursion.
 #[derive(Default)]
 pub(crate) struct MatchCaches {
+    /// A single-candidate query cannot amortize indexing a wide sibling list.
+    single_match: bool,
     /// Filtered sibling ranks, bounded per immutable match operation.
     filtered_nth: RefCell<FilteredNthCache>,
     /// Left-side results of `~` frames; see [`LaterSiblingCache`].
@@ -137,10 +139,11 @@ struct HasScratch {
 }
 
 impl MatchCaches {
-    /// One-shot queries cannot reuse filtered ranks. Skip rank construction
-    /// while retaining the other matching memos.
+    /// One-shot queries scan filtered ranks and `:has()` sibling roots directly
+    /// rather than building indexes intended for repeated candidates.
     pub(super) fn for_single_match() -> Self {
         Self {
+            single_match: true,
             filtered_nth: RefCell::new(FilteredNthCache::with_limits(0, 0)),
             ..Self::default()
         }
@@ -1115,16 +1118,28 @@ fn relative_selector_matches<D: StyleDom>(
             // share the anchor's own ancestor chain.
             let depth = scratch.path.len();
             let only_first = relative_selector.match_hint.is_next_sibling();
-            let mut following = false;
-            for child_id in ctx.dom.child_ids(parent_id) {
-                if child_id == anchor_id {
-                    following = true;
-                    continue;
+            if only_first
+                && !ctx.caches.single_match
+                && let Some(info) = ctx
+                    .caches
+                    .sibling_info(ctx.dom, parent_id, ctx.allow_detached)
+                && let Some(&index) = info.index_of.get(&anchor_id)
+            {
+                if let Some(&next) = info.elements.get(index + 1) {
+                    scratch.stack.push((next, depth));
                 }
-                if following && is_candidate_element(ctx.dom, child_id, ctx.allow_detached) {
-                    scratch.stack.push((child_id, depth));
-                    if only_first {
-                        break;
+            } else {
+                let mut following = false;
+                for child_id in ctx.dom.child_ids(parent_id) {
+                    if child_id == anchor_id {
+                        following = true;
+                        continue;
+                    }
+                    if following && is_candidate_element(ctx.dom, child_id, ctx.allow_detached) {
+                        scratch.stack.push((child_id, depth));
+                        if only_first {
+                            break;
+                        }
                     }
                 }
             }
