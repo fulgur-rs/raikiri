@@ -72,10 +72,23 @@ fn detached_component_survives_through_a_child_then_is_collectible() {
          && retainedChild.nextSibling === siblingWeak.deref() \
          && retainedChild.nextSibling.payload === 22"
     ));
+    let child = crate::runtime::webidl::node_index(&rt.evaluate("retainedChild").unwrap()).unwrap();
     rt.evaluate("retainedChild = null;").unwrap();
     collect(&mut rt);
     assert!(eval_bool(&mut rt, "parentWeak.deref() === undefined"));
     assert!(eval_bool(&mut rt, "siblingWeak.deref() === undefined"));
+    let object = crate::runtime::interfaces::wrap(rt.context_mut(), child).unwrap();
+    rt.context_mut()
+        .register_global_property(
+            boa_engine::JsString::from("restoredChild"),
+            object,
+            boa_engine::property::Attribute::all(),
+        )
+        .unwrap();
+    assert!(eval_bool(
+        &mut rt,
+        "restoredChild.parentNode.tagName === 'DIV' && restoredChild.nextSibling.tagName === 'P' && restoredChild.parentNode.payload === undefined"
+    ));
 }
 
 #[test]
@@ -456,4 +469,72 @@ fn written_handlers_survive_collection_before_fragment_attachment() {
         &mut rt,
         "document.getElementById('written-a').onclick() === 10 && document.getElementById('written-b').onclick() === 20"
     ));
+}
+
+#[test]
+fn native_bulk_moves_to_new_parents_preserve_wrapper_identity() {
+    let (mut host, _, _, body) = StubHost::page();
+    let children: Vec<_> = (0..128)
+        .map(|_| {
+            host.document
+                .append_element(Some(body), "div", None::<&str>)
+        })
+        .collect();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var heldNodes = Array.from(document.body.children); heldNodes.forEach(function (node, index) { node.payload = index; });").unwrap();
+    with_state(rt.context_mut(), |state| {
+        let doc = state.host.document_mut();
+        for child in children {
+            let parent = doc.append_element(Some(body), "section", None::<&str>);
+            doc.pre_insert(parent, child, None).unwrap();
+        }
+    })
+    .unwrap();
+    collect(&mut rt);
+    assert!(eval_bool(
+        &mut rt,
+        "heldNodes.every(function (node, index) { return node.payload === index && node.parentNode.tagName === 'SECTION' && node.parentNode.firstChild === node; })"
+    ));
+    let debug = with_state(rt.context_mut(), |state| {
+        format!("{:?}", state.node_record(body))
+    })
+    .unwrap();
+    assert!(debug.starts_with("NodeRecord { index:"));
+}
+
+#[test]
+fn detached_css_rule_identity_survives_repeated_cache_sweeps() {
+    let mut rt = runtime();
+    rt.evaluate("var detachedRules = []; var detachedWeaks = []; var detachedNodeWeak; var detachedSheet; (function () { \
+        var node = document.createElement('style'); node.textContent = Array.from({length: 192}, function (_, i) { return '.n' + i + '{color:red}'; }).join(''); \
+        document.body.appendChild(node); detachedNodeWeak = new WeakRef(node); detachedSheet = node.sheet; \
+        for (var i = 0; i < 192; i++) { var rule = detachedSheet.cssRules[i]; rule.payload = i; detachedRules.push(rule); detachedWeaks.push(new WeakRef(rule)); } \
+        for (var i = 0; i < 96; i++) detachedSheet.deleteRule(0); node.remove(); \
+    })();").unwrap();
+    collect(&mut rt);
+    rt.evaluate("for (var i = 0; i < 96; i++) detachedSheet.deleteRule(0); detachedSheet = null;")
+        .unwrap();
+    collect(&mut rt);
+    assert!(eval_bool(
+        &mut rt,
+        "detachedNodeWeak.deref() === undefined && detachedRules.every(function (rule, index) { return rule === detachedWeaks[index].deref() && rule.payload === index && rule.style.color === 'red'; })"
+    ));
+    rt.evaluate("detachedRules = null;").unwrap();
+    collect(&mut rt);
+    assert!(eval_bool(
+        &mut rt,
+        "detachedWeaks.every(function (ref) { return ref.deref() === undefined; })"
+    ));
+}
+
+#[test]
+fn ownership_initialization_bounds_work_for_cyclic_native_host_edges() {
+    let mut document = raikiri_dom::Document::new();
+    let root = document.root_index();
+    let child = document.append_element(Some(root), "div", None::<&str>);
+    // Parser-level attachment trusts its caller. A malformed host must not
+    // make ownership initialization loop forever when it supplies a cycle.
+    document.attach_child(child, root);
+    let graph = crate::runtime::node_gc::NodeGraph::new(&mut document);
+    assert_eq!(graph.edge_visits, document.node_count());
 }

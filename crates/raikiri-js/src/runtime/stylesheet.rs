@@ -603,10 +603,13 @@ fn transfer_rule_owner(state: &mut State, sheet: SheetKey, object: &JsObject) {
     let owner = state.css_owner(sheet);
     let previous = if let Some(data) = object.downcast_ref::<CssStyleRuleData>() {
         data.owner.borrow_mut().replace(owner.clone())
-    } else if let Some(data) = object.downcast_ref::<MarginRuleData>() {
-        data.owner.borrow_mut().replace(owner.clone())
     } else {
-        None
+        object
+            .downcast_ref::<MarginRuleData>()
+            .expect("rule indices contain only style/page or margin rules")
+            .owner
+            .borrow_mut()
+            .replace(owner.clone())
     };
     if let Some(previous) = previous {
         previous.objects.borrow_mut().remove(object);
@@ -1076,7 +1079,7 @@ fn style_sheet_rules(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
         prototype,
         CssRuleListSource { style_element },
         vec![owner],
-    )?;
+    )?; // cov:ignore: Fresh proxy targets accept the fixed native members and private WeakMap registration.
     with_state(context, |state| {
         state.set_node_object(style_element, NodeObject::RuleList, list.clone())
     })?;
@@ -1511,7 +1514,7 @@ fn css_style_rule_object(
             prototype,
             MarginRuleListSource { page: slot },
             vec![object.clone()],
-        )?;
+        )?; // cov:ignore: Fresh proxy targets accept the fixed native members and private WeakMap registration.
         let descriptor = PropertyDescriptor::builder()
             .value(list)
             .writable(false)
