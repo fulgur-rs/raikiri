@@ -111,7 +111,13 @@ fn report_cascades() {
 }
 
 fn main() {
-    for n in [1_000, 2_000, 4_000, 16_000] {
+    let long_history = std::env::args().any(|arg| arg == "--long-history");
+    let sizes: &[usize] = if long_history {
+        &[64_000, 256_000]
+    } else {
+        &[1_000, 2_000, 4_000, 16_000]
+    };
+    for &n in sizes {
         let doc = document();
         let source = doc.normal_line_height();
         let mut font = key();
@@ -134,6 +140,9 @@ fn main() {
             "font cache distinct={n} retained_bytes={retained} revisit_delta_bytes={}",
             LIVE.load(Relaxed) - before
         );
+    }
+    if long_history {
+        return;
     }
     for mode in ["hits", "churn"] {
         let mut times = Vec::new();

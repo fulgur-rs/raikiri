@@ -57,8 +57,11 @@ fn cloned_and_extracted_documents_have_distinct_named_element_versions() {
     let node = document.append_element(Some(0), "div", None::<&str>);
     let snapshot = document.named_element_version().clone();
     assert_eq!(&snapshot, document.named_element_version());
-    let restored = Document::from_logical_snapshot(document.logical_snapshot(), 100).unwrap();
-    assert_ne!(&snapshot, restored.named_element_version());
+    #[cfg(feature = "logical-snapshot")]
+    {
+        let restored = Document::from_logical_snapshot(document.logical_snapshot(), 100).unwrap();
+        assert_ne!(&snapshot, restored.named_element_version());
+    }
     assert_ne!(&snapshot, document.clone().named_element_version());
     assert_ne!(
         &snapshot,
