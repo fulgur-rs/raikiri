@@ -1951,10 +1951,10 @@ fn page_area_width(tree: &LayoutSession<'_>) -> Option<f32> {
 }
 
 /// The height of the page area, which stands in for the room along its height
-/// that a vertical box in a horizontal paragraph is offered while nothing
-/// sets one, as the initial containing block does for an orthogonal flow (CSS
-/// Writing Modes 4 §7.3.1).
-fn page_area_height(tree: &LayoutSession<'_>) -> Option<f32> {
+/// that a vertical box in a horizontal paragraph or block container is offered
+/// while nothing sets one, as the initial containing block does for an
+/// orthogonal flow (CSS Writing Modes 4 §7.3.1).
+pub(crate) fn page_area_height(tree: &LayoutSession<'_>) -> Option<f32> {
     tree.fixed_page_area
         .map(|(_, height)| height)
         .filter(|height| *height > 0.0)

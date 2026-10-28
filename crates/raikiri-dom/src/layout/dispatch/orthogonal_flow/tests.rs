@@ -203,3 +203,168 @@ fn sideways_percentage_padding_uses_the_containing_block_inline_extent() {
         assert_eq!(doc.nodes[child].layout.size.width, 30.0);
     }
 }
+
+/// A hundred three-letter words, 299 Ahem glyphs: a 60px-tall column of 10px
+/// glyphs takes 20 words, so the 600px page area holds 5 columns of it.
+fn long_text() -> String {
+    vec!["aa"; 100].join(" ")
+}
+
+const VERTICAL_TEXT: &str = "display:block;writing-mode:vertical-rl;font-family:Ahem;\
+                             font-size:10px;line-height:10px";
+
+/// Lay out `doc` on one 800x600 page.
+fn lay_out(doc: &mut Document) {
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(doc);
+    let cascade = raikiri_style::cascade(doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(doc), &cascade, page_box_800x600()).expect("layout");
+}
+
+/// A zero-margin body that holds a block `parent_css` and, in it, the vertical
+/// block `css` with `text`. The node ids are those of the parent and of the
+/// vertical block.
+fn vertical_block_under(parent_css: &str, css: &str, text: &str) -> (Document, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(parent_css));
+    let container = doc.append_element(
+        Some(parent),
+        "div",
+        Some(format!("{VERTICAL_TEXT};{css}").as_str()),
+    );
+    doc.append_text(container, text);
+    (doc, parent, container)
+}
+
+/// The border-box rect of a vertical block holding [`long_text`] under the
+/// block `parent_css`.
+fn long_paragraph_rect(parent_css: &str, css: &str) -> (f32, f32, f32, f32) {
+    let (mut doc, _, container) = vertical_block_under(parent_css, css, &long_text());
+    lay_out(&mut doc);
+    absolute_rect(&doc, container)
+}
+
+#[test]
+fn a_long_vertical_paragraph_wraps_at_the_page_height() {
+    // The lines fit the initial containing block when nothing else gives the
+    // box a height (CSS Writing Modes 4 §7.3.1): 5 columns of 600px, not one
+    // column of 2990px.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        assert_eq!(
+            long_paragraph_rect("display:block", &format!("writing-mode:{mode}")),
+            (0.0, 0.0, 50.0, 600.0)
+        );
+    }
+}
+
+#[test]
+fn the_page_height_is_the_room_whatever_edges_and_overflow_an_auto_height_parent_has() {
+    for parent in [
+        "display:block;padding:20px",
+        "display:block;border:5px solid",
+        "display:block;overflow:auto",
+        "display:block;height:50%",
+        "display:block;min-height:300px",
+    ] {
+        let (_, _, width, height) = long_paragraph_rect(parent, "");
+        assert_eq!((width, height), (50.0, 600.0), "{parent}");
+    }
+}
+
+#[test]
+fn a_definite_height_of_the_parent_is_the_height_a_vertical_paragraph_fits() {
+    // The 300px parent gives 10 words a column, 10 columns in all.
+    assert_eq!(
+        long_paragraph_rect("display:block;height:300px", ""),
+        (0.0, 0.0, 100.0, 300.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:block;height:300px;overflow:hidden", ""),
+        (0.0, 0.0, 100.0, 300.0)
+    );
+    // The height is the one inside the parent's padding and border.
+    assert_eq!(
+        long_paragraph_rect("display:block;height:300px;border:5px solid", ""),
+        (5.0, 5.0, 100.0, 300.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(
+            "display:block;box-sizing:border-box;height:300px;padding:20px",
+            ""
+        ),
+        (20.0, 20.0, 120.0, 260.0)
+    );
+}
+
+#[test]
+fn the_margins_of_a_vertical_paragraph_come_off_the_height_it_fits() {
+    // 570px: 19 words to a column, 6 columns.
+    assert_eq!(
+        long_paragraph_rect("display:block", "margin:15px"),
+        (15.0, 15.0, 60.0, 570.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:block", "margin-top:40px"),
+        (0.0, 40.0, 60.0, 560.0)
+    );
+    // A percentage refers to the 800px width of the parent: 5% is 40px.
+    assert_eq!(
+        long_paragraph_rect("display:block", "margin:5%"),
+        (40.0, 40.0, 60.0, 520.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:block;height:300px", "margin:20px"),
+        (20.0, 20.0, 120.0, 260.0)
+    );
+}
+
+#[test]
+fn margins_that_leave_no_room_put_every_word_on_a_column_of_its_own() {
+    // 350px above and below leave nothing of the 600px: the min-content size,
+    // 100 columns of the 20px words.
+    assert_eq!(
+        long_paragraph_rect("display:block", "margin:350px 0"),
+        (0.0, 350.0, 1000.0, 20.0)
+    );
+}
+
+#[test]
+fn the_padding_and_border_of_a_vertical_paragraph_come_off_the_height_inside_them() {
+    // The 600px is the border box: 570px of lines between 15px of padding.
+    assert_eq!(
+        long_paragraph_rect("display:block", "padding:15px"),
+        (0.0, 0.0, 90.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:block", "padding:15px;margin:15px"),
+        (15.0, 15.0, 90.0, 570.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:block", "border:5px solid"),
+        (0.0, 0.0, 60.0, 600.0)
+    );
+}
+
+#[test]
+fn a_short_vertical_paragraph_keeps_the_height_of_its_line() {
+    let (mut doc, _, container) = vertical_block_under("display:block", "", "aa aa aa");
+    lay_out(&mut doc);
+    assert_eq!(absolute_rect(&doc, container), (0.0, 0.0, 10.0, 80.0));
+}
+
+#[test]
+fn a_vertical_block_of_paragraphs_wraps_each_at_the_page_height() {
+    let (mut doc, _, container) = vertical_block_under("display:block", "", "");
+    let first = doc.append_element(Some(container), "p", Some("display:block;margin:0"));
+    doc.append_text(first, long_text());
+    let second = doc.append_element(Some(container), "p", Some("display:block;margin:0"));
+    doc.append_text(second, long_text());
+    lay_out(&mut doc);
+    assert_eq!(absolute_rect(&doc, container), (0.0, 0.0, 100.0, 600.0));
+    // The first paragraph is at the block start, the right.
+    assert_eq!(absolute_rect(&doc, first), (50.0, 0.0, 50.0, 600.0));
+    assert_eq!(absolute_rect(&doc, second), (0.0, 0.0, 50.0, 600.0));
+}

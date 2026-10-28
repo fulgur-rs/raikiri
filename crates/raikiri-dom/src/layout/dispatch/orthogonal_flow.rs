@@ -11,8 +11,9 @@
 //! from where a browser draws it.
 //!
 //! This module measures such a box at its max-content width, the extent of
-//! its columns, and lays it out at that width. Its inline size keeps
-//! following the available height the parent passes down.
+//! its columns, and lays it out at that width. Its inline size fits the
+//! height it is offered: the one the parent passes down, else the parent's
+//! definite height, else the page area's.
 
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
@@ -20,7 +21,7 @@ use crate::layout::protocol::{
 };
 use crate::node::FormattingContext;
 use raikiri_layout_geometry::Size;
-use raikiri_layout_style::values::{Float, Position};
+use raikiri_layout_style::values::{Float, Position, ResolveOrZero};
 
 use raikiri_style::property::DisplayValue;
 
@@ -50,6 +51,34 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
         }
 }
 
+/// The height that the orthogonal flow `idx` is offered to fit its lines in
+/// (CSS Writing Modes 4 §7.3.1), as the room of its margin box.
+///
+/// A block container leaves the height it passes down to its children
+/// indefinite. The box is then offered the definite height of its parent, or
+/// else the height of the initial containing block, the page area here, less
+/// its own vertical margins. Whatever else the parent passes down, an
+/// intrinsic or a definite space, is kept as it is. The padding and border of
+/// the box come off the room where it is laid out.
+fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> AvailableSpace {
+    if inputs.available_space.height != AvailableSpace::MaxContent {
+        return inputs.available_space.height;
+    }
+    // The percentages of the margins refer to the width of the parent.
+    let margin = tree
+        .physical_style(idx)
+        .margin()
+        .map(|margin| margin.resolve_or_zero(inputs.parent_size.width));
+    // Without a page area there is no room to fit the lines in.
+    inputs
+        .parent_size
+        .height
+        .or_else(|| crate::layout::ifc::boxes::page_area_height(tree))
+        .map_or(AvailableSpace::MaxContent, |room| {
+            AvailableSpace::Definite((room - margin.top - margin.bottom).max(0.0))
+        })
+}
+
 /// Lay out `node_id` with its content-based width in place of the width
 /// its block container stretched it to.
 ///
@@ -66,6 +95,7 @@ pub(super) fn compute_orthogonal_block(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    let height = offered_height(tree, idx, &inputs);
     let measure_inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,
         axis: RequestedAxis::Horizontal,
@@ -75,7 +105,7 @@ pub(super) fn compute_orthogonal_block(
         },
         available_space: Size {
             width: AvailableSpace::MaxContent,
-            height: inputs.available_space.height,
+            height,
         },
         ..inputs
     };
@@ -96,7 +126,7 @@ pub(super) fn compute_orthogonal_block(
         },
         available_space: Size {
             width: AvailableSpace::Definite(width),
-            height: inputs.available_space.height,
+            height,
         },
         ..inputs
     };
