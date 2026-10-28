@@ -104,6 +104,12 @@ pub(crate) fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisVa
     {
         return Some(FlexBasisValue::FitContent);
     }
+    if input
+        .try_parse(|i| i.expect_ident_matching("stretch"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::Stretch);
+    }
     // A mixed-unit `calc()` reaches this parser only after substitution or
     // simplification failed to fold it to one dimension; keep its terms.
     if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {

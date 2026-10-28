@@ -2575,7 +2575,8 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
         LengthOrAuto::MinContent
         | LengthOrAuto::MaxContent
         | LengthOrAuto::FitContent
-        | LengthOrAuto::FitContentOf(_) => LengthOrAuto::Length(Length::Px(0.0)),
+        | LengthOrAuto::FitContentOf(_)
+        | LengthOrAuto::Stretch => LengthOrAuto::Length(Length::Px(0.0)),
         other => other,
     }
 }
@@ -2597,6 +2598,7 @@ fn inherited_box_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
         ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
         ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::FitContent,
+        ComputedLengthPercentageOrAuto::Stretch => LengthOrAuto::Stretch,
         ComputedLengthPercentageOrAuto::FitContentOf(limit) => {
             LengthOrAuto::FitContentOf(crate::resolve::lift_length_percentage_or_calc(limit))
         }

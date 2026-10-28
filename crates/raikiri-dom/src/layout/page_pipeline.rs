@@ -5368,7 +5368,8 @@ fn visit_same_bfc_floats_in_subtree(
 
 /// The content-box height of `block` when it is definite: a length, or a
 /// percentage of a definite containing block, the initial containing block
-/// being definite (CSS 2.1 §10.5).
+/// being definite (CSS 2.1 §10.5). `stretch` fills a definite containing block
+/// as a percentage does, and is `auto` otherwise (CSS Sizing 4 §5.1).
 fn definite_content_height(
     document: &super::context::LayoutSession<'_>,
     block: usize,
@@ -5377,7 +5378,7 @@ fn definite_content_height(
     let height = document.block_axis(block).height().expand();
     let definite = if matches!(
         height,
-        ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_)
+        ExpandedDimension::Percent(_) | ExpandedDimension::Calc(_) | ExpandedDimension::Stretch
     ) {
         BoxTree::for_layout(document)
             .parent(block, BoxParentScope::Document)

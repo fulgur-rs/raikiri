@@ -29,6 +29,7 @@ impl LengthValue<'_> {
             L::MinContent => Dimension::min_content(),
             L::MaxContent => Dimension::max_content(),
             L::FitContent => Dimension::fit_content(),
+            L::Stretch => Dimension::stretch(),
             L::Calc(_) => Dimension::calc(self.calc_ref()),
             L::FitContentOf(P::Px(v)) => Dimension::fit_content_px(sanitize(v)),
             L::FitContentOf(P::Percent(v)) => Dimension::fit_content_percent(sanitize(v / 100.0)),

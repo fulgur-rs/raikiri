@@ -199,8 +199,20 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     parse_box_size(input)
 }
 
+/// Consumes `stretch` or its legacy spelling `-webkit-fill-available`, which
+/// CSS Sizing 4 §5.1 defines as an alias of the keyword.
+fn expect_stretch_keyword<'i>(input: &mut Parser<'i, '_>) -> Result<(), ParseError<'i, ()>> {
+    let ident = input.expect_ident()?;
+    if ident.eq_ignore_ascii_case("stretch") || ident.eq_ignore_ascii_case("-webkit-fill-available")
+    {
+        Ok(())
+    } else {
+        Err(input.new_custom_error(()))
+    }
+}
+
 /// Parse `<box-size>`: a non-negative `<length-percentage>`, `min-content`, `max-content`,
-/// `fit-content` or `fit-content(<length-percentage>)`.
+/// `fit-content`, `fit-content(<length-percentage>)` or `stretch`.
 ///
 /// CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#sizing-values> groups every sizing value
 /// other than `auto` and `none` under this production, which `width`, `min-width` and `max-width` (and
@@ -224,6 +236,9 @@ fn parse_box_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         .is_ok()
     {
         return Some(LengthOrAuto::FitContent);
+    }
+    if input.try_parse(expect_stretch_keyword).is_ok() {
+        return Some(LengthOrAuto::Stretch);
     }
     if let Ok(limit) = input.try_parse(|i| {
         i.expect_function_matching("fit-content")?;

@@ -5,7 +5,7 @@ use super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId, OofLayoutResult,
-    OofPosition, OofPositioningArea,
+    OofPosition, OofPositioningArea, SizingMode,
 };
 use raikiri_layout_geometry::{Edges, Line, Size};
 use raikiri_layout_style::ToTaffy;
@@ -43,13 +43,26 @@ pub(crate) fn compute_grid_layout(
 
 /// Lay out a leaf whose content is measured by `measure`, which is given the
 /// known dimensions and the available space.
+///
+/// A `width` of `stretch` takes the room the caller offers the border box,
+/// which has its margins taken off already (CSS Sizing 4 §5.1); Taffy's leaf
+/// algorithm reads the keyword as `auto`. Without a definite room, or for a
+/// measure that ignores the box's own sizes, it stays `auto`.
 #[inline]
 pub(crate) fn compute_leaf_layout(
-    inputs: LayoutInput,
+    mut inputs: LayoutInput,
     style: &impl taffy::CoreStyle,
     resolve_calc_value: impl Fn(*const (), f32) -> f32,
     measure: impl FnOnce(Size<Option<f32>>, Size<AvailableSpace>) -> Size<f32>,
 ) -> LayoutOutput {
+    if inputs.sizing_mode == SizingMode::InherentSize
+        && inputs.known_dimensions.width.is_none()
+        && style.size().width.is_stretch()
+        && let AvailableSpace::Definite(room) = inputs.available_space.width
+    {
+        inputs.known_dimensions.width = Some(room.max(0.0));
+        inputs.known_dimensions_are_definite.width = true;
+    }
     LayoutOutput::from_taffy(taffy::compute_leaf_layout(
         inputs.into_taffy(),
         style,

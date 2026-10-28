@@ -5919,7 +5919,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             LengthOrAuto::Auto
             | LengthOrAuto::MinContent
             | LengthOrAuto::MaxContent
-            | LengthOrAuto::FitContent => None,
+            | LengthOrAuto::FitContent
+            | LengthOrAuto::Stretch => None,
             LengthOrAuto::FitContentOf(limit) => length_percentage_or_calc(limit),
             LengthOrAuto::Calc(_) => Some("calc()"),
             LengthOrAuto::RelativeCalc(_) => Some("LengthOrAuto::RelativeCalc"),
@@ -5952,7 +5953,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | FlexBasisValue::Content
             | FlexBasisValue::MinContent
             | FlexBasisValue::MaxContent
-            | FlexBasisValue::FitContent => None,
+            | FlexBasisValue::FitContent
+            | FlexBasisValue::Stretch => None,
             FlexBasisValue::Calc(_) => Some("calc()"),
             FlexBasisValue::RelativeCalc(_) => Some("FlexBasisValue::RelativeCalc"),
             FlexBasisValue::Length(l) => length(l),
@@ -8327,6 +8329,17 @@ fn cascade_page_max_and_fit_content_widths_are_kept() {
     assert_eq!(
         fit.declarations().get(&PropertyKey::Width),
         Some(&PropertyValue::Width(LengthOrAuto::FitContent)),
+    );
+}
+
+/// `stretch` survives page-context absolutization.
+#[test]
+fn cascade_page_stretch_width_is_kept() {
+    let root = ComputedValues::initial();
+    let stretch = page("@page { width: stretch }", &root);
+    assert_eq!(
+        stretch.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::Stretch)),
     );
 }
 

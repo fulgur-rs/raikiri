@@ -1614,20 +1614,20 @@ fn resolved_margins(tree: &LayoutSession<'_>, node: usize, basis: f32) -> Edges<
 }
 
 /// Lay a child of the root out the way taffy's block algorithm lays out a
-/// float: no known size but `known_width`, the root's content width as the
-/// percentage basis, and `available` as the room it may take. It is also how
-/// an atomic inline is sized: shrink-to-fit within the line's content width.
-/// Percentage heights resolve against `height_basis`, the root's definite
-/// content height, and behave as `auto` without one. A vertical root passes
-/// its inline extent as the basis, which its children's edges take their
-/// percentages of, and the width its children's own width percentage
-/// resolves to as `known_width`.
+/// float: no known size but `known_width` and `known_height`, the root's
+/// content width as the percentage basis, and `available` as the room it may
+/// take. It is also how an atomic inline is sized: shrink-to-fit within the
+/// line's content width. Percentage heights resolve against `height_basis`,
+/// the root's definite content height, and behave as `auto` without one. A
+/// vertical root passes its inline extent as the basis, which its children's
+/// edges take their percentages of, and the width its children's own width
+/// percentage resolves to as `known_width`.
 fn perform_box_layout(
     tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
     height_basis: Option<f32>,
-    known_width: Option<f32>,
+    known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
 ) -> LayoutOutput {
     // What taffy's `perform_child_layout` does; that helper is private to
@@ -1638,10 +1638,7 @@ fn perform_box_layout(
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,
             axis: RequestedAxis::Both,
-            known_dimensions: Size {
-                width: known_width,
-                height: None,
-            },
+            known_dimensions: known,
             known_dimensions_are_definite: Size {
                 width: true,
                 height: true,
@@ -1664,6 +1661,8 @@ struct ChildFit {
     space: Size<AvailableSpace>,
     /// The width it is given outright.
     known_width: Option<f32>,
+    /// The height it is given outright: what `height: stretch` fills.
+    known_height: Option<f32>,
     /// The percentage widths of the box that are replaced by what they stand
     /// for, as a layout of its own.
     widths: WidthOverrides,
@@ -1744,9 +1743,23 @@ fn fit_child(
     } else {
         WidthOverrides::default()
     };
+    // `height: stretch` fills the definite content height of the root, less
+    // the margins: those of a float or an atomic inline never escape it (CSS
+    // Sizing 4 §5.1).
+    let known_height = geometry
+        .definite_height
+        .filter(|_| {
+            !vertical
+                && matches!(
+                    tree.physical_style(node).size().height.expand(),
+                    ExpandedDimension::Stretch
+                )
+        })
+        .map(|room| (room - margin.top - margin.bottom).max(0.0));
     ChildFit {
         space,
         known_width,
+        known_height,
         widths,
     }
 }
@@ -1764,10 +1777,15 @@ fn layout_child(
     let ChildFit {
         space,
         known_width,
+        known_height,
         widths,
     } = fit;
+    let known = Size {
+        width: known_width,
+        height: known_height,
+    };
     let layout = |tree: &mut LayoutSession<'_>| {
-        perform_box_layout(tree, node, geometry.width, height_basis, known_width, space)
+        perform_box_layout(tree, node, geometry.width, height_basis, known, space)
     };
     let WidthOverrides { entries, variant } = widths;
     if entries.is_empty() {

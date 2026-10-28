@@ -905,6 +905,17 @@ fn resolve_length_percentage_or_auto_keeps_the_sizing_keywords() {
     }
 }
 
+/// `stretch` stays a keyword in the computed layer, and unlike the content
+/// keywords it takes its size from the containing block, so it is no content
+/// keyword.
+#[test]
+fn resolve_length_percentage_or_auto_keeps_the_stretch_keyword() {
+    let computed =
+        resolve_length_percentage_or_auto(LengthOrAuto::Stretch, ComputedLength(16.0), None, &CTX);
+    assert_eq!(computed, ComputedLengthPercentageOrAuto::Stretch);
+    assert!(!computed.is_content_keyword());
+}
+
 /// The limit of `fit-content(<length-percentage>)` is absolutized like a
 /// padding: a font-relative length becomes px and a percentage waits for the
 /// containing block.
@@ -946,6 +957,7 @@ fn resolve_margin_length_or_auto_drops_the_sizing_keywords() {
         LengthOrAuto::MinContent,
         LengthOrAuto::MaxContent,
         LengthOrAuto::FitContent,
+        LengthOrAuto::Stretch,
         LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(Length::Px(10.0))),
     ] {
         assert_eq!(
@@ -963,6 +975,7 @@ fn computed_flex_basis_reads_a_stray_sizing_keyword_as_auto() {
         LengthOrAuto::MinContent,
         LengthOrAuto::MaxContent,
         LengthOrAuto::FitContent,
+        LengthOrAuto::Stretch,
         LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(Length::Px(10.0))),
     ] {
         assert_eq!(
@@ -970,6 +983,20 @@ fn computed_flex_basis_reads_a_stray_sizing_keyword_as_auto() {
             ComputedFlexBasis::Auto,
         );
     }
+}
+
+/// `flex-basis: stretch` stays a keyword in the computed layer, and the
+/// specified-layer round trip of a computed basis keeps it.
+#[test]
+fn flex_basis_stretch_stays_a_keyword_through_the_computed_layer() {
+    assert_eq!(
+        resolve_flex_basis(FlexBasisValue::Stretch, ComputedLength(16.0), None, &CTX),
+        ComputedFlexBasis::Stretch,
+    );
+    assert_eq!(
+        lift_flex_basis(ComputedFlexBasis::Stretch),
+        FlexBasisValue::Stretch,
+    );
 }
 
 /// `margin: auto` itself must still pass through as `Auto` —
@@ -2588,6 +2615,7 @@ fn a_resolved_calc_that_is_no_length_folds_to_zero() {
         ComputedLengthPercentageOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent,
         ComputedLengthPercentageOrAuto::FitContent,
+        ComputedLengthPercentageOrAuto::Stretch,
     ] {
         assert_eq!(
             fold_resolved_calc(resolved),

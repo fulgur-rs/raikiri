@@ -1,7 +1,7 @@
 //! Place block-flow children while retaining one shared float transaction.
 
 use super::context::{BlockContext, BoxProbe};
-use super::{Metrics, child_inputs, child_style, commit, shares_parent_context};
+use super::{Metrics, child_inputs, child_style, commit, shares_context, shares_parent_context};
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
@@ -273,6 +273,15 @@ pub(super) fn layout(
         width: Some(content_width),
         height: metrics.percent_height,
     };
+    // A margin at an edge of this box that its parent's margins cannot absorb
+    // stays inside it: it takes room off a child that stretches to the height
+    // of the content box. A margin that would escape takes none.
+    let holds_margin = Line {
+        start: !collapse_start,
+        end: !(shares_context(container)
+            && inputs.vertical_margins_are_collapsible.end
+            && metrics.inset.bottom == 0.0),
+    };
     let mut flow = Flow {
         end: metrics.inset.top,
         leading: CollapsibleMarginSet::ZERO,
@@ -379,6 +388,20 @@ pub(super) fn layout(
             .preferred
             .height
             .filter(|_| !child_metrics.ratio_height);
+        // `height: stretch` fills the content box of a parent whose height is
+        // definite, less the margins that do not escape it (CSS Sizing 4
+        // §5.1). A float's margins never escape. Without a definite room it
+        // sizes like `auto`.
+        if let (Some(room), ExpandedDimension::Stretch) =
+            (parent.height, style.size.height.expand())
+        {
+            let floated = style.float != Float::None;
+            let held = |holds: bool, margin: f32| if holds || floated { margin } else { 0.0 };
+            let taken =
+                held(holds_margin.start, margin.top) + held(holds_margin.end, margin.bottom);
+            child_input.known_dimensions.height =
+                Some(child_metrics.clamp_height((room - taken).max(0.0)));
+        }
         if style.float != Float::None {
             child_input.known_dimensions.width = child_metrics
                 .preferred
@@ -459,11 +482,14 @@ pub(super) fn layout(
             .is_ok()
             .then(|| ctx.page_start_float_floor())
             .flatten();
-        let stretches = matches!(
-            style.size.width.expand(),
-            ExpandedDimension::Auto | ExpandedDimension::Stretch
-        ) && !style.item_is_table
-            && !style.is_compressible_replaced();
+        // An `auto` width fills the room, but a table and a compressible
+        // replaced box take their own size then; `stretch` fills it for them
+        // too (CSS Sizing 4 §5.1).
+        let stretches = match style.size.width.expand() {
+            ExpandedDimension::Stretch => true,
+            ExpandedDimension::Auto => !style.item_is_table && !style.is_compressible_replaced(),
+            _ => false,
+        };
         let natural_stretch = content_width - margin.horizontal_axis_sum();
         // `Width`: the border-box width the child gets where an `auto` width
         // resolves to `stretch`. `Height`: its border-box height at `width`.
