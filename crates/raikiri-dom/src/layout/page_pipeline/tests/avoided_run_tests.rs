@@ -83,11 +83,33 @@ fn a_heading_stays_with_the_lines_that_orphans_keeps_together() {
 }
 
 #[test]
-fn a_heading_moves_with_a_paragraph_too_short_to_break_between_its_lines() {
-    // Three lines are too few for `orphans` and `widows` of 2 to let a break
-    // fall between them, so the paragraph moves whole, and the heading with it.
+fn a_heading_moves_with_a_paragraph_that_has_no_more_lines_than_its_orphans() {
+    // Two lines cannot break between them with `orphans` of 2, so the
+    // paragraph moves whole, and the heading with it.
+    assert_eq!(
+        heading_then(80, |doc, body| paragraph(doc, body, "", 2)),
+        (100.0, 110.0)
+    );
+    // The two lines fit after a heading that ends earlier.
+    assert_eq!(
+        heading_then(70, |doc, body| paragraph(doc, body, "", 2)),
+        (70.0, 80.0)
+    );
+}
+
+#[test]
+fn a_heading_stays_with_the_orphans_of_a_paragraph_too_short_for_its_widows() {
+    // Three lines cannot have two orphans and two widows: the paragraph keeps
+    // its orphans and the last line goes to the next page, so the heading,
+    // which ends at 80, stays with the two lines that fit after it.
     assert_eq!(
         heading_then(70, |doc, body| paragraph(doc, body, "", 3)),
+        (70.0, 80.0)
+    );
+    // One line fits after it, which is too few, so the paragraph moves whole,
+    // and the heading with it.
+    assert_eq!(
+        heading_then(80, |doc, body| paragraph(doc, body, "", 3)),
         (100.0, 110.0)
     );
     // The three lines fit after a heading that ends earlier.

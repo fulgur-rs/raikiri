@@ -1920,6 +1920,16 @@ fn first_owned_line_height(
 /// how far it and the lines after it move, and the page they move to.
 type LineBreakMove = (usize, f32, u32);
 
+/// The widows a paragraph of `total_lines` lines can have next to `orphans`.
+/// A paragraph too short for both constraints keeps its orphans and gives up
+/// the widows it cannot have: its last piece takes the lines the orphans leave
+/// it (CSS Fragmentation 3 §3.3 lets the UA ignore a constraint it cannot
+/// meet, and Chromium keeps the orphans). A paragraph breaks between its
+/// lines exactly when it has more than `orphans` of them.
+fn usable_widows(total_lines: usize, orphans: usize, widows: usize) -> usize {
+    widows.min(total_lines.saturating_sub(orphans)).max(1)
+}
+
 /// The break that keeps the last `widows` lines of a paragraph together at
 /// the top of the page after `current_page` (CSS Fragmentation 3 §3.3).
 /// `line_metrics` holds each line's top and bottom relative to the top of
@@ -4024,9 +4034,8 @@ fn avoided_run_ends(
 /// A box tied to the one before it can still be broken inside: the page ends
 /// within it, and the box before it stays with what the page holds of it
 /// (CSS Break 3 §4.4). A paragraph that breaks between its lines holds the
-/// first `orphans` of them, and one with too few lines for `orphans` and
-/// `widows` to let a break fall between them moves whole, so it holds all of
-/// them; what follows the last held line, such as the rest of a box taller than
+/// first `orphans` of them, and one with no more lines than `orphans` moves
+/// whole, so it holds all of them; what follows the last held line, such as the rest of a box taller than
 /// its lines, flows on to the next page, but not the padding and border that
 /// close the box right below it, which would be alone there. The first box of
 /// a block of boxes holds the same. A box that avoids breaks inside it, a box
@@ -4076,9 +4085,7 @@ fn avoided_run_head(
             }
             let total = lines.lines.len();
             let computed = &cascade.computed[current];
-            let breaks_between = i64::try_from(total).is_ok_and(|total| {
-                total >= i64::from(computed.orphans) + i64::from(computed.widows)
-            });
+            let breaks_between = total > computed.orphans.max(1) as usize;
             // A paragraph that cannot move its lines down inside it breaks
             // where they naturally fall, or moves whole when that break
             // leaves too few of them on a side: the box before it cannot
@@ -6088,8 +6095,8 @@ fn avoid_chain_before_last_box(
 /// edges (class C) is not taken while one between lines (class B) honors
 /// `orphans` and `widows`, as in [`closing_edges_move`]. `line_metrics` is as
 /// for [`widows_break_on_next_page`]. `None` when the lines or the edges do
-/// not run past the page end the way that needs, there are too few lines for
-/// both constraints, or the next page cannot hold the lines with the edges.
+/// not run past the page end the way that needs, there are no more lines than
+/// `orphans`, or the next page cannot hold the lines with the edges.
 fn closing_edges_line_move(
     line_metrics: &[(f32, f32)],
     edges: f32,
@@ -6106,18 +6113,19 @@ fn closing_edges_line_move(
     let fits_lines = first_top >= page_start - 0.001
         && first_top < page_end
         && last_bottom <= page_end + 0.001
-        && line_metrics.len() >= orphans + widows;
+        && line_metrics.len() > orphans;
     if !fits_lines || last_bottom + edges <= page_end + 0.001 {
         return None;
     }
     let mut with_edges = line_metrics.to_vec();
     with_edges.last_mut()?.1 += edges;
+    let widows = usable_widows(line_metrics.len(), orphans, widows);
     widows_break_on_next_page(&with_edges, effective_y, current_page, widows, page_origins)
 }
 
 /// Whether the page cannot break inside the block `node_id` at a better place
-/// than before it: it has no box in its flow, or its lines are too few for
-/// `orphans` and `widows` to let a break fall between them, or it is a block
+/// than before it: it has no box in its flow, or it has no more lines than
+/// `orphans`, so that a break cannot fall between them, or it is a block
 /// without padding or border around one box that is as unbreakable.
 fn breaks_only_around(
     document: &super::context::LayoutSession<'_>,
@@ -6139,8 +6147,7 @@ fn breaks_only_around(
                 .is_some_and(|lines| {
                     // Block boxes between the lines are breakable places too.
                     lines.block_line_starts.is_empty()
-                        && i64::try_from(lines.lines.len()).unwrap_or(i64::MAX)
-                            < i64::from(computed.orphans) + i64::from(computed.widows)
+                        && lines.lines.len() <= computed.orphans.max(1) as usize
                 });
         }
         let mut boxes = Vec::new();
@@ -6841,7 +6848,7 @@ impl ParagraphLineFit {
             .count();
         let needs_break = lines_before_break < total_lines;
         let orphans = orphans.max(1) as usize;
-        let widows = widows.max(1) as usize;
+        let widows = usable_widows(total_lines, orphans, widows.max(1) as usize);
         let violates_line_constraints = needs_break
             && (lines_before_break < orphans
                 || total_lines.saturating_sub(lines_before_break) < widows);
