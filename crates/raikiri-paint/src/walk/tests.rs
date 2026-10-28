@@ -5567,14 +5567,21 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
         b: 0,
         a: 255,
     };
-    let gradient = conic_to_peniko(&center_conic, center, current).expect("sweep");
+    let Some(gradient::GradientFill::Brush(gradient, _)) =
+        conic_to_peniko(&center_conic, center, current)
+    else {
+        panic!("expected a sweep brush");
+    };
     assert_eq!(gradient.stops.len(), 8);
     let angle_conic = conic_of(&cascade.computed[angle_id].background_layers()[0].image);
     let default_center = conic_center(&angle_conic.position, positioning);
     assert!((default_center.x - 100.0).abs() < 0.01);
     assert!((default_center.y - 100.0).abs() < 0.01);
-    let angle_gradient =
-        conic_to_peniko(&angle_conic, default_center, current).expect("angle sweep");
+    let Some(gradient::GradientFill::Brush(angle_gradient, _)) =
+        conic_to_peniko(&angle_conic, default_center, current)
+    else {
+        panic!("expected a sweep brush");
+    };
     assert_eq!(angle_gradient.stops.len(), 8);
 }
 
