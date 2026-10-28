@@ -2472,10 +2472,11 @@ fn layout_vertical_block_child(
         height: Some(inline_basis),
     };
     let shares_context = shares_vertical_root_context(tree, node, geometry.axes.writing_mode());
-    // A horizontal child with an auto width is an orthogonal flow, which takes
-    // the fit-content width in the room the root leaves it (CSS Writing Modes
-    // 4 §7.3.1): the root's content width less the child's margins. A root
-    // whose width depends on its content leaves no definite room.
+    // A horizontal child with an auto or `fit-content` width is an orthogonal
+    // flow, which takes the fit-content width in the room the root leaves it
+    // (CSS Writing Modes 4 §7.3.1): the root's content width less the child's
+    // margins. A root whose width depends on its content leaves no definite
+    // room. A `min-content` width takes the min-content width.
     let width = width.or_else(|| {
         let room = geometry
             .vertical_width
@@ -3108,11 +3109,12 @@ fn orthogonal_content_height(
     Some(OwnWidth::Fixed(output.size.height))
 }
 
-/// The fit-content width of the orthogonal flow `node`, a horizontal child of
-/// a vertical root, in `room`, the root's content width less the margins of
-/// the child, when that is definite. `None` when the child does not take its
-/// width from the room: it has a `width` of its own, or is not a horizontal
-/// box in flow.
+/// The width of the orthogonal flow `node`, a horizontal child of a vertical
+/// root, when its `width` is `auto` or `fit-content`, the fit-content width in
+/// `room`, the root's content width less the margins of the child, when that
+/// is definite; when it is `min-content`, the min-content width. `None` when
+/// the child does not take its width from its content: it has a length,
+/// percentage or `max-content` width, or is not a horizontal box in flow.
 fn orthogonal_fit_content_width(
     tree: &mut LayoutSession<'_>,
     node: usize,
