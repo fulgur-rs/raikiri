@@ -1,4 +1,5 @@
 mod frame_tests;
+mod keyword_width_tests;
 mod scoped_override_tests;
 mod view_tests;
 
@@ -13,6 +14,16 @@ use raikiri_layout_style::values::LengthPercentage;
 /// a `|` is the Ahem text of the child. Returns the rects of the container
 /// and of its children.
 fn layout(container_css: &str, children: &[&str]) -> Vec<(f32, f32, f32, f32)> {
+    layout_after_text(container_css, "", children)
+}
+
+/// [`layout`] of a container that holds the Ahem text `text` before its
+/// children, which a paragraph root does, not a container of blocks only.
+fn layout_after_text(
+    container_css: &str,
+    text: &str,
+    children: &[&str],
+) -> Vec<(f32, f32, f32, f32)> {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
@@ -26,6 +37,9 @@ fn layout(container_css: &str, children: &[&str]) -> Vec<(f32, f32, f32, f32)> {
             .as_str(),
         ),
     );
+    if !text.is_empty() {
+        doc.append_text(container, text);
+    }
     let mut ids = vec![container];
     for css in children {
         let (css, text) = css.split_once('|').unwrap_or((css, ""));
