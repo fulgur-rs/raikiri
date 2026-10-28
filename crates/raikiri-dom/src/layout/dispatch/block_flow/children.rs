@@ -482,12 +482,16 @@ pub(super) fn layout(
             .is_ok()
             .then(|| ctx.page_start_float_floor())
             .flatten();
-        // An `auto` width fills the room, but a table and a compressible
-        // replaced box take their own size then; `stretch` fills it for them
-        // too (CSS Sizing 4 §5.1).
+        // An `auto` width fills the room, but a table, a compressible
+        // replaced box and a button take their own size then; `stretch` fills
+        // it for them too (CSS Sizing 4 §5.1).
         let stretches = match style.size.width.expand() {
             ExpandedDimension::Stretch => true,
-            ExpandedDimension::Auto => !style.item_is_table && !style.is_compressible_replaced(),
+            ExpandedDimension::Auto => {
+                !style.item_is_table
+                    && !style.is_compressible_replaced()
+                    && !tree.nodes[usize::from(child)].is_html_button()
+            }
             _ => false,
         };
         let natural_stretch = content_width - margin.horizontal_axis_sum();

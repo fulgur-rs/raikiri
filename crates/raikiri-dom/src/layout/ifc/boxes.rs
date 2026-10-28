@@ -3221,7 +3221,8 @@ impl OwnWidth {
 
 /// The border-box width a horizontal block child's own `width` gives: a length
 /// or percentage, else the size its sizing keyword measures (see
-/// [`content_keyword_width`]); `None` for `auto`.
+/// [`content_keyword_width`]), or the fit-content size of a button; `None` for
+/// another `auto`.
 fn own_inline_width(
     tree: &mut LayoutSession<'_>,
     node: usize,
@@ -3259,6 +3260,9 @@ fn content_keyword_width(
         parent_size.height
     };
     let room = fit_content_room(tree, node, keyword.expand(), basis, horizontal);
+    // The `auto` width of a button is its fit-content width, where it is
+    // block-level too.
+    let button = horizontal && tree.nodes[node].is_html_button();
     let mut measure = |along: AvailableSpace| {
         let (width, height) = if horizontal {
             (along, AvailableSpace::MaxContent)
@@ -3289,6 +3293,10 @@ fn content_keyword_width(
         ExpandedDimension::MinContent => Some(OwnWidth::Fixed(measure(AvailableSpace::MinContent))),
         ExpandedDimension::MaxContent => Some(OwnWidth::Fixed(measure(AvailableSpace::MaxContent))),
         ExpandedDimension::FitContent => Some(OwnWidth::Fit {
+            min: measure(AvailableSpace::MinContent),
+            max: measure(AvailableSpace::MaxContent),
+        }),
+        ExpandedDimension::Auto if button => Some(OwnWidth::Fit {
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
         }),

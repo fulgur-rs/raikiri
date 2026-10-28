@@ -1312,6 +1312,14 @@ impl Node {
         }
     }
 
+    /// Whether the node is an HTML `<button>`. Its `auto` inline size is the
+    /// fit-content size even where it is block-level (HTML Standard §15.5.3),
+    /// so it does not stretch to the room of its container.
+    #[inline]
+    pub(crate) fn is_html_button(&self) -> bool {
+        self.tag_name() == Some("button") && self.namespace_uri().is_none()
+    }
+
     /// Return a null-namespace element attribute value, if present.
     ///
     /// The `style` attribute is stored separately from the ordinary attribute
