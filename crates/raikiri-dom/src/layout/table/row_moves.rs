@@ -66,10 +66,11 @@ pub(crate) fn follow_moved_rows(
                 move_top(document, part, delta);
             }
         }
-        // A caption above the grid keeps the table's top edge where it is
-        // (an absolutely positioned one is out of the table's flow), and so
-        // may content outside the rows, wrapped in an anonymous row.
-        let top_caption = document.nodes[table].children.iter().any(|&id| {
+        // A caption above the grid, one inside a `display: contents` child of
+        // the table included, keeps the table's top edge where it is (an
+        // absolutely positioned one is out of the table's flow), and so may
+        // content outside the rows, wrapped in an anonymous row.
+        let top_caption = document.children_through_contents(table).iter().any(|&id| {
             !document.nodes[id].is_display_none()
                 && document.nodes[id].display() == DisplayValue::TableCaption
                 && document.nodes[id].caption_side == CaptionSideValue::Top

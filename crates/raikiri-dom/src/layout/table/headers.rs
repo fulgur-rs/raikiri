@@ -131,7 +131,7 @@ impl HeaderRepeats {
                 .iter()
                 .flat_map(|row| row.cells.iter().copied())
                 .any(|cell| super::get_rowspan(document, cell) != 1);
-            let bottom_caption = node.children.iter().any(|&id| {
+            let bottom_caption = document.children_through_contents(table).iter().any(|&id| {
                 document.nodes[id].display() == DisplayValue::TableCaption
                     && document.nodes[id].caption_side
                         == raikiri_style::property::CaptionSideValue::Bottom
