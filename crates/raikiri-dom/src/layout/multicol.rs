@@ -3474,8 +3474,10 @@ impl AncestorFacts {
             || cv.width != ComputedLengthPercentageOrAuto::Auto
             || !matches!(node.position(), PositionValue::Static)
             || has_nonzero_horizontal_margin(cv)
-            // A float shrinks to fit, and a box whose width follows its
-            // height through the aspect ratio does not stretch.
+            // A float shrinks to fit, and so does a button, whose `auto` width
+            // is the fit-content one; a box whose width follows its height
+            // through the aspect ratio does not stretch.
+            || node.is_html_button()
             || AuthoredBox::new(doc, cascade, id).is_floated()
             || width_follows_height(doc, cascade, id)
             || self.out_of_flow_ancestor[id]
