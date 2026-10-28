@@ -1776,23 +1776,18 @@ fn layout_child(
         known_width,
         widths,
     } = fit;
-    with_width_overrides(tree, node, widths, |tree| {
+    let layout = |tree: &mut LayoutSession<'_>| {
         perform_box_layout(tree, node, geometry.width, height_basis, known_width, space)
-    })
-}
-
-/// Run `f` with the widths of the box `node` replaced by `entries`.
-fn with_width_overrides<R>(
-    tree: &mut LayoutSession<'_>,
-    node: usize,
-    entries: Vec<OwnedPropertyOverride>,
-    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
-) -> R {
-    if entries.is_empty() {
-        return f(tree);
+    };
+    if widths.is_empty() {
+        layout(tree)
+    } else {
+        let key = tree.nodes.box_key(node).expect("live box");
+        tree.with_overrides(
+            widths.into_iter().map(|entry| (key, entry)).collect(),
+            layout,
+        )
     }
-    let key = tree.nodes.box_key(node).expect("live box");
-    tree.with_overrides(entries.into_iter().map(|entry| (key, entry)).collect(), f)
 }
 
 /// Lay a float out the way the block algorithm does: resolve its margins
@@ -4434,24 +4429,17 @@ fn content_widths(
     margins_collapse: bool,
 ) -> (f32, f32) {
     let parent_size = Size {
-        width: Some(basis.unwrap_or(0.0)),
+        width: basis,
         height: percent_height,
     };
-    let unresolved = if basis.is_some() {
-        Vec::new()
-    } else {
-        percentage_width_overrides(tree, node, None)
-    };
-    with_width_overrides(tree, node, unresolved, |tree| {
-        content_sizes_on_axis(
-            tree,
-            node,
-            parent_size,
-            margins_x,
-            RequestedAxis::Horizontal,
-            margins_collapse,
-        )
-    })
+    content_sizes_on_axis(
+        tree,
+        node,
+        parent_size,
+        margins_x,
+        RequestedAxis::Horizontal,
+        margins_collapse,
+    )
 }
 
 fn content_heights(

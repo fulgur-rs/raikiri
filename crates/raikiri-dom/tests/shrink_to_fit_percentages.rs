@@ -316,3 +316,68 @@ fn a_percentage_margin_or_padding_of_an_atomic_inline_counts_as_zero_for_a_verti
         );
     }
 }
+
+/// `depth` boxes with `style` inside each other around `bbbb`; the outermost
+/// has the id `a` and the innermost the id `z`.
+fn nested(style: &str, depth: usize) -> String {
+    (0..depth).fold(String::from("bbbb"), |inner, level| {
+        let id = if level == depth - 1 {
+            " id=a"
+        } else if level == 0 {
+            " id=z"
+        } else {
+            ""
+        };
+        format!("<div{id} style=\"{style}\">{inner}</div>")
+    })
+}
+
+#[test]
+fn nested_percentage_width_boxes_each_take_half_of_the_one_around_them() {
+    // Every box counts as `auto` for the container, which is 60px wide; the
+    // boxes then halve the width one after the other.
+    check(
+        &format!(
+            "<div id=r style=\"float:left\">aa{}</div>",
+            nested("display:inline-block;width:50%", 3)
+        ),
+        &[
+            ("r", (8.0, 8.0, 60.0, 10.0)),
+            ("a", (28.0, 8.0, 30.0, 10.0)),
+            ("z", (28.0, 8.0, 7.5, 10.0)),
+        ],
+    );
+    check(
+        &format!(
+            "<div id=r style=\"float:left\">aa{}</div>",
+            nested("float:left;width:50%", 3)
+        ),
+        &[
+            ("r", (8.0, 8.0, 60.0, 10.0)),
+            ("a", (8.0, 8.0, 30.0, 10.0)),
+            ("z", (8.0, 8.0, 7.5, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_chain_of_nested_percentage_width_boxes_is_laid_out_in_a_time_that_grows_slowly() {
+    // Measuring a box must not make the boxes around it forget what they have
+    // measured: the time then multiplies for every box of the chain. The chain
+    // takes milliseconds; with the multiplication it takes about twenty seconds.
+    for style in ["display:inline-block;width:50%", "float:left;width:50%"] {
+        let start = std::time::Instant::now();
+        check(
+            &format!(
+                "<div id=r style=\"float:left\">aa{}</div>",
+                nested(style, 8)
+            ),
+            &[("r", (8.0, 8.0, 60.0, 10.0))],
+        );
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "{style}: the chain took {:?}",
+            start.elapsed()
+        );
+    }
+}
