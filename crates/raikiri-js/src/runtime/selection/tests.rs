@@ -197,7 +197,10 @@ fn range_select_node_contents_rejects_an_invalid_node_handle() {
     let mut rt = rt();
     let node = JsObject::from_proto_and_data(
         Some(protos(rt.context_mut()).node.clone()),
-        NodeHandle { index: usize::MAX },
+        NodeHandle {
+            index: usize::MAX,
+            record: crate::runtime::node_gc::NodeRecord::new(usize::MAX),
+        },
     );
     rt.context_mut()
         .register_global_property(JsString::from("invalidNode"), node, Attribute::all())

@@ -412,12 +412,23 @@ fn write_markup(
         s.host.document_mut().create_detached_fragment()
     })?;
     guard_fragment_budget(context, &fragment)?;
-    let written = with_state(context, |s| {
+    let (written, scripts) = with_state(context, |s| {
         let document = s.host.document_mut();
         document.replace_children_from(holder, &fragment, fragment.root_index());
         let scripts = super::scripts::scripts_below(document, holder).unwrap_or_default();
-        s.written_scripts.extend(scripts);
-        super::stylesheet::inserted_nodes(s.host.document(), holder)
+        (
+            super::stylesheet::inserted_nodes(s.host.document(), holder),
+            scripts,
+        )
+    })?;
+    // Fragment initialization may run GC before the nodes become connected.
+    let _holder_owner = with_state(context, |s| {
+        let owner = s.node_record(holder);
+        for script in scripts {
+            let owner = s.node_record(script);
+            s.written_scripts.push((script, owner));
+        }
+        owner
     })?;
     super::dispatch::sync_event_handlers_in_subtree(context, holder)?;
     super::image::update_images_below(context, holder)?;

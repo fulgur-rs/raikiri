@@ -11,9 +11,10 @@ use boa_engine::{
 use cssparser::{Parser, ParserInput};
 use raikiri_dom::NodeKind;
 
-use super::indexed::{IndexedSource, indexed_object, this_indexed};
+use super::indexed::{IndexedSource, indexed_object_with_retention, this_indexed};
 use super::interfaces::{Members, closure_function, function, protos};
 use super::node::mark_dirty;
+use super::node_gc::NodeObject;
 use super::stylesheet::RuleSlot;
 use super::webidl::{
     arg_node, arg_unsigned_long, dom_string, host_failure, host_failure_with_message, this_element,
@@ -1521,9 +1522,15 @@ fn style_object(
     index: usize,
     computed: bool,
     rule: Option<Rc<RuleSlot>>,
+    parent_rule: Option<JsObject>,
 ) -> JsResult<JsObject> {
     let prototype = protos(context).css_style_declaration.clone();
-    indexed_object(
+    let owners = if rule.is_none() {
+        vec![with_state(context, |state| state.node_record(index))?]
+    } else {
+        Vec::new()
+    };
+    indexed_object_with_retention(
         context,
         prototype,
         StyleSource {
@@ -1531,16 +1538,20 @@ fn style_object(
             computed,
             rule,
         },
+        parent_rule.into_iter().collect(),
+        owners,
     )
 }
 
 fn style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    if let Some(existing) = with_state(context, |s| s.style_objects.get(&index).cloned())? {
+    if let Some(existing) = with_state(context, |s| s.node_object(index, NodeObject::Style))? {
         return Ok(existing.into());
     }
-    let object = style_object(context, index, false, None)?;
-    with_state(context, |s| s.style_objects.insert(index, object.clone()))?;
+    let object = style_object(context, index, false, None, None)?;
+    with_state(context, |s| {
+        s.set_node_object(index, NodeObject::Style, object.clone())
+    })?;
     Ok(object.into())
 }
 
@@ -1559,22 +1570,27 @@ fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> J
             .with_message("argument is not an Element")
             .into());
     }
-    if let Some(existing) = with_state(context, |s| s.computed_style_objects.get(&index).cloned())?
+    if let Some(existing) =
+        with_state(context, |s| s.node_object(index, NodeObject::ComputedStyle))?
     {
         return Ok(existing.into());
     }
-    let object = style_object(context, index, true, None)?;
+    let object = style_object(context, index, true, None, None)?;
     with_state(context, |s| {
-        s.computed_style_objects.insert(index, object.clone())
+        s.set_node_object(index, NodeObject::ComputedStyle, object.clone())
     })?;
     Ok(object.into())
 }
 
 /// The declaration object over the block of the rule (or margin rule)
 /// `slot` points at.
-pub(crate) fn rule_style_object(context: &mut Context, slot: Rc<RuleSlot>) -> JsResult<JsObject> {
+pub(crate) fn rule_style_object(
+    context: &mut Context,
+    slot: Rc<RuleSlot>,
+    parent: JsObject,
+) -> JsResult<JsObject> {
     // A rule's declarations are found through `slot`, not an element.
-    style_object(context, 0, false, Some(slot))
+    style_object(context, 0, false, Some(slot), Some(parent))
 }
 
 /// Defines on an `@page` rule's declaration object the attributes of its

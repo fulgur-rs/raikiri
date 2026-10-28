@@ -1,6 +1,6 @@
 //! `NodeList` and `HTMLCollection` (DOM §4.2.10).
 //!
-//! Both are [`indexed_object`]s. A live collection (`childNodes`,
+//! Both are [`super::indexed::indexed_object`]s. A live collection (`childNodes`,
 //! `children`, `getElementsByTagName`, `getElementsByClassName`) stores
 //! only what it enumerates -- a root node plus a filter -- and resolves it
 //! against the current tree on access, caching the resolved list per
@@ -24,7 +24,7 @@ use boa_engine::property::PropertyDescriptor;
 use boa_engine::{Context, JsNativeError, JsResult, JsSymbol, JsValue};
 use raikiri_dom::Document;
 
-use super::indexed::{IndexedSource, indexed_object, this_indexed};
+use super::indexed::{IndexedSource, indexed_object_with_owners, this_indexed};
 use super::interfaces::{HTML_NS, Members, protos, wrap};
 use super::query::{elements_by_tag_name, elements_with_class_tokens};
 use super::tree::element_children_of;
@@ -264,13 +264,15 @@ impl IndexedSource for HtmlCollectionSource {
 /// A new `NodeList` over `source`.
 pub(crate) fn node_list(context: &mut Context, source: CollectionSource) -> JsResult<JsObject> {
     let prototype = protos(context).node_list.clone();
-    indexed_object(
+    let owners = source_owners(&source, context)?;
+    indexed_object_with_owners(
         context,
         prototype,
         NodeListSource {
             source,
             cache: CollectionCache::default(),
         },
+        owners,
     )
 }
 
@@ -280,14 +282,33 @@ pub(crate) fn html_collection(
     source: CollectionSource,
 ) -> JsResult<JsObject> {
     let prototype = protos(context).html_collection.clone();
-    indexed_object(
+    let owners = source_owners(&source, context)?;
+    indexed_object_with_owners(
         context,
         prototype,
         HtmlCollectionSource {
             source,
             cache: CollectionCache::default(),
         },
+        owners,
     )
+}
+
+fn source_owners(
+    source: &CollectionSource,
+    context: &mut Context,
+) -> JsResult<Vec<boa_gc::Gc<super::node_gc::NodeRecord>>> {
+    with_state(context, |state| match source {
+        CollectionSource::Static(nodes) => nodes.iter().map(|&id| state.node_record(id)).collect(),
+        CollectionSource::ChildNodes(root)
+        | CollectionSource::Children(root)
+        | CollectionSource::TagName(root, _)
+        | CollectionSource::ClassNames(root, _) => vec![state.node_record(*root)],
+        CollectionSource::WindowNamed(_) => {
+            let root = state.host.document().root_index();
+            vec![state.node_record(root)]
+        }
+    })
 }
 
 fn node_list_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

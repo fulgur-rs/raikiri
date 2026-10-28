@@ -124,7 +124,9 @@ pub(crate) fn update_image_data(context: &mut Context, index: usize) -> JsResult
                 .select_image_url(index, &src, selected);
         })?;
     }
+    let owner = with_state(context, |state| state.node_record(index))?;
     let job = NativeJob::new(move |context| {
+        let _owner = &owner;
         finish_request(context, index, request, url.as_deref())?;
         Ok(JsValue::undefined())
     });

@@ -21,6 +21,7 @@ pub(crate) const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 pub(crate) struct NodeHandle {
     #[unsafe_ignore_trace]
     pub index: usize,
+    pub(super) record: boa_gc::Gc<super::node_gc::NodeRecord>,
 }
 
 /// Native data of `DOMException` instances.
@@ -813,17 +814,27 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
 
 /// The unique wrapper for arena node `index`, created on first use.
 pub(crate) fn wrap(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    if let Some(existing) = with_state(context, |s| s.wrappers.get(index).cloned().flatten())? {
+    let record = with_state(context, |s| {
+        s.host
+            .document()
+            .get_node(index)
+            .is_some()
+            .then(|| s.node_graph.record(s.host.document(), index))
+    })?
+    .ok_or_else(|| JsNativeError::typ().with_message("node handle is out of range"))?;
+    let existing = record.state.borrow().wrapper.clone();
+    if let Some(existing) = existing {
         return Ok(existing);
     }
     let proto = prototype_for(context, index)?;
-    let object = JsObject::from_proto_and_data(Some(proto), NodeHandle { index });
-    with_state(context, |s| {
-        if s.wrappers.len() <= index {
-            s.wrappers.resize(index + 1, None);
-        }
-        s.wrappers[index] = Some(object.clone());
-    })?;
+    let object = JsObject::from_proto_and_data(
+        Some(proto),
+        NodeHandle {
+            index,
+            record: record.clone(),
+        },
+    );
+    record.state.borrow_mut().wrapper = Some(object.clone());
     Ok(object)
 }
 

@@ -18,7 +18,7 @@ use super::webidl::{dom_string, node_index, with_state};
 /// `dispatch::invoke` re-checking that an identical
 /// `(type, callback, capture)` entry is still present in the target's list
 /// right before calling it, rather than flagging entries in place.
-#[derive(Clone)]
+#[derive(Clone, boa_engine::Trace, boa_engine::Finalize)]
 pub(crate) struct Listener {
     pub kind: String,
     pub callback: JsObject,
@@ -147,23 +147,24 @@ pub(crate) fn add_event_listener(
         return Ok(JsValue::undefined());
     };
     with_state(context, |s| {
-        let list = s.listeners.entry(key).or_default();
-        let duplicate = list.iter().any(|l| {
-            !l.is_handler
-                && l.kind == kind
-                && JsObject::equals(&l.callback, &callback)
-                && l.capture == capture
-        });
-        if !duplicate {
-            list.push(Listener {
-                kind,
-                callback,
-                capture,
-                once,
-                passive,
-                is_handler: false,
+        s.with_listeners(key, |list| {
+            let duplicate = list.iter().any(|l| {
+                !l.is_handler
+                    && l.kind == kind
+                    && JsObject::equals(&l.callback, &callback)
+                    && l.capture == capture
             });
-        }
+            if !duplicate {
+                list.push(Listener {
+                    kind,
+                    callback,
+                    capture,
+                    once,
+                    passive,
+                    is_handler: false,
+                });
+            }
+        })
     })?;
     Ok(JsValue::undefined())
 }
@@ -190,14 +191,14 @@ pub(crate) fn remove_event_listener(
         return Ok(JsValue::undefined());
     };
     with_state(context, |s| {
-        if let Some(list) = s.listeners.get_mut(&key) {
+        s.with_listeners(key, |list| {
             list.retain(|l| {
                 l.is_handler
                     || !(l.kind == kind
                         && JsObject::equals(&l.callback, &callback)
                         && l.capture == capture)
             });
-        }
+        })
     })?;
     Ok(JsValue::undefined())
 }
