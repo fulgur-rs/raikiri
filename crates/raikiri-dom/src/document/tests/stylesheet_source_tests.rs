@@ -195,3 +195,23 @@ fn native_text_write_resets_render_source_even_when_text_is_unchanged() {
     raikiri_style::walk_style_elements(&doc, |source| sources.push(source.to_owned()));
     assert_eq!(sources, ["p { color: red }"]);
 }
+
+#[test]
+fn cssom_source_keeps_the_generic_walks_descendant_styles_visible() {
+    let mut doc = Document::new();
+    let outer = doc.append_element(Some(0), "style", None::<&str>);
+    let inner = doc.append_element(Some(outer), "style", None::<&str>);
+    doc.append_text(inner, "inner {}");
+    doc.mark_in_document_flags();
+    for source in ["outer {}", ""] {
+        doc.set_stylesheet_source(outer, source.into()).unwrap();
+        let mut actual = Vec::new();
+        raikiri_style::walk_style_elements(&doc, |text| actual.push(text.to_owned()));
+        let mut expected = Vec::new();
+        if !source.is_empty() {
+            expected.push(source);
+        }
+        expected.push("inner {}");
+        assert_eq!(actual, expected);
+    }
+}
