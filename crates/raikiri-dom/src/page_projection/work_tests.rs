@@ -234,7 +234,7 @@ fn multicol_event_clip_queries_do_not_scan_every_line_in_every_column() {
                 })
                 .collect(),
         );
-        doc.fragment_tree.fragments.clear();
+        doc.fragment_tree.replace_finalized_fragments(Vec::new());
         for column in 0..count {
             let rect = FragmentRect {
                 x: column as f32 * 20.0,

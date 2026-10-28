@@ -523,7 +523,7 @@ impl FragmentEdits {
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         if self.arena.len() == self.original {
-            tree.fragment_tree.fragments = self.arena;
+            tree.fragment_tree.replace_finalized_fragments(self.arena);
             return Ok(());
         }
         work.charge(self.arena.len())?;
@@ -555,7 +555,7 @@ impl FragmentEdits {
         for (fragment, source) in updated.iter_mut().zip(sources) {
             fragment.parent = self.parent(source).and_then(|parent| remap[parent]);
         }
-        tree.fragment_tree.fragments = updated;
+        tree.fragment_tree.replace_finalized_fragments(updated);
         Ok(())
     }
 }
