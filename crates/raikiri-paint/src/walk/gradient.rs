@@ -1250,6 +1250,71 @@ pub(super) fn expand_stops(
     expanded
 }
 
+/// Most periods of a repeating conic gradient that are drawn one by one.
+/// A shorter period paints the average color: on the rim of a circle as large
+/// as a page it is about a pixel wide, and the stops of every period would
+/// number in the tens of thousands.
+const MAX_CONIC_PERIODS: f64 = 4096.0;
+
+/// What a repeating conic gradient draws over the one turn of a sweep.
+pub(super) enum RepeatedTurn {
+    /// One color: the last one when every stop shares a position, and the
+    /// average of the stops when the period is too short to tell apart.
+    Solid(Color),
+    /// The stops of the periods that cover the turn, running past both of its
+    /// ends so that the cut at 0 and 1 falls inside a period.
+    Stops(Vec<(f64, DynamicColor)>),
+}
+
+/// Repeat the stops of a repeating conic gradient, from the first to the
+/// last, over the turn a sweep draws (CSS Images 4 §3.5.1, 0 to 1). `stops`
+/// holds at least two.
+///
+/// A sweep takes its stops over one turn from its angle, and its seam stays
+/// at that angle, so a period that is not a divisor of the turn cannot be left
+/// to the brush to repeat. The periods are laid out as stops instead. Each
+/// period ends with its last color and the next begins with its first one at
+/// the same offset, which is a hard transition.
+///
+/// A gradient whose stops all share one position has no period to repeat and
+/// shows its last color, as the stops of a gradient that does not repeat do
+/// past the last one.
+pub(super) fn repeat_over_turn(
+    stops: Vec<(f64, DynamicColor)>,
+    interpolation: &GradientColorInterpolation,
+) -> RepeatedTurn {
+    let (first, (last, last_color)) = (stops[0].0, stops[stops.len() - 1]);
+    let period = last - first;
+    if period <= 0.0 {
+        return RepeatedTurn::Solid(solid_color(last_color));
+    }
+    if period < 1.0 / MAX_CONIC_PERIODS {
+        return RepeatedTurn::Solid(ramp_average_color(&stops, interpolation));
+    }
+    // The first period that starts at or before 0, and the first that ends at
+    // or after 1. A period longer than the turn is the only one.
+    let lowest = (-first / period).floor() as i64;
+    let highest = (((1.0 - last) / period).ceil() as i64).max(lowest);
+    let mut repeated = Vec::with_capacity(stops.len() * (highest - lowest + 1) as usize);
+    for index in lowest..=highest {
+        let start = first + index as f64 * period;
+        // The end is the start of the next period, not a sum that rounds
+        // differently, so that the two stops at the seam share their offset.
+        let end = first + (index + 1) as f64 * period;
+        for (position, &(offset, color)) in stops.iter().enumerate() {
+            let placed = match position {
+                0 => start,
+                _ if position == stops.len() - 1 => end,
+                _ => (start + (offset - first)).clamp(start, end),
+            };
+            // Rounding never lets an offset run backward.
+            let held = repeated.last().map_or(placed, |&(previous, _)| previous);
+            repeated.push((placed.max(held), color));
+        }
+    }
+    RepeatedTurn::Stops(repeated)
+}
+
 /// Some stop lies outside the offsets 0 to 1 that a sweep draws.
 pub(super) fn any_outside_turn(stops: &[(f32, DynamicColor)]) -> bool {
     stops

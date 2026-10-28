@@ -2259,3 +2259,212 @@ fn conic_stops_millions_of_turns_away_are_cut_without_walking_the_range() {
         2,
     );
 }
+
+/// The pixels that [`ring_probes`] reads: on a circle of radius 80 around the
+/// middle of a 200x200 box, at 5, 50, 95, 140, 185, 230, 275 and 320 degrees
+/// clockwise from the top.
+const RING_POINTS: [(u32, u32); 8] = [
+    (107, 20),
+    (161, 49),
+    (180, 107),
+    (151, 161),
+    (93, 180),
+    (39, 151),
+    (20, 93),
+    (49, 39),
+];
+
+/// Pixels of a 200x200 conic gradient at [`RING_POINTS`].
+fn ring_probes(style: &str) -> [[u8; 3]; 8] {
+    let rgba = raster_conic(style, 200, 200);
+    RING_POINTS.map(|(x, y)| {
+        let [red, green, blue, _] = pixel(&rgba, 200, x, y);
+        [red, green, blue]
+    })
+}
+
+/// Assert that [`ring_probes`] of `style` are within `slack` levels of
+/// `expected`, the colors Chromium draws.
+fn assert_ring_probes(style: &str, expected: [[u8; 3]; 8], slack: u8) {
+    let probes = ring_probes(style);
+    for (index, (got, want)) in probes.iter().zip(expected).enumerate() {
+        for channel in 0..3 {
+            assert!(
+                got[channel].abs_diff(want[channel]) <= slack,
+                "{style}: probe {index} is {got:?}, expected {want:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_repeating_conic_gradient_repeats_a_period_that_divides_the_turn() {
+    const RED: [u8; 3] = [255, 0, 0];
+    const BLUE: [u8; 3] = [0, 0, 255];
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(red 0 25%, blue 25% 50%)",
+        [RED, RED, BLUE, BLUE, RED, RED, BLUE, BLUE],
+        0,
+    );
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red 0 10deg, blue 10deg 20deg)",
+        [RED, BLUE, BLUE, RED, RED, RED, BLUE, RED],
+        0,
+    );
+}
+
+#[test]
+fn a_repeating_conic_gradient_repeats_a_period_that_does_not_divide_the_turn() {
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red, blue 20%)",
+        [
+            [236, 0, 20],
+            [76, 0, 179],
+            [173, 0, 83],
+            [14, 0, 241],
+            [111, 0, 144],
+            [207, 0, 48],
+            [47, 0, 208],
+            [141, 0, 114],
+        ],
+        2,
+    );
+    // The stops start and end inside the turn, so the first period begins
+    // before the turn does.
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red 10%, blue 30%)",
+        [
+            [109, 0, 147],
+            [203, 0, 51],
+            [45, 0, 210],
+            [141, 0, 114],
+            [239, 0, 17],
+            [79, 0, 175],
+            [175, 0, 80],
+            [14, 0, 241],
+        ],
+        2,
+    );
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red -10%, blue 15%)",
+        [
+            [138, 0, 118],
+            [9, 0, 245],
+            [138, 0, 117],
+            [11, 0, 244],
+            [140, 0, 115],
+            [12, 0, 242],
+            [140, 0, 115],
+            [11, 0, 244],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_repeating_conic_gradient_starts_its_periods_at_the_from_angle() {
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(from 45deg in srgb, red, blue 30%)",
+        [
+            [9, 0, 247],
+            [242, 0, 13],
+            [136, 0, 119],
+            [31, 0, 224],
+            [181, 0, 75],
+            [74, 0, 181],
+            [223, 0, 32],
+            [115, 0, 140],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_repeating_conic_gradient_with_a_period_beyond_the_turn_shows_the_start_of_its_ramp() {
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red 0%, blue 150%)",
+        [
+            [253, 0, 3],
+            [231, 0, 24],
+            [210, 0, 45],
+            [189, 0, 66],
+            [168, 0, 87],
+            [146, 0, 108],
+            [125, 0, 130],
+            [104, 0, 151],
+        ],
+        2,
+    );
+}
+
+#[test]
+fn a_repeating_conic_gradient_repeats_its_transition_hints_and_hue_turns() {
+    // The hint sits three quarters of the way along each period of 40%, so
+    // the mix at a fraction `t` of it is `t` raised to ln(1/2) / ln(3/4)
+    // (CSS Images 3 §3.4.2). Chromium approximates that curve with a few
+    // stops and is several levels off it, so the exact curve is the reference.
+    let probes =
+        ring_probes("background-image: repeating-conic-gradient(in srgb, red, 30%, blue 40%)");
+    let exponent = 0.5f64.ln() / 0.75f64.ln();
+    for ((x, y), got) in RING_POINTS.into_iter().zip(probes) {
+        let turns = (f64::from(x) + 0.5 - 100.0).atan2(100.0 - (f64::from(y) + 0.5))
+            / std::f64::consts::TAU;
+        let fraction = (turns.rem_euclid(1.0) % 0.4) / 0.4;
+        let mix = fraction.powf(exponent);
+        let want = [(255.0 * (1.0 - mix)).round(), 0.0, (255.0 * mix).round()];
+        for channel in 0..3 {
+            assert!(
+                (f64::from(got[channel]) - want[channel]).abs() <= 2.0,
+                "hint probe at {x},{y} is {got:?}, expected {want:?}"
+            );
+        }
+    }
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(in oklch longer hue, red 0, blue 25%)",
+        [
+            [249, 29, 0],
+            [0, 149, 39],
+            [249, 28, 0],
+            [0, 149, 30],
+            [250, 24, 0],
+            [0, 149, 19],
+            [250, 24, 0],
+            [0, 149, 32],
+        ],
+        12,
+    );
+}
+
+#[test]
+fn a_repeating_conic_gradient_of_one_position_shows_its_last_color() {
+    // Nothing repeats, so the gradient is the color after its last stop.
+    assert_ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red 10%, blue 10%)",
+        [[0, 0, 255]; 8],
+        0,
+    );
+}
+
+#[test]
+fn a_repeating_conic_gradient_of_periods_too_short_to_tell_apart_shows_their_average() {
+    // 18000 periods around the turn.
+    let probes = ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red 0 0.01deg, blue 0.01deg 0.02deg)",
+    );
+    for probe in probes {
+        assert!(probe[0].abs_diff(128) <= 1 && probe[1] == 0 && probe[2].abs_diff(128) <= 1);
+    }
+}
+
+#[test]
+fn a_repeating_conic_gradient_of_many_periods_is_drawn_period_by_period() {
+    // 1800 periods around the turn, one for each fifth of a degree: the ring
+    // probes land in them one after the other, red then blue.
+    let probes = ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red 0 0.1deg, blue 0.1deg 0.2deg)",
+    );
+    for probe in probes {
+        assert!(probe == [255, 0, 0] || probe == [0, 0, 255], "{probe:?}");
+    }
+    assert!(probes.contains(&[255, 0, 0]) && probes.contains(&[0, 0, 255]));
+}
