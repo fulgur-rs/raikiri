@@ -319,3 +319,43 @@ fn compact_cache_preserves_a_cached_failure_until_mutation() {
     document.append_element(Some(0), "div", None::<&str>);
     assert!(document.shared_compact_counter_snapshots(&computed).is_ok());
 }
+
+#[test]
+fn compact_factory_rejects_an_initialization_that_exceeds_the_allowance() {
+    let mut document = Document::new();
+    document.append_element(Some(0), "div", Some("counter-reset: c 1"));
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let computed = cascade(&document, &rules).unwrap();
+    let mut budget = CounterSnapshotBudget::new(0);
+    let error =
+        compact_counter_snapshots_with_budget(&document, &computed, &mut budget).unwrap_err();
+    assert_eq!(error.limit, 0);
+    assert!(error.actual > 0);
+    assert_eq!(budget.estimated_bytes, 0);
+}
+
+#[test]
+fn compact_factory_reports_budget_failure_during_final_scope_cleanup() {
+    let mut document = Document::new();
+    let node = document.append_element(Some(0), "div", Some("counter-reset: a 1 b 2 c 3 d 4"));
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let computed = cascade(&document, &rules).unwrap();
+    let complete = compact_counter_snapshots(&document, &computed).unwrap();
+    for (name, value) in [("a", 1), ("b", 2), ("c", 3), ("d", 4)] {
+        assert_eq!(
+            complete.get(node).unwrap().values_for(name).last(),
+            Some(value)
+        );
+    }
+    // The final root exit pops the four names after the last consumer snapshot.
+    // Its persistent-map growth must still reject the whole construction.
+    let required = complete.estimated_bytes();
+    let mut budget = CounterSnapshotBudget::new(required - 1);
+    let error =
+        compact_counter_snapshots_with_budget(&document, &computed, &mut budget).unwrap_err();
+    assert_eq!(error.limit, required - 1);
+    assert_eq!(error.actual, required);
+    assert!(budget.estimated_bytes < required);
+}

@@ -60,7 +60,7 @@ impl State {
             } else if let Some(entry) = self.sources.pop_front() {
                 entry.bytes
             } else {
-                break;
+                break; // cov:ignore: empty queues imply self.bytes == 0, and incoming bytes were already bounded by MAX_BYTES
             };
             self.bytes -= removed;
         }

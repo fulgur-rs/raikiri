@@ -285,7 +285,7 @@ fn insert_annotation_pieces(
     #[cfg(test)]
     if !annotations.is_empty() {
         work::record(|work| work.fallback_lines += 1);
-    }
+    } // cov:ignore: Compiler region on a closing brace; the telemetry body is covered.
     // Where the next annotation of each segment goes.
     let mut ends: HashMap<usize, usize> = HashMap::new();
     for (container, own) in annotations {

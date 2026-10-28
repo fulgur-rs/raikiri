@@ -30,11 +30,11 @@ pub(super) fn plan(
 ) -> Option<Batch> {
     let mut containers = HashMap::with_capacity(annotations.len());
     for (container, _) in annotations {
-        #[cfg(test)]
+        #[cfg(test)] // cov:ignore: Non-executable test-only attribute.
         super::work::record(|work| work.inspected += 1);
         let next = containers.len();
         containers.entry(*container).or_insert(next);
-    }
+    } // cov:ignore: Compiler loop-closing region; both the counter and entry insertion are covered.
     let mut seen = vec![false; containers.len()];
     let mut ends = vec![None; containers.len()];
     let mut nodes: HashMap<usize, Node> = HashMap::with_capacity(line.len());
@@ -104,7 +104,7 @@ pub(super) fn plan(
         super::work::record(|work| work.inspected += 1);
         let slot = &mut slots[end?];
         if slot.replace(container).is_some() {
-            return None;
+            return None; // cov:ignore: Defensive check; distinct first groups end at strictly increasing slots.
         }
     }
     Some(Batch {
@@ -127,10 +127,10 @@ impl Batch {
             if bucket.is_empty() {
                 *bucket = own;
             } else {
-                #[cfg(test)]
+                #[cfg(test)] // cov:ignore: Non-executable test-only attribute.
                 super::work::record(|work| work.copied += own.len());
                 bucket.append(&mut own);
-            }
+            } // cov:ignore: Compiler closing-brace region; both the counter and bucket append are covered.
         }
         let line = pieces.split_off(line_start);
         pieces.reserve(line.len() + self.extra);

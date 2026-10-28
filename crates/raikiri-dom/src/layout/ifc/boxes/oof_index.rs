@@ -100,11 +100,11 @@ impl StaticFallbackIndex {
             tests::OOF_METADATA_VISITS.with(|visits| visits.set(visits.get() + 1));
             let through = count.min(lines.block_line_starts.len());
             while threshold <= through {
-                #[cfg(test)]
+                #[cfg(test)] // cov:ignore: non-executable test attribute.
                 tests::OOF_METADATA_VISITS.with(|visits| visits.set(visits.get() + 1));
                 generated[threshold] = Some(first);
                 threshold += 1;
-            }
+            } // cov:ignore: synthetic loop edge; its body has positive coverage.
         }
         let offset = |before: Option<usize>, after: Option<usize>| {
             let Some(block) = before else {

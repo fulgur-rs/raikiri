@@ -497,3 +497,68 @@ fn repeated_pair_after_another_pair_and_overflowing_row_end_keep_full_borders() 
         });
     }
 }
+
+#[test]
+fn vertical_segment_allowance_is_shared_across_row_slabs() {
+    let grid = synthetic_grid(
+        2,
+        2,
+        vec![
+            make_cell(1, 0, 0, 2, 1, Dimension::auto()),
+            make_cell(2, 1, 0, 2, 1, Dimension::auto()),
+        ],
+    );
+    let index = super::super::CellIndex::new(&grid);
+    let complete = super::super::boundaries::BoundarySegments::new_bounded(&grid, &index, 4)
+        .expect("four vertical edges fit the allowance");
+    assert_eq!(complete.vertical.len(), 4);
+    assert_eq!(complete.horizontal.len(), 1);
+    assert!(super::super::boundaries::BoundarySegments::new_bounded(&grid, &index, 2).is_none());
+}
+
+#[test]
+fn horizontal_segment_allowance_rejects_partial_gapped_rows() {
+    let grid = synthetic_grid(
+        3,
+        3,
+        (0..3)
+            .map(|row| make_cell(row as usize, row, 1, 1, 1, Dimension::auto()))
+            .collect(),
+    );
+    let index = super::super::CellIndex::new(&grid);
+    let complete = super::super::boundaries::BoundarySegments::new_bounded(&grid, &index, 2)
+        .expect("two horizontal pairs fit the allowance");
+    assert!(complete.vertical.is_empty());
+    assert_eq!(
+        complete
+            .horizontal
+            .iter()
+            .map(|segment| (segment.boundary, segment.leading, segment.trailing))
+            .collect::<Vec<_>>(),
+        [(1, 0, 1), (2, 1, 2)]
+    );
+    assert!(super::super::boundaries::BoundarySegments::new_bounded(&grid, &index, 1).is_none());
+}
+
+#[test]
+fn row_run_allowance_limits_the_union_of_tree_levels() {
+    let grid = synthetic_grid(
+        2,
+        5,
+        vec![
+            make_cell(1, 0, 1, 1, 2, Dimension::auto()),
+            make_cell(2, 0, 3, 1, 1, Dimension::auto()),
+        ],
+    );
+    let index = super::super::CellIndex::new(&grid);
+    let complete = index.row_runs(0, 2).expect("both disjoint runs fit");
+    assert_eq!(
+        complete
+            .iter()
+            .map(|run| (run.start, run.end, run.cell))
+            .collect::<Vec<_>>(),
+        [(1, 2, 0), (3, 4, 1)]
+    );
+    assert_eq!(index.row_runs(1, 1).unwrap().len(), 1);
+    assert!(index.row_runs(0, 1).is_none());
+}

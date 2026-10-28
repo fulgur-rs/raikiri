@@ -4,6 +4,37 @@ use raikiri_style::{PseudoElem, StyleNodeId, build_rule_tree, cascade};
 use raikiri_traits::Symbol;
 
 #[test]
+fn owned_and_compact_alt_text_keep_counter_attribute_and_empty_semantics() {
+    let mut document = Document::new();
+    let style = document.append_element(Some(0), "style", None::<&str>);
+    document.append_text(
+        style,
+        "div { counter-reset: c 7 } div::before { content: 'visible' / attr(data-label) ':' counter(c); counter-increment: c 2 } div::after { content: 'visible' / '' }",
+    );
+    let node = document.append_element(Some(0), "div", None::<&str>);
+    document.set_element_attributes(node, vec![("data-label".into(), "label".into())]);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let computed = cascade(&document, &rules).unwrap();
+    let owned = crate::target::counter_snapshots(&document, &computed).unwrap();
+    let compact = crate::target::compact_counter_snapshots(&document, &computed).unwrap();
+    for (pseudo, expected) in [
+        (PseudoElem::Before, Some("label:9")),
+        (PseudoElem::After, Some("")),
+        (PseudoElem::Marker, None),
+    ] {
+        assert_eq!(
+            generated_alt_text(&document, &computed, node, pseudo, &owned).as_deref(),
+            expected
+        );
+        assert_eq!(
+            generated_alt_text_compact(&document, &computed, node, pseudo, &compact).as_deref(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn generated_ids_round_trip_and_stay_above_document_ids() {
     for element in [0, 1, 42, usize::MAX >> 4] {
         for pseudo in [

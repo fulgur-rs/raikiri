@@ -189,6 +189,7 @@ impl CompactBuilder {
         let id = if let Some(&id) = self.snapshots.names.get(name) {
             id
         } else {
+            // cov:ignore: public rendering's 128 MiB budget rejects growth before u32 name IDs overflow; larger private test budgets need impractical billions of names
             let id = u32::try_from(self.snapshots.names.len()).map_err(|_| {
                 CounterSnapshotLimitExceeded {
                     limit: self.budget.limit,
@@ -288,7 +289,7 @@ impl CompactBuilder {
             if let MapEntry::Branch { bit, mut children } = self.snapshots.maps[ancestor] {
                 children[direction] = root;
                 root = self.add_map(MapEntry::Branch { bit, children })?;
-            }
+            } // cov:ignore: path entries are recorded only from Branch nodes, and arena entries are immutable
         }
         Ok(root)
     }
