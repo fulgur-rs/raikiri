@@ -109,7 +109,8 @@ impl<'a> StreamPage<'a> {
     /// is not the box's last spans only the content that arrived so far.
     /// Its top, its width and everything painted on the page match a layout
     /// of the whole document; a box whose painting turns on its whole
-    /// height, such as one turned by a `transform`, is not delivered before
+    /// height, such as one turned by a `transform`, or the root element's
+    /// when images of the canvas background fill it, is not delivered before
     /// that height is known.
     pub fn page(&self) -> Page<'a> {
         let page = self.layout.page_at(self.index as usize);

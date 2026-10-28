@@ -353,6 +353,154 @@ fn one_long_paragraph_lays_out_the_whole_document() {
     assert_eq!(resumed, 0);
 }
 
+/// The root element's border box on every page, in the order the sink saw
+/// the pages.
+#[derive(Clone, Default)]
+struct RootBoxes(Rc<RefCell<Vec<raikiri_traits::PaintRect>>>);
+
+impl PageSink for RootBoxes {
+    type Output = StreamSummary;
+
+    fn page(
+        &mut self,
+        page: StreamPage<'_>,
+        _events: Vec<ConsumerPropertyEvent>,
+    ) -> std::io::Result<()> {
+        let root = page.page().root_box().expect("a root box");
+        self.0.borrow_mut().push(root.border_box);
+        Ok(())
+    }
+
+    fn finish(self, summary: StreamSummary) -> std::io::Result<StreamSummary> {
+        Ok(summary)
+    }
+}
+
+/// What streaming `html` in `chunk`-byte pieces delivered of the root box.
+struct StreamedRoots {
+    /// The root box on each page.
+    boxes: Vec<raikiri_traits::PaintRect>,
+    /// How many layouts resumed after delivered pages.
+    resumed: usize,
+    /// How many pages were delivered before the input ended.
+    early: u32,
+}
+
+fn stream_root_boxes(html: &str, chunk: usize) -> StreamedRoots {
+    let resources = RenderResources::new();
+    let roots = RootBoxes::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        roots.clone(),
+    )
+    .checkpoint_bytes(chunk);
+    for piece in html.as_bytes().chunks(chunk) {
+        stream.feed(piece).expect("feed");
+    }
+    let early = stream.progress.delivered;
+    let resumed = stream.settings.resumed.get();
+    let StreamStatus::Completed(_) = stream.finish().expect("finish") else {
+        panic!("aborted");
+    };
+    let boxes = roots.0.borrow().clone();
+    StreamedRoots {
+        boxes,
+        resumed,
+        early,
+    }
+}
+
+/// The root element's border box on every page of a batch layout.
+fn batch_root_boxes(html: &str) -> Vec<raikiri_traits::PaintRect> {
+    let resources = RenderResources::new();
+    let doc = crate::parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
+    let LayoutStatus::Completed(laid_out) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("aborted");
+    };
+    laid_out
+        .pages()
+        .map(|page| page.root_box().expect("a root box").border_box)
+        .collect()
+}
+
+/// Several pages of paragraphs under `canvas` as the style of the document.
+fn long_document(canvas: &str) -> String {
+    format!(
+        "<!doctype html><style>{canvas}</style><body>{}</body>",
+        paragraphs(90, 60)
+    )
+}
+
+/// The streamed root boxes equal the batch layout's: their start and
+/// width, and with `whole_height` their height too.
+fn assert_root_boxes_like_batch(html: &str, whole_height: bool) -> StreamedRoots {
+    let expected = batch_root_boxes(html);
+    assert!(expected.len() > 4, "the fixture spans several pages");
+    let streamed = stream_root_boxes(html, 2048);
+    assert_eq!(streamed.boxes.len(), expected.len());
+    for (index, (streamed, batch)) in streamed.boxes.iter().zip(&expected).enumerate() {
+        let shown = |rect: &raikiri_traits::PaintRect| {
+            let height = if whole_height { rect.height } else { 0.0 };
+            (rect.x, rect.y, rect.width, height)
+        };
+        assert_eq!(shown(streamed), shown(batch), "root box on page {index}");
+    }
+    streamed
+}
+
+/// A canvas image the size of the root's box is not delivered before the
+/// whole height of the root is known.
+#[test]
+fn a_canvas_gradient_over_the_root_streams_like_batch() {
+    let html = long_document("html { background: linear-gradient(red, blue) }");
+    let streamed = assert_root_boxes_like_batch(&html, true);
+    assert_eq!(streamed.early, 0);
+}
+
+/// The body's background reaches the canvas when the root has none.
+#[test]
+fn a_canvas_gradient_from_the_body_streams_like_batch() {
+    let html = long_document("body { background: linear-gradient(red, blue) }");
+    let streamed = assert_root_boxes_like_batch(&html, true);
+    assert_eq!(streamed.early, 0);
+}
+
+/// Tiles start from the top of the root's box, which a layout resumed after
+/// the delivered pages would place at its own start.
+#[test]
+fn a_tiled_canvas_image_streams_like_batch_without_resuming() {
+    let html = long_document(
+        "html { background: linear-gradient(red 50%, blue 50%); background-size: 100px 30px }",
+    );
+    // The tiles do not take the root's height, which the early pages only
+    // know in part.
+    let streamed = assert_root_boxes_like_batch(&html, false);
+    assert_eq!(streamed.resumed, 0);
+    assert!(streamed.early > 0, "the pages are delivered as they end");
+}
+
+/// A canvas image fixed to the page area, and a canvas that shows only a
+/// color, do not use the root's box.
+#[test]
+fn a_canvas_that_ignores_the_root_box_still_resumes() {
+    for canvas in [
+        "html { background: linear-gradient(red, blue) fixed }",
+        "html { background: #def }",
+    ] {
+        let streamed = stream_root_boxes(&long_document(canvas), 2048);
+        assert!(streamed.resumed > 0, "{canvas}");
+        assert!(streamed.early > 0, "{canvas}");
+    }
+}
+
 /// The parsed `html`, and the first page start at or after page `page`
 /// that its batch layout could resume at.
 fn resume_point_of(html: &str, page: u32) -> (HtmlDocument, ResumePoint) {

@@ -32,6 +32,9 @@
 //!   containers here, and an open box of the first kind above that belongs
 //!   to a run holds from the start of that run, since its size reflows the
 //!   lines before it;
+//! - the document root, when the images of the canvas background fill or
+//!   are placed in the root element's box along all the pages, which only
+//!   the end of the input gives the height of;
 //! - the document root, when a selector's result can change as later
 //!   siblings or descendants arrive (see
 //!   [`raikiri_style::RuleTree::has_forward_dependent_selectors`]); the
@@ -45,7 +48,7 @@
 //! page boundary between them is not final either. That includes content
 //! before an ancestor the frontier node starts.
 
-use raikiri_dom::Document;
+use raikiri_dom::{CanvasBoxUse, Document, canvas_box_use};
 use raikiri_style::computed::ComputedValues;
 use raikiri_style::property::{
     BreakBetween, BreakInside, ColumnCountValue, DisplayValue, FloatValue, PositionValue,
@@ -79,6 +82,11 @@ pub(crate) fn stable_frontier(
 ) -> Frontier {
     let root = document.root_index();
     if forward_dependent_selectors {
+        return Frontier::At(root);
+    }
+    // The root's box, which the images of the canvas are sized and placed
+    // by, ends where the content that arrived ends until the input ends.
+    if canvas_box_use(document, cascade) == CanvasBoxUse::Extent {
         return Frontier::At(root);
     }
     let open: Vec<usize> = open_elements(document, traced)

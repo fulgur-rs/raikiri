@@ -23,7 +23,7 @@ use raikiri_dom::image_geometry::{
     DeviceGrid, VisibleArea, background_image_dimensions, background_tiles, position_offset,
     rounded_background_tile_size,
 };
-use raikiri_dom::{CounterSnapshots, Document, StandaloneAlign};
+use raikiri_dom::{CounterSnapshots, Document, StandaloneAlign, canvas_background_owner};
 use raikiri_layout_geometry::{BoxLayout, Edges};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor, BorderStyle,
@@ -605,23 +605,6 @@ fn page_background_color(
         pixel_source,
     )
     .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
-}
-
-fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Option<usize> {
-    let html_id = find_html(document)?;
-    let html = cascade.computed.get(html_id)?;
-    let html_is_transparent = !html.has_background_image() && html.background_color.a == 0;
-    if !html_is_transparent {
-        return Some(html_id);
-    }
-
-    // Only a `body` propagates its background, not a `frameset` (CSS
-    // Backgrounds 3, 2.11.2).
-    let body_id = raikiri_dom::paint_rules::find_paint_root(document)
-        .filter(|&id| document.get_node(id).and_then(|node| node.tag_name()) == Some("body"))?;
-    let body = cascade.computed.get(body_id)?;
-    let body_has_background = body.has_background_image() || body.background_color.a != 0;
-    body_has_background.then_some(body_id)
 }
 
 fn canvas_background_color(

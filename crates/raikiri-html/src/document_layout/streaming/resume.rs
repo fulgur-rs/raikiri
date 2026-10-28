@@ -24,6 +24,8 @@
 //!   the page's top edge, so that the relayout can begin its page there;
 //! - no content of a page from the start on belongs to those siblings, as
 //!   the tail of a float or of an absolutely positioned box would;
+//! - the images of the canvas background are not tiled from the start of the
+//!   root element's box, which the relayout would start where it resumes;
 //! - the document has no running elements and no `target-counter()`,
 //!   `target-counters()` or `target-text()`, which look up the pages of
 //!   earlier content;
@@ -31,8 +33,8 @@
 //!   whose pages are checked against the delivered ones, unless it is
 //!   already left out for landing on a delivered page.
 
-use raikiri_dom::Document;
 use raikiri_dom::generated_content::generated_origin;
+use raikiri_dom::{CanvasBoxUse, Document, canvas_box_use};
 use raikiri_style::computed::ComputedValues;
 use raikiri_style::property::{ContentComponent, DisplayValue, FloatValue, PositionValue};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto};
@@ -134,6 +136,9 @@ pub(super) fn resume_point(
 pub(super) fn can_resume(document: &HtmlDocument, late_nodes_from: Option<usize>) -> bool {
     let cascade = &document.cascade;
     let dom = &document.uncascaded.dom;
+    if canvas_box_use(dom, cascade) != CanvasBoxUse::None {
+        return false;
+    }
     let looks_up_targets = |computed: &ComputedValues| {
         computed.content.iter().any(|component| {
             matches!(
