@@ -841,6 +841,65 @@ fn fit_content_inline_size(
     )
 }
 
+/// `inputs` for the orthogonal flow `node_id`, a horizontal child of a vertical
+/// paragraph root, with its fit-content width as the known width when its
+/// `width` is `auto` (CSS Writing Modes 4 §7.3.1). The room is the definite
+/// width `inputs` offer, net of the child's margins already; with none, the
+/// width of the initial containing block less the margins, the page area here.
+/// Fixing the width makes the lines of the child break at the room instead of
+/// staying whole, as they do when the child is measured under its max-content
+/// size. `measure` lays the child out under the probe inputs it is given.
+pub(crate) fn with_orthogonal_fit_content(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    mut measure: impl FnMut(&mut LayoutSession<'_>, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if inputs.known_dimensions.width.is_some()
+        || inputs.sizing_mode != SizingMode::InherentSize
+        || !flows_horizontally(tree, idx)
+        || tree.nodes[idx].layout_position() == Position::Absolute
+        || !tree.physical_style(idx).size().width.is_auto()
+    {
+        return inputs;
+    }
+    let room = match inputs.available_space.width {
+        AvailableSpace::Definite(room) => room,
+        _ => {
+            // Without a page area there is no room to limit the child to.
+            let page_width = tree.fixed_page_area.unwrap_or_default().0;
+            let page_width = (page_width > 0.0).then_some(page_width);
+            let margin = tree
+                .physical_style(idx)
+                .margin()
+                .map(|margin| margin.resolve_or_zero(inputs.parent_size.height));
+            (page_width.unwrap_or(f32::INFINITY) - margin.left - margin.right).max(0.0)
+        }
+    };
+    let width = fit_content_size(
+        tree,
+        AvailableSpace::Definite(room),
+        0.0,
+        |tree, available| measure(tree, probe_inputs(inputs, available)).size.width,
+    );
+    LayoutInput {
+        known_dimensions: Size {
+            width: Some(width),
+            ..inputs.known_dimensions
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            ..inputs.known_dimensions_are_definite
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(width),
+            ..inputs.available_space
+        },
+        ..inputs
+    }
+}
+
 /// `inputs` of the flex or grid container `node_id` on its own axes, with
 /// the fit-content inline size as the width when the container is an atomic
 /// inline whose inline size is `auto`. `algorithm` is the container's layout

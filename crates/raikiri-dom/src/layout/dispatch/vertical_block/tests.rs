@@ -369,7 +369,8 @@ fn horizontal_child_of_a_vertical_container_is_as_wide_as_its_widest_child() {
 
 /// The rect of the horizontal child, styled `child_css`, of a vertical
 /// container styled `container_css`, which holds one `display:block` div
-/// styled with each entry of `items`.
+/// styled with each entry of `items`. The part of an entry after a `|` is the
+/// Ahem text of the div.
 fn horizontal_child_rect(
     container_css: &str,
     child_css: &str,
@@ -381,7 +382,12 @@ fn horizontal_child_rect(
     let container = doc.append_element(
         Some(body),
         "div",
-        Some(format!("display:block;{container_css}").as_str()),
+        Some(
+            format!(
+                "display:block;font-family:Ahem;font-size:10px;line-height:10px;{container_css}"
+            )
+            .as_str(),
+        ),
     );
     let child = doc.append_element(
         Some(container),
@@ -389,11 +395,15 @@ fn horizontal_child_rect(
         Some(format!("display:block;writing-mode:horizontal-tb;{child_css}").as_str()),
     );
     for css in items {
-        doc.append_element(
+        let (css, text) = css.split_once('|').unwrap_or((css, ""));
+        let item = doc.append_element(
             Some(child),
             "div",
             Some(format!("display:block;{css}").as_str()),
         );
+        if !text.is_empty() {
+            doc.append_text(item, text);
+        }
     }
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -444,6 +454,150 @@ fn horizontal_child_content_wraps_in_the_width_its_margins_leave() {
         ),
         (38.0, 8.0, 163.0, 30.0)
     );
+}
+
+/// Twelve words of two letters: 350px wide in Ahem at 10px, and 20px at the
+/// narrowest.
+const WORDS: &str = "aa bb cc dd ee ff gg hh ii jj kk ll";
+
+#[test]
+fn horizontal_text_child_of_a_vertical_container_wraps_in_the_container_width() {
+    // The fit-content width of the child is the 100px the container leaves it
+    // (CSS Writing Modes 4 §7.3.1), so the twelve words break into four lines
+    // instead of staying on one.
+    for container in ["vertical-rl", "vertical-lr"] {
+        let rects = layout(
+            &format!("writing-mode:{container};width:100px;height:200px"),
+            &[&format!("writing-mode:horizontal-tb|{WORDS}")],
+        );
+        assert_eq!(rects[1], (8.0, 8.0, 100.0, 40.0), "{container}");
+    }
+}
+
+#[test]
+fn horizontal_text_child_of_a_vertical_container_is_no_wider_than_its_text() {
+    // Three words fit the 200px room, so the child is as wide as they are.
+    for (container, x) in [("vertical-rl", 128.0), ("vertical-lr", 8.0)] {
+        let rects = layout(
+            &format!("writing-mode:{container};width:200px;height:400px"),
+            &["writing-mode:horizontal-tb|aa bb cc"],
+        );
+        assert_eq!(rects[1], (x, 8.0, 80.0, 10.0), "{container}");
+    }
+}
+
+#[test]
+fn horizontal_text_child_wraps_in_the_room_its_margins_leave() {
+    // 23 words of three letters take five to a line in 160px, six to a line
+    // in 200px.
+    let words = (0..23)
+        .map(|i| format!("w{i:02}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    for container in ["vertical-rl", "vertical-lr"] {
+        let css = format!("writing-mode:{container};width:200px;height:400px");
+        assert_eq!(
+            layout(&css, &[&format!("writing-mode:horizontal-tb|{words}")])[1],
+            (8.0, 8.0, 200.0, 50.0),
+            "{container}"
+        );
+        assert_eq!(
+            layout(
+                &css,
+                &[&format!("writing-mode:horizontal-tb;margin:0 20px|{words}")]
+            )[1],
+            (28.0, 8.0, 160.0, 60.0),
+            "{container}"
+        );
+    }
+}
+
+#[test]
+fn horizontal_text_child_stays_as_wide_as_its_longest_word() {
+    // A word cannot break, so the child overflows the 100px room as wide as
+    // the word, and the rest of the text wraps below it.
+    for (container, x) in [("vertical-rl", -152.0), ("vertical-lr", 8.0)] {
+        let rects = layout(
+            &format!("writing-mode:{container};width:100px;height:200px"),
+            &["writing-mode:horizontal-tb|abcdefghijklmnopqrstuvwxyz abc"],
+        );
+        assert_eq!(rects[1], (x, 8.0, 260.0, 20.0), "{container}");
+    }
+}
+
+#[test]
+fn horizontal_text_child_keeps_its_limits_while_it_wraps() {
+    for (container, max_x, min_x) in [("vertical-rl", 48.0, -42.0), ("vertical-lr", 8.0, 8.0)] {
+        let css = format!("writing-mode:{container};width:100px;height:200px");
+        // `max-width` is below the room, so the lines break at it.
+        assert_eq!(
+            layout(
+                &css,
+                &[&format!(
+                    "writing-mode:horizontal-tb;max-width:60px|{WORDS}"
+                )]
+            )[1],
+            (max_x, 8.0, 60.0, 60.0),
+            "{container}"
+        );
+        // `min-width` is above it, so the text takes its max-content size.
+        assert_eq!(
+            layout(&css, &["writing-mode:horizontal-tb;min-width:150px|aa bb"])[1],
+            (min_x, 8.0, 150.0, 10.0),
+            "{container}"
+        );
+    }
+}
+
+#[test]
+fn horizontal_children_of_a_vertical_container_take_the_room_one_by_one() {
+    // Each child is offered the whole 100px width, not what a sibling left.
+    for (container, x) in [("vertical-rl", -92.0), ("vertical-lr", 108.0)] {
+        let rects = layout(
+            &format!("writing-mode:{container};width:100px;height:300px"),
+            &[
+                &format!("writing-mode:horizontal-tb|{WORDS}"),
+                "writing-mode:horizontal-tb|aa bb cc dd ee ff gg",
+            ],
+        );
+        assert_eq!(rects[1], (8.0, 8.0, 100.0, 40.0), "{container}");
+        assert_eq!(rects[2], (x, 8.0, 100.0, 30.0), "{container}");
+    }
+}
+
+#[test]
+fn horizontal_block_child_of_a_vertical_container_wraps_the_text_it_holds() {
+    // A block that holds the text, a flex container, and a nested one: the
+    // child takes the room, and its content breaks at it.
+    for container in ["vertical-rl", "vertical-lr"] {
+        let css = format!("writing-mode:{container};width:100px;height:200px");
+        let words = format!("|{WORDS}");
+        for child in ["", "display:flex"] {
+            assert_eq!(
+                horizontal_child_rect(&css, child, &[&words]),
+                (8.0, 8.0, 100.0, 40.0),
+                "{container} {child}"
+            );
+        }
+    }
+}
+
+#[test]
+fn horizontal_child_of_a_vertical_container_without_a_definite_width_wraps_in_the_page() {
+    // The width of the container comes from its content, so the room is the
+    // 800px page area. 23 words of three letters take 910px.
+    let words = (0..23)
+        .map(|i| format!("w{i:02}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    for container in ["vertical-rl", "vertical-lr"] {
+        let rects = layout(
+            &format!("writing-mode:{container};height:200px"),
+            &[&format!("writing-mode:horizontal-tb|{words}")],
+        );
+        assert_eq!(rects[0], (8.0, 8.0, 800.0, 200.0), "{container}");
+        assert_eq!(rects[1], (8.0, 8.0, 800.0, 20.0), "{container}");
+    }
 }
 
 #[test]
