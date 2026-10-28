@@ -64,7 +64,7 @@ fn cyclic_chains_are_rejected_without_returning_an_incomplete_path() {
 #[test]
 fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
     let (mut doc, mc, chain) = fixture_with_margin(1, "0 0 0 calc(1px + 10%)");
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     let context = FragmentationContext {
         rtl: false,
         available_width: 100.0,
@@ -130,7 +130,7 @@ fn column_clips_keep_overhanging_ruby_annotations() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     let context = FragmentationContext {
         rtl: false,
         available_width: 100.0,

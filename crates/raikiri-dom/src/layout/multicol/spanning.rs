@@ -223,7 +223,7 @@ pub(super) fn layout(
                 let nested = &mut tree.fragment_tree.fragments[index];
                 nested.rect.x += offset.x;
                 nested.rect.y += offset.y;
-                nested.parent = Some(fragment);
+                tree.fragment_tree.attach_root(index, fragment);
             }
             block_offset =
                 child_layout.location.y + output.size.height + child_layout.margin.bottom;

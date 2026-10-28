@@ -85,12 +85,12 @@ fn the_fragments_of_a_document_are_found_by_the_record_they_hang_under() {
     let div = doc.append_element(Some(body), "div", Some("display:block"));
     let span = doc.append_element(Some(div), "span", None::<&str>);
     let once = doc.append_element(Some(body), "p", Some("display:block"));
-    doc.fragment_tree.fragments = vec![
+    doc.fragment_tree.replace_finalized_fragments(vec![
         fragment(div, None, None),
         fragment(div, None, None),
         fragment(once, None, None),
         fragment(div, Some(0), None),
-    ];
+    ]);
     let index = FragmentIndex::new(&doc);
     assert_eq!(index.placements(None, div), [0, 1]);
     assert_eq!(index.placements(Some(0), div), [3]);
@@ -394,8 +394,10 @@ fn the_sources_are_in_node_order_though_a_node_is_placed_more_than_once() {
     for _ in 0..2 {
         doc.append_element(Some(wrapper), "div", Some("display:block"));
     }
-    doc.fragment_tree.fragments =
-        vec![fragment(wrapper, None, None), fragment(wrapper, None, None)];
+    doc.fragment_tree.replace_finalized_fragments(vec![
+        fragment(wrapper, None, None),
+        fragment(wrapper, None, None),
+    ]);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");

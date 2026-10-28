@@ -153,7 +153,7 @@ fn paginating<'a>(
 fn set_committed_column_fragments(doc: &mut Document, root: usize) {
     use crate::fragment::{FragmentRect, LayoutFragment};
     use crate::node::MulticolTextFragment;
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     // Supply an independently specified producer stream. The second source
     // box starts above its column so its original lines 2 and 3 start at y=0.
     doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(vec![
@@ -279,8 +279,8 @@ fn column_break_clips_intersect_the_explicit_ancestor_clip() {
             line_end: None,
         })
         .unwrap();
-    for fragment in &mut doc.fragment_tree.fragments[..2] {
-        fragment.parent = Some(parent);
+    for index in 0..2 {
+        doc.fragment_tree.attach_root(index, parent);
     }
     doc.project_pages(
         &cascade,
@@ -10053,7 +10053,7 @@ fn many_column_fixture(count: usize) -> (Document, CascadeResult, usize) {
     let text = vec!["A"; count].join("\n");
     let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph(&text, "width:20px");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(
         (0..count)
             .map(|column| MulticolTextFragment {
@@ -10206,7 +10206,7 @@ fn duplicate_column_placements_charge_their_selected_records_before_copying() {
             doc.append_text(root, vec!["A"; 128].join("\n"));
         });
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(vec![MulticolTextFragment {
         line_start: 0,
         line_end: count,

@@ -101,6 +101,30 @@ fn replacement_work_limit_rejects_before_installing_a_partial_fragment_stream() 
     assert_eq!(tree.fragment_tree.fragments, original);
 }
 
+#[test]
+fn paged_arena_installation_preserves_retirement_indexes_on_success_and_failure() {
+    for replacement_count in [0, 2, 7] {
+        let (mut tree, owner, child, _) = source_fragments();
+        tree.fragment_tree.limit = 8;
+        let original = tree.fragment_tree.fragments.clone();
+        let mut edits = FragmentEdits::new(&tree.fragment_tree);
+        if replacement_count > 0 {
+            edits.replace(child, vec![original[1]; replacement_count]);
+        }
+        let control = PageLayoutControl::new(None);
+        let mut work = ProjectionWork::new(&control, 8);
+        let result = edits.finish(&mut tree, &mut work);
+        assert_eq!(result.is_ok(), replacement_count != 7);
+        if result.is_err() {
+            assert_eq!(tree.fragment_tree.fragments, original);
+        }
+        // Both installation branches and a rejected edit leave usable indexes.
+        tree.fragment_tree.retire_previous_roots(owner);
+        tree.fragment_tree.finalize();
+        assert!(tree.fragment_tree.fragments.is_empty());
+    }
+}
+
 // A later owner can replace or move the records of an earlier owner's
 // replacements; every change applies to the records that describe a node at
 // that moment, and records placed in a replaced record follow its first

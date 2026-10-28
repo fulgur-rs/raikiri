@@ -290,7 +290,7 @@ fn a_new_layout_of_a_container_retires_its_earlier_root_subtree() {
     let old_root = tree.try_push(fragment(7, None)).unwrap();
     let grandchild = tree.try_push(fragment(9, None)).unwrap();
     let old_child = tree.try_push(fragment(8, Some(old_root))).unwrap();
-    tree.fragments[grandchild].parent = Some(old_child);
+    tree.attach_root(grandchild, old_child);
     // An unrelated record survives.
     tree.try_push(fragment(3, None)).unwrap();
     tree.retire_previous_roots(7);
@@ -378,4 +378,18 @@ fn a_column_width_with_a_count_makes_a_container_of_that_many_columns() {
         style.intrinsic_inline_sizes((100.0, 100.0), (0.0, 0.0)),
         (100.0, 230.0)
     );
+}
+
+mod retirement_index_tests;
+
+thread_local! {
+    static INDEX_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+pub(super) fn record_index_work(kind: usize, count: usize) {
+    INDEX_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += count;
+        work.set(counts);
+    });
 }
