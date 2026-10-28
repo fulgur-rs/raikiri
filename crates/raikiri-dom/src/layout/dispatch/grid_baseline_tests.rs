@@ -1,6 +1,7 @@
 //! The first baseline a grid container exports to the flex or grid container
-//! that aligns it by a baseline: the baseline of the first line of an item in
-//! its first row, not the bottom edge of that item.
+//! that aligns it by a baseline, or to the line it sits in when it is
+//! inline-level: the baseline of the first line of an item in its first row,
+//! not the bottom edge of that item.
 //!
 //! The expected tops are those Chromium gives the same markup.
 
@@ -322,4 +323,62 @@ fn a_vertical_scroll_container_item_gives_a_baseline_within_its_border_box() {
     )];
     assert_eq!(lefts(VERTICAL_RL, GRID, &scrolling), (280.0, 270.0));
     assert_eq!(lefts(VERTICAL_LR, GRID, &scrolling), (10.0, 0.0));
+}
+
+/// The size `(width, height)` of the block styled `container_css`, with a 10px
+/// line height, that holds the text `before`, then an inline-level box styled
+/// `inline_css` holding the text `text`.
+fn line_box_size(container_css: &str, before: &str, inline_css: &str, text: &str) -> (f32, f32) {
+    let fixture = block_fixture(&format!("line-height:10px;{container_css}"), |doc, root| {
+        if !before.is_empty() {
+            doc.append_text(root, before);
+        }
+        let inline = doc.append_element(Some(root), "div", Some(inline_css));
+        doc.append_text(inline, text);
+    });
+    let root = fixture.root;
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let (_, _, width, height) = absolute_rect(&doc, root);
+    (width, height)
+}
+
+const WIDE: &str = "width:200px";
+
+#[test]
+fn an_inline_grid_with_only_text_adds_nothing_to_its_line() {
+    // The grid sits on the baseline of its text, so the 10px line holds it
+    // without the extra room that the bottom edge of the grid as a baseline
+    // asked of the strut.
+    for before in ["", "x"] {
+        for display in ["inline-grid", "inline-flex", "inline-block"] {
+            // The boxes that already agreed stay as they were.
+            let css = format!("display:{display}");
+            let (_, height) = line_box_size(WIDE, before, &css, "AAAA BBBB");
+            assert_eq!(height, 10.0, "{display} after {before:?}");
+        }
+    }
+}
+
+#[test]
+fn an_inline_grid_wrapped_to_two_lines_sits_on_the_baseline_of_its_first() {
+    // The two lines make the grid 20px high, and its baseline is that of the
+    // first, so the line box is 20px high.
+    for before in ["", "x"] {
+        let css = "display:inline-grid;width:min-content";
+        let (_, height) = line_box_size(WIDE, before, css, "AAAA BBBB");
+        assert_eq!(height, 20.0, "after {before:?}");
+    }
+}
+
+#[test]
+fn a_vertical_inline_grid_with_only_text_adds_nothing_to_its_line() {
+    // The line of a vertical block is a column 10px wide.
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        let container = format!("writing-mode:{writing_mode};height:200px");
+        for before in ["", "x"] {
+            let (width, _) = line_box_size(&container, before, "display:inline-grid", "AAAA BBBB");
+            assert_eq!(width, 10.0, "{writing_mode} after {before:?}");
+        }
+    }
 }
