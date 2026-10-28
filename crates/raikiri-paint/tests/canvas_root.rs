@@ -176,3 +176,15 @@ fn page_area_text_clips_stay_put_under_the_root_transform() {
     let inked = (0..20).any(|y| (30..70).any(|x| pixel(page, x, y) != WHITE));
     assert!(inked, "the text paints in the page area");
 }
+
+/// The root's `display: contents` computes to `block` (CSS Display 3 §2.8),
+/// so its opacity applies to the page content like any block root's.
+#[test]
+fn a_contents_root_is_as_translucent_as_a_block_root() {
+    let content = "<div style=\"width: 100px; height: 100px; background: red\"></div>";
+    let block = pages(content, "html { display: block; opacity: .5 }");
+    let contents = pages(content, "html { display: contents; opacity: .5 }");
+    let (block, contents) = (pixel(&block[0], 50, 50), pixel(&contents[0], 50, 50));
+    assert!((100..200).contains(&block[1]), "{block:?}");
+    assert_eq!(contents, block);
+}

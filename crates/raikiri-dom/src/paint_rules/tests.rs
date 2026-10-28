@@ -222,6 +222,38 @@ fn overflow_and_opacity_predicates() {
 }
 
 #[test]
+fn a_contents_document_element_paints_the_box_of_a_block() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(doc.root_index()),
+        "html",
+        Some("display:contents;opacity:0.5"),
+    );
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let contents = doc.append_element(Some(body), "div", Some("display:contents;opacity:0.5"));
+    let hidden = doc.append_element(Some(body), "div", Some("display:none;opacity:0.5"));
+    doc.mark_in_document_flags();
+    let cr = cascaded(&doc);
+    let cv = |id: usize| &cr.computed[id];
+    // The document element has no parent to take its contents.
+    assert_eq!(painted_display(&doc, html, cv(html)), DisplayValue::Block);
+    assert!(element_generates_box(&doc, html, cv(html)));
+    assert_eq!(element_opacity_layer(&doc, html, cv(html)), Some(0.5));
+    // Any other contents element keeps its display and has no box.
+    assert_eq!(
+        painted_display(&doc, contents, cv(contents)),
+        DisplayValue::Contents
+    );
+    assert!(!element_generates_box(&doc, contents, cv(contents)));
+    assert_eq!(element_opacity_layer(&doc, contents, cv(contents)), None);
+    assert_eq!(
+        painted_display(&doc, hidden, cv(hidden)),
+        DisplayValue::None
+    );
+    assert!(!element_generates_box(&doc, hidden, cv(hidden)));
+}
+
+#[test]
 fn internal_table_tracks_do_not_clip_but_containers_do() {
     for (display, clips) in [
         ("table-row", false),

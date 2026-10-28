@@ -1237,3 +1237,54 @@ fn split_inline_line_pieces_keep_their_clips() {
         ["box s"]
     );
 }
+
+/// The boxes of the document element and the opacity groups a page paints.
+fn root_box_and_group_counts(style: &str) -> (usize, usize) {
+    let result = lay_out(
+        "<div style='width:100px;height:100px;background:red'></div>",
+        &format!("@page {{size:100px 100px;margin:0}} body {{margin:0}} {style}"),
+    );
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let events = page.paint_order();
+    let roots = events
+        .iter()
+        .filter(|event| matches!(event, PaintEvent::Box(f) if dom.parent(f.node()).is_none_or(|p| dom.parent(p).is_none())))
+        .count();
+    let groups = events
+        .iter()
+        .filter(|event| matches!(event, PaintEvent::PushOpacity(_)))
+        .count();
+    (roots, groups)
+}
+
+#[test]
+fn root_with_display_contents_keeps_its_box_and_opacity_group() {
+    let block = root_box_and_group_counts("html {opacity:.5}");
+    let contents = root_box_and_group_counts("html {display:contents;opacity:.5}");
+    assert_eq!(block.1, 1, "{block:?}");
+    assert_eq!(contents, block);
+}
+
+#[test]
+fn text_of_a_root_with_display_contents_paints_inside_its_opacity_group() {
+    let text_depths = |style: &str| {
+        let result = lay_out_with_font("<p>Text</p>", &format!("p {{margin:0}} {style}"));
+        let page = result.page(0).unwrap();
+        let runs = page.text_runs();
+        let mut depth = 0;
+        let mut depths = Vec::new();
+        for event in page.paint_order_for_text_runs(&runs) {
+            match event {
+                PaintEvent::PushOpacity(_) => depth += 1,
+                PaintEvent::PopOpacity => depth -= 1,
+                PaintEvent::TextLine(_) => depths.push(depth),
+                _ => {}
+            }
+        }
+        depths
+    };
+    let block = text_depths("html {opacity:.5}");
+    assert_eq!(block, [1]);
+    assert_eq!(text_depths("html {display:contents;opacity:.5}"), block);
+}
