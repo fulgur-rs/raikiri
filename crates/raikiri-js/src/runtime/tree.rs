@@ -10,6 +10,9 @@
 //! - <https://dom.spec.whatwg.org/#interface-processinginstruction>
 //! - <https://dom.spec.whatwg.org/#converting-nodes-into-a-node>
 
+mod element_count;
+pub(super) use element_count::ElementCounts;
+
 mod sibling_order;
 pub(super) use sibling_order::SiblingIndex;
 
@@ -527,6 +530,8 @@ pub(crate) const NODE_TREE_MEMBERS: Members = Members {
 pub(crate) fn element_children_of(doc: &raikiri_dom::Document, parent: usize) -> Vec<usize> {
     doc.get_node(parent)
         .map(|n| {
+            #[cfg(test)]
+            tests::record_element_child_work(3, n.children.len());
             n.children
                 .iter()
                 .copied()
@@ -556,9 +561,18 @@ fn children(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<Js
 fn first_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let found = with_state(context, |s| {
-        element_children_of(s.host.document(), index)
-            .first()
-            .copied()
+        let doc = s.host.document();
+        let children = &doc.get_node(index)?.children;
+        let mut scan = children.iter();
+        let found = scan
+            .find(|&&c| {
+                doc.get_node(c)
+                    .is_some_and(|n| n.kind() == NodeKind::Element)
+            })
+            .copied();
+        #[cfg(test)]
+        tests::record_element_child_work(0, children.len() - scan.len());
+        found
     })?;
     wrap_optional(context, found)
 }
@@ -566,9 +580,18 @@ fn first_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> 
 fn last_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let found = with_state(context, |s| {
-        element_children_of(s.host.document(), index)
-            .last()
-            .copied()
+        let doc = s.host.document();
+        let children = &doc.get_node(index)?.children;
+        let mut scan = children.iter().rev();
+        let found = scan
+            .find(|&&c| {
+                doc.get_node(c)
+                    .is_some_and(|n| n.kind() == NodeKind::Element)
+            })
+            .copied();
+        #[cfg(test)]
+        tests::record_element_child_work(1, children.len() - scan.len());
+        found
     })?;
     wrap_optional(context, found)
 }
@@ -576,7 +599,7 @@ fn last_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
 fn child_element_count(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let count = with_state(context, |s| {
-        element_children_of(s.host.document(), index).len()
+        s.element_counts.count(s.host.document(), index)
     })?;
     Ok(JsValue::from(count as u32))
 }

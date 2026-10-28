@@ -6,8 +6,8 @@ use crate::runtime::test_host::StubHost;
 use crate::runtime::webidl::with_state;
 use crate::runtime::{DomRuntime, RuntimeError};
 
-mod sibling_order_tests;
 mod element_child_tests;
+mod sibling_order_tests;
 
 fn rt() -> DomRuntime {
     let (h, ..) = StubHost::page();
@@ -619,6 +619,18 @@ thread_local! {
 
 pub(super) fn record_sibling_work(kind: usize, visits: usize) {
     SIBLING_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += visits;
+        work.set(counts);
+    });
+}
+
+thread_local! {
+    static ELEMENT_CHILD_WORK: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
+}
+
+pub(super) fn record_element_child_work(kind: usize, visits: usize) {
+    ELEMENT_CHILD_WORK.with(|work| {
         let mut counts = work.get();
         counts[kind] += visits;
         work.set(counts);

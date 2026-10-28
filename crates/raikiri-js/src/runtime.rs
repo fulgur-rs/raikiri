@@ -64,6 +64,7 @@ pub(crate) struct State {
     pub generation: u64,
     window_named_cache: window::named::NamedAccessCache,
     sibling_order: tree::SiblingIndex,
+    element_counts: tree::ElementCounts,
     /// Live-collection tree walks since the runtime was created. Counts cache
     /// misses (fresh walks) only, never cache hits; tests use it to prove
     /// repeated `length`/index accesses do not re-walk.
@@ -345,6 +346,7 @@ impl DomRuntime {
             generation: 0,
             window_named_cache: Default::default(),
             sibling_order: Default::default(),
+            element_counts: Default::default(),
             #[cfg(test)]
             live_walks: 0,
             host_failure: None,
