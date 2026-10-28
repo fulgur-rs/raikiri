@@ -57,10 +57,12 @@ pub(crate) enum CollectionSource {
 /// Resolved nodes for one live collection at one generation. Each collection
 /// object owns one; a mutation bumps the shared generation (see the state
 /// field it is cached against), so the next access re-walks once and later
-/// accesses in the same generation reuse it.
+/// accesses in the same generation reuse it. Window named collections also
+/// compare the native document version so host-side changes remain live.
 #[derive(Debug, Default)]
 struct CollectionCache {
     generation: Cell<Option<u64>>,
+    named_version: RefCell<Option<raikiri_dom::document::NamedElementVersion>>,
     nodes: RefCell<Vec<usize>>,
 }
 
@@ -97,21 +99,26 @@ fn with_live_nodes<T>(
         }
         _ => {}
     }
-    let generation = with_state(context, |s| s.generation)?;
-    if cache.generation.get() == Some(generation) {
+    let (generation, named_version_matches) = with_state(context, |s| {
+        let named_version_matches = !matches!(source, CollectionSource::WindowNamed(_))
+            || cache.named_version.borrow().as_ref()
+                == Some(s.host.document().named_element_version());
+        (s.generation, named_version_matches)
+    })?;
+    if cache.generation.get() == Some(generation) && named_version_matches {
         let cached = cache.nodes.borrow();
         return with_state(context, |s| {
             let doc = s.host.document();
             f(doc, &cached)
         });
     }
-    let fresh = with_state(context, |s| {
+    let (fresh, named_version) = with_state(context, |s| {
         #[cfg(test)]
         {
             s.live_walks += 1;
         }
         let doc = s.host.document();
-        match source {
+        let fresh = match source {
             CollectionSource::Children(node) => element_children_of(doc, *node),
             CollectionSource::TagName(root, query) => elements_by_tag_name(doc, *root, query),
             CollectionSource::ClassNames(root, tokens) => {
@@ -120,9 +127,13 @@ fn with_live_nodes<T>(
             CollectionSource::WindowNamed(name) => super::window::named::nodes(doc, name),
             // cov:ignore: Static and ChildNodes return through the fast paths above.
             CollectionSource::Static(_) | CollectionSource::ChildNodes(_) => Vec::new(),
-        }
+        };
+        let named_version = matches!(source, CollectionSource::WindowNamed(_))
+            .then(|| doc.named_element_version().clone());
+        (fresh, named_version)
     })?;
     *cache.nodes.borrow_mut() = fresh;
+    *cache.named_version.borrow_mut() = named_version;
     cache.generation.set(Some(generation));
     let cached = cache.nodes.borrow();
     with_state(context, |s| {
