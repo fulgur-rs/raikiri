@@ -790,3 +790,17 @@ fn balance_all_stops_balancing_rows_once_its_probes_use_up_the_budget() {
     // The first row's probes spend the budget, so the second keeps its height.
     assert_eq!(heights[1], 100.0);
 }
+
+mod parent_column_tests;
+
+thread_local! {
+    static PARENT_COMPARISONS: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+pub(super) fn record_parent_comparison(kind: usize) {
+    PARENT_COMPARISONS.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += 1;
+        work.set(counts);
+    });
+}

@@ -1459,10 +1459,13 @@ fn push_wrapped_wrapper(
     tree.set_unrounded_layout(NodeId::from(wrapper), &layout);
     let mut records = Vec::with_capacity(pieces.len());
     for (index, piece) in pieces.iter().enumerate() {
-        let parent_index = parents
-            .iter()
-            .position(|parent| parent.column == piece.column)?;
-        let parent = &parents[parent_index];
+        // Wrapper parents come from wrapper_pieces: one contiguous column range.
+        let parent_index = piece.column.checked_sub(parent_first.column)?;
+        let parent = parents.get(parent_index).filter(|parent| {
+            #[cfg(test)]
+            tests::record_parent_comparison(0);
+            parent.column == piece.column
+        })?;
         let x_offset =
             context.column_offset_x(piece.column) - context.column_offset_x(parent.column);
         let record = tree.fragment_tree.try_push(LayoutFragment {
@@ -1534,10 +1537,13 @@ fn push_wrapped_block(
     let sliced = pieces.len() > 1 && slices_decorations(tree, leaf);
     let mut taken = 0.0f32;
     for (index, piece) in pieces.iter().enumerate() {
-        let parent_index = parents
-            .iter()
-            .position(|parent| parent.column == piece.column)?;
-        let parent = &parents[parent_index];
+        // Wrapper parents come from wrapper_pieces: one contiguous column range.
+        let parent_index = piece.column.checked_sub(wrapper_first.column)?;
+        let parent = parents.get(parent_index).filter(|parent| {
+            #[cfg(test)]
+            tests::record_parent_comparison(1);
+            parent.column == piece.column
+        })?;
         tree.fragment_tree.try_push(LayoutFragment {
             node_id: leaf,
             parent: Some(records[parent_index]),
