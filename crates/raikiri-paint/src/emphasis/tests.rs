@@ -10,3 +10,5 @@ fn a_mark_is_centered_in_whole_layout_units() {
     // A mark wider than its character overhangs both sides evenly.
     assert_eq!(centered_offset(4.0, 5.0), -0.5);
 }
+
+mod scaling_tests;
