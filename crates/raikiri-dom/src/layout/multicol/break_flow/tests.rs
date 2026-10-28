@@ -18,11 +18,18 @@ fn collect(
     tree: &mut Document,
     id: usize,
     context: FragmentationContext,
-    ancestors: &mut Vec<usize>,
+    ancestors: &mut Vec<super::Wrapper>,
     out: &mut Vec<super::FlowBox>,
 ) {
     with_bridged_session(tree, |session| {
-        super::collect(session, id, context, ancestors, out)
+        super::collect(
+            session,
+            id,
+            context,
+            super::ContentBox::column(context),
+            ancestors,
+            out,
+        )
     })
 }
 
@@ -288,7 +295,6 @@ fn decorated_and_positioned_boxes_keep_the_existing_geometry_strategy() {
         "padding-top:10px",
         "border-top:2px solid",
         "position:relative;top:10px",
-        "width:30px",
     ] {
         let markup = format!(
             "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='{decoration}'><div style='height:20px'></div><div style='height:20px;break-before:avoid'></div></div></div>"
@@ -382,10 +388,9 @@ fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
 #[test]
 fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
     let mut differences = Vec::new();
-    // A minimum width is not listed: a wrapper in the column stream gets the
-    // width its column gives it, while this strategy measures against the
-    // container, so the two no longer agree on it.
-    for css in ["min-height:60px", "max-height:20px", "max-width:30px"] {
+    // The widths are not listed: this strategy places a wrapper by the width
+    // its column gives it, as the column stream does.
+    for css in ["min-height:60px", "max-height:20px"] {
         let markup = |constraint| {
             format!(
                 "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='{css}'><div style='height:20px'></div><div style='height:20px'></div></div><div id='next' style='height:20px;{constraint}'></div></div>"
@@ -1452,4 +1457,258 @@ fn measurement_work_in_a_large_document_does_not_need_free_fragment_slots() {
         reserve_measurement_work(session, root)
     }));
     assert!(!doc.fragment_tree.limit_exceeded);
+}
+
+/// The border box of every fragment of `name`, from the border box of the
+/// container, with its column.
+fn placed(doc: &Document, name: &str) -> Vec<(usize, f32, f32, f32, f32)> {
+    let node = id(doc, name);
+    let fragments = doc.layout_fragments();
+    fragments
+        .iter()
+        .filter(|f| f.node_id == node)
+        .map(|f| {
+            let (mut x, mut y) = (f.rect.x, f.rect.y);
+            let mut parent = f.parent;
+            while let Some(index) = parent {
+                x += fragments[index].rect.x;
+                y += fragments[index].rect.y;
+                parent = fragments[index].parent;
+            }
+            (f.fragmentainer, x, y, f.rect.width, f.rect.height)
+        })
+        .collect()
+}
+
+/// A 100px wide container of two 50px columns, 100px high, holding `wrapper`
+/// with `css`, which holds a block `a` and a padded wrapper `inner` that holds
+/// the block `b`, followed by `next` with `next_css`.
+fn wrapper_markup(container_css: &str, css: &str, next_css: &str) -> String {
+    format!(
+        "<div id='columns' style='{container_css}columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='{css}'><div id='a' style='height:20px'></div><div id='inner' style='padding:0 2px'><div id='b' style='height:20px'></div></div></div><div id='next' style='height:20px;{next_css}'></div></div>"
+    )
+}
+
+fn flow_supported(markup: &str) -> bool {
+    let (mut doc, cascade) = fixture(markup);
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    with_bridged_session(&mut doc, |session| supports(session, root, context))
+}
+
+#[test]
+fn a_wrapper_with_a_minimum_width_is_measured_in_its_column() {
+    let markup = wrapper_markup("", "min-width:60px", "break-before:avoid-column");
+    assert!(flow_supported(&markup));
+    let doc = laid_out(&markup);
+    // The wrapper is as wide as its minimum, not as the container, and what it
+    // holds follows it. The box after it takes the width of a column.
+    assert_eq!(placed(&doc, "wrapper"), vec![(0, 0.0, 0.0, 60.0, 40.0)]);
+    assert_eq!(placed(&doc, "a"), vec![(0, 0.0, 0.0, 60.0, 20.0)]);
+    assert_eq!(placed(&doc, "b"), vec![(0, 2.0, 20.0, 56.0, 20.0)]);
+    assert_eq!(placed(&doc, "next"), vec![(0, 0.0, 40.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn a_wrapper_with_a_maximum_or_authored_width_keeps_it_in_its_column() {
+    for (css, width) in [("max-width:30px", 30.0), ("width:70px", 70.0)] {
+        let markup = wrapper_markup("", css, "break-before:avoid-column");
+        assert!(flow_supported(&markup), "{css}");
+        let doc = laid_out(&markup);
+        assert_eq!(placed(&doc, "wrapper"), vec![(0, 0.0, 0.0, width, 40.0)]);
+        assert_eq!(placed(&doc, "b"), vec![(0, 2.0, 20.0, width - 4.0, 20.0)]);
+        assert_eq!(placed(&doc, "next"), vec![(0, 0.0, 40.0, 50.0, 20.0)]);
+    }
+}
+
+#[test]
+fn a_wrapper_with_inline_padding_and_border_narrows_what_it_holds() {
+    for (css, inset) in [
+        ("padding:0 5px", 5.0),
+        ("padding:0 10%", 5.0),
+        ("border:3px solid;border-top:0;border-bottom:0", 3.0),
+        ("padding:0 2px;border-left:3px solid", 5.0),
+    ] {
+        let markup = wrapper_markup("", css, "break-before:avoid-column");
+        assert!(flow_supported(&markup), "{css}");
+        let doc = laid_out(&markup);
+        let right = if css.contains("border-left") {
+            2.0
+        } else {
+            inset
+        };
+        assert_eq!(placed(&doc, "wrapper"), vec![(0, 0.0, 0.0, 50.0, 40.0)]);
+        assert_eq!(
+            placed(&doc, "a"),
+            vec![(0, inset, 0.0, 50.0 - inset - right, 20.0)],
+            "{css}"
+        );
+        // The padded wrapper inside it is offset by the same amount.
+        assert_eq!(
+            placed(&doc, "b"),
+            vec![(0, inset + 2.0, 20.0, 50.0 - inset - right - 4.0, 20.0)],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_wrapper_with_inline_margins_is_placed_within_its_column() {
+    for (css, x, width) in [
+        ("margin:0 7px", 7.0, 36.0),
+        ("margin:0 auto;width:30px", 10.0, 30.0),
+        ("margin-left:auto;width:30px", 20.0, 30.0),
+    ] {
+        let markup = wrapper_markup("", css, "break-before:avoid-column");
+        assert!(flow_supported(&markup), "{css}");
+        let doc = laid_out(&markup);
+        assert_eq!(
+            placed(&doc, "wrapper"),
+            vec![(0, x, 0.0, width, 40.0)],
+            "{css}"
+        );
+        assert_eq!(placed(&doc, "a"), vec![(0, x, 0.0, width, 20.0)], "{css}");
+    }
+}
+
+#[test]
+fn a_right_to_left_container_aligns_a_narrow_wrapper_to_its_column_end() {
+    for (css, x, width) in [
+        ("width:70px", 30.0, 70.0),
+        ("min-width:60px", 40.0, 60.0),
+        ("max-width:30px", 70.0, 30.0),
+        ("margin:0 7px", 57.0, 36.0),
+        ("padding:0 5px", 50.0, 50.0),
+    ] {
+        let markup = wrapper_markup("direction:rtl;", css, "break-before:avoid-column");
+        assert!(flow_supported(&markup), "{css}");
+        let doc = laid_out(&markup);
+        assert_eq!(
+            placed(&doc, "wrapper"),
+            vec![(0, x, 0.0, width, 40.0)],
+            "{css}"
+        );
+        assert_eq!(
+            placed(&doc, "next"),
+            vec![(0, 50.0, 40.0, 50.0, 20.0)],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_forced_break_after_a_wrapper_with_an_inline_box_starts_the_next_column() {
+    let markup = wrapper_markup("", "min-width:60px", "break-before:column");
+    assert!(flow_supported(&markup));
+    let doc = laid_out(&markup);
+    assert_eq!(placed(&doc, "wrapper"), vec![(0, 0.0, 0.0, 60.0, 40.0)]);
+    assert_eq!(placed(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn a_wrapper_with_padding_split_between_columns_is_placed_in_each_of_them() {
+    let doc = laid_out(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:10px;width:110px;height:100px'><div id='wrapper' style='padding:0 5px'><div id='first' style='height:60px'></div><div id='second' style='height:60px'></div></div><div style='height:20px;break-before:avoid-column'></div></div>",
+    );
+    assert_eq!(
+        placed(&doc, "wrapper"),
+        vec![(0, 0.0, 0.0, 50.0, 60.0), (1, 60.0, 0.0, 50.0, 60.0)]
+    );
+    assert_eq!(placed(&doc, "first"), vec![(0, 5.0, 0.0, 40.0, 60.0)]);
+    assert_eq!(placed(&doc, "second"), vec![(1, 65.0, 0.0, 40.0, 60.0)]);
+}
+
+#[test]
+fn a_plain_wrapper_inside_a_padded_one_fills_its_content_box() {
+    let doc = laid_out(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='outer' style='padding:0 5px'><div id='plain'><div id='leaf' style='height:20px'></div></div></div><div style='height:20px;break-before:avoid-column'></div></div>",
+    );
+    assert_eq!(placed(&doc, "plain"), vec![(0, 5.0, 0.0, 40.0, 20.0)]);
+    assert_eq!(placed(&doc, "leaf"), vec![(0, 5.0, 0.0, 40.0, 20.0)]);
+    assert_eq!(doc.nodes[id(&doc, "leaf")].layout.location.x, 5.0);
+}
+
+#[test]
+fn block_axis_boxes_and_orthogonal_wrappers_keep_the_existing_strategy() {
+    for css in [
+        "padding:3px 5px",
+        "border-top:2px solid;padding:0 5px",
+        "margin:5px 7px",
+        "min-height:60px;padding:0 5px",
+        "overflow:hidden;padding:0 5px",
+        "writing-mode:vertical-rl;width:30px",
+        "display:inline;padding:0 5px",
+    ] {
+        let markup = wrapper_markup("", css, "break-before:avoid-column");
+        assert!(!flow_supported(&markup), "{css}");
+    }
+}
+
+#[test]
+fn a_wrapper_sized_by_an_aspect_ratio_keeps_the_height_it_was_measured_at() {
+    for css in ["width:60px;aspect-ratio:1", "aspect-ratio:1"] {
+        let markup = wrapper_markup("", css, "break-before:avoid-column");
+        assert!(flow_supported(&markup), "{css}");
+        let doc = laid_out(&markup);
+        let height = if css.starts_with("width") { 60.0 } else { 50.0 };
+        let width = if css.starts_with("width") { 60.0 } else { 50.0 };
+        // The children give the wrapper 40px, but its ratio gives the height.
+        assert_eq!(
+            placed(&doc, "wrapper"),
+            vec![(0, 0.0, 0.0, width, height)],
+            "{css}"
+        );
+        assert_eq!(
+            placed(&doc, "next"),
+            vec![(0, 0.0, height, 50.0, 20.0)],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn nested_wrappers_with_inline_boxes_add_up_their_offsets() {
+    for (direction, column, outer, inner) in
+        [("", 0.0, 0.0, 8.0), ("direction:rtl;", 50.0, 50.0, 58.0)]
+    {
+        let doc = laid_out(&format!(
+            "<div id='columns' style='{direction}columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='outer' style='padding:0 5px'><div id='inner' style='margin:0 3px;padding:0 2px'><div id='leaf' style='height:20px'></div></div></div><div style='height:20px;break-before:avoid-column'></div></div>"
+        ));
+        assert_eq!(
+            placed(&doc, "outer"),
+            vec![(0, outer, 0.0, 50.0, 20.0)],
+            "{direction}"
+        );
+        assert_eq!(
+            placed(&doc, "inner"),
+            vec![(0, inner, 0.0, 34.0, 20.0)],
+            "{direction}"
+        );
+        assert_eq!(
+            placed(&doc, "leaf"),
+            vec![(0, inner + 2.0, 0.0, 30.0, 20.0)],
+            "{direction}"
+        );
+        // The leaf's own layout is placed from the column, like its fragment.
+        let leaf = id(&doc, "leaf");
+        assert_eq!(
+            doc.nodes[leaf].layout.location.x,
+            column + 10.0,
+            "{direction}"
+        );
+    }
+}
+
+#[test]
+fn percentage_margins_of_a_wrapper_resolve_against_the_column() {
+    let doc = laid_out(&wrapper_markup(
+        "",
+        "margin:0 10%",
+        "break-before:avoid-column",
+    ));
+    assert_eq!(placed(&doc, "wrapper"), vec![(0, 5.0, 0.0, 40.0, 40.0)]);
+    assert_eq!(placed(&doc, "a"), vec![(0, 5.0, 0.0, 40.0, 20.0)]);
 }

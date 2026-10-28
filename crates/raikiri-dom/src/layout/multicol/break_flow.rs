@@ -99,9 +99,10 @@ pub(super) fn supports(
             return false;
         }
         // This projection preserves already measured atomic subtrees, but
-        // does not reconstruct block margins, clearance or constrained wrapper sizes.
-        // Leave those boxes to the existing geometry-preserving strategies.
-        if projected && has_box_constraints(tree, id, node) {
+        // does not reconstruct block margins, clearance or block-axis wrapper
+        // sizes. Leave those boxes to the existing geometry-preserving
+        // strategies.
+        if projected && has_box_constraints(tree, id) {
             return false;
         }
         // Keep existing strategies for contexts whose only constraints are
@@ -143,12 +144,42 @@ pub(super) fn supports(
     visible && needs_break_flow && !(projected_floats > 0 && projected_text_lines)
 }
 
+/// A box that holds flow boxes and has no height of its own to place.
+#[derive(Clone, Copy)]
+struct Wrapper {
+    node: usize,
+    /// The inline start of its border box, from that of its parent fragment.
+    offset: f32,
+    /// The inline size of its border box.
+    width: f32,
+}
+
+/// The content box that the boxes being collected are placed in, as an inline
+/// range from the border box of their parent fragment.
+#[derive(Clone, Copy)]
+struct ContentBox {
+    start: f32,
+    width: f32,
+}
+
+impl ContentBox {
+    /// The column itself, which holds the children of the container.
+    fn column(context: FragmentationContext) -> Self {
+        Self {
+            start: 0.0,
+            width: context.column_width,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct FlowBox {
     node: usize,
-    ancestors: Vec<usize>,
+    ancestors: Vec<Wrapper>,
     width: f32,
     height: f32,
+    /// The inline start of the border box, from the border box of its parent
+    /// fragment.
     inline_offset: f32,
     before: BreakBetween,
     after: BreakBetween,
@@ -156,29 +187,60 @@ struct FlowBox {
     splittable: bool,
 }
 
-/// Whether the box has a margin, padding, border, inset, clearance or, unless
-/// it is atomic, a size limit or a clip.
-fn has_box_constraints(tree: &LayoutSession<'_>, id: usize, node: &crate::node::Node) -> bool {
+/// Whether the box has a margin, padding, border, inset or clearance, or,
+/// unless it is atomic, a block-axis size limit or a clip. Of a box that is not
+/// atomic, the inline-axis margin, padding, border and size are no constraint
+/// here: [`collect`] places such a wrapper in its column by its inline box.
+fn has_box_constraints(tree: &LayoutSession<'_>, id: usize) -> bool {
     let zero = LengthPercentageAuto::length(0.0);
     let style = style_of(tree, id);
     let margin = style.margin();
+    let (padding, border) = (style.padding(), style.border());
+    if style.inset() != Edges::splat(LengthPercentageAuto::auto()) || style.clear() != Clear::None {
+        return true;
+    }
+    if atomic(tree, id) {
+        return margin != Edges::splat(zero)
+            || padding != Edges::splat(LengthPercentage::ZERO)
+            || border != Edges::splat(LengthPercentage::ZERO);
+    }
     let visible = Point {
         x: TaffyOverflow::Visible,
         y: TaffyOverflow::Visible,
     };
-    margin.top != zero
-        || margin.right != zero
+    // The inline axis of an orthogonal flow is the block axis of the columns,
+    // and an inline box that holds blocks has its padding, border and margin
+    // only on its first and last fragments (CSS 2, 9.2.1.1).
+    let node = layout_node(tree, id);
+    ((node.used_writing_mode.is_vertical() || node.display() == DisplayValue::Inline)
+        && has_inline_constraints(tree, id))
+        || margin.top != zero
         || margin.bottom != zero
-        || margin.left != zero
-        || style.padding() != Edges::splat(LengthPercentage::ZERO)
-        || style.border() != Edges::splat(LengthPercentage::ZERO)
-        || style.inset() != Edges::splat(LengthPercentageAuto::auto())
-        || style.clear() != Clear::None
-        || (!atomic(tree, id)
-            && (!node.multicol_auto_width
-                || style.min_size() != Size::splat(LengthPercentageAuto::auto())
-                || style.max_size() != Size::splat(LengthPercentageAuto::auto())
-                || style.overflow() != visible))
+        || padding.top != LengthPercentage::ZERO
+        || padding.bottom != LengthPercentage::ZERO
+        || border.top != LengthPercentage::ZERO
+        || border.bottom != LengthPercentage::ZERO
+        || !style.min_size().height.is_auto()
+        || !style.max_size().height.is_auto()
+        || style.overflow() != visible
+}
+
+/// Whether the box has a margin, padding, border or size along the inline
+/// axis, so that block flow does not make it as wide as the content box of its
+/// parent.
+fn has_inline_constraints(tree: &LayoutSession<'_>, id: usize) -> bool {
+    let zero = LengthPercentageAuto::length(0.0);
+    let style = style_of(tree, id);
+    let (margin, padding, border) = (style.margin(), style.padding(), style.border());
+    margin.left != zero
+        || margin.right != zero
+        || padding.left != LengthPercentage::ZERO
+        || padding.right != LengthPercentage::ZERO
+        || border.left != LengthPercentage::ZERO
+        || border.right != LengthPercentage::ZERO
+        || !style.size().width.is_auto()
+        || !style.min_size().width.is_auto()
+        || !style.max_size().width.is_auto()
 }
 
 fn forced(value: BreakBetween) -> bool {
@@ -199,6 +261,8 @@ fn atomic(tree: &LayoutSession<'_>, id: usize) -> bool {
                 DisplayValue::InlineBlock | DisplayValue::FlowRoot
             ))
         || style.size().height != Dimension::auto()
+        // The height follows from the width, which the children do not give.
+        || style.aspect_ratio().is_some()
         || matches!(
             node.break_inside,
             BreakInside::Avoid | BreakInside::AvoidColumn
@@ -299,7 +363,8 @@ fn collect(
     tree: &mut LayoutSession<'_>,
     id: usize,
     context: FragmentationContext,
-    ancestors: &mut Vec<usize>,
+    content: ContentBox,
+    ancestors: &mut Vec<Wrapper>,
     out: &mut Vec<FlowBox>,
 ) {
     if tree.fragment_tree.limit_exceeded
@@ -315,27 +380,48 @@ fn collect(
         (style.float(), style.size().width == Dimension::auto())
     };
     let floated = float.is_floated();
-    let known_width = (tree.nodes[id].multicol_auto_width
-        && !floated
-        && (tree.nodes[id].display().is_block_flex_or_grid_container()
-            || matches!(
-                tree.nodes[id].display(),
-                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-            ))
-        && auto_width
-        && tree.nodes[id].image_intrinsic_box().is_none()
-        && tree.nodes[id].tag_name() != Some("img"))
-    .then_some(context.column_width);
-    let input = super::column_child_input(
-        known_width,
-        context.column_width,
-        context.available_height,
-        AvailableSpace::MaxContent,
-    );
+    let monolithic = atomic(tree, id);
+    // A wrapper with an inline box of its own is as wide as block flow makes
+    // it within its parent, which its margins, size limits and authored width
+    // decide. Its padding and border then narrow what it holds.
+    let inline_box = !monolithic && has_inline_constraints(tree, id);
+    let input = if inline_box {
+        super::column_child_layout_input(
+            tree,
+            id,
+            content.width,
+            context.available_height,
+            AvailableSpace::MaxContent,
+        )
+    } else {
+        let known_width = (tree.nodes[id].multicol_auto_width
+            && !floated
+            && (tree.nodes[id].display().is_block_flex_or_grid_container()
+                || matches!(
+                    tree.nodes[id].display(),
+                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                ))
+            && auto_width
+            && tree.nodes[id].image_intrinsic_box().is_none()
+            && tree.nodes[id].tag_name() != Some("img"))
+        .then_some(content.width);
+        super::column_child_input(
+            known_width,
+            content.width,
+            context.available_height,
+            AvailableSpace::MaxContent,
+        )
+    };
     let output = tree.compute_child_layout(NodeId::from(id), input);
     let before = descendant_edge(tree, id, true, 0);
     let after = descendant_edge(tree, id, false, 0);
-    if atomic(tree, id) {
+    // The measured box belongs to a column, not the original full-width
+    // containing block. Its parent determines block inline alignment; physical
+    // float sides remain independent of inline direction.
+    let parent_rtl = tree
+        .taffy_parent_of(id)
+        .is_some_and(|parent| style_of(tree, parent).direction() == Direction::Rtl);
+    if monolithic {
         let monolithic_display = tree.nodes[id].display().is_block_flex_or_grid_container()
             || tree.nodes[id].display() == DisplayValue::InlineBlock;
         out.push(FlowBox {
@@ -343,22 +429,18 @@ fn collect(
             ancestors: ancestors.clone(),
             width: output.size.width,
             height: output.size.height.max(0.0),
-            // The measured box belongs to a column, not the original full-width
-            // containing block. Its parent determines block inline alignment;
-            // physical float sides remain independent of inline direction.
-            inline_offset: match float {
-                Float::Right => context.column_width - output.size.width,
-                Float::Left => 0.0,
-                Float::None => {
-                    if tree.taffy_parent_of(id).is_some_and(|parent| {
-                        style_of(tree, parent).direction() == Direction::Rtl
-                    }) {
-                        context.column_width - output.size.width
-                    } else {
-                        0.0
+            inline_offset: content.start
+                + match float {
+                    Float::Right => content.width - output.size.width,
+                    Float::Left => 0.0,
+                    Float::None => {
+                        if parent_rtl {
+                            content.width - output.size.width
+                        } else {
+                            0.0
+                        }
                     }
-                }
-            },
+                },
             before,
             after,
             floated,
@@ -386,10 +468,25 @@ fn collect(
         });
         return;
     }
+    let (wrapper, inner) = if inline_box {
+        wrapper_boxes(tree, id, content, output.size.width, parent_rtl)
+    } else {
+        (
+            Wrapper {
+                node: id,
+                offset: content.start,
+                width: content.width,
+            },
+            ContentBox {
+                start: 0.0,
+                width: content.width,
+            },
+        )
+    };
     let start = out.len();
-    ancestors.push(id);
+    ancestors.push(wrapper);
     for child in tree.children_through_contents(id) {
-        collect(tree, child, context, ancestors, out);
+        collect(tree, child, context, inner, ancestors, out);
         if tree.fragment_tree.limit_exceeded {
             break;
         }
@@ -400,6 +497,47 @@ fn collect(
         let last = out.len() - 1;
         out[last].after = propagated(after, out[last].after);
     }
+}
+
+/// The wrapper `id`, `width` wide, and the content box it holds its children
+/// in, from its own border box.
+fn wrapper_boxes(
+    tree: &LayoutSession<'_>,
+    id: usize,
+    content: ContentBox,
+    width: f32,
+    parent_rtl: bool,
+) -> (Wrapper, ContentBox) {
+    let style = style_of(tree, id);
+    let (margin_left, margin_right) =
+        super::column_horizontal_margins(&style, content.width, width);
+    // A right-to-left parent aligns a narrower box to its right edge.
+    let offset = if parent_rtl {
+        content.start + content.width - width - margin_right
+    } else {
+        content.start + margin_left
+    };
+    let (padding, border) = (style.padding(), style.border());
+    let basis = content.width.max(0.0);
+    let inset = |padding: LengthPercentage, border: LengthPercentage| {
+        super::multicol_resolve_inset(tree, padding, basis)
+            + super::multicol_resolve_inset(tree, border, basis)
+    };
+    let (start, end) = (
+        inset(padding.left, border.left),
+        inset(padding.right, border.right),
+    );
+    (
+        Wrapper {
+            node: id,
+            offset,
+            width,
+        },
+        ContentBox {
+            start,
+            width: (width - start - end).max(0.0),
+        },
+    )
 }
 
 fn reserve_measurement_work(tree: &mut LayoutSession<'_>, root: usize) -> bool {
@@ -506,7 +644,14 @@ pub(super) fn layout(
     }
     let mut boxes = Vec::new();
     for child in tree.children_through_contents(root) {
-        collect(tree, child, context, &mut Vec::new(), &mut boxes);
+        collect(
+            tree,
+            child,
+            context,
+            ContentBox::column(context),
+            &mut Vec::new(),
+            &mut boxes,
+        );
         if tree.fragment_tree.limit_exceeded {
             return fallback.height;
         }
@@ -587,7 +732,7 @@ pub(super) fn layout(
             let mut parent_fragment = container;
             let mut parent_y = 0.0;
             for &ancestor in &item.ancestors {
-                let (id, top) = if let Some(&(id, top)) = wrappers.get(&(column, ancestor)) {
+                let (id, top) = if let Some(&(id, top)) = wrappers.get(&(column, ancestor.node)) {
                     if !item.floated {
                         tree.fragment_tree.fragments[id].rect.height =
                             (y + used - top).max(tree.fragment_tree.fragments[id].rect.height);
@@ -595,19 +740,23 @@ pub(super) fn layout(
                     (id, top)
                 } else {
                     let Some(id) = tree.fragment_tree.try_push(fragment(
-                        ancestor,
+                        ancestor.node,
                         Some(parent_fragment),
                         column,
                         FragmentRect {
-                            x: if parent_fragment == container { x } else { 0.0 },
+                            x: if parent_fragment == container {
+                                x + ancestor.offset
+                            } else {
+                                ancestor.offset
+                            },
                             y: y - parent_y,
-                            width: context.column_width,
+                            width: ancestor.width,
                             height: if item.floated { 0.0 } else { used },
                         },
                     )) else {
                         return fallback.height;
                     };
-                    wrappers.insert((column, ancestor), (id, y));
+                    wrappers.insert((column, ancestor.node), (id, y));
                     (id, y)
                 };
                 parent_fragment = id;
@@ -637,7 +786,12 @@ pub(super) fn layout(
                     height: item.height,
                 };
                 layout.location = Point {
-                    x: x + item.inline_offset,
+                    x: x + item
+                        .ancestors
+                        .iter()
+                        .map(|ancestor| ancestor.offset)
+                        .sum::<f32>()
+                        + item.inline_offset,
                     y,
                 };
                 tree.set_unrounded_layout(NodeId::from(item.node), &layout);
