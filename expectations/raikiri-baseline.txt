@@ -5367,3 +5367,7 @@ css/css-break/break-at-end-container-edge-002.html
 # A `repeating-conic-gradient()` repeats the span from its first stop to its last, from the `from` angle around the turn, instead of padding the last color over the rest of the turn; a span of no length shows the last color, as in Chromium. The degenerate-period test KEEPs in two audit-vacuous-passes runs. The other reports VACUOUS-UNSTYLED because its `background-color: red` is only a fallback that the gradient covers completely and the reference never repeats it; it failed before the fix (the second half of the box was filled with the last color), so it stays as a guard.
 css/css-images/normalization-conic-degenerate.html
 css/css-images/repeating-conic-gradient.html
+
+# --- the automatic minimum size of a flex container with an aspect-ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A flex container that has an aspect-ratio and an auto height was held at the height the ratio gives instead of growing to the height of its content, up to its max-height. This test renders a green square that max-block-size caps at 100px while the item is 200px tall; it failed before the fix (the container was 100x50). flex-aspect-ratio-040, 041 and 043 pass too, but their item is 100px tall on its own, so the reference still matches without aspect-ratio, and they stay out of the baseline.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-044.html

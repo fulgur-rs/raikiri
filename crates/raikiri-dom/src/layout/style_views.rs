@@ -514,13 +514,17 @@ impl LayoutSession<'_> {
         let width_stands_in = self.nodes[idx].svg_width_follows_available;
         let main_is_stated = states_a_size(main) && (!is_row || !width_stands_in);
         // Hiding the ratio leaves the cross size to the box itself, which
-        // only blocks, grids and replaced boxes derive from the main size
-        // they are measured at; a paragraph or a flex container measures
-        // its content instead.
-        let derives_cross_from_ratio = matches!(
-            self.nodes[idx].formatting_context,
-            FormattingContext::Block | FormattingContext::Grid
-        );
+        // only blocks, flex and grid containers and replaced boxes derive from
+        // the main size they are measured at; a paragraph measures its content
+        // instead. A flex container on vertical axes leaves its height to the
+        // flex algorithm, so it keeps the ratio.
+        let derives_cross_from_ratio = match self.nodes[idx].formatting_context {
+            FormattingContext::Block | FormattingContext::Grid => true,
+            FormattingContext::Flex => {
+                crate::layout::dispatch::block_right_to_left(self, idx).is_none()
+            }
+            _ => false,
+        };
         if item.aspect_ratio().is_some()
             && cross.is_auto()
             && main_is_stated

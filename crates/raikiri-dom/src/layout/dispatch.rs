@@ -3012,6 +3012,11 @@ pub(crate) fn flex_layout(
 ) -> LayoutOutput {
     let inputs = with_fit_content_width(tree, node_id, inputs);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
+    let inputs = if block_right_to_left(tree, usize::from(node_id)).is_none() {
+        with_ratio_height(tree, node_id, inputs, flex_layout_sized)
+    } else {
+        inputs
+    };
     flex_layout_sized(tree, node_id, inputs)
 }
 
@@ -3284,35 +3289,54 @@ fn with_clamped_keyword_width(
 
 /// Lay out the grid container `node_id` with taffy's grid algorithm.
 ///
-/// A container with a preferred aspect ratio and an `auto` height takes the
-/// height the ratio gives for its width, whether the width is the one the
-/// container states or the one its parent imposes; taffy applies the ratio
-/// to the former only. Unless the container scrolls or states a `min-height`,
-/// its content raises that height up to the `max-height` it states: the
-/// automatic minimum size of CSS Sizing 4 §5.1.
+/// A container with a preferred aspect ratio and an `auto` height is given the
+/// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
+    let inputs = if grid_oof::right_to_left(tree, idx).is_none() {
+        with_ratio_height(tree, node_id, inputs, grid_layout_sized)
+    } else {
+        inputs
+    };
+    grid_layout_sized(tree, node_id, inputs)
+}
+
+/// Give a flex or grid container with a preferred aspect ratio and an `auto`
+/// height the height the ratio gives for its width, whether the width is the
+/// one the container states or the one its parent imposes; taffy applies the
+/// ratio to the former only. Unless the container scrolls or states a
+/// `min-height`, its content raises that height up to the `max-height` it
+/// states: the automatic minimum size of CSS Sizing 4 §5.1.
+///
+/// `sized` is the layout of the container once its height is settled; it
+/// measures the content, and gives the width of a container whose width comes
+/// from its content.
+fn with_ratio_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
     let height_follows_width = inputs.known_dimensions.height.is_none()
-        && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal)
-        && grid_oof::right_to_left(tree, idx).is_none();
+        && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal);
     if !height_follows_width {
-        return grid_layout_sized(tree, node_id, inputs);
+        return inputs;
     }
     let style = block_flow::style_input::physical(tree, idx);
     // A measure that ignores the sizes of the box (`ContentSize`) sees an
     // `auto` height whatever the style says.
     let auto_height = inputs.sizing_mode == SizingMode::ContentSize || style.size.height.is_auto();
     if style.aspect_ratio.is_none() || !auto_height {
-        return grid_layout_sized(tree, node_id, inputs);
+        return inputs;
     }
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
-    let mut inputs = inputs;
     let mut metrics = block_flow::Metrics::resolve(&style, false, content_box_ratio, inputs);
     if metrics.preferred.width.is_none() {
         // A width that comes from the content, as for an item of a flex row,
         // is settled first and the ratio then gives the height for it.
-        let width = grid_layout_sized(
+        let width = sized(
             tree,
             node_id,
             LayoutInput {
@@ -3327,23 +3351,25 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
         inputs.known_dimensions_are_definite.width = true;
         metrics = block_flow::Metrics::resolve(&style, false, content_box_ratio, inputs);
     }
-    let height = grid_ratio_height(tree, node_id, inputs, &metrics);
+    let height = ratio_height(tree, node_id, inputs, &metrics, sized);
     inputs.known_dimensions.height = height;
     inputs.known_dimensions_are_definite.height |= height.is_some();
-    grid_layout_sized(tree, node_id, inputs)
+    inputs
 }
 
-/// The border-box height a grid container takes from its aspect ratio at the
-/// width in `metrics`, or `None` while the ratio has no width to relate to.
+/// The border-box height a flex or grid container takes from its aspect ratio
+/// at the width in `metrics`, or `None` while the ratio has no width to relate
+/// to.
 ///
 /// When the automatic minimum size applies, the height of the content raises
 /// it: that comes from laying the container out without the ratio at the
 /// width the ratio relates to.
-fn grid_ratio_height(
+fn ratio_height(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
     metrics: &block_flow::Metrics,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> Option<f32> {
     let width = metrics.preferred.width?;
     let ratio_height = metrics.preferred.height?;
@@ -3370,11 +3396,11 @@ fn grid_ratio_height(
     let key = tree
         .nodes
         .box_key(usize::from(node_id))
-        .expect("live grid container box");
+        .expect("live container box");
     let content = tree
         .with_overrides(
             vec![(key, OwnedPropertyOverride::aspect_ratio(None))],
-            |tree| grid_layout_sized(tree, node_id, probe),
+            |tree| sized(tree, node_id, probe),
         )
         .size
         .height;
