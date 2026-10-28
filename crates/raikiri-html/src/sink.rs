@@ -28,6 +28,13 @@ use crate::types::UncascadedDocument;
 /// Store QualName / Attribute metadata in an FxHashMap inside a RefCell,
 /// keeping html5ever-specific types out of raikiri-dom::Node.
 pub struct RaikiriTreeSink {
+    /// Whether any body or frameset candidate has ever been created, even
+    /// detached or in another namespace. False rules out a reachable body.
+    created_body_candidate: Cell<bool>,
+    #[cfg(test)]
+    pub(crate) snapshot_calls: Cell<usize>,
+    #[cfg(test)]
+    pub(crate) traced_handle_calls: Cell<usize>,
     document: RefCell<Document>,
     /// Handle → full QualName (namespace + local name). This backs the
     /// `Ref<'_, QualName>` returned by `elem_name()`. On `finish()`, copy only
@@ -104,6 +111,11 @@ impl RaikiriTreeSink {
     ) -> Self {
         let initial_node_count = 1;
         Self {
+            created_body_candidate: Cell::new(false),
+            #[cfg(test)]
+            snapshot_calls: Cell::new(0),
+            #[cfg(test)]
+            traced_handle_calls: Cell::new(0),
             document: RefCell::new(Document::new()),
             qual_names: RefCell::new({
                 let mut names = FxHashMap::default();
@@ -197,6 +209,10 @@ impl RaikiriTreeSink {
             .document
             .borrow_mut()
             .append_element(None, tag, None::<&str>);
+        let local: &str = &name.local;
+        if local.eq_ignore_ascii_case("body") || local.eq_ignore_ascii_case("frameset") {
+            self.created_body_candidate.set(true);
+        }
         self.qual_names.borrow_mut().insert(idx, name);
         self.attributes.borrow_mut().insert(idx, attrs);
         idx
@@ -208,9 +224,17 @@ impl RaikiriTreeSink {
         self.root_attributes_frozen.set(true);
     }
 
+    /// Whether a body candidate has been created. This is conservative:
+    /// candidates need not be attached to the document or in HTML's namespace.
+    pub(crate) fn has_created_body_candidate(&self) -> bool {
+        self.created_body_candidate.get()
+    }
+
     /// The document parsed so far, finished as [`TreeSink::finish`] would
     /// finish it, while the parser keeps its own state.
     pub(crate) fn snapshot(&self) -> UncascadedDocument {
+        #[cfg(test)]
+        self.snapshot_calls.update(|calls| calls + 1);
         self.flush_text();
         let mut qual_names = self.qual_names.borrow().clone();
         qual_names.remove(&OVERFLOW_HANDLE);
