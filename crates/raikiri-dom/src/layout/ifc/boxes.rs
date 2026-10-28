@@ -21,11 +21,11 @@ use crate::layout::protocol::{
 };
 use crate::layout::style_views::ReadRole;
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, Point, Size};
-use raikiri_layout_style::LengthProperty;
 use raikiri_layout_style::values::{
     self, AlignContentKeyword, BoxSizing, Clear, Display, ExpandedDimension, LengthPercentageAuto,
     MaybeResolve, Overflow, Position, ResolveOrZero,
 };
+use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::{LineOptions, TextGroupAlign};
@@ -1656,6 +1656,138 @@ fn perform_box_layout(
     )
 }
 
+/// What a float or an atomic inline of the root is laid out with.
+struct ChildFit {
+    /// The room it is offered.
+    space: Size<AvailableSpace>,
+    /// The width it is given outright.
+    known_width: Option<f32>,
+    /// The percentage widths of the box that are replaced by what they stand
+    /// for, as a layout of its own.
+    widths: Vec<OwnedPropertyOverride>,
+}
+
+/// Work out how `node`, a float or an atomic inline of the root `geometry`
+/// describes, is fitted to it. `margin` holds its margins resolved against the
+/// root's inline extent.
+fn fit_child(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    geometry: &FlowGeometry,
+    vertical: bool,
+    margin: Edges<f32>,
+) -> ChildFit {
+    // Only a child that lays out on the axes of a vertical paragraph is
+    // offered the paragraph's inline extent as its height; an orthogonal one
+    // is offered the root's width.
+    let along_height =
+        vertical && crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
+    let orthogonal = vertical && !along_height;
+    let inline_margins = if along_height {
+        margin.top + margin.bottom
+    } else {
+        margin.left + margin.right
+    };
+    let available = (geometry.width - inline_margins).max(0.0);
+    // A child that lays out across a vertical paragraph's lines fits the
+    // root's physical width. The page area stands in for it while the content
+    // of the root decides it, as the initial containing block does for an
+    // orthogonal flow (CSS Writing Modes 4 §7.3.1).
+    let page_width = tree
+        .fixed_page_area
+        .map(|(width, _)| width)
+        .filter(|width| *width > 0.0);
+    // The root's physical width, the basis for the percentages of the child's
+    // own width in a vertical paragraph.
+    let width_basis = geometry
+        .vertical_width
+        .or_else(|| page_width.filter(|_| orthogonal));
+    // The room along the line is the room along the paragraph's inline axis,
+    // the physical height of a vertical one.
+    let room = AvailableSpace::Definite(available);
+    let space = if along_height {
+        Size {
+            width: AvailableSpace::MaxContent,
+            height: room,
+        }
+    } else if orthogonal {
+        Size {
+            width: width_basis.map_or(AvailableSpace::MaxContent, |width| {
+                AvailableSpace::Definite((width - inline_margins).max(0.0))
+            }),
+            height: AvailableSpace::MaxContent,
+        }
+    } else {
+        Size {
+            width: room,
+            height: AvailableSpace::MaxContent,
+        }
+    };
+    // A vertical paragraph's inline extent is the box's height, so its
+    // percentages of the width resolve against the containing block's physical
+    // width, while the edges' percentages stay with the inline extent (CSS
+    // Writing Modes 4 §7.2). A box is given one basis for both, so the width is
+    // resolved here, and the limits are replaced by lengths below. A width that
+    // the content of the root decides is no basis: the percentages of a box laid
+    // out on the same axes behave as `auto` and as no limit then.
+    let known_width = if vertical {
+        width_basis.and_then(|physical_width| {
+            used_block_width_with_edge_basis(tree, node, physical_width, geometry.width).map(
+                |width| {
+                    clamp_block_width_with_edge_basis(
+                        tree,
+                        node,
+                        physical_width,
+                        geometry.width,
+                        width,
+                    )
+                },
+            )
+        })
+    } else {
+        keyword_width(tree, node, geometry, available)
+    };
+    let widths = if vertical {
+        percentage_width_overrides(tree, node, width_basis)
+    } else {
+        Vec::new()
+    };
+    ChildFit {
+        space,
+        known_width,
+        widths,
+    }
+}
+
+/// Lay `node` out as `fit` says. Its edges keep the root's inline extent as
+/// their percentage basis, which a single basis for both would take away from
+/// a box whose percentage widths stand aside, so those are what is set aside.
+fn layout_child(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    geometry: &FlowGeometry,
+    height_basis: Option<f32>,
+    fit: ChildFit,
+) -> LayoutOutput {
+    let ChildFit {
+        space,
+        known_width,
+        widths,
+    } = fit;
+    let layout = |tree: &mut LayoutSession<'_>| {
+        perform_box_layout(tree, node, geometry.width, height_basis, known_width, space)
+    };
+    if widths.is_empty() {
+        layout(tree)
+    } else {
+        let key = tree.nodes.box_key(node).expect("live box");
+        tree.with_overrides(
+            widths.into_iter().map(|entry| (key, entry)).collect(),
+            layout,
+        )
+    }
+}
+
 /// Lay a float out the way the block algorithm does: resolve its margins
 /// against the container, then give it the room that is left.
 fn measure_float(
@@ -1670,23 +1802,8 @@ fn measure_float(
     } else {
         (margin.left + margin.right, margin.top + margin.bottom)
     };
-    let available = (geometry.width - inline_margin).max(0.0);
-    let known_width = if vertical {
-        None
-    } else {
-        keyword_width(tree, node, &geometry, available)
-    };
-    let output = perform_box_layout(
-        tree,
-        node,
-        geometry.width,
-        geometry.definite_height,
-        known_width,
-        Size {
-            width: AvailableSpace::Definite(available),
-            height: AvailableSpace::MaxContent,
-        },
-    );
+    let fit = fit_child(tree, node, &geometry, vertical, margin);
+    let output = layout_child(tree, node, &geometry, geometry.definite_height, fit);
     let style = tree.physical_style(node);
     let output_size = shodo::geometry::PhysicalSize {
         width: output.size.width,
@@ -1745,14 +1862,6 @@ pub(crate) fn measure_atomics(
             ),
         );
     }
-    // An atomic that lays out across a vertical paragraph's lines fits the
-    // root's physical width. The page area stands in for it while the
-    // content of the root decides it, as the initial containing block does
-    // for an orthogonal flow (CSS Writing Modes 4 §7.3.1).
-    let page_width = tree
-        .fixed_page_area
-        .map(|(width, _)| width)
-        .filter(|width| *width > 0.0);
     // The height of a vertical paragraph is its inline extent, definite once
     // the lines are broken in it, so the percentage heights of its atomics
     // resolve against it.
@@ -1767,88 +1876,8 @@ pub(crate) fn measure_atomics(
         // A child's margins and padding resolve their percentages against the
         // paragraph's inline extent (CSS 2.1 8.3).
         let margin = resolved_margins(tree, node, geometry.width);
-        // Only an atomic that lays out on the axes of a vertical paragraph is
-        // offered the paragraph's inline extent as its height; an orthogonal
-        // one is offered the root's width.
-        let along_height =
-            vertical && crate::layout::dispatch::used_writing_mode(tree, node).is_vertical();
-        let orthogonal = vertical && !along_height;
-        let inline_margins = if along_height {
-            margin.top + margin.bottom
-        } else {
-            margin.left + margin.right
-        };
-        let available = (geometry.width - inline_margins).max(0.0);
-        // The root's physical width, the basis for the percentages of an
-        // atomic's own width in a vertical paragraph.
-        let width_basis = geometry
-            .vertical_width
-            .or_else(|| page_width.filter(|_| orthogonal));
-        // The room along the line is the room along the paragraph's inline
-        // axis, the physical height of a vertical one.
-        let room = AvailableSpace::Definite(available);
-        let space = if along_height {
-            Size {
-                width: AvailableSpace::MaxContent,
-                height: room,
-            }
-        } else if orthogonal {
-            Size {
-                width: width_basis.map_or(AvailableSpace::MaxContent, |width| {
-                    AvailableSpace::Definite((width - inline_margins).max(0.0))
-                }),
-                height: AvailableSpace::MaxContent,
-            }
-        } else {
-            Size {
-                width: room,
-                height: AvailableSpace::MaxContent,
-            }
-        };
-        // A vertical paragraph's inline extent is the box's height, so its
-        // percentages of the width resolve against the containing block's
-        // physical width, while the edges' percentages stay with the inline
-        // extent (CSS Writing Modes 4 §7.2). A box is given one basis for
-        // both, so the width is resolved here. A width that the content of
-        // the root decides is no basis: the percentages of a box laid out on
-        // the same axes behave as `auto` and as no limit then, and it is given
-        // none.
-        let known_width = if vertical {
-            width_basis.and_then(|physical_width| {
-                used_block_width_with_edge_basis(tree, node, physical_width, geometry.width).map(
-                    |width| {
-                        clamp_block_width_with_edge_basis(
-                            tree,
-                            node,
-                            physical_width,
-                            geometry.width,
-                            width,
-                        )
-                    },
-                )
-            })
-        } else {
-            keyword_width(tree, node, &geometry, available)
-        };
-        // Without a width to resolve against, the percentages of a box laid
-        // out on the same axes behave as `auto` and as no limit. Its edges
-        // keep the inline extent as their basis, which a single basis for
-        // both would take away, so the percentages are what is set aside.
-        let neutral = if along_height && width_basis.is_none() {
-            percentage_widths(tree, node)
-        } else {
-            Vec::new()
-        };
-        let layout = |tree: &mut LayoutSession<'_>| {
-            perform_box_layout(tree, node, geometry.width, height_basis, known_width, space)
-        };
-        let output = if neutral.is_empty() {
-            layout(tree)
-        } else {
-            crate::layout::dispatch::content_limits::with_neutral_sizes(
-                tree, node, &neutral, layout,
-            )
-        };
+        let fit = fit_child(tree, node, &geometry, vertical, margin);
+        let output = layout_child(tree, node, &geometry, height_basis, fit);
         let id = shodo::node::NodeId(node as u64);
         // Only the alphabetic baseline is supplied. shodo measures it from
         // the margin box's line-over edge and falls back to the margin box's
@@ -1899,8 +1928,15 @@ pub(crate) fn measure_atomics(
 }
 
 /// The `width`, `min-width` and `max-width` of `node` that are percentages,
-/// which resolve to nothing without a basis.
-fn percentage_widths(tree: &LayoutSession<'_>, node: usize) -> Vec<LengthProperty> {
+/// which resolve to nothing without a basis, as overrides: `auto` and no limit
+/// without a `basis`, and with one the `min-width` and `max-width` as the
+/// lengths they come to. The `width` is left to the width the box is given.
+fn percentage_width_overrides(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    basis: Option<f32>,
+) -> Vec<OwnedPropertyOverride> {
+    use raikiri_style::ComputedLengthPercentageOrAuto as Length;
     let style = tree.physical_style(node);
     let in_percentages = |dimension: values::Dimension| {
         dimension.maybe_resolve(None::<f32>).is_none()
@@ -1913,7 +1949,17 @@ fn percentage_widths(tree: &LayoutSession<'_>, node: usize) -> Vec<LengthPropert
     ]
     .into_iter()
     .filter(|&(_, dimension)| in_percentages(dimension))
-    .map(|(property, _)| property)
+    .filter_map(|(property, dimension)| {
+        let entry = match basis {
+            None => OwnedPropertyOverride::length(property, Length::Auto, false),
+            Some(_) if property == LengthProperty::Width => return None,
+            Some(basis) => {
+                let length = dimension.maybe_resolve(Some(basis))?.max(0.0);
+                OwnedPropertyOverride::length(property, Length::Px(length), true)
+            }
+        };
+        Some(entry.expect("physical width"))
+    })
     .collect()
 }
 
