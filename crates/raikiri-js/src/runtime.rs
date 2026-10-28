@@ -84,6 +84,7 @@ pub(crate) struct State {
     /// Per-style-element sheet text the rule objects above were handed out
     /// for.
     pub css_sheet_versions: HashMap<usize, stylesheet::SheetVersion>,
+    css_rule_memo: stylesheet::RuleMemo,
     /// The text of each rule detached from its sheet, which its rule
     /// objects keep reading and writing.
     css_detached_rules: HashMap<u64, boa_gc::WeakGc<stylesheet::CssOwner>>,
@@ -357,6 +358,7 @@ impl DomRuntime {
             css_style_rules: HashMap::new(),
             css_margin_rules: HashMap::new(),
             css_sheet_versions: HashMap::new(),
+            css_rule_memo: stylesheet::RuleMemo::default(),
             css_detached_rules: HashMap::new(),
             next_detached_rule: 0,
             css_cache_sweep_at: 64,

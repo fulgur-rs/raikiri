@@ -216,17 +216,7 @@ fn declared_text(state: &mut super::State, source: &StyleSource) -> (Option<Stri
         );
     };
     let (sheet, rule, margin) = slot.location(state);
-    let text = super::stylesheet::sheet_text(state, sheet);
-    match margin {
-        Some(margin) => (
-            super::stylesheet::margin_rule_body(&text, rule, margin),
-            false,
-        ),
-        None => (
-            super::stylesheet::rule_body(&text, rule),
-            super::stylesheet::is_page_rule(&text, rule),
-        ),
-    }
+    super::stylesheet::declared_rule_text(state, sheet, rule, margin)
 }
 
 /// One validated inline declaration: `value` without any trailing
@@ -782,9 +772,7 @@ impl StyleSource {
             return Ok(false);
         };
         with_state(context, |s| match slot.location(s) {
-            (sheet, rule, None) => {
-                super::stylesheet::is_page_rule(&super::stylesheet::sheet_text(s, sheet), rule)
-            }
+            (sheet, rule, None) => super::stylesheet::sheet_rule_is_page(s, sheet, rule),
             _ => false,
         })
     }

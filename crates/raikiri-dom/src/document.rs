@@ -49,6 +49,7 @@ mod stylesheet_source;
 mod tree_changes;
 pub use mutation::DomMutationError;
 pub use named_elements::NamedElementVersion;
+pub use stylesheet_source::StylesheetVersion;
 
 const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
 const MATHML_NAMESPACE_URI: &str = "http://www.w3.org/1998/Math/MathML";
@@ -226,6 +227,7 @@ struct PreparedImage {
 pub struct Document {
     tree_changes: tree_changes::TreeChanges,
     named_elements: named_elements::Tracker,
+    stylesheet_revision: stylesheet_source::Tracker,
     stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
@@ -516,6 +518,7 @@ impl Document {
         Self {
             tree_changes: Default::default(),
             named_elements: Default::default(),
+            stylesheet_revision: Default::default(),
             stylesheet_sources: HashMap::new(),
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
@@ -1924,6 +1927,7 @@ impl Document {
         let Document {
             tree_changes: _,
             named_elements: _,
+            stylesheet_revision: _,
             stylesheet_sources,
             table_objects: _,
             page_projection: _,
