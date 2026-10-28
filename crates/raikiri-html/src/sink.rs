@@ -740,6 +740,9 @@ pub(crate) fn collect_head_stylesheet_sources(doc: &Document) -> Vec<HeadStylesh
 }
 
 fn inline_stylesheet_text(doc: &Document, node_id: raikiri_traits::NodeId) -> String {
+    if let Some(source) = doc.stylesheet_source(node_id.0 as usize) {
+        return source.to_owned();
+    }
     use raikiri_traits::{Dom, Node};
 
     let mut text = String::new();
@@ -781,6 +784,9 @@ fn is_stylesheet_style_element(element: &impl raikiri_traits::Element) -> bool {
 }
 
 fn inline_stylesheet_has_content(doc: &Document, node_id: raikiri_traits::NodeId) -> bool {
+    if let Some(source) = doc.stylesheet_source(node_id.0 as usize) {
+        return !source.is_empty();
+    }
     use raikiri_traits::{Dom, Node};
 
     doc.child_ids(node_id).any(|child_id| {
@@ -793,7 +799,7 @@ fn inline_stylesheet_has_content(doc: &Document, node_id: raikiri_traits::NodeId
 
 /// Inline stylesheet text paired with the `<style>` element's `media`
 /// attribute.
-fn extract_inline_stylesheets(doc: &Document) -> Vec<(String, Option<String>)> {
+pub(crate) fn extract_inline_stylesheets(doc: &Document) -> Vec<(String, Option<String>)> {
     let inline = |node_id| {
         (
             inline_stylesheet_text(doc, node_id),

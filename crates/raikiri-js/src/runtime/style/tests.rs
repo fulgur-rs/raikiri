@@ -32,7 +32,7 @@ fn inline_style_helpers_match_the_previous_runner_semantics() {
 }
 
 #[test]
-fn stylesheet_rule_declaration_updates_the_live_style_element() {
+fn stylesheet_rule_declaration_updates_the_live_sheet() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
     rt.evaluate(
@@ -56,7 +56,7 @@ fn stylesheet_rule_declaration_updates_the_live_style_element() {
     ok(&mut rt, "declaration.backgroundColor === 'magenta'");
     ok(
         &mut rt,
-        "styleElement.textContent.includes('background-color: magenta;')",
+        "rule.cssText.includes('background-color: magenta;') && styleElement.textContent === 'span { color: cyan; } span.active { color: red; }'",
     );
     ok(&mut rt, "rule.style === declaration");
 
@@ -1054,7 +1054,7 @@ fn stylesheet_declaration_reads_priorities_indexes_and_writes_css_text() {
     ok(
         &mut rt,
         "declaration.cssText === 'color: red; margin-top: 2px;' && \
-         styleElement.textContent.includes('color: red; margin-top: 2px;')",
+         declaration.parentRule.cssText.includes('color: red; margin-top: 2px;')",
     );
 }
 
@@ -1303,16 +1303,16 @@ fn page_rules_expose_style_and_margin_rule_insertion() {
     ok(
         &mut rt,
         "pageRule.style.margin === '50px 0px 0px' && \
-         styleElement.textContent.includes('@top-left { content: \"a\" }') && \
-         styleElement.textContent.indexOf('@top-center') < styleElement.textContent.indexOf('@top-left') && \
-         styleElement.textContent.indexOf('@top-left') < styleElement.textContent.indexOf('@bottom-center')",
+         pageRule.cssText.includes('@top-left { content: \"a\" }') && \
+         pageRule.cssText.indexOf('@top-center') < pageRule.cssText.indexOf('@top-left') && \
+         pageRule.cssText.indexOf('@top-left') < pageRule.cssText.indexOf('@bottom-center')",
     );
 
     rt.evaluate("pageRule.deleteRule(1);").unwrap();
     ok(
         &mut rt,
-        "!styleElement.textContent.includes('@top-left') && \
-         styleElement.textContent.includes('@bottom-center') && \
+        "!pageRule.cssText.includes('@top-left') && \
+         pageRule.cssText.includes('@bottom-center') && \
          sheet.rules[1].selectorText === 'p'",
     );
     ok(
@@ -1645,7 +1645,7 @@ fn page_rule_selector_text_setter_replaces_only_a_valid_prelude() {
     ok(
         &mut rt,
         "pageRule.selectorText === 'named:left' && \
-         styleElement.textContent === '@page named:left { margin: 1px; @top-left { content: \"a\" } } p { color: red }' && \
+         pageRule.cssText === '@page named:left { margin: 1px; @top-left { content: \"a\" } }' && \
          pageRule.style.margin === '1px' && pageRule.cssRules.length === 1",
     );
     rt.evaluate("pageRule.selectorText = 'p { color: blue'; pageRule.selectorText = '::first';")
@@ -1658,7 +1658,7 @@ fn page_rule_selector_text_setter_replaces_only_a_valid_prelude() {
     ok(
         &mut rt,
         "pageRule.selectorText === '' && styleElement.sheet.cssRules.length === 2 && \
-         styleElement.textContent.startsWith('@page { margin: 1px;')",
+         pageRule.cssText.startsWith('@page { margin: 1px;')",
     );
     // A style rule's selectorText stays read-only here.
     rt.evaluate("var styleRule = styleElement.sheet.cssRules[1]; styleRule.selectorText = 'div';")
@@ -1889,7 +1889,7 @@ fn margin_rule_objects_follow_insert_and_delete_rule() {
          page.cssRules.length === 2 && page.cssRules[1] === right && \
          right.name === 'top-right' && page.cssRules[0].name === 'top-center' && \
          page.cssRules[0].style.color === 'blue' && \
-         rightStyle.color === 'black' && styleElement.textContent.includes('color: black')",
+         rightStyle.color === 'black' && page.cssText.includes('color: black')",
     );
     rt.evaluate("var center = page.cssRules[0]; page.deleteRule(1);")
         .unwrap();
@@ -1897,7 +1897,7 @@ fn margin_rule_objects_follow_insert_and_delete_rule() {
         &mut rt,
         "page.cssRules.length === 1 && page.cssRules[0] === center && \
          center.name === 'top-center' && right.name === 'top-right' && \
-         rightStyle.color === 'black' && !styleElement.textContent.includes('top-right')",
+         rightStyle.color === 'black' && !page.cssText.includes('top-right')",
     );
     // Writes to a removed margin rule stay on it.
     rt.evaluate("leftStyle.color = 'white';").unwrap();
@@ -2368,7 +2368,7 @@ fn urls_read_back_as_quoted_strings_in_every_property() {
 }
 
 #[test]
-fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
+fn style_sheet_insert_and_delete_rule_edit_the_sheet() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
     rt.evaluate(
@@ -2391,7 +2391,7 @@ fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
     ok(
         &mut rt,
         "sheet.insertRule('z { color: gray }', 3) === 3 && rules[3].selectorText === 'z' && \
-         el.textContent === 'i { color: green; }\\na { color: red; } b { color: blue; }\\nz { color: gray }'",
+         el.textContent === 'a { color: red; } b { color: blue; }' && rules.length === 4 && rules[0].style.color === 'green' && rules[3].style.color === 'gray'",
     );
     // Removing a rule detaches its object, which keeps the rule's text.
     rt.evaluate("sheet.deleteRule(1);").unwrap();
@@ -2460,7 +2460,7 @@ fn style_sheet_insert_rule_closes_cut_off_rules_and_orders_imports() {
     ok(
         &mut rt,
         "sheet.insertRule('p { color: red', 1) === 1 && sheet.cssRules.length === 2 && \
-         el.textContent === '@import \"x.css\";\\np { color: red}'",
+         el.textContent === '@import \"x.css\"' && sheet.cssRules[0].cssText === '@import \"x.css\";' && sheet.cssRules[1].style.color === 'red'",
     );
     ok(
         &mut rt,
@@ -2532,7 +2532,7 @@ fn style_sheet_insert_rule_closes_cut_off_rules_and_orders_imports() {
     rt.evaluate("el.textContent = 'a { color: red';").unwrap();
     ok(
         &mut rt,
-        "sheet.insertRule('b {}', 1) === 1 && el.textContent === 'a { color: red}\\nb {}'",
+        "sheet.insertRule('b {}', 1) === 1 && el.textContent === 'a { color: red' && sheet.cssRules[0].style.color === 'red' && sheet.cssRules[1].selectorText === 'b'",
     );
     rt.evaluate("el.textContent = 'a { content: \"x';").unwrap();
     ok(
@@ -2631,6 +2631,6 @@ fn style_sheet_delete_rule_detaches_page_rule_margin_objects() {
     ok(
         &mut rt,
         "sheet.cssRules.length === 0 && margin.name === 'top-left' && \
-         margin.style.content === '\"a\"' && el.textContent === ' '",
+         margin.style.content === '\"a\"' && el.textContent === 'p {} @page { @top-left { content: \"a\" } }'",
     );
 }

@@ -1157,6 +1157,12 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
                     continue;
                 }
                 if tag.eq_ignore_ascii_case("style") {
+                    if let Some(source) = elem.stylesheet_source() {
+                        if !source.is_empty() {
+                            on_style_text(source);
+                        }
+                        continue;
+                    }
                     // Concatenate child Text nodes.
                     let mut concat = String::new();
                     for child_id in dom.child_ids(id) {

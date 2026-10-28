@@ -44,6 +44,7 @@ pub(crate) struct OofCoordinate {
 
 pub(crate) mod ancestors;
 mod mutation;
+mod stylesheet_source;
 mod tree_changes;
 pub use mutation::DomMutationError;
 
@@ -222,6 +223,7 @@ struct PreparedImage {
 #[derive(Debug, Clone)]
 pub struct Document {
     tree_changes: tree_changes::TreeChanges,
+    stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
@@ -510,6 +512,7 @@ impl Document {
         nodes.push(Node::new_document());
         Self {
             tree_changes: Default::default(),
+            stylesheet_sources: HashMap::new(),
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
@@ -630,6 +633,7 @@ impl Document {
             merged.push_str(data.text_content.as_str());
             merged.push_str(text.as_str());
             data.text_content = SmolStr::new(merged);
+            self.reset_stylesheet_source(parent);
             self.invalidate_layout_cache();
             self.flags_dirty = true;
             return last;
@@ -665,6 +669,7 @@ impl Document {
             merged.push_str(data.text_content.as_str());
             merged.push_str(text.as_str());
             data.text_content = SmolStr::new(merged);
+            self.reset_stylesheet_source(parent);
             self.invalidate_layout_cache();
             self.flags_dirty = true;
             return previous;
@@ -955,6 +960,7 @@ impl Document {
     /// Primitive for html5ever's `TreeSink::remove_from_parent(target)`.
     pub fn detach_from_parent(&mut self, child: usize) -> Option<usize> {
         let parent = self.parent_of(child)?;
+        self.reset_stylesheet_source(parent);
         let kids = &mut self.nodes[parent].children;
         if let Some(pos) = kids.iter().position(|&c| c == child) {
             kids.remove(pos);
@@ -975,6 +981,8 @@ impl Document {
     /// Move all children of `from` to the end of `to`'s children, leaving
     /// `from` empty. Primitive for html5ever's `TreeSink::reparent_children`.
     pub fn reparent_children(&mut self, from: usize, to: usize) {
+        self.reset_stylesheet_source(from);
+        self.reset_stylesheet_source(to);
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
         self.nodes[to].children.extend(moved.iter().copied());
         for moved_child in moved {
@@ -1038,6 +1046,9 @@ impl Document {
             e.prefix = prefix;
             (changed, affects_tree_flags, affects_layout)
         };
+        if namespace_changed {
+            self.reset_stylesheet_source(id);
+        }
         if namespace_changed && affects_tree_flags {
             self.flags_dirty = true;
         }
@@ -1058,6 +1069,7 @@ impl Document {
     ///
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
+        let had_css_type = self.stylesheet_has_css_type(id);
         self.page_projection.clear();
         let e = self.nodes[id]
             .data
@@ -1072,6 +1084,7 @@ impl Document {
                 value,
             })
             .collect();
+        self.reset_stylesheet_if_type_changed(id, had_css_type);
     }
 
     /// Set one namespace-qualified attribute on an element.
@@ -1161,6 +1174,9 @@ impl Document {
         if !is_valid_attribute_local_name(local.as_str()) {
             return Err(format!("invalid attribute name: {local}"));
         }
+        let had_css_type = local
+            .eq_ignore_ascii_case("type")
+            .then(|| self.stylesheet_has_css_type(id));
         self.page_projection.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("set_element_attribute called on non-Element");
@@ -1226,6 +1242,9 @@ impl Document {
         // and changes the intrinsic size, so layout caches must be
         // invalidated the same way image resolution does. Oversized or
         // over-budget bitmaps remain implicitly transparent without storage.
+        if let Some(had_css_type) = had_css_type {
+            self.reset_stylesheet_if_type_changed(id, had_css_type);
+        }
         if is_canvas_size_attr {
             self.reset_canvas_bitmap_for_current_size(id);
             self.invalidate_layout_cache();
@@ -1259,7 +1278,15 @@ impl Document {
             .data
             .as_element_mut()
             .expect("remove_element_attribute_ns called on non-Element");
-        Some(element.attributes.remove(position).value)
+        let value = element.attributes.remove(position).value;
+        if namespace.is_none()
+            && local == "type"
+            && !value.is_empty()
+            && !value.eq_ignore_ascii_case("text/css")
+        {
+            self.reset_stylesheet_source(id);
+        }
+        Some(value)
     }
 
     /// Remove one null-namespace attribute from an element and return its
@@ -1299,6 +1326,7 @@ impl Document {
         };
         let is_canvas_size_attr =
             matches!(local.as_str(), "width" | "height") && self.is_canvas_element(id);
+        let had_css_type = (local == "type").then(|| self.stylesheet_has_css_type(id));
         let first_value = {
             let element = self.nodes[id]
                 .data
@@ -1332,6 +1360,9 @@ impl Document {
         // size (HTML Standard §4.12.5), clearing the bitmap and changing the
         // intrinsic size. Only when the attribute actually existed: removing
         // a missing attribute is a no-op.
+        if let Some(had_css_type) = had_css_type {
+            self.reset_stylesheet_if_type_changed(id, had_css_type);
+        }
         if is_canvas_size_attr && first_value.is_some() {
             self.reset_canvas_bitmap_for_current_size(id);
             self.invalidate_layout_cache();
@@ -1373,6 +1404,7 @@ impl Document {
             return Err(format!("textContent target index {id} is not an Element"));
         }
         let text = text.into();
+        self.reset_stylesheet_source(id);
         let removed: Vec<usize> = std::mem::take(&mut self.nodes[id].children);
         for old_child in removed {
             if let Some(node) = self.nodes.get_mut(old_child)
@@ -1423,6 +1455,7 @@ impl Document {
         let target_parent = self.nodes[target_parent]
             .template_contents()
             .unwrap_or(target_parent);
+        self.reset_stylesheet_source(target_parent);
         if !self.nodes[target_parent].children.is_empty() {
             // The parent is already known. Avoid a whole-arena parent lookup
             // and shifting the remaining child IDs for every removed child.
@@ -1875,6 +1908,7 @@ impl Document {
         // Every field is named so that a new one has to be considered here.
         let Document {
             tree_changes: _,
+            stylesheet_sources,
             table_objects: _,
             page_projection: _,
             nodes: arena,
@@ -1946,6 +1980,7 @@ impl Document {
         let mut document = Document::new();
         document.nodes = copied.into();
         document.root = 0;
+        document.stylesheet_sources = remap_keys(stylesheet_sources, nodes);
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
         document.focused = focused.and_then(|old| new_of_old.get(&old).copied());
@@ -1996,6 +2031,7 @@ impl Document {
                     kept.push(child);
                 } else {
                     any_removed = true;
+                    self.reset_stylesheet_source(parent_id);
                     if let Some(node) = self.nodes.get_mut(child)
                         && node.parent == Some(parent_id)
                     {
@@ -2652,7 +2688,7 @@ impl Document {
     }
 
     /// Serialize an inline SVG element and its subtree as a standalone XML
-    /// source, retaining element/attribute namespace URIs and prefixes.
+    /// source for rendering, retaining namespaces and current CSSOM sources.
     pub fn serialize_svg_subtree(&self, id: usize) -> Result<Option<String>, String> {
         const SVG_NS: &str = "http://www.w3.org/2000/svg";
         const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
@@ -2788,7 +2824,11 @@ impl Document {
                             }
                             output.push('>');
                             pending.push(Task::End(name));
-                            pending.extend(node.children.iter().rev().copied().map(Task::Node));
+                            if let Some(source) = self.stylesheet_source(node_id) {
+                                push_xml_escaped(&mut output, source, false);
+                            } else {
+                                pending.extend(node.children.iter().rev().copied().map(Task::Node));
+                            }
                         }
                         NodeData::Text(text) => {
                             push_xml_escaped(&mut output, text.text_content.as_str(), false);

@@ -192,7 +192,7 @@ fn prepare_runs_reference_side_scroll_without_wait() {
 }
 
 #[test]
-fn prepare_carries_sampled_animation_styles_outside_serialized_html() {
+fn prepare_carries_sampled_style_sources_outside_serialized_html() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("animated.html");
     std::fs::write(&path, "").unwrap();
@@ -210,11 +210,8 @@ fn prepare_carries_sampled_animation_styles_outside_serialized_html() {
         !prepared.html.contains("font-size: 20px"),
         "sampled declarations must not be serialized as authored style"
     );
-    assert_eq!(prepared.animation_styles.len(), 1);
-    assert_eq!(
-        prepared.animation_styles[0].declarations,
-        "font-size: 20px;"
-    );
+    assert_eq!(prepared.style_sources.len(), 1);
+    assert_eq!(prepared.style_sources[0].declarations, "font-size: 20px;");
 }
 
 #[test]
@@ -229,7 +226,7 @@ fn animation_style_sidecar_survives_adjacent_text_node_serialization() {
     let parsed =
         raikiri_html::parse(prepared.html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
     let mut document = parsed.dom;
-    super::super::restore_animation_styles(&mut document, &prepared.animation_styles).unwrap();
+    super::super::restore_style_sources(&mut document, &prepared.style_sources).unwrap();
     let target = (0..document.node_count())
         .find(|id| document.element_attribute(*id, "id") == Some("target"))
         .expect("target element should survive serialization");
@@ -319,4 +316,42 @@ fn focus_sidecar_is_dropped_when_reparsing_changes_a_namespace() {
     super::super::restore_focus(&mut document, focused);
 
     assert_eq!(document.focused_element(), None);
+}
+
+#[test]
+fn cssom_sources_survive_preparation_without_entering_dom_markup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cssom.html");
+    std::fs::write(&path, "").unwrap();
+    let html = r#"<!DOCTYPE html><html><head><style id=s>p { color: red }</style></head><body>
+        <script>var el=document.querySelector('#s'), text=el.firstChild;
+        el.sheet.insertRule('p::before { content: "</style><div>" }', 1);
+        if(text!==el.firstChild || text.data!=='p { color: red }') throw Error('DOM changed');
+        </script></body></html>"#;
+    let prepared = prepare(html, &path, "", ReftestConfig::default()).unwrap();
+    assert!(
+        prepared
+            .html
+            .contains("<style id=\"s\">p { color: red }</style>")
+    );
+    let source = prepared
+        .style_sources
+        .iter()
+        .find(|style| style.kind == StyleSourceKind::Stylesheet)
+        .unwrap();
+    assert!(source.declarations.contains("</style><div>"));
+    let options = raikiri::ParseOptions::new();
+    let mut parsed = raikiri_html::parse(prepared.html.as_bytes(), &options).unwrap();
+    super::super::restore_style_sources(&mut parsed.dom, &prepared.style_sources).unwrap();
+    raikiri_html::refresh_stylesheets(&mut parsed, &options);
+    assert!(parsed.stylesheet_sources.iter().any(|sheet| {
+        sheet
+            .parts
+            .iter()
+            .any(|part| part.source.contains("</style><div>"))
+    }));
+    assert_eq!(
+        parsed.dom.element_text_content(3).as_deref(),
+        Some("p { color: red }")
+    );
 }

@@ -117,7 +117,14 @@ pub(crate) struct CustomHighlightPathRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AnimationStyleSidecar {
+pub(crate) enum StyleSourceKind {
+    Animation,
+    Stylesheet,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StyleSourceSidecar {
+    pub(crate) kind: StyleSourceKind,
     /// Indices among element children at each level, stable when text nodes merge.
     pub(crate) node_path: Vec<usize>,
     pub(crate) declarations: String,
@@ -153,8 +160,8 @@ pub(crate) struct PrintRenderResources<'a> {
     /// parsed document before paint so `innerHTML` round-tripping does not
     /// drop script-painted pixels or require another pixel-buffer copy.
     pub(crate) canvas_bitmaps: Option<Vec<raikiri_dom::CanvasBitmap>>,
-    /// Animation-origin declarations keyed by paths into the serialized tree.
-    pub(crate) animation_styles: Option<&'a [AnimationStyleSidecar]>,
+    /// Animation declarations and CSSOM sources keyed by element paths.
+    pub(crate) style_sources: Option<&'a [StyleSourceSidecar]>,
     /// Script-created ranges identified by a child-index path, so reparsing
     /// serialized HTML can resolve them to its new arena indices.
     pub(crate) custom_highlight_ranges: Option<&'a [CustomHighlightPathRange]>,
@@ -2515,6 +2522,9 @@ fn is_live_stylesheet_style(document: &raikiri_dom::Document, node_id: usize) ->
 /// Raw CSS text of a live `<style>` element, with the XHTML CDATA wrapper
 /// removed the same way the fragment parser's projection does.
 fn live_stylesheet_text(document: &raikiri_dom::Document, node_id: usize) -> String {
+    if let Some(source) = document.stylesheet_source(node_id) {
+        return source.to_owned();
+    }
     let Some(node) = document.get_node(node_id) else {
         return String::new();
     };
@@ -2535,6 +2545,9 @@ fn live_stylesheet_text(document: &raikiri_dom::Document, node_id: usize) -> Str
 }
 
 fn live_stylesheet_has_content(document: &raikiri_dom::Document, node_id: usize) -> bool {
+    if let Some(source) = document.stylesheet_source(node_id) {
+        return !source.is_empty();
+    }
     let Some(node) = document.get_node(node_id) else {
         return false;
     };
@@ -2693,9 +2706,9 @@ fn render_raikiri_pages_inner(
     )
 }
 
-fn restore_animation_styles(
+fn restore_style_sources(
     document: &mut raikiri_dom::Document,
-    styles: &[AnimationStyleSidecar],
+    styles: &[StyleSourceSidecar],
 ) -> Result<(), std::io::Error> {
     for style in styles {
         let mut target = document.root_index();
@@ -2736,7 +2749,13 @@ fn restore_animation_styles(
                 ),
             ));
         }
-        document.set_element_animation_style(target, Some(style.declarations.as_str().into()));
+        match style.kind {
+            StyleSourceKind::Animation => document
+                .set_element_animation_style(target, Some(style.declarations.as_str().into())),
+            StyleSourceKind::Stylesheet => document
+                .set_stylesheet_source(target, style.declarations.clone())
+                .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?,
+        }
     }
     Ok(())
 }
@@ -2801,7 +2820,7 @@ fn render_raikiri_pages_inner_with_canvases(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
     engine: InlineEngineChoice,
-    animation_styles: Option<&[AnimationStyleSidecar]>,
+    style_sources: Option<&[StyleSourceSidecar]>,
     canvas_bitmaps: Option<Vec<raikiri_dom::CanvasBitmap>>,
     custom_highlight_ranges: Option<&[CustomHighlightPathRange]>,
     focused_path: Option<&dynamic::FocusedPath>,
@@ -2859,7 +2878,7 @@ fn render_raikiri_pages_inner_with_canvases(
             require_inline_fonts: engine.require_inline_fonts,
             print_page_margin: engine.print_page_margin,
             canvas_bitmaps,
-            animation_styles,
+            style_sources,
             custom_highlight_ranges,
             focused_path,
         },
@@ -2931,7 +2950,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     };
 
     let canvas_bitmaps = resources.canvas_bitmaps;
-    let animation_styles = resources.animation_styles;
+    let style_sources = resources.style_sources;
     let image_resolver = resources.replaced_resolver;
     let image_pixel_source = resources.image_pixel_source;
     let base_url = resources.base_url;
@@ -2954,8 +2973,30 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // before resolving viewport units so both the content box and `vh` use the
     // same print viewport as the reference renderer.
     let html = inject_default_page_margin(html);
+    let has_cssom_sources = style_sources.is_some_and(|styles| {
+        styles
+            .iter()
+            .any(|style| style.kind == StyleSourceKind::Stylesheet)
+    });
+    // Restore CSSOM sources before fetching any sheets. The final projection
+    // shares one import budget across consumer, inline and external sheets.
+    let deferred_options = ParseOptions::new().base_url(opts.base_url.clone());
+    let parse_options = if has_cssom_sources {
+        &deferred_options
+    } else {
+        &opts
+    };
     let parse_document = || {
-        let mut parsed = resources.syntax.parse(html.as_bytes(), &opts)?;
+        let mut parsed = resources.syntax.parse(html.as_bytes(), parse_options)?;
+        if let Some(styles) = style_sources {
+            restore_style_sources(&mut parsed.dom, styles).map_err(|error| error.to_string())?;
+            if styles
+                .iter()
+                .any(|style| style.kind == StyleSourceKind::Stylesheet)
+            {
+                raikiri_html::refresh_stylesheets(&mut parsed, &opts);
+            }
+        }
         if resources.mirror_page_margin {
             parsed.stylesheet_sources.insert(
                 0,
@@ -2965,9 +3006,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
         Ok::<_, String>(parsed)
     };
     let mut uncascaded = parse_document()?;
-    if let Some(styles) = animation_styles {
-        restore_animation_styles(&mut uncascaded.dom, styles)?;
-    }
     if let Some(path) = resources.focused_path {
         restore_focus(&mut uncascaded.dom, path);
     }
@@ -3161,9 +3199,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // parse/layout pass.
     let (mut uncascaded, slices, mut cascade, page_tree, mut continuations) = if geometry_varies {
         let mut fresh = parse_document()?;
-        if let Some(styles) = animation_styles {
-            restore_animation_styles(&mut fresh.dom, styles)?;
-        }
         if let Some(path) = resources.focused_path {
             restore_focus(&mut fresh.dom, path);
         }
@@ -4160,7 +4195,7 @@ where
         },
         pair.test.parent(),
         test_engine,
-        Some(&test_prepared.animation_styles),
+        Some(&test_prepared.style_sources),
         Some(test_prepared.canvases),
         Some(&test_prepared.custom_highlight_ranges),
         test_prepared.focused_path.as_ref(),
@@ -4177,7 +4212,7 @@ where
         },
         pair.reference.parent(),
         ref_engine,
-        Some(&ref_prepared.animation_styles),
+        Some(&ref_prepared.style_sources),
         Some(ref_prepared.canvases),
         Some(&ref_prepared.custom_highlight_ranges),
         ref_prepared.focused_path.as_ref(),

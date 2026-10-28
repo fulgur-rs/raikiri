@@ -185,6 +185,7 @@ fn element_node(tag: &str, template: Option<usize>) -> LogicalNode {
             attributes: Vec::new(),
             inline_style: None,
             animation_style: None,
+            stylesheet_source: None,
             template,
         },
         children: Vec::new(),
@@ -332,6 +333,7 @@ fn reject_template_link_variants() {
                     attributes: Vec::new(),
                     inline_style: None,
                     animation_style: None,
+                    stylesheet_source: None,
                     template: Some(2),
                 },
                 children: Vec::new(),
@@ -358,6 +360,7 @@ fn reject_template_link_variants() {
         attributes: Vec::new(),
         inline_style: None,
         animation_style: None,
+        stylesheet_source: None,
         template: Some(2),
     };
     assert!(bad_tag.validate(100).is_err());
@@ -541,4 +544,37 @@ fn detached_focus_is_dropped_on_rebuild() {
     rebuilt.append_child(body, loose).unwrap();
     assert_eq!(rebuilt.focused_element(), None);
     assert_eq!(rebuilt.logical_snapshot().focused, None);
+}
+
+#[test]
+fn roundtrip_preserves_cssom_source_without_changing_dom_text() {
+    let mut document = Document::new();
+    let style = document.append_element(Some(0), "style", None::<&str>);
+    document.append_text(style, "original {}");
+    document
+        .set_stylesheet_source(style, "current {}".into())
+        .unwrap();
+    let restored =
+        Document::from_logical_snapshot(document.logical_snapshot(), document.node_count())
+            .unwrap();
+    assert_eq!(restored.stylesheet_source(style), Some("current {}"));
+    assert_eq!(
+        restored.element_text_content(style).as_deref(),
+        Some("original {}")
+    );
+}
+
+#[test]
+fn logical_cssom_source_rejects_non_style_target() {
+    let mut document = Document::new();
+    let style = document.append_element(Some(0), "style", None::<&str>);
+    document
+        .set_stylesheet_source(style, "edited {}".into())
+        .unwrap();
+    let mut snapshot = document.logical_snapshot();
+    if let LogicalData::Element { tag, .. } = &mut snapshot.nodes[style].data {
+        *tag = "div".into();
+    }
+    assert!(snapshot.validate(2).is_err());
+    assert!(Document::from_logical_snapshot(snapshot, 2).is_err());
 }

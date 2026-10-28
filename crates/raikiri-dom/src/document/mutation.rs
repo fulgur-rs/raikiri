@@ -158,6 +158,11 @@ impl Document {
                 ));
             }
         }
+        if matches!(self.nodes[id].data, NodeData::Text(_))
+            && let Some(parent) = self.parent_of(id)
+        {
+            self.reset_stylesheet_source(parent);
+        }
         self.invalidate_layout_cache();
         Ok(())
     }

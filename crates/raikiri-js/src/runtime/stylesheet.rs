@@ -386,8 +386,13 @@ impl<'i> QualifiedRuleParser<'i> for RuleRangeParser<'_> {
 
 pub(crate) fn stylesheet_text(document: &Document, style_element: usize) -> String {
     document
-        .element_text_content(style_element)
-        .unwrap_or_default()
+        .stylesheet_source(style_element)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            document
+                .element_text_content(style_element)
+                .unwrap_or_default()
+        })
 }
 
 /// The sheet of one style element as the CSSOM last saw or wrote it: its
@@ -732,7 +737,7 @@ fn write_sheet_text(context: &mut Context, sheet: SheetKey, text: String) -> JsR
         let written = state
             .host
             .document_mut()
-            .set_element_text_content(style_element, text);
+            .set_stylesheet_source(style_element, text);
         record_sheet_text(state, style_element);
         written
     })?;
