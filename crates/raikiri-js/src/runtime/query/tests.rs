@@ -502,3 +502,13 @@ fn query_selector_all_nth_child_sees_mutations_between_queries() {
              && ul.querySelector('li:nth-child(2)') === ul.children[1]",
     );
 }
+
+mod id_cache_tests;
+
+thread_local! {
+    static ID_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn record_id_visits(visits: usize) {
+    ID_VISITS.with(|count| count.set(count.get() + visits));
+}
