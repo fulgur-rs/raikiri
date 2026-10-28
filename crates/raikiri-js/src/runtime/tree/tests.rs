@@ -6,6 +6,8 @@ use crate::runtime::test_host::StubHost;
 use crate::runtime::webidl::with_state;
 use crate::runtime::{DomRuntime, RuntimeError};
 
+mod sibling_order_tests;
+
 fn rt() -> DomRuntime {
     let (h, ..) = StubHost::page();
     DomRuntime::new(h).unwrap()
