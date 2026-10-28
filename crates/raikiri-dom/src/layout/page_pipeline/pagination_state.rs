@@ -699,9 +699,18 @@ impl PaginationState {
             );
         } else {
             // A forced break before the first class-A box does not manufacture
-            // a leading blank page.
+            // a leading blank page. The box starts on the page its top falls
+            // on, which is the second when the schedule opens with a short
+            // page that ends where the flow begins, as the one a relayout
+            // after delivered pages starts with: a forced break after the box
+            // then opens the third page, not the one the box is on.
             self.saw_child = true;
-            self.current_page = 0;
+            self.current_page = if position.effective_y.is_finite() && position.effective_y >= 0.0 {
+                env.page_origins
+                    .start_page(position.effective_y, candidate.height)
+            } else {
+                0
+            };
         }
         Ok(page_transition)
     }
