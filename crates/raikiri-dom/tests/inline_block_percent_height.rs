@@ -55,9 +55,14 @@ fn boxes(body: &str) -> Vec<(String, [f32; 4])> {
 /// Layout units are 1/64px; allow a little more for the 32-bit sums.
 const TOLERANCE: f32 = 0.04;
 
-/// A label, the markup of a case and the `(id, left, top, width, height)` it
-/// expects.
-type Case<'a> = (&'a str, &'a str, &'a [(&'a str, f32, f32, f32, f32)]);
+/// The `(id, left, top, width, height)` a case expects of one element.
+type Expected<'a> = (&'a str, f32, f32, f32, f32);
+
+/// A label, the markup of a case and the boxes it expects.
+type Case<'a> = (&'a str, &'a str, &'a [Expected<'a>]);
+
+/// Like [`Case`], with markup built at run time.
+type OwnedCase<'a> = (&'a str, String, Vec<Expected<'a>>);
 
 /// Lays out each case and compares the elements it names with the expected
 /// boxes.
@@ -299,7 +304,7 @@ fn an_absolutely_positioned_block_in_an_inline_keeps_its_containing_block() {
 
 /// Lays out each case and compares the elements it names with the boxes
 /// Chromium gives.
-fn check(cases: &[(&str, String, Vec<(&str, f32, f32, f32, f32)>)]) {
+fn check(cases: &[OwnedCase<'_>]) {
     for (label, body, expected) in cases {
         check_boxes(&[(*label, body.as_str(), expected.as_slice())]);
     }
