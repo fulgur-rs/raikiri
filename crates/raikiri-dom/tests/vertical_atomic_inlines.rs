@@ -1188,3 +1188,243 @@ fn a_vertical_inline_block_in_a_horizontal_line_is_as_tall_as_the_horizontal_box
         &line,
     );
 }
+
+/// `html` on a page without the body margin, so that the boxes sit at the
+/// origin.
+fn on_a_bare_page(html: &str) -> String {
+    format!("<style>body{{margin:0}}</style>{html}")
+}
+
+/// A vertical root of the width of 100px that is a float, so that its height
+/// is the extent its lines take, holding `aa` and the float `f` of `float_css`.
+fn float_root(float_css: &str, content: &str) -> String {
+    on_a_bare_page(&paragraph_with_float(
+        "float:left;width:100px",
+        float_css,
+        content,
+    ))
+}
+
+#[test]
+fn a_float_adds_its_height_to_the_height_a_vertical_root_takes_from_its_lines() {
+    // The 20px of `aa` and the 40px of the float make 60px along the lines.
+    check_modes(
+        &float_root("width:20px", "bbbb"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+        ],
+    );
+    // A height of its own counts the same.
+    check_modes(
+        &float_root("width:20px;height:40px", "bbbb"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+        ],
+    );
+    // The float is the only content of its line, and the root follows it.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">\
+             <div id=f style=\"float:left;width:20px\">bbbbbb</div></div>",
+        ),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 60.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 60.0)),
+        ],
+    );
+    // The text takes 100px, so the root takes 140px.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">aaaaaaaaaa\
+             <div id=f style=\"float:left;width:20px\">bbbb</div></div>",
+        ),
+        &[("r", (0.0, 0.0, 100.0, 140.0))],
+        &[("r", (0.0, 0.0, 100.0, 140.0))],
+    );
+}
+
+#[test]
+fn the_margins_of_a_float_count_along_the_lines_of_a_vertical_root() {
+    let along = [
+        ("r", (0.0, 0.0, 100.0, 70.0)),
+        ("f", (0.0, 5.0, 20.0, 40.0)),
+    ];
+    let along_rl = [
+        ("r", (0.0, 0.0, 100.0, 70.0)),
+        ("f", (80.0, 5.0, 20.0, 40.0)),
+    ];
+    check_modes(
+        &float_root("width:20px;margin:5px 0", "bbbb"),
+        &along,
+        &along_rl,
+    );
+}
+
+#[test]
+fn a_float_on_the_far_side_of_a_vertical_root_counts_too() {
+    // A right float sits at the end of the line, below the text.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">aa\
+             <div id=f style=\"float:right;width:20px\">bbbb</div></div>",
+        ),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 20.0, 20.0, 40.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 20.0, 20.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn the_floats_of_a_vertical_root_add_up_along_its_lines() {
+    // 20px of text, 40px and 60px of floats on one line.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">aa\
+             <div id=f style=\"float:left;width:20px\">bbbb</div>\
+             <div id=g style=\"float:left;width:20px\">cccccc</div></div>",
+        ),
+        &[
+            ("r", (0.0, 0.0, 100.0, 120.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+            ("g", (0.0, 40.0, 20.0, 60.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 120.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+            ("g", (80.0, 40.0, 20.0, 60.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_horizontal_float_counts_the_height_it_has_at_the_width_it_fits() {
+    // Of the width of 60px, the text breaks in two lines of 10px.
+    check_modes(
+        &float_root("writing-mode:horizontal-tb;width:60px", "bb cc dd ee"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 40.0)),
+            ("f", (0.0, 0.0, 60.0, 20.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 40.0)),
+            ("f", (40.0, 0.0, 60.0, 20.0)),
+        ],
+    );
+    // Without a width it fits the 100px of the root, not the 110px of its text.
+    let fits = [
+        ("r", (0.0, 0.0, 100.0, 40.0)),
+        ("f", (0.0, 0.0, 100.0, 20.0)),
+    ];
+    check_modes(
+        &float_root("writing-mode:horizontal-tb", "bb cc dd ee"),
+        &fits,
+        &fits,
+    );
+}
+
+#[test]
+fn the_percentage_height_of_a_float_follows_the_height_a_vertical_root_takes() {
+    // The root is 60px high, as its lines are, and the float takes half of it.
+    check_modes(
+        &float_root("width:20px;height:50%", "bbbb"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 30.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 30.0)),
+        ],
+    );
+    // The height of a root that is no float follows its lines just the same.
+    check_modes(
+        &on_a_bare_page(&paragraph_with_float(
+            "width:100px",
+            "width:20px;height:50%",
+            "bbbb",
+        )),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 30.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 30.0)),
+        ],
+    );
+    // A height of its own is what the percentage is of.
+    check_modes(
+        &on_a_bare_page(&paragraph_with_float(
+            "width:100px;height:100px",
+            "width:20px;height:50%",
+            "bbbb",
+        )),
+        &[("f", (0.0, 0.0, 20.0, 50.0))],
+        &[("f", (80.0, 0.0, 20.0, 50.0))],
+    );
+}
+
+#[test]
+fn a_float_counts_in_every_kind_of_vertical_root_sized_by_its_lines() {
+    let float = "<div id=f style=\"float:left;width:20px\">bbbb</div>";
+    let lr = [
+        ("r", (0.0, 0.0, 100.0, 60.0)),
+        ("f", (0.0, 0.0, 20.0, 40.0)),
+    ];
+    let rl = [
+        ("r", (0.0, 0.0, 100.0, 60.0)),
+        ("f", (80.0, 0.0, 20.0, 40.0)),
+    ];
+    for root_css in ["display:inline-block", "position:absolute"] {
+        check_modes(
+            &on_a_bare_page(&format!(
+                "<div id=r style=\"writing-mode:MODE;width:100px;{root_css}\">aa{float}</div>"
+            )),
+            &lr,
+            &rl,
+        );
+    }
+    // A flex item takes the height of its content as well.
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=x style=\"display:flex\"><div id=r style=\"writing-mode:MODE;width:100px\">\
+             aa{float}</div></div>"
+        )),
+        &[
+            ("x", (0.0, 0.0, 800.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+        ],
+        &[
+            ("x", (0.0, 0.0, 800.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+        ],
+    );
+    // A root of auto width is as wide as its widest line, here the float.
+    let narrow = [("r", (0.0, 0.0, 20.0, 60.0)), ("f", (0.0, 0.0, 20.0, 40.0))];
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=r style=\"float:left;writing-mode:MODE\">aa{float}</div>"
+        )),
+        &narrow,
+        &narrow,
+    );
+}
