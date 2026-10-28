@@ -13,7 +13,9 @@ use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::layout::dispatch::block_flow::context::{
     BlockContext, BlockFormattingContext, BoxProbe,
 };
-use crate::layout::dispatch::{fit_content_room, measure_against_parent_height};
+use crate::layout::dispatch::{
+    fit_content_room, measure_against_parent_height, with_orthogonal_fit_content,
+};
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, CollapsibleMarginSet, FloatDirection,
     LayoutInput, LayoutOutput, NodeId, OofCandidate, OofCandidates, OofPosition,
@@ -2285,6 +2287,16 @@ fn layout_vertical_block_child(
         height: Some(inline_basis),
     };
     let shares_context = shares_vertical_root_context(tree, node, geometry.axes.writing_mode());
+    // A horizontal child with an auto width is an orthogonal flow, which takes
+    // the fit-content width in the room the root leaves it (CSS Writing Modes
+    // 4 §7.3.1): the root's content width less the child's margins. A root
+    // whose width depends on its content leaves no definite room.
+    let width = width.or_else(|| {
+        let room = geometry
+            .vertical_width
+            .map(|width| (width - margin.left - margin.right).max(0.0));
+        orthogonal_fit_content_width(tree, node, room, parent_size)
+    });
     let own_inline_size = used_block_height(tree, node, inline_basis)
         .map(OwnWidth::Fixed)
         .or_else(|| content_keyword_width(tree, node, false, parent_size))
@@ -2909,6 +2921,41 @@ fn orthogonal_content_height(
     };
     let output = tree.compute_child_layout_with_block_ctx(NodeId::from(node), inputs, None);
     Some(OwnWidth::Fixed(output.size.height))
+}
+
+/// The fit-content width of the orthogonal flow `node`, a horizontal child of
+/// a vertical root, in `room`, the root's content width less the margins of
+/// the child, when that is definite. `None` when the child does not take its
+/// width from the room: it has a `width` of its own, or is not a horizontal
+/// box in flow.
+fn orthogonal_fit_content_width(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    room: Option<f32>,
+    parent_size: Size<Option<f32>>,
+) -> Option<f32> {
+    let node_id = NodeId::from(node);
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size,
+        available_space: Size {
+            width: room.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    with_orthogonal_fit_content(tree, node_id, inputs, |tree, probe| {
+        tree.compute_child_layout(node_id, probe)
+    })
+    .known_dimensions
+    .width
 }
 
 /// The border-box width of the float or atomic inline `node`, a paragraph root

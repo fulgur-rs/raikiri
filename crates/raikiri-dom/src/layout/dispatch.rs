@@ -1282,6 +1282,7 @@ pub(crate) use oof::{compute_root_layout_with_content_limits, layout_container_c
 pub(crate) use transposed_axes::reverse_static_position;
 pub(crate) use vertical_block::{
     TransposedBlock, TransposedSizingUndo, TransposedStyleIndex, block_right_to_left, is_table_box,
+    with_orthogonal_fit_content,
 };
 pub(crate) use vertical_oof::used_writing_mode;
 
