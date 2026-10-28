@@ -1971,6 +1971,7 @@ fn viewport_rule_tree(
 /// hint policy, including the nominal basis of page-context viewport units.
 fn authored_document_page_viewport(
     document: &raikiri_html::UncascadedDocument,
+    html: &str,
     width: f32,
     height: f32,
 ) -> (f32, f32) {
@@ -1993,8 +1994,13 @@ fn authored_document_page_viewport(
         }
     }
     projected.push_str("</style>");
-    let name =
-        first_effective_page_name(&document.dom).or_else(|| first_authored_page_name(&projected));
+    // Preserve the legacy raw-HTML hint's scope, not its stale value. For
+    // example, an unclosed parenthesis in an HTML comment hides later inline
+    // hints from that scanner. New CSSOM declarations still use the projected
+    // fallback, while names admitted by the old scope come from current data.
+    let name = first_authored_page_name(html)
+        .and_then(|_| first_effective_page_name(&document.dom))
+        .or_else(|| first_authored_page_name(&projected));
     let context = raikiri_style::MediaContext::with_viewport(
         raikiri_style::MediaType::Print,
         width as u32,
@@ -3091,7 +3097,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         restore_focus(&mut uncascaded.dom, path);
     }
     let (viewport_width, viewport_height) =
-        authored_document_page_viewport(&uncascaded, width as f32, height as f32);
+        authored_document_page_viewport(&uncascaded, html, width as f32, height as f32);
     resolve_document_page_context_viewport_units(&mut uncascaded);
     expand_document_viewport_units(
         &mut uncascaded,

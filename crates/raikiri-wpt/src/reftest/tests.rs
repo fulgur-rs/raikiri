@@ -2381,7 +2381,7 @@ fn print_probe_preserves_dom_associated_stylesheet_origins() {
         doc.dom
             .add_stylesheet("@page{size:300px 200px!important;margin:0}", kind);
         assert_eq!(
-            authored_document_page_viewport(&doc, 800.0, 600.0),
+            authored_document_page_viewport(&doc, html, 800.0, 600.0),
             expected
         );
     }
@@ -2406,7 +2406,7 @@ fn viewport_review_rtl_probe_uses_left_page_basis() {
 fn parsed_page_viewport(html: &str, width: f32, height: f32) -> (f32, f32) {
     let opts = raikiri::ParseOptions::new();
     let doc = raikiri_html::parse(html.as_bytes(), &opts).unwrap();
-    authored_document_page_viewport(&doc, width, height)
+    authored_document_page_viewport(&doc, html, width, height)
 }
 
 #[test]
@@ -3484,4 +3484,26 @@ fn effective_page_hint_keeps_inline_declarations_after_empty_cssom_override() {
         first_effective_page_name(&parsed.dom).as_deref(),
         Some("new")
     );
+}
+
+#[test]
+fn effective_page_hint_preserves_the_raw_html_hint_scope() {
+    let html = "<!-- ( --><style>@page{size:500px;margin:0}@page larger{size:500px 800px;margin:0}html,body{margin:0}</style><div style='height:200vh'></div><div style='page:larger'></div>";
+    assert_eq!(parsed_page_viewport(html, 800.0, 600.0), (500.0, 500.0));
+}
+
+#[test]
+fn cssom_print_added_page_hint_uses_current_projected_fallback() {
+    let old = "@page{size:500px 400px;margin:0}@page new{size:400px 300px;margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}";
+    let edited = format!("{old}body{{page:new}}");
+    let html = format!(
+        "<!DOCTYPE html><!-- ( --><html><head><style>{old}</style></head><body><div class=box></div></body></html>"
+    );
+    let reference = html.replace(old, &edited);
+    let styles = [StyleSourceSidecar {
+        kind: StyleSourceKind::Stylesheet,
+        node_path: vec![0, 0, 0],
+        declarations: edited,
+    }];
+    assert_cssom_print_matches_static(&html, &styles, &reference);
 }
