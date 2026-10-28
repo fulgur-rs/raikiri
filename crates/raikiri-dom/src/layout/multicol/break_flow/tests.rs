@@ -1646,3 +1646,25 @@ fn block_axis_boxes_and_orthogonal_wrappers_keep_the_existing_strategy() {
         assert!(!flow_supported(&markup), "{css}");
     }
 }
+
+#[test]
+fn a_wrapper_sized_by_an_aspect_ratio_keeps_the_height_it_was_measured_at() {
+    for css in ["width:60px;aspect-ratio:1", "aspect-ratio:1"] {
+        let markup = wrapper_markup("", css, "break-before:avoid-column");
+        assert!(flow_supported(&markup), "{css}");
+        let doc = laid_out(&markup);
+        let height = if css.starts_with("width") { 60.0 } else { 50.0 };
+        let width = if css.starts_with("width") { 60.0 } else { 50.0 };
+        // The children give the wrapper 40px, but its ratio gives the height.
+        assert_eq!(
+            placed(&doc, "wrapper"),
+            vec![(0, 0.0, 0.0, width, height)],
+            "{css}"
+        );
+        assert_eq!(
+            placed(&doc, "next"),
+            vec![(0, 0.0, height, 50.0, 20.0)],
+            "{css}"
+        );
+    }
+}

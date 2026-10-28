@@ -261,6 +261,8 @@ fn atomic(tree: &LayoutSession<'_>, id: usize) -> bool {
                 DisplayValue::InlineBlock | DisplayValue::FlowRoot
             ))
         || style.size().height != Dimension::auto()
+        // The height follows from the width, which the children do not give.
+        || style.aspect_ratio().is_some()
         || matches!(
             node.break_inside,
             BreakInside::Avoid | BreakInside::AvoidColumn
