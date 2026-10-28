@@ -1668,3 +1668,47 @@ fn a_wrapper_sized_by_an_aspect_ratio_keeps_the_height_it_was_measured_at() {
         );
     }
 }
+
+#[test]
+fn nested_wrappers_with_inline_boxes_add_up_their_offsets() {
+    for (direction, column, outer, inner) in
+        [("", 0.0, 0.0, 8.0), ("direction:rtl;", 50.0, 50.0, 58.0)]
+    {
+        let doc = laid_out(&format!(
+            "<div id='columns' style='{direction}columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='outer' style='padding:0 5px'><div id='inner' style='margin:0 3px;padding:0 2px'><div id='leaf' style='height:20px'></div></div></div><div style='height:20px;break-before:avoid-column'></div></div>"
+        ));
+        assert_eq!(
+            placed(&doc, "outer"),
+            vec![(0, outer, 0.0, 50.0, 20.0)],
+            "{direction}"
+        );
+        assert_eq!(
+            placed(&doc, "inner"),
+            vec![(0, inner, 0.0, 34.0, 20.0)],
+            "{direction}"
+        );
+        assert_eq!(
+            placed(&doc, "leaf"),
+            vec![(0, inner + 2.0, 0.0, 30.0, 20.0)],
+            "{direction}"
+        );
+        // The leaf's own layout is placed from the column, like its fragment.
+        let leaf = id(&doc, "leaf");
+        assert_eq!(
+            doc.nodes[leaf].layout.location.x,
+            column + 10.0,
+            "{direction}"
+        );
+    }
+}
+
+#[test]
+fn percentage_margins_of_a_wrapper_resolve_against_the_column() {
+    let doc = laid_out(&wrapper_markup(
+        "",
+        "margin:0 10%",
+        "break-before:avoid-column",
+    ));
+    assert_eq!(placed(&doc, "wrapper"), vec![(0, 5.0, 0.0, 40.0, 40.0)]);
+    assert_eq!(placed(&doc, "a"), vec![(0, 5.0, 0.0, 40.0, 20.0)]);
+}

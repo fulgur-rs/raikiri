@@ -381,17 +381,6 @@ fn collect(
     };
     let floated = float.is_floated();
     let monolithic = atomic(tree, id);
-    let known_width = (tree.nodes[id].multicol_auto_width
-        && !floated
-        && (tree.nodes[id].display().is_block_flex_or_grid_container()
-            || matches!(
-                tree.nodes[id].display(),
-                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-            ))
-        && auto_width
-        && tree.nodes[id].image_intrinsic_box().is_none()
-        && tree.nodes[id].tag_name() != Some("img"))
-    .then_some(content.width);
     // A wrapper with an inline box of its own is as wide as block flow makes
     // it within its parent, which its margins, size limits and authored width
     // decide. Its padding and border then narrow what it holds.
@@ -405,6 +394,17 @@ fn collect(
             AvailableSpace::MaxContent,
         )
     } else {
+        let known_width = (tree.nodes[id].multicol_auto_width
+            && !floated
+            && (tree.nodes[id].display().is_block_flex_or_grid_container()
+                || matches!(
+                    tree.nodes[id].display(),
+                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                ))
+            && auto_width
+            && tree.nodes[id].image_intrinsic_box().is_none()
+            && tree.nodes[id].tag_name() != Some("img"))
+        .then_some(content.width);
         super::column_child_input(
             known_width,
             content.width,
