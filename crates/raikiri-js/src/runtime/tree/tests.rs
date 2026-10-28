@@ -6,6 +6,8 @@ use crate::runtime::test_host::StubHost;
 use crate::runtime::webidl::with_state;
 use crate::runtime::{DomRuntime, RuntimeError};
 
+mod sibling_order_tests;
+
 fn rt() -> DomRuntime {
     let (h, ..) = StubHost::page();
     DomRuntime::new(h).unwrap()
@@ -608,4 +610,16 @@ fn append_wrapping_multiple_nodes_propagates_a_validity_error() {
         "try { document.body.append(document.createElement('a'), document); false } \
          catch (e) { e.name === 'HierarchyRequestError' }",
     );
+}
+
+thread_local! {
+    static SIBLING_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+pub(super) fn record_sibling_work(kind: usize, visits: usize) {
+    SIBLING_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += visits;
+        work.set(counts);
+    });
 }
