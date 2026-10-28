@@ -4,9 +4,10 @@
 use super::records::{PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
+use crate::layout::dispatch::grid_baseline;
 use crate::layout::{LineGlyph, PositionedLine, PositionedRun};
 use crate::node::FormattingContext;
-use raikiri_layout_style::values::{AlignItemsKeyword, Float, Position};
+use raikiri_layout_style::values::{Float, Position};
 use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
 };
@@ -1124,38 +1125,12 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
     };
-    let first_row = node
-        .grid_item_row_starts
-        .iter()
-        .filter(|&&(item, _)| is_item(item))
-        .map(|&(_, row)| row)
-        .min()?;
-    let column_of = |child: usize| {
-        node.grid_item_column_starts
-            .iter()
-            .find(|&&(item, _)| item == child)
-            .map_or(0, |&(_, column)| column)
-    };
-    // The recorded items follow the children Taffy laid out: in
-    // order-modified document order, with `display: contents` flattened.
-    let mut first_row_items = node
-        .grid_item_row_starts
-        .iter()
-        .filter(|&&(item, row)| row == first_row && is_item(item))
-        .map(|&(item, _)| item)
-        .collect::<Vec<_>>();
-    // A stable sort keeps the order-modified document order within a column.
-    first_row_items.sort_by_key(|&child| column_of(child));
-    let item = first_row_items
-        .iter()
-        .copied()
-        .find(|&child| {
-            document
-                .finished_style(cascade, child)
-                .is_some_and(|item| aligns_by_baseline(&container_style.view(), &item.view()))
-                && !node.grid_items_without_baseline.contains(&child)
+    let vertical = grid_baseline::runs_vertically(document, grid);
+    let item = grid_baseline::first_baseline_item(node, is_item, |child| {
+        document.finished_style(cascade, child).is_some_and(|item| {
+            grid_baseline::aligns_by_baseline(&container_style.view(), &item.view(), vertical)
         })
-        .or_else(|| first_row_items.first().copied())?;
+    })?;
     // A relative offset moves the item's box, not the line the grid
     // takes its baseline from.
     let item_node = &document.nodes[item];
@@ -1195,20 +1170,6 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
             center: top + bottom,
         },
     })
-}
-
-/// Whether a grid item takes part in baseline alignment in the block axis:
-/// its `align-self` resolves to `baseline` and neither block-axis margin is
-/// `auto` (CSS Box Alignment 3 §9.3).
-fn aligns_by_baseline(
-    container: &raikiri_layout_style::LayoutStyleView<'_>,
-    item: &raikiri_layout_style::LayoutStyleView<'_>,
-) -> bool {
-    let align = item.bridge_align_self().or(Some(container.align_items()));
-    let margin = item.margin();
-    align.is_some_and(|align| align.keyword == AlignItemsKeyword::Baseline)
-        && !margin.top.is_auto()
-        && !margin.bottom.is_auto()
 }
 
 /// The vertical relative offset that layout already applied to `id`'s
