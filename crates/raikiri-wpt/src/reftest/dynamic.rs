@@ -19,6 +19,8 @@ pub(super) struct PreparedDynamic {
     pub canvases: Vec<raikiri_dom::CanvasBitmap>,
     /// Animation declarations and CSSOM sources absent from serialized HTML.
     pub style_sources: Vec<StyleSourceSidecar>,
+    /// Current inline page rules before print fallback normalization.
+    pub page_rules: Vec<PageRuleEdges>,
     /// Script-created highlight ranges expressed against the serialized tree.
     pub custom_highlight_ranges: Vec<CustomHighlightPathRange>,
     /// The element script left focused.
@@ -266,6 +268,7 @@ pub(super) fn prepare(
             html: html.to_owned(),
             canvases: Vec::new(),
             style_sources: Vec::new(),
+            page_rules: current_inline_page_rules(&parsed.dom),
             custom_highlight_ranges: Vec::new(),
             focused_path: None,
         });
@@ -314,6 +317,7 @@ pub(super) fn prepare(
         let mut host = runtime.into_host();
         let custom_highlight_ranges = custom_highlight_paths(host.document(), &highlights);
         let style_sources = style_source_sidecars(host.document());
+        let page_rules = current_inline_page_rules(host.document());
         let focused_path = focused_path(host.document());
         let html = serialize(host.document(), &report)?;
         let canvases = host.document_mut().take_canvases_in_tree_order();
@@ -323,6 +327,7 @@ pub(super) fn prepare(
             html,
             canvases,
             style_sources,
+            page_rules,
             custom_highlight_ranges,
             focused_path,
         })
@@ -346,6 +351,7 @@ pub(super) fn prepare(
             .synchronize_final_document()
             .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
         let style_sources = style_source_sidecars(runtime.document());
+        let page_rules = current_inline_page_rules(runtime.document());
         let focused_path = focused_path(runtime.document());
         let html = serialize(runtime.document(), &report)?;
         let canvases = runtime.take_canvases_in_tree_order();
@@ -354,6 +360,7 @@ pub(super) fn prepare(
             html,
             canvases,
             style_sources,
+            page_rules,
             custom_highlight_ranges: Vec::new(),
             focused_path,
         });

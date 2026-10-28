@@ -355,3 +355,28 @@ fn cssom_sources_survive_preparation_without_entering_dom_markup() {
         Some("p { color: red }")
     );
 }
+
+#[test]
+fn cssom_page_rule_metadata_controls_reference_margin_mirroring() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("page-margin.html");
+    std::fs::write(&path, "").unwrap();
+    for (margin, edit, mirror) in [
+        (
+            "margin:0",
+            "s.cssRules[0].style.removeProperty('margin')",
+            true,
+        ),
+        ("", "s.cssRules[0].style.margin='0px'", false),
+        ("", "s.deleteRule(0)", false),
+    ] {
+        let html = format!(
+            "<!DOCTYPE html><head><style>@page{{size:300px 300px;{margin}}}</style></head><body><script>var s=document.querySelector('style').sheet;{edit};</script></body>"
+        );
+        let prepared = prepare(&html, &path, "", ReftestConfig::default()).unwrap();
+        assert_eq!(
+            super::super::should_mirror_default_page_margin(&prepared.page_rules, &[]),
+            mirror
+        );
+    }
+}

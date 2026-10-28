@@ -718,14 +718,20 @@ fn named_page_does_not_receive_fallback_when_unqualified_rule_exists() {
 fn default_page_margin_is_mirrored_to_reference_without_page_edges() {
     let test = "<style>@page :first { size: portrait; } @page { size: landscape; }</style>";
     let reference = "<style>body { margin: 0; }</style>Landscape";
-    assert!(should_mirror_default_page_margin(test, reference));
+    assert!(should_mirror_default_page_margin(
+        &scan_page_rules(test),
+        &scan_page_rules(reference)
+    ));
 }
 
 #[test]
 fn explicit_reference_page_margin_is_not_overridden_by_mirroring() {
     let test = "<style>@page { size: 300px; }</style>";
     let reference = "<style>@page { margin: 0; }</style>Reference";
-    assert!(!should_mirror_default_page_margin(test, reference));
+    assert!(!should_mirror_default_page_margin(
+        &scan_page_rules(test),
+        &scan_page_rules(reference)
+    ));
 }
 
 #[test]
@@ -2375,7 +2381,7 @@ fn print_probe_preserves_dom_associated_stylesheet_origins() {
         doc.dom
             .add_stylesheet("@page{size:300px 200px!important;margin:0}", kind);
         assert_eq!(
-            authored_document_page_viewport(&doc, html, 800.0, 600.0),
+            authored_document_page_viewport(&doc, 800.0, 600.0),
             expected
         );
     }
@@ -2400,7 +2406,7 @@ fn viewport_review_rtl_probe_uses_left_page_basis() {
 fn parsed_page_viewport(html: &str, width: f32, height: f32) -> (f32, f32) {
     let opts = raikiri::ParseOptions::new();
     let doc = raikiri_html::parse(html.as_bytes(), &opts).unwrap();
-    authored_document_page_viewport(&doc, html, width, height)
+    authored_document_page_viewport(&doc, width, height)
 }
 
 #[test]
@@ -3295,5 +3301,187 @@ fn cssom_reparse_fetches_only_the_final_sheets_once() {
             "https://example.test/external.css",
             "https://example.test/edited.css"
         ]
+    );
+}
+
+fn assert_cssom_print_matches_static(html: &str, styles: &[StyleSourceSidecar], reference: &str) {
+    let engine = InlineEngineChoice {
+        require_inline_fonts: false,
+        print_page_margin: false,
+        ..Default::default()
+    };
+    let actual = render_raikiri_pages_inner_with_canvases(
+        html,
+        800,
+        600,
+        None,
+        None,
+        engine,
+        Some(styles),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let expected = render_raikiri_pages_inner_with_canvases(
+        reference, 800, 600, None, None, engine, None, None, None, None,
+    )
+    .unwrap();
+    assert_eq!(actual.pages.len(), expected.pages.len());
+    for (actual, expected) in actual.pages.iter().zip(&expected.pages) {
+        assert_eq!(
+            (actual.width, actual.height),
+            (expected.width, expected.height)
+        );
+        assert!(actual.rgba == expected.rgba, "print pixels differ");
+    }
+}
+
+#[test]
+fn cssom_print_preserves_default_and_explicit_page_margins() {
+    for margin in ["", "margin:0;", "margin-left:10px;"] {
+        for first in ["", "@page:first{size:300px 200px}"] {
+            let old = format!(
+                "@page{{size:300px 300px;{margin}}}{first}html,body{{margin:0}}div{{height:400px;background:red}}"
+            );
+            let edited = old.replace("background:red", "background:green");
+            let html = format!(
+                "<!DOCTYPE html><html><head><style>{old}</style></head><body><div></div></body></html>"
+            );
+            let reference = html.replace(&old, &edited);
+            let styles = [StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: vec![0, 0, 0],
+                declarations: edited,
+            }];
+            assert_cssom_print_matches_static(&html, &styles, &reference);
+        }
+    }
+}
+
+#[test]
+fn cssom_print_named_page_hint_uses_current_css_and_preserves_inline_order() {
+    for inline in ["", " style='page:old'"] {
+        for in_head in [true, false] {
+            let old = "@page old{size:300px 200px;margin:0}@page new{size:400px 300px;margin:0}html,body{margin:0}body{page:old}.box{width:100vw;height:100vh;background:green}";
+            let edited = old.replace("page:old", "page:new");
+            let (head, body, path) = if in_head {
+                (
+                    format!("<style>{old}</style>"),
+                    String::new(),
+                    vec![0, 0, 0],
+                )
+            } else {
+                (
+                    String::new(),
+                    format!("<style>{old}</style>"),
+                    vec![0, 1, 0],
+                )
+            };
+            let html = format!(
+                "<!DOCTYPE html><html><head>{head}</head><body{inline}>{body}<div class=box></div></body></html>"
+            );
+            let reference = html.replace(old, &edited);
+            let styles = [StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: path,
+                declarations: edited,
+            }];
+            assert_cssom_print_matches_static(&html, &styles, &reference);
+        }
+    }
+}
+
+#[test]
+fn cssom_print_page_defaults_use_all_current_inline_sheets() {
+    for keep_base in [true, false] {
+        let base = "@page{margin:0}";
+        let page = "/* 名 */ @page named{size:300px 200px}html,body{margin:0}body{page:named}div{height:240px;background:green}";
+        let html = format!(
+            "<!DOCTYPE html><html><head><style>{base}</style><style>{page}</style></head><body><div></div></body></html>"
+        );
+        let styles = if keep_base {
+            vec![StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: vec![0, 0, 1],
+                declarations: page.into(),
+            }]
+        } else {
+            vec![StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: vec![0, 0, 0],
+                declarations: String::new(),
+            }]
+        };
+        let reference = if keep_base {
+            html.clone()
+        } else {
+            html.replace(base, "")
+        };
+        assert_cssom_print_matches_static(&html, &styles, &reference);
+    }
+}
+
+#[test]
+fn cssom_print_empty_source_discards_old_page_hint_and_keeps_inline_hint() {
+    for inline in ["", " style='page:new'"] {
+        let old = "body{page:old}";
+        let rules = "@page{size:500px 400px;margin:0}@page old{size:300px 200px;margin:0}@page new{size:400px 300px;margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}";
+        let html = format!(
+            "<!DOCTYPE html><html><head><style>{old}</style><style>{rules}</style></head><body{inline}><div class=box></div></body></html>"
+        );
+        let reference = html.replace(old, "");
+        let styles = [StyleSourceSidecar {
+            kind: StyleSourceKind::Stylesheet,
+            node_path: vec![0, 0, 0],
+            declarations: String::new(),
+        }];
+        assert_cssom_print_matches_static(&html, &styles, &reference);
+    }
+}
+
+#[test]
+fn print_normalization_keeps_sheet_boundaries_and_original_dom_text() {
+    let original = "/* 名 */ @page named{size:300px 200px}";
+    let html = format!("<head><style>@page {{</style><style>{original}</style></head>");
+    let mut parsed = raikiri_html::parse(html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
+    let ids = live_style_element_ids(&parsed.dom, parsed.dom.root_index());
+    let count = parsed.dom.node_count();
+    assert_eq!(current_inline_page_rules(&parsed.dom).len(), 1);
+    normalize_print_stylesheets(&mut parsed.dom);
+    assert_eq!(parsed.dom.node_count(), count);
+    assert_eq!(
+        parsed.dom.element_text_content(ids[1]).as_deref(),
+        Some(original)
+    );
+    assert!(
+        parsed
+            .dom
+            .stylesheet_source(ids[1])
+            .unwrap()
+            .contains("margin: 48px;")
+    );
+    assert_eq!(parsed.dom.stylesheet_source(ids[0]), None);
+}
+
+#[test]
+fn effective_page_hint_keeps_inline_declarations_after_empty_cssom_override() {
+    let mut parsed = raikiri_html::parse(
+        &b"<head><style>body{page:old}</style></head><body style='page:new'></body>"[..],
+        &raikiri::ParseOptions::new(),
+    )
+    .unwrap();
+    let style = live_style_element_ids(&parsed.dom, parsed.dom.root_index())[0];
+    assert_eq!(
+        first_effective_page_name(&parsed.dom).as_deref(),
+        Some("old")
+    );
+    parsed
+        .dom
+        .set_stylesheet_source(style, String::new())
+        .unwrap();
+    assert_eq!(
+        first_effective_page_name(&parsed.dom).as_deref(),
+        Some("new")
     );
 }

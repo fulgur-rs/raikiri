@@ -1621,6 +1621,7 @@ fn strip_css_comments(input: &str) -> String {
 }
 
 /// One `@page` rule that [`scan_page_rules`] found.
+#[derive(Debug)]
 struct PageRuleEdges {
     /// Where the rule's block starts, right after its `{`.
     block_start: usize,
@@ -1641,6 +1642,7 @@ impl PageRuleEdges {
     }
 }
 
+#[cfg(test)]
 fn inject_default_page_margin(input: &str) -> String {
     let page_rules = scan_page_rules(input);
     let insertions = default_margin_insertions(&page_rules);
@@ -1790,8 +1792,10 @@ fn default_margin_insertions(page_rules: &[PageRuleEdges]) -> Vec<(usize, String
     }
 }
 
-fn should_mirror_default_page_margin(test_html: &str, reference_html: &str) -> bool {
-    let test_rules = scan_page_rules(test_html);
+fn should_mirror_default_page_margin(
+    test_rules: &[PageRuleEdges],
+    reference_rules: &[PageRuleEdges],
+) -> bool {
     let has_unqualified = test_rules.iter().any(|rule| rule.unqualified);
     // Only mirror the pure UA fallback.  If the test has an authored margin,
     // the reference normally supplies its own matching geometry.
@@ -1803,9 +1807,7 @@ fn should_mirror_default_page_margin(test_html: &str, reference_html: &str) -> b
     if !test_uses_only_default_margin {
         return false;
     }
-    let reference_has_authored_edge = scan_page_rules(reference_html)
-        .iter()
-        .any(PageRuleEdges::has_authored_edge);
+    let reference_has_authored_edge = reference_rules.iter().any(PageRuleEdges::has_authored_edge);
     if reference_has_authored_edge {
         return false;
     }
@@ -1969,7 +1971,6 @@ fn viewport_rule_tree(
 /// hint policy, including the nominal basis of page-context viewport units.
 fn authored_document_page_viewport(
     document: &raikiri_html::UncascadedDocument,
-    html: &str,
     width: f32,
     height: f32,
 ) -> (f32, f32) {
@@ -1992,7 +1993,8 @@ fn authored_document_page_viewport(
         }
     }
     projected.push_str("</style>");
-    let name = first_authored_page_name(html).or_else(|| first_authored_page_name(&projected));
+    let name =
+        first_effective_page_name(&document.dom).or_else(|| first_authored_page_name(&projected));
     let context = raikiri_style::MediaContext::with_viewport(
         raikiri_style::MediaType::Print,
         width as u32,
@@ -2576,6 +2578,26 @@ pub(crate) fn live_wpt_stylesheets_in_subtree(
     document: &raikiri_dom::Document,
     target: usize,
 ) -> Vec<(String, Option<String>)> {
+    live_style_element_ids(document, target)
+        .into_iter()
+        .filter_map(|node_id| {
+            if !live_stylesheet_has_content(document, node_id) {
+                return None;
+            }
+            let source = live_stylesheet_text(document, node_id);
+            (!source.is_empty()).then(|| {
+                (
+                    source,
+                    document
+                        .element_attribute(node_id, "media")
+                        .map(str::to_owned),
+                )
+            })
+        })
+        .collect()
+}
+
+fn live_style_element_ids(document: &raikiri_dom::Document, target: usize) -> Vec<usize> {
     let Some(target_node) = document.get_node(target) else {
         return Vec::new();
     };
@@ -2585,25 +2607,103 @@ pub(crate) fn live_wpt_stylesheets_in_subtree(
     } else {
         target_node.children.iter().rev().copied().collect()
     };
-    let mut sources = Vec::new();
+    let mut styles = Vec::new();
     while let Some(node_id) = pending.pop() {
         let Some(node) = document.get_node(node_id) else {
             continue; // cov:ignore: child indices in a valid append-only document always name arena nodes.
         };
         if is_live_stylesheet_style(document, node_id) {
-            if live_stylesheet_has_content(document, node_id) {
-                let source = live_stylesheet_text(document, node_id);
-                if !source.is_empty() {
-                    let media = document.element_attribute(node_id, "media");
-                    sources.push((source, media.map(ToOwned::to_owned)));
-                }
-            }
+            styles.push(node_id);
             // `<style>` contents are CSS text, not nested HTML elements.
             continue;
         }
         pending.extend(node.children.iter().rev().copied());
     }
-    sources
+    styles
+}
+
+fn current_inline_stylesheet_sources(document: &raikiri_dom::Document) -> Vec<(usize, String)> {
+    live_style_element_ids(document, document.root_index())
+        .into_iter()
+        .map(|id| (id, live_stylesheet_text(document, id)))
+        .collect()
+}
+
+fn current_inline_page_rules(document: &raikiri_dom::Document) -> Vec<PageRuleEdges> {
+    current_inline_stylesheet_sources(document)
+        .into_iter()
+        .flat_map(|(_, source)| scan_page_rules(&source))
+        .collect()
+}
+
+/// Normalize only the render document's effective inline sources. Decide the
+/// fallback once across sheets, scanning each separately so malformed CSS in
+/// one sheet cannot consume another sheet's tokens.
+fn normalize_print_stylesheets(document: &mut raikiri_dom::Document) {
+    let sources = current_inline_stylesheet_sources(document);
+    let mut starts = Vec::with_capacity(sources.len());
+    let mut rules = Vec::new();
+    let mut offset = 0;
+    for (_, source) in &sources {
+        starts.push(offset);
+        rules.extend(scan_page_rules(source).into_iter().map(|mut rule| {
+            rule.block_start += offset;
+            rule
+        }));
+        offset += source.len() + 1;
+    }
+    let mut insertions = default_margin_insertions(&rules).into_iter().peekable();
+    for ((id, source), start) in sources.into_iter().zip(starts) {
+        let end = start + source.len();
+        if insertions
+            .peek()
+            .is_none_or(|(position, _)| *position > end)
+        {
+            continue;
+        }
+        let mut normalized = String::new();
+        let mut copied = 0;
+        while insertions
+            .peek()
+            .is_some_and(|(position, _)| *position <= end)
+        {
+            let (position, declarations) = insertions.next().expect("peeked insertion");
+            let local = position - start;
+            normalized.push_str(&source[copied..local]);
+            normalized.push_str(&declarations);
+            copied = local;
+        }
+        normalized.push_str(&source[copied..]);
+        document
+            .set_stylesheet_source(id, normalized)
+            .expect("collected style element");
+    }
+}
+
+/// Preserve the authored-page hint's DOM ordering, using current sheet sources
+/// rather than stale serialized child text. This remains a heuristic, not the
+/// element cascade's exact first-page selection.
+fn first_effective_page_name(document: &raikiri_dom::Document) -> Option<String> {
+    let mut pending = vec![document.root_index()];
+    while let Some(id) = pending.pop() {
+        let node = document.get_node(id).expect("reachable document node");
+        if node.tag_name().is_some() {
+            if let Some(name) = document
+                .element_attribute(id, "style")
+                .and_then(first_authored_page_name)
+            {
+                return Some(name);
+            }
+            if is_live_stylesheet_style(document, id) {
+                if let Some(name) = first_authored_page_name(&live_stylesheet_text(document, id)) {
+                    return Some(name);
+                }
+                continue;
+            }
+        }
+        pending.extend(node.children.iter().rev().copied());
+    }
+    None
 }
 
 pub(crate) fn update_live_wpt_stylesheet_sources(
@@ -2968,35 +3068,16 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // Media queries use the selected output page box before margins and
     // independently of any authored `@page size`.
     let media_context = MediaContext::with_viewport(raikiri::MediaType::Print, width, height);
-    // WPT's print UA supplies a 0.5in default page margin when an authored
-    // `@page` rule omits all page-margin declarations.  Add that UA value
-    // before resolving viewport units so both the content box and `vh` use the
-    // same print viewport as the reference renderer.
-    let html = inject_default_page_margin(html);
-    let has_cssom_sources = style_sources.is_some_and(|styles| {
-        styles
-            .iter()
-            .any(|style| style.kind == StyleSourceKind::Stylesheet)
-    });
-    // Restore CSSOM sources before fetching any sheets. The final projection
-    // shares one import budget across consumer, inline and external sheets.
+    // Resolve sheets only after restoring current CSSOM sources and applying
+    // the document-wide print fallback, with one shared import budget.
     let deferred_options = ParseOptions::new().base_url(opts.base_url.clone());
-    let parse_options = if has_cssom_sources {
-        &deferred_options
-    } else {
-        &opts
-    };
     let parse_document = || {
-        let mut parsed = resources.syntax.parse(html.as_bytes(), parse_options)?;
+        let mut parsed = resources.syntax.parse(html.as_bytes(), &deferred_options)?;
         if let Some(styles) = style_sources {
             restore_style_sources(&mut parsed.dom, styles).map_err(|error| error.to_string())?;
-            if styles
-                .iter()
-                .any(|style| style.kind == StyleSourceKind::Stylesheet)
-            {
-                raikiri_html::refresh_stylesheets(&mut parsed, &opts);
-            }
         }
+        normalize_print_stylesheets(&mut parsed.dom);
+        raikiri_html::refresh_stylesheets(&mut parsed, &opts);
         if resources.mirror_page_margin {
             parsed.stylesheet_sources.insert(
                 0,
@@ -3010,7 +3091,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         restore_focus(&mut uncascaded.dom, path);
     }
     let (viewport_width, viewport_height) =
-        authored_document_page_viewport(&uncascaded, &html, width as f32, height as f32);
+        authored_document_page_viewport(&uncascaded, width as f32, height as f32);
     resolve_document_page_context_viewport_units(&mut uncascaded);
     expand_document_viewport_units(
         &mut uncascaded,
@@ -4173,8 +4254,8 @@ where
     let print = is_print_reftest(&pair.test);
     let config = config.for_test(&pair.test);
     // A printed reference gets the print page margin on its own.
-    let mirror_page_margin =
-        !print && should_mirror_default_page_margin(&test_prepared.html, &ref_prepared.html);
+    let mirror_page_margin = !print
+        && should_mirror_default_page_margin(&test_prepared.page_rules, &ref_prepared.page_rules);
     let test_engine = InlineEngineChoice {
         syntax: test_prepared.syntax,
         ..InlineEngineChoice::of(&config, print)
