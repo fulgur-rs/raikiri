@@ -11729,6 +11729,21 @@ fn a_relative_offset_on_the_first_box_does_not_move_the_page_it_starts_on() {
 }
 
 #[test]
+fn an_absolutely_positioned_first_box_does_not_move_the_flow_to_its_page() {
+    // The tall absolutely positioned box is a candidate, but it takes no part
+    // in the flow: the box after it stays on the first page, and the break
+    // after that opens the second page for the last one.
+    assert_eq!(
+        page_box_positions(&[
+            "position:absolute;top:100px;height:120px",
+            "height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![100.0, 0.0, 100.0], 3)
+    );
+}
+
+#[test]
 fn a_relative_offset_is_not_truncated_as_a_margin() {
     // The offset moves only the box itself; it is not a margin that adjoins
     // the break, and later siblings keep their flow positions.

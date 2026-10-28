@@ -7,7 +7,7 @@ use super::{
     FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError, LineBreakFix,
     LineBreakMove, LineMove, MarginBreak, MarginTruncation, PageBox, PageCandidate,
     PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
-    PendingBreak, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
+    PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
     block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
     box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
@@ -705,11 +705,18 @@ impl PaginationState {
             // after delivered pages starts with: a forced break after the box
             // then opens the third page, not the one the box is on. A
             // relative offset only paints the box elsewhere, so the page is
-            // found from its position in the flow.
+            // found from its position in the flow. A box outside the flow
+            // does not open the flow on its page.
             self.saw_child = true;
+            let in_flow = !entry.uses_positioned_coordinates
+                && !candidate.context.is_out_of_flow_descendant()
+                && !matches!(
+                    document.nodes[node_id].position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                );
             let flow_y = position.effective_y
                 - accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
-            self.current_page = if flow_y.is_finite() && flow_y >= 0.0 {
+            self.current_page = if in_flow && flow_y.is_finite() && flow_y >= 0.0 {
                 env.page_origins.start_page(flow_y, candidate.height)
             } else {
                 0
