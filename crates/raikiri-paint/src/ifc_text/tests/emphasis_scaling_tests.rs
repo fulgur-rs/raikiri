@@ -12,7 +12,7 @@ fn vertical_emphasis_paint_probe() {
                 n * 20
             ),
             |doc, root| {
-                doc.append_text(root, &"a".repeat(n));
+                doc.append_text(root, "a".repeat(n));
             },
         );
         lay_out(&mut doc, &cascade);
