@@ -3810,18 +3810,26 @@ fn table_row_leads(
             }
         }
         for (table, (row, row_y)) in table_first_rows {
-            // A caption above the grid stays on the current page; an
+            // A caption above the grid stays on the current page, one inside
+            // a `display: contents` child of the table included; an
             // absolutely positioned one is out of the table's flow. Content
             // outside the rows, wrapped in an anonymous row, may come before
             // the first row.
-            if document.nodes[table].children.iter().any(|&child| {
-                document.nodes[child].display() == DisplayValue::TableCaption
-                    && cascade.computed[child].caption_side
-                        == raikiri_style::property::CaptionSideValue::Top
-                    && document.nodes[child].layout_position() != Position::Absolute
-                    || document.nodes[child].display() != DisplayValue::TableRow
+            let top_caption = document
+                .children_through_contents(table)
+                .iter()
+                .any(|&child| {
+                    document.nodes[child].display() == DisplayValue::TableCaption
+                        && cascade.computed[child].caption_side
+                            == raikiri_style::property::CaptionSideValue::Top
+                        && document.nodes[child].layout_position() != Position::Absolute
+                });
+            if top_caption
+                || document.nodes[table].children.iter().any(|&child| {
+                    document.nodes[child].display() != DisplayValue::TableRow
                         && document.anonymous_table_cells(child).next().is_some()
-            }) || document.anonymous_table_cells(table).next().is_some()
+                })
+                || document.anonymous_table_cells(table).next().is_some()
             {
                 continue;
             }

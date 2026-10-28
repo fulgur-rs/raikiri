@@ -1212,10 +1212,9 @@ fn table_pagination_child_order(
     let header = first(DisplayValue::TableHeaderGroup);
     let footer = first(DisplayValue::TableFooterGroup);
     // Table layout renders only the first caption among the table's own
-    // children, so other captions, including ones inside `display: contents`
-    // wrappers, have no box to paginate or to take a page name from.
-    let caption = document.nodes[table]
-        .children
+    // children, those of `display: contents` wrappers included, so other
+    // captions have no box to paginate or to take a page name from.
+    let caption = children
         .iter()
         .copied()
         .find(|&id| boxes.identity(id).display() == DisplayValue::TableCaption);
