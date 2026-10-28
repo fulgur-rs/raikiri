@@ -748,6 +748,8 @@ impl StreamInput {
     /// The element handles the tree builder holds, in the order
     /// [`traced_handles`] reports them.
     fn traced_handles(&self) -> Vec<usize> {
+        #[cfg(test)]
+        self.sink().traced_handle_calls.update(|calls| calls + 1);
         match self {
             Self::Html(feed) => traced_handles(&feed.parser().tokenizer.sink),
             Self::Xhtml(feed) => traced_xml_handles(&feed.parser().parser().tokenizer.sink),
@@ -971,6 +973,12 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
 
     /// Lay out the document parsed so far and deliver its final pages.
     fn checkpoint(&mut self) -> Result<(), RenderError> {
+        // No page can be final before a body candidate exists. Avoid tracing
+        // and cloning a growing head; the reachable-body check below still
+        // rejects detached candidates and other conservative false positives.
+        if !self.input.sink().has_created_body_candidate() {
+            return Ok(());
+        }
         // `feed_unchecked` has just checked the parse budgets, and a snapshot
         // allocates no node of the parse, so they hold here.
         let traced = self.input.traced_handles();

@@ -631,7 +631,8 @@ fn a_resumed_layout_reports_the_resources_of_delivered_pages_as_last_loaded() {
     let mut html = String::from("<!doctype html><body>");
     html.push_str(&format!("<p>{}</p>", image("broken.png")));
     html.push_str(&format!("<p>{}</p>", image("flaky.png")));
-    html.push_str(&paragraphs(60, 60));
+    // Guarantee multiple pages even when fallback fonts fit each paragraph on one line.
+    html.push_str(&paragraphs(120, 60).replace("<p ", "<p style='line-height:24px' "));
     html.push_str("</body>");
     let resolver = FlakyResolver {
         flaky: std::sync::atomic::AtomicBool::new(true),

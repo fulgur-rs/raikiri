@@ -6,6 +6,7 @@ use super::*;
 use crate::StringFetchMode;
 use crate::layout;
 
+mod head_checkpoint_tests;
 mod xhtml_tests;
 
 const PAGED: &str = "<style>div { break-after: page }</style>\

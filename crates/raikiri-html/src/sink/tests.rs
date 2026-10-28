@@ -1,5 +1,6 @@
 use super::*;
 
+mod body_candidate_tests;
 mod collect_external_stylesheet_hrefs_tests;
 mod dom_node_budget_tests;
 mod find_document_base_href_tests;
