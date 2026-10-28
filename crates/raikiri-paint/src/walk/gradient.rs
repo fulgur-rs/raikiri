@@ -1289,7 +1289,14 @@ pub(super) fn repeat_over_turn(
         return RepeatedTurn::Solid(solid_color(last_color));
     }
     if period < 1.0 / MAX_CONIC_PERIODS {
-        return RepeatedTurn::Solid(ramp_average_color(&stops, interpolation));
+        // The average weighs a pair of stops by its share of the period only
+        // above a tolerance of its own; a period of a millionth of a turn or
+        // less would fall back to equal weights, so ask in units of the period.
+        let unit: Vec<(f64, DynamicColor)> = stops
+            .iter()
+            .map(|&(offset, color)| ((offset - first) / period, color))
+            .collect();
+        return RepeatedTurn::Solid(ramp_average_color(&unit, interpolation));
     }
     // The first period that starts at or before 0, and the first that ends at
     // or after 1. A period longer than the turn is the only one.

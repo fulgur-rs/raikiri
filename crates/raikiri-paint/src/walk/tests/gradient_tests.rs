@@ -2457,6 +2457,21 @@ fn a_repeating_conic_gradient_of_periods_too_short_to_tell_apart_shows_their_ave
 }
 
 #[test]
+fn the_average_of_a_period_below_a_millionth_of_a_turn_keeps_the_widths_of_its_bands() {
+    // The period is 0.0001deg, under the width at which the average weighs
+    // the pairs of stops by their distance; red takes nine tenths of it.
+    let probes = ring_probes(
+        "background-image: repeating-conic-gradient(in srgb, red 0 0.00009deg, blue 0.00009deg 0.0001deg)",
+    );
+    for probe in probes {
+        assert!(
+            probe[0].abs_diff(230) <= 1 && probe[1] == 0 && probe[2].abs_diff(26) <= 1,
+            "{probe:?}"
+        );
+    }
+}
+
+#[test]
 fn a_repeating_conic_gradient_of_many_periods_is_drawn_period_by_period() {
     // 1800 periods around the turn, one for each fifth of a degree: the ring
     // probes land in them one after the other, red then blue.
