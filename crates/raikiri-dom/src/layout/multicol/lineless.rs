@@ -583,7 +583,7 @@ fn block_margins(style: &LayoutStyleView<'_>) -> Option<(f32, f32)> {
     Some((length(margin.top)?, length(margin.bottom)?))
 }
 
-fn has_block_edge_decorations(style: &LayoutStyleView<'_>) -> bool {
+pub(super) fn has_block_edge_decorations(style: &LayoutStyleView<'_>) -> bool {
     let zero = LengthPercentage::length(0.0);
     let (padding, border) = (style.padding(), style.border());
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero

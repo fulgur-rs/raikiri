@@ -23,6 +23,10 @@ struct Paragraph {
     margin_bottom: f32,
     orphans: usize,
     widows: usize,
+    /// Block size of the padding and border above the first line.
+    edge_start: f32,
+    /// Block size of the padding and border below the last line.
+    edge_end: f32,
 }
 
 pub(super) fn balance(
@@ -30,7 +34,8 @@ pub(super) fn balance(
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, has_empty, mut high) = collect(tree, entries, true)?;
+    let (paragraphs, paragraph_count, has_empty, mut high) =
+        collect(tree, entries, true, BlockEdges::Refused)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
         || !high.is_finite()
@@ -63,7 +68,7 @@ pub(super) fn fill_definite(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) = collect(tree, entries, true)?;
+    let (paragraphs, paragraph_count, _, _) = collect(tree, entries, true, BlockEdges::Sliced)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
     }
@@ -81,16 +86,20 @@ pub(super) fn fill_definite(
 /// plain paragraph. With `atomics`, a paragraph may hold atomic inlines, which
 /// go to the column of their line. The row and page streams place only lines,
 /// so they pass `false` and leave such a paragraph to the other strategies.
+/// With `edges` sliced, a paragraph may have padding and border above its
+/// first line and below its last, which its pieces slice; only a stream that
+/// places those edges with the lines passes that.
 fn collect(
     tree: &LayoutSession<'_>,
     entries: &[Measurement],
     atomics: bool,
+    edges: BlockEdges,
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
     let mut paragraphs = Vec::with_capacity(entries.len());
     let mut paragraph_count = 0;
     let mut has_empty = false;
     let mut high = 0.0;
-    for &(child, ref output, _, margin_top, margin_bottom, _) in entries {
+    for &(child, ref output, layout, margin_top, margin_bottom, _) in entries {
         let node = layout_node(tree, child);
         // Source whitespace between block elements has no formatting box.
         if node.kind() == NodeKind::Text && output.size.height == 0.0 && node.ifc.is_none() {
@@ -117,10 +126,10 @@ fn collect(
                 let overflow = style_of(tree, child).overflow();
                 overflow.x == Overflow::Visible && overflow.y == Overflow::Visible
             };
-        if !can_balance_paragraph_box(tree, child)
+        if !can_balance_paragraph_box(tree, child, edges)
             || (!empty
                 && !if atomics {
-                    can_balance_atomic_paragraph(tree, child)
+                    can_balance_atomic_paragraph(tree, child, edges)
                 } else {
                     can_balance_single_paragraph(tree, child)
                 })
@@ -144,6 +153,8 @@ fn collect(
                 margin_bottom,
                 orphans: node.paragraph_orphans,
                 widows: node.paragraph_widows,
+                edge_start: 0.0,
+                edge_end: 0.0,
             }));
             continue;
         }
@@ -160,12 +171,15 @@ fn collect(
             return None;
         }
         high += height + margin_top.abs() + margin_bottom.abs();
+        let (edge_start, edge_end) = block_edges(&layout);
         paragraphs.push(Some(Paragraph {
             extents,
             margin_top,
             margin_bottom,
             orphans: node.paragraph_orphans,
             widows: node.paragraph_widows,
+            edge_start,
+            edge_end,
         }));
         paragraph_count += 1;
     }
@@ -269,14 +283,34 @@ fn fill_chunk(
         let mut first_column = column;
         let mut first_y = top;
         let mut first_height = 0.0;
-        while start < paragraph.extents.len() {
+        let line_count = paragraph.extents.len();
+        while start < line_count {
+            // The padding and border above the first line sit in the piece
+            // that holds it, and those below the last line in the piece that
+            // holds that.
+            let lead = if start == 0 {
+                paragraph.edge_start
+            } else {
+                0.0
+            };
             let origin = paragraph.extents[start].0;
             let available = height - top;
             let mut end = start
                 + paragraph.extents[start..]
-                    .partition_point(|extent| extent.1 - origin <= available + f32::EPSILON);
-            let remaining = paragraph.extents.len() - end;
+                    .partition_point(|extent| extent.1 - origin + lead <= available + f32::EPSILON);
+            // The last line stays with the edge below it: when the edge does
+            // not fit after it, the line goes to the next column, to be
+            // followed there by the edge, so that the paragraph does not
+            // break between its last line and its bottom padding or border.
+            if end == line_count
+                && paragraph.extents[line_count - 1].1 - origin + lead + paragraph.edge_end
+                    > available + f32::EPSILON
+            {
+                end -= 1;
+            }
+            let remaining = line_count - end;
             if remaining > 0 {
+                let fitting = end;
                 end = end.min(paragraph.extents.len().saturating_sub(paragraph.widows));
                 let minimum = if start == 0 {
                     paragraph.orphans
@@ -284,7 +318,16 @@ fn fill_chunk(
                     paragraph.orphans.max(paragraph.widows)
                 };
                 if end.saturating_sub(start) < minimum {
-                    end = start;
+                    // A paragraph with padding or border has no other path
+                    // that places its edges, so in a column with nothing
+                    // else the lines that fit stay and orphans and widows
+                    // yield, as no later column would do better.
+                    let decorated = paragraph.edge_start > 0.0 || paragraph.edge_end > 0.0;
+                    end = if decorated && !column_has_content && fitting > start {
+                        fitting
+                    } else {
+                        start
+                    };
                 }
             }
             if end <= start {
@@ -310,7 +353,12 @@ fn fill_chunk(
                 first_y = top;
                 continue;
             }
-            let used = paragraph.extents[end - 1].1 - origin;
+            let trail = if end == line_count {
+                paragraph.edge_end
+            } else {
+                0.0
+            };
+            let used = paragraph.extents[end - 1].1 - origin + lead + trail;
             if fragments.is_empty() {
                 first_height = used;
             }
@@ -319,13 +367,22 @@ fn fill_chunk(
                 line_end: end,
                 fragmentainer: column,
                 x: context.column_offset_x(column) - context.column_offset_x(first_column),
-                y: top - first_y,
+                // Lines are measured from the content box, which lies below
+                // the edge above them in the piece that holds the first line
+                // only.
+                y: top
+                    - first_y
+                    - if start == 0 {
+                        0.0
+                    } else {
+                        paragraph.edge_start
+                    },
             });
             cursor = top + used;
             column_has_content = true;
             maximum = maximum.max(cursor);
             start = end;
-            if start < paragraph.extents.len() {
+            if start < line_count {
                 column = column.checked_add(1)?;
                 if column >= context.column_count {
                     placements[slot] = Some(Placement {
@@ -431,7 +488,8 @@ pub(super) fn fill_rows(
     later: f32,
     budget: usize,
 ) -> Result<Rows, RowsStop> {
-    let (paragraphs, count, _, _) = collect(tree, entries, false).ok_or(RowsStop::Unsupported)?;
+    let (paragraphs, count, _, _) =
+        collect(tree, entries, false, BlockEdges::Refused).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
         return Err(RowsStop::Unsupported);
     }
@@ -527,6 +585,22 @@ pub(super) fn fill_rows(
 /// and ink, stays visible; this is far wider than any page.
 const CLIP_REACH: f32 = 1.0e5;
 
+/// The clip that cuts the piece `rect` of a paragraph to its column of block
+/// size `height`, whose top is at the block offset `context.origin_y`, and
+/// leaves the inline axis open.
+pub(super) fn column_window(
+    rect: crate::fragment::FragmentRect,
+    context: FragmentationContext,
+    height: f32,
+) -> crate::fragment::FragmentRect {
+    crate::fragment::FragmentRect {
+        x: rect.x - CLIP_REACH,
+        y: context.origin_y,
+        width: rect.width + 2.0 * CLIP_REACH,
+        height,
+    }
+}
+
 pub(super) struct PagedFragment {
     pub(super) child: usize,
     pub(super) line_start: usize,
@@ -564,7 +638,7 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let Some((paragraphs, count, _, _)) = collect(tree, entries, false) else {
+    let Some((paragraphs, count, _, _)) = collect(tree, entries, false, BlockEdges::Refused) else {
         return Ok(None);
     };
     if count == 0 || context.column_count == 0 {

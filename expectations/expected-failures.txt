@@ -12,6 +12,8 @@
 # Exact entries override directory-prefix SKIPs in known-issues.txt. They do
 # not override deprecated.txt or quarantine.txt, and must not overlap the pass
 # baseline. See README.md for the add, review, and XPASS cleanup procedure.
+css/css-break/break-at-end-container-edge-003.html | A float that fills the first column of a definite-height column-fill:auto container keeps the container's content in one column instead of breaking it into columns | RAIKIRI-934 | 2026-10-28 | 2026-12-28
+css/css-break/break-at-end-container-edge-004.html | A padded paragraph that follows an empty block with a height is not split between the columns of a definite-height column-fill:auto container, because the planner takes only paragraphs and the box with a height keeps the container on another path | RAIKIRI-985 | 2026-10-28 | 2026-12-28
 css/css-break/grid/grid-item-fragmentation-028.html | A grid row holding a break-inside: avoid item is not pushed to the next column, so the second column stays empty; it matched only while the grid-template shorthand was ignored | RAIKIRI-426 | 2026-10-17 | 2026-12-17
 css/css-break/grid/grid-item-fragmentation-029.html | A grid row holding a break-inside: avoid item is not pushed to the next column, so the second column stays empty; it matched only while the grid-template shorthand was ignored | RAIKIRI-426 | 2026-10-17 | 2026-12-17
 css/css-break/ruby-003.html | The annotation line is about 2px taller than the box in it because the baseline strut of the ruby-text adds descent below the box, so the stacked boxes leave a gap and the green square is 102px tall | RAIKIRI-455 | 2026-10-15 | 2026-12-15

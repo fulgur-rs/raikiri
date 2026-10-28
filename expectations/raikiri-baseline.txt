@@ -5357,3 +5357,9 @@ css/css-images/out-of-range-color-stop-conic.html
 # A shape with nothing to render (a `rect` of no width, a `path` without segments, an `image` of no height) draws nothing, and its filter draws nothing either; a zero `divisor` on an `feConvolveMatrix` asks for the default divisor, the sum of the kernel. The divisor test KEEPs in two audit-vacuous-passes runs. The empty-shape test has a blank reference, so the audit reports VACUOUS-BLANK; it failed before the fix (the filter flooded a red 100px box), so it stays as a guard.
 css/filter-effects/feconvolve-divisor.html
 css/filter-effects/svg-empty-element-with-filter-001.html
+
+# --- the padding and border of a paragraph split between columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A paragraph with padding or border above its first line or below its last, in the definite-height columns of a `column-fill: auto` container, breaks between its lines like one without. The padding or border below stays with the last line, so the last line moves to the next column when the edge would not fit under it, and the edge above stays with the first. Each of the three tests failed before the change (the paragraph stayed in one column at the full width, 5000 to 6000 mismatched pixels) and each KEEPs in two audit-vacuous-passes runs.
+css/css-break/break-at-end-container-edge-000.html
+css/css-break/break-at-end-container-edge-001.html
+css/css-break/break-at-end-container-edge-002.html

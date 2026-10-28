@@ -4834,6 +4834,18 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     assert!(paragraphs(
         "display:block;margin:0;position:relative;top:5px"
     ));
+    // Padding and border above the first line or below the last are sliced
+    // between the pieces.
+    assert!(paragraphs("display:block;margin:0;padding-top:2px"));
+    assert!(paragraphs("display:block;margin:0;border-bottom:2px solid"));
+    // A box that repeats its edges at every break, or paints an effect sized
+    // from its whole border box, is not sliced.
+    assert!(!paragraphs(
+        "display:block;margin:0;padding-top:2px;box-decoration-break:clone"
+    ));
+    assert!(!paragraphs(
+        "display:block;margin:0;padding-bottom:2px;border-radius:4px"
+    ));
     for style in [
         "display:grid",
         "display:list-item",
@@ -4842,8 +4854,6 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;height:20px",
         "display:block;min-height:20px",
         "display:block;max-height:20px",
-        "display:block;padding-top:2px",
-        "display:block;border-bottom:2px solid",
         "display:block;margin-top:20px",
         "display:block;margin-bottom:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
@@ -6182,4 +6192,389 @@ fn only_a_block_level_box_that_is_in_the_flow_is_a_spanner() {
             "{css}"
         );
     }
+}
+
+/// A document with a container of three 100px columns, 50px high and filled
+/// one after another, whose only child is a paragraph of `lines` lines of 10px
+/// styled `paragraph_css`. The document, the container and the paragraph.
+fn padded_paragraph_columns(paragraph_css: &str, lines: usize) -> (Document, usize, usize) {
+    padded_paragraph_columns_in("", paragraph_css, lines)
+}
+
+/// [`padded_paragraph_columns`] with `container_css` added to the container's
+/// style, after its own.
+fn padded_paragraph_columns_in(
+    container_css: &str,
+    paragraph_css: &str,
+    lines: usize,
+) -> (Document, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            format!(
+                "display:block;width:300px;height:50px;columns:3;column-gap:0;\
+                 column-fill:auto;orphans:1;widows:1;{container_css}"
+            )
+            .as_str(),
+        ),
+    );
+    let paragraph = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("display:block;{paragraph_css}").as_str()),
+    );
+    for line in 0..lines {
+        doc.append_text(paragraph, "x");
+        if line + 1 < lines {
+            doc.append_element(Some(paragraph), "br", None::<&str>);
+        }
+    }
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+    (doc, container, paragraph)
+}
+
+/// The line ranges of `paragraph` per column, and the box of each piece with
+/// the column window it is clipped to.
+#[allow(clippy::type_complexity)]
+fn paragraph_pieces(
+    doc: &Document,
+    paragraph: usize,
+) -> (
+    Vec<(usize, usize, usize)>,
+    Vec<(f32, f32, Option<(f32, f32)>)>,
+) {
+    let ranges = doc.nodes[paragraph]
+        .ifc_multicol_fragments()
+        .expect("column ranges")
+        .iter()
+        .map(|range| (range.line_start, range.line_end, range.fragmentainer))
+        .collect();
+    let boxes = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == paragraph)
+        .map(|fragment| {
+            (
+                fragment.rect.y,
+                fragment.rect.height,
+                fragment
+                    .fragmentainer_clip
+                    .map(|clip| (clip.y, clip.height)),
+            )
+        })
+        .collect();
+    (ranges, boxes)
+}
+
+/// The top of each line of `paragraph` in column `column`, from the content box
+/// of the piece the column holds.
+fn line_tops_in_column(doc: &Document, paragraph: usize, column: usize) -> Vec<f32> {
+    let rules = raikiri_style::build_rule_tree(doc);
+    let cascade = raikiri_style::cascade(doc, &rules).expect("cascade Ok");
+    let positioned =
+        crate::PositionedLines::new(doc, &cascade, paragraph, Some(column)).expect("lines");
+    positioned
+        .all_lines()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| Some(positioned.line_offset(index)?.1 + line.block_offset()))
+        .collect()
+}
+
+#[test]
+fn padding_below_the_last_line_moves_that_line_to_the_next_column() {
+    // Five lines fill the first column, but the 20px of padding below the
+    // last one would not fit: the line goes on with the padding, as in a
+    // browser, instead of the padding being cut away.
+    let (doc, _, paragraph) = padded_paragraph_columns("padding-bottom:20px;background:green", 5);
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 4, 0), (4, 5, 1)]);
+    // The first piece runs to the end of its column and 20px past it, where
+    // its padding would be; the clip cuts that off. The second is the last
+    // line and the padding.
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 70.0, Some((0.0, 50.0))),
+            (0.0, 30.0, Some((0.0, 50.0)))
+        ]
+    );
+    assert_eq!(line_tops_in_column(&doc, paragraph, 1), [0.0]);
+}
+
+#[test]
+fn padding_above_the_first_line_stays_with_it_and_a_later_piece_begins_above_its_column() {
+    // The 20px of padding above takes room in the first column only. The
+    // piece in the next column is drawn as the whole box clipped to the
+    // column, so its box starts 20px above the column with the lines at its
+    // top, and the padding does not show.
+    let (doc, _, paragraph) = padded_paragraph_columns("padding-top:20px;background:green", 5);
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 3, 0), (3, 5, 1)]);
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 50.0, Some((0.0, 50.0))),
+            (-20.0, 40.0, Some((0.0, 50.0)))
+        ]
+    );
+    // The lines are drawn from the content box of each piece: 20px below the
+    // first piece's top, at the top of the second column.
+    assert_eq!(line_tops_in_column(&doc, paragraph, 0), [0.0, 10.0, 20.0]);
+    assert_eq!(line_tops_in_column(&doc, paragraph, 1), [0.0, 10.0]);
+}
+
+#[test]
+fn a_middle_piece_has_neither_edge_and_both_fall_outside_its_column() {
+    // 15px above (padding and border) and 30px below, eight lines: three
+    // lines and the top edge; four lines (a fifth would leave the bottom edge
+    // no room, so the last line moves on with it); the last line and the
+    // bottom edge.
+    let (doc, _, paragraph) = padded_paragraph_columns(
+        "padding:10px 0 30px;border-top:5px solid;background:green",
+        8,
+    );
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 3, 0), (3, 7, 1), (7, 8, 2)]);
+    // Each piece after the first begins 15px above its column, and each that
+    // goes on ends 30px below it; the 50px window of the column cuts both.
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 80.0, Some((0.0, 50.0))),
+            (-15.0, 95.0, Some((0.0, 50.0))),
+            (-15.0, 55.0, Some((0.0, 50.0)))
+        ]
+    );
+}
+
+#[test]
+fn a_line_taller_than_a_column_with_its_edge_is_left_to_the_other_strategies() {
+    // The last line and the 60px of padding below it fit no column: the
+    // planner gives up instead of cutting the padding, and the paragraph stays
+    // whole in the first column, past its end, as on the path that places
+    // it without slicing.
+    let (doc, _, paragraph) = padded_paragraph_columns("padding-bottom:60px;background:green", 3);
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 3, 0)]);
+    assert_eq!(boxes, [(0.0, 90.0, None)]);
+}
+
+#[test]
+fn a_paragraph_without_block_edges_keeps_its_box_as_the_lines_it_holds() {
+    // No padding or border: the pieces are the lines of each column, as
+    // before block edges were sliced.
+    let (doc, _, paragraph) = padded_paragraph_columns("background:green", 8);
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 5, 0), (5, 8, 1)]);
+    assert_eq!(boxes[1].0, 0.0);
+    assert_eq!(boxes[1].1, 30.0);
+}
+
+#[test]
+fn a_single_paragraph_enters_the_stream_only_with_block_edges() {
+    for (css, enters) in [
+        ("background:green", false),
+        ("padding-left:4px", false),
+        ("padding-top:4px", true),
+        ("border-bottom:2px solid", true),
+        ("padding-top:4px;box-decoration-break:clone", false),
+        ("padding-bottom:4px;box-shadow:0 0 2px", false),
+    ] {
+        let (mut doc, container, _) = padded_paragraph_columns(css, 4);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container)
+            }),
+            enters,
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn atomic_inlines_follow_the_piece_of_a_padded_paragraph_to_the_next_column() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            "display:block;width:300px;height:50px;columns:3;column-gap:0;column-fill:auto;\
+             orphans:1;widows:1",
+        ),
+    );
+    let paragraph = doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;padding-top:20px;background:green"),
+    );
+    let boxes: Vec<_> = (0..5)
+        .map(|line| {
+            let atomic = doc.append_element(
+                Some(paragraph),
+                "span",
+                Some(
+                    "display:inline-block;vertical-align:top;width:10px;height:10px;background:red",
+                ),
+            );
+            if line + 1 < 5 {
+                doc.append_element(Some(paragraph), "br", None::<&str>);
+            }
+            atomic
+        })
+        .collect();
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+
+    let (ranges, pieces) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 3, 0), (3, 5, 1)]);
+    // The atomic inlines of the lines of the second piece are drawn in the
+    // second column.
+    let atomics: Vec<_> = boxes
+        .iter()
+        .filter_map(|&atomic| {
+            doc.fragment_tree
+                .fragments
+                .iter()
+                .find(|fragment| fragment.node_id == atomic)
+        })
+        .map(|fragment| {
+            (
+                fragment.fragmentainer,
+                fragment.rect.y,
+                fragment
+                    .fragmentainer_clip
+                    .map(|clip| (clip.y, clip.height)),
+            )
+        })
+        .collect();
+    // The second piece begins 20px above its column, so its atomics sit 20px
+    // below the piece's top, and the column's window begins 20px into it.
+    assert_eq!(pieces[1].0, -20.0);
+    assert_eq!(
+        atomics,
+        [
+            (0, 20.0, Some((0.0, 50.0))),
+            (0, 30.0, Some((0.0, 50.0))),
+            (0, 40.0, Some((0.0, 50.0))),
+            (1, 20.0, Some((20.0, 50.0))),
+            (1, 30.0, Some((20.0, 50.0))),
+        ]
+    );
+}
+
+#[test]
+fn a_piece_that_goes_on_covers_the_gap_under_its_last_line_and_its_edge_below_the_column() {
+    // The column is 55px high, so five lines leave a 5px gap under them. The
+    // 5px of padding and border below the paragraph must not show at the
+    // break: the piece covers the gap and ends 5px below the column, where
+    // the clip cuts it off.
+    let (doc, _, paragraph) = padded_paragraph_columns_in(
+        "height:55px",
+        "padding-bottom:3px;border-bottom:2px solid;background:green",
+        8,
+    );
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 5, 0), (5, 8, 1)]);
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 60.0, Some((0.0, 55.0))),
+            (0.0, 35.0, Some((0.0, 55.0)))
+        ]
+    );
+}
+
+#[test]
+fn widows_pull_more_lines_to_the_next_column_when_the_bottom_edge_moves_the_last_one() {
+    // The edge below the last line does not fit under the five lines of the
+    // first column, so the last line moves on with it; two widows then need
+    // another line, and the first column keeps three.
+    let (doc, _, paragraph) =
+        padded_paragraph_columns_in("widows:2", "padding-bottom:20px;background:green", 5);
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 3, 0), (3, 5, 1)]);
+    assert_eq!(
+        boxes,
+        [
+            (0.0, 70.0, Some((0.0, 50.0))),
+            (0.0, 40.0, Some((0.0, 50.0)))
+        ]
+    );
+}
+
+#[test]
+fn orphans_and_widows_yield_in_an_empty_column_to_the_lines_of_a_padded_paragraph() {
+    // Two lines fit the first column and would leave one for the next, which
+    // widows of 2 and orphans of 2 forbid either way. With nothing else in
+    // the column, the lines that fit stay and the last line goes on with its
+    // padding.
+    let (doc, _, paragraph) = padded_paragraph_columns_in(
+        "orphans:2;widows:2;height:100px",
+        "padding-bottom:20px;font-size:50px;line-height:50px;background:green",
+        3,
+    );
+    let (ranges, boxes) = paragraph_pieces(&doc, paragraph);
+    assert_eq!(ranges, [(0, 2, 0), (2, 3, 1)]);
+    assert_eq!(boxes[1], (0.0, 70.0, Some((0.0, 100.0))));
+}
+
+#[test]
+fn a_padded_paragraph_after_another_follows_it_in_columns_with_gaps_and_container_padding() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            "display:block;width:290px;height:50px;padding:5px 7px;columns:3;column-gap:10px;\
+             column-fill:auto;orphans:1;widows:1",
+        ),
+    );
+    let plain = doc.append_element(Some(container), "div", Some("display:block"));
+    doc.append_text(plain, "x");
+    let padded = doc.append_element(
+        Some(container),
+        "div",
+        Some("display:block;padding:20px 0;background:green"),
+    );
+    for line in 0..4 {
+        doc.append_text(padded, "x");
+        if line < 3 {
+            doc.append_element(Some(padded), "br", None::<&str>);
+        }
+    }
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+
+    let (ranges, boxes) = paragraph_pieces(&doc, padded);
+    // Below the one-line paragraph, 40px are left: the padding above and two
+    // lines. The other two lines and the padding below fill the next column.
+    assert_eq!(ranges, [(0, 2, 0), (2, 4, 1)]);
+    // The first piece runs from the end of the plain paragraph to the end of
+    // its column and the padding below that would be; the second begins 20px
+    // above the top of its column, which is 5px below the container's top, and
+    // holds two lines between the padding above, cut by the column, and the
+    // padding below.
+    assert_eq!(
+        boxes,
+        [
+            (15.0, 60.0, Some((5.0, 50.0))),
+            (-15.0, 60.0, Some((5.0, 50.0)))
+        ]
+    );
+    let columns: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == padded)
+        .map(|fragment| (fragment.fragmentainer, fragment.rect.x))
+        .collect();
+    assert_eq!(columns, [(0, 7.0), (1, 107.0)]);
 }
