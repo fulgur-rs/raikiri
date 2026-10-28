@@ -60,22 +60,33 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &LayoutSession<'_>, idx: usize
 /// its own vertical margins. Whatever else the parent passes down, an
 /// intrinsic or a definite space, is kept as it is. The padding and border of
 /// the box come off the room where it is laid out.
+///
+/// A block container laid out on transposed axes takes its margins off the
+/// room itself, so it is offered the room whole.
 fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> AvailableSpace {
     if inputs.available_space.height != AvailableSpace::MaxContent {
         return inputs.available_space.height;
     }
+    let node = &tree.nodes[idx];
+    let takes_margins_off_itself =
+        !node.is_ifc_root() && !node.display().is_flex_or_grid_container();
     // The percentages of the margins refer to the width of the parent.
     let margin = tree
         .physical_style(idx)
         .margin()
         .map(|margin| margin.resolve_or_zero(inputs.parent_size.width));
+    let margin = if takes_margins_off_itself {
+        0.0
+    } else {
+        margin.top + margin.bottom
+    };
     // Without a page area there is no room to fit the lines in.
     inputs
         .parent_size
         .height
         .or_else(|| crate::layout::ifc::boxes::page_area_height(tree))
         .map_or(AvailableSpace::MaxContent, |room| {
-            AvailableSpace::Definite((room - margin.top - margin.bottom).max(0.0))
+            AvailableSpace::Definite((room - margin).max(0.0))
         })
 }
 

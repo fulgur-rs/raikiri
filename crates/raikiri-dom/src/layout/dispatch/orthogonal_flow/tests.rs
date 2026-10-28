@@ -368,3 +368,35 @@ fn a_vertical_block_of_paragraphs_wraps_each_at_the_page_height() {
     assert_eq!(absolute_rect(&doc, first), (50.0, 0.0, 50.0, 600.0));
     assert_eq!(absolute_rect(&doc, second), (0.0, 0.0, 50.0, 600.0));
 }
+
+#[test]
+fn a_vertical_block_container_that_holds_no_text_takes_its_margins_off_the_height_once() {
+    // 110 boxes of 10px, wrapped in a flex container, line up along the
+    // height they are offered. The container is no paragraph root, so it is
+    // laid out on transposed axes.
+    let flex_boxes = |css: &str, parent_css: &str| {
+        let (mut doc, _, container) = vertical_block_under(parent_css, css, "");
+        let flex = doc.append_element(Some(container), "div", Some("display:flex;flex-wrap:wrap"));
+        for _ in 0..110 {
+            doc.append_element(
+                Some(flex),
+                "div",
+                Some("display:block;width:10px;height:10px;flex:none"),
+            );
+        }
+        lay_out(&mut doc);
+        assert!(!doc.nodes[container].is_ifc_root());
+        absolute_rect(&doc, container)
+    };
+    // 600px fit 60 of them in a line: 2 lines.
+    assert_eq!(flex_boxes("", "display:block"), (0.0, 0.0, 20.0, 600.0));
+    // 570px fit 57, and a third line would need 540px or less.
+    assert_eq!(
+        flex_boxes("margin:15px", "display:block"),
+        (15.0, 15.0, 20.0, 570.0)
+    );
+    assert_eq!(
+        flex_boxes("margin:20px", "display:block;height:300px"),
+        (20.0, 20.0, 50.0, 260.0)
+    );
+}
