@@ -77,6 +77,7 @@ pub(crate) struct State {
     pub animations: Vec<animation::AnimationEffect>,
     /// The live `document.styleSheets` list.
     pub style_sheet_list: Option<JsObject>,
+    css_sheet_index: stylesheet::SheetList,
     /// Weak lookup tables for CSS rules. Their traced sheet/rule owner groups
     /// preserve identity while reachable without permanently rooting scripts.
     pub css_style_rules: HashMap<(stylesheet::SheetKey, usize), boa_gc::WeakGc<JsObject>>,
@@ -355,6 +356,7 @@ impl DomRuntime {
             host_failure: None,
             animations: Vec::new(),
             style_sheet_list: None,
+            css_sheet_index: stylesheet::SheetList::default(),
             css_style_rules: HashMap::new(),
             css_margin_rules: HashMap::new(),
             css_sheet_versions: HashMap::new(),

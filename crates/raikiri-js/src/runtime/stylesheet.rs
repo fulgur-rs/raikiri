@@ -22,6 +22,8 @@ use raikiri_dom::{Document, NodeKind};
 
 mod parsed;
 pub(crate) use parsed::RuleMemo;
+mod list_index;
+pub(crate) use list_index::SheetList;
 
 #[cfg(test)]
 thread_local! {
@@ -855,6 +857,8 @@ impl RuleSlot {
 }
 
 fn stylesheet_nodes(document: &Document) -> Vec<usize> {
+    #[cfg(test)]
+    tests::record_list_work(0, 1);
     let root = document.root_index();
     let Some(root_node) = document.get_node(root) else {
         return Vec::new(); // cov:ignore: A Document always retains its initialized root node.
@@ -862,6 +866,8 @@ fn stylesheet_nodes(document: &Document) -> Vec<usize> {
     let mut pending: Vec<usize> = root_node.children.iter().rev().copied().collect();
     let mut nodes = Vec::new();
     while let Some(index) = pending.pop() {
+        #[cfg(test)]
+        tests::record_list_work(1, 1);
         let Some(node) = document.get_node(index) else {
             continue; // cov:ignore: Child indices are created and retained by the same append-only document arena.
         };
@@ -889,13 +895,17 @@ struct StyleSheetListSource;
 impl IndexedSource for StyleSheetListSource {
     fn length(&self, context: &mut Context) -> JsResult<usize> {
         with_state(context, |state| {
-            stylesheet_nodes(state.host.document()).len()
+            state.css_sheet_index.nodes(state.host.document()).len()
         })
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
         let node = with_state(context, |state| {
-            stylesheet_nodes(state.host.document()).get(index).copied()
+            state
+                .css_sheet_index
+                .nodes(state.host.document())
+                .get(index)
+                .copied()
         })?;
         node.map(|node| style_sheet_object(context, node).map(JsValue::from))
             .transpose()
