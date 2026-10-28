@@ -7,6 +7,7 @@ use crate::runtime::webidl::with_state;
 use crate::runtime::{DomRuntime, RuntimeError};
 
 mod sibling_order_tests;
+mod element_child_tests;
 
 fn rt() -> DomRuntime {
     let (h, ..) = StubHost::page();
