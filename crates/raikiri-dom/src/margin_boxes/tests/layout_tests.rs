@@ -1326,6 +1326,39 @@ fn shared_named_values_take_the_last_assignment_on_every_page() {
     }
 }
 
+#[test]
+fn shared_named_values_read_the_attributes_and_counters_of_the_last_assignment() {
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style = doc.append_element(Some(head), "style", None::<&str>);
+    doc.append_text(
+        style,
+        "body { counter-reset: chapter } \
+         h1 { counter-increment: chapter; \
+              string-set: title 'Chapter ' counter(chapter) ': ' attr(data-title) } \
+         @page { margin: 40px; @top-left { content: string(title) } }",
+    );
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    for title in ["Origins", "Aftermath"] {
+        let h1 = doc.append_element(Some(body), "h1", None::<&str>);
+        doc.set_element_attributes(h1, vec![(SmolStr::new("data-title"), SmolStr::new(title))]);
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let contents: Vec<_> = layout_page(&doc, &cascade, small_page())
+        .into_iter()
+        .map(|margin_box| (margin_box.slot, margin_box.content))
+        .collect();
+    assert_eq!(
+        contents,
+        [(
+            PageMarginBoxSlot::TopLeft,
+            "Chapter 2: Aftermath".to_owned()
+        )]
+    );
+}
+
 /// `boxes_for` for a document that knows `green.png` is 100x50, as the pages of
 /// the render pipeline do once its images are loaded.
 fn boxes_with_images(css: &str) -> Vec<MarginBox> {

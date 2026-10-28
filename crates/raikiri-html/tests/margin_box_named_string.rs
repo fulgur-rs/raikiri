@@ -152,3 +152,47 @@ fn only_elements_with_a_box_assign_and_the_last_assignment_of_an_element_wins() 
         ["O:", "O:", "O:", "O:O1", "O:O1"]
     );
 }
+
+#[test]
+fn a_named_string_reads_the_attributes_and_counters_at_its_element() {
+    let result = lay_out(
+        "@top-left { content: string(chapter, first) }",
+        r#"<style>
+             body { counter-reset: chapter }
+             h1 { counter-increment: chapter; margin: 0;
+                  string-set: chapter 'Chapter ' counter(chapter) ': ' attr(data-title) }
+           </style>
+           <h1 data-title="Origins">x</h1><p>A</p>
+           <h1 data-title="Aftermath" style="break-before: page">y</h1>
+           <p style="break-before: page">B</p>"#,
+    );
+    // `counter()` reads the value the heading itself makes, and the page
+    // without a heading carries the string of the page before it.
+    assert_eq!(
+        top_left(&result),
+        [
+            "Chapter 1: Origins",
+            "Chapter 2: Aftermath",
+            "Chapter 2: Aftermath"
+        ]
+    );
+}
+
+#[test]
+fn a_named_string_joins_the_nested_values_of_a_counter() {
+    let result = lay_out(
+        "@top-left { content: string(path, first) } \
+         @top-right { content: string(path, last) }",
+        r#"<style>
+             div { counter-reset: sec }
+             h3 { counter-increment: sec; margin: 0; string-set: path counters(sec, '.') }
+           </style>
+           <div><h3>a</h3><div><h3>b</h3></div></div>
+           <p style="break-before: page">c</p>"#,
+    );
+    assert_eq!(top_left(&result), ["1", "1.1"]);
+    assert_eq!(
+        slot_texts(&result, PageMarginBoxSlot::TopRight),
+        ["1.1", "1.1"]
+    );
+}
