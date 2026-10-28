@@ -163,6 +163,8 @@ struct Indexed<S: IndexedSource> {
     /// Script objects the source serves, traced with the target so they
     /// live exactly as long as the indexed object.
     retained: Vec<JsObject>,
+    /// Native DOM ownership, kept in traced data rather than the source Rc.
+    owners: Vec<boa_gc::Gc<super::node_gc::NodeRecord>>,
 }
 
 /// Engine functions captured before any script runs, so that later
@@ -249,11 +251,31 @@ pub(crate) fn indexed_object_retaining<S: IndexedSource>(
     source: S,
     retained: Vec<JsObject>,
 ) -> JsResult<JsObject> {
+    indexed_object_with_retention(context, prototype, source, retained, Vec::new())
+}
+
+pub(super) fn indexed_object_with_owners<S: IndexedSource>(
+    context: &mut Context,
+    prototype: JsObject,
+    source: S,
+    owners: Vec<boa_gc::Gc<super::node_gc::NodeRecord>>,
+) -> JsResult<JsObject> {
+    indexed_object_with_retention(context, prototype, source, Vec::new(), owners)
+}
+
+pub(super) fn indexed_object_with_retention<S: IndexedSource>(
+    context: &mut Context,
+    prototype: JsObject,
+    source: S,
+    retained: Vec<JsObject>,
+    owners: Vec<boa_gc::Gc<super::node_gc::NodeRecord>>,
+) -> JsResult<JsObject> {
     let target = JsObject::from_proto_and_data(
         Some(prototype),
         Indexed {
             source: Rc::new(source),
             retained,
+            owners,
         },
     );
     let proxy: JsObject = JsProxyBuilder::new(target.clone())

@@ -21,6 +21,7 @@ use boa_engine::{Context, Finalize, JsData, JsNativeError, JsResult, JsString, J
 
 use super::interfaces::{Members, protos, wrap};
 use super::node::mark_dirty;
+use super::node_gc::NodeObject;
 use super::webidl::{
     dom_string, host_failure_with_message, this_element, throw_dom_exception, with_state,
 };
@@ -35,6 +36,7 @@ use raikiri_traits::DecodedImage;
 pub(crate) struct CanvasContextData {
     #[unsafe_ignore_trace]
     pub canvas: usize,
+    owner: boa_gc::Gc<super::node_gc::NodeRecord>,
 }
 
 fn with_canvas_context(this: &JsValue, _context: &mut Context) -> JsResult<usize> {
@@ -275,7 +277,9 @@ fn get_context(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     if mode != "2d" {
         return Ok(JsValue::null());
     }
-    if let Some(existing) = with_state(context, |s| s.canvas_contexts.get(&index).cloned())? {
+    if let Some(existing) =
+        with_state(context, |s| s.node_object(index, NodeObject::CanvasContext))?
+    {
         return Ok(existing.into());
     }
     // Ensure a bounded bitmap exists before creating a drawing context.
@@ -286,9 +290,16 @@ fn get_context(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
         return Ok(JsValue::null());
     }
     let proto = protos(context).canvas_rendering_context_2d.clone();
-    let object = JsObject::from_proto_and_data(Some(proto), CanvasContextData { canvas: index });
+    let owner = with_state(context, |state| state.node_record(index))?;
+    let object = JsObject::from_proto_and_data(
+        Some(proto),
+        CanvasContextData {
+            canvas: index,
+            owner,
+        },
+    );
     with_state(context, |s| {
-        s.canvas_contexts.insert(index, object.clone());
+        s.set_node_object(index, NodeObject::CanvasContext, object.clone());
     })?;
     Ok(object.into())
 }
