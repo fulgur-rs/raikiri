@@ -32,13 +32,12 @@ impl GlyphPositions {
         }
         for i in (1..n).rev() {
             minima[i] = minima[i * 2].min(minima[i * 2 + 1]);
-            #[cfg(test)]
-            {
-                work += 1;
-            }
         }
         #[cfg(test)]
-        super::tests::record_glyph_work(work);
+        {
+            work += n.saturating_sub(1);
+            super::tests::record_glyph_work(work);
+        }
         Self { offsets, minima }
     }
 

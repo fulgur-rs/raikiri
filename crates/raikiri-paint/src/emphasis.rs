@@ -365,10 +365,9 @@ pub(crate) fn vertical_mark_centers(
 }
 
 #[cfg(test)]
-#[path = "emphasis/tests/oracle.rs"]
-mod oracle;
+mod oracle_tests;
 #[cfg(test)]
-pub(crate) use oracle::vertical_mark_centers as reference_vertical_mark_centers;
+pub(crate) use oracle_tests::vertical_mark_centers as reference_vertical_mark_centers;
 
 #[cfg(test)]
 mod tests;

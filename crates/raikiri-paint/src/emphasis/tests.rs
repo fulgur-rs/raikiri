@@ -126,7 +126,7 @@ fn vertical_centers_match_the_quadratic_reference_for_real_runs() {
                                         (line, &run),
                                         (writing_mode, &converter)
                                     ),
-                                    oracle::vertical_mark_centers(
+                                    reference_vertical_mark_centers(
                                         &mark,
                                         (line, &run),
                                         (writing_mode, &converter)
