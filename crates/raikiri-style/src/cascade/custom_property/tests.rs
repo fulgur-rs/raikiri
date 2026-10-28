@@ -1,3 +1,6 @@
+mod cycle_probe_tests;
+mod cycle_tests;
+
 use super::*;
 use crate::cascade::test_support::*;
 use crate::cascade::{apply_value, cascade};
