@@ -6,6 +6,9 @@ use rustc_hash::FxHashMap;
 use std::cell::{RefCell, RefMut};
 
 mod scopes;
+mod variants;
+
+pub(crate) use variants::VariantCaches;
 
 /// A generation stays distinct when its 64-bit counter rolls over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -451,6 +454,13 @@ pub(crate) struct SavedLayoutCache {
     key: BoxKey,
     cache: LayoutCache,
     epoch: Option<CacheEpoch>,
+}
+
+impl SavedLayoutCache {
+    /// See [`LayoutCache::forget_final_layout`].
+    pub(crate) fn forget_final_layout(&mut self) {
+        self.cache.forget_final_layout();
+    }
 }
 
 impl LayoutSession<'_> {

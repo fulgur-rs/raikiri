@@ -390,6 +390,7 @@ fn pending_document_mutation_rejects_parent_cache_before_child_read() {
 }
 
 mod restore_tests;
+mod variant_tests;
 
 #[test]
 fn nested_frame_tokens_preserve_unbounded_reentrant_order() {

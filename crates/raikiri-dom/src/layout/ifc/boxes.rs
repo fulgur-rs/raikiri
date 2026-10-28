@@ -1666,7 +1666,7 @@ struct ChildFit {
     known_width: Option<f32>,
     /// The percentage widths of the box that are replaced by what they stand
     /// for, as a layout of its own.
-    widths: Vec<OwnedPropertyOverride>,
+    widths: WidthOverrides,
 }
 
 /// Work out how `node`, a float or an atomic inline of the root `geometry`
@@ -1742,7 +1742,7 @@ fn fit_child(
     let widths = if vertical {
         percentage_width_overrides(tree, node, width_basis)
     } else {
-        Vec::new()
+        WidthOverrides::default()
     };
     ChildFit {
         space,
@@ -1769,12 +1769,22 @@ fn layout_child(
     let layout = |tree: &mut LayoutSession<'_>| {
         perform_box_layout(tree, node, geometry.width, height_basis, known_width, space)
     };
-    if widths.is_empty() {
+    let WidthOverrides { entries, variant } = widths;
+    if entries.is_empty() {
+        if variant.is_some() {
+            tree.note_base_variant(node);
+        }
         layout(tree)
     } else {
         let key = tree.nodes.box_key(node).expect("live box");
-        tree.with_overrides(
-            widths.into_iter().map(|entry| (key, entry)).collect(),
+        let variant = variant.expect("replaced widths are percentages of the box");
+        // The box is laid out again for every width its parent tries, which
+        // would take time exponential in the depth of a chain of such boxes if
+        // each layout threw the others away.
+        tree.with_style_variant(
+            node,
+            variant,
+            entries.into_iter().map(|entry| (key, entry)).collect(),
             layout,
         )
     }
@@ -2027,6 +2037,18 @@ fn known_atomic_width(
     })
 }
 
+/// The percentage widths of a box that stand aside for the layout of a vertical
+/// paragraph's float or atomic inline.
+#[derive(Default)]
+struct WidthOverrides {
+    /// The replacements, in physical sizing.
+    entries: Vec<OwnedPropertyOverride>,
+    /// What the replacements make of the box among the ways it is laid out
+    /// with them, or its own style: set when some width of the box is a
+    /// percentage, also while none is replaced.
+    variant: Option<u64>,
+}
+
 /// The `width`, `min-width` and `max-width` of `node` that are percentages,
 /// which resolve to nothing without a basis, as overrides: `auto` and no limit
 /// without a `basis`, and with one the `min-width` and `max-width` as the
@@ -2035,32 +2057,51 @@ fn percentage_width_overrides(
     tree: &LayoutSession<'_>,
     node: usize,
     basis: Option<f32>,
-) -> Vec<OwnedPropertyOverride> {
+) -> WidthOverrides {
     use raikiri_style::ComputedLengthPercentageOrAuto as Length;
     let style = tree.physical_style(node);
     let in_percentages = |dimension: values::Dimension| {
         dimension.maybe_resolve(None::<f32>).is_none()
             && dimension.maybe_resolve(Some(0.0)).is_some()
     };
-    [
+    let percentages: Vec<_> = [
         (LengthProperty::Width, style.size().width),
         (LengthProperty::MinWidth, style.min_size().width.into()),
         (LengthProperty::MaxWidth, style.max_size().width.into()),
     ]
     .into_iter()
     .filter(|&(_, dimension)| in_percentages(dimension))
-    .filter_map(|(property, dimension)| {
-        let entry = match basis {
-            None => OwnedPropertyOverride::length(property, Length::Auto, false),
-            Some(_) if property == LengthProperty::Width => return None,
-            Some(basis) => {
-                let length = dimension.maybe_resolve(Some(basis))?.max(0.0);
-                OwnedPropertyOverride::length(property, Length::Px(length), true)
-            }
-        };
-        Some(entry.expect("physical width"))
-    })
-    .collect()
+    .collect();
+    // The entries follow from which of the widths are percentages and from the
+    // basis, which is all that tells one variant from another.
+    let which = percentages
+        .iter()
+        .fold(0_u64, |which, &(property, _)| match property {
+            LengthProperty::Width => which | 1,
+            LengthProperty::MinWidth => which | 2,
+            _ => which | 4,
+        });
+    let variant = (which != 0).then(|| {
+        1 << 40
+            | which << 33
+            | u64::from(basis.is_some()) << 32
+            | u64::from(basis.map_or(0, f32::to_bits))
+    });
+    let entries = percentages
+        .into_iter()
+        .filter_map(|(property, dimension)| {
+            let entry = match basis {
+                None => OwnedPropertyOverride::length(property, Length::Auto, false),
+                Some(_) if property == LengthProperty::Width => return None,
+                Some(basis) => {
+                    let length = dimension.maybe_resolve(Some(basis))?.max(0.0);
+                    OwnedPropertyOverride::length(property, Length::Px(length), true)
+                }
+            };
+            Some(entry.expect("physical width"))
+        })
+        .collect();
+    WidthOverrides { entries, variant }
 }
 
 /// What laying out a block child gives the line loop.

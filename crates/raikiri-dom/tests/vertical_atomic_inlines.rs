@@ -1678,3 +1678,56 @@ fn a_horizontal_box_that_fits_its_content_is_as_wide_as_the_vertical_inline_bloc
         &with_text,
     );
 }
+
+/// `depth` boxes of `css`, each inside the one before, in a vertical float
+/// whose width the content decides, with a column of text in the innermost.
+fn nested_in_a_vertical_float(depth: usize, css: &str) -> String {
+    let mut body = String::from("<div id=r style=\"float:left;writing-mode:vertical-rl\">");
+    for level in 0..depth {
+        body.push_str(&format!("<div id=c{level} style=\"{css}\">"));
+    }
+    body.push_str("bbbb");
+    body.push_str(&"</div>".repeat(depth + 1));
+    body
+}
+
+#[test]
+fn a_deep_chain_of_percentage_width_floats_is_as_wide_as_the_text_it_holds() {
+    // The percentage widths count as auto while the root takes its width from
+    // its lines, so every float is the one column of text wide. A float is laid
+    // out once for each way its parent tries it, however deep the chain is.
+    let depth = 12;
+    let expected: Vec<(String, Rect)> = std::iter::once("r".to_owned())
+        .chain((0..depth).map(|level| format!("c{level}")))
+        .map(|id| (id, (8.0, 8.0, 10.0, 40.0)))
+        .collect();
+    let expected: Vec<(&str, Rect)> = expected
+        .iter()
+        .map(|(id, rect)| (id.as_str(), *rect))
+        .collect();
+    check(
+        &nested_in_a_vertical_float(depth, "float:left;width:50%"),
+        &expected,
+    );
+}
+
+#[test]
+fn a_deep_chain_of_percentage_width_atomic_inlines_keeps_the_width_of_its_root() {
+    // Laying each box out once for every layout of the one around it took time
+    // exponential in the depth, 42 seconds at eight levels. (The inner boxes
+    // are not compared: they take their percentages of the width the box
+    // around them ends up with, which Chromium leaves as `auto`.)
+    for css in [
+        "display:inline-block;width:50%",
+        "display:inline-block;min-width:30%",
+        "display:inline-block;max-width:50%",
+    ] {
+        check(
+            &nested_in_a_vertical_float(12, css),
+            &[
+                ("r", (8.0, 8.0, 10.0, 40.0)),
+                ("c0", (8.0, 8.0, 10.0, 40.0)),
+            ],
+        );
+    }
+}

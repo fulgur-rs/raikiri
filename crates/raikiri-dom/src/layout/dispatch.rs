@@ -683,6 +683,7 @@ impl LayoutSession<'_> {
         let mut pending = vec![usize::from(node_id)];
         while let Some(idx) = pending.pop() {
             self.nodes[idx].cache.clear();
+            self.context.variant_caches.forget(idx);
             pending.extend(self.nodes[idx].children.iter().copied());
         }
     }
