@@ -319,7 +319,7 @@ impl Document {
             .computed
             .iter()
             .enumerate()
-            .filter(|(_, cv)| crate::paint_rules::opacity_layer(cv).is_some())
+            .filter(|(id, cv)| crate::paint_rules::element_opacity_layer(self, *id, cv).is_some())
             .map(|(id, _)| {
                 // Inline groups are listed by their paragraph, including
                 // empty groups. One paragraph source keeps every ancestor

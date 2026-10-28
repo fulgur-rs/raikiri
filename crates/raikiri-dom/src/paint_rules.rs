@@ -458,6 +458,35 @@ pub fn opacity_layer(cv: &ComputedValues) -> Option<f32> {
     (cv.opacity < 1.0 && cv.display != DisplayValue::Contents).then_some(cv.opacity)
 }
 
+/// The `display` the box of element `id` is painted with.
+///
+/// The document element has no parent to take its contents, so a
+/// `display: contents` one computes to `block` (CSS Display 3 §2.8), as layout
+/// treats it. Every other element is painted with the `display` it computed.
+pub fn painted_display(document: &Document, id: usize, cv: &ComputedValues) -> DisplayValue {
+    if cv.display == DisplayValue::Contents && document.document_element_index() == Some(id) {
+        DisplayValue::Block
+    } else {
+        cv.display
+    }
+}
+
+/// [`generates_box`] for the element `id`, counting a `display: contents`
+/// document element, which paints the box of a block (see [`painted_display`]).
+pub fn element_generates_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    !matches!(
+        painted_display(document, id, cv),
+        DisplayValue::Contents | DisplayValue::None
+    )
+}
+
+/// [`opacity_layer`] for the element `id`, counting a `display: contents`
+/// document element, which paints the box of a block (see [`painted_display`]).
+pub fn element_opacity_layer(document: &Document, id: usize, cv: &ComputedValues) -> Option<f32> {
+    (cv.opacity < 1.0 && painted_display(document, id, cv) != DisplayValue::Contents)
+        .then_some(cv.opacity)
+}
+
 /// The group opacity a `::before`, `::after` or `::first-letter` laid out in
 /// its paragraph paints its boxes, images and text with, by the generated id
 /// of `generated_node_id`. Floated and
@@ -854,7 +883,7 @@ fn is_block_container(display: DisplayValue) -> bool {
 /// group, a transform or a filter. A transform on a box that is not
 /// transformable does not apply, so it forms no group (CSS Transforms 1 §3).
 fn establishes_stacking_context(document: &Document, id: usize, cv: &ComputedValues) -> bool {
-    opacity_layer(cv).is_some()
+    element_opacity_layer(document, id, cv).is_some()
         || !cv.filter.is_empty()
         || crate::layout::has_applied_transform(document, id, cv)
 }
@@ -885,7 +914,7 @@ pub fn defers_to_positioned_layer(
         document
             .get_node(node_id)
             .is_some_and(|node| node.kind() == NodeKind::Element)
-            && generates_box(cv)
+            && element_generates_box(document, node_id, cv)
             && (leveled || establishes_stacking_context(document, node_id, cv))
             && !negative
             && (leaves_paragraph_lines(document, cascade, node_id, paragraphs)
@@ -1863,7 +1892,7 @@ pub fn closes_deferred_inline_content(
     document
         .get_node(node_id)
         .is_some_and(|node| node.kind() == NodeKind::Element)
-        && generates_box(cv)
+        && element_generates_box(document, node_id, cv)
         && !below_inline_content
         && !defers_inline_content(document, cascade, node_id)
         && !merges_clipped_inline_content(document, cascade, node_id)
