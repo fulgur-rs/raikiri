@@ -2,7 +2,8 @@
 //! offers along the inline axis, the physical height: its max-content size
 //! when that fits, else the room, but never less than its min-content size
 //! (CSS 2.1 §10.3.9, CSS Sizing 3 §5.1). A flex container that the room
-//! squeezes shrinks its items.
+//! squeezes shrinks its items. The floats of a vertical paragraph are sized
+//! against the same widths as its atomic inlines.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px. The
@@ -674,6 +675,193 @@ fn a_percentage_height_horizontal_atomic_resolves_against_the_height_the_lines_g
         &horizontal_atomic("float:left;height:100px", "height:50%", "bb"),
         &known,
         &known,
+    );
+}
+
+/// A paragraph `aa` of the writing mode `MODE`, styled by `root_css`, with the
+/// left float `f` (styled by `float_css`, holding `content`) in it.
+fn paragraph_with_float(root_css: &str, float_css: &str, content: &str) -> String {
+    format!(
+        "<div id=r style=\"writing-mode:MODE;{root_css}\">aa\
+         <div id=f style=\"float:left;{float_css}\">{content}</div></div>"
+    )
+}
+
+/// A vertical paragraph of the known width of 100px and the height of 300px.
+const KNOWN: &str = "width:100px;height:300px";
+
+/// A vertical paragraph that is a float: the content of its lines decides its
+/// width, and its height is 100px.
+const FROM_LINES: &str = "float:left;height:100px";
+
+#[test]
+fn a_horizontal_float_in_a_vertical_root_fits_the_width_of_the_root() {
+    // The text asks for 140px and the root is 100px wide: it takes two lines
+    // of the width of the root, not of the 300px height of the paragraph.
+    let fits = [
+        ("f", (8.0, 8.0, 100.0, 20.0)),
+        ("r", (8.0, 8.0, 100.0, 300.0)),
+    ];
+    check_modes(
+        &paragraph_with_float(KNOWN, "writing-mode:horizontal-tb", "bb cc dd ee ff"),
+        &fits,
+        &fits,
+    );
+    // Its horizontal margins come off the room.
+    let margins = [
+        ("f", (18.0, 8.0, 70.0, 30.0)),
+        ("r", (8.0, 8.0, 100.0, 300.0)),
+    ];
+    check_modes(
+        &paragraph_with_float(
+            KNOWN,
+            "writing-mode:horizontal-tb;margin-left:10px;margin-right:20px",
+            "bb cc dd ee ff",
+        ),
+        &margins,
+        &margins,
+    );
+}
+
+#[test]
+fn a_horizontal_float_in_a_vertical_root_of_unknown_width_fits_the_page() {
+    // The content of the root decides its width, so the page area stands in
+    // for it: the text fits on one line and the root takes its width.
+    let same = [
+        ("f", (8.0, 8.0, 140.0, 10.0)),
+        ("r", (8.0, 8.0, 140.0, 100.0)),
+    ];
+    check_modes(
+        &paragraph_with_float(FROM_LINES, "writing-mode:horizontal-tb", "bb cc dd ee ff"),
+        &same,
+        &same,
+    );
+}
+
+#[test]
+fn the_percentage_widths_of_a_float_resolve_against_the_width_of_the_root() {
+    let half = |lr_x: f32, rl_x: f32| {
+        (
+            [
+                ("f", (lr_x, 8.0, 50.0, 20.0)),
+                ("r", (8.0, 8.0, 100.0, 300.0)),
+            ],
+            [
+                ("f", (rl_x, 8.0, 50.0, 20.0)),
+                ("r", (8.0, 8.0, 100.0, 300.0)),
+            ],
+        )
+    };
+    let (lr, rl) = half(8.0, 58.0);
+    // The 50% of the 100px, whether the float runs across the lines or along
+    // them, and as a width or as a lower limit, also over a smaller width.
+    for css in [
+        "width:50%;height:20px",
+        "writing-mode:horizontal-tb;width:50%;height:20px",
+        "min-width:50%;height:20px",
+        "writing-mode:horizontal-tb;min-width:50%;height:20px",
+        "width:40%;min-width:50%;height:20px",
+    ] {
+        check_modes(&paragraph_with_float(KNOWN, css, ""), &lr, &rl);
+    }
+    // An upper limit, over a larger width.
+    let capped_lr = [
+        ("f", (8.0, 8.0, 30.0, 20.0)),
+        ("r", (8.0, 8.0, 100.0, 300.0)),
+    ];
+    let capped_rl = [
+        ("f", (78.0, 8.0, 30.0, 20.0)),
+        ("r", (8.0, 8.0, 100.0, 300.0)),
+    ];
+    for css in [
+        "width:80%;max-width:30%;height:20px",
+        "width:80px;max-width:30%;height:20px",
+    ] {
+        check_modes(
+            &paragraph_with_float(KNOWN, css, ""),
+            &capped_lr,
+            &capped_rl,
+        );
+    }
+}
+
+#[test]
+fn the_percentage_widths_of_a_float_count_as_auto_while_the_root_takes_its_width_from_its_lines() {
+    // The width of the root is that of the text, 10px, whatever the float asks
+    // of it; its 50% does not become half the 100px height.
+    let text = [
+        ("f", (8.0, 8.0, 10.0, 20.0)),
+        ("r", (8.0, 8.0, 10.0, 100.0)),
+    ];
+    check_modes(
+        &paragraph_with_float(FROM_LINES, "width:50%;height:20px", "bb"),
+        &text,
+        &text,
+    );
+    // A lower limit that is a percentage is no limit: the float is empty.
+    check_modes(
+        &paragraph_with_float(FROM_LINES, "min-width:50%;height:20px", ""),
+        &[("f", (8.0, 8.0, 0.0, 20.0)), ("r", (8.0, 8.0, 10.0, 100.0))],
+        &[
+            ("f", (18.0, 8.0, 0.0, 20.0)),
+            ("r", (8.0, 8.0, 10.0, 100.0)),
+        ],
+    );
+    // Its padding takes its percentage of the 100px all the same.
+    let padded = [
+        ("f", (8.0, 8.0, 20.0, 20.0)),
+        ("r", (8.0, 8.0, 20.0, 100.0)),
+    ];
+    check_modes(
+        &paragraph_with_float(FROM_LINES, "width:50%;padding:10%;height:10px", ""),
+        &padded,
+        &padded,
+    );
+    // A horizontal float takes the page area for the width of the root: 50% of
+    // the 800px.
+    let page = [
+        ("f", (8.0, 8.0, 400.0, 20.0)),
+        ("r", (8.0, 8.0, 400.0, 100.0)),
+    ];
+    check_modes(
+        &paragraph_with_float(
+            FROM_LINES,
+            "writing-mode:horizontal-tb;width:50%;height:20px",
+            "",
+        ),
+        &page,
+        &page,
+    );
+}
+
+#[test]
+fn the_limits_of_an_atomic_resolve_against_the_known_width_of_a_vertical_root() {
+    let atomic = |css: &str, content: &str| {
+        format!(
+            "<div id=r style=\"writing-mode:MODE;{KNOWN}\">aa\
+             <div id=a style=\"display:inline-block;{css}\">{content}</div></div>"
+        )
+    };
+    let half_lr = [
+        ("a", (8.0, 28.0, 50.0, 10.0)),
+        ("r", (8.0, 8.0, 100.0, 300.0)),
+    ];
+    let half_rl = [
+        ("a", (58.0, 28.0, 50.0, 10.0)),
+        ("r", (8.0, 8.0, 100.0, 300.0)),
+    ];
+    // 50% of the 100px width of the root, not of the 300px height.
+    for css in [
+        "min-width:50%;height:10px",
+        "width:40%;min-width:50%;height:10px",
+        "writing-mode:horizontal-tb;min-width:50%;height:10px",
+    ] {
+        check_modes(&atomic(css, ""), &half_lr, &half_rl);
+    }
+    check_modes(
+        &atomic("max-width:30%", "bbbbbbbb"),
+        &[("a", (8.0, 28.0, 10.0, 80.0))],
+        &[("a", (98.0, 28.0, 10.0, 80.0))],
     );
 }
 
