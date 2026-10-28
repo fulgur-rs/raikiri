@@ -256,6 +256,38 @@ fn a_flex_container_with_a_ratio_takes_its_width_from_its_content() {
     check_boxes(cases);
 }
 
+/// A flex container with a ratio and a height of its own that is an item of a flex column takes its width from that height: the height is the main size the column gives it, and the container derives the width through the ratio when it is not stretched.
+#[test]
+fn a_flex_container_with_a_ratio_and_a_height_takes_its_width_as_a_column_item() {
+    let cases: &[Case<'_>] = &[
+        (
+            "an empty item aligned to the start",
+            "<div id=f style='display:flex;flex-direction:column;width:300px;align-items:flex-start'><div id=c style='display:flex;height:100px;aspect-ratio:2/1'></div></div>",
+            &[("f", 8.0, 8.0, 300.0, 100.0), ("c", 8.0, 8.0, 200.0, 100.0)],
+        ),
+        (
+            "an item with content aligned to the start",
+            "<div id=f style='display:flex;flex-direction:column;width:300px;align-items:flex-start'><div id=c style='display:flex;height:100px;aspect-ratio:2/1'><div id=i style='width:100%;height:20px'></div></div></div>",
+            &[
+                ("f", 8.0, 8.0, 300.0, 100.0),
+                ("c", 8.0, 8.0, 200.0, 100.0),
+                ("i", 8.0, 8.0, 200.0, 20.0),
+            ],
+        ),
+        (
+            "an item that does not flex",
+            "<div id=f style='display:flex;flex-direction:column;width:300px;align-items:flex-start'><div id=c style='display:flex;height:100px;aspect-ratio:2/1;flex:none'><div id=i style='width:100%;height:20px'></div></div></div>",
+            &[("c", 8.0, 8.0, 200.0, 100.0), ("i", 8.0, 8.0, 200.0, 20.0)],
+        ),
+        (
+            "a stretched item keeps the width the column gives it",
+            "<div id=f style='display:flex;flex-direction:column;width:300px'><div id=c style='display:flex;height:100px;aspect-ratio:2/1'></div></div>",
+            &[("c", 8.0, 8.0, 300.0, 100.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
 /// A flex container with a ratio that is an item of a flex or grid container takes the height the ratio gives for the width the parent settles, which its content raises as for any box.
 #[test]
 fn a_flex_container_with_a_ratio_is_raised_by_its_content_as_an_item() {
