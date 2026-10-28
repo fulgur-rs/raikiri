@@ -563,3 +563,53 @@ fn a_vertical_float_in_a_block_container_fits_the_page_height() {
     lay_out(&mut doc);
     assert_eq!(absolute_rect(&doc, parent).3, 0.0);
 }
+
+#[test]
+fn a_vertical_flex_item_stretched_by_a_taller_sibling_keeps_the_width_of_its_columns() {
+    let sibling = |doc: &mut Document, parent: usize, height: &str| {
+        doc.append_element(
+            Some(parent),
+            "div",
+            Some(format!("display:block;width:20px;height:{height}").as_str()),
+        )
+    };
+    // The row is as high as the sibling, 800px, and the item fills it; its
+    // columns stay as wide as when it was measured at the page height.
+    let (mut doc, parent, item) =
+        vertical_block_under("display:flex;width:300px", "", &long_text());
+    let tall = sibling(&mut doc, parent, "800px");
+    lay_out(&mut doc);
+    assert_eq!(absolute_rect(&doc, item), (0.0, 0.0, 50.0, 800.0));
+    assert_eq!(absolute_rect(&doc, tall), (50.0, 0.0, 20.0, 800.0));
+    // A shorter sibling leaves the row as high as the page area.
+    let (mut doc, parent, item) =
+        vertical_block_under("display:flex;width:300px", "", &long_text());
+    let short = sibling(&mut doc, parent, "300px");
+    lay_out(&mut doc);
+    assert_eq!(absolute_rect(&doc, item), (0.0, 0.0, 50.0, 600.0));
+    assert_eq!(absolute_rect(&doc, short), (50.0, 0.0, 20.0, 300.0));
+}
+
+#[test]
+fn a_vertical_box_of_blocks_fits_the_page_height_as_a_flex_item_or_a_float() {
+    for (parent, css, expected) in [
+        ("display:flex;width:300px", "", (0.0, 0.0, 50.0, 600.0)),
+        (
+            "display:block;width:300px",
+            "float:left",
+            (0.0, 0.0, 50.0, 600.0),
+        ),
+        (
+            "display:block;width:300px",
+            "width:100px",
+            (0.0, 0.0, 100.0, 600.0),
+        ),
+    ] {
+        let (mut doc, _, container) = vertical_block_under(parent, css, "");
+        let paragraph = doc.append_element(Some(container), "p", Some("display:block;margin:0"));
+        doc.append_text(paragraph, long_text());
+        lay_out(&mut doc);
+        assert_eq!(absolute_rect(&doc, container), expected, "{parent} {css}");
+        assert_eq!(absolute_rect(&doc, paragraph).3, 600.0, "{parent} {css}");
+    }
+}
