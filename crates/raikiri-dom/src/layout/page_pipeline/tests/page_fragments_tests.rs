@@ -868,24 +868,48 @@ fn a_padded_paragraph_whose_first_line_overflows_moves() {
 /// 100px pages (Ahem 20px, line height 30px). Returns the number of its lines
 /// on each page from the first up to the last it reaches.
 fn lines_on_each_page_after_a_spacer(spacer_height: f32, style: &str, lines: usize) -> Vec<usize> {
+    lines_per_page_after_a_spacer(spacer_height, style, lines, false)
+}
+
+/// Like [`lines_on_each_page_after_a_spacer`], with the paragraph as bare text
+/// of the 20px-wide body, so that the spacer is a block before the lines.
+fn bare_lines_on_each_page_after_a_spacer(
+    spacer_height: f32,
+    style: &str,
+    lines: usize,
+) -> Vec<usize> {
+    lines_per_page_after_a_spacer(spacer_height, style, lines, true)
+}
+
+fn lines_per_page_after_a_spacer(
+    spacer_height: f32,
+    style: &str,
+    lines: usize,
+    bare: bool,
+) -> Vec<usize> {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Some("display:block;margin:0;font:20px/30px Ahem"),
-    );
+    let body_style = if bare {
+        format!("display:block;margin:0;font:20px/30px Ahem;width:20px;{style}")
+    } else {
+        "display:block;margin:0;font:20px/30px Ahem".to_string()
+    };
+    let body = doc.append_element(Some(html), "body", Some(&body_style));
     doc.append_element(
         Some(body),
         "div",
         Some(&format!("display:block;height:{spacer_height}px")),
     );
-    let block = doc.append_element(
-        Some(body),
-        "div",
-        Some(&format!("display:block;width:20px;{style}")),
-    );
-    let text = doc.append_text(block, vec!["X"; lines].join(" "));
+    let paragraph = if bare {
+        body
+    } else {
+        doc.append_element(
+            Some(body),
+            "div",
+            Some(&format!("display:block;width:20px;{style}")),
+        )
+    };
+    let text = doc.append_text(paragraph, vec!["X"; lines].join(" "));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -904,6 +928,45 @@ fn lines_on_each_page_after_a_spacer(spacer_height: f32, style: &str, lines: usi
                 .sum()
         })
         .collect()
+}
+
+#[test]
+fn a_paragraph_too_short_for_both_constraints_keeps_its_orphans() {
+    // (spacer height, block style, lines, lines on each page). The counts are
+    // the lines Chromium prints on each page of `page.pdf`, read with
+    // `pdftotext -bbox`. Lines are 30px on 100px pages, so a 10px spacer
+    // leaves room for three lines, 40px for two and 70px for one.
+    let cases: &[(f32, &str, usize, &[usize])] = &[
+        // The orphans win over the widows the paragraph has no lines for.
+        (40.0, "", 3, &[2, 1]),
+        (40.0, "widows:1", 3, &[2, 1]),
+        (40.0, "orphans:1;widows:1", 3, &[2, 1]),
+        (40.0, "orphans:2;widows:3", 4, &[2, 2]),
+        (10.0, "orphans:2;widows:3", 4, &[2, 2]),
+        (10.0, "orphans:2;widows:4", 5, &[2, 3]),
+        (10.0, "orphans:3;widows:3", 5, &[3, 2]),
+        // A break that moves up for the widows still stops at the orphans.
+        (40.0, "orphans:1", 3, &[1, 2]),
+        (70.0, "orphans:1;widows:2", 2, &[1, 1]),
+        // Fewer lines fit than the orphans: the paragraph moves whole.
+        (70.0, "", 3, &[0, 3]),
+        (40.0, "orphans:3;widows:1", 3, &[0, 3]),
+        (40.0, "orphans:3;widows:3", 5, &[0, 3, 2]),
+        // A paragraph that fits needs no break.
+        (10.0, "", 3, &[3]),
+    ];
+    for (spacer_height, style, lines, expected) in cases {
+        assert_eq!(
+            lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "{spacer_height} {style} {lines} lines"
+        );
+        assert_eq!(
+            bare_lines_on_each_page_after_a_spacer(*spacer_height, style, *lines),
+            *expected,
+            "bare {spacer_height} {style} {lines} lines"
+        );
+    }
 }
 
 #[test]
@@ -953,7 +1016,7 @@ fn ranges_of_a_text_below_a_span(
     use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
     let mut results = Vec::new();
     {
-        let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
+        let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px;orphans:1;widows:2");
         let span = doc.append_element(Some(root), "span", Some("display:inline"));
         doc.append_text(span, "aa ");
         let text = doc.append_text(root, "bbbb cccc");
@@ -976,9 +1039,10 @@ fn ranges_of_a_text_below_a_span(
 }
 
 #[test]
-fn a_text_that_starts_on_a_later_line_is_checked_for_orphans_from_that_line() {
-    // The text's lines end at 35 and 45 on a 40px page: one line would be
-    // left behind, so orphans:2 moves the paragraph to page 1.
+fn a_text_that_starts_on_a_later_line_is_checked_against_the_whole_paragraph() {
+    // The text's lines end at 35 and 45 on a 40px page. Breaking after the
+    // second paragraph line would leave a one-line widow, so the break moves
+    // up to after the first line and the whole text goes to page 1.
     let results = ranges_of_a_text_below_a_span(40.0);
     assert_eq!(
         results[0],
@@ -2801,12 +2865,12 @@ fn whole_on_page_1() -> Vec<(u32, Option<PageFragmentLineRange>)> {
 }
 
 #[test]
-fn a_nested_paragraph_that_would_leave_a_widow_moves_to_the_next_page() {
-    // Lines at 15, 25 and 35 on a 40px page: the last line would be a
-    // widow, so the whole paragraph starts page 1 (y 40), as it does when
-    // it is a direct child of the body.
+fn a_nested_paragraph_that_cannot_hold_its_orphans_moves_to_the_next_page() {
+    // Lines at 15, 25 and 35 on a 40px page: only two lines fit and three
+    // are required before the break, so the whole paragraph starts page 1
+    // (y 40), as it does when it is a direct child of the body.
     for section in [None, Some("")] {
-        let laid_out = paragraph_after_a_spacer(section, 15.0, "orphans:2;widows:2", 40.0);
+        let laid_out = paragraph_after_a_spacer(section, 15.0, "orphans:3;widows:2", 40.0);
         assert_eq!(laid_out.pages, 2, "{section:?}");
         assert_eq!(laid_out.fragments, whole_on_page_1(), "{section:?}");
         assert_eq!(
@@ -2820,7 +2884,7 @@ fn a_nested_paragraph_that_would_leave_a_widow_moves_to_the_next_page() {
 fn a_section_that_a_moved_paragraph_begins_moves_with_it() {
     // Nothing of the section precedes the paragraph, so the section starts
     // page 1 with it rather than leaving an empty start on page 0.
-    let laid_out = paragraph_after_a_spacer(Some(""), 15.0, "orphans:2;widows:2", 40.0);
+    let laid_out = paragraph_after_a_spacer(Some(""), 15.0, "orphans:3;widows:2", 40.0);
     assert_eq!(laid_out.section, (40.0, 30.0));
 }
 
@@ -2829,7 +2893,7 @@ fn a_padded_section_grows_to_hold_its_moved_paragraph() {
     // The section starts at 15 and its padding stays there; the paragraph
     // moves from 17 to 40, so the section ends at 70.
     let laid_out =
-        paragraph_after_a_spacer(Some("padding-top:2px"), 15.0, "orphans:2;widows:2", 40.0);
+        paragraph_after_a_spacer(Some("padding-top:2px"), 15.0, "orphans:3;widows:2", 40.0);
     assert_eq!(laid_out.fragments, whole_on_page_1());
     assert_eq!(laid_out.section, (15.0, 55.0));
     assert_eq!(laid_out.after_top, 70.0);
@@ -2842,7 +2906,7 @@ fn a_relatively_offset_section_moves_by_its_flow_position() {
     let laid_out = paragraph_after_a_spacer(
         Some("position:relative;top:3px"),
         15.0,
-        "orphans:2;widows:2",
+        "orphans:3;widows:2",
         40.0,
     );
     assert_eq!(laid_out.fragments, whole_on_page_1());
@@ -2858,7 +2922,7 @@ fn a_raised_section_whose_flow_position_starts_the_page_stays() {
     let laid_out = paragraph_after_a_spacer(
         Some("position:relative;top:-5px"),
         40.0,
-        "orphans:2;widows:2",
+        "orphans:3;widows:2",
         40.0,
     );
     assert_eq!(laid_out.section, (35.0, 30.0));
@@ -2868,7 +2932,7 @@ fn a_raised_section_whose_flow_position_starts_the_page_stays() {
 #[test]
 fn a_paragraph_in_a_display_contents_wrapper_moves() {
     let laid_out =
-        paragraph_after_a_spacer(Some("display:contents"), 15.0, "orphans:2;widows:2", 40.0);
+        paragraph_after_a_spacer(Some("display:contents"), 15.0, "orphans:3;widows:2", 40.0);
     assert_eq!(laid_out.fragments, whole_on_page_1());
     assert_eq!(laid_out.after_top, 70.0);
 }
@@ -2877,7 +2941,7 @@ fn a_paragraph_in_a_display_contents_wrapper_moves() {
 fn a_paragraph_in_a_fixed_height_section_is_not_moved_out_of_it() {
     // The section ends at 45, so moving the paragraph to 40 would push its
     // lines past that end: it stays split inside the section.
-    let laid_out = paragraph_after_a_spacer(Some("height:30px"), 15.0, "orphans:2;widows:2", 40.0);
+    let laid_out = paragraph_after_a_spacer(Some("height:30px"), 15.0, "orphans:3;widows:2", 40.0);
     assert_eq!(laid_out.fragments[0].0, 0);
     assert_eq!(laid_out.section, (15.0, 30.0));
 }
@@ -2915,10 +2979,10 @@ fn a_fixed_height_paragraph_whose_first_line_overflows_moves_only_as_a_direct_ch
 }
 
 #[test]
-fn a_nested_paragraph_moved_for_a_widow_leaves_an_earlier_float_behind() {
+fn a_nested_paragraph_moved_for_its_orphans_leaves_an_earlier_float_behind() {
     // `body > (spacer, section > (float, paragraph))`: the 5px float and the
     // paragraph beside it both start the section at y 15. The paragraph's
-    // lines at 15, 25 and 35 on a 40px page would leave a widow, so it moves
+    // lines at 15, 25 and 35 on a 40px page leave too few orphans, so it moves
     // to page 1; the float, already placed on page 0, stays there.
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
@@ -2936,7 +3000,7 @@ fn a_nested_paragraph_moved_for_a_widow_leaves_an_earlier_float_behind() {
         "div",
         Some(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:50px;\
-             orphans:2;widows:2",
+             orphans:3;widows:2",
         ),
     );
     let text = doc.append_text(root, "aaaa bbbb cccc");
@@ -2961,7 +3025,7 @@ fn a_nested_paragraph_does_not_move_a_section_whose_height_ignores_its_content()
     // place at y 15 and the block after it its place below the section:
     // moving the section with the paragraph would move that block as well.
     for (section, height) in [("min-height:100px", 100.0), ("contain:size", 0.0)] {
-        let laid_out = paragraph_after_a_spacer(Some(section), 15.0, "orphans:2;widows:2", 40.0);
+        let laid_out = paragraph_after_a_spacer(Some(section), 15.0, "orphans:3;widows:2", 40.0);
         assert_eq!(laid_out.section, (15.0, height), "{section}");
         assert_eq!(laid_out.after_top, 15.0 + height, "{section}");
     }
@@ -2974,20 +3038,20 @@ fn a_zero_min_height_does_not_keep_a_nested_paragraph_from_moving() {
     let laid_out = paragraph_after_a_spacer(
         Some("min-height:0"),
         15.0,
-        "orphans:2;widows:2;min-height:0",
+        "orphans:3;widows:2;min-height:0",
         40.0,
     );
     assert_eq!(laid_out.fragments, whole_on_page_1());
 }
 
 #[test]
-fn a_paragraph_in_a_floated_section_is_not_moved_for_its_widow() {
+fn a_paragraph_in_a_floated_section_is_not_moved_for_its_orphans() {
     // A float is placed by the float rules rather than by the block flow, so
     // its paragraph keeps the existing whole-box path.
     let laid_out = paragraph_after_a_spacer(
         Some("float:left;width:100px"),
         15.0,
-        "orphans:2;widows:2",
+        "orphans:3;widows:2",
         40.0,
     );
     assert_eq!(
@@ -3024,10 +3088,10 @@ fn a_block_outside_the_laid_out_root_is_not_a_block_flow_paragraph() {
 }
 
 #[test]
-fn a_nested_paragraph_moved_for_a_widow_leaves_a_later_positioned_box_behind() {
+fn a_nested_paragraph_moved_for_its_orphans_leaves_a_later_positioned_box_behind() {
     // `body > (spacer, section[relative] > (paragraph, abs[top:0]))`: the
     // positioned box is placed at the section's top on page 0. The
-    // paragraph moves to page 1 for its widow; the section, and the box
+    // paragraph moves to page 1 for its orphans; the section, and the box
     // placed against it, stay where they are.
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
@@ -3044,7 +3108,7 @@ fn a_nested_paragraph_moved_for_a_widow_leaves_a_later_positioned_box_behind() {
         "div",
         Some(
             "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
-             orphans:2;widows:2",
+             orphans:3;widows:2",
         ),
     );
     let text = doc.append_text(root, "aaaa bbbb cccc");
@@ -3126,32 +3190,58 @@ fn inline_runs_after_a_spacer(
 }
 
 #[test]
-fn a_paragraph_wrapped_in_a_span_that_would_leave_a_widow_moves() {
+fn a_paragraph_wrapped_in_a_span_that_cannot_hold_its_orphans_moves() {
     // Lines at 15, 25 and 35 on a 40px page, as in the unwrapped case: the
     // span's text has no block of its own, so the paragraph root moves.
     for section in [None, Some("")] {
         let (pages, fragments) =
-            inline_runs_after_a_spacer(section, &[(true, "aaaa bbbb cccc")], "widows:2");
+            inline_runs_after_a_spacer(section, &[(true, "aaaa bbbb cccc")], "orphans:3");
         assert_eq!(pages, 2, "{section:?}");
         assert_eq!(fragments, [whole_on_page_1()], "{section:?}");
     }
 }
 
 #[test]
-fn a_widow_owned_by_a_later_text_node_moves_the_paragraph() {
-    // The first text owns the two lines that fit; the widow belongs to the
-    // span after it, and still counts against the paragraph. Each text
-    // reports its own lines.
+fn an_orphan_owned_by_a_later_text_node_moves_the_paragraph() {
+    // The first text owns the two lines that fit; the third orphan line
+    // belongs to the span after it, and still counts against the paragraph.
+    // Each text reports its own lines.
     for section in [None, Some("")] {
         let (_, fragments) = inline_runs_after_a_spacer(
             section,
             &[(false, "aaaa bbbb "), (true, "cccc")],
-            "widows:2",
+            "orphans:3",
         );
         assert_eq!(
             fragments,
             [
                 vec![(1, Some(PageFragmentLineRange::new(0, 2)))],
+                vec![(1, Some(PageFragmentLineRange::new(0, 1)))],
+            ],
+            "{section:?}"
+        );
+    }
+}
+
+#[test]
+fn a_widow_owned_by_a_later_text_node_moves_the_break_up() {
+    // The first text owns the two lines that fit; the widow belongs to the
+    // span after it, and still counts against the paragraph, so the break
+    // moves up one line and the first text splits across the pages.
+    for section in [None, Some("")] {
+        let (pages, fragments) = inline_runs_after_a_spacer(
+            section,
+            &[(false, "aaaa bbbb "), (true, "cccc")],
+            "orphans:1;widows:2",
+        );
+        assert_eq!(pages, 2, "{section:?}");
+        assert_eq!(
+            fragments,
+            [
+                vec![
+                    (0, Some(PageFragmentLineRange::new(0, 1))),
+                    (1, Some(PageFragmentLineRange::new(1, 2))),
+                ],
                 vec![(1, Some(PageFragmentLineRange::new(0, 1)))],
             ],
             "{section:?}"

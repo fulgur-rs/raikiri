@@ -15632,6 +15632,8 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
     let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
+    // Four lines hold two orphans and two widows, so the widows stay at two.
+    assert_eq!(fit.widows, 2);
     // Room for both constraints and shiftable lines: the break moves up.
     assert_eq!(
         fit.fix(&lines, 70.0, 0, &pages, true, || true),
@@ -15647,12 +15649,31 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
         fit.fix(&lines, 70.0, 0, &pages, false, || false),
         LineBreakFix::Keep
     );
-    // Too few lines for both constraints never ask whether lines can shift.
-    let short = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)];
-    let fit = ParagraphLineFit::measure(&short, 80.0, 0.0, 100.0, 2, 2);
+    // Too few lines for the orphans never ask whether lines can shift.
+    let short = [(0.0, 10.0), (10.0, 20.0)];
+    let fit = ParagraphLineFit::measure(&short, 90.0, 0.0, 100.0, 2, 2);
     assert_eq!(
-        fit.fix(&short, 80.0, 0, &pages, true, || unreachable!()),
+        fit.fix(&short, 90.0, 0, &pages, true, || unreachable!()),
         LineBreakFix::MoveBlock
+    );
+    let three = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)];
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 3, 1);
+    assert_eq!(
+        fit.fix(&three, 80.0, 0, &pages, true, || unreachable!()),
+        LineBreakFix::MoveBlock
+    );
+    // Three lines under the default orphans and widows of 2: the paragraph
+    // keeps its orphans and the last piece takes the one line they leave.
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 2, 2);
+    assert_eq!(
+        fit.fix(&three, 80.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // With one orphan and two widows the break moves up to leave two lines.
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 1, 2);
+    assert_eq!(
+        fit.fix(&three, 80.0, 0, &pages, true, || true),
+        LineBreakFix::MoveLines([Some((1, 10.0, 1)), None])
     );
     // A break that honors both constraints needs no repair.
     let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2);

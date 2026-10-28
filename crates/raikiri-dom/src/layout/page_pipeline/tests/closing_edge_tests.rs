@@ -942,13 +942,22 @@ fn lines_that_orphans_and_widows_keep_together_move_with_the_edges() {
     // The lines end at 70 on the page and the padding below them does not.
     // The paragraph moves whole to the top of the next page, and the padding
     // follows it.
-    for lines in [3, 2, 1] {
+    for lines in [2, 1] {
         assert_eq!(
             closed_paragraph(lines, ""),
             (100.0, 140.0 + 10.0 * lines as f32),
             "{lines} lines"
         );
     }
+}
+
+#[test]
+fn a_paragraph_too_short_for_both_constraints_keeps_its_orphans_before_the_edges() {
+    // Three lines cannot have two orphans and two widows. The first two stay,
+    // and the last one moves with the padding, as Chromium prints it.
+    assert_eq!(closed_paragraph(3, ""), (40.0, 150.0));
+    // Orphans of three leave no line to move, so the paragraph moves whole.
+    assert_eq!(closed_paragraph(3, "orphans:3"), (100.0, 170.0));
 }
 
 #[test]
