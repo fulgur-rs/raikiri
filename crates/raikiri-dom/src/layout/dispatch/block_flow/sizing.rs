@@ -42,10 +42,11 @@ fn bounds(own: [Option<f32>; 2], carried: [Option<f32>; 2]) -> (Option<f32>, Opt
     (min, max)
 }
 
-/// Whether `size` is a percentage, or a `calc()` with one.
+/// Whether `size` is a percentage, or a `calc()` with one, or `stretch`: a size
+/// that behaves as `auto` where its containing block has no definite size.
 fn is_percentage(size: Dimension) -> bool {
     match size.expand() {
-        ExpandedDimension::Percent(_) => true,
+        ExpandedDimension::Percent(_) | ExpandedDimension::Stretch => true,
         ExpandedDimension::Calc(calc) => calc.has_percentage(),
         _ => false,
     }

@@ -1250,8 +1250,9 @@ pub enum LengthOrAuto {
     /// spelling `-webkit-fill-available`: the margin box of the box fills the
     /// containing block along the axis. Unlike the content keywords it takes
     /// its size from the containing block, so a box whose containing block has
-    /// no definite size along the axis sizes like `auto`. Produced by every
-    /// `<box-size>` parser; a margin or an offset never holds it.
+    /// no definite size along the axis sizes like `auto`. Produced by the
+    /// preferred size parsers (`width`, `height` and their logical forms), not
+    /// by the minimum and maximum ones; a margin or an offset never holds it.
     Stretch,
 }
 

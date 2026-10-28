@@ -3,6 +3,7 @@
 use super::OofSpan;
 use super::convert::{FromTaffy, IntoTaffy};
 use crate::layout::context::LayoutSession;
+use crate::layout::ifc::boxes::box_sizing_adjustment;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticPosition, LayoutInput, LayoutOutput, NodeId, OofLayoutResult,
     OofPosition, OofPositioningArea, SizingMode,
@@ -10,8 +11,44 @@ use crate::layout::protocol::{
 use raikiri_layout_geometry::{Edges, Line, Size};
 use raikiri_layout_style::ToTaffy;
 use raikiri_layout_style::values::{
-    AlignContent, AlignSelf, ContainingBlockClaims, Direction, Position,
+    AlignContent, AlignSelf, ContainingBlockClaims, Direction, ExpandedDimension,
+    LengthPercentageAuto, MaybeResolve, Position,
 };
+
+/// The inputs a flex or grid container is laid out with: a `width` of
+/// `stretch` takes the room the caller offers the border box, which has its
+/// margins taken off already (CSS Sizing 4 §5.1), within the `min-width` and
+/// `max-width` of the box. Taffy's container algorithms read the keyword as
+/// `auto`. Without a definite room, or for a measure that ignores the box's own
+/// sizes, it stays `auto`.
+fn with_stretch_width(
+    tree: &LayoutSession<'_>,
+    node: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let idx = usize::from(node);
+    let style = tree.physical_style(idx);
+    if inputs.sizing_mode == SizingMode::InherentSize
+        && inputs.known_dimensions.width.is_none()
+        && matches!(style.size().width.expand(), ExpandedDimension::Stretch)
+        && let AvailableSpace::Definite(room) = inputs.available_space.width
+    {
+        let basis = inputs.parent_size.width;
+        let adjustment = box_sizing_adjustment(tree, idx, basis.unwrap_or(0.0));
+        let limit =
+            |size: LengthPercentageAuto| size.maybe_resolve(basis).map(|size| size + adjustment);
+        let mut width = room.max(0.0);
+        if let Some(max) = limit(style.max_size().width) {
+            width = width.min(max);
+        }
+        if let Some(min) = limit(style.min_size().width) {
+            width = width.max(min);
+        }
+        inputs.known_dimensions.width = Some(width);
+        inputs.known_dimensions_are_definite.width = true;
+    }
+    inputs
+}
 
 /// Lay out a flex container.
 #[inline]
@@ -20,6 +57,7 @@ pub(crate) fn compute_flexbox_layout(
     node: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let inputs = with_stretch_width(tree, node, inputs);
     LayoutOutput::from_taffy(taffy::compute_flexbox_layout(
         tree,
         node.into_taffy(),
@@ -34,6 +72,7 @@ pub(crate) fn compute_grid_layout(
     node: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let inputs = with_stretch_width(tree, node, inputs);
     LayoutOutput::from_taffy(taffy::compute_grid_layout(
         tree,
         node.into_taffy(),

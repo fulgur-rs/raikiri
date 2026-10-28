@@ -154,14 +154,14 @@ fn inherit_keeps_the_parents_sizing_keywords() {
 #[test]
 fn inherit_keeps_the_parents_stretch_keyword() {
     let (parent, child) = cascade_pair(
-        "width: stretch; max-height: -webkit-fill-available",
+        "width: stretch; height: -webkit-fill-available",
         &[],
-        "#target { width: inherit; max-height: inherit }",
+        "#target { width: inherit; height: inherit }",
     );
     assert_eq!(parent.width, Computed::Stretch);
     assert_eq!(child.width, Computed::Stretch);
-    assert_eq!(parent.max_height, Computed::Stretch);
-    assert_eq!(child.max_height, Computed::Stretch);
+    assert_eq!(parent.height, Computed::Stretch);
+    assert_eq!(child.height, Computed::Stretch);
 }
 
 #[test]

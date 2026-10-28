@@ -970,23 +970,13 @@ fn max_content_and_fit_content_preferred_widths_survive_the_cascade() {
 }
 
 #[test]
-fn the_stretch_keyword_survives_the_cascade_on_every_size() {
+fn the_stretch_keyword_survives_the_cascade_on_every_preferred_size() {
     // Both spellings compute to the one keyword, on the physical and the
     // logical properties alike.
     for value in ["stretch", "-webkit-fill-available"] {
-        let style = format!(
-            "width: {value}; height: {value}; min-width: {value}; min-height: {value}; \
-             max-width: {value}; max-height: {value}"
-        );
+        let style = format!("width: {value}; height: {value}");
         let values = cascade_doc("", "div", Some(style.as_str()));
-        for (name, size) in [
-            ("width", values.width),
-            ("height", values.height),
-            ("min-width", values.min_width),
-            ("min-height", values.min_height),
-            ("max-width", values.max_width),
-            ("max-height", values.max_height),
-        ] {
+        for (name, size) in [("width", values.width), ("height", values.height)] {
             assert_eq!(size, ComputedLengthPercentageOrAuto::Stretch, "{name}");
             assert!(!size.is_content_keyword(), "{name}");
         }
@@ -995,6 +985,24 @@ fn the_stretch_keyword_survives_the_cascade_on_every_size() {
         assert_eq!(values.width, ComputedLengthPercentageOrAuto::Stretch);
         assert_eq!(values.height, ComputedLengthPercentageOrAuto::Stretch);
     }
+}
+
+#[test]
+fn a_stretch_minimum_or_maximum_leaves_the_earlier_declaration_in_force() {
+    // The keyword is invalid there, so the cascade keeps the earlier value, as
+    // it does for any declaration a browser does not understand.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some(
+            "min-width: 10px; min-width: stretch; min-height: 20px; min-height: -webkit-fill-available; \
+             max-width: 30px; max-width: stretch; max-height: 40px; max-height: stretch",
+        ),
+    );
+    assert_eq!(values.min_width, ComputedLengthPercentageOrAuto::Px(10.0));
+    assert_eq!(values.min_height, ComputedLengthPercentageOrAuto::Px(20.0));
+    assert_eq!(values.max_width, ComputedLengthPercentageOrAuto::Px(30.0));
+    assert_eq!(values.max_height, ComputedLengthPercentageOrAuto::Px(40.0));
 }
 
 #[test]

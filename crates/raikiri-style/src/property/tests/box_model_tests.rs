@@ -2247,9 +2247,9 @@ fn min_and_max_sizes_keep_the_sizing_keywords() {
 }
 
 #[test]
-fn every_size_property_keeps_the_stretch_keyword() {
-    // CSS Sizing 4 §5.1: `stretch` is a `<box-size>`, so each preferred, minimum
-    // and maximum size, in physical and logical form, takes it.
+fn every_preferred_size_property_keeps_the_stretch_keyword() {
+    // CSS Sizing 4 §5.1: `stretch` is a `<box-size>`, so each preferred size,
+    // in physical and logical form, takes it.
     for (property, wrap) in [
         (
             "width",
@@ -2258,14 +2258,6 @@ fn every_size_property_keeps_the_stretch_keyword() {
         ("height", PropertyValue::Height),
         ("inline-size", PropertyValue::InlineSize),
         ("block-size", PropertyValue::BlockSize),
-        ("min-width", PropertyValue::MinWidth),
-        ("min-height", PropertyValue::MinHeight),
-        ("min-inline-size", PropertyValue::MinInlineSize),
-        ("min-block-size", PropertyValue::MinBlockSize),
-        ("max-width", PropertyValue::MaxWidth),
-        ("max-height", PropertyValue::MaxHeight),
-        ("max-inline-size", PropertyValue::MaxInlineSize),
-        ("max-block-size", PropertyValue::MaxBlockSize),
     ] {
         assert_eq!(
             parse("stretch", property),
@@ -2290,9 +2282,29 @@ fn every_size_property_keeps_the_stretch_keyword() {
 }
 
 #[test]
+fn a_minimum_or_maximum_size_is_invalid_with_the_stretch_keyword() {
+    // The layout does not honor `stretch` as a limit yet; the declaration stays
+    // invalid so that an earlier one is not overridden for nothing.
+    for property in [
+        "min-width",
+        "min-height",
+        "min-inline-size",
+        "min-block-size",
+        "max-width",
+        "max-height",
+        "max-inline-size",
+        "max-block-size",
+    ] {
+        for value in ["stretch", "STRETCH", "-webkit-fill-available"] {
+            assert_eq!(parse_entire(value, property), None, "{property}: {value}");
+        }
+    }
+}
+
+#[test]
 fn the_stretch_keyword_is_not_a_math_function_operand_or_a_list() {
     // Chromium drops each of these declarations; `stretch` stands alone.
-    for property in ["width", "height", "min-width", "max-height"] {
+    for property in ["width", "height", "inline-size", "block-size"] {
         assert_eq!(
             parse_entire("calc(10px + stretch)", property),
             None,

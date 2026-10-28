@@ -256,3 +256,138 @@ cases! {
         r#"<div id=w style="height:100px"><div id=a style="height:stretch;margin-bottom:10px"></div></div><div id=b style="height:5px"></div>"# =>
         [("w", (8.0, 8.0, 784.0, 100.0)), ("a", (8.0, 8.0, 784.0, 100.0)), ("b", (8.0, 108.0, 784.0, 5.0))];
 }
+
+cases! {
+    aspect_ratio_unresolved_height_follows_the_ratio:
+        r#"<div style="width:200px"><div id=a style="width:30px;height:stretch;aspect-ratio:1"></div></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 30.0))];
+    aspect_ratio_unresolved_height_is_not_raised_by_content:
+        r#"<div style="width:200px"><div id=a style="width:30px;height:stretch;aspect-ratio:1"><div style="height:50px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 30.0))];
+    aspect_ratio_resolved_height_takes_the_room:
+        r#"<div style="width:200px;height:100px"><div id=a style="width:30px;height:stretch;aspect-ratio:1"></div></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 100.0))];
+    aspect_ratio_resolved_height_ignores_the_content:
+        r#"<div style="width:200px;height:100px"><div id=a style="width:30px;height:stretch;aspect-ratio:1"><div style="height:150px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 100.0))];
+    aspect_ratio_resolved_height_less_held_margins:
+        r#"<div style="width:200px;height:100px;overflow:hidden"><div id=a style="width:30px;height:stretch;margin:5px 0 15px;aspect-ratio:1"></div></div>"# =>
+        [("a", (8.0, 13.0, 30.0, 80.0))];
+    aspect_ratio_stretch_width_gives_the_unresolved_height:
+        r#"<div style="width:200px"><div id=a style="width:stretch;height:stretch;aspect-ratio:2"></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 100.0))];
+    aspect_ratio_stretch_both_resolved:
+        r#"<div style="width:200px;height:100px"><div id=a style="width:stretch;height:stretch;aspect-ratio:2"></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 100.0))];
+    aspect_ratio_float_unresolved_height:
+        r#"<div style="width:200px"><div id=a style="float:left;width:30px;height:stretch;aspect-ratio:1"></div></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 30.0))];
+    aspect_ratio_inline_block_unresolved_height:
+        r#"<div style="width:200px"><span id=a style="display:inline-block;width:30px;height:stretch;aspect-ratio:1"></span></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 30.0))];
+    aspect_ratio_flex_item_unresolved_height:
+        r#"<div style="display:flex;width:200px"><div id=a style="width:30px;height:stretch;aspect-ratio:1"></div></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 30.0))];
+    aspect_ratio_flex_item_resolved_height:
+        r#"<div style="display:flex;width:200px;height:100px"><div id=a style="width:30px;height:stretch;aspect-ratio:1"></div></div>"# =>
+        [("a", (8.0, 8.0, 30.0, 100.0))];
+    aspect_ratio_flex_item_stretch_width:
+        r#"<div style="display:flex;width:200px"><div id=a style="width:stretch;height:20px;aspect-ratio:1;flex:none"></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 20.0))];
+}
+
+cases! {
+    container_inline_flex_fills_room:
+        r#"<div style="width:200px"><div id=a style="display:inline-flex;width:stretch"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+    container_inline_flex_less_margins:
+        r#"<div style="width:200px"><div id=a style="display:inline-flex;width:stretch;margin:0 10px 0 20px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (28.0, 8.0, 170.0, 10.0))];
+    container_inline_grid_fills_room:
+        r#"<div style="width:200px"><div id=a style="display:inline-grid;width:stretch"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+    container_inline_grid_less_margins:
+        r#"<div style="width:200px"><div id=a style="display:inline-grid;width:stretch;margin:0 10px 0 20px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (28.0, 8.0, 170.0, 10.0))];
+    container_inline_flex_with_text:
+        r#"<div style="width:200px"><div id=a style="display:inline-flex;width:stretch">aaa</div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+    container_inline_flex_after_text:
+        r#"<div style="width:200px">xx<div id=a style="display:inline-flex;width:stretch"><div style="width:30px;height:10px"></div></div>yy</div>"# =>
+        [("a", (8.0, 18.0, 200.0, 10.0))];
+    container_inline_flex_both_axes:
+        r#"<div style="width:200px;height:100px"><div id=a style="display:inline-flex;width:stretch;height:stretch;margin:5px 0 15px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 13.0, 200.0, 80.0))];
+    container_floated_flex_fills_room:
+        r#"<div style="width:200px"><div id=a style="float:left;display:flex;width:stretch"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+    container_floated_grid_fills_room:
+        r#"<div style="width:200px"><div id=a style="float:left;display:grid;width:stretch"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+    container_block_flex_less_margins:
+        r#"<div style="width:200px"><div id=a style="display:flex;width:stretch;margin:0 10px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (18.0, 8.0, 180.0, 10.0))];
+    container_block_grid_less_margins:
+        r#"<div style="width:200px"><div id=a style="display:grid;width:stretch;margin:0 10px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (18.0, 8.0, 180.0, 10.0))];
+    container_inline_flex_max_width_limits:
+        r#"<div style="width:200px"><div id=a style="display:inline-flex;width:stretch;max-width:50px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 10.0))];
+    container_inline_flex_min_width_raises:
+        r#"<div style="width:200px"><div id=a style="display:inline-flex;width:stretch;min-width:250px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 250.0, 10.0))];
+    container_floated_grid_max_width_limits:
+        r#"<div style="width:200px"><div id=a style="float:left;display:grid;width:stretch;max-width:50px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 10.0))];
+    container_floated_flex_min_width_raises:
+        r#"<div style="width:200px"><div id=a style="float:left;display:flex;width:stretch;min-width:250px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 250.0, 10.0))];
+    container_inline_flex_padding_border_and_margins:
+        r#"<div style="width:200px"><div id=a style="display:inline-flex;width:stretch;padding:0 5px;border:2px solid;margin:0 3px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (11.0, 8.0, 194.0, 14.0))];
+    container_inline_flex_content_box_sizing:
+        r#"<div style="width:200px"><div id=a style="box-sizing:content-box;display:inline-flex;width:stretch;padding:0 5px;border:2px solid;margin:0 3px"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (11.0, 8.0, 194.0, 14.0))];
+    container_flex_in_a_shrink_wrapped_parent:
+        r#"<div id=p style="float:left"><div id=a style="display:flex;width:stretch"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("p", (8.0, 8.0, 30.0, 10.0)), ("a", (8.0, 8.0, 30.0, 10.0))];
+    container_flex_that_is_a_flex_item:
+        r#"<div style="display:flex;width:200px"><div id=a style="display:flex;width:stretch"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+    container_grid_that_is_a_grid_item:
+        r#"<div style="display:grid;width:200px"><div id=a style="display:grid;width:stretch"><div style="width:30px;height:10px"></div></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+    container_inline_grid_with_text:
+        r#"<div style="width:200px"><div id=a style="display:inline-grid;width:stretch">aaa</div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 10.0))];
+}
+
+cases! {
+    limits_canvas_max_width:
+        r#"<div style="width:200px"><canvas id=a style="display:block;width:stretch;max-width:50px;height:10px"></canvas></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 10.0))];
+    limits_canvas_min_width:
+        r#"<div style="width:200px"><canvas id=a style="display:block;width:stretch;min-width:250px;height:10px"></canvas></div>"# =>
+        [("a", (8.0, 8.0, 250.0, 10.0))];
+    limits_fixed_table_max_width:
+        r#"<div style="width:200px"><div id=a style="display:table;table-layout:fixed;width:stretch;max-width:50px"></div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 0.0))];
+    limits_fixed_table_min_width:
+        r#"<div style="width:200px"><div id=a style="display:table;table-layout:fixed;width:stretch;min-width:250px"></div></div>"# =>
+        [("a", (8.0, 8.0, 250.0, 0.0))];
+    limits_block_max_width:
+        r#"<div style="width:200px"><div id=a style="width:stretch;max-width:50px;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 10.0))];
+    limits_block_min_width:
+        r#"<div style="width:200px"><div id=a style="width:stretch;min-width:250px;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 250.0, 10.0))];
+    limits_float_max_width:
+        r#"<div style="width:200px"><div id=a style="float:left;width:stretch;max-width:50px;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 10.0))];
+    limits_inline_block_max_width:
+        r#"<div style="width:200px"><span id=a style="display:inline-block;width:stretch;max-width:50px;height:10px"></span></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 10.0))];
+    limits_flex_item_max_width:
+        r#"<div style="display:flex;width:200px"><div id=a style="width:stretch;max-width:50px;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 50.0, 10.0))];
+}
