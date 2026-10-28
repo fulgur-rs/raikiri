@@ -632,7 +632,7 @@ fn first_page_name_skips_a_second_caption_that_table_layout_drops() {
 }
 
 #[test]
-fn first_page_name_skips_a_caption_inside_a_contents_wrapper() {
+fn first_page_name_takes_a_caption_inside_a_contents_wrapper_as_the_first_caption() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -657,7 +657,9 @@ fn first_page_name_skips_a_caption_inside_a_contents_wrapper() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
 
-    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("caption"));
+    // Table layout renders only the first caption, the wrapped one, so the
+    // direct caption after it has no box to take a page name from.
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("wrapped"));
 }
 
 #[test]
