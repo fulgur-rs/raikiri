@@ -2098,6 +2098,7 @@ pub(crate) fn paint_document_impl(
     let mut walk = PaintWalk {
         image_cache,
         document,
+        order: raikiri_dom::paint_rules::DocumentOrder::new(document),
         cascade,
         counter_snapshots,
         page_box,
