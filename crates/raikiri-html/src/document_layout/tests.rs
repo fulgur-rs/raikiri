@@ -1,4 +1,5 @@
 use super::*;
+mod inline_svg_storage_tests;
 use raikiri_traits::{NodeId, NodeKind, PaintRect, PaintTransform};
 
 fn dom(html: &str) -> crate::HtmlDocument {
