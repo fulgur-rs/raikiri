@@ -188,3 +188,88 @@ fn a_contents_root_is_as_translucent_as_a_block_root() {
     assert!((100..200).contains(&block[1]), "{block:?}");
     assert_eq!(contents, block);
 }
+
+// The root element's own border is drawn on its box, which the root's margin
+// and transform place; the pixel positions were measured in Chromium.
+
+#[test]
+fn the_root_border_sits_inside_the_root_margin() {
+    let pages = pages(
+        "<div style=\"height: 60px; background: green\"></div>",
+        "html { margin: 10px; border: 5px solid red }",
+    );
+    let page = &pages[0];
+    assert_eq!(pixel(page, 2, 2), WHITE);
+    assert_eq!(pixel(page, 2, 50), WHITE);
+    assert_eq!(pixel(page, 12, 50), RED);
+    assert_eq!(pixel(page, 87, 50), RED);
+    assert_eq!(pixel(page, 50, 12), RED);
+    assert_eq!(pixel(page, 50, 77), RED);
+    assert_eq!(pixel(page, 50, 50), GREEN);
+    assert_eq!(pixel(page, 50, 85), WHITE);
+    assert_eq!(pixel(page, 95, 50), WHITE);
+}
+
+#[test]
+fn the_root_border_moves_with_the_root_transform() {
+    let pages = pages(
+        "<div style=\"height: 40px; background: green\"></div>",
+        "html { width: 60px; border: 5px solid red; transform: translateX(30px) }",
+    );
+    let page = &pages[0];
+    assert_eq!(pixel(page, 12, 20), WHITE);
+    assert_eq!(pixel(page, 32, 20), RED);
+    assert_eq!(pixel(page, 50, 20), GREEN);
+    assert_eq!(pixel(page, 97, 20), RED);
+    assert_eq!(pixel(page, 50, 2), RED);
+    assert_eq!(pixel(page, 50, 47), RED);
+    assert_eq!(pixel(page, 50, 60), WHITE);
+}
+
+#[test]
+fn a_singular_root_transform_hides_the_root_border() {
+    let pages = pages(
+        "<div style=\"height: 40px; background: green\"></div>",
+        "html { border: 5px solid red; transform: scale(0) }",
+    );
+    for (x, y) in [(2, 2), (50, 2), (2, 20), (50, 20), (97, 20), (50, 47)] {
+        assert_eq!(pixel(&pages[0], x, y), WHITE, "({x}, {y})");
+    }
+}
+
+#[test]
+fn the_root_border_runs_down_every_page_and_closes_on_the_last() {
+    let pages = pages(
+        "<div style=\"height: 250px; background: green\"></div>",
+        "html { border: 5px solid red }",
+    );
+    assert_eq!(pages.len(), 3);
+    // The top edge opens the first page only, and the sides run on.
+    assert_eq!(pixel(&pages[0], 50, 2), RED);
+    assert_eq!(pixel(&pages[0], 50, 97), GREEN);
+    assert_eq!(pixel(&pages[1], 50, 2), GREEN);
+    for page in &pages {
+        assert_eq!(pixel(page, 2, 30), RED);
+        assert_eq!(pixel(page, 97, 30), RED);
+    }
+    // The bottom edge closes the last page where the root ends.
+    assert_eq!(pixel(&pages[2], 50, 57), RED);
+    assert_eq!(pixel(&pages[2], 50, 80), WHITE);
+    assert_eq!(pixel(&pages[2], 2, 80), WHITE);
+}
+
+#[test]
+fn the_root_top_margin_and_border_are_left_at_the_page_break() {
+    let pages = pages(
+        "<div style=\"height: 150px; background: green\"></div>",
+        "html { margin-top: 30px; border: 5px solid red }",
+    );
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pixel(&pages[0], 50, 10), WHITE);
+    assert_eq!(pixel(&pages[0], 50, 32), RED);
+    assert_eq!(pixel(&pages[0], 50, 50), GREEN);
+    // The margin and the border at the top do not repeat on the next page.
+    assert_eq!(pixel(&pages[1], 50, 2), GREEN);
+    assert_eq!(pixel(&pages[1], 50, 87), RED);
+    assert_eq!(pixel(&pages[1], 50, 95), WHITE);
+}

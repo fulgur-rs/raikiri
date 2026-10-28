@@ -54,6 +54,7 @@ mod body_overflow;
 mod box_tree;
 mod bridge;
 pub(crate) mod cache_context;
+mod canvas_background;
 mod compact_length;
 mod depth;
 mod fixed;
@@ -99,6 +100,8 @@ pub(crate) use sanitize::LayoutWarn;
 pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};
 pub(crate) use sanitize::sanitize_taffy;
 
+#[doc(hidden)]
+pub use canvas_background::{CanvasBoxUse, canvas_background_owner, canvas_box_use};
 #[doc(hidden)]
 pub use fixed::generates_inline_box;
 pub use fixed::{establishes_fixed_containing_block, has_applied_transform, is_transformable};
