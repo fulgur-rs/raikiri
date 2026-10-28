@@ -139,12 +139,6 @@ impl TransposedBlock {
         self.container
     }
 
-    /// The writing mode the container is laid out on the axes of, when it is
-    /// a flex or grid container.
-    pub(super) fn own_writing_mode(&self) -> Option<WritingMode> {
-        self.own_axes
-    }
-
     /// Resolve the percentages of the padding of the container against
     /// `basis`, the inline size of its containing block. The views of the
     /// frame must be prepared.
