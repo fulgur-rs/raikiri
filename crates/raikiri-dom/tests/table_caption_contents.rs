@@ -197,3 +197,25 @@ fn a_caption_in_display_contents_paginates_as_a_direct_caption_does() {
         }
     }
 }
+
+/// When the first row does not fit below the caption on the first page, it
+/// moves to the next one and a top caption stays: a caption in a
+/// `display: contents` child is the caption of the table here as well.
+#[test]
+fn a_caption_in_display_contents_stays_when_the_first_row_moves_to_the_next_page() {
+    let rows = "<div style='display:table-row'><div id=k0 style='display:table-cell;height:70px'>k</div></div>\
+                <div style='display:table-row'><div id=k1 style='display:table-cell;height:20px'>k</div></div>";
+    for side in ["top", "bottom"] {
+        let direct = format!(
+            "<div style='display:table'><div id=c style='display:table-caption;caption-side:{side}'>cap</div>{rows}</div>"
+        );
+        let wrapped = format!(
+            "<div style='display:table'><div style='display:contents'><div id=c style='display:table-caption;caption-side:{side}'>cap</div></div>{rows}</div>"
+        );
+        assert_eq!(
+            boxes_on_pages("200px 80px", &wrapped),
+            boxes_on_pages("200px 80px", &direct),
+            "caption-side: {side}"
+        );
+    }
+}
