@@ -4374,9 +4374,9 @@ impl BoxIntrinsics {
 /// The paragraph's inline extent is what these widths decide, so a box
 /// cannot refer to it: its percentage margins and paddings count as zero, and
 /// its percentage sizes along the inline axis as `auto` and as no limit (CSS
-/// Sizing 3 §5.2.1). A replaced element keeps the `inline_basis`, the
-/// paragraph's inline extent when it is definite, and a basis of zero without
-/// one.
+/// Sizing 3 §5.2.1). A replaced element does the same for its max-content
+/// contribution, and resolves those percentages against zero for its
+/// min-content one, so the room the paragraph has does not change them.
 ///
 /// `percent_height` is the root's definite content-box height, the basis a
 /// box's percentage height resolves against while its width is measured: it
@@ -4453,8 +4453,16 @@ pub(crate) fn intrinsics_of_boxes(
     }
     for b in boxes {
         let replaced = crate::paint_rules::is_replaced_element(tree.document, b.node);
-        let basis = replaced.then(|| inline_basis.unwrap_or(0.0));
-        let margin_basis = basis.unwrap_or(0.0);
+        let percent = if !replaced {
+            PercentSize::Initial
+        } else if tree.nodes[b.node].svg_width_follows_available {
+            PercentSize::Zero
+        } else {
+            PercentSize::Replaced
+        };
+        // The width a percentage margin refers to is what these contributions
+        // decide, so it counts as zero for a replaced box as for any other.
+        let margin_basis = 0.0;
         match b.kind {
             IfcBoxKind::Float => {
                 let margin = resolved_margins(tree, b.node, margin_basis);
@@ -4471,7 +4479,7 @@ pub(crate) fn intrinsics_of_boxes(
                     content_heights(
                         tree,
                         b.node,
-                        inline_basis.filter(|_| replaced),
+                        percent,
                         physical_width,
                         margin.top + margin.bottom,
                         false,
@@ -4481,7 +4489,7 @@ pub(crate) fn intrinsics_of_boxes(
                     content_widths(
                         tree,
                         b.node,
-                        basis,
+                        percent,
                         percent_height,
                         margin.left + margin.right,
                         false,
@@ -4536,7 +4544,7 @@ pub(crate) fn intrinsics_of_boxes(
                     content_heights(
                         tree,
                         b.node,
-                        inline_basis.filter(|_| replaced),
+                        percent,
                         physical_width,
                         margin.top + margin.bottom,
                         margins_collapse,
@@ -4546,7 +4554,7 @@ pub(crate) fn intrinsics_of_boxes(
                     content_widths(
                         tree,
                         b.node,
-                        basis,
+                        percent,
                         percent_height,
                         margin.left + margin.right,
                         margins_collapse,
@@ -4569,7 +4577,7 @@ pub(crate) fn intrinsics_of_boxes(
                     content_heights(
                         tree,
                         b.node,
-                        inline_basis.filter(|_| replaced),
+                        percent,
                         physical_width,
                         margin.top + margin.bottom,
                         false,
@@ -4579,7 +4587,7 @@ pub(crate) fn intrinsics_of_boxes(
                     content_widths(
                         tree,
                         b.node,
-                        basis,
+                        percent,
                         percent_height,
                         margin.left + margin.right,
                         false,
@@ -4605,27 +4613,33 @@ pub(crate) fn intrinsics_of_boxes(
 /// formatting context; floats, atomic inlines and the other blocks establish a
 /// formatting context of their own and do not.
 ///
-/// The width the percentages of the box refer to is `basis`; without one it is
-/// not known yet, and the percentage width and limits of the box stand for
-/// `auto` and for no limit, as they do for the contribution of a box to the
-/// intrinsic size of its container (CSS Sizing 3 §5.2.1).
+/// The width the percentages of the box refer to is not known yet: the
+/// contributions decide it. `percent` says how its percentage width and limits
+/// are read meanwhile.
 fn content_widths(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    basis: Option<f32>,
+    percent: PercentSize,
     percent_height: Option<f32>,
     margins_x: f32,
     margins_collapse: bool,
     across: AcrossLines,
 ) -> (f32, f32) {
-    let parent_size = Size {
-        width: basis,
+    let max_content = Size {
+        width: (percent == PercentSize::Zero).then_some(0.0),
         height: percent_height,
+    };
+    let basis = ContributionBasis {
+        max_content,
+        min_content: Size {
+            width: (percent != PercentSize::Initial).then_some(0.0),
+            ..max_content
+        },
     };
     content_sizes_on_axis(
         tree,
         node,
-        parent_size,
+        basis,
         margins_x,
         RequestedAxis::Horizontal,
         margins_collapse,
@@ -4633,28 +4647,67 @@ fn content_widths(
     )
 }
 
+/// The extents along the lines of a vertical paragraph, as [`content_widths`]
+/// measures the widths of a horizontal one: `percent` says how the percentage
+/// heights of the box are read, and `physical_width` is what its percentage
+/// widths resolve against.
 fn content_heights(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    inline_basis: Option<f32>,
+    percent: PercentSize,
     physical_width: Option<f32>,
     margins_y: f32,
     margins_collapse: bool,
     across: AcrossLines,
 ) -> (f32, f32) {
-    let parent_size = Size {
+    let max_content = Size {
         width: physical_width,
-        height: inline_basis,
+        height: None,
+    };
+    let basis = ContributionBasis {
+        max_content,
+        min_content: Size {
+            height: (percent != PercentSize::Initial).then_some(0.0),
+            ..max_content
+        },
     };
     content_sizes_on_axis(
         tree,
         node,
-        parent_size,
+        basis,
         margins_y,
         RequestedAxis::Vertical,
         margins_collapse,
         across,
     )
+}
+
+/// How the percentage size of a box along the axis it contributes on is read
+/// while the contribution is measured (CSS Sizing 3 §5.2.1).
+#[derive(Clone, Copy, PartialEq)]
+enum PercentSize {
+    /// A box that is not replaced: a percentage width, height or limit reads
+    /// as the initial value of its property, `auto` or no limit, in both
+    /// contributions.
+    Initial,
+    /// A replaced box: the percentages resolve against zero in its min-content
+    /// contribution, and read as the initial value in its max-content one,
+    /// which is its natural size.
+    Replaced,
+    /// A replaced box that has no natural width, an `<svg>` with a `viewBox`
+    /// only: the width that stands in for its `auto` one is the room its
+    /// parent offers, which is zero in both contributions.
+    Zero,
+}
+
+/// What the percentage sizes of a box refer to while its two contributions
+/// are measured.
+#[derive(Clone, Copy)]
+struct ContributionBasis {
+    /// For the max-content contribution.
+    max_content: Size<Option<f32>>,
+    /// For the min-content contribution.
+    min_content: Size<Option<f32>>,
 }
 
 /// The room a box that a paragraph measures along its lines is offered across
@@ -4672,8 +4725,8 @@ enum AcrossLines {
     Width(f32),
 }
 
-/// Min- and max-content extents of `node` along `axis`, against the
-/// `parent_size` its percentages resolve against.
+/// Min- and max-content extents of `node` along `axis`, against the sizes its
+/// percentages resolve against in each.
 ///
 /// The box is measured with the margin-collapsing mode its layout runs in:
 /// Taffy keeps the entries of one mode per node and drops them all when a
@@ -4682,7 +4735,7 @@ enum AcrossLines {
 fn content_sizes_on_axis(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    parent_size: Size<Option<f32>>,
+    basis: ContributionBasis,
     margins: f32,
     axis: RequestedAxis,
     margins_collapse: bool,
@@ -4695,6 +4748,11 @@ fn content_sizes_on_axis(
         AcrossLines::Width(width) => (Some(width), AvailableSpace::Definite(width)),
     };
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
+        let parent_size = if available == AvailableSpace::MinContent {
+            basis.min_content
+        } else {
+            basis.max_content
+        };
         let output = tree.compute_child_layout(
             NodeId::from(node),
             LayoutInput {
@@ -4736,7 +4794,7 @@ fn content_sizes_on_axis(
             output.size.width + margins
         }
     };
-    let parent_height = parent_size.height.filter(|_| !vertical);
+    let parent_height = basis.max_content.height.filter(|_| !vertical);
     measure_against_parent_height(tree, node, parent_height, |tree| {
         // The extent of a box across the lines is its block size, which
         // neither the min-content nor the max-content constraint changes.
