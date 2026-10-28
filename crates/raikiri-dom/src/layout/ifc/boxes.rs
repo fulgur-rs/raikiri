@@ -1717,9 +1717,12 @@ fn fit_child(
             height: AvailableSpace::MaxContent,
         }
     } else {
+        // A vertical box in a horizontal paragraph is an orthogonal flow, whose
+        // height is the room it fits.
         Size {
             width: room,
-            height: AvailableSpace::MaxContent,
+            height: orthogonal_room(tree, node, margin, geometry.definite_height)
+                .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
         }
     };
     // A vertical paragraph's inline extent is the box's height, so its
@@ -1937,6 +1940,33 @@ fn page_area_width(tree: &LayoutSession<'_>) -> Option<f32> {
         .filter(|width| *width > 0.0)
 }
 
+/// The height of the page area, which stands in for the room along its height
+/// that a vertical box in a horizontal paragraph is offered while nothing
+/// sets one, as the initial containing block does for an orthogonal flow (CSS
+/// Writing Modes 4 §7.3.1).
+fn page_area_height(tree: &LayoutSession<'_>) -> Option<f32> {
+    tree.fixed_page_area
+        .map(|(_, height)| height)
+        .filter(|height| *height > 0.0)
+}
+
+/// The room along its height that `node`, a float or an atomic inline of a
+/// horizontal paragraph, is offered when it is vertical: the paragraph's
+/// `definite_height` or else the page area's, less the margins of the box.
+/// `None` for a horizontal box, which lays out on the axes of the paragraph.
+fn orthogonal_room(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    margin: Edges<f32>,
+    definite_height: Option<f32>,
+) -> Option<f32> {
+    crate::layout::dispatch::used_writing_mode(tree, node)
+        .is_vertical()
+        .then(|| definite_height.or_else(|| page_area_height(tree)))
+        .flatten()
+        .map(|height| (height - margin.top - margin.bottom).max(0.0))
+}
+
 /// How wide a float or an atomic inline `node` of a vertical paragraph is
 /// measured across its lines, when its height, the extent it takes along them,
 /// is what is wanted. A box that lays out on the paragraph's axes keeps its
@@ -1964,6 +1994,20 @@ fn across_lines_of_child(
             )
         },
     )
+}
+
+/// How tall a float or an atomic inline `node` of a horizontal paragraph is
+/// measured across its lines, when its width, the extent it takes along them,
+/// is what is wanted. A horizontal box keeps its max-content height. A
+/// vertical one fits the room [`orthogonal_room`] gives it, as it is laid out.
+fn across_lines_of_orthogonal(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    margin: Edges<f32>,
+    definite_height: Option<f32>,
+) -> AcrossLines {
+    orthogonal_room(tree, node, margin, definite_height)
+        .map_or(AcrossLines::MaxContent, AcrossLines::Room)
 }
 
 /// The border-box width of the atomic inline `node` in a vertical paragraph
@@ -4389,6 +4433,7 @@ pub(crate) fn intrinsics_of_boxes(
                         percent_height,
                         margin.left + margin.right,
                         false,
+                        across_lines_of_orthogonal(tree, b.node, margin, percent_height),
                     )
                 };
                 let style = tree.physical_style(b.node);
@@ -4453,6 +4498,7 @@ pub(crate) fn intrinsics_of_boxes(
                         percent_height,
                         margin.left + margin.right,
                         margins_collapse,
+                        AcrossLines::MaxContent,
                     )
                 };
                 intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
@@ -4479,6 +4525,7 @@ pub(crate) fn intrinsics_of_boxes(
                         percent_height,
                         margin.left + margin.right,
                         false,
+                        across_lines_of_orthogonal(tree, b.node, margin, percent_height),
                     )
                 };
                 intrinsics.engine.insert_atomic(
@@ -4506,6 +4553,7 @@ fn content_widths(
     percent_height: Option<f32>,
     margins_x: f32,
     margins_collapse: bool,
+    across: AcrossLines,
 ) -> (f32, f32) {
     let parent_size = Size {
         width: Some(basis),
@@ -4518,7 +4566,7 @@ fn content_widths(
         margins_x,
         RequestedAxis::Horizontal,
         margins_collapse,
-        AcrossLines::MaxContent,
+        across,
     )
 }
 
@@ -4546,17 +4594,18 @@ fn content_heights(
     )
 }
 
-/// The width a box that a vertical paragraph measures along its height is
-/// offered across the lines.
+/// The room a box that a paragraph measures along its lines is offered across
+/// them: the width for a vertical paragraph, the height for a horizontal one.
 #[derive(Clone, Copy)]
 enum AcrossLines {
-    /// Its max-content width: the box lays out on the paragraph's axes, and
-    /// its height is its extent along the lines.
+    /// Its max-content size across the lines: the box lays out on the
+    /// paragraph's axes, and its extent along the lines is what is measured.
     MaxContent,
-    /// It shrinks to fit this room: a horizontal atomic inline, an orthogonal
-    /// flow whose height is its block size at that width.
+    /// It shrinks to fit this room: an orthogonal flow whose extent along the
+    /// lines is its block size at that fit, a horizontal atomic inline of a
+    /// vertical paragraph or a vertical one of a horizontal paragraph.
     Room(f32),
-    /// This used width, settled already.
+    /// This used width, settled already (a vertical paragraph).
     Width(f32),
 }
 
@@ -4606,7 +4655,10 @@ fn content_sizes_on_axis(
                 } else {
                     Size {
                         width: available,
-                        height: AvailableSpace::MaxContent,
+                        height: match across {
+                            AcrossLines::Room(room) => AvailableSpace::Definite(room),
+                            _ => AvailableSpace::MaxContent,
+                        },
                     }
                 },
                 vertical_margins_are_collapsible: Line {
@@ -4623,7 +4675,7 @@ fn content_sizes_on_axis(
     };
     let parent_height = parent_size.height.filter(|_| !vertical);
     measure_against_parent_height(tree, node, parent_height, |tree| {
-        // The height of a box across the lines is its block size, which
+        // The extent of a box across the lines is its block size, which
         // neither the min-content nor the max-content constraint changes.
         if matches!(across, AcrossLines::MaxContent) {
             (
@@ -4631,8 +4683,8 @@ fn content_sizes_on_axis(
                 measure(tree, AvailableSpace::MaxContent),
             )
         } else {
-            let height = measure(tree, AvailableSpace::MaxContent);
-            (height, height)
+            let extent = measure(tree, AvailableSpace::MaxContent);
+            (extent, extent)
         }
     })
 }
