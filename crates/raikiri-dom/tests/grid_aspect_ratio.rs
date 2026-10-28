@@ -187,6 +187,72 @@ fn a_grid_container_ratio_height_is_raised_by_its_content() {
     check_boxes(cases);
 }
 
+/// A `max-width` that clamps the width of a container with a ratio carries through the ratio to a height of the same shape (25px for 50px at 2/1), but the content still raises the height past it, as for a container without the clamp; a container that may not be raised keeps that height.
+#[test]
+fn a_grid_container_clamped_by_max_width_is_raised_past_the_height_the_clamp_gives() {
+    let cases: &[Case<'_>] = &[
+        (
+            "an own width that max-width clamps, content centered in the block axis",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2;max-width:50px;align-content:center'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "an own width that max-width clamps",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2;max-width:50px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "an auto width that max-width clamps",
+            "<div id=c style='display:grid;aspect-ratio:2;max-width:50px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "an inline-grid",
+            "<div id=c style='display:inline-grid;width:100px;aspect-ratio:2;max-width:50px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a width the parent imposes and max-width clamps",
+            "<div id=w style='width:100px'><div id=c style='display:grid;aspect-ratio:2;max-width:50px'><div id=i style='width:100px;height:100px'></div></div></div>",
+            &[
+                ("w", 8.0, 8.0, 100.0, 100.0),
+                ("c", 8.0, 8.0, 50.0, 100.0),
+                ("i", 8.0, 8.0, 100.0, 100.0),
+            ],
+        ),
+        (
+            "an item of a flex row",
+            "<div id=w style='display:flex'><div id=c style='display:grid;width:100px;aspect-ratio:2;max-width:50px'><div id=i style='width:100px;height:100px'></div></div></div>",
+            &[
+                ("w", 8.0, 8.0, 784.0, 100.0),
+                ("c", 8.0, 8.0, 50.0, 100.0),
+                ("i", 8.0, 8.0, 100.0, 100.0),
+            ],
+        ),
+        (
+            "a min-width above the max-width wins, and so does the content",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2;min-width:80px;max-width:50px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 80.0, 100.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a max-height still caps the raise",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2;max-width:50px;max-height:60px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 60.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "overflow: hidden keeps the clamped ratio height",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2;max-width:50px;overflow:hidden'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 25.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "min-height: 0 keeps the clamped ratio height",
+            "<div id=c style='display:grid;width:100px;aspect-ratio:2;max-width:50px;min-height:0'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 25.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
 /// The ratio height stays when the container scrolls, states a `min-height` or has less content than the ratio height, and a container sized by its height takes its width from it.
 #[test]
 fn a_grid_container_ratio_height_stays_when_the_content_may_not_raise_it() {
