@@ -6525,6 +6525,189 @@ fn orphans_and_widows_yield_in_an_empty_column_to_the_lines_of_a_padded_paragrap
     assert_eq!(boxes[1], (0.0, 70.0, Some((0.0, 100.0))));
 }
 
+/// A container of balanced columns 200px wide holding block paragraphs of the
+/// given numbers of 20px lines, 10px apart, with a block of one line below it.
+/// Returns the document, the container, the paragraphs and the block below.
+fn balanced_paragraphs_in(
+    container_css: &str,
+    paragraph_css: &str,
+    lines: &[usize],
+) -> (Document, usize, Vec<usize>, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:20px/20px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(format!("display:block;width:200px;columns:2;column-gap:0;{container_css}").as_str()),
+    );
+    let paragraphs = lines
+        .iter()
+        .map(|&count| {
+            let paragraph = doc.append_element(
+                Some(container),
+                "div",
+                Some(format!("display:block;margin:0 0 10px;{paragraph_css}").as_str()),
+            );
+            for line in 0..count {
+                doc.append_text(paragraph, "x");
+                if line + 1 < count {
+                    doc.append_element(Some(paragraph), "br", None::<&str>);
+                }
+            }
+            paragraph
+        })
+        .collect();
+    let below = doc.append_element(Some(body), "div", Some("display:block"));
+    doc.append_text(below, "x");
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    (doc, container, paragraphs, below)
+}
+
+#[test]
+fn balanced_columns_split_a_paragraph_whose_orphans_and_widows_cannot_both_hold() {
+    // Three lines cannot leave two lines on each side of a break. The second
+    // paragraph keeps its two orphans in the first column and gives up a
+    // widow, which makes the columns 110px high; moving it whole to the next
+    // column would need 130px.
+    let (doc, container, paragraphs, below) =
+        balanced_paragraphs_in("orphans:2;widows:2", "", &[3, 3, 3]);
+    let (ranges, _) = paragraph_pieces(&doc, paragraphs[1]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 3, 1)]);
+    assert_eq!(doc.nodes[container].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[below].layout.location.y, 110.0);
+    // The last line of the second paragraph tops the second column, and the
+    // third paragraph follows it 10px below.
+    assert_eq!(line_tops_in_column(&doc, paragraphs[1], 1), [0.0]);
+    assert_eq!(doc.nodes[paragraphs[2]].layout.location.y, 30.0);
+}
+
+#[test]
+fn balanced_columns_move_a_paragraph_whose_first_lines_leave_too_few_orphans() {
+    // Only two lines of the second paragraph fit below the first one at the
+    // smaller heights, and three orphans need a third.
+    for (orphans, widows) in [(3, 1), (3, 3)] {
+        let (doc, container, paragraphs, below) = balanced_paragraphs_in(
+            &format!("orphans:{orphans};widows:{widows}"),
+            "",
+            &[3, 3, 3],
+        );
+        let (ranges, _) = paragraph_pieces(&doc, paragraphs[1]);
+        assert_eq!(ranges, [(0, 3, 0)], "{orphans}/{widows}");
+        assert_eq!(doc.nodes[container].layout.size.height, 130.0);
+        assert_eq!(doc.nodes[below].layout.location.y, 130.0);
+    }
+}
+
+#[test]
+fn balanced_columns_keep_the_orphans_when_the_widows_ask_for_more_than_the_paragraph_has() {
+    // Three widows would leave nothing before the break, so a single orphan
+    // stays and the other two lines go on.
+    let (doc, _, paragraphs, _) = balanced_paragraphs_in("orphans:1;widows:3", "", &[3, 3, 3]);
+    let (ranges, _) = paragraph_pieces(&doc, paragraphs[1]);
+    assert_eq!(ranges, [(0, 1, 0), (1, 3, 1)]);
+}
+
+#[test]
+fn columns_filled_in_turn_split_a_paragraph_that_cannot_honor_both_constraints() {
+    // The second paragraph has two lines of room below the first, as browsers
+    // split it two and one, with the padding wherever its edge falls, and it
+    // moves whole when a single line fits. At the top of a column of its own
+    // it splits after the two lines the column holds.
+    for (css, room, lines, expected) in [
+        ("margin:0", 100, [3, 3], vec![(0, 2, 0), (2, 3, 1)]),
+        (
+            "margin:0;padding-bottom:10px",
+            110,
+            [3, 3],
+            vec![(0, 2, 0), (2, 3, 1)],
+        ),
+        (
+            "margin:0;padding-top:5px",
+            110,
+            [3, 3],
+            vec![(0, 2, 0), (2, 3, 1)],
+        ),
+        ("margin:0;padding-bottom:10px", 100, [3, 3], vec![(0, 3, 1)]),
+        ("margin:0", 40, [2, 3], vec![(0, 2, 1), (2, 3, 2)]),
+    ] {
+        let (doc, _, paragraphs, _) = balanced_paragraphs_in(
+            &format!("columns:3;height:{room}px;column-fill:auto;orphans:2;widows:2"),
+            css,
+            &lines,
+        );
+        let (ranges, _) = paragraph_pieces(&doc, paragraphs[1]);
+        assert_eq!(ranges, expected, "{css} in {room}px");
+    }
+}
+
+#[test]
+fn a_break_that_honors_both_constraints_stays_where_the_lines_fall() {
+    // Four lines split two and two, which orphans and widows of two allow.
+    let (doc, _, paragraphs, _) = balanced_paragraphs_in("orphans:2;widows:2", "", &[3, 4, 3]);
+    let (ranges, _) = paragraph_pieces(&doc, paragraphs[1]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 4, 1)]);
+}
+
+/// The line ranges of the second of two paragraphs, the first of one line,
+/// in three columns of three lines, filled one after another. A line is 20px
+/// and the paragraphs touch.
+fn second_paragraph_in_filled_columns(
+    orphans: usize,
+    widows: usize,
+    lines: usize,
+) -> Vec<(usize, usize, usize)> {
+    let (doc, _, paragraphs, _) = balanced_paragraphs_in(
+        &format!("columns:3;height:60px;column-fill:auto;orphans:{orphans};widows:{widows}"),
+        "margin:0",
+        &[1, lines],
+    );
+    paragraph_pieces(&doc, paragraphs[1]).0
+}
+
+#[test]
+fn a_continued_piece_keeps_its_orphans_when_the_widows_cut_falls_short_of_them() {
+    // Six lines in columns of three, the first holding another line: the
+    // widows cut the second piece at the fourth line, one line into it, which
+    // leaves fewer than its two orphans. The piece keeps them and the last
+    // lines go on.
+    assert_eq!(
+        second_paragraph_in_filled_columns(2, 3, 6),
+        [(0, 2, 0), (2, 4, 1), (4, 6, 2)]
+    );
+    // Three orphans and three widows move the paragraph to the next column,
+    // where its second piece runs to the column's end for the three orphans.
+    assert_eq!(
+        second_paragraph_in_filled_columns(3, 3, 7),
+        [(0, 3, 1), (3, 6, 2), (6, 7, 3)]
+    );
+}
+
+#[test]
+fn a_continued_piece_runs_to_the_column_end_when_the_widows_cut_is_behind_it() {
+    // Four widows of five lines cut at the second line, so the first piece
+    // ends there; the second begins at the cut and has no break inside it
+    // that could honor them.
+    assert_eq!(
+        second_paragraph_in_filled_columns(1, 4, 5),
+        [(0, 1, 0), (1, 4, 1), (4, 5, 2)]
+    );
+    assert_eq!(
+        second_paragraph_in_filled_columns(1, 5, 7),
+        [(0, 2, 0), (2, 5, 1), (5, 7, 2)]
+    );
+}
+
+#[test]
+fn a_continued_piece_ignores_widows_that_do_not_fit_a_column() {
+    // Four widows of seven lines need four lines in one column, and the
+    // columns hold three, so no break inside the second piece can honor them.
+    assert_eq!(
+        second_paragraph_in_filled_columns(2, 4, 7),
+        [(0, 2, 0), (2, 5, 1), (5, 7, 2)]
+    );
+}
+
 #[test]
 fn a_padded_paragraph_after_another_follows_it_in_columns_with_gaps_and_container_padding() {
     let mut doc = Document::new();

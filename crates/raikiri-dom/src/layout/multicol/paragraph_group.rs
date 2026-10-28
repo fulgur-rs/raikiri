@@ -29,6 +29,14 @@ struct Paragraph {
     edge_end: f32,
 }
 
+impl Paragraph {
+    /// The first of the last `widows` lines: a break before it leaves the
+    /// widows, and a break after it leaves fewer.
+    fn widows_cut(&self) -> usize {
+        self.extents.len().saturating_sub(self.widows)
+    }
+}
+
 pub(super) fn balance(
     tree: &LayoutSession<'_>,
     entries: &[Measurement],
@@ -311,7 +319,7 @@ fn fill_chunk(
             let remaining = line_count - end;
             if remaining > 0 {
                 let fitting = end;
-                end = end.min(paragraph.extents.len().saturating_sub(paragraph.widows));
+                end = end.min(paragraph.widows_cut());
                 let minimum = if start == 0 {
                     paragraph.orphans
                 } else {
@@ -326,7 +334,7 @@ fn fill_chunk(
                     end = if decorated && !column_has_content && fitting > start {
                         fitting
                     } else {
-                        start
+                        relaxed_piece_end(paragraph, start, fitting, height).unwrap_or(start)
                     };
                 }
             }
@@ -423,6 +431,45 @@ fn fill_chunk(
     (used <= height + f32::EPSILON).then(|| Chunk {
         group: finish_group(placements, used),
         next: None,
+    })
+}
+
+/// Where a piece that starts at line `start` ends when orphans and widows
+/// leave it too short, `fitting` lines being all the column holds. Orphans
+/// win over widows: the piece keeps at least `orphans` lines, and the break
+/// moves up toward the widows only that far. A paragraph whose orphans and
+/// widows cannot both be honored thus splits where its lines allow instead of
+/// moving whole to the next column. `None` when the lines that fit do not hold
+/// the orphans.
+///
+/// A continued piece ignores widows that no break inside it can honor: the
+/// last lines they ask for begin at or before its start, or do not fit one
+/// column together.
+fn relaxed_piece_end(
+    paragraph: &Paragraph,
+    start: usize,
+    fitting: usize,
+    height: f32,
+) -> Option<usize> {
+    let kept = start + paragraph.orphans;
+    if fitting < kept {
+        return None;
+    }
+    let cut = paragraph.widows_cut();
+    // A continued piece begins at the top of its column, so the lines the
+    // widows ask for fit it when they fit the column's height.
+    if start > 0 && (cut <= start || !lines_fit_column(paragraph, cut, height)) {
+        return Some(fitting);
+    }
+    Some(fitting.min(cut.max(kept)))
+}
+
+/// Whether the lines of `paragraph` from `first` on, with the edge below the
+/// last, fit a column of `height` together.
+fn lines_fit_column(paragraph: &Paragraph, first: usize, height: f32) -> bool {
+    paragraph.extents.get(first).is_some_and(|&(top, _)| {
+        paragraph.extents[paragraph.extents.len() - 1].1 - top + paragraph.edge_end
+            <= height + f32::EPSILON
     })
 }
 

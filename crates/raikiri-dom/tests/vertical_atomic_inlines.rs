@@ -6,7 +6,9 @@
 //! against the same widths as its atomic inlines.
 //!
 //! The expected border boxes are the ones Chromium computes for the same
-//! markup in an 800px by 600px viewport, with the body margin of 8px.
+//! markup in an 800px by 600px viewport, with the body margin of 8px. The
+//! tests that fill the width of the page take the body margin away, so that
+//! the page does not cut the boxes.
 
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
@@ -860,5 +862,329 @@ fn the_limits_of_an_atomic_resolve_against_the_known_width_of_a_vertical_root() 
         &atomic("max-width:30%", "bbbbbbbb"),
         &[("a", (8.0, 28.0, 10.0, 80.0))],
         &[("a", (98.0, 28.0, 10.0, 80.0))],
+    );
+}
+
+/// Sets the root element to `MODE` and takes the body margin away, so that a
+/// box as wide as the 800px page fits it.
+const PAGE_MODE: &str = "<style>body{margin:0}html{writing-mode:MODE}</style>";
+
+/// Twelve words of 90px with a space of 10px between them: 1190px of text.
+fn twelve_words() -> String {
+    ["wwwwwwwww"; 12].join(" ")
+}
+
+/// A horizontal inline-block holding `content`, with `css`.
+fn horizontal_box(id: &str, css: &str, content: &str) -> String {
+    format!(
+        "<div id={id} style=\"display:inline-block;writing-mode:horizontal-tb;{css}\">\
+         {content}</div>"
+    )
+}
+
+#[test]
+fn a_horizontal_inline_block_in_a_vertical_paragraph_wraps_at_the_page_width() {
+    // The paragraph is 600px high and its width follows its lines, so the
+    // page area stands in for the width the box fits: the 1190px of text
+    // break in two lines of 800px, not in as many lines as 600px would ask.
+    let wrapped = [
+        ("p", (0.0, 0.0, 800.0, 600.0)),
+        ("o", (0.0, 0.0, 800.0, 20.0)),
+    ];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p>{}</div>",
+            horizontal_box("o", "", &twelve_words())
+        ),
+        &wrapped,
+        &wrapped,
+    );
+}
+
+#[test]
+fn a_horizontal_inline_block_in_a_vertical_paragraph_is_no_wider_than_its_text() {
+    // Three words are 290px, whatever the page offers.
+    let words = ["wwwwwwwww"; 3].join(" ");
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p>{}</div>",
+            horizontal_box("o", "", &words)
+        ),
+        &[
+            ("p", (0.0, 0.0, 290.0, 600.0)),
+            ("o", (0.0, 0.0, 290.0, 10.0)),
+        ],
+        &[
+            ("p", (510.0, 0.0, 290.0, 600.0)),
+            ("o", (510.0, 0.0, 290.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_horizontal_inline_block_in_a_vertical_paragraph_leaves_room_for_its_margins() {
+    // The 30px to each side come off the page, and the percentages of the
+    // margins are of the 600px the lines run along: 10% is 60px.
+    let sides = [
+        ("p", (0.0, 0.0, 800.0, 600.0)),
+        ("o", (30.0, 0.0, 740.0, 20.0)),
+    ];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p>{}</div>",
+            horizontal_box("o", "margin:0 30px", &twelve_words())
+        ),
+        &sides,
+        &sides,
+    );
+    let percent = [("o", (60.0, 0.0, 680.0, 20.0))];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p>{}</div>",
+            horizontal_box("o", "margin:0 10%", &twelve_words())
+        ),
+        &percent,
+        &percent,
+    );
+    // The margins along the line take no room across it.
+    let along = [("o", (0.0, 20.0, 800.0, 20.0))];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p>{}</div>",
+            horizontal_box("o", "margin:20px 0", &twelve_words())
+        ),
+        &along,
+        &along,
+    );
+}
+
+#[test]
+fn a_horizontal_inline_block_in_a_vertical_paragraph_shares_its_line_with_text() {
+    // The 20px of "aa" come before or after the box on the line.
+    let before = [("o", (0.0, 20.0, 800.0, 20.0))];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p>aa{}</div>",
+            horizontal_box("o", "", &twelve_words())
+        ),
+        &before,
+        &before,
+    );
+    let after = [("o", (0.0, 0.0, 800.0, 20.0))];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p>{}aa</div>",
+            horizontal_box("o", "", &twelve_words())
+        ),
+        &after,
+        &after,
+    );
+}
+
+#[test]
+fn a_vertical_box_sized_by_its_content_is_as_tall_as_the_horizontal_box_it_holds() {
+    // The height of a float, an inline-block or an absolutely positioned box
+    // with a vertical writing mode follows its content: the two lines the
+    // horizontal box wraps to at the page width, not the one it would take at
+    // its max-content width.
+    let tall = [
+        ("p", (0.0, 0.0, 800.0, 20.0)),
+        ("o", (0.0, 0.0, 800.0, 20.0)),
+    ];
+    for root in ["float:left", "display:inline-block", "position:absolute"] {
+        check_modes(
+            &format!(
+                "{PAGE_MODE}<div id=p style=\"{root};writing-mode:MODE\">{}</div>",
+                horizontal_box("o", "", &twelve_words())
+            ),
+            &tall,
+            &tall,
+        );
+    }
+    // A margin of 30px at each side narrows the box, not the height of the
+    // two lines.
+    let margins = [
+        ("p", (0.0, 0.0, 800.0, 20.0)),
+        ("o", (30.0, 0.0, 740.0, 20.0)),
+    ];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p style=\"float:left;writing-mode:MODE\">{}</div>",
+            horizontal_box("o", "margin:0 30px", &twelve_words())
+        ),
+        &margins,
+        &margins,
+    );
+}
+
+#[test]
+fn a_vertical_box_sized_by_its_content_stacks_the_horizontal_boxes_it_holds() {
+    // The 20px of the first box and the 10px of the second add up, and the
+    // narrower one is centred across the line.
+    let five = ["wwwwwwwww"; 5].join(" ");
+    let stacked = [
+        ("p", (0.0, 0.0, 800.0, 30.0)),
+        ("o", (0.0, 0.0, 800.0, 20.0)),
+        ("q", (155.0, 20.0, 490.0, 10.0)),
+    ];
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p style=\"float:left;writing-mode:MODE\">{}{}</div>",
+            horizontal_box("o", "", &twelve_words()),
+            horizontal_box("q", "", &five)
+        ),
+        &stacked,
+        &stacked,
+    );
+}
+
+#[test]
+fn a_vertical_box_sized_by_its_content_is_as_tall_as_a_horizontal_box_with_a_width() {
+    // The lines break at the width of the box, within its limits, and the
+    // percentage is of the 800px page: 250px take two words of a line (six
+    // lines), 300px three (four) and 400px four (three).
+    let float = |css: &str| {
+        format!(
+            "{PAGE_MODE}<div id=p style=\"float:left;writing-mode:MODE\">{}</div>",
+            horizontal_box("o", css, &twelve_words())
+        )
+    };
+    check_modes(
+        &float("width:250px"),
+        &[
+            ("p", (0.0, 0.0, 250.0, 60.0)),
+            ("o", (0.0, 0.0, 250.0, 60.0)),
+        ],
+        &[
+            ("p", (550.0, 0.0, 250.0, 60.0)),
+            ("o", (550.0, 0.0, 250.0, 60.0)),
+        ],
+    );
+    check_modes(
+        &float("max-width:300px"),
+        &[
+            ("p", (0.0, 0.0, 300.0, 40.0)),
+            ("o", (0.0, 0.0, 300.0, 40.0)),
+        ],
+        &[
+            ("p", (500.0, 0.0, 300.0, 40.0)),
+            ("o", (500.0, 0.0, 300.0, 40.0)),
+        ],
+    );
+    check_modes(
+        &float("width:50%"),
+        &[
+            ("p", (0.0, 0.0, 400.0, 30.0)),
+            ("o", (0.0, 0.0, 400.0, 30.0)),
+        ],
+        &[
+            ("p", (400.0, 0.0, 400.0, 30.0)),
+            ("o", (400.0, 0.0, 400.0, 30.0)),
+        ],
+    );
+    // The margins of 20px at each side add to the width of the root.
+    check_modes(
+        &float("width:250px;margin:0 20px"),
+        &[
+            ("p", (0.0, 0.0, 290.0, 60.0)),
+            ("o", (20.0, 0.0, 250.0, 60.0)),
+        ],
+        &[
+            ("p", (510.0, 0.0, 290.0, 60.0)),
+            ("o", (530.0, 0.0, 250.0, 60.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_vertical_box_with_a_width_wraps_the_horizontal_box_it_holds_at_that_width() {
+    // 300px fit three words of a line, so the twelve words take four lines.
+    check_modes(
+        &format!(
+            "{PAGE_MODE}<div id=p style=\"float:left;width:300px;writing-mode:MODE\">{}</div>",
+            horizontal_box("o", "", &twelve_words())
+        ),
+        &[
+            ("p", (0.0, 0.0, 300.0, 40.0)),
+            ("o", (0.0, 0.0, 300.0, 40.0)),
+        ],
+        &[
+            ("p", (500.0, 0.0, 300.0, 40.0)),
+            ("o", (500.0, 0.0, 300.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_vertical_box_sized_by_its_content_is_as_tall_as_a_horizontal_block_it_holds() {
+    // A block child of the vertical box is an orthogonal flow too: it fits
+    // the page, less its margins, and the box is as tall as its lines.
+    let block = |css: &str| {
+        format!(
+            "{PAGE_MODE}<div id=p style=\"float:left;writing-mode:MODE\">\
+             <div id=i style=\"writing-mode:horizontal-tb;{css}\">{}</div></div>",
+            twelve_words()
+        )
+    };
+    let plain = [
+        ("p", (0.0, 0.0, 800.0, 20.0)),
+        ("i", (0.0, 0.0, 800.0, 20.0)),
+    ];
+    check_modes(&block(""), &plain, &plain);
+    let margins = [
+        ("p", (0.0, 0.0, 800.0, 20.0)),
+        ("i", (40.0, 0.0, 720.0, 20.0)),
+    ];
+    check_modes(&block("margin:0 40px"), &margins, &margins);
+}
+
+#[test]
+fn a_vertical_item_sized_by_its_content_is_as_tall_as_the_horizontal_box_it_holds() {
+    // A flex item, a grid item, a table cell and a box with a keyword height
+    // take the height of the two lines as well.
+    let tall = [
+        ("p", (0.0, 0.0, 800.0, 20.0)),
+        ("o", (0.0, 0.0, 800.0, 20.0)),
+    ];
+    let held = horizontal_box("o", "", &twelve_words());
+    let item = |outer: &str, css: &str, close: &str| {
+        format!(
+            "<style>body{{margin:0}}</style>{outer}\
+             <div id=p style=\"writing-mode:MODE;{css}\">{held}</div>{close}"
+        )
+    };
+    for (outer, css, close) in [
+        ("<div style=\"display:flex\">", "", "</div>"),
+        ("<div style=\"display:grid\">", "", "</div>"),
+        (
+            "<div style=\"display:table\"><div style=\"display:table-row\">",
+            "display:table-cell",
+            "</div></div>",
+        ),
+        ("", "height:min-content", ""),
+        ("", "height:max-content", ""),
+        ("", "height:fit-content", ""),
+    ] {
+        check_modes(&item(outer, css, close), &tall, &tall);
+    }
+}
+
+#[test]
+fn a_vertical_inline_block_in_a_horizontal_line_is_as_tall_as_the_horizontal_box_it_holds() {
+    // The 20px of the two lines make the vertical box 20px tall, and the line
+    // 32px.
+    let line = [
+        ("h", (0.0, 0.0, 800.0, 32.0)),
+        ("p", (0.0, 10.0, 800.0, 20.0)),
+        ("o", (0.0, 10.0, 800.0, 20.0)),
+    ];
+    check_modes(
+        &format!(
+            "<style>body{{margin:0}}</style><div id=h>aa<div id=p \
+             style=\"display:inline-block;writing-mode:MODE\">{}</div></div>",
+            horizontal_box("o", "", &twelve_words())
+        ),
+        &line,
+        &line,
     );
 }

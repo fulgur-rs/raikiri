@@ -1695,10 +1695,7 @@ fn fit_child(
     // root's physical width. The page area stands in for it while the content
     // of the root decides it, as the initial containing block does for an
     // orthogonal flow (CSS Writing Modes 4 §7.3.1).
-    let page_width = tree
-        .fixed_page_area
-        .map(|(width, _)| width)
-        .filter(|width| *width > 0.0);
+    let page_width = page_area_width(tree);
     // The root's physical width, the basis for the percentages of the child's
     // own width in a vertical paragraph.
     let width_basis = geometry
@@ -1734,17 +1731,7 @@ fn fit_child(
     // out on the same axes behave as `auto` and as no limit then.
     let known_width = if vertical {
         width_basis.and_then(|physical_width| {
-            used_block_width_with_edge_basis(tree, node, physical_width, geometry.width).map(
-                |width| {
-                    clamp_block_width_with_edge_basis(
-                        tree,
-                        node,
-                        physical_width,
-                        geometry.width,
-                        width,
-                    )
-                },
-            )
+            known_atomic_width(tree, node, physical_width, geometry.width)
         })
     } else {
         keyword_width(tree, node, geometry, available)
@@ -1927,6 +1914,33 @@ pub(crate) fn measure_atomics(
         outputs.push((node, output));
     }
     AtomicMeasure { sizes, outputs }
+}
+
+/// The width of the page area, which stands in for the physical width of a
+/// vertical paragraph while the content of the paragraph decides it, as the
+/// initial containing block does for an orthogonal flow (CSS Writing Modes 4
+/// §7.3.1).
+fn page_area_width(tree: &LayoutSession<'_>) -> Option<f32> {
+    tree.fixed_page_area
+        .map(|(width, _)| width)
+        .filter(|width| *width > 0.0)
+}
+
+/// The border-box width of the atomic inline `node` in a vertical paragraph
+/// when its `width` is a length, a percentage of `physical_width`, the
+/// physical width of the paragraph, or a keyword, within its `min-width` and
+/// `max-width`. The percentages of its edges are of `inline_basis`, the
+/// paragraph's inline extent. `None` for an `auto` width, which the box takes
+/// by shrinking to fit the room it is offered.
+fn known_atomic_width(
+    tree: &LayoutSession<'_>,
+    node: usize,
+    physical_width: f32,
+    inline_basis: f32,
+) -> Option<f32> {
+    used_block_width_with_edge_basis(tree, node, physical_width, inline_basis).map(|width| {
+        clamp_block_width_with_edge_basis(tree, node, physical_width, inline_basis, width)
+    })
 }
 
 /// The `width`, `min-width` and `max-width` of `node` that are percentages,
@@ -4243,7 +4257,10 @@ impl BoxIntrinsics {
 /// measures along the block axis of its boxes and passes none; it passes the
 /// root's definite physical content width as `physical_width` instead, the
 /// basis a box's percentage width resolves against while its height is
-/// measured.
+/// measured. A box that lays out across its lines is measured at the width it
+/// fits in that width, or in the page area's while it is not known (CSS
+/// Writing Modes 4 §7.3.1): it contributes the height it has there, whether
+/// the contribution is min-content or max-content.
 pub(crate) fn intrinsics_of_boxes(
     tree: &mut LayoutSession<'_>,
     idx: usize,
@@ -4355,6 +4372,17 @@ pub(crate) fn intrinsics_of_boxes(
                     in_the_roots_formatting_context(tree, b.node)
                 };
                 let (min_content, max_content) = if vertical {
+                    // A horizontal block child is an orthogonal flow, whose
+                    // height is measured at its fit-content width in the room
+                    // the root leaves it, as it is laid out.
+                    let room =
+                        physical_width.map(|width| (width - margin.left - margin.right).max(0.0));
+                    let parent_size = Size {
+                        width: physical_width,
+                        height: inline_basis,
+                    };
+                    let across = orthogonal_fit_content_width(tree, b.node, room, parent_size)
+                        .map_or(AcrossLines::MaxContent, AcrossLines::Width);
                     content_heights(
                         tree,
                         b.node,
@@ -4362,6 +4390,7 @@ pub(crate) fn intrinsics_of_boxes(
                         physical_width,
                         margin.top + margin.bottom,
                         margins_collapse,
+                        across,
                     )
                 } else {
                     content_widths(
@@ -4379,6 +4408,25 @@ pub(crate) fn intrinsics_of_boxes(
             IfcBoxKind::Atomic => {
                 let margin = resolved_margins(tree, b.node, margin_basis);
                 let (min_content, max_content) = if vertical {
+                    // A horizontal atomic lays out across the lines at the
+                    // width it fits in the room of the paragraph's width, so
+                    // its height is measured at that width.
+                    let across =
+                        if crate::layout::dispatch::used_writing_mode(tree, b.node).is_vertical() {
+                            AcrossLines::MaxContent
+                        } else {
+                            let width_basis = physical_width.or_else(|| page_area_width(tree));
+                            width_basis.map_or(AcrossLines::MaxContent, |width_basis| {
+                                known_atomic_width(tree, b.node, width_basis, basis).map_or_else(
+                                    || {
+                                        AcrossLines::Room(
+                                            (width_basis - margin.left - margin.right).max(0.0),
+                                        )
+                                    },
+                                    AcrossLines::Width,
+                                )
+                            })
+                        };
                     content_heights(
                         tree,
                         b.node,
@@ -4386,6 +4434,7 @@ pub(crate) fn intrinsics_of_boxes(
                         physical_width,
                         margin.top + margin.bottom,
                         false,
+                        across,
                     )
                 } else {
                     content_widths(
@@ -4439,6 +4488,7 @@ fn content_widths(
         margins_x,
         RequestedAxis::Horizontal,
         margins_collapse,
+        AcrossLines::MaxContent,
     )
 }
 
@@ -4449,6 +4499,7 @@ fn content_heights(
     physical_width: Option<f32>,
     margins_y: f32,
     margins_collapse: bool,
+    across: AcrossLines,
 ) -> (f32, f32) {
     let parent_size = Size {
         width: physical_width,
@@ -4461,7 +4512,22 @@ fn content_heights(
         margins_y,
         RequestedAxis::Vertical,
         margins_collapse,
+        across,
     )
+}
+
+/// The width a box that a vertical paragraph measures along its height is
+/// offered across the lines.
+#[derive(Clone, Copy)]
+enum AcrossLines {
+    /// Its max-content width: the box lays out on the paragraph's axes, and
+    /// its height is its extent along the lines.
+    MaxContent,
+    /// It shrinks to fit this room: a horizontal atomic inline, an orthogonal
+    /// flow whose height is its block size at that width.
+    Room(f32),
+    /// This used width, settled already.
+    Width(f32),
 }
 
 /// Min- and max-content extents of `node` along `axis`, against the
@@ -4478,8 +4544,14 @@ fn content_sizes_on_axis(
     margins: f32,
     axis: RequestedAxis,
     margins_collapse: bool,
+    across: AcrossLines,
 ) -> (f32, f32) {
     let vertical = axis == RequestedAxis::Vertical;
+    let (known_width, width_space) = match across {
+        AcrossLines::MaxContent => (None, AvailableSpace::MaxContent),
+        AcrossLines::Room(room) => (None, AvailableSpace::Definite(room)),
+        AcrossLines::Width(width) => (Some(width), AvailableSpace::Definite(width)),
+    };
     let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
         let output = tree.compute_child_layout(
             NodeId::from(node),
@@ -4487,7 +4559,10 @@ fn content_sizes_on_axis(
                 run_mode: RunMode::ComputeSize,
                 sizing_mode: SizingMode::InherentSize,
                 axis,
-                known_dimensions: Size::NONE,
+                known_dimensions: Size {
+                    width: known_width,
+                    height: None,
+                },
                 known_dimensions_are_definite: Size {
                     width: true,
                     height: true,
@@ -4495,7 +4570,7 @@ fn content_sizes_on_axis(
                 parent_size,
                 available_space: if vertical {
                     Size {
-                        width: AvailableSpace::MaxContent,
+                        width: width_space,
                         height: available,
                     }
                 } else {
@@ -4518,10 +4593,17 @@ fn content_sizes_on_axis(
     };
     let parent_height = parent_size.height.filter(|_| !vertical);
     measure_against_parent_height(tree, node, parent_height, |tree| {
-        (
-            measure(tree, AvailableSpace::MinContent),
-            measure(tree, AvailableSpace::MaxContent),
-        )
+        // The height of a box across the lines is its block size, which
+        // neither the min-content nor the max-content constraint changes.
+        if matches!(across, AcrossLines::MaxContent) {
+            (
+                measure(tree, AvailableSpace::MinContent),
+                measure(tree, AvailableSpace::MaxContent),
+            )
+        } else {
+            let height = measure(tree, AvailableSpace::MaxContent);
+            (height, height)
+        }
     })
 }
 
