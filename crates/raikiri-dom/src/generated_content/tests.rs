@@ -159,6 +159,29 @@ fn pseudo_counter_view_matches_directive_application_without_cloning_the_map() {
 }
 
 #[test]
+fn counters_of_a_counter_that_does_not_exist_is_zero_as_counter_is() {
+    let registry = CounterStyleRegistry::new();
+    let mut snapshot = CounterSnapshot::default();
+    snapshot.insert(Symbol::new("outer"), vec![2, 5]);
+    for style in [
+        CounterStyle::Decimal,
+        CounterStyle::Named("upper-roman".into()),
+    ] {
+        let one = format_counter_component(&snapshot, "missing", &style, &registry);
+        assert_eq!(one, "0");
+        assert_eq!(
+            format_counters_component(&snapshot, "missing", ".", &style, &registry),
+            one
+        );
+    }
+    // A counter that exists keeps one value per nesting level.
+    assert_eq!(
+        format_counters_component(&snapshot, "outer", ".", &CounterStyle::Decimal, &registry),
+        "2.5"
+    );
+}
+
+#[test]
 fn first_letter_group_ids_round_trip_and_stay_apart_from_other_ids() {
     let largest = usize::MAX >> (3 + LETTER_GROUP_BITS);
     for element in [0, 1, 42, largest] {
