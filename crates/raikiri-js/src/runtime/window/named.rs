@@ -87,3 +87,6 @@ pub(super) fn install(context: &mut Context) -> JsResult<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
