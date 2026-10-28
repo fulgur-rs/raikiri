@@ -225,6 +225,19 @@ fn min_content_width(
     }
 }
 
+/// Whether `node` is an inline box that stays inline: a float, an absolutely
+/// positioned box and an item of a flex or grid container are blockified
+/// (CSS Display 3 §2.7) and are the containing block of their children.
+fn is_inline_box(tree: &LayoutSession<'_>, node: NodeId, style: &Style) -> bool {
+    use crate::layout::{BoxParentScope, box_tree::BoxTree};
+    children::is_non_atomic_inline(tree, node)
+        && style.float == Float::None
+        && style.position != Position::Absolute
+        && !BoxTree::for_layout(tree.document)
+            .parent(usize::from(node), BoxParentScope::LayoutRoot)
+            .is_some_and(|parent| tree.nodes[parent].display().is_flex_or_grid_container())
+}
+
 pub(crate) fn compute_block_flow(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
@@ -238,7 +251,7 @@ pub(crate) fn compute_block_flow(
     // it, whose containing block is that paragraph's content box (CSS 2.1
     // §10.1): a percentage height below the inline resolves against the
     // height the inline was given, not against its own `auto` one.
-    let inline = children::is_non_atomic_inline(tree, node);
+    let inline = is_inline_box(tree, node, &style);
     let in_the_block_around = |metrics: Metrics| Metrics {
         percent_height: if inline {
             inputs.parent_size.height

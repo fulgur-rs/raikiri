@@ -207,6 +207,82 @@ fn a_container_of_auto_height_leaves_the_percentages_of_the_block_unresolved() {
     check(&cases);
 }
 
+/// A float, an absolutely positioned box and an item of a flex or grid
+/// container are blockified: they are the containing block of the block
+/// inside them, so its percentage height follows their own height and not
+/// the one of the container.
+#[test]
+fn a_blockified_inline_is_the_percentage_base_of_the_block_inside_it() {
+    let cases = [
+        (
+            "flex item",
+            "<div style='display:flex;width:100px;height:100px'><span style='height:50px'>\
+             <div id=b style='height:100%'></div></span></div>"
+                .to_owned(),
+            vec![("b", 8.0, 8.0, 0.0, 50.0)],
+        ),
+        (
+            "flex item with a width",
+            "<div style='display:flex;width:100px;height:100px'>\
+             <span style='height:50px;width:40px'><div id=b style='height:100%'></div></span></div>"
+                .to_owned(),
+            vec![("b", 8.0, 8.0, 40.0, 50.0)],
+        ),
+        (
+            "flex item of auto height",
+            "<div style='display:flex;align-items:flex-start;width:100px;height:100px'>\
+             <span style='width:40px'><div id=b style='height:100%;min-height:20px'></div></span></div>"
+                .to_owned(),
+            vec![("b", 8.0, 8.0, 40.0, 20.0)],
+        ),
+        (
+            "grid item",
+            "<div style='display:grid;width:100px;height:100px'>\
+             <span style='height:50px;width:40px;align-self:start'>\
+             <div id=b style='height:100%'></div></span></div>"
+                .to_owned(),
+            vec![("b", 8.0, 8.0, 40.0, 50.0)],
+        ),
+        (
+            "absolutely positioned",
+            container(
+                "<span style='position:absolute;height:50px;width:40px'>\
+                 <div id=b style='height:100%'></div></span>",
+                "position:relative",
+            ),
+            vec![("b", 8.0, 8.0, 40.0, 50.0)],
+        ),
+        (
+            "float",
+            container(
+                "<span style='float:left;height:50px;width:40px'>\
+                 <div id=b style='height:100%'></div></span>",
+                "",
+            ),
+            vec![("b", 8.0, 8.0, 40.0, 50.0)],
+        ),
+        (
+            "float of auto height",
+            container(
+                "<span style='float:left;width:40px'>\
+                 <div id=b style='height:100%;min-height:20px'></div></span>",
+                "",
+            ),
+            vec![("b", 8.0, 8.0, 40.0, 20.0)],
+        ),
+        (
+            "relatively positioned inline",
+            container(
+                "<span style='position:relative;height:50px'>\
+                 <div id=b style='height:100%'></div></span>",
+                "",
+            ),
+            vec![("b", 8.0, 8.0, 100.0, 100.0)],
+        ),
+    ];
+    check(&cases);
+}
+
 /// An absolutely positioned block takes its percentage height from the
 /// containing block it names, with the inline between it and that block.
 #[test]
