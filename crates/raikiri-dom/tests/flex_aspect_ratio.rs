@@ -165,6 +165,34 @@ fn a_flex_container_ratio_height_is_raised_by_its_content() {
     check_boxes(cases);
 }
 
+/// A `max-width` that clamps the width of a container with a ratio carries through the ratio to a height of the same shape (25px for 50px at 2/1), but the content still raises the height past it, as for a container without the clamp; a container that may not be raised keeps that height.
+#[test]
+fn a_flex_container_clamped_by_max_width_is_raised_past_the_height_the_clamp_gives() {
+    let cases: &[Case<'_>] = &[
+        (
+            "a row with an own width that max-width clamps",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2;max-width:50px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0), ("i", 8.0, 8.0, 50.0, 100.0)],
+        ),
+        (
+            "a column with an auto width that max-width clamps",
+            "<div id=c style='display:flex;flex-direction:column;aspect-ratio:2;max-width:50px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 100.0), ("i", 8.0, 8.0, 100.0, 100.0)],
+        ),
+        (
+            "a max-height still caps the raise",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2;max-width:50px;max-height:60px'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 60.0), ("i", 8.0, 8.0, 50.0, 100.0)],
+        ),
+        (
+            "min-height: 0 keeps the clamped ratio height",
+            "<div id=c style='display:flex;width:100px;aspect-ratio:2;max-width:50px;min-height:0'><div id=i style='width:100px;height:100px'></div></div>",
+            &[("c", 8.0, 8.0, 50.0, 25.0)],
+        ),
+    ];
+    check_boxes(cases);
+}
+
 /// The ratio height stays when the container scrolls, states a `min-height`, has less content than the ratio height or states a `height`.
 #[test]
 fn a_flex_container_ratio_height_stays_when_the_content_may_not_raise_it() {

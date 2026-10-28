@@ -3012,11 +3012,9 @@ pub(crate) fn flex_layout(
 ) -> LayoutOutput {
     let inputs = with_fit_content_width(tree, node_id, inputs);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
-    let inputs = if block_right_to_left(tree, usize::from(node_id)).is_none() {
-        with_ratio_height(tree, node_id, inputs, flex_layout_sized)
-    } else {
-        inputs
-    };
+    if block_right_to_left(tree, usize::from(node_id)).is_none() {
+        return laid_out_with_ratio_height(tree, node_id, inputs, flex_layout_sized);
+    }
     flex_layout_sized(tree, node_id, inputs)
 }
 
@@ -3294,11 +3292,9 @@ fn with_clamped_keyword_width(
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
-    let inputs = if grid_oof::right_to_left(tree, idx).is_none() {
-        with_ratio_height(tree, node_id, inputs, grid_layout_sized)
-    } else {
-        inputs
-    };
+    if grid_oof::right_to_left(tree, idx).is_none() {
+        return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
+    }
     grid_layout_sized(tree, node_id, inputs)
 }
 
@@ -3355,6 +3351,43 @@ fn with_ratio_height(
     inputs.known_dimensions.height = height;
     inputs.known_dimensions_are_definite.height |= height.is_some();
     inputs
+}
+
+/// Lay out a flex or grid container with `sized` once [`with_ratio_height`] has
+/// settled its height.
+///
+/// When the width and height are then both settled, or the ratio gave the
+/// height, it has nothing left to give the sizes. Taffy would still carry a
+/// `max-width` through the ratio into a `max-height` and clamp the height back
+/// to it, which undoes a height the content raised (CSS Sizing 4 §5.1):
+/// `max-width: 50px` at 2/1 would cap a 100px-tall content at 25px. So the
+/// container is laid out without the ratio.
+fn laid_out_with_ratio_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    original: LayoutInput,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let inputs = with_ratio_height(tree, node_id, original, sized);
+    let height_from_ratio =
+        original.known_dimensions.height.is_none() && inputs.known_dimensions.height.is_some();
+    let both_settled =
+        inputs.known_dimensions.width.is_some() && inputs.known_dimensions.height.is_some();
+    let drop_ratio = (height_from_ratio || both_settled)
+        && block_flow::style_input::physical(tree, usize::from(node_id))
+            .aspect_ratio
+            .is_some();
+    if !drop_ratio {
+        return sized(tree, node_id, inputs);
+    }
+    let key = tree
+        .nodes
+        .box_key(usize::from(node_id))
+        .expect("live container box");
+    tree.with_overrides(
+        vec![(key, OwnedPropertyOverride::aspect_ratio(None))],
+        |tree| sized(tree, node_id, inputs),
+    )
 }
 
 /// The border-box height a flex or grid container takes from its aspect ratio

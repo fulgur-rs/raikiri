@@ -5372,6 +5372,10 @@ css/css-images/repeating-conic-gradient.html
 # A flex container that has an aspect-ratio and an auto height was held at the height the ratio gives instead of growing to the height of its content, up to its max-height. This test renders a green square that max-block-size caps at 100px while the item is 200px tall; it failed before the fix (the container was 100x50). flex-aspect-ratio-040, 041 and 043 pass too, but their item is 100px tall on its own, so the reference still matches without aspect-ratio, and they stay out of the baseline.
 css/css-sizing/aspect-ratio/flex-aspect-ratio-044.html
 
+# --- the automatic minimum size of a grid container clamped by max-width (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A grid container that has an aspect-ratio and an auto height keeps the height its content raised it to when max-width clamps its width, instead of taffy carrying max-width through the ratio into a max-height and cutting the container back to it (50x25 instead of Chromium's 50x100). The audit reports VACUOUS-UNSTYLED in two runs because the reference still matches once the grid declarations are removed (the 100px child alone draws the square); it was an expected failure before the fix (the container was 50x25), so it stays as a guard.
+css/css-grid/alignment/grid-content-distribution-029.html
+
 # --- `stretch` as the size of a box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
 # `width`, `height`, `inline-size` and `block-size` accept `stretch` (and `-webkit-fill-available`): the margin box fills the containing block, the inline axis less its margins, the block axis less the margins its parent holds in, and an indefinite containing block makes it `auto`. Eight tests failed before the change and each KEEPs in two audit-vacuous-passes runs. The fixed-table test reports VACUOUS-UNSTYLED because a plain block with the same text also draws the green square; it failed before the fix (the table took the 200px of its cell instead of the 100px of its container), so it stays as a guard.
 css/css-sizing/stretch/abspos-1.html
