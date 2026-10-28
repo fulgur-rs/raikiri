@@ -1504,3 +1504,38 @@ fn document_write_parses_markup_after_the_script_with_the_real_parser() {
     );
     assert_eq!(written, "script|\u{2685}\u{2685}\u{2685}|bold|script|[out]");
 }
+
+#[test]
+fn cssom_edits_relayout_from_current_sources_without_changing_dom_text() {
+    let (_dir, mut rt) = runtime("<style id=s>#t { height: 5px }</style><div id=t></div>");
+    rt.evaluate(
+        "var s=document.getElementById('s'), t=document.getElementById('t'); \
+        var original=s.firstChild, sheet=s.sheet, rule=sheet.cssRules[0]; \
+        rule.style.height='17px';",
+    )
+    .unwrap();
+    assert_eq!(num(&mut rt, "t.offsetHeight"), 17.0);
+    assert!(
+        rt.evaluate(
+            "s.firstChild===original && original.parentNode===s && \
+        s.textContent==='#t { height: 5px }'"
+        )
+        .unwrap()
+        .to_boolean()
+    );
+    rt.evaluate("sheet.deleteRule(0);").unwrap();
+    assert_eq!(num(&mut rt, "t.offsetHeight"), 0.0);
+    rt.evaluate("sheet.insertRule('#t { height: 23px }');")
+        .unwrap();
+    assert_eq!(num(&mut rt, "t.offsetHeight"), 23.0);
+    rt.evaluate("original.data='#t { height: 11px }'; rule.style.height='99px';")
+        .unwrap();
+    assert_eq!(num(&mut rt, "t.offsetHeight"), 11.0);
+    rt.evaluate(
+        "var empty=document.createElement('style'); document.head.appendChild(empty); \
+        empty.sheet.insertRule('#t { height: 29px }');",
+    )
+    .unwrap();
+    assert_eq!(num(&mut rt, "t.offsetHeight"), 29.0);
+    assert_eq!(text(&mut rt, "empty.textContent"), "");
+}

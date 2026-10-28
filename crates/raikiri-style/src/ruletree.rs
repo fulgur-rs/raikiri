@@ -1157,17 +1157,23 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
                     continue;
                 }
                 if tag.eq_ignore_ascii_case("style") {
-                    // Concatenate child Text nodes.
-                    let mut concat = String::new();
-                    for child_id in dom.child_ids(id) {
-                        if let Some(child) = dom.node(child_id)
-                            && let Some(t) = child.text_content()
-                        {
-                            concat.push_str(t);
+                    if let Some(source) = elem.stylesheet_source() {
+                        if !source.is_empty() {
+                            on_style_text(source);
                         }
-                    }
-                    if !concat.is_empty() {
-                        on_style_text(&concat);
+                    } else {
+                        // Concatenate child Text nodes.
+                        let mut concat = String::new();
+                        for child_id in dom.child_ids(id) {
+                            if let Some(child) = dom.node(child_id)
+                                && let Some(t) = child.text_content()
+                            {
+                                concat.push_str(t);
+                            }
+                        }
+                        if !concat.is_empty() {
+                            on_style_text(&concat);
+                        }
                     }
                 }
             }

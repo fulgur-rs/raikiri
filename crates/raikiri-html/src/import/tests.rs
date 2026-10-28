@@ -1277,3 +1277,42 @@ fn imports_redirected_to_overlong_urls_are_not_applied() {
         WarningKind::NetworkFallback { url } if url.as_str() == "https://example.test/a.css"
     ));
 }
+
+#[test]
+fn refreshed_cssom_sources_share_the_consumer_import_budget() {
+    let provider = MapProvider::new(&[]);
+    for index in 0..260 {
+        provider
+            .responses
+            .lock()
+            .unwrap()
+            .insert(format!("https://example.test/{index}.css"), "p {}".into());
+    }
+    let mut document = crate::parse(
+        &b"<head><style>@import 'original.css';</style>"[..],
+        &crate::ParseOptions::new(),
+    )
+    .unwrap();
+    assert!(provider.requests.lock().unwrap().is_empty());
+    let style = (0..document.dom.node_count())
+        .find(|&id| document.dom.get_node(id).unwrap().tag_name() == Some("style"))
+        .unwrap();
+    document
+        .dom
+        .set_stylesheet_source(style, "@import '255.css'; @import '256.css';".into())
+        .unwrap();
+    let consumer: String = (0..255)
+        .map(|index| format!("@import '{index}.css';"))
+        .collect();
+    let extras = [consumer.as_str()];
+    let options = crate::ParseOptions::new()
+        .extra_stylesheets(&extras)
+        .network(Some(&provider))
+        .base_url(Some(Url::parse("https://example.test/").unwrap()));
+    crate::refresh_stylesheets(&mut document, &options);
+    let requests = provider.requests.lock().unwrap();
+    assert_eq!(requests.len(), MAX_IMPORT_FETCHES);
+    assert_eq!(requests.last().unwrap(), "https://example.test/255.css");
+    assert!(!requests.iter().any(|url| url.ends_with("original.css")));
+    assert_eq!(document.user_stylesheet_sources.len(), 1);
+}

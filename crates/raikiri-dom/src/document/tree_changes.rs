@@ -40,6 +40,10 @@ impl Document {
     }
 
     pub(super) fn note_tree_change(&mut self, node: usize) {
+        if let Some(parent) = self.parent_of(node) {
+            self.reset_stylesheet_source(parent);
+        }
+        self.reset_stylesheet_sources_in_subtree(node);
         if let Some(pending) = &mut self.tree_changes.pending {
             pending.insert(node);
         }

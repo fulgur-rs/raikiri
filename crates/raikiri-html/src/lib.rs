@@ -133,3 +133,5 @@ mod document_tests;
 #[cfg(test)]
 #[allow(clippy::needless_lifetimes, clippy::collapsible_if)]
 mod tests;
+
+pub use parse::refresh_stylesheets;

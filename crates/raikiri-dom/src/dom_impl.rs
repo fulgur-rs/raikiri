@@ -38,6 +38,7 @@ pub struct NodeRef<'a> {
 /// Element reference (a Node narrowed by type to kind == Element).
 pub struct ElementRef<'a> {
     node: &'a Node,
+    stylesheet_source: Option<&'a str>,
 }
 
 /// Child NodeId iterator for `Dom::child_ids`.
@@ -56,7 +57,10 @@ impl Iterator for ChildIter<'_> {
 impl<'a> NodeRef<'a> {
     fn as_element(&self) -> Option<ElementRef<'_>> {
         let node = &self.doc.nodes[self.id];
-        matches!(&node.data, crate::node::NodeData::Element(_)).then(|| ElementRef { node })
+        matches!(&node.data, crate::node::NodeData::Element(_)).then(|| ElementRef {
+            node,
+            stylesheet_source: self.doc.stylesheet_source(self.id),
+        })
     }
 
     fn text_content(&self) -> Option<&str> {
@@ -377,6 +381,10 @@ impl<'a> StyleNode for NodeRef<'a> {
 }
 
 impl<'a> StyleElement for ElementRef<'a> {
+    fn stylesheet_source(&self) -> Option<&str> {
+        self.stylesheet_source
+    }
+
     fn tag_name(&self) -> &str {
         self.tag_name()
     }

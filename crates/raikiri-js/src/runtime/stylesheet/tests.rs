@@ -67,3 +67,5 @@ fn top_level_charset_rules_are_dropped() {
         ["p"]
     );
 }
+
+mod source_tests;

@@ -17,6 +17,7 @@ mod parent_pointer_tests;
 mod replace_children_from_tests;
 mod send_soundness_tests;
 mod serialize_inner_html_tests;
+mod stylesheet_source_tests;
 mod stylesheets_tests;
 mod template_in_document_tests;
 mod tree_changes_tests;

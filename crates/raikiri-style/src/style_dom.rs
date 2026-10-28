@@ -261,6 +261,12 @@ pub trait StyleNode {
 /// `StyleDom::NodeRef<'a>` and `StyleNode::Element<'b>`, so the trait
 /// itself needs no lifetime parameter.
 pub trait StyleElement {
+    /// Current CSSOM stylesheet source override. `Some("")` is an empty sheet;
+    /// only `None` falls back to DOM child text.
+    fn stylesheet_source(&self) -> Option<&str> {
+        None
+    }
+
     /// Tag name (`"p"`, `"div"`, …).
     fn tag_name(&self) -> &str;
 
