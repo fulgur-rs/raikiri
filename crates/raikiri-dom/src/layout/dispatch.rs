@@ -1084,6 +1084,7 @@ impl LayoutSession<'_> {
             // A paragraph measured as if empty is a block container with no
             // lines.
             if formatting_context == FormattingContext::Inline && !empty {
+                let inputs = orthogonal_flow::with_page_room(tree, idx, inputs);
                 return compute_ifc_root(tree, node_id, inputs, block_ctx);
             }
             if is_leaf {

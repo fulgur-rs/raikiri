@@ -13,7 +13,9 @@
 //! This module measures such a box at its max-content width, the extent of
 //! its columns, and lays it out at that width. Its inline size fits the
 //! height it is offered: the one the parent passes down, else the parent's
-//! definite height, else the page area's.
+//! definite height, else the page area's. A vertical paragraph root with a
+//! width of its own, a float, or an item of a row flex container is not
+//! stretched by the parent, yet fits the same height ([`with_page_room`]).
 
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
@@ -70,11 +72,15 @@ fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
     let node = &tree.nodes[idx];
     let takes_margins_off_itself =
         !node.is_ifc_root() && !node.display().is_flex_or_grid_container();
-    // The percentages of the margins refer to the width of the parent.
+    // The percentages of the margins refer to the width of the parent, which
+    // a flex container has not passed down while it measures its items.
+    let basis = inputs.parent_size.width.or_else(|| {
+        super::flex_item_percent_basis(tree, idx).and_then(|container| container.width)
+    });
     let margin = tree
         .physical_style(idx)
         .margin()
-        .map(|margin| margin.resolve_or_zero(inputs.parent_size.width));
+        .map(|margin| margin.resolve_or_zero(basis));
     let margin = if takes_margins_off_itself {
         0.0
     } else {
@@ -88,6 +94,46 @@ fn offered_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) ->
         .map_or(AvailableSpace::MaxContent, |room| {
             AvailableSpace::Definite((room - margin).max(0.0))
         })
+}
+
+/// Whether `idx` is a vertical box that is a child of a horizontal block
+/// container, floated or not, or an item of a horizontal flex container with a
+/// row direction. The block axis of such a box is the inline axis of its
+/// parent, and its lines fit the height its parent leaves open.
+///
+/// A column flex container sizes the box along its inline axis by its
+/// max-content size, and a grid container by its tracks, so neither is one.
+fn is_vertical_box_in_horizontal_flow(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    use super::vertical_oof::used_writing_mode;
+    tree.nodes[idx].layout_position() != Position::Absolute
+        && used_writing_mode(tree, idx).is_vertical()
+        && tree.taffy_parent_of(idx).is_some_and(|parent| {
+            !used_writing_mode(tree, parent).is_vertical()
+                && match tree.nodes[parent].formatting_context {
+                    FormattingContext::Block => true,
+                    FormattingContext::Flex => tree.physical_style(parent).flex_direction_is_row(),
+                    _ => false,
+                }
+        })
+}
+
+/// `inputs` for the paragraph root `idx` with the height it fits its lines in
+/// as the available height, when it is a vertical box in a horizontal flow
+/// that is offered none (CSS Writing Modes 4 §7.3.1).
+///
+/// The lines of such a box break at its inline size, its height. A parent that
+/// leaves that height indefinite, as a block container and a row flex container
+/// whose height is automatic do, would have them stay on one column; see
+/// [`offered_height`] for the room they get instead.
+pub(super) fn with_page_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if is_vertical_box_in_horizontal_flow(tree, idx) {
+        inputs.available_space.height = offered_height(tree, idx, &inputs);
+    }
+    inputs
 }
 
 /// Lay out `node_id` with its content-based width in place of the width

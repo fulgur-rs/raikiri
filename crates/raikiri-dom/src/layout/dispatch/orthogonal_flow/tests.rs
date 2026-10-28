@@ -400,3 +400,166 @@ fn a_vertical_block_container_that_holds_no_text_takes_its_margins_off_the_heigh
         (20.0, 20.0, 50.0, 260.0)
     );
 }
+
+#[test]
+fn a_vertical_flex_item_of_a_row_container_fits_the_page_height() {
+    // The row is as high as its items are long, and an item is a column or
+    // more of the 600px page area: 5 columns of 10px at 20 words each.
+    for container in [
+        "display:flex;width:300px",
+        "display:flex;flex-wrap:wrap;width:300px",
+        "display:flex;flex-direction:row-reverse;width:300px",
+        "display:flex;justify-content:center;width:300px",
+        "display:flex;flex-wrap:wrap;align-content:flex-start;width:300px",
+    ] {
+        let (mut doc, parent, item) = vertical_block_under(container, "", &long_text());
+        lay_out(&mut doc);
+        let (_, _, width, height) = absolute_rect(&doc, item);
+        assert_eq!((width, height), (50.0, 600.0), "{container}");
+        assert_eq!(absolute_rect(&doc, parent).3, 600.0, "{container}");
+    }
+    assert_eq!(
+        long_paragraph_rect("display:flex;flex-direction:row-reverse;width:300px", ""),
+        (250.0, 0.0, 50.0, 600.0)
+    );
+}
+
+#[test]
+fn a_vertical_flex_item_takes_the_flex_properties_and_edges_of_its_own() {
+    let flex = "display:flex;width:300px";
+    // The height is the cross size, so it stays at the page height whatever
+    // the width the item gets along the main axis.
+    for (css, width) in [
+        ("width:100px", 100.0),
+        ("width:30px", 30.0),
+        ("flex:0 0 100px", 100.0),
+        ("align-self:flex-start", 50.0),
+        ("min-height:100px", 50.0),
+        ("flex:1", 300.0),
+        ("padding:5px", 60.0),
+        ("padding:5px;box-sizing:border-box", 60.0),
+    ] {
+        let (_, _, found, height) = long_paragraph_rect(flex, css);
+        assert_eq!((found, height), (width, 600.0), "{css}");
+    }
+    // A definite height is the room, as it is for a block.
+    assert_eq!(
+        long_paragraph_rect(flex, "height:200px"),
+        (0.0, 0.0, 150.0, 200.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(flex, "max-height:200px"),
+        (0.0, 0.0, 150.0, 200.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:flex;width:300px;height:300px", ""),
+        (0.0, 0.0, 100.0, 300.0)
+    );
+}
+
+#[test]
+fn the_margins_of_a_vertical_flex_item_come_off_the_height_it_fits() {
+    let flex = "display:flex;width:300px";
+    assert_eq!(
+        long_paragraph_rect(flex, "margin:15px 0"),
+        (0.0, 15.0, 60.0, 570.0)
+    );
+    // A percentage refers to the 300px width of the container: 5% is 15px.
+    assert_eq!(
+        long_paragraph_rect(flex, "margin:5% 0"),
+        (0.0, 15.0, 60.0, 570.0)
+    );
+}
+
+#[test]
+fn an_inline_flex_container_is_as_wide_as_the_columns_of_its_vertical_item() {
+    let (mut doc, parent, item) = vertical_block_under("display:inline-flex", "", &long_text());
+    lay_out(&mut doc);
+    assert_eq!(absolute_rect(&doc, item), (0.0, 0.0, 50.0, 600.0));
+    assert_eq!(absolute_rect(&doc, parent), (0.0, 0.0, 50.0, 600.0));
+}
+
+#[test]
+fn vertical_items_of_one_row_each_fit_the_page_height() {
+    let (mut doc, parent, first) =
+        vertical_block_under("display:flex;width:300px", "", &long_text());
+    let second = doc.append_element(Some(parent), "div", Some(VERTICAL_TEXT));
+    doc.append_text(second, long_text());
+    lay_out(&mut doc);
+    assert_eq!(absolute_rect(&doc, first), (0.0, 0.0, 50.0, 600.0));
+    assert_eq!(absolute_rect(&doc, second), (50.0, 0.0, 50.0, 600.0));
+}
+
+#[test]
+fn a_vertical_item_of_a_column_flex_container_or_a_grid_keeps_its_max_content_height() {
+    // The main size of a column item is its max-content size, and a grid row
+    // is sized by the content of its items, so no page height limits either.
+    for container in [
+        "display:flex;flex-direction:column;width:300px",
+        "display:grid;width:300px",
+    ] {
+        assert_eq!(
+            long_paragraph_rect(container, ""),
+            (0.0, 0.0, 300.0, 2990.0),
+            "{container}"
+        );
+    }
+}
+
+#[test]
+fn a_vertical_block_with_a_width_of_its_own_fits_the_page_height() {
+    let block = "display:block;width:300px";
+    assert_eq!(
+        long_paragraph_rect(block, "width:100px"),
+        (0.0, 0.0, 100.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(block, "width:30px"),
+        (0.0, 0.0, 30.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(block, "width:100px;margin:15px 0"),
+        (0.0, 15.0, 100.0, 570.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(block, "width:100px;padding:5px"),
+        (0.0, 0.0, 110.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:block;width:300px;height:300px", "width:100px"),
+        (0.0, 0.0, 100.0, 300.0)
+    );
+}
+
+#[test]
+fn a_vertical_float_in_a_block_container_fits_the_page_height() {
+    let block = "display:block;width:300px";
+    assert_eq!(
+        long_paragraph_rect(block, "float:left"),
+        (0.0, 0.0, 50.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(block, "float:right"),
+        (250.0, 0.0, 50.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(block, "float:left;width:100px"),
+        (0.0, 0.0, 100.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(block, "float:left;margin:15px 0"),
+        (0.0, 15.0, 60.0, 570.0)
+    );
+    assert_eq!(
+        long_paragraph_rect(block, "float:left;padding:5px"),
+        (0.0, 0.0, 60.0, 600.0)
+    );
+    assert_eq!(
+        long_paragraph_rect("display:block;width:300px;height:300px", "float:left"),
+        (0.0, 0.0, 100.0, 300.0)
+    );
+    // The float leaves its container with no height of its own.
+    let (mut doc, parent, _) = vertical_block_under(block, "float:left", &long_text());
+    lay_out(&mut doc);
+    assert_eq!(absolute_rect(&doc, parent).3, 0.0);
+}
