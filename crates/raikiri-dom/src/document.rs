@@ -44,9 +44,11 @@ pub(crate) struct OofCoordinate {
 
 pub(crate) mod ancestors;
 mod mutation;
+mod named_elements;
 mod stylesheet_source;
 mod tree_changes;
 pub use mutation::DomMutationError;
+pub use named_elements::NamedElementVersion;
 
 const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
 const MATHML_NAMESPACE_URI: &str = "http://www.w3.org/1998/Math/MathML";
@@ -223,6 +225,7 @@ struct PreparedImage {
 #[derive(Debug, Clone)]
 pub struct Document {
     tree_changes: tree_changes::TreeChanges,
+    named_elements: named_elements::Tracker,
     stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
@@ -512,6 +515,7 @@ impl Document {
         nodes.push(Node::new_document());
         Self {
             tree_changes: Default::default(),
+            named_elements: Default::default(),
             stylesheet_sources: HashMap::new(),
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
@@ -1047,6 +1051,7 @@ impl Document {
             (changed, affects_tree_flags, affects_layout)
         };
         if namespace_changed {
+            self.note_named_element_change();
             self.reset_stylesheet_source(id);
         }
         if namespace_changed && affects_tree_flags {
@@ -1070,6 +1075,7 @@ impl Document {
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
         let had_css_type = self.stylesheet_has_css_type(id);
+        self.note_named_element_change();
         self.page_projection.clear();
         let e = self.nodes[id]
             .data
@@ -1204,6 +1210,9 @@ impl Document {
             return Ok(());
         }
 
+        if matches!(local.as_str(), "id" | "name") {
+            self.note_named_element_change();
+        }
         // Whether this write resizes a canvas bitmap. Computed before the
         // exclusive borrow below so the immutable canvas check does not
         // conflict with it.
@@ -1273,6 +1282,9 @@ impl Document {
         let position = element.attributes.iter().position(|attribute| {
             attribute.namespace.as_deref() == namespace && attribute.local == local
         })?;
+        if namespace.is_none() && matches!(local, "id" | "name") {
+            self.note_named_element_change();
+        }
         self.page_projection.clear();
         let element = self.nodes[id]
             .data
@@ -1356,6 +1368,9 @@ impl Document {
                 .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
             first_value
         };
+        if first_value.is_some() && matches!(local.as_str(), "id" | "name") {
+            self.note_named_element_change();
+        }
         // Removing a canvas width/height attribute reverts to the default
         // size (HTML Standard §4.12.5), clearing the bitmap and changing the
         // intrinsic size. Only when the attribute actually existed: removing
@@ -1908,6 +1923,7 @@ impl Document {
         // Every field is named so that a new one has to be considered here.
         let Document {
             tree_changes: _,
+            named_elements: _,
             stylesheet_sources,
             table_objects: _,
             page_projection: _,
