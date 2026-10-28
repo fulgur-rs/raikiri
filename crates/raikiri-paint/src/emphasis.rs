@@ -13,6 +13,8 @@
 //! vertical run's marks are shaped as upright vertical text and centered on
 //! their character's em box.
 
+mod range_min;
+
 use anyrender::PaintScene;
 use peniko::Color;
 use raikiri_dom::{Document, StandaloneAlign, StandaloneText};
@@ -333,16 +335,16 @@ pub(crate) fn vertical_mark_centers(
     }
     // Clusters follow the run's text, which bidi reordering can reverse;
     // lay their advances out in the order their glyphs are drawn.
-    let glyphs: Vec<shodo::Glyph> = run.glyphs().collect();
+    let positions = range_min::GlyphPositions::new(
+        run.glyphs()
+            .map(|glyph| (glyph.cluster, glyph.inline_position)),
+    );
     let mut clusters: Vec<(f32, shodo::Cluster)> = run
         .clusters()
         .filter_map(|cluster| {
-            let key = glyphs
-                .iter()
-                .filter(|glyph| cluster.text_range.contains(&(glyph.cluster as usize)))
-                .map(|glyph| glyph.inline_position)
-                .reduce(f32::min)?;
-            Some((key, cluster))
+            positions
+                .minimum(cluster.text_range.clone())
+                .map(|key| (key, cluster))
         })
         .collect();
     clusters.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -361,6 +363,11 @@ pub(crate) fn vertical_mark_centers(
     }
     centers
 }
+
+#[cfg(test)]
+mod oracle_tests;
+#[cfg(test)]
+pub(crate) use oracle_tests::vertical_mark_centers as reference_vertical_mark_centers;
 
 #[cfg(test)]
 mod tests;
