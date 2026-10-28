@@ -44,6 +44,7 @@ pub(crate) struct OofCoordinate {
 
 pub(crate) mod ancestors;
 mod mutation;
+mod tree_changes;
 pub use mutation::DomMutationError;
 
 const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
@@ -220,6 +221,7 @@ struct PreparedImage {
 /// element at index 1 or later, as a child of root index 0.
 #[derive(Debug, Clone)]
 pub struct Document {
+    tree_changes: tree_changes::TreeChanges,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
@@ -507,6 +509,7 @@ impl Document {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
         Self {
+            tree_changes: Default::default(),
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
@@ -591,6 +594,7 @@ impl Document {
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
+            self.note_tree_change(id);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -606,6 +610,7 @@ impl Document {
         self.nodes.push(Node::new_text(text.into()));
         self.nodes[parent].children.push(id);
         self.nodes[id].parent = Some(parent);
+        self.note_tree_change(id);
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         id
@@ -694,6 +699,7 @@ impl Document {
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
+            self.note_tree_change(id);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -723,6 +729,7 @@ impl Document {
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
+            self.note_tree_change(id);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -775,12 +782,14 @@ impl Document {
             for moved_child in moved {
                 if let Some(node) = self.nodes.get_mut(moved_child) {
                     node.parent = Some(parent);
+                    self.note_tree_change(moved_child);
                 }
             }
         } else {
             self.nodes[parent].children.push(child);
             if let Some(node) = self.nodes.get_mut(child) {
                 node.parent = Some(parent);
+                self.note_tree_change(child);
             }
         }
         self.invalidate_layout_cache();
@@ -853,6 +862,7 @@ impl Document {
             for moved_child in moved {
                 if let Some(node) = self.nodes.get_mut(moved_child) {
                     node.parent = Some(parent);
+                    self.note_tree_change(moved_child);
                 }
             }
         } else {
@@ -871,6 +881,7 @@ impl Document {
             }
             if let Some(node) = self.nodes.get_mut(child) {
                 node.parent = Some(parent);
+                self.note_tree_change(child);
             }
         }
         self.invalidate_layout_cache();
@@ -950,6 +961,7 @@ impl Document {
         }
         if let Some(node) = self.nodes.get_mut(child) {
             node.parent = None;
+            self.note_tree_change(child);
         }
         // Removal clears focus even when the node is inserted again right
         // away, as `appendChild` and `insertBefore` moves do (HTML removing
@@ -968,6 +980,7 @@ impl Document {
         for moved_child in moved {
             if let Some(node) = self.nodes.get_mut(moved_child) {
                 node.parent = Some(to);
+                self.note_tree_change(moved_child);
             }
         }
         self.invalidate_layout_cache();
@@ -1366,6 +1379,7 @@ impl Document {
                 && node.parent == Some(id)
             {
                 node.parent = None;
+                self.note_tree_change(old_child);
             }
         }
         if !text.is_empty() {
@@ -1374,6 +1388,7 @@ impl Document {
             self.nodes[id].children.push(text_id);
             if let Some(node) = self.nodes.get_mut(text_id) {
                 node.parent = Some(id);
+                self.note_tree_change(text_id);
             }
         }
         self.invalidate_layout_cache();
@@ -1417,6 +1432,7 @@ impl Document {
                     && node.parent == Some(target_parent)
                 {
                     node.parent = None;
+                    self.note_tree_change(old_child);
                 }
             }
             self.invalidate_layout_cache();
@@ -1802,6 +1818,7 @@ impl Document {
             .as_element_mut()
             .expect("allocate_template_fragment_root: element vanished between checks");
         e.template_contents = Some(frag_root);
+        self.note_tree_change(template_id);
         frag_root
     }
 
@@ -1857,6 +1874,7 @@ impl Document {
     pub fn extract_nodes(&self, nodes: &[usize]) -> Document {
         // Every field is named so that a new one has to be considered here.
         let Document {
+            tree_changes: _,
             table_objects: _,
             page_projection: _,
             nodes: arena,
@@ -1982,6 +2000,7 @@ impl Document {
                         && node.parent == Some(parent_id)
                     {
                         node.parent = None;
+                        self.note_tree_change(child);
                     }
                 }
             }

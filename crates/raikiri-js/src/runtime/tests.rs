@@ -1,6 +1,9 @@
 use super::test_host::StubHost;
 use super::{DomRuntime, RuntimeError};
 
+mod gc_tests;
+mod ownership_probe_tests;
+
 fn eval_bool(runtime: &mut DomRuntime, source: &str) -> bool {
     runtime.evaluate(source).unwrap().to_boolean()
 }
@@ -202,7 +205,13 @@ fn expose_node(rt: &mut DomRuntime, name: &str, index: usize) {
 /// A wrapper-shaped object whose index is past the end of the arena.
 fn dangling_handle(rt: &mut DomRuntime) -> JsObject {
     let proto = protos(rt.context_mut()).node.clone();
-    JsObject::from_proto_and_data(Some(proto), NodeHandle { index: 9999 })
+    JsObject::from_proto_and_data(
+        Some(proto),
+        NodeHandle {
+            index: 9999,
+            record: super::node_gc::NodeRecord::new(9999),
+        },
+    )
 }
 
 #[test]

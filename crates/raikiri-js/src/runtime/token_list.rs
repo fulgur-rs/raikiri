@@ -8,10 +8,10 @@ use std::rc::Rc;
 use boa_engine::object::JsObject;
 use boa_engine::{Context, JsNativeError, JsResult, JsValue};
 
-use super::indexed::{IndexedSource, indexed_object, this_indexed};
+use super::indexed::{IndexedSource, indexed_object_with_owners, this_indexed};
 use super::interfaces::{Members, protos};
 use super::node::{attribute, js_str, write_attribute};
-use super::webidl::{arg_unsigned_long, dom_string, throw_dom_exception};
+use super::webidl::{arg_unsigned_long, dom_string, throw_dom_exception, with_state};
 
 const CLASS_ATTR: &str = "class";
 
@@ -112,7 +112,8 @@ impl IndexedSource for TokenListSource {
 /// A new `DOMTokenList` bound to element `index`.
 pub(crate) fn token_list(context: &mut Context, index: usize) -> JsResult<JsObject> {
     let prototype = protos(context).dom_token_list.clone();
-    indexed_object(context, prototype, TokenListSource(index))
+    let owner = with_state(context, |state| state.node_record(index))?;
+    indexed_object_with_owners(context, prototype, TokenListSource(index), vec![owner])
 }
 
 fn this_source(this: &JsValue, context: &mut Context) -> JsResult<Rc<TokenListSource>> {

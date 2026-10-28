@@ -16,6 +16,7 @@ use raikiri_dom::{DomMutationError, NodeKind};
 use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::node::{js_str, mark_dirty};
+use super::node_gc::NodeObject;
 use super::webidl::{
     arg_node, arg_node_or_null, arg_required_node_or_null, arg_unsigned_long, dom_string,
     guard_node_budget, guard_node_budget_for, node_index, this_character_data, this_child_node,
@@ -176,11 +177,13 @@ pub(crate) fn replace_all(
 /// `node.childNodes === node.childNodes`.
 fn child_nodes(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    if let Some(existing) = with_state(context, |s| s.child_node_lists.get(&index).cloned())? {
+    if let Some(existing) = with_state(context, |s| s.node_object(index, NodeObject::ChildNodes))? {
         return Ok(existing.into());
     }
     let list = node_list(context, CollectionSource::ChildNodes(index))?;
-    with_state(context, |s| s.child_node_lists.insert(index, list.clone()))?;
+    with_state(context, |s| {
+        s.set_node_object(index, NodeObject::ChildNodes, list.clone())
+    })?;
     Ok(list.into())
 }
 
@@ -460,13 +463,16 @@ fn clone_into_wrapper(
         // cov:ignore: `clone_node_count` above returned non-zero, so the same
         // node is cloneable.
         .ok_or_else(unreachable_mutation_error)?;
+    // Keep the new detached component alive while handlers allocate and
+    // image requests are initialized, before the wrapper reaches script.
+    let object = wrap(context, copy)?;
     mark_dirty(context)?;
     // Each copied attribute is appended, so copied `on*` handlers compile
     // and every copied `<img>` starts its own request.
     super::dispatch::sync_event_handlers_in_tree(context, copy)?;
     if !adopt && super::image::is_inert(context, index)? {
         super::image::remember_inert_images(context, copy)?;
-        return Ok(wrap(context, copy)?.into());
+        return Ok(object.into());
     }
     super::image::update_images_below(context, copy)?;
     if with_state(context, |s| {
@@ -474,7 +480,7 @@ fn clone_into_wrapper(
     })? {
         super::image::update_image_data(context, copy)?;
     }
-    Ok(wrap(context, copy)?.into())
+    Ok(object.into())
 }
 
 /// `Node.cloneNode(subtree)`.
@@ -528,12 +534,12 @@ pub(crate) fn element_children_of(doc: &raikiri_dom::Document, parent: usize) ->
 /// `node.children === node.children`.
 fn children(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
-    if let Some(existing) = with_state(context, |s| s.children_collections.get(&index).cloned())? {
+    if let Some(existing) = with_state(context, |s| s.node_object(index, NodeObject::Children))? {
         return Ok(existing.into());
     }
     let collection = html_collection(context, CollectionSource::Children(index))?;
     with_state(context, |s| {
-        s.children_collections.insert(index, collection.clone())
+        s.set_node_object(index, NodeObject::Children, collection.clone())
     })?;
     Ok(collection.into())
 }
