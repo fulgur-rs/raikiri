@@ -1246,6 +1246,14 @@ pub enum LengthOrAuto {
     /// percentage limit resolves against the containing block's inline size at
     /// used-value time; against an indefinite size the box sizes like `auto`.
     FitContentOf(LengthPercentageOrCalc),
+    /// The `stretch` sizing keyword (CSS Sizing 4 §5.1), and its legacy
+    /// spelling `-webkit-fill-available`: the margin box of the box fills the
+    /// containing block along the axis. Unlike the content keywords it takes
+    /// its size from the containing block, so a box whose containing block has
+    /// no definite size along the axis sizes like `auto`. Produced by the
+    /// preferred size parsers (`width`, `height` and their logical forms), not
+    /// by the minimum and maximum ones; a margin or an offset never holds it.
+    Stretch,
 }
 
 /// A `<length-percentage>` that keeps a mixed-unit `calc()` until it can be
@@ -3820,6 +3828,10 @@ pub enum FlexBasisValue {
     /// Bare `fit-content` keyword — same as above. The `fit-content()` function
     /// with a `<length-percentage>` argument is outside scope (absent from the WPT vector).
     FitContent,
+    /// `stretch` — CSS Sizing 4 §5.1 adds the keyword to `flex-basis`. The
+    /// legacy `-webkit-fill-available` spelling is not accepted here, as in
+    /// Chromium.
+    Stretch,
     /// `<length-percentage [0,∞]>` — the same non-negative constraint as `width`
     /// (see the [`parse_flex_basis`] doc).
     Length(Length),

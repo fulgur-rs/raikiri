@@ -165,7 +165,11 @@ fn parse_start_end_shorthand<T: Copy>(
     Some(StartEnd { start, end })
 }
 
-/// Parse `width: auto | min-content | max-content | fit-content | <length-percentage [0,∞]>`.
+/// Parse `width: auto | min-content | max-content | fit-content | stretch | <length-percentage [0,∞]>`.
+///
+/// `stretch` (CSS Sizing 4 §5.1) and its legacy spelling `-webkit-fill-available` stay with the
+/// preferred sizes. The minimum and maximum sizes share [`parse_box_size`] but do not take the
+/// keyword; see [`parse_min_size`].
 ///
 /// Grammar reference: CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>
 /// "Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
@@ -196,7 +200,22 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
+    if input.try_parse(expect_stretch_keyword).is_ok() {
+        return Some(LengthOrAuto::Stretch);
+    }
     parse_box_size(input)
+}
+
+/// Consumes `stretch` or its legacy spelling `-webkit-fill-available`, which
+/// CSS Sizing 4 §5.1 defines as an alias of the keyword.
+fn expect_stretch_keyword<'i>(input: &mut Parser<'i, '_>) -> Result<(), ParseError<'i, ()>> {
+    let ident = input.expect_ident()?;
+    if ident.eq_ignore_ascii_case("stretch") || ident.eq_ignore_ascii_case("-webkit-fill-available")
+    {
+        Ok(())
+    } else {
+        Err(input.new_custom_error(()))
+    }
 }
 
 /// Parse `<box-size>`: a non-negative `<length-percentage>`, `min-content`, `max-content`,
@@ -978,6 +997,11 @@ pub(super) fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto>
 /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties> specifies initial value `auto` and
 /// inheritance `No`. It is the shape of [`parse_max_size`] with the minimum size's `auto` in place of
 /// `none`; `none` is not a minimum size and drops the declaration.
+///
+/// `stretch` is not accepted here, nor by [`parse_max_size`], although CSS Sizing 4 §5.1 allows it:
+/// the layout does not honor it for a minimum or a maximum yet, and a declaration that parses but
+/// changes nothing would still override an earlier one (`min-height: 100vh; min-height: stretch`),
+/// where an invalid one leaves the cascade falling back to the earlier value.
 pub(super) fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);

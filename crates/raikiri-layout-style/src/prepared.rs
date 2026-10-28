@@ -82,6 +82,7 @@ scalar_properties! {
         F::MinContent => L::MinContent,
         F::MaxContent => L::MaxContent,
         F::FitContent => L::FitContent,
+        F::Stretch => L::Stretch,
         F::Px(v) => L::Px(v),
         F::Percent(v) => L::Percent(v),
         F::Calc(v) => L::Calc(v),

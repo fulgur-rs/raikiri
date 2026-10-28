@@ -152,6 +152,19 @@ fn inherit_keeps_the_parents_sizing_keywords() {
 }
 
 #[test]
+fn inherit_keeps_the_parents_stretch_keyword() {
+    let (parent, child) = cascade_pair(
+        "width: stretch; height: -webkit-fill-available",
+        &[],
+        "#target { width: inherit; height: inherit }",
+    );
+    assert_eq!(parent.width, Computed::Stretch);
+    assert_eq!(child.width, Computed::Stretch);
+    assert_eq!(parent.height, Computed::Stretch);
+    assert_eq!(child.height, Computed::Stretch);
+}
+
+#[test]
 fn inherit_keeps_the_parents_calc() {
     let (parent, child) = cascade_pair(
         "width: calc(50% + 10px); margin-left: calc(10% - 3px); padding-top: calc(5% + 2px)",

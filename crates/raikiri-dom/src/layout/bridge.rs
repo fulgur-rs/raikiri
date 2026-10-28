@@ -1242,6 +1242,8 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
         ComputedLengthPercentageOrAuto::MinContent => Dimension::min_content(),
         ComputedLengthPercentageOrAuto::MaxContent => Dimension::max_content(),
         ComputedLengthPercentageOrAuto::FitContent => Dimension::fit_content(),
+        // CSS Sizing 4 §5.1: the margin box fills the containing block.
+        ComputedLengthPercentageOrAuto::Stretch => Dimension::stretch(),
         // `fit-content(<length-percentage>)`: the limit keeps its percentage
         // for Taffy to resolve against the containing block.
         ComputedLengthPercentageOrAuto::FitContentOf(limit) => match limit {

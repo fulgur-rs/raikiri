@@ -1110,6 +1110,43 @@ fn flex_shorthand_content_basis() {
 }
 
 #[test]
+fn flex_basis_takes_the_stretch_keyword_but_not_its_legacy_spelling() {
+    // CSS Sizing 4 §5.1 adds `stretch` to `flex-basis`; Chromium does not
+    // accept `-webkit-fill-available` there.
+    assert_eq!(
+        parse("stretch", "flex-basis"),
+        Some(PropertyValue::FlexBasis(FlexBasisValue::Stretch))
+    );
+    assert_eq!(
+        parse("STRETCH", "flex-basis"),
+        Some(PropertyValue::FlexBasis(FlexBasisValue::Stretch))
+    );
+    assert_eq!(parse_entire("-webkit-fill-available", "flex-basis"), None);
+    assert_eq!(parse_entire("-moz-available", "flex-basis"), None);
+}
+
+#[test]
+fn flex_shorthand_stretch_basis() {
+    assert_eq!(
+        parse("1 0 stretch", "flex"),
+        Some(PropertyValue::Flex(FlexShorthand {
+            grow: 1.0,
+            shrink: 0.0,
+            basis: FlexBasisValue::Stretch,
+        }))
+    );
+    // The basis may also lead the numbers.
+    assert_eq!(
+        parse("stretch 2 3", "flex"),
+        Some(PropertyValue::Flex(FlexShorthand {
+            grow: 2.0,
+            shrink: 3.0,
+            basis: FlexBasisValue::Stretch,
+        }))
+    );
+}
+
+#[test]
 fn flex_shorthand_empty_is_none() {
     assert_eq!(parse("", "flex"), None);
 }

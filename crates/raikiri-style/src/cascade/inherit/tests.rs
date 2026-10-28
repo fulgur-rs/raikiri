@@ -970,6 +970,60 @@ fn max_content_and_fit_content_preferred_widths_survive_the_cascade() {
 }
 
 #[test]
+fn the_stretch_keyword_survives_the_cascade_on_every_preferred_size() {
+    // Both spellings compute to the one keyword, on the physical and the
+    // logical properties alike.
+    for value in ["stretch", "-webkit-fill-available"] {
+        let style = format!("width: {value}; height: {value}");
+        let values = cascade_doc("", "div", Some(style.as_str()));
+        for (name, size) in [("width", values.width), ("height", values.height)] {
+            assert_eq!(size, ComputedLengthPercentageOrAuto::Stretch, "{name}");
+            assert!(!size.is_content_keyword(), "{name}");
+        }
+        let logical = format!("inline-size: {value}; block-size: {value}");
+        let values = cascade_doc("", "div", Some(logical.as_str()));
+        assert_eq!(values.width, ComputedLengthPercentageOrAuto::Stretch);
+        assert_eq!(values.height, ComputedLengthPercentageOrAuto::Stretch);
+    }
+}
+
+#[test]
+fn a_stretch_minimum_or_maximum_leaves_the_earlier_declaration_in_force() {
+    // The keyword is invalid there, so the cascade keeps the earlier value, as
+    // it does for any declaration a browser does not understand.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some(
+            "min-width: 10px; min-width: stretch; min-height: 20px; min-height: -webkit-fill-available; \
+             max-width: 30px; max-width: stretch; max-height: 40px; max-height: stretch",
+        ),
+    );
+    assert_eq!(values.min_width, ComputedLengthPercentageOrAuto::Px(10.0));
+    assert_eq!(values.min_height, ComputedLengthPercentageOrAuto::Px(20.0));
+    assert_eq!(values.max_width, ComputedLengthPercentageOrAuto::Px(30.0));
+    assert_eq!(values.max_height, ComputedLengthPercentageOrAuto::Px(40.0));
+}
+
+#[test]
+fn the_stretch_keyword_of_a_vertical_box_lands_on_its_physical_axes() {
+    // `inline-size` runs along the height of a vertical box and `block-size`
+    // along its width, so each keyword reaches the axis it names.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-rl; inline-size: stretch; block-size: stretch"),
+    );
+    assert_eq!(
+        values.vertical_logical_size,
+        Some(VerticalLogicalSize {
+            width: ComputedLengthPercentageOrAuto::Stretch,
+            height: ComputedLengthPercentageOrAuto::Stretch,
+        })
+    );
+}
+
+#[test]
 fn the_fit_content_function_keeps_its_limit_through_the_cascade() {
     let font = cascade_doc("", "div", Some("font-size: 20px; width: fit-content(2em)"));
     assert_eq!(
@@ -6542,8 +6596,8 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
             ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
             | ComputedLengthPercentageOrAuto::FitContent
-            | ComputedLengthPercentageOrAuto::FitContentOf(_) =>
-                LengthOrAuto::Length(Length::Px(0.0)),
+            | ComputedLengthPercentageOrAuto::FitContentOf(_)
+            | ComputedLengthPercentageOrAuto::Stretch => LengthOrAuto::Length(Length::Px(0.0)),
         })))
     );
 }

@@ -942,6 +942,7 @@ pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
         LengthOrAuto::MinContent => "min-content".to_owned(),
         LengthOrAuto::MaxContent => "max-content".to_owned(),
         LengthOrAuto::FitContent => "fit-content".to_owned(),
+        LengthOrAuto::Stretch => "stretch".to_owned(),
         LengthOrAuto::FitContentOf(limit) => {
             format!(
                 "fit-content({})",

@@ -278,6 +278,14 @@ pub(crate) fn compute_block_flow(
         let width = match style.size.width.expand() {
             ExpandedDimension::MinContent => minimum,
             ExpandedDimension::MaxContent => maximum,
+            // `stretch` fills the room the parent offers, which is the border
+            // box left after the margins (CSS Sizing 4 §5.1); without a
+            // definite room it sizes like `auto`.
+            ExpandedDimension::Stretch => match inputs.available_space.width {
+                AvailableSpace::Definite(room) => room,
+                AvailableSpace::MaxContent => maximum,
+                AvailableSpace::MinContent => minimum,
+            },
             // `fit-content(<length-percentage>)` takes the room its limit
             // makes, which `with_fit_content_room` offers before this runs.
             _ => match inputs.available_space.width {
@@ -364,7 +372,10 @@ fn layout_context(
     let collapse_end = shares_context(style)
         && inputs.vertical_margins_are_collapsible.end
         && metrics.inset.bottom == 0.0
-        && style.size.height.is_auto()
+        && matches!(
+            style.size.height.expand(),
+            ExpandedDimension::Auto | ExpandedDimension::Stretch
+        )
         && metrics.preferred.height.is_none();
     if ctx.is_bfc_root() {
         ctx.set_width(width);
