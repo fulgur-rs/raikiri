@@ -17,6 +17,7 @@
 //!   functions themselves)
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
@@ -196,17 +197,18 @@ impl HtmlCollectionSource {
     fn supported_names(&self, context: &mut Context) -> JsResult<Vec<String>> {
         self.with_nodes(context, |doc, nodes| {
             let mut out: Vec<String> = Vec::new();
+            let mut seen = HashSet::new();
             for &node in nodes {
                 if let Some(id) = doc.element_attribute(node, "id")
                     && !id.is_empty()
-                    && !out.iter().any(|s| s == id)
+                    && seen.insert(id)
                 {
                     out.push(id.to_owned());
                 }
                 if doc.element_namespace_uri(node) == Some(HTML_NS)
                     && let Some(name) = doc.element_attribute(node, "name")
                     && !name.is_empty()
-                    && !out.iter().any(|s| s == name)
+                    && seen.insert(name)
                 {
                     out.push(name.to_owned());
                 }

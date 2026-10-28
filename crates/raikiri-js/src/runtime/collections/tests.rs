@@ -15,6 +15,72 @@ fn rt() -> DomRuntime {
     DomRuntime::new(h).unwrap()
 }
 
+#[test]
+fn supported_names_keep_first_occurrence_across_id_name_and_namespaces() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; \
+         var a = document.createElement('div'); a.id = 'alpha'; a.setAttribute('name', 'beta'); \
+         var d = document.createElement('div'); d.id = 'beta'; d.setAttribute('name', 'alpha'); \
+         var e = document.createElement('div'); e.id = 'gamma'; e.setAttribute('name', 'gamma'); \
+         var empty = document.createElement('div'); empty.id = ''; empty.setAttribute('name', ''); \
+         var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); \
+         svg.id = 'vector'; svg.setAttribute('name', 'excluded'); \
+         b.append(a, d, e, empty, svg); var names = b.children;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "Reflect.ownKeys(names).join() === '0,1,2,3,4,alpha,beta,gamma,vector'",
+    );
+    rt.evaluate("a.id = 'beta'; a.setAttribute('name', 'delta'); b.prepend(e);")
+        .unwrap();
+    ok(
+        &mut rt,
+        "Reflect.ownKeys(names).join() === '0,1,2,3,4,gamma,beta,delta,alpha,vector'",
+    );
+}
+
+#[test]
+#[ignore = "manual release-mode scaling measurement; no wall-time assertion"]
+fn supported_names_scaling_probe() {
+    use super::{CollectionCache, CollectionSource, HtmlCollectionSource};
+    use std::time::Instant;
+
+    for count in [1000, 2000, 4000, 8000] {
+        let (mut host, _, _, body) = StubHost::page();
+        for index in 0..count {
+            let id = host.document.create_detached_element("div").unwrap();
+            host.document
+                .set_element_attribute(id, "id", format!("item{index}"))
+                .unwrap();
+            host.document.append_child(body, id).unwrap();
+        }
+        let mut rt = DomRuntime::new(host).unwrap();
+        let source = HtmlCollectionSource {
+            source: CollectionSource::Children(body),
+            cache: CollectionCache::default(),
+        };
+        assert_eq!(source.length(rt.context_mut()).unwrap(), count);
+        rt.evaluate("var enumeration = document.body.children; enumeration.length;")
+            .unwrap();
+        for sample in 0..5 {
+            let start = Instant::now();
+            let names = source.supported_names(rt.context_mut()).unwrap();
+            let duration = start.elapsed();
+            assert_eq!(names.len(), count);
+            assert_eq!(names.first().unwrap(), "item0");
+            assert_eq!(names.last().unwrap(), &format!("item{}", count - 1));
+            println!("supported_names,{count},{sample},{}", duration.as_nanos());
+            let start = Instant::now();
+            let length = rt.evaluate("Reflect.ownKeys(enumeration).length").unwrap();
+            let duration = start.elapsed();
+            assert_eq!(length.as_number(), Some((count * 2) as f64));
+            println!("own_keys,{count},{sample},{}", duration.as_nanos());
+        }
+    }
+}
+
 fn ok(rt: &mut DomRuntime, src: &str) {
     assert!(
         rt.evaluate(src).unwrap().to_boolean(),
