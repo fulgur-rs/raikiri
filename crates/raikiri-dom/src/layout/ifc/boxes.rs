@@ -4417,7 +4417,13 @@ pub(crate) fn intrinsics_of_boxes(
                         } else {
                             let width_basis = physical_width.or_else(|| page_area_width(tree));
                             width_basis.map_or(AcrossLines::MaxContent, |width_basis| {
-                                known_atomic_width(tree, b.node, width_basis, basis).map_or_else(
+                                known_atomic_width(
+                                    tree,
+                                    b.node,
+                                    width_basis,
+                                    inline_basis.unwrap_or(0.0),
+                                )
+                                .map_or_else(
                                     || {
                                         AcrossLines::Room(
                                             (width_basis - margin.left - margin.right).max(0.0),
