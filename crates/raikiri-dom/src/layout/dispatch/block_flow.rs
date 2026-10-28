@@ -234,7 +234,25 @@ pub(crate) fn compute_block_flow(
     let style = style_input::container(tree, usize::from(node));
     let content_box_ratio = tree.nodes[usize::from(node)].ratio_in_content_box;
     let width_stands_in = tree.nodes[usize::from(node)].svg_width_follows_available;
-    let metrics = Metrics::resolve(&style, width_stands_in, content_box_ratio, inputs);
+    // An inline laid out here as a block holds blocks of the paragraph around
+    // it, whose containing block is that paragraph's content box (CSS 2.1
+    // §10.1): a percentage height below the inline resolves against the
+    // height the inline was given, not against its own `auto` one.
+    let inline = children::is_non_atomic_inline(tree, node);
+    let in_the_block_around = |metrics: Metrics| Metrics {
+        percent_height: if inline {
+            inputs.parent_size.height
+        } else {
+            metrics.percent_height
+        },
+        ..metrics
+    };
+    let metrics = in_the_block_around(Metrics::resolve(
+        &style,
+        width_stands_in,
+        content_box_ratio,
+        inputs,
+    ));
     let width = if let Some(width) = metrics.preferred.width {
         if metrics.ratio_width {
             let minimum = min_content_width(tree, node, metrics.percent_height)
@@ -304,7 +322,12 @@ pub(crate) fn compute_block_flow(
     {
         let mut sized = inputs;
         sized.known_dimensions.width = Some(width);
-        Metrics::resolve(&style, width_stands_in, content_box_ratio, sized)
+        in_the_block_around(Metrics::resolve(
+            &style,
+            width_stands_in,
+            content_box_ratio,
+            sized,
+        ))
     } else {
         metrics
     };

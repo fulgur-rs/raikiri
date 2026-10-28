@@ -5376,6 +5376,10 @@ css/css-sizing/aspect-ratio/flex-aspect-ratio-044.html
 # A button that is block-level takes the fit-content size as its `auto` width, as an inline-block does, instead of the room of its container (HTML Standard 15.5.3). In this test a button with a percentage height and an aspect-ratio sits in a flex item: the percentage is cyclic while the flex container is sized, so the button is 50x50 there and the item 100px tall, and the stretched item then gives the button its 100px height. The audit reports VACUOUS-UNSTYLED in two runs because the reference still matches once the aspect-ratio is removed (the item alone draws the green square); it was an expected failure before the fix (the stretching button was 150x150 and made the item 150px tall), so it stays as a guard.
 css/css-sizing/aspect-ratio/flex-aspect-ratio-042.html
 
+# --- a percentage height below an inline element (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A block inside an inline element that holds no text takes the percentage base of its height and maximum height from the block container around the inline (CSS 2.1 10.1), instead of the auto height of the inline, which left the image at its 1000px height. The test fails before the fix and KEEPs in two audit-vacuous-passes runs.
+css/css-sizing/block-image-percentage-max-height-inside-inline.html
+
 # --- the automatic minimum size of a grid container clamped by max-width (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
 # A grid container that has an aspect-ratio and an auto height keeps the height its content raised it to when max-width clamps its width, instead of taffy carrying max-width through the ratio into a max-height and cutting the container back to it (50x25 instead of Chromium's 50x100). The audit reports VACUOUS-UNSTYLED in two runs because the reference still matches once the grid declarations are removed (the 100px child alone draws the square); it was an expected failure before the fix (the container was 50x25), so it stays as a guard.
 css/css-grid/alignment/grid-content-distribution-029.html
