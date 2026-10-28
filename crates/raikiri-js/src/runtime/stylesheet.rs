@@ -19,6 +19,18 @@ use cssparser::{
 };
 use raikiri_dom::{Document, NodeKind};
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static COLLECT_CSS_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+fn css_allocation_checkpoint() {
+    if COLLECT_CSS_ALLOCATIONS.get() {
+        boa_gc::force_collect();
+    }
+}
+
 use super::State;
 use super::indexed::{
     IndexedSource, indexed_object, indexed_object_retaining, indexed_object_with_owners,
@@ -416,10 +428,8 @@ pub(crate) fn has_css_type(document: &Document, element: usize) -> bool {
 /// when `had_css_type` is set. A write that turns a style element's sheet
 /// off or back on destroys the sheet the CSSOM handed out objects for.
 pub(crate) fn note_attribute_change(state: &mut State, element: usize, had_css_type: bool) {
-    if has_css_type(state.host.document(), element) != had_css_type
-        && let Some(version) = state.css_sheet_versions.get_mut(&element)
-    {
-        version.stale = true;
+    if has_css_type(state.host.document(), element) != had_css_type {
+        invalidate_sheet(state, element);
     }
 }
 
@@ -444,10 +454,23 @@ pub(crate) fn note_child_list_change(state: &mut State, parent: usize, moved: &[
         })
         .collect();
     for style_element in replaced {
-        if let Some(version) = state.css_sheet_versions.get_mut(&style_element) {
-            version.stale = true;
-        }
+        invalidate_sheet(state, style_element);
     }
+}
+
+// Release obsolete rules when their native sheet is replaced, even if no
+// script ever reads the CSSOM again. Live old rules keep their own text;
+// the connected style element no longer owns them through its cache.
+fn invalidate_sheet(state: &mut State, element: usize) {
+    let Some(version) = state.css_sheet_versions.get_mut(&element) else {
+        return;
+    };
+    if version.stale {
+        return;
+    }
+    version.stale = true;
+    let old_text = version.text.clone();
+    detach_sheet_rules(state, element, &old_text);
 }
 
 /// The nodes inserting `node` adds as children: a `DocumentFragment`'s
@@ -533,23 +556,26 @@ fn detach_sheet_rules(state: &mut State, style_element: usize, old_text: &str) {
         .collect();
     let parsed = parse_css_rules(old_text);
     let mut detached: HashMap<usize, SheetKey> = HashMap::new();
-    for (rule, margin, object) in rules.into_iter().chain(margins) {
+    // Borrow the batch so processed wrappers still root their new groups
+    // until later margins have been transferred to those same groups.
+    for (rule, margin, object) in rules.iter().chain(&margins) {
+        let (rule, margin) = (*rule, *margin);
         let key = *detached.entry(rule).or_insert_with(|| {
             let text = parsed
                 .get(rule)
                 .map_or("", |info| &old_text[info.source.clone()]);
             detached_rule_text(state, text.to_owned())
         });
-        if let Some(slot) = rule_object_slot(&object) {
+        if let Some(slot) = rule_object_slot(object) {
             slot.sheet.set(key);
             slot.rule_index.set(0);
         }
-        transfer_rule_owner(state, key, &object);
+        transfer_rule_owner(state, key, object);
         match margin {
             Some(margin) => state
                 .css_margin_rules
-                .insert((key, 0, margin), weak_rule(&object)),
-            None => state.css_style_rules.insert((key, 0), weak_rule(&object)),
+                .insert((key, 0, margin), weak_rule(object)),
+            None => state.css_style_rules.insert((key, 0), weak_rule(object)),
         };
     }
 }
@@ -589,6 +615,8 @@ impl State {
 }
 
 fn weak_rule(object: &JsObject) -> WeakGc<JsObject> {
+    #[cfg(test)]
+    css_allocation_checkpoint();
     let anchor = Gc::new(object.clone());
     let weak = WeakGc::new(&anchor);
     if let Some(data) = object.downcast_ref::<CssStyleRuleData>() {
@@ -619,6 +647,8 @@ fn transfer_rule_owner(state: &mut State, sheet: SheetKey, object: &JsObject) {
 
 /// Stores `text`, a rule taken out of its sheet, and returns its key.
 fn detached_rule_text(state: &mut State, text: String) -> SheetKey {
+    #[cfg(test)]
+    css_allocation_checkpoint();
     let id = state.next_detached_rule;
     state.next_detached_rule += 1;
     let owner = Gc::new(CssOwner {
@@ -1424,7 +1454,10 @@ fn shift_sheet_rules(
         })
         .collect();
     let mut removed: Option<SheetKey> = None;
-    for (rule, margin, object) in rules.into_iter().chain(margins) {
+    // Borrow the batch so processed wrappers still root their new groups
+    // until later margins have been transferred to those same groups.
+    for (rule, margin, object) in rules.iter().chain(&margins) {
+        let (rule, margin) = (*rule, *margin);
         let (key, index) = match shift(rule) {
             Some(index) => (sheet, index),
             None => {
@@ -1437,18 +1470,18 @@ fn shift_sheet_rules(
                 (key, 0)
             }
         };
-        if let Some(slot) = rule_object_slot(&object) {
+        if let Some(slot) = rule_object_slot(object) {
             slot.sheet.set(key);
             slot.rule_index.set(index);
         }
-        transfer_rule_owner(state, key, &object);
+        transfer_rule_owner(state, key, object);
         match margin {
             Some(margin) => state
                 .css_margin_rules
-                .insert((key, index, margin), weak_rule(&object)),
+                .insert((key, index, margin), weak_rule(object)),
             None => state
                 .css_style_rules
-                .insert((key, index), weak_rule(&object)),
+                .insert((key, index), weak_rule(object)),
         };
     }
 }

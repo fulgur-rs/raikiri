@@ -538,3 +538,49 @@ fn ownership_initialization_bounds_work_for_cyclic_native_host_edges() {
     let graph = crate::runtime::node_gc::NodeGraph::new(&mut document);
     assert_eq!(graph.edge_visits, document.node_count());
 }
+
+#[test]
+fn replacing_a_connected_sheet_releases_obsolete_rule_payloads_without_a_cssom_read() {
+    for mutation in [
+        "sheetNode.textContent = 'p {color: blue}'",
+        "sheetNode.firstChild.data = 'p {color: blue}'",
+        "sheetNode.setAttribute('type', 'text/plain')",
+    ] {
+        let mut rt = runtime();
+        rt.evaluate("var sheetNode = document.createElement('style'); sheetNode.textContent = 'p {color: red}'; document.body.appendChild(sheetNode); var obsoleteWeak; var obsoletePayloadWeak; (function () { var rule = sheetNode.sheet.cssRules[0]; rule.payload = new Uint8Array(1048576); obsoleteWeak = new WeakRef(rule); obsoletePayloadWeak = new WeakRef(rule.payload); })();").unwrap();
+        rt.evaluate(mutation).unwrap();
+        collect(&mut rt);
+        assert!(
+            eval_bool(
+                &mut rt,
+                "obsoleteWeak.deref() === undefined && obsoletePayloadWeak.deref() === undefined"
+            ),
+            "{mutation}"
+        );
+    }
+}
+
+#[test]
+fn css_detachment_keeps_batch_roots_during_collections_between_allocations() {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            crate::runtime::stylesheet::COLLECT_CSS_ALLOCATIONS.set(false);
+        }
+    }
+    for mutation in [
+        "batchSheetNode.textContent = 'p {color: blue}'",
+        "batchSheetNode.sheet.deleteRule(0)",
+    ] {
+        let mut rt = runtime();
+        rt.evaluate("var batchSheetNode = document.createElement('style'); batchSheetNode.textContent = Array.from({length:16}, function (_, i) { return '@page p' + i + ' { @top-left {content: \"a\"} @top-center {content: \"b\"} @top-right {content: \"c\"} }'; }).join(''); document.body.appendChild(batchSheetNode); (function () { var list = batchSheetNode.sheet.cssRules; for (var i = 0; i < list.length; i++) { var page = list[i]; for (var j = 0; j < page.cssRules.length; j++) page.cssRules[j].payload = j; } })();").unwrap();
+        rt.context_mut().clear_kept_objects();
+        crate::runtime::stylesheet::COLLECT_CSS_ALLOCATIONS.set(true);
+        let _reset = Reset;
+        rt.evaluate(mutation).unwrap();
+        assert!(eval_bool(
+            &mut rt,
+            "batchSheetNode.sheet.cssRules.length > 0"
+        ));
+    }
+}
