@@ -316,6 +316,8 @@ pub fn content_images_are_placed(
         return false;
     }
     !document.inclusive_ancestors(element).any(|id| {
+        #[cfg(test)]
+        tests::IMAGE_VISIBILITY_VISITS.with(|count| count.set(count.get() + 1));
         cascade
             .computed
             .get(id)

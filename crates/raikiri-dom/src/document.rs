@@ -3129,11 +3129,16 @@ impl Document {
         let mut pseudos: Vec<_> = cascade
             .pseudo
             .iter()
-            .filter(|((_, pseudo), _)| {
+            .filter(|((_, pseudo), cv)| {
                 matches!(
                     pseudo,
                     raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
-                )
+                ) && cv.content.iter().any(|component| {
+                    matches!(
+                        component,
+                        raikiri_style::property::ContentComponent::Image { .. }
+                    )
+                })
             })
             .filter_map(|(&(owner, pseudo), cv)| {
                 Some((
