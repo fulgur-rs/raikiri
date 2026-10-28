@@ -460,6 +460,19 @@ fn pseudo_counters<'a>(
 static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =
     std::sync::LazyLock::new(std::collections::HashMap::new);
 
+/// The counters in effect at `element` once its own directives are applied,
+/// before its `::before` (CSS Lists 3 §4), as `snapshots` hold them. No
+/// counter exists when there are no snapshots, as for a document whose
+/// snapshots passed the memory budget.
+pub(crate) fn element_counters(
+    snapshots: Option<&CounterSnapshots>,
+    element: usize,
+) -> &CounterSnapshot {
+    snapshots
+        .and_then(|all| all.get(element))
+        .unwrap_or(&EMPTY_COUNTER_SNAPSHOT)
+}
+
 /// Read-only access to the effective stack for a counter name.
 #[doc(hidden)]
 pub trait CounterSnapshotLookup {
