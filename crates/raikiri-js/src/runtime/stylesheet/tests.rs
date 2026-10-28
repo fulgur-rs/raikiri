@@ -68,8 +68,25 @@ fn top_level_charset_rules_are_dropped() {
     );
 }
 
+mod list_index_tests;
 mod memo_tests;
 mod source_tests;
+
+thread_local! {
+    static LIST_WORK: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+pub(super) fn record_list_work(kind: usize, count: usize) {
+    LIST_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += count;
+        work.set(counts);
+    });
+}
+
+pub(super) fn take_list_work() -> [usize; 2] {
+    LIST_WORK.with(|work| work.replace([0; 2]))
+}
 
 thread_local! {
     static SHEET_WORK: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
