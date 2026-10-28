@@ -724,7 +724,8 @@ pub fn format_counter_component<C: CounterSnapshotLookup + ?Sized>(
 }
 
 /// Every value of the counter `name`, outermost first, in `style` and joined
-/// by `separator` (`counters()`).
+/// by `separator` (`counters()`). A counter that does not exist reads as a
+/// single `0`, as it does for `counter()`.
 #[doc(hidden)]
 pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
     snapshot: &C,
@@ -735,7 +736,7 @@ pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
 ) -> String {
     let values = snapshot.values_for(name);
     if values.is_empty() {
-        String::new()
+        format_counter(0, style, registry)
     } else {
         values
             .iter()

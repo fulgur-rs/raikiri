@@ -512,6 +512,25 @@ fn counted_document() -> (Document, CascadeResult, [usize; 6]) {
 }
 
 #[test]
+fn counters_of_a_counter_that_does_not_exist_reads_zero_in_a_string_assignment() {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", None::<&str>);
+    doc.append_text(
+        style,
+        "h1 { string-set: where '[' counters(missing, '.') ']' }",
+    );
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let heading = doc.append_element(Some(body), "h1", None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+    assert_eq!(
+        string_set_text(&doc, &cascade, heading, "where").as_deref(),
+        Some("[0]")
+    );
+}
+
+#[test]
 fn a_string_assignment_reads_the_attributes_and_counters_at_its_element() {
     let (doc, cascade, [titled, first, second, untitled, third, quiet]) = counted_document();
     let text = |idx, name| string_set_text(&doc, &cascade, idx, name);

@@ -359,6 +359,8 @@ fn marker_content_text_resolves_literals_counters_and_quotes() {
     );
     let mut list_item_counters = CounterSnapshot::default();
     list_item_counters.insert(raikiri_traits::Symbol::new("list-item"), vec![1, 2]);
+    // The `chapter` counter does not exist in this scope, so `counters()`
+    // reads it as a single `0`, as `counter()` does.
     assert_eq!(
         marker_content_text(
             &components,
@@ -368,7 +370,7 @@ fn marker_content_text_resolves_literals_counters_and_quotes() {
             &list_item_counters,
             &registry,
         ),
-        Some("(2I.II".to_string())
+        Some("(2I.II0".to_string())
     );
     assert_eq!(
         marker_content_text(

@@ -8,6 +8,30 @@ use shodo::limits::Limits;
 type Build = fn(&mut crate::Document, usize);
 
 #[test]
+fn a_counters_marker_of_a_counter_that_does_not_exist_reads_zero_and_qualifies_the_parent() {
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {content:counters(absent, '.')}",
+        "display:list-item;list-style:inside disc",
+        |doc, root| {
+            let child = doc.append_element(Some(root), "p", Some("display:block"));
+            doc.append_text(child, "body");
+        },
+    );
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    assert_eq!(
+        fixture.doc.nodes[fixture.root]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .paragraph
+            .text(),
+        "\u{2066}0\u{2069}\u{2029}"
+    );
+}
+
+#[test]
 fn vertical_block_children_with_inside_counter_text_qualify_the_parent() {
     let mut child = 0;
     let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
@@ -75,10 +99,6 @@ fn suppressed_inside_markers_leave_block_children_on_the_block_path() {
         ("", "display:list-item;list-style:inside ''"),
         (
             "div::marker {content:''}",
-            "display:list-item;list-style:inside disc",
-        ),
-        (
-            "div::marker {content:counters(absent, '.')}",
             "display:list-item;list-style:inside disc",
         ),
         (
