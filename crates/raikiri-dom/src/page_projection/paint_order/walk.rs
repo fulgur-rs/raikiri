@@ -15,6 +15,7 @@ use std::collections::HashSet;
 /// The state of the walk of one page.
 pub(super) struct PaintWalk<'a, 'l> {
     document: &'a Document,
+    order: paint_rules::DocumentOrder<'a>,
     cascade: &'a CascadeResult,
     items: &'l PageItems<'a>,
     lines: Option<&'l TextLines>,
@@ -51,6 +52,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     ) -> Self {
         Self {
             document,
+            order: paint_rules::DocumentOrder::new(document),
             cascade,
             items,
             lines,
@@ -162,7 +164,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
                 &self.paragraphs,
             ) {
                 paint_rules::insert_positioned_frame(
-                    self.document,
+                    &mut self.order,
                     &mut layer.positioned,
                     frame,
                     positioned_frame,
@@ -192,7 +194,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             )
         {
             paint_rules::insert_positioned_frame(
-                self.document,
+                &mut self.order,
                 &mut layer.positioned,
                 frame,
                 positioned_frame,

@@ -827,16 +827,17 @@ fn positioned_frames_go_back_to_their_place_in_tree_order() {
     let c = block(&mut doc, body);
     doc.mark_in_document_flags();
 
-    assert!(precedes_in_tree(&doc, a, b1));
-    assert!(precedes_in_tree(&doc, b, b1));
-    assert!(!precedes_in_tree(&doc, b1, b));
-    assert!(!precedes_in_tree(&doc, c, a));
-    assert!(!precedes_in_tree(&doc, a, a));
-    assert!(!precedes_in_tree(&doc, a, usize::MAX));
+    let mut order = DocumentOrder::new(&doc);
+    assert!(order.precedes(a, b1));
+    assert!(order.precedes(b, b1));
+    assert!(!order.precedes(b1, b));
+    assert!(!order.precedes(c, a));
+    assert!(!order.precedes(a, a));
+    assert!(!order.precedes(a, usize::MAX));
 
     use PositionedFrame::{Box, Close, Open};
-    let insert = |mut frames: Vec<PositionedFrame>, frame| {
-        insert_positioned_frame(&doc, &mut frames, frame, |frame| *frame);
+    let mut insert = |mut frames: Vec<PositionedFrame>, frame| {
+        insert_positioned_frame(&mut order, &mut frames, frame, |frame| *frame);
         frames
     };
     // A box goes back past the boxes after it, and past a clip around
@@ -861,6 +862,7 @@ fn positioned_frames_go_back_to_their_place_in_tree_order() {
 }
 
 mod first_line_membership_tests;
+mod positioned_order_tests;
 
 thread_local! {
     static FIRST_LINE_WORK: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };

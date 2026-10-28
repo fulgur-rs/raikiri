@@ -1064,35 +1064,100 @@ fn paragraph_of_line_box(
     })?
 }
 
-/// Whether node `a` comes before node `b` in tree order. A node comes before
-/// its descendants; nodes outside the tree, such as generated boxes, come
-/// before none and after none.
-fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
-    if a == b || document.get_node(a).is_none() || document.get_node(b).is_none() {
-        return false;
+/// Tree order and ancestor intervals shared by one immutable document walk.
+///
+/// Construction is constant-time. The first comparison in a source tree indexes
+/// that whole tree, including detached trees and template-content fragments.
+/// Other arena entries are neither visited nor allocated an index entry. Each
+/// queried tree costs O(V + E) preparation and O(V) space; subsequent comparisons
+/// use average O(1) hash lookups. The document borrow keeps the index valid.
+/// Generated layout boxes are not source nodes and remain incomparable.
+pub struct DocumentOrder<'a> {
+    document: &'a Document,
+    entries: rustc_hash::FxHashMap<usize, OrderEntry>,
+    #[cfg(test)]
+    index_work: usize,
+}
+
+#[derive(Clone, Copy)]
+struct OrderEntry {
+    component: usize,
+    start: usize,
+    end: usize,
+}
+
+impl<'a> DocumentOrder<'a> {
+    /// Creates an empty index to share across all layers of one document walk.
+    pub fn new(document: &'a Document) -> Self {
+        Self {
+            document,
+            entries: rustc_hash::FxHashMap::default(),
+            #[cfg(test)]
+            index_work: 0,
+        }
     }
-    let chain = |id: usize| {
-        let mut chain: Vec<usize> = document.inclusive_ancestors(id).collect();
-        chain.reverse();
-        chain
-    };
-    let (a_chain, b_chain) = (chain(a), chain(b));
-    let shared = a_chain
-        .iter()
-        .zip(&b_chain)
-        .take_while(|(x, y)| x == y)
-        .count();
-    match (a_chain.get(shared), b_chain.get(shared)) {
-        // `a` is an ancestor of `b`.
-        (None, Some(_)) => true,
-        (Some(&a_branch), Some(&b_branch)) if shared > 0 => document
-            .get_node(a_chain[shared - 1])
-            .and_then(|parent| {
-                let at = |id| parent.children.iter().position(|&child| child == id);
-                Some(at(a_branch)? < at(b_branch)?)
-            })
-            .unwrap_or(false),
-        _ => false,
+
+    fn entry(&mut self, id: usize) -> OrderEntry {
+        if let Some(&entry) = self.entries.get(&id) {
+            return entry;
+        }
+        let mut root = id;
+        while let Some(parent) = self.document.parent_of(root) {
+            root = parent;
+        }
+        // Source parent links form a forest, even after layout creates its
+        // separate anonymous boxes. Walk iteratively to support deep documents.
+        let mut pending = vec![(root, false)];
+        while let Some((node_id, leaving)) = pending.pop() {
+            if leaving {
+                let end = self.entries.len();
+                self.entries.get_mut(&node_id).unwrap().end = end;
+                continue;
+            }
+            #[cfg(test)]
+            {
+                self.index_work += 1;
+            }
+            let start = self.entries.len();
+            self.entries.insert(
+                node_id,
+                OrderEntry {
+                    component: root,
+                    start,
+                    end: start,
+                },
+            );
+            pending.push((node_id, true));
+            let node = self.document.get_node(node_id).unwrap();
+            for &child in node.children.iter().rev() {
+                #[cfg(test)]
+                {
+                    self.index_work += 1;
+                }
+                // Layout-only children must not become source-tree edges.
+                if self.document.get_node(child).is_some()
+                    && self.document.parent_of(child) == Some(node_id)
+                {
+                    pending.push((child, false));
+                }
+            }
+        }
+        self.entries[&id]
+    }
+
+    fn precedes(&mut self, a: usize, b: usize) -> bool {
+        if a == b || self.document.get_node(a).is_none() || self.document.get_node(b).is_none() {
+            return false;
+        }
+        let (a, b) = (self.entry(a), self.entry(b));
+        a.component == b.component && a.start < b.start
+    }
+
+    fn is_ancestor_or_self(&mut self, ancestor: usize, node: usize) -> bool {
+        let (ancestor, node) = (self.entry(ancestor), self.entry(node));
+        ancestor.component == node.component
+            && ancestor.start <= node.start
+            && node.start < ancestor.end
     }
 }
 
@@ -1107,8 +1172,12 @@ fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
 /// (see [`leaves_paragraph_lines`] and [`leaves_paragraph_content`]) after
 /// the boxes that follow it, so its boxes go back past them with this, past
 /// the clips around them as a whole.
+///
+/// Share `order` across the walk so tree comparisons do not revisit ancestors
+/// or siblings. Reverse insertion still shifts the vector; closed clips still
+/// scan back to their matching open frame.
 pub fn insert_positioned_frame<F>(
-    document: &Document,
+    order: &mut DocumentOrder<'_>,
     frames: &mut Vec<F>,
     frame: F,
     kind: impl Fn(&F) -> PositionedFrame,
@@ -1140,8 +1209,7 @@ pub fn insert_positioned_frame<F>(
         };
         match first {
             Some((index, other))
-                if precedes_in_tree(document, id, other)
-                    && !document.is_ancestor_or_self(other, id) =>
+                if order.precedes(id, other) && !order.is_ancestor_or_self(other, id) =>
             {
                 at = index;
             }
