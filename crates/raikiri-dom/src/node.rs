@@ -527,6 +527,12 @@ pub struct Node {
     /// [`Self::opposed_baseline_group`] holds back from the algorithm of its
     /// parent keeps its own: the parent reads this one to align the box by it.
     pub(crate) own_first_baseline: Option<f32>,
+    /// First baseline the box handed to its parent in its last performed
+    /// layout, as an offset from its block-start border edge along the block
+    /// axis the parent's algorithm runs on, or `None` when it exported none. A
+    /// grid container reads it from the item that gives the container its own
+    /// baseline.
+    pub(crate) exported_first_baseline: Option<f32>,
     /// Whether the box is an item of a vertical flex row or grid that aligns
     /// by a baseline against the block direction of its container, and so
     /// forms a baseline-sharing group of its own. The algorithm of the
@@ -768,6 +774,7 @@ impl Node {
             flex_first_baseline: None,
             vertical_first_baseline: None,
             own_first_baseline: None,
+            exported_first_baseline: None,
             opposed_baseline_group: false,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,

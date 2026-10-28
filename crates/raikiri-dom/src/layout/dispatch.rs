@@ -789,6 +789,12 @@ impl LayoutSession<'_> {
             self.context.text_group_shortest = shortest;
         }
         self.context.recursion.leave();
+        // A grid container reads this when its algorithm returns, and the
+        // last layout the algorithm performs of an item is the one that
+        // places it, so it is the baseline the container saw of the item.
+        if inputs.run_mode == RunMode::PerformLayout {
+            self.nodes[idx].exported_first_baseline = output.baselines.first;
+        }
         output
     }
 
@@ -1258,6 +1264,8 @@ impl LayoutSession<'_> {
 #[cfg(test)]
 mod float_container_tests;
 #[cfg(test)]
+mod grid_baseline_tests;
+#[cfg(test)]
 mod item_width_tests;
 #[cfg(test)]
 mod self_alignment_tests;
@@ -1269,6 +1277,7 @@ mod tests;
 mod axis_adapter;
 pub(crate) mod block_flow;
 pub(crate) mod content_limits;
+pub(crate) mod grid_baseline;
 mod grid_oof;
 mod inline_baseline;
 mod intrinsic_scopes;
@@ -3391,6 +3400,18 @@ fn grid_layout_sized(
         inputs,
         parent_size,
         |tree, node_id, inputs| {
+            // The items are still where the algorithm placed them, on the
+            // axes it ran on, when the baseline is taken from one of them.
+            let algorithm = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
+                let output = compute_grid_layout(tree, node_id, inputs);
+                grid_baseline::with_first_baseline(
+                    tree,
+                    usize::from(node_id),
+                    right_to_left.is_some(),
+                    inputs.run_mode,
+                    output,
+                )
+            };
             if right_to_left.is_some() {
                 // The container runs its algorithm on the axes of its own
                 // writing mode.
@@ -3401,10 +3422,10 @@ fn grid_layout_sized(
                         inputs,
                         compute_grid_layout,
                     );
-                    compute_grid_layout(tree, node_id, inputs)
+                    algorithm(tree, node_id, inputs)
                 })
             } else {
-                compute_grid_layout(tree, node_id, inputs)
+                algorithm(tree, node_id, inputs)
             }
         },
     );
