@@ -654,7 +654,7 @@ impl<'a> Page<'a> {
         let Some(prepared) = self.prepare_inline_svg(id, viewport, computed, rendering)? else {
             return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
         };
-        self.svg_sources.insert(key, prepared.clone());
+        let prepared = self.svg_sources.insert(key, prepared);
         Ok(Some((viewport, prepared)))
     }
 
