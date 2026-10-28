@@ -301,6 +301,118 @@ fn a_replaced_element_with_a_percentage_limit_keeps_its_natural_width_in_a_float
     );
 }
 
+/// An svg of 100px by 50px with the id `a` and `style`.
+fn svg_100_by_50(style: &str) -> String {
+    format!(
+        "<svg id=a xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"50\" \
+         style=\"{style}\"><rect width=\"100\" height=\"50\"/></svg>"
+    )
+}
+
+#[test]
+fn a_percentage_size_of_a_replaced_element_counts_as_auto_for_its_shrink_to_fit_container() {
+    // The container takes the 20px of `aa` and the 100px of the svg, and the
+    // svg then resolves its percentages against the 120px.
+    for (style, container, svg) in [
+        ("max-width:100%", (120.0, 52.0), (28.0, 8.0, 100.0, 50.0)),
+        ("width:50%", (120.0, 52.0), (28.0, 8.0, 60.0, 50.0)),
+        // The whole 120px leaves no room beside `aa`.
+        ("width:100%", (120.0, 62.0), (8.0, 18.0, 120.0, 50.0)),
+        ("min-width:50%", (120.0, 52.0), (28.0, 8.0, 100.0, 50.0)),
+        // The `max-width` of 80px limits the contribution, not the percentage.
+        (
+            "width:50%;max-width:80px",
+            (100.0, 52.0),
+            (28.0, 8.0, 50.0, 50.0),
+        ),
+    ] {
+        check_in_each_container(
+            &format!("aa{}", svg_100_by_50(style)),
+            &[("r", (8.0, 8.0, container.0, container.1)), ("a", svg)],
+        );
+    }
+}
+
+#[test]
+fn a_percentage_size_of_a_replaced_element_resolves_against_zero_for_a_min_content_container() {
+    // The percentages shrink the svg to what `aa` leaves; `min-width` does not
+    // count, and the 100px of the svg is what its container takes.
+    for (style, container, svg) in [
+        ("max-width:100%", (20.0, 62.0), (8.0, 18.0, 20.0, 50.0)),
+        ("width:50%", (20.0, 62.0), (8.0, 18.0, 10.0, 50.0)),
+        ("width:100%", (20.0, 62.0), (8.0, 18.0, 20.0, 50.0)),
+        ("min-width:50%", (100.0, 62.0), (8.0, 18.0, 100.0, 50.0)),
+        (
+            "width:50%;max-width:80px",
+            (20.0, 62.0),
+            (8.0, 18.0, 10.0, 50.0),
+        ),
+    ] {
+        check(
+            &format!(
+                "<div id=r style=\"width:min-content\">aa{}</div>",
+                svg_100_by_50(style)
+            ),
+            &[("r", (8.0, 8.0, container.0, container.1)), ("a", svg)],
+        );
+    }
+}
+
+#[test]
+fn a_percentage_margin_of_a_replaced_element_counts_as_zero_for_its_container() {
+    // The container is as wide as the svg, and the margin then resolves
+    // against that width: 10% of 100px.
+    for (style, svg) in [
+        ("margin-left:10%", (18.0, 8.0, 100.0, 50.0)),
+        ("margin:0 10%", (18.0, 8.0, 100.0, 50.0)),
+        ("margin-left:10%;width:50%", (18.0, 8.0, 50.0, 50.0)),
+        ("margin-left:10%;max-width:100%", (18.0, 8.0, 100.0, 50.0)),
+    ] {
+        check_in_each_container(
+            &svg_100_by_50(style),
+            &[("r", (8.0, 8.0, 100.0, 52.0)), ("a", svg)],
+        );
+    }
+    check(
+        &format!(
+            "<div id=r style=\"width:min-content\">{}</div>",
+            svg_100_by_50("margin-left:10%")
+        ),
+        &[
+            ("r", (8.0, 8.0, 100.0, 52.0)),
+            ("a", (18.0, 8.0, 100.0, 50.0)),
+        ],
+    );
+}
+
+/// The vertical containers whose height is decided by their content.
+const VERTICAL_CONTAINERS: [&str; 3] = [
+    "<div id=r style=\"float:left;writing-mode:vertical-rl\">{}</div>",
+    "<div id=r style=\"display:inline-block;writing-mode:vertical-rl\">{}</div>",
+    "<div style=\"display:table\"><div id=r style=\"display:table-cell;\
+     writing-mode:vertical-rl\">{}</div></div>",
+];
+
+#[test]
+fn a_percentage_size_of_a_replaced_element_counts_as_auto_for_its_vertical_container() {
+    // The height of a vertical container is its inline extent: the svg takes
+    // its 50px, and the percentage then resolves against that.
+    for (style, svg) in [
+        ("max-height:100%", (8.0, 8.0, 100.0, 50.0)),
+        ("height:50%", (8.0, 8.0, 100.0, 25.0)),
+        ("height:100%", (8.0, 8.0, 100.0, 50.0)),
+        ("min-height:50%", (8.0, 8.0, 100.0, 50.0)),
+        ("margin-top:10%", (8.0, 13.0, 100.0, 50.0)),
+    ] {
+        for container in VERTICAL_CONTAINERS {
+            check(
+                &container.replace("{}", &svg_100_by_50(style)),
+                &[("r", (8.0, 8.0, 100.0, 50.0)), ("a", svg)],
+            );
+        }
+    }
+}
+
 #[test]
 fn a_percentage_margin_or_padding_of_an_atomic_inline_counts_as_zero_for_a_vertical_container() {
     for (style, atomic) in [
