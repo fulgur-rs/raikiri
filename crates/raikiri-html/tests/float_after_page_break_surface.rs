@@ -275,3 +275,58 @@ fn text_beside_the_page_start_float_in_a_paragraph_with_inline_content() {
         .collect();
     assert_eq!(on_page_one, [(1, 40.0, 5.0), (1, 40.0, 35.0)]);
 }
+
+#[test]
+fn the_margin_above_the_box_after_the_page_start_float_is_kept() {
+    // The 10px margin above the text stays at the top of the page, so every
+    // line is 10px lower than without it and the third line ends at the bottom
+    // edge of the page.
+    let left = lines(&format!(
+        "{BREAK}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(left, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+    let right = lines(&format!(
+        "{BREAK}{}<div style='margin-top:10px'>{TEXT}</div>",
+        float("right", 40, 50)
+    ));
+    assert_eq!(right, [(1, 0.0, 15.0), (1, 0.0, 45.0), (1, 0.0, 75.0)]);
+    // The margin of the box below a break with no float is kept the same way.
+    let none = lines(&format!("{BREAK}<div style='margin-top:10px'>{TEXT}</div>"));
+    assert_eq!(none, [(1, 0.0, 15.0), (1, 0.0, 45.0)]);
+}
+
+#[test]
+fn the_margin_is_kept_whichever_box_carries_it() {
+    let float = float("left", 40, 50);
+    let expected = [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)];
+    // A margin above and below the box.
+    let both = lines(&format!(
+        "{BREAK}{float}<div style='margin:10px 0'>{TEXT}</div>"
+    ));
+    assert_eq!(both, expected);
+    // A box whose child holds the text.
+    let wrapped = lines(&format!(
+        "{BREAK}{float}<div style='margin-top:10px'><div>{TEXT}</div></div>"
+    ));
+    assert_eq!(wrapped, expected);
+    // The block before the break has a smaller margin below it than the box
+    // after the float has above it.
+    let smaller = lines(&format!(
+        "<div style='break-after:page;height:30px;margin-bottom:5px'>a</div>\
+         {float}<div style='margin-top:10px'>{TEXT}</div>"
+    ));
+    assert_eq!(smaller, expected);
+    // The break is forced after a box nested in the block before the float,
+    // or after the block itself.
+    for before in [
+        "<div><div style='break-after:page;height:30px'>a</div></div>",
+        "<div><div><div style='break-after:page;height:30px'>a</div></div></div>",
+        "<div style='break-after:page'><div style='height:30px'>a</div></div>",
+    ] {
+        let nested = lines(&format!(
+            "{before}{float}<div style='margin-top:10px'>{TEXT}</div>"
+        ));
+        assert_eq!(nested, expected, "{before}");
+    }
+}
