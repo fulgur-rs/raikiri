@@ -11716,6 +11716,19 @@ fn a_forced_break_after_the_first_box_of_a_later_page_opens_the_page_after_it() 
 }
 
 #[test]
+fn a_relative_offset_on_the_first_box_does_not_move_the_page_it_starts_on() {
+    // The offset only paints the box lower. It stays on the first page, so
+    // the break after it opens the second page for the next box.
+    assert_eq!(
+        page_box_positions(&[
+            "position:relative;top:100px;height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![100.0, 100.0], 2)
+    );
+}
+
+#[test]
 fn a_relative_offset_is_not_truncated_as_a_margin() {
     // The offset moves only the box itself; it is not a margin that adjoins
     // the break, and later siblings keep their flow positions.

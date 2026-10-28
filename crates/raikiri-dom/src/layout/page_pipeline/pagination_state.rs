@@ -703,11 +703,14 @@ impl PaginationState {
             // on, which is the second when the schedule opens with a short
             // page that ends where the flow begins, as the one a relayout
             // after delivered pages starts with: a forced break after the box
-            // then opens the third page, not the one the box is on.
+            // then opens the third page, not the one the box is on. A
+            // relative offset only paints the box elsewhere, so the page is
+            // found from its position in the flow.
             self.saw_child = true;
-            self.current_page = if position.effective_y.is_finite() && position.effective_y >= 0.0 {
-                env.page_origins
-                    .start_page(position.effective_y, candidate.height)
+            let flow_y = position.effective_y
+                - accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id);
+            self.current_page = if flow_y.is_finite() && flow_y >= 0.0 {
+                env.page_origins.start_page(flow_y, candidate.height)
             } else {
                 0
             };
