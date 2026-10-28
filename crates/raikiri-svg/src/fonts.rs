@@ -7,7 +7,12 @@
 //! the parser, so a face is selected by the same rules as for HTML text and
 //! never by a second font database.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+mod key;
+use key::{ContextKey, FaceIdentity};
 
 use raikiri_traits::vector::FontFace;
 use skrifa::MetadataProvider;
@@ -101,21 +106,28 @@ pub trait SvgFontSource: Send + Sync {
 /// database once and shared by all the ids of a face.
 pub(crate) struct Faces<'a> {
     source: &'a dyn SvgFontSource,
-    entries: Mutex<Vec<Entry>>,
+    entries: Mutex<Entries>,
+}
+
+#[derive(Default)]
+struct Entries {
+    list: Vec<Entry>,
+    contexts: HashMap<ContextKey<'static>, fontdb::ID>,
+    faces: HashMap<FaceIdentity, fontdb::ID>,
+    ids: HashMap<fontdb::ID, usize>,
 }
 
 struct Entry {
     face: FontFace,
     id: fontdb::ID,
-    request: SvgFontRequest,
+    request: Arc<SvgFontRequest>,
 }
 
 /// The face behind each database id of a parsed tree.
 #[derive(Default)]
-pub(crate) struct FaceMap(Vec<MappedFace>);
+pub(crate) struct FaceMap(HashMap<fontdb::ID, MappedFace>);
 
 struct MappedFace {
-    id: fontdb::ID,
     face: FontFace,
     /// Whether the face has an optical size axis.
     has_opsz: bool,
@@ -133,7 +145,9 @@ impl FaceMap {
     }
 
     fn entry(&self, id: fontdb::ID) -> Option<&MappedFace> {
-        self.0.iter().find(|entry| entry.id == id)
+        #[cfg(test)]
+        tests::record_entry_visit();
+        self.0.get(&id)
     }
 }
 
@@ -141,13 +155,13 @@ impl<'a> Faces<'a> {
     pub(crate) fn new(source: &'a dyn SvgFontSource) -> Self {
         Self {
             source,
-            entries: Mutex::new(Vec::new()),
+            entries: Mutex::default(),
         }
     }
 
-    fn entries(&self) -> MutexGuard<'_, Vec<Entry>> {
-        // A panic in a source leaves the list consistent: entries are only
-        // ever appended whole.
+    fn entries(&self) -> MutexGuard<'_, Entries> {
+        // User font-data reads finish before publishing entries and indexes.
+        // Publication uses owned standard keys and makes no user callbacks.
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -158,19 +172,20 @@ impl<'a> Faces<'a> {
             select_font: Box::new(move |font, database| {
                 let request = request(font);
                 let face = self.source.select(&request)?;
-                self.load(face, &request, database)
+                self.load(face, Cow::Owned(request), database)
             }),
             select_fallback: Box::new(move |ch, used, database| {
                 // The first face used is the one the text was selected with.
                 let base = *used.first()?;
-                let request = self
-                    .entries()
-                    .iter()
-                    .find(|entry| entry.id == base)?
-                    .request
-                    .clone();
+                let request = {
+                    let entries = self.entries();
+                    #[cfg(test)]
+                    tests::record_entry_visit();
+                    let index = *entries.ids.get(&base)?;
+                    Arc::clone(&entries.list[index].request)
+                };
                 let face = self.source.fallback(&request, ch)?;
-                let id = self.load(face, &request, database)?;
+                let id = self.load(face, Cow::Borrowed(&request), database)?;
                 // The parser asks for a face it has not used yet.
                 (!used.contains(&id)).then_some(id)
             }),
@@ -182,21 +197,24 @@ impl<'a> Faces<'a> {
     fn load(
         &self,
         face: FontFace,
-        request: &SvgFontRequest,
+        request: Cow<'_, SvgFontRequest>,
         database: &mut Arc<fontdb::Database>,
     ) -> Option<fontdb::ID> {
         let mut entries = self.entries();
-        if let Some(entry) = entries
-            .iter()
-            .find(|entry| entry.face.is_same_face(&face) && entry.request == *request)
+        let identity = FaceIdentity::of(&face);
+        #[cfg(test)]
+        tests::record_entry_visit();
+        if let Some(&id) = entries
+            .contexts
+            .get(&ContextKey::borrowed(identity, &request))
         {
-            return Some(entry.id);
+            return Some(id);
         }
-        let id = match entries.iter().find(|entry| entry.face.is_same_face(&face)) {
-            // Another request loaded the face: a second entry for it shares
-            // its bytes and needs no parse.
+        #[cfg(test)]
+        tests::record_entry_visit();
+        let id = match entries.faces.get(&identity).copied() {
             Some(loaded) => {
-                let mut info = database.face(loaded.id)?.clone();
+                let mut info = database.face(loaded)?.clone();
                 info.id = fontdb::ID::dummy();
                 Arc::make_mut(database).push_face_info(info)
             }
@@ -210,11 +228,15 @@ impl<'a> Faces<'a> {
                 })?
             }
         };
-        entries.push(Entry {
-            face,
-            id,
-            request: request.clone(),
-        });
+        // A context owns its request only after the database load succeeds.
+        // Selection misses move fresh requests; fallback misses clone as before.
+        let request = Arc::new(request.into_owned());
+        let key = ContextKey::shared(identity, Arc::clone(&request));
+        let index = entries.list.len();
+        entries.list.push(Entry { face, id, request });
+        entries.contexts.insert(key, id);
+        entries.faces.entry(identity).or_insert(id);
+        entries.ids.insert(id, index);
         Some(id)
     }
 
@@ -226,11 +248,16 @@ impl<'a> Faces<'a> {
             .unwrap_or_else(PoisonError::into_inner);
         FaceMap(
             entries
+                .list
                 .into_iter()
-                .map(|entry| MappedFace {
-                    id: entry.id,
-                    has_opsz: has_opsz_axis(&entry.face),
-                    face: entry.face,
+                .map(|entry| {
+                    (
+                        entry.id,
+                        MappedFace {
+                            has_opsz: has_opsz_axis(&entry.face),
+                            face: entry.face,
+                        },
+                    )
                 })
                 .collect(),
         )
@@ -280,3 +307,6 @@ fn has_opsz_axis(face: &FontFace) -> bool {
     skrifa::FontRef::from_index(face.bytes(), face.index())
         .is_ok_and(|font| font.axes().get_by_tag(skrifa::Tag::new(b"opsz")).is_some())
 }
+
+#[cfg(test)]
+mod tests;
