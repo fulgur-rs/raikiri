@@ -4369,11 +4369,12 @@ impl BoxIntrinsics {
 /// Min- and max-content inline extents of the root's boxes, for the
 /// paragraph's intrinsic sizes. Each box is measured without changing layout.
 ///
-/// `inline_basis` is the paragraph's inline extent when it is definite;
-/// without one, the margins of the boxes resolve their percentages to zero. A
-/// vertical paragraph measures its boxes along their heights, which a
-/// percentage of that extent would size: while the extent is not known, such a
-/// percentage behaves as `auto`.
+/// The paragraph's inline extent is what these widths decide, so a box
+/// cannot refer to it: its percentage margins and paddings count as zero, and
+/// its percentage sizes along the inline axis as `auto` and as no limit (CSS
+/// Sizing 3 §5.2.1). A replaced element keeps the `inline_basis`, the
+/// paragraph's inline extent when it is definite, and a basis of zero without
+/// one.
 ///
 /// `percent_height` is the root's definite content-box height, the basis a
 /// box's percentage height resolves against while its width is measured: it
@@ -4393,7 +4394,6 @@ pub(crate) fn intrinsics_of_boxes(
     percent_height: Option<f32>,
     physical_width: Option<f32>,
 ) -> BoxIntrinsics {
-    let basis = inline_basis.unwrap_or(0.0);
     let writing_mode = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -4450,17 +4450,26 @@ pub(crate) fn intrinsics_of_boxes(
         }
     }
     for b in boxes {
+        let replaced = crate::paint_rules::is_replaced_element(tree.document, b.node);
+        let basis = replaced.then(|| inline_basis.unwrap_or(0.0));
+        let margin_basis = basis.unwrap_or(0.0);
         match b.kind {
             IfcBoxKind::Float => {
-                let margin = resolved_margins(tree, b.node, basis);
+                let margin = resolved_margins(tree, b.node, margin_basis);
                 let (min_content, max_content) = if vertical {
                     // A float of a vertical paragraph sits along its lines:
                     // its height is the extent it takes there.
-                    let across = across_lines_of_child(tree, b.node, margin, physical_width, basis);
+                    let across = across_lines_of_child(
+                        tree,
+                        b.node,
+                        margin,
+                        physical_width,
+                        inline_basis.unwrap_or(0.0),
+                    );
                     content_heights(
                         tree,
                         b.node,
-                        inline_basis,
+                        inline_basis.filter(|_| replaced),
                         physical_width,
                         margin.top + margin.bottom,
                         false,
@@ -4501,7 +4510,7 @@ pub(crate) fn intrinsics_of_boxes(
             // Out of flow: no part of the paragraph's widths.
             IfcBoxKind::OutOfFlow => {}
             IfcBoxKind::Block => {
-                let margin = resolved_margins(tree, b.node, basis);
+                let margin = resolved_margins(tree, b.node, margin_basis);
                 // Only a block in the root's formatting context has margins
                 // that collapse with its content's; the others are laid out
                 // as formatting-context roots.
@@ -4525,7 +4534,7 @@ pub(crate) fn intrinsics_of_boxes(
                     content_heights(
                         tree,
                         b.node,
-                        inline_basis,
+                        inline_basis.filter(|_| replaced),
                         physical_width,
                         margin.top + margin.bottom,
                         margins_collapse,
@@ -4546,13 +4555,19 @@ pub(crate) fn intrinsics_of_boxes(
                 intrinsics.blocks.1 = intrinsics.blocks.1.max(max_content);
             }
             IfcBoxKind::Atomic => {
-                let margin = resolved_margins(tree, b.node, basis);
+                let margin = resolved_margins(tree, b.node, margin_basis);
                 let (min_content, max_content) = if vertical {
-                    let across = across_lines_of_child(tree, b.node, margin, physical_width, basis);
+                    let across = across_lines_of_child(
+                        tree,
+                        b.node,
+                        margin,
+                        physical_width,
+                        inline_basis.unwrap_or(0.0),
+                    );
                     content_heights(
                         tree,
                         b.node,
-                        inline_basis,
+                        inline_basis.filter(|_| replaced),
                         physical_width,
                         margin.top + margin.bottom,
                         false,
@@ -4587,17 +4602,22 @@ pub(crate) fn intrinsics_of_boxes(
 /// may collapse with its content's, as they do for a block in the root's
 /// formatting context; floats, atomic inlines and the other blocks establish a
 /// formatting context of their own and do not.
+///
+/// The width the percentages of the box refer to is `basis`; without one it is
+/// not known yet, and the percentage width and limits of the box stand for
+/// `auto` and for no limit, as they do for the contribution of a box to the
+/// intrinsic size of its container (CSS Sizing 3 §5.2.1).
 fn content_widths(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    basis: f32,
+    basis: Option<f32>,
     percent_height: Option<f32>,
     margins_x: f32,
     margins_collapse: bool,
     across: AcrossLines,
 ) -> (f32, f32) {
     let parent_size = Size {
-        width: Some(basis),
+        width: basis,
         height: percent_height,
     };
     content_sizes_on_axis(
