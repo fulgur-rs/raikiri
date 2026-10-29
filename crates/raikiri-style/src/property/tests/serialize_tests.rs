@@ -130,6 +130,41 @@ fn serialize_value_covers_simple_length_variants() {
 }
 
 #[test]
+fn serialize_value_covers_the_contain_intrinsic_lengths() {
+    let size = |auto, length| ContainIntrinsicSize { auto, length };
+    let px = |value| Some(ContainIntrinsicLength::Length(Length::Px(value)));
+    let calc = crate::cascade::parse_relative_calc_length_percentage("calc(2em + 10px)")
+        .map(ContainIntrinsicLength::Calc);
+    for (value, want) in [
+        (size(false, None), "none"),
+        (size(true, None), "auto none"),
+        (size(false, px(100.0)), "100px"),
+        (size(true, px(100.0)), "auto 100px"),
+        (size(false, calc), "calc(2em + 10px)"),
+        (size(true, calc), "auto calc(2em + 10px)"),
+    ] {
+        assert_eq!(
+            serialize_value(&PropertyValue::ContainIntrinsicWidth(value)),
+            Some(want.to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::ContainIntrinsicHeight(value)),
+            Some(want.to_owned())
+        );
+    }
+    // The shorthand has no single-value form here, as for `gap`.
+    assert_eq!(
+        serialize_value(&PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: size(false, None),
+                height: size(false, None),
+            }
+        )),
+        None
+    );
+}
+
+#[test]
 fn serialize_value_covers_safe_length_or_auto_variants() {
     assert_eq!(
         serialize_value(&PropertyValue::Top(LengthOrAuto::Auto)),
