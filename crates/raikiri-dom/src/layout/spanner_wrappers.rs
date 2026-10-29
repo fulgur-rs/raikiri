@@ -102,7 +102,7 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
     let size_is_auto = |size| matches!(size, ComputedLengthPercentageOrAuto::Auto);
     // A minimum or maximum that is a keyword is laid out by the box's
     // content limits, so it constrains nothing here.
-    let limit_is_none = |size| size_is_auto(size) || super::bridge::is_sizing_keyword(size);
+    let limit_is_none = |size| size_is_auto(size) || super::bridge::is_limit_keyword(size);
     let overflows_visibly = |value| {
         !matches!(
             value,
