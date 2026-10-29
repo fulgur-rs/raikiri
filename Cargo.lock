@@ -2601,6 +2601,7 @@ dependencies = [
  "raikiri-html",
  "raikiri-paint",
  "raikiri-style",
+ "raikiri-traits",
  "triomphe",
 ]
 

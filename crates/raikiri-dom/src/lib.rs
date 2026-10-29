@@ -152,3 +152,10 @@ mod tests;
 mod scene_geometry;
 #[doc(hidden)]
 pub use scene_geometry::{SceneGeometry, SceneGeometryNode};
+
+mod continuation_diagnostics;
+#[cfg(feature = "continuation-diagnostics")]
+#[doc(hidden)]
+pub use continuation_diagnostics::{
+    ContinuationWork, begin_continuation_diagnostics, finish_continuation_diagnostics,
+};

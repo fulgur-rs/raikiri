@@ -51,6 +51,17 @@ fn root_of(doc: &Document, node: usize) -> Option<usize> {
 /// The DOM owners of the glyph runs on `line`, in order. The glyphs of a ruby
 /// annotation belong to the line the annotation is placed over.
 pub(crate) fn glyph_owners(line: &shodo::Line) -> Vec<usize> {
+    #[cfg(any(test, feature = "continuation-diagnostics"))]
+    if crate::continuation_diagnostics::enabled() {
+        return glyph_owners_counted::<true>(line);
+    }
+    glyph_owners_counted::<false>(line)
+}
+
+fn glyph_owners_counted<const COUNT: bool>(line: &shodo::Line) -> Vec<usize> {
+    if COUNT {
+        crate::continuation_diagnostics::glyph_owner_call();
+    }
     fn collect(line: &shodo::Line, owners: &mut Vec<usize>) {
         for fragment in line.fragments() {
             match fragment {
@@ -132,6 +143,14 @@ pub(crate) fn single_unplaced_line(doc: &Document, root: usize) -> Option<IfcTex
 /// one of its glyph runs comes from, so a line shared by two text nodes
 /// belongs to both, and a line of atomic boxes only belongs to none.
 pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
+    #[cfg(any(test, feature = "continuation-diagnostics"))]
+    if crate::continuation_diagnostics::enabled() {
+        return lines_of_counted::<true>(doc, node);
+    }
+    lines_of_counted::<false>(doc, node)
+}
+
+fn lines_of_counted<const COUNT: bool>(doc: &Document, node: usize) -> Option<IfcTextLines> {
     if !is_text_line_owner(doc, node) {
         return None;
     }
@@ -145,7 +164,10 @@ pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
             #[cfg(test)]
             crate::layout::test_support::TEXT_LINE_VISITS
                 .with(|visits| visits.set(visits.get() + 1));
-            glyph_owners(line).contains(&node)
+            if COUNT {
+                crate::continuation_diagnostics::text_line_visit();
+            }
+            glyph_owners_counted::<COUNT>(line).contains(&node)
         })
         .map(|(index, line)| {
             let top = lines.line_top(index);
@@ -175,6 +197,18 @@ impl Document {
     fn checked_ifc_text_lines_by_node(
         &self,
         root: usize,
+        check: impl FnMut() -> Result<(), LayoutError>,
+    ) -> Result<HashMap<usize, IfcTextLines>, LayoutError> {
+        #[cfg(any(test, feature = "continuation-diagnostics"))]
+        if crate::continuation_diagnostics::enabled() {
+            return self.checked_ifc_text_lines_by_node_counted::<true>(root, check);
+        }
+        self.checked_ifc_text_lines_by_node_counted::<false>(root, check)
+    }
+
+    fn checked_ifc_text_lines_by_node_counted<const COUNT: bool>(
+        &self,
+        root: usize,
         mut check: impl FnMut() -> Result<(), LayoutError>,
     ) -> Result<HashMap<usize, IfcTextLines>, LayoutError> {
         let mut by_node = HashMap::new();
@@ -196,7 +230,10 @@ impl Document {
                 top,
                 bottom: top + line.block_size(),
             };
-            for owner in glyph_owners(line) {
+            if COUNT {
+                crate::continuation_diagnostics::text_line_visit();
+            }
+            for owner in glyph_owners_counted::<COUNT>(line) {
                 check()?;
                 if !is_text_line_owner(self, owner) {
                     continue;

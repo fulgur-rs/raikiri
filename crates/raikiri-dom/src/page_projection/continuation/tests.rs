@@ -176,3 +176,27 @@ fn continuation_break_at_the_start_of_a_text_node_breaks_before_it() {
     };
     assert_eq!(doc.page_token_offset(0, token), Some(10.0));
 }
+
+#[test]
+fn ownership_diagnostics_are_optional_and_preserve_public_query_results() {
+    use crate::continuation_diagnostics::{
+        ContinuationWork, begin_continuation_diagnostics, finish_continuation_diagnostics,
+    };
+    let (mut doc, cascade, text) = paragraph();
+    paginate(&mut doc, &cascade, page_box(100.0, 30.0));
+    let expected = doc.page_start(&cascade, 1).unwrap();
+    assert_eq!(
+        finish_continuation_diagnostics(),
+        ContinuationWork::default()
+    );
+    begin_continuation_diagnostics();
+    assert!(doc.ifc_text_lines(text).is_some());
+    let work = finish_continuation_diagnostics();
+    assert!(work.text_line_visits > 0);
+    assert!(work.glyph_owner_calls > 0);
+    assert_eq!(doc.page_start(&cascade, 1), Some(expected));
+    assert_eq!(
+        finish_continuation_diagnostics(),
+        ContinuationWork::default()
+    );
+}
