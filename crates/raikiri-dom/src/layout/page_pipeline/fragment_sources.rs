@@ -6,7 +6,7 @@ use super::{
     CascadeResult, Document, FlowAxis, LayoutError, NodeId, NodeKind, OverflowClipSource,
     PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
     PageFragmentRect, PaintInsets, PaintRect, ProjectionWork, flow_page_overlap,
-    line_range_for_page,
+    line_ranges::LineRanges,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -224,6 +224,7 @@ fn fragment_placements(
         }
         None => slots.reached_by(source),
     };
+    let mut line_ranges = None;
     for &(page_slot, page_start, page_end) in reached {
         if source.is_repeat {
             placements.push(FragmentPlacement {
@@ -249,7 +250,9 @@ fn fragment_placements(
         };
         if intersects {
             let line_range = source.line_metrics.as_deref().and_then(|metrics| {
-                line_range_for_page(metrics, source.abs_y, page_start, page_end)
+                line_ranges
+                    .get_or_insert_with(|| LineRanges::new(metrics, source.abs_y))
+                    .range(page_start, page_end)
             });
             placements.push(FragmentPlacement {
                 page_slot,

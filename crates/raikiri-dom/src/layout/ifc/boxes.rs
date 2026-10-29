@@ -37,6 +37,9 @@ use shodo::{
 };
 use std::collections::{HashMap, HashSet};
 
+mod oof_index;
+use oof_index::{StaticFallbackIndex, first_anchors};
+
 /// A child of an ifc root that is not part of the paragraph's text: it is
 /// laid out as a box of its own and painted by the walk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3865,6 +3868,22 @@ fn anchor_has_odd_level(line: &shodo::Line, position: f32, paragraph_rtl: bool) 
     }
 }
 
+fn find_oof_anchor(lines: &IfcLines, node: usize) -> Option<(usize, f32)> {
+    lines.lines.iter().enumerate().find_map(|(index, line)| {
+        line.fragments()
+            .inspect(|_| {
+                #[cfg(test)]
+                tests::OOF_ANCHOR_VISITS.with(|count| count.set(count.get() + 1));
+            })
+            .find_map(|fragment| match fragment {
+                shodo::Fragment::OutOfFlowAnchor(anchor) if anchor.node.0 as usize == node => {
+                    Some((index, anchor.inline_position))
+                }
+                _ => None,
+            })
+    })
+}
+
 /// Where the static position of the out-of-flow box `node` lies along the
 /// block axis of the paragraph, from the content box's block-start edge.
 ///
@@ -3898,6 +3917,8 @@ fn static_block_offset(
     let mut block_after = None;
     let mut reached = false;
     for &(id, kind) in boxes {
+        #[cfg(test)]
+        tests::OOF_BOX_VISITS.with(|count| count.set(count.get() + 1));
         if id == node {
             reached = true;
         } else if kind == IfcBoxKind::Block {
@@ -3914,6 +3935,10 @@ fn static_block_offset(
         Some(block) => lines
             .block_ends
             .iter()
+            .inspect(|_| {
+                #[cfg(test)]
+                tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
+            })
             .find(|&&(id, ..)| id == block)
             .map_or(lines.height, |&(_, next_line, end)| {
                 // A line holding nothing but the box is dropped, so the box
@@ -3921,16 +3946,33 @@ fn static_block_offset(
                 // it: it follows the last of them, up to the next block or the
                 // `::after` block, whose lines come after the box.
                 let next_block = block_after
-                    .and_then(|id| lines.block_line_starts.iter().find(|&&(b, _)| b == id))
+                    .and_then(|id| {
+                        lines
+                            .block_line_starts
+                            .iter()
+                            .inspect(|_| {
+                                #[cfg(test)]
+                                tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
+                            })
+                            .find(|&&(b, _)| b == id)
+                    })
                     .map(|&(_, first)| first);
                 let blocks_before = lines
                     .block_line_starts
                     .iter()
+                    .inspect(|_| {
+                        #[cfg(test)]
+                        tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
+                    })
                     .position(|&(id, _)| id == block)
                     .map_or(0, |index| index + 1);
                 let generated_block = lines
                     .generated_block_starts
                     .iter()
+                    .inspect(|_| {
+                        #[cfg(test)]
+                        tests::OOF_METADATA_VISITS.with(|count| count.set(count.get() + 1));
+                    })
                     .find(|&&(count, _)| count >= blocks_before)
                     .map(|&(_, first)| first);
                 let lines_end = next_block
@@ -4085,12 +4127,18 @@ pub(crate) fn place_out_of_flow(
         });
         return;
     }
+    #[cfg(test)]
+    tests::OOF_PLACE_CALLS.with(|count| count.set(count.get() + 1));
     let content_left = border.left + padding.left;
     let content_top = border.top + padding.top;
     let content_right = border_box.width - border.right - padding.right;
     // The kinds of the boxes in document order, for the boxes without an
     // anchor.
     let mut box_order: Option<Vec<(usize, IfcBoxKind)>> = None;
+    // A single target keeps the early-exit scan and avoids index allocations.
+    let anchors = (positioned.len() > 1).then(|| first_anchors(&lines));
+    let mut fallback = None;
+
     let owner = tree.ifc_source_owner(idx);
     // The pieces of the inline elements on the lines, made when a box needs
     // them.
@@ -4131,30 +4179,38 @@ pub(crate) fn place_out_of_flow(
                     ..inline
                 }
             });
-        let anchor = lines.lines.iter().enumerate().find_map(|(index, line)| {
-            line.fragments().find_map(|fragment| match fragment {
-                shodo::Fragment::OutOfFlowAnchor(anchor) if anchor.node.0 as usize == node => {
-                    Some((index, anchor.inline_position))
-                }
-                _ => None,
-            })
-        });
+        let anchor = anchors.as_ref().map_or_else(
+            || find_oof_anchor(&lines, node),
+            |anchors| anchors.get(&node).copied(),
+        );
         let inline_level = tree.nodes[node].display().is_inline_level();
         // The box's static position along the root's block axis, from the
         // content box's block-start edge.
-        if anchor.is_none() && box_order.is_none() {
-            box_order = tree.nodes[idx]
-                .ifc
-                .as_ref()
-                .map(|root| root.boxes.iter().map(|b| (b.node, b.kind)).collect());
-        }
-        let block_offset = static_block_offset(
-            &lines,
-            box_order.as_deref().unwrap_or_default(),
-            node,
-            anchor,
-            inline_level,
-        );
+        let block_offset = if anchor.is_none() && anchors.is_some() {
+            fallback
+                .get_or_insert_with(|| {
+                    let boxes = tree.nodes[idx]
+                        .ifc
+                        .as_ref()
+                        .map_or(&[][..], |root| root.boxes.as_slice());
+                    StaticFallbackIndex::new(&lines, boxes)
+                })
+                .offset(node)
+        } else {
+            if anchor.is_none() && box_order.is_none() {
+                box_order = tree.nodes[idx]
+                    .ifc
+                    .as_ref()
+                    .map(|root| root.boxes.iter().map(|b| (b.node, b.kind)).collect());
+            }
+            static_block_offset(
+                &lines,
+                box_order.as_deref().unwrap_or_default(),
+                node,
+                anchor,
+                inline_level,
+            )
+        };
         // A box that was inline-level extends from its anchor the way the
         // text there reads.
         let inline_anchor = anchor.filter(|_| inline_level).map(|(index, position)| {

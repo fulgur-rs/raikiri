@@ -1403,7 +1403,7 @@ fn generated_punctuation_lookahead_reuses_counters_and_keeps_each_original_owner
         let span = fixture.doc.get_node(fixture.root).unwrap().children[0];
         let counters = GeneratedCounters::default();
         let snapshots = counters.get(&fixture.doc, &fixture.cascade).unwrap();
-        let pointer = snapshots.as_ptr();
+        let pointer = std::ptr::from_ref(snapshots);
         let mut cx = LayoutContext::new();
         let projected = project_ifc_builder_with(
             &fixture.doc,
@@ -1418,10 +1418,7 @@ fn generated_punctuation_lookahead_reuses_counters_and_keeps_each_original_owner
         .unwrap();
         assert_eq!(projected.paragraph.text(), expected);
         assert_eq!(
-            counters
-                .get(&fixture.doc, &fixture.cascade)
-                .unwrap()
-                .as_ptr(),
+            std::ptr::from_ref(counters.get(&fixture.doc, &fixture.cascade).unwrap()),
             pointer
         );
         assert_eq!(

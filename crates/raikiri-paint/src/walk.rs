@@ -23,7 +23,7 @@ use raikiri_dom::image_geometry::{
     DeviceGrid, VisibleArea, background_image_dimensions, background_tiles, position_offset,
     rounded_background_tile_size,
 };
-use raikiri_dom::{CounterSnapshots, Document, StandaloneAlign, canvas_background_owner};
+use raikiri_dom::{CompactCounterSnapshots, Document, StandaloneAlign, canvas_background_owner};
 use raikiri_layout_geometry::{BoxLayout, Edges};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor, BorderStyle,
@@ -79,7 +79,7 @@ use paint_walk::{PaintWalk, index_fragments};
 
 use crate::text;
 
-use raikiri_dom::generated_content::markers::marker_render_info_with_snapshots;
+use raikiri_dom::generated_content::markers::marker_render_info_with_compact_snapshots;
 
 /// Cover the whole paper with the UA's white canvas and nothing else.
 pub(crate) fn paint_blank_paper(scene: &mut impl PaintScene, page_box: PageBox) {
@@ -1212,9 +1212,9 @@ fn marker_render_info<'a>(
     cascade: &'a CascadeResult,
     node_id: usize,
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
-    let snapshots = raikiri_dom::counter_snapshots(document, cascade)
+    let snapshots = raikiri_dom::compact_counter_snapshots(document, cascade)
         .expect("test counter snapshots stay within budget");
-    marker_render_info_with_snapshots(document, cascade, node_id, &snapshots)
+    marker_render_info_with_compact_snapshots(document, cascade, node_id, &snapshots)
 }
 
 fn generated_pseudo_content_with_snapshots<'a>(
@@ -1222,9 +1222,11 @@ fn generated_pseudo_content_with_snapshots<'a>(
     cascade: &'a CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
-    raikiri_dom::generated_content::generated_text(document, cascade, node_id, pseudo, snapshots)
+    raikiri_dom::generated_content::generated_text_compact(
+        document, cascade, node_id, pseudo, snapshots,
+    )
 }
 
 /// Whether the inline engine laid the `pseudo` of `node_id` out as text of
@@ -1246,7 +1248,7 @@ fn generated_pseudo_text_advance(
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
 ) -> f32 {
     if laid_out_in_lines(document, cascade, node_id, pseudo) {
         return 0.0;
@@ -1276,7 +1278,7 @@ fn generated_flow_height(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
     cache: &mut std::collections::HashMap<usize, f32>,
 ) -> f32 {
     if let Some(height) = cache.get(&node_id) {
@@ -1314,7 +1316,7 @@ fn generated_flow_node_height(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
     cache: &std::collections::HashMap<usize, f32>,
 ) -> f32 {
     let before = generated_pseudo_text_height(
@@ -1371,7 +1373,7 @@ fn generated_inline_children_height(
     document: &Document,
     cascade: &CascadeResult,
     children: &[usize],
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
 ) -> f32 {
     children
         .iter()
@@ -1427,7 +1429,7 @@ fn generated_pseudo_text_height(
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
 ) -> f32 {
     if laid_out_in_lines(document, cascade, node_id, pseudo) {
         return 0.0;
@@ -1464,7 +1466,7 @@ fn paint_generated_pseudo(
     y: f32,
     width: f32,
     height: f32,
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
 ) -> f32 {
     if laid_out_in_lines(document, cascade, node_id, pseudo) {
         return 0.0;
@@ -1518,7 +1520,7 @@ fn paint_list_marker(
     height: f32,
     padding_left: f32,
 ) {
-    let snapshots = raikiri_dom::counter_snapshots(document, cascade)
+    let snapshots = raikiri_dom::compact_counter_snapshots(document, cascade)
         .expect("test counter snapshots stay within budget");
     paint_list_marker_with_snapshots(
         &crate::walk::ImageBrushCache::for_document(document)
@@ -1552,7 +1554,7 @@ fn paint_list_marker_with_snapshots(
     height: f32,                 // cov:ignore: signature line has no executable mapping
     padding_left: f32,           // cov:ignore: signature line has no executable mapping
     page_flow: (f32, f32, bool), // cov:ignore: signature line has no executable mapping
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
     pixel_source: Option<&dyn ImagePixelSource>,
 ) {
     let Some((computed, content)) =
@@ -1613,7 +1615,7 @@ fn list_marker_to_paint<'a>(
     document: &Document,
     cascade: &'a CascadeResult,
     node_id: usize,
-    snapshots: &CounterSnapshots,
+    snapshots: &CompactCounterSnapshots,
     (width, height): (f32, f32),
 ) -> Option<(&'a ComputedValues, String)> {
     if raikiri_dom::generated_content::inside_marker_in_flow(cascade, node_id)
@@ -1624,7 +1626,7 @@ fn list_marker_to_paint<'a>(
         return None;
     }
     let (computed, content) =
-        marker_render_info_with_snapshots(document, cascade, node_id, snapshots)?;
+        marker_render_info_with_compact_snapshots(document, cascade, node_id, snapshots)?;
     // The marker is visible by its own `visibility`, which it inherits from
     // its item unless `::marker` sets it; `collapse` hides it like `hidden`.
     if width <= 0.0 || height <= 0.0 || raikiri_dom::paint_rules::hides_own_box(computed) {
@@ -1973,7 +1975,7 @@ pub(crate) fn paint_document(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    counter_snapshots: &CounterSnapshots,
+    counter_snapshots: &CompactCounterSnapshots,
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
@@ -2006,7 +2008,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    counter_snapshots: &CounterSnapshots,
+    counter_snapshots: &CompactCounterSnapshots,
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
@@ -2040,7 +2042,7 @@ pub(crate) fn paint_document_impl(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    counter_snapshots: &CounterSnapshots,
+    counter_snapshots: &CompactCounterSnapshots,
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,

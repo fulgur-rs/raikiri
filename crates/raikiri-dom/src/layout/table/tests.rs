@@ -21,9 +21,11 @@ mod border_state_tests;
 mod cache_tests;
 mod cell_index_tests;
 pub(super) mod cell_scope_tests;
+mod cold_border_benchmark_tests;
 mod intrinsic_keyword_tests;
 mod part_containing_block_tests;
 mod rowspan_tests;
+mod sparse_border_tests;
 mod visibility_collapse_column_tests;
 mod visibility_collapse_tests;
 

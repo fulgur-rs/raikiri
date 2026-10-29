@@ -1,7 +1,7 @@
 use std::any::Any;
 
 use raikiri_dom::Document;
-use raikiri_js::runtime::{BoxGeometry, DocumentHost, HostError};
+use raikiri_js::runtime::{BoxGeometry, DocumentHost, FragmentParseError, HostError};
 use raikiri_js_wasmtime_protocol::*;
 pub type Transport = Box<dyn FnMut(HostOperation) -> Result<HostValue, String>>;
 pub struct RpcDocumentHost {
@@ -126,6 +126,37 @@ impl DocumentHost for RpcDocumentHost {
             HostValue::Document(s) => Document::from_logical_snapshot(s, self.max_nodes)
                 .map_err(|e| HostError(e.to_string())),
             _ => Err(HostError("fragment response kind".into())),
+        }
+    }
+    // cov:ignore: verified by guest and real-AOT host tests; this tools workspace is outside the native llvm-cov run.
+    fn parse_fragment_with_budget(
+        &mut self,
+        tag: &str,
+        namespace: &str,
+        markup: &str,
+        remaining_nodes: usize,
+    ) -> Result<Document, FragmentParseError> {
+        match self
+            .call(HostOperation::BudgetedFragment {
+                tag: tag.into(),
+                namespace: namespace.into(),
+                markup: markup.into(),
+                remaining_nodes: u64::try_from(remaining_nodes).unwrap_or(u64::MAX),
+            })
+            .map_err(FragmentParseError::Host)?
+        {
+            HostValue::FragmentNodes => Err(FragmentParseError::Nodes),
+            HostValue::Document(snapshot) => {
+                let arena_cap = remaining_nodes.min(self.max_nodes).saturating_add(4);
+                if snapshot.nodes.len() > arena_cap {
+                    return Err(FragmentParseError::Nodes);
+                }
+                Document::from_logical_snapshot(snapshot, arena_cap)
+                    .map_err(|error| FragmentParseError::Host(HostError(error.to_string())))
+            }
+            _ => Err(FragmentParseError::Host(HostError(
+                "fragment response kind".into(),
+            ))),
         }
     }
     // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.

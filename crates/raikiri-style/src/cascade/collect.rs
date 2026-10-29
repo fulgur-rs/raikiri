@@ -31,9 +31,9 @@ use super::html_quirks::{
 };
 use super::limits::{CandidateBudget, CascadeLimits, Counter, WalkCounts};
 use super::list_hints::push_list_attribute_hints;
-use super::rule_index::{AncestorFilter, RuleIndex};
+use super::rule_index::{AncestorFilter, CandidateSelector, RuleIndex};
 use super::selector_match::{
-    MatchCaches, MatchContext, match_complex_selector_list, selector_matches_pseudo_element,
+    MatchCaches, MatchContext, match_complex_selectors, selector_matches_pseudo_element,
 };
 use super::table_hints::push_table_attribute_hints;
 
@@ -453,7 +453,7 @@ pub(crate) struct Collector<'a, 'r, D: StyleDom> {
     /// margin-collapsing hints.
     substantial_bounds: SubstantialBoundsCache,
     /// Scratch list of the rules the index could not rule out for an element.
-    candidate_rules: Vec<u32>,
+    candidate_rules: Vec<CandidateSelector>,
     candidates: CandidateBudget,
     /// The selector tests of every element collected so far.
     selector_tests: Counter,
@@ -539,6 +539,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         counts.max_element_candidates = self.candidates.max_element();
         counts.declarations_visited = self.candidates.visited();
         counts.selector_tests = self.selector_tests.count();
+        counts.selector_work = self.match_ctx.caches.work_count();
     }
 
     /// Collects the input of element `id` into the empty `input`.
@@ -683,19 +684,26 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         // stylesheet rule matching, restricted to the rules the
         // index could not rule out (still in source order)
         self.index
-            .candidate_rules(elem, ancestor_filter, &mut self.candidate_rules);
-        for &rule_idx in &self.candidate_rules {
+            .candidate_selectors(elem, ancestor_filter, &mut self.candidate_rules);
+        let mut remaining = self.candidate_rules.as_slice();
+        while let Some(first) = remaining.first() {
+            let rule_idx = first.rule;
+            let end = remaining.partition_point(|candidate| candidate.rule == rule_idx);
+            let (positions, rest) = remaining.split_at(end);
+            remaining = rest;
             let indexed = self.index.rule(rule_idx);
             let rule = indexed.rule;
             self.selector_tests.add(indexed.selector_tests)?;
             if indexed.has_element_selector
-                && let Some(spec) = match_complex_selector_list(
-                    &rule.selectors,
+                && let Some(spec) = match_complex_selectors(
+                    positions
+                        .iter()
+                        .map(|position| &rule.selectors.slice()[position.selector as usize]),
                     self.match_ctx,
                     elem,
                     id,
                     ancestor_path,
-                )
+                )?
             {
                 // The declarations were expanded when the rule was
                 // parsed (`crate::rule::expand_shorthand_into`), and the
@@ -714,23 +722,19 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
             if !indexed.has_pseudo_selector {
                 continue;
             }
-            // Pseudo-elements — independent pass over the same rule's selector
-            // list (a rule's comma-separated list can target the real element
-            // via one selector and a pseudo-element via another, e.g.
-            // `a, a::before {..}`, so this isn't mutually exclusive with the
-            // match above). `selector_matches_pseudo_element` fast-returns
-            // `None` via `Selector::pseudo_element()`'s `O(1)` flag check for
-            // the (overwhelmingly common) selector that doesn't target a
-            // pseudo-element at all, so this second list walk stays cheap for
-            // documents with no pseudo-element rules.
-            for selector in rule.selectors.slice() {
+            // Element and pseudo selectors are independent passes. Candidate
+            // positions retain list order so matching pseudo declarations keep
+            // their original ordering and specificity.
+            for position in positions {
+                let selector = &rule.selectors.slice()[position.selector as usize];
                 let Some(pseudo) = selector_matches_pseudo_element(
                     self.match_ctx,
                     selector,
                     elem,
                     id,
                     ancestor_path,
-                ) else {
+                )?
+                else {
                     continue;
                 };
                 let spec = specificity_of(selector);

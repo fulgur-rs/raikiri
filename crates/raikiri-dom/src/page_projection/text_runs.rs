@@ -112,7 +112,7 @@ pub(super) fn prepare_markers(
         return Ok(markers);
     }
     let snapshots = document
-        .shared_counter_snapshots(cascade)
+        .shared_compact_counter_snapshots(cascade)
         .map_err(
             |error| raikiri_traits::LayoutError::CounterSnapshotLimitExceeded {
                 limit: error.limit,
@@ -140,7 +140,7 @@ pub(super) fn prepare_markers(
             continue;
         }
         let Some((style, content)) =
-            crate::generated_content::markers::marker_render_info_with_snapshots(
+            crate::generated_content::markers::marker_render_info_with_compact_snapshots(
                 document, cascade, owner, &snapshots,
             )
         else {

@@ -357,6 +357,22 @@ pub trait StyleElement {
             .is_some_and(|value| class_token_matches(value, class, true))
     }
 
+    /// Opts into standard class-token matching for repeated compound checks.
+    ///
+    /// `Some(value)` promises that both [`Self::has_class`] and
+    /// [`Self::has_class_ascii_case_insensitive`] agree exactly with splitting
+    /// `value` on the five HTML ASCII whitespace characters and comparing
+    /// tokens exactly or with ASCII case folding, respectively. `Some("")`
+    /// describes an empty set. `None` preserves the customized methods and
+    /// does not mean an empty set. The default does not opt in.
+    ///
+    /// The matcher borrows the value only for the current immutable compound
+    /// match. Repeated checks may scan that borrow before indexing it; no
+    /// borrowed state survives the compound or a subsequent attribute mutation.
+    fn class_attribute_for_matching(&self) -> Option<&str> {
+        None
+    }
+
     /// Calls `f` once per non-empty `class` token, in attribute order
     /// (duplicates included).
     ///

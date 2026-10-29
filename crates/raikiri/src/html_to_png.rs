@@ -166,7 +166,12 @@ where
         if !matches!(
             pseudo,
             raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
-        ) || !usize::try_from(owner.0).is_ok_and(|element| {
+        ) || !computed.content.iter().any(|component| {
+            matches!(
+                component,
+                raikiri_style::property::ContentComponent::Image { .. }
+            )
+        }) || !usize::try_from(owner.0).is_ok_and(|element| {
             raikiri_dom::generated_content::content_images_are_placed(
                 &uncascaded.dom,
                 &cascade,

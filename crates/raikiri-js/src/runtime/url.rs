@@ -9,7 +9,7 @@ use boa_engine::{
 };
 use url::Url;
 
-use super::interfaces::{function, set_to_string_tag};
+use super::interfaces::{function, guarded_native, set_to_string_tag};
 use super::webidl::usv_string;
 
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -202,7 +202,7 @@ pub(crate) fn install(context: &mut Context, params_prototype: JsObject) -> JsRe
     let can_parse = function(context, "canParse", 1, url_can_parse)?;
     let constructor =
         NativeFunction::from_copy_closure_with_captures(url_constructor, params_prototype);
-    let mut builder = ConstructorBuilder::new(context, constructor);
+    let mut builder = ConstructorBuilder::new(context, guarded_native(constructor));
     builder.name("URL").length(1).constructor(true);
     let operation = Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE;
     for (name, getter) in accessors {

@@ -2763,7 +2763,9 @@ pub(crate) fn parse_wpt_inner_html_fragment(
     document_base_url: Option<&raikiri::Url>,
     page_base: Option<&Path>,
     wpt_root: &Path,
-) -> Result<raikiri_html::UncascadedDocument, String> {
+    limits: &raikiri_traits::RenderLimits,
+    remaining_nodes: Option<u64>,
+) -> Result<raikiri_html::UncascadedDocument, raikiri_traits::ParseError> {
     let page_base = page_base.and_then(|base| std::fs::canonicalize(base).ok());
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
     let stylesheet_network = wpt_root
@@ -2777,14 +2779,15 @@ pub(crate) fn parse_wpt_inner_html_fragment(
         )
         .base_url(document_base_url.cloned());
     let markup = absolutize_wpt_resource_urls(markup, page_base.as_deref(), wpt_root.as_deref());
-    raikiri_html::parse_fragment(
+    raikiri_html::parse_fragment_with_limits(
         markup.as_bytes(),
         &opts,
         context_tag,
         context_namespace,
         true,
+        limits,
+        remaining_nodes,
     )
-    .map_err(|error| format!("parse innerHTML fragment: {error:?}"))
 }
 
 fn render_raikiri_pages_inner(

@@ -405,7 +405,7 @@ fn scene_of(children: usize) -> Arc<VectorImage> {
 }
 
 fn bytes_of(scene: &VectorImage) -> u64 {
-    u64::try_from(scene.estimated_heap_bytes()).unwrap()
+    DecodedImageCache::scene_bytes(&url("a"), scene)
 }
 
 fn url(name: &str) -> Url {
@@ -446,23 +446,6 @@ fn a_scene_built_again_replaces_the_one_before_without_being_charged_twice() {
 }
 
 #[test]
-fn the_oldest_scenes_make_room_when_there_are_too_many() {
-    let (mut cache, budget) = cache_with(u64::MAX);
-    let each = bytes_of(&scene_of(1));
-    for at in 0..=super::image_cache::MAX_CACHED_SCENES {
-        cache.insert_scene(url(&at.to_string()), size(1.0, 1.0), scene_of(1));
-    }
-    assert!(cache.scene(&url("0"), size(1.0, 1.0)).is_none());
-    assert!(cache.scene(&url("1"), size(1.0, 1.0)).is_some());
-    let last = super::image_cache::MAX_CACHED_SCENES.to_string();
-    assert!(cache.scene(&url(&last), size(1.0, 1.0)).is_some());
-    assert_eq!(
-        budget.retained(),
-        each * u64::try_from(super::image_cache::MAX_CACHED_SCENES).unwrap()
-    );
-}
-
-#[test]
 fn the_oldest_scenes_make_room_when_the_set_is_out_of_bytes() {
     let (mut cache, budget) = cache_with(u64::MAX);
     let each = bytes_of(&scene_of(1));
@@ -482,11 +465,11 @@ fn a_scene_larger_than_the_set_is_not_kept_and_costs_nothing() {
     let small = scene_of(1);
     let large = scene_of(64);
     cache.max_bytes = bytes_of(&small) + 1;
-    cache.insert_scene(url("small"), size(1.0, 1.0), Arc::clone(&small));
-    cache.insert_scene(url("large"), size(1.0, 1.0), large);
-    assert!(cache.scene(&url("large"), size(1.0, 1.0)).is_none());
+    cache.insert_scene(url("a"), size(1.0, 1.0), Arc::clone(&small));
+    cache.insert_scene(url("b"), size(1.0, 1.0), large);
+    assert!(cache.scene(&url("b"), size(1.0, 1.0)).is_none());
     // It did not push out the one that fits.
-    assert!(cache.scene(&url("small"), size(1.0, 1.0)).is_some());
+    assert!(cache.scene(&url("a"), size(1.0, 1.0)).is_some());
     assert_eq!(budget.retained(), bytes_of(&small));
 }
 
@@ -619,6 +602,72 @@ fn shared_svg_sources_are_charged_once_and_failed_replacement_keeps_the_old_sour
     drop(cache);
     assert_eq!(budget.retained(), 0);
     assert!(document.source_only_retained_bytes().is_some());
+}
+
+#[test]
+fn sixteen_seventeen_and_thirty_two_small_svg_scenes_survive_repeated_cycles() {
+    for count in [16, 17, 32] {
+        let images: Vec<_> = (0..count)
+            .map(|at| svg_url(&RED_SQUARE.replace("red", &format!("rgb({at},0,0)"))))
+            .collect();
+        let resources = RenderResources::new();
+        preload(&resources, &images);
+        let first: Vec<_> = images
+            .iter()
+            .map(|url| resources.get_vector(url, &request(8.0, 4.0)).unwrap())
+            .collect();
+        for _ in 0..3 {
+            for (url, original) in images.iter().zip(&first) {
+                assert!(
+                    Arc::ptr_eq(
+                        original,
+                        &resources.get_vector(url, &request(8.0, 4.0)).unwrap()
+                    ),
+                    "scene cycle {count}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_scene_metadata_and_url_storage_are_bounded_by_the_byte_budget() {
+    let (mut cache, budget) = cache_with(u64::MAX);
+    let each = bytes_of(&scene_of(0));
+    assert!(each > 0);
+    cache.max_bytes = each * 2;
+    for name in ["a", "b", "c"] {
+        cache.insert_scene(url(name), size(1.0, 1.0), scene_of(0));
+    }
+    assert!(cache.scene(&url("a"), size(1.0, 1.0)).is_none());
+    assert!(cache.scene(&url("b"), size(1.0, 1.0)).is_some());
+    assert!(cache.scene(&url("c"), size(1.0, 1.0)).is_some());
+    assert_eq!(budget.retained(), each * 2);
+    assert!(DecodedImageCache::scene_bytes(&url("a-longer-url"), &scene_of(0)) > each);
+    drop(cache);
+    assert_eq!(budget.retained(), 0);
+}
+
+#[test]
+fn hot_svg_scenes_survive_one_shot_images_while_the_byte_budget_has_room() {
+    let images: Vec<_> = (0..40)
+        .map(|at| svg_url(&RED_SQUARE.replace("red", &format!("rgb({at},0,0)"))))
+        .collect();
+    let resources = RenderResources::new();
+    preload(&resources, &images);
+    let hot: Vec<_> = images[..8]
+        .iter()
+        .map(|url| resources.get_vector(url, &request(8.0, 4.0)).unwrap())
+        .collect();
+    for one_shot in &images[8..] {
+        resources.get_vector(one_shot, &request(8.0, 4.0)).unwrap();
+        for (url, original) in images[..8].iter().zip(&hot) {
+            assert!(Arc::ptr_eq(
+                original,
+                &resources.get_vector(url, &request(8.0, 4.0)).unwrap()
+            ));
+        }
+    }
 }
 
 #[test]

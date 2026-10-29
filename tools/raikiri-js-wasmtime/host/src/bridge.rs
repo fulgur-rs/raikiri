@@ -76,6 +76,32 @@ impl Bridge {
                 .parse_fragment(&tag, &namespace, &markup)
                 .map(|d| HostValue::Document(d.logical_snapshot()))
                 .map_err(|e| e.to_string()),
+            // cov:ignore: exercised by the separate host workspace, including the real-AOT typed fragment test.
+            HostOperation::BudgetedFragment {
+                tag,
+                namespace,
+                markup,
+                remaining_nodes,
+            } => {
+                let remaining = usize::try_from(remaining_nodes)
+                    .unwrap_or(usize::MAX)
+                    .min(self.max_nodes);
+                match self
+                    .host
+                    .parse_fragment_with_budget(&tag, &namespace, &markup, remaining)
+                {
+                    Ok(document) if document.node_count() > remaining.saturating_add(4) => {
+                        Ok(HostValue::FragmentNodes)
+                    }
+                    Ok(document) => Ok(HostValue::Document(document.logical_snapshot())),
+                    Err(raikiri_js::runtime::FragmentParseError::Nodes) => {
+                        Ok(HostValue::FragmentNodes)
+                    }
+                    Err(raikiri_js::runtime::FragmentParseError::Host(error)) => {
+                        Err(error.to_string())
+                    }
+                }
+            }
             HostOperation::Fetch(url) => self
                 .host
                 .fetch_script(&url)

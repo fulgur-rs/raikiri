@@ -13,7 +13,9 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
-use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+use raikiri_js::runtime::{
+    BoxGeometry, DocumentHost, DomRect, FragmentParseError, HostError, PositionKind,
+};
 
 use crate::reftest::{
     LiveWptSetup, live_wpt_stylesheets_in_subtree, parse_wpt_inner_html_fragment,
@@ -683,7 +685,22 @@ impl DocumentHost for WptDocumentHost {
         context_ns: &str,
         markup: &str,
     ) -> Result<raikiri_dom::Document, HostError> {
-        let fragment = parse_wpt_inner_html_fragment(
+        self.parse_fragment_with_budget(context_tag, context_ns, markup, usize::MAX)
+            .map_err(|error| match error {
+                FragmentParseError::Nodes => HostError("fragment node limit exceeded".into()), // cov:ignore: this legacy entry fixes the node cap at one million; small-budget Nodes is exercised through the budgeted entry.
+                FragmentParseError::Host(error) => error,
+            })
+    }
+    fn parse_fragment_with_budget(
+        &mut self,
+        context_tag: &str,
+        context_ns: &str,
+        markup: &str,
+        remaining_nodes: usize,
+    ) -> Result<raikiri_dom::Document, FragmentParseError> {
+        let limits = raikiri_traits::RenderLimits::default();
+        let remaining = u64::try_from(remaining_nodes).unwrap_or(u64::MAX);
+        parse_wpt_inner_html_fragment(
             markup,
             context_tag,
             context_ns,
@@ -692,9 +709,19 @@ impl DocumentHost for WptDocumentHost {
             self.setup.document_base_url.as_ref(),
             self.setup.page_resource_base.as_deref(),
             &self.wpt_root,
+            &limits,
+            Some(remaining),
         )
-        .map_err(HostError)?; // cov:ignore: UTF-8 markup is parsed from memory; its reader and parser recover without I/O/encoding errors.
-        Ok(fragment.dom)
+        .map(|fragment| fragment.dom)
+        .map_err(|error| match error {
+            raikiri_traits::ParseError::LimitExceeded {
+                kind: raikiri_traits::LimitKind::DomNodes,
+                ..
+            } => FragmentParseError::Nodes,
+            error => {
+                FragmentParseError::Host(HostError(format!("parse innerHTML fragment: {error:?}")))
+            }
+        })
     }
     fn as_any(&self) -> &dyn Any {
         self

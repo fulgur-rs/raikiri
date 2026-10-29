@@ -18,13 +18,14 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 /// > element, then return the directionality of parentNode. Return 'ltr'.
 ///
 /// i.e. own `dir="ltr"`/`dir="rtl"` wins; own `dir="auto"` uses
-/// [`auto_directionality`]'s text scan (falling back to `'ltr'`, *not* the
+/// [`contained_text_auto_directionality`]'s text scan (falling back to `'ltr'`, *not* the
 /// parent's directionality, when the scan finds nothing); otherwise
 /// (missing/invalid `dir`) walk up to the nearest ancestor with an explicit
 /// `ltr`/`rtl` `dir`; if none exists anywhere (including at the document
 /// root, which has no parent element), the default is `'ltr'` — this
-/// function is total (`Direction`, not `Option<Direction>`), matching the
-/// spec's own "always ltr or rtl, never undetermined" shape.
+/// successful resolution always yields a `Direction`, matching the spec's
+/// "always ltr or rtl, never undetermined" shape. A failed visit budget is
+/// propagated as an error before reading the next node.
 ///
 /// CSS Selectors L4 §7.1 <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>
 /// This motivates
@@ -37,7 +38,7 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 ///
 /// The quoted `Auto` arm above elides two branches of the referenced "auto
 /// directionality" algorithm that this crate does not implement — see
-/// [`auto_directionality`]'s own doc for the precise cut and why each is out
+/// [`contained_text_auto_directionality`]'s own doc for the precise cut and why each is out
 /// of scope. Also elided from the `Undefined` arm: the `bdi` element and
 /// `input[type=tel]` special cases (raikiri has no notion of
 /// element-specific behavior at this layer — `bdi` without an explicit
@@ -49,16 +50,21 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
     elem: &E,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
-) -> Direction {
+    mut visit: impl FnMut() -> Result<(), crate::CascadeError>,
+) -> Result<Direction, crate::CascadeError> {
     match own_dir_attribute_state(elem) {
-        DirAttributeState::Ltr => return Direction::Ltr,
-        DirAttributeState::Rtl => return Direction::Rtl,
+        DirAttributeState::Ltr => return Ok(Direction::Ltr),
+        DirAttributeState::Rtl => return Ok(Direction::Rtl),
         DirAttributeState::Auto => {
-            return auto_directionality(dom, elem_id).unwrap_or(Direction::Ltr);
+            return Ok(
+                contained_text_auto_directionality(dom, elem_id, &mut visit)?
+                    .unwrap_or(Direction::Ltr),
+            );
         }
         DirAttributeState::Undefined => {}
     }
     for &ancestor_id in ancestors.iter().rev() {
+        visit()?;
         // Same "explicit `if let` nesting instead of `.and_then` chain"
         // reason as `effective_language`'s sibling loop — `own_explicit_direction`
         // borrows from `ancestor_elem`, which itself borrows from a `node`
@@ -67,10 +73,10 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
             && let Some(ancestor_elem) = node.as_element()
             && let Some(dir) = own_explicit_direction(&ancestor_elem)
         {
-            return dir;
+            return Ok(dir);
         }
     }
-    Direction::Ltr
+    Ok(Direction::Ltr)
 }
 
 /// The `dir` attribute's full enumerated state — HTML LS §3.2.6.4's LTR /
@@ -156,44 +162,6 @@ pub(crate) fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direct
     }
 }
 
-/// HTML LS §3.2.6.4's "auto directionality" given an element (see
-/// [`resolve_directionality`]'s contract), simplified to the text-content-scan
-/// branch only:
-///
-/// > To compute the auto directionality given an element element: \[...\]
-/// > Return the contained text auto directionality of element with
-/// > canExcludeRoot set to false.
-///
-/// i.e. [`contained_text_auto_directionality`] over `element`'s own
-/// descendants, `None` iff no descendant text node contains a strong L/AL/R
-/// character anywhere ([`resolve_directionality`]'s caller then applies the
-/// spec's own `'ltr'` fallback for that case).
-///
-/// # Deliberately out of scope
-///
-/// The full algorithm has two branches elided here, both unreachable from
-/// this crate's current DOM model:
-///
-/// - **Form-associated elements' current value** — the spec's first step
-///   scans an `input`/`textarea` element's live *value* (not its descendant
-///   text) for the same L/AL/R rule. [`StyleElement`] has no notion of a
-///   form control's current value (a run-time, potentially
-///   script-or-user-mutated state distinct from the parsed DOM tree this
-///   crate's style layer operates over) — out of scope for the same reason
-///   [`crate::style_dom`] carries no form-control surface at all. Falling
-///   through to the descendant-text scan instead happens to coincide with a
-///   `textarea`'s *initial* value (its child text node) but not any
-///   subsequently-changed value, and always resolves `input` (a void
-///   element with no descendant text) to `None` regardless of what the
-///   user has typed into it.
-/// - **`slot` elements with shadow-tree assigned nodes** — raikiri has no
-///   shadow DOM (established elsewhere, e.g. [`resolve_directionality`]'s
-///   own "Deliberately out of scope" note on the shadow-tree host step of
-///   "parent directionality"), so this branch's precondition never holds.
-fn auto_directionality<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> Option<Direction> {
-    contained_text_auto_directionality(dom, elem_id)
-}
-
 const MAX_AUTO_DIRECTIONALITY_SCAN_EDGES: usize = 65_536;
 const MAX_AUTO_DIRECTIONALITY_SCAN_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -244,11 +212,44 @@ where
     true
 }
 
+/// HTML LS §3.2.6.4's "auto directionality" given an element (see
+/// [`resolve_directionality`]'s contract), simplified to the text-content-scan
+/// branch only:
+///
+/// > To compute the auto directionality given an element element: \[...\]
+/// > Return the contained text auto directionality of element with
+/// > canExcludeRoot set to false.
+///
+/// i.e. [`contained_text_auto_directionality`] over `element`'s own
+/// descendants, `None` iff no descendant text node contains a strong L/AL/R
+/// character anywhere ([`resolve_directionality`]'s caller then applies the
+/// spec's own `'ltr'` fallback for that case).
+///
+/// # Deliberately out of scope
+///
+/// The full algorithm has two branches elided here, both unreachable from
+/// this crate's current DOM model:
+///
+/// - **Form-associated elements' current value** — the spec's first step
+///   scans an `input`/`textarea` element's live *value* (not its descendant
+///   text) for the same L/AL/R rule. [`StyleElement`] has no notion of a
+///   form control's current value (a run-time, potentially
+///   script-or-user-mutated state distinct from the parsed DOM tree this
+///   crate's style layer operates over) — out of scope for the same reason
+///   [`crate::style_dom`] carries no form-control surface at all. Falling
+///   through to the descendant-text scan instead happens to coincide with a
+///   `textarea`'s *initial* value (its child text node) but not any
+///   subsequently-changed value, and always resolves `input` (a void
+///   element with no descendant text) to `None` regardless of what the
+///   user has typed into it.
+/// - **`slot` elements with shadow-tree assigned nodes** — raikiri has no
+///   shadow DOM (established elsewhere, e.g. [`resolve_directionality`]'s
+///   own "Deliberately out of scope" note on the shadow-tree host step of
+///   "parent directionality"), so this branch's precondition never holds.
+///
 /// HTML LS §3.2.6.4's "contained text auto directionality" of an element,
-/// with `canExcludeRoot` fixed to `false` (the only value
-/// [`auto_directionality`] ever needs — `true` is only used by the
-/// shadow-tree `slot` branch this crate does not implement, see that
-/// function's doc).:
+/// with `canExcludeRoot` fixed to `false`; the shadow-tree `slot` branch
+/// using `true` is outside the supported subset.
 ///
 /// > For each node descendant of element's descendants, in tree order: If
 /// > any of \[descendant, any ancestor element of descendant that is a
@@ -279,16 +280,18 @@ where
 /// A single scan is bounded by 65,536 yielded child edges, 8 MiB of text,
 /// and at most one worklist frame per edge plus the root frame. Exhausting a
 /// budget returns `None`, which the existing directionality resolver maps
-/// to its LTR fallback.
+/// to its LTR fallback. The cumulative selector visit budget is separate:
+/// exceeding it returns an error instead of a directionality fallback.
 fn contained_text_auto_directionality<D: StyleDom>(
     dom: &D,
     elem_id: StyleNodeId,
-) -> Option<Direction> {
+    visit: &mut impl FnMut() -> Result<(), crate::CascadeError>,
+) -> Result<Option<Direction>, crate::CascadeError> {
     let mut budget = AutoDirectionalityScanBudget::new();
     let mut pending: Vec<D::ChildIter<'_>> = Vec::new();
     if !push_auto_directionality_frame::<D>(&mut pending, dom.child_ids(elem_id)) {
         // cov:ignore: only allocator failure reaches this fail-closed fallback.
-        return None;
+        return Ok(None);
     }
 
     while !pending.is_empty() {
@@ -297,8 +300,9 @@ fn contained_text_auto_directionality<D: StyleDom>(
             pending.pop();
             continue;
         };
+        visit()?;
         if !budget.charge_edge() {
-            return None;
+            return Ok(None);
         }
 
         let Some(node) = dom.node(node_id) else {
@@ -308,10 +312,10 @@ fn contained_text_auto_directionality<D: StyleDom>(
             StyleNodeKind::Text => {
                 let text = node.text_content().unwrap_or("");
                 if !budget.charge_text_bytes(text.len()) {
-                    return None;
+                    return Ok(None);
                 }
                 if let Some(direction) = text_node_first_strong_direction(text) {
-                    return Some(direction);
+                    return Ok(Some(direction));
                 }
             }
             StyleNodeKind::Element => {
@@ -324,7 +328,7 @@ fn contained_text_auto_directionality<D: StyleDom>(
                 }
                 if !push_auto_directionality_frame::<D>(&mut pending, dom.child_ids(node_id)) {
                     // cov:ignore: only allocator failure reaches this fail-closed fallback.
-                    return None;
+                    return Ok(None);
                 }
             }
             StyleNodeKind::Comment
@@ -334,7 +338,7 @@ fn contained_text_auto_directionality<D: StyleDom>(
         }
     }
 
-    None
+    Ok(None)
 }
 
 /// The exclusion set [`contained_text_auto_directionality`]'s spec quote

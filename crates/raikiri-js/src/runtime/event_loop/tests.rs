@@ -4,7 +4,7 @@ use boa_engine::{JsError, JsNativeError, JsValue, Source};
 
 use super::{Abort, Limits, RunOptions, abort_for};
 use crate::runtime::test_host::StubHost;
-use crate::runtime::webidl::with_state;
+use crate::runtime::webidl::with_state_unchecked as with_state;
 use crate::runtime::{DomRuntime, RuntimeError};
 
 fn rt() -> DomRuntime {
@@ -32,6 +32,11 @@ fn limits_defaults() {
     let limits = Limits::default();
     assert_eq!(limits.max_virtual_time_ms, 30_000.0);
     assert_eq!(limits.max_tasks, 100_000);
+    assert_eq!(limits.max_enqueued_jobs, 100_000);
+    assert_eq!(
+        limits.max_selector_work,
+        raikiri_style::CascadeLimits::default().max_selector_work
+    );
     assert_eq!(limits.max_loop_iterations, 10_000_000);
     assert_eq!(limits.max_recursion, 512);
     assert_eq!(limits.max_nodes, 1_000_000);
@@ -442,6 +447,8 @@ fn abort_display() {
     for (abort, text) in [
         (Abort::VirtualTime, "virtual time limit"),
         (Abort::Tasks, "task limit"),
+        (Abort::EnqueuedJobs, "enqueued job limit"),
+        (Abort::SelectorWork, "selector work limit"),
         (Abort::LoopIterations, "loop iteration limit"),
         (Abort::Recursion, "recursion limit"),
         (Abort::Nodes, "node limit"),
@@ -650,4 +657,478 @@ fn into_host_after_an_abort_returns_the_document() {
         .filter(|n| n.kind() == raikiri_dom::NodeKind::Element)
         .count();
     assert_eq!(p, 4, "html, head, body, p");
+}
+
+#[test]
+fn enqueue_budget_stops_bursts_and_cancelled_timer_churn() {
+    for source in [
+        "for(let i=0;i<4;i++) queueMicrotask(()=>{});",
+        "for(let i=0;i<4;i++) clearTimeout(setTimeout(()=>{},0));",
+        "for(let i=0;i<4;i++) requestAnimationFrame(()=>{});",
+        "for(let i=0;i<4;i++) Promise.resolve().then(()=>{});",
+    ] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 3,
+            ..Limits::default()
+        });
+        assert_eq!(
+            rt.evaluate(source),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+        assert_eq!(rt.run_until_idle(), Err(Abort::EnqueuedJobs));
+        assert_eq!(
+            rt.evaluate("true"),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+        with_state(rt.context_mut(), |state| {
+            let event_loop = &state.event_loop;
+            assert!(event_loop.tasks.is_empty());
+            assert!(event_loop.microtasks.is_empty());
+            assert!(event_loop.timers.is_empty());
+            assert!(event_loop.frame_callbacks.is_empty());
+            assert!(event_loop.cancellable.is_empty());
+            assert_eq!(event_loop.tasks.capacity(), 0);
+            assert_eq!(event_loop.microtasks.capacity(), 0);
+            assert_eq!(event_loop.timers.capacity(), 0);
+            assert_eq!(event_loop.cancellable.capacity(), 0);
+            assert_eq!(event_loop.jobs_run, 0);
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn enqueue_budget_exact_zero_and_execution_limits_are_independent() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 3,
+        max_tasks: 1,
+        ..Limits::default()
+    });
+    rt.evaluate("requestAnimationFrame(()=>{}); requestAnimationFrame(()=>{}); requestAnimationFrame(()=>{});").unwrap();
+    assert_eq!(rt.run_until_idle(), Ok(()));
+    with_state(rt.context_mut(), |s| {
+        assert_eq!(s.event_loop.jobs_run, 1);
+        assert_eq!(s.event_loop.jobs_enqueued, 3);
+    })
+    .unwrap();
+    assert_eq!(
+        rt.evaluate("setTimeout(()=>{},0)"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    ok(&mut rt, "1+1===2");
+    assert_eq!(
+        rt.evaluate("queueMicrotask(()=>{})"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+}
+
+#[test]
+fn enqueue_budget_blocks_dom_actions_after_promise_overflow() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 1,
+        ..Limits::default()
+    });
+    let before = with_state(rt.context_mut(), |s| s.host.document().node_count()).unwrap();
+    assert_eq!(rt.evaluate("var survived=false; Promise.resolve().then(()=>{}); Promise.resolve().then(()=>{}); survived=true; document.body.appendChild(document.createElement('p'));"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+    with_state(rt.context_mut(), |s| {
+        assert_eq!(s.host.document().node_count(), before)
+    })
+    .unwrap();
+    // Boa's enqueue hook cannot throw: ordinary JS between overflow and the
+    // next host boundary still executes, but no queued callback does.
+    assert!(
+        rt.context_mut()
+            .global_object()
+            .get(boa_engine::js_string!("survived"), rt.context_mut())
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn enqueue_budget_applies_to_interval_rescheduling_and_recursive_microtasks() {
+    for source in [
+        "setInterval(()=>{},0);",
+        "queueMicrotask(function f(){queueMicrotask(f)});",
+    ] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 4,
+            ..Limits::default()
+        });
+        let result = rt.evaluate(source);
+        if result.is_ok() {
+            assert_eq!(rt.run_until_idle(), Err(Abort::EnqueuedJobs));
+        } else {
+            assert_eq!(result, Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+        }
+        with_state(rt.context_mut(), |s| {
+            assert_eq!(s.event_loop.jobs_enqueued, 4)
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn enqueue_budget_counts_boa_and_native_registration_routes() {
+    for kind in 0..5 {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 0,
+            ..Limits::default()
+        });
+        let context = rt.context_mut();
+        match kind {
+            0 => context.enqueue_job(Job::GenericJob(GenericJob::new(
+                |_| Ok(JsValue::undefined()),
+                context.realm().clone(),
+            ))),
+            1 => context.enqueue_job(Job::AsyncJob(NativeAsyncJob::new(async |_| {
+                Ok(JsValue::undefined())
+            }))),
+            2 => context.enqueue_job(Job::TimeoutJob(TimeoutJob::new(
+                NativeJob::new(|_| Ok(JsValue::undefined())),
+                0,
+            ))),
+            3 => context.enqueue_job(Job::IntervalJob(IntervalJob::new(
+                boa_engine::job::NativeJobFn::new(|_| Ok(JsValue::undefined())),
+                0,
+            ))),
+            _ => assert!(
+                super::queue_native_task(context, NativeJob::new(|_| Ok(JsValue::undefined())))
+                    .is_err()
+            ),
+        }
+        assert_eq!(rt.run_until_idle(), Err(Abort::EnqueuedJobs));
+        // An executor hook invoked after abort must not retain its job.
+        rt.context_mut()
+            .enqueue_job(Job::AsyncJob(NativeAsyncJob::new(async |_| {
+                panic!("aborted job ran")
+            })));
+        with_state(rt.context_mut(), |s| {
+            assert!(s.event_loop.tasks.is_empty());
+            assert!(s.event_loop.microtasks.is_empty());
+            assert_eq!(s.event_loop.jobs_enqueued, 0);
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn enqueue_budget_drops_cancellable_jobs_and_preserves_first_reason() {
+    let mut event_loop = super::EventLoop::new(Limits {
+        max_enqueued_jobs: 2,
+        ..Limits::default()
+    });
+    let retained = std::rc::Rc::new(());
+    let capture = retained.clone();
+    event_loop
+        .queue_cancellable_native_task(
+            10.0,
+            NativeJob::new(move |_| {
+                let _ = &capture;
+                Ok(JsValue::undefined())
+            }),
+        )
+        .unwrap();
+    let token = event_loop
+        .queue_cancellable_native_task(20.0, NativeJob::new(|_| Ok(JsValue::undefined())))
+        .unwrap();
+    event_loop.cancel_native_task(token);
+    assert_eq!(event_loop.jobs_enqueued, 2);
+    assert!(
+        event_loop
+            .queue_cancellable_native_task(0.0, NativeJob::new(|_| Ok(JsValue::undefined())))
+            .is_err()
+    );
+    assert_eq!(std::rc::Rc::strong_count(&retained), 1);
+    assert!(event_loop.cancellable.is_empty());
+    assert!(event_loop.tasks.is_empty());
+    assert_eq!(event_loop.tasks.capacity(), 0);
+    assert_eq!(event_loop.microtasks.capacity(), 0);
+    assert_eq!(event_loop.cancellable.capacity(), 0);
+    event_loop.abort(Abort::Tasks);
+    assert_eq!(event_loop.aborted, Some(Abort::EnqueuedJobs));
+    assert_eq!(
+        event_loop.queue_task(0.0, super::Task::AnimationFrame),
+        Err(Abort::EnqueuedJobs)
+    );
+}
+
+#[test]
+fn promise_only_overflow_waits_for_engine_limit_but_never_retains_more_jobs() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 2,
+        max_loop_iterations: 20,
+        ..Limits::default()
+    });
+    assert_eq!(
+        rt.evaluate("while(true) Promise.resolve().then(()=>{});"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    with_state(rt.context_mut(), |s| {
+        assert_eq!(s.event_loop.jobs_enqueued, 2);
+        assert!(s.event_loop.microtasks.is_empty());
+    })
+    .unwrap();
+}
+
+#[test]
+fn enqueue_overflow_is_uncatchable_and_later_reports_do_not_repeat_console() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(rt.evaluate("var caught=false, finalized=false; console.log('before'); try {setTimeout(()=>{},0)} catch(e){caught=true} finally {finalized=true}"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+    let context = rt.context_mut();
+    let global = context.global_object();
+    assert!(
+        !global
+            .get(boa_engine::js_string!("caught"), context)
+            .unwrap()
+            .to_boolean()
+    );
+    assert!(
+        !global
+            .get(boa_engine::js_string!("finalized"), context)
+            .unwrap()
+            .to_boolean()
+    );
+    let report = rt.run_document();
+    assert_eq!(report.aborted, Some(Abort::EnqueuedJobs));
+    assert!(report.console.is_empty());
+}
+
+#[test]
+#[ignore = "manual resource measurement; select workload/count using RAIKIRI_QUEUE_PROBE_* env vars"]
+fn enqueue_resource_probe() {
+    let workload = std::env::var("RAIKIRI_QUEUE_PROBE_KIND").unwrap_or_else(|_| "churn".into());
+    let count: usize = std::env::var("RAIKIRI_QUEUE_PROBE_COUNT")
+        .unwrap_or_else(|_| "300000".into())
+        .parse()
+        .unwrap();
+    let operation = match workload.as_str() {
+        "churn" => "clearTimeout(setTimeout(callback, 0));",
+        "timer" => "setTimeout(callback, 0);",
+        "microtask" => "queueMicrotask(callback);",
+        "promise" => "Promise.resolve().then(callback);",
+        "frame" => "requestAnimationFrame(callback);",
+        _ => panic!("unknown probe workload"),
+    };
+    let mut rt = rt();
+    rt.context_mut()
+        .eval(Source::from_bytes("var callback=()=>{};"))
+        .unwrap();
+    let start = std::time::Instant::now();
+    let mut high_water = 0;
+    let mut completed = 0;
+    let mut abort = None;
+    for offset in (0..count).step_by(1000) {
+        let batch = (count - offset).min(1000);
+        let source = format!("for(var i=0;i<{batch};i++){{{operation}}}");
+        let result = rt.context_mut().eval(Source::from_bytes(&source));
+        let (pending, reason) = with_state(rt.context_mut(), |s| {
+            (
+                s.event_loop.tasks.len()
+                    + s.event_loop.microtasks.len()
+                    + s.event_loop.frame_callbacks.len(),
+                s.event_loop.aborted.clone(),
+            )
+        })
+        .unwrap();
+        high_water = high_water.max(pending);
+        abort = reason;
+        if result.is_err() || abort.is_some() {
+            break;
+        }
+        completed += batch;
+    }
+    let elapsed = start.elapsed();
+    let (tasks, microtasks, timers, frames) = with_state(rt.context_mut(), |s| {
+        (
+            s.event_loop.tasks.len(),
+            s.event_loop.microtasks.len(),
+            s.event_loop.timers.len(),
+            s.event_loop.frame_callbacks.len(),
+        )
+    })
+    .unwrap();
+    let memory = std::fs::read_to_string("/proc/self/status").unwrap();
+    let peak = memory
+        .lines()
+        .find(|line| line.starts_with("VmHWM:"))
+        .unwrap();
+    println!(
+        "QUEUE_PROBE kind={workload} requested={count} completed={completed} elapsed_ms={:.3} high_water={high_water} tasks={tasks} microtasks={microtasks} timers={timers} frames={frames} abort={abort:?} {peak}",
+        elapsed.as_secs_f64() * 1000.0
+    );
+}
+
+#[test]
+fn animation_finish_jobs_obey_enqueue_budget() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(
+        rt.evaluate("document.body.animate({opacity:[0,1]}, 20).finished;"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    assert_eq!(rt.run_until_idle(), Err(Abort::EnqueuedJobs));
+    with_state(rt.context_mut(), |s| {
+        assert!(s.event_loop.cancellable.is_empty())
+    })
+    .unwrap();
+}
+
+#[test]
+fn effectively_unlimited_enqueue_budget_keeps_cancelled_task_execution_semantics() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: u64::MAX,
+        max_tasks: 0,
+        ..Limits::default()
+    });
+    rt.evaluate("for(let i=0;i<1000;i++) clearTimeout(setTimeout(()=>{},0));")
+        .unwrap();
+    assert_eq!(rt.run_until_idle(), Ok(()));
+    with_state(rt.context_mut(), |s| {
+        assert_eq!(s.event_loop.jobs_enqueued, 1000);
+        assert_eq!(s.event_loop.jobs_run, 0);
+    })
+    .unwrap();
+}
+
+#[test]
+fn silent_enqueue_abort_blocks_public_native_callbacks() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = calls.clone();
+    let result = rt.evaluate_with_callback(
+        "Promise.resolve().then(()=>{}); notify();",
+        "notify",
+        move |_, _, _| {
+            seen.set(seen.get() + 1);
+            Ok(JsValue::undefined())
+        },
+    );
+    assert_eq!(calls.get(), 0);
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+}
+
+#[test]
+fn silent_enqueue_abort_during_error_conversion_is_reported_immediately() {
+    for source in [
+        "throw {toString(){Promise.resolve().then(()=>{}); return 'x'}};",
+        "var e=new Error('x'); Object.defineProperty(e,'message',{get(){Promise.resolve().then(()=>{}); return 'x'}}); throw e;",
+    ] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 0,
+            ..Limits::default()
+        });
+        assert_eq!(
+            rt.evaluate(source),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+    }
+}
+
+#[test]
+fn silent_enqueue_abort_stops_animation_iterator_callbacks() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(rt.evaluate("var nextCalls=0; document.body.animate({[Symbol.iterator](){Promise.resolve().then(()=>{});return{next(){nextCalls++;return{done:true}}}}},20);"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+    let context = rt.context_mut();
+    assert_eq!(
+        context
+            .global_object()
+            .get(boa_engine::js_string!("nextCalls"), context)
+            .unwrap()
+            .as_number(),
+        Some(0.0)
+    );
+}
+
+#[test]
+fn silent_enqueue_abort_blocks_constructor_argument_callbacks() {
+    for constructor in ["DOMRect", "URL", "URLSearchParams"] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 0,
+            ..Limits::default()
+        });
+        let source = format!(
+            "var converted=false; Promise.resolve().then(()=>{{}}); new {constructor}({{valueOf(){{converted=true;return 1}},toString(){{converted=true;return 'https://example.test'}}}});"
+        );
+        assert_eq!(
+            rt.evaluate(&source),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+        let context = rt.context_mut();
+        assert!(
+            !context
+                .global_object()
+                .get(boa_engine::js_string!("converted"), context)
+                .unwrap()
+                .to_boolean()
+        );
+    }
+}
+
+#[test]
+fn silent_enqueue_abort_during_native_error_getters_is_reported_immediately() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(rt.evaluate("var e=new Error('x'); Object.defineProperty(e,'message',{get(){Promise.resolve().then(()=>{});return 'x'}}); throw e;"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+}
+
+#[test]
+fn silent_enqueue_abort_stops_later_constructor_conversions() {
+    for source in [
+        "new DOMRect({valueOf(){Promise.resolve().then(()=>{});return 1}},{valueOf(){later=true;return 2}});",
+        "new URL({toString(){Promise.resolve().then(()=>{});return 'https://example.test'}},{toString(){later=true;return 'https://base.test'}});",
+    ] {
+        let mut rt = runtime_with(Limits {
+            max_enqueued_jobs: 0,
+            ..Limits::default()
+        });
+        rt.evaluate("var later=false;").unwrap();
+        assert_eq!(
+            rt.evaluate(source),
+            Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+        );
+        let context = rt.context_mut();
+        assert!(
+            !context
+                .global_object()
+                .get(boa_engine::js_string!("later"), context)
+                .unwrap()
+                .to_boolean()
+        );
+    }
+}
+
+#[test]
+fn silent_enqueue_abort_in_iterator_getter_blocks_iterator_method() {
+    let mut rt = runtime_with(Limits {
+        max_enqueued_jobs: 0,
+        ..Limits::default()
+    });
+    assert_eq!(rt.evaluate("var iteratorCalls=0; document.body.animate({get [Symbol.iterator](){Promise.resolve().then(()=>{});return function(){iteratorCalls++;return{next(){return{done:true}}}}}},20);"), Err(RuntimeError::Aborted(Abort::EnqueuedJobs)));
+    let context = rt.context_mut();
+    assert_eq!(
+        context
+            .global_object()
+            .get(boa_engine::js_string!("iteratorCalls"), context)
+            .unwrap()
+            .as_number(),
+        Some(0.0)
+    );
 }

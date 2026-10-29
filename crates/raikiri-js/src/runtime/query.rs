@@ -24,7 +24,9 @@ pub(super) use id_cache::IdLookupCache;
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::{Document, NodeKind};
-use raikiri_style::{SelectorQuery, StyleDom, StyleNodeId, StyleQuirksMode};
+use raikiri_style::{
+    CascadeError, SelectorQuery, SelectorWorkBudget, StyleDom, StyleNodeId, StyleQuirksMode,
+};
 
 use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{HTML_NS, Members, wrap_optional};
@@ -36,20 +38,12 @@ use super::webidl::{
 
 // ---- shared tree walk ---------------------------------------------------
 
-/// `index`'s ancestor **element** chain, root side first, excluding
-/// `index` itself, and stopping at the first non-Element ancestor
-/// (Document, DocumentFragment, or simply a detached node with no
-/// parent) rather than continuing past it.
-///
-/// Builds a parent map with one O(N) scan (`node_count` + `get_node` +
-/// `children`, all O(1) per node) and then walks the chain O(depth),
-/// instead of calling `Document::parent_of` (an O(N) arena scan) per level
-/// for O(depth*N).
+/// Real ancestor elements, nearest parent last. Parent pointers are O(1),
+/// including in detached and template fragment trees.
 fn element_ancestors(doc: &Document, index: usize) -> Vec<StyleNodeId> {
-    let map = parent_map(doc);
     let mut chain = Vec::new();
     let mut current = index;
-    while let Some(parent) = map.get(current).copied().flatten() {
+    while let Some(parent) = doc.parent_of(current) {
         if doc.get_node(parent).map(|n| n.kind()) != Some(NodeKind::Element) {
             break;
         }
@@ -60,22 +54,89 @@ fn element_ancestors(doc: &Document, index: usize) -> Vec<StyleNodeId> {
     chain
 }
 
-/// Immediate-parent map for [`element_ancestors`]: `map[child] == Some(parent)`
-/// iff `child` appears in `parent`'s `children`. One pass over the arena,
-/// O(N + total children).
-fn parent_map(doc: &Document) -> Vec<Option<usize>> {
-    let n = doc.node_count();
-    let mut map = vec![None; n];
-    for i in 0..n {
-        if let Some(node) = doc.get_node(i) {
-            for &child in &node.children {
-                if child < n {
-                    map[child] = Some(i);
-                }
+fn bounded_ancestors(
+    doc: &Document,
+    index: usize,
+    budget: &SelectorWorkBudget,
+) -> Result<Vec<StyleNodeId>, CascadeError> {
+    budget.charge(1)?;
+    let mut chain = Vec::new();
+    let mut current = index;
+    while let Some(parent) = doc.parent_of(current) {
+        budget.charge(1)?;
+        if doc.get_node(parent).map(|n| n.kind()) != Some(NodeKind::Element) {
+            break;
+        }
+        chain.push(StyleNodeId(parent as u64));
+        current = parent;
+    }
+    chain.reverse();
+    Ok(chain)
+}
+
+/// One native selector boundary. Flag refresh is dirty-gated semantic DOM
+/// maintenance, outside the logical query work count; it can scan the arena
+/// once after mutation. Selector parsing and string bytes are also excluded.
+/// Charge the invocation first so zero or terminal budgets touch no DOM.
+fn with_selector_query<T>(
+    context: &mut Context,
+    run: impl FnOnce(&Document, &SelectorWorkBudget) -> Result<T, CascadeError>,
+) -> JsResult<T> {
+    let result = with_state(context, |s| {
+        s.event_loop.selector_work.charge(1)?;
+        s.host.document_mut().mark_in_document_flags();
+        run(s.host.document(), &s.event_loop.selector_work)
+    })?;
+    result.map_err(|_| {
+        let reason = super::event_loop::abort(context, super::event_loop::Abort::SelectorWork);
+        super::event_loop::abort_error(reason)
+    })
+}
+
+/// Fallible pre-order traversal. Every root read, child enqueue and pending
+/// node visit is charged before inspection or allocation. Ancestors follow
+/// parent pointers rather than allocating or scanning a whole-arena map.
+fn find_in_tree_bounded<T>(
+    doc: &Document,
+    root: usize,
+    budget: &SelectorWorkBudget,
+    mut visit: impl FnMut(usize, &[StyleNodeId]) -> Result<Option<T>, CascadeError>,
+) -> Result<Option<T>, CascadeError> {
+    budget.charge(1)?;
+    let Some(root_node) = doc.get_node(root) else {
+        return Ok(None); // cov:ignore: query entrypoints validate the ParentNode handle with kind_of before borrowing this immutable Document
+    };
+    let mut ancestors = bounded_ancestors(doc, root, budget)?;
+    if root_node.kind() == NodeKind::Element {
+        ancestors.push(StyleNodeId(root as u64));
+    }
+    let base_depth = ancestors.len();
+    let mut stack = Vec::new();
+    for &child in root_node.children.iter().rev() {
+        budget.charge(1)?;
+        stack.push((child, base_depth));
+    }
+    while let Some((node, depth)) = stack.pop() {
+        budget.charge(1)?;
+        ancestors.truncate(depth);
+        let Some(n) = doc.get_node(node) else {
+            continue; // cov:ignore: pending ids come from children of resolved nodes in this immutably borrowed arena
+        };
+        let child_depth = if n.kind() == NodeKind::Element {
+            if let Some(found) = visit(node, &ancestors)? {
+                return Ok(Some(found));
             }
+            ancestors.push(StyleNodeId(node as u64));
+            depth + 1
+        } else {
+            depth
+        };
+        for &child in n.children.iter().rev() {
+            budget.charge(1)?;
+            stack.push((child, child_depth));
         }
     }
-    map
+    Ok(None)
 }
 
 /// Pre-order walk of every **element** that is a descendant of `root` in
@@ -197,18 +258,12 @@ pub(crate) const NON_ELEMENT_PARENT_NODE_MEMBERS: Members = Members {
 fn query_selector(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let query = parsed_selector(context, args)?;
-    let found = with_state(context, |s| {
-        // JS mutations leave `IS_IN_DOCUMENT` stale; the cascade matcher
-        // consults it for sibling combinators and structural pseudo-classes,
-        // so refresh it before walking (dirty-gated: a no-op when nothing
-        // changed since the last refresh).
-        s.host.document_mut().mark_in_document_flags();
-        let doc = s.host.document();
-        let matcher = query.matcher(doc, scope_for_root(doc, index));
-        find_in_tree(doc, index, |e, ancestors| {
-            matcher
-                .matches(StyleNodeId(e as u64), ancestors)
-                .then_some(e)
+    let found = with_selector_query(context, |doc, budget| {
+        let matcher = query.bounded_matcher(doc, scope_for_root(doc, index), budget);
+        find_in_tree_bounded(doc, index, budget, |e, ancestors| {
+            Ok(matcher
+                .try_matches(StyleNodeId(e as u64), ancestors)?
+                .then_some(e))
         })
     })?;
     wrap_optional(context, found)
@@ -221,16 +276,17 @@ fn query_selector_all(
 ) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let query = parsed_selector(context, args)?;
-    let found = with_state(context, |s| {
-        s.host.document_mut().mark_in_document_flags();
-        let doc = s.host.document();
-        // One matcher for the whole traversal, so sibling positions and
-        // language/direction lookups are computed once per parent/element
-        // instead of once per tested element.
-        let matcher = query.matcher(doc, scope_for_root(doc, index));
-        descendants_matching(doc, index, |e, ancestors| {
-            matcher.matches(StyleNodeId(e as u64), ancestors)
-        })
+    let found = with_selector_query(context, |doc, budget| {
+        let matcher = query.bounded_matcher(doc, scope_for_root(doc, index), budget);
+        let mut found = Vec::new();
+        find_in_tree_bounded::<()>(doc, index, budget, |e, ancestors| {
+            if matcher.try_matches(StyleNodeId(e as u64), ancestors)? {
+                budget.charge(1)?;
+                found.push(e);
+            }
+            Ok(None)
+        })?;
+        Ok(found)
     })?;
     Ok(node_list(context, CollectionSource::Static(found))?.into())
 }
@@ -389,12 +445,10 @@ pub(crate) const DOCUMENT_QUERY_MEMBERS: Members = Members {
 fn element_matches(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let query = parsed_selector(context, args)?;
-    let matched = with_state(context, |s| {
-        s.host.document_mut().mark_in_document_flags();
-        let doc = s.host.document();
-        let ancestors = element_ancestors(doc, index);
+    let matched = with_selector_query(context, |doc, budget| {
+        let ancestors = bounded_ancestors(doc, index, budget)?;
         let scope = Some(StyleNodeId(index as u64));
-        query.matches_scoped(doc, StyleNodeId(index as u64), &ancestors, scope)
+        query.try_matches_scoped(doc, StyleNodeId(index as u64), &ancestors, scope, budget)
     })?;
     Ok(JsValue::from(matched))
 }
@@ -410,18 +464,19 @@ fn element_closest(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let index = this_element(this, context)?;
     let query = parsed_selector(context, args)?;
     let scope = Some(StyleNodeId(index as u64));
-    let found = with_state(context, |s| {
-        s.host.document_mut().mark_in_document_flags();
-        let doc = s.host.document();
-        let mut chain = element_ancestors(doc, index);
+    let found = with_selector_query(context, |doc, budget| {
+        let mut chain = bounded_ancestors(doc, index, budget)?;
+        budget.charge(1)?;
         chain.push(StyleNodeId(index as u64));
-        let matcher = query.matcher(doc, scope);
-        (0..chain.len()).rev().find_map(|i| {
+        let matcher = query.bounded_matcher(doc, scope, budget);
+        for i in (0..chain.len()).rev() {
+            budget.charge(1)?;
             let candidate = chain[i];
-            matcher
-                .matches(candidate, &chain[..i])
-                .then_some(candidate.0 as usize)
-        })
+            if matcher.try_matches(candidate, &chain[..i])? {
+                return Ok(Some(candidate.0 as usize));
+            }
+        }
+        Ok(None)
     })?;
     wrap_optional(context, found)
 }

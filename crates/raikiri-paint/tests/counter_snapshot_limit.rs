@@ -9,7 +9,7 @@ use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{LayoutError, LimitKind, PageBox, RenderError};
 
 #[test]
-fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {
+fn counter_snapshot_budget_fails_closed_for_retained_mutations_at_render_boundaries() {
     const COUNTER_COUNT: usize = 2048;
     const DESCENDANT_COUNT: usize = 1024;
 
@@ -31,6 +31,11 @@ fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {
     for _ in 0..DESCENDANT_COUNT {
         document.append_element(Some(body), "div", None::<&str>);
     }
+    let names = (0..COUNTER_COUNT)
+        .map(|index| format!("c{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    document.append_text(style, format!("div {{ counter-increment: {names} }}"));
     document.mark_in_document_flags();
 
     let rules = build_rule_tree(&document);
@@ -93,6 +98,13 @@ fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {
         image_scene.commands.is_empty(),
         "image paint fails before emitting commands"
     );
+    assert!(matches!(
+        raikiri_paint::trace_paint_order(&document, &cascade, PageBox::A4, 0.0, None),
+        Err(RenderError::LimitExceeded {
+            kind: LimitKind::CounterSnapshots,
+            ..
+        })
+    ));
 }
 
 /// Every page slice reads the snapshots built once for the document, so a
@@ -127,7 +139,7 @@ fn multipage_paint_shares_one_counter_snapshot_build() {
     let cascade = cascade(&document, &rules).expect("cascade succeeds");
 
     let shared = document
-        .shared_counter_snapshots(&cascade)
+        .shared_compact_counter_snapshots(&cascade)
         .expect("one build stays within the snapshot limit");
     for page in 0..4 {
         let mut scene = Scene::new();
@@ -141,10 +153,42 @@ fn multipage_paint_shares_one_counter_snapshot_build() {
         .expect("every page reuses the shared snapshots");
     }
     let again = document
-        .shared_counter_snapshots(&cascade)
+        .shared_compact_counter_snapshots(&cascade)
         .expect("the shared snapshots stay cached");
     assert!(
         std::sync::Arc::ptr_eq(&shared, &again),
         "painting must not rebuild the shared snapshots"
     );
+}
+
+#[test]
+fn unchanged_counter_names_keep_owned_guard_but_fit_compact_rendering() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let style = document.append_element(Some(html), "style", None::<&str>);
+    document.append_text(
+        style,
+        "body, div { display: block } body::before { content: counter(c0) }",
+    );
+    let names = (0..2048)
+        .map(|index| format!("c{index} 0"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let body = document.append_element(Some(html), "body", Some(format!("counter-reset: {names}")));
+    for _ in 0..1024 {
+        document.append_element(Some(body), "div", None::<&str>);
+    }
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade");
+    assert!(counter_snapshots(&document, &cascade).is_err());
+    let compact = document
+        .shared_compact_counter_snapshots(&cascade)
+        .expect("shared prefixes fit");
+    assert!(compact.estimated_bytes() < MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES);
+    layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout uses compact counters");
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &document, &cascade, PageBox::A4)
+        .expect("paint uses compact counters");
+    assert!(!scene.commands.is_empty());
 }

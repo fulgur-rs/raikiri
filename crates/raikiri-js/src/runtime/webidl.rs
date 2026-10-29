@@ -1,6 +1,6 @@
 //! WebIDL-level conversions and checks shared by every binding.
 
-use boa_engine::{Context, JsError, JsNativeError, JsResult, JsValue};
+use boa_engine::{Context, JsError, JsNativeError, JsResult, JsString, JsValue};
 use raikiri_dom::NodeKind;
 
 use super::event_loop;
@@ -8,25 +8,26 @@ use super::host::HostError;
 use super::interfaces::{DomExceptionData, NodeHandle, protos};
 use super::{State, shared};
 
-/// `DOMString` conversion of argument `i` (missing -> "undefined", per ToString).
-pub(crate) fn dom_string(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<String> {
-    Ok(args
+fn string_argument(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<JsString> {
+    guard_active(context)?;
+    let value = args
         .get(i)
         .cloned()
         .unwrap_or_default()
-        .to_string(context)?
-        .to_std_string_escaped())
+        .to_string(context)?;
+    guard_active(context)?;
+    Ok(value)
+}
+
+/// `DOMString` conversion of argument `i` (missing -> "undefined", per ToString).
+pub(crate) fn dom_string(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<String> {
+    Ok(string_argument(args, i, context)?.to_std_string_escaped())
 }
 
 /// WebIDL `USVString` conversion of argument `i`: a `DOMString` whose
 /// unpaired surrogates become U+FFFD.
 pub(crate) fn usv_string(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<String> {
-    Ok(args
-        .get(i)
-        .cloned()
-        .unwrap_or_default()
-        .to_string(context)?
-        .to_std_string_lossy())
+    Ok(string_argument(args, i, context)?.to_std_string_lossy())
 }
 
 /// WebIDL `unsigned long` conversion (ToUint32, no `[EnforceRange]`) of
@@ -39,7 +40,10 @@ pub(crate) fn arg_unsigned_long(
     let value = args
         .get(i)
         .ok_or_else(|| type_error("a required argument is missing"))?;
-    Ok(value.to_u32(context)? as usize)
+    guard_active(context)?;
+    let value = value.to_u32(context)? as usize;
+    guard_active(context)?;
+    Ok(value)
 }
 
 /// The arena index behind a node wrapper, if `value` is one. Not an error
@@ -278,7 +282,7 @@ pub(crate) struct DeferredHostFailure(pub String);
 /// [`DomRuntime::evaluate`]: super::DomRuntime::evaluate
 pub(crate) fn take_host_failure(context: &mut Context) -> Option<String> {
     let deferred = context.remove_data::<DeferredHostFailure>().map(|f| f.0);
-    let recorded = with_state(context, |s| s.host_failure.take())
+    let recorded = with_state_unchecked(context, |s| s.host_failure.take())
         .ok()
         .flatten();
     recorded.or(deferred)
@@ -286,8 +290,30 @@ pub(crate) fn take_host_failure(context: &mut Context) -> Option<String> {
 
 /// Run `f` with the shared state borrowed. A re-entrant borrow (a binding
 /// called while another holds the state) is recorded as a host failure and
-/// thrown as an `Error` rather than panicking.
+/// thrown as an `Error` rather than panicking. After a resource abort,
+/// refuse the operation before calling `f`.
 pub(crate) fn with_state<T>(context: &mut Context, f: impl FnOnce(&mut State) -> T) -> JsResult<T> {
+    with_state_unchecked(context, |state| {
+        if let Some(reason) = &state.event_loop.aborted {
+            return Err(event_loop::abort_error(reason.clone()));
+        }
+        Ok(f(state))
+    })?
+}
+
+/// Reject a native boundary after abort without keeping the state borrowed.
+/// Check again after argument conversion that can execute script, before
+/// mutating native object data or invoking another callback.
+pub(crate) fn guard_active(context: &mut Context) -> JsResult<()> {
+    with_state(context, |_| ())
+}
+
+/// Borrow shared state for host cleanup and inspection, including after abort.
+/// Script bindings must use [`with_state`] so they cannot mutate an aborted run.
+pub(crate) fn with_state_unchecked<T>(
+    context: &mut Context,
+    f: impl FnOnce(&mut State) -> T,
+) -> JsResult<T> {
     let shared = shared(context);
     let Ok(mut state) = shared.0.try_borrow_mut() else {
         const MESSAGE: &str = "re-entrant DOM runtime access";

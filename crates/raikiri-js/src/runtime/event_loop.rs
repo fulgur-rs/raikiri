@@ -22,11 +22,15 @@ use boa_engine::{
 };
 
 use super::interfaces::function;
-use super::webidl::with_state;
+use super::webidl::{with_state, with_state_unchecked};
 
 /// Resource limits for one runtime. Reaching any of them aborts the run:
-/// the running script stops, every queue is discarded, and the runtime
-/// refuses to run anything afterwards.
+/// every queue is discarded, and the runtime refuses subsequent script
+/// and host operations. Native bindings throw an uncatchable engine error.
+/// Boa's job-enqueue hook cannot throw: on overflow, pure JavaScript may
+/// continue until its next host operation or engine limit, and evaluation
+/// reports the sticky abort at its next microtask checkpoint. These limits
+/// do not provide immediate VM interruption for Promise-only enqueue loops.
 ///
 /// # What these limits do not bound
 ///
@@ -50,6 +54,20 @@ pub struct Limits {
     /// too, so that an endless `queueMicrotask`/promise chain -- which no
     /// per-frame engine limit sees -- is bounded as well.
     pub max_tasks: u64,
+    /// Cumulative task, microtask, timer, animation callback and native job
+    /// registrations. Cancellation does not refund this budget; interval
+    /// repetitions each register again. A frame callback and its shared
+    /// internal frame task count as one registration. This bounds queue
+    /// entries, including canceled entries, but not JavaScript heap bytes.
+    /// Use `u64::MAX` to effectively disable the registration limit.
+    pub max_enqueued_jobs: u64,
+    /// Logical native selector operations accumulated over this runtime's
+    /// entire lifetime, including repeated evaluations and all four CSS
+    /// query methods. `None` disables the limit. Defaults to the cascade's
+    /// selector work default; this is a separate budget. Outer DOM/ancestor
+    /// walks and result entries count. Parsing, string bytes and dirty-gated
+    /// connectivity flag maintenance are excluded; this is not a CPU limit.
+    pub max_selector_work: Option<u64>,
     /// Boa's per-frame loop iteration limit.
     pub max_loop_iterations: u64,
     /// Boa's call recursion limit. Native bindings that call back into
@@ -65,6 +83,8 @@ impl Default for Limits {
         Self {
             max_virtual_time_ms: 30_000.0,
             max_tasks: 100_000,
+            max_enqueued_jobs: 100_000,
+            max_selector_work: raikiri_style::CascadeLimits::default().max_selector_work,
             max_loop_iterations: 10_000_000,
             max_recursion: 512,
             max_nodes: 1_000_000,
@@ -86,6 +106,10 @@ pub enum Abort {
     VirtualTime,
     /// More than [`Limits::max_tasks`] tasks and microtasks.
     Tasks,
+    /// More than [`Limits::max_enqueued_jobs`] registrations.
+    EnqueuedJobs,
+    /// More than [`Limits::max_selector_work`] native selector operations.
+    SelectorWork,
     /// Boa's loop iteration limit ([`Limits::max_loop_iterations`]).
     LoopIterations,
     /// Boa's recursion or stack size limit ([`Limits::max_recursion`]).
@@ -99,6 +123,8 @@ impl std::fmt::Display for Abort {
         f.write_str(match self {
             Self::VirtualTime => "virtual time limit reached",
             Self::Tasks => "task limit reached",
+            Self::EnqueuedJobs => "enqueued job limit reached",
+            Self::SelectorWork => "selector work limit reached",
             Self::LoopIterations => "loop iteration limit reached",
             Self::Recursion => "recursion limit reached",
             Self::Nodes => "node limit reached",
@@ -140,9 +166,12 @@ pub(crate) fn abort_for(error: &JsError) -> Option<Abort> {
 pub(crate) fn abort_error(reason: Abort) -> JsError {
     JsError::from(match reason {
         Abort::LoopIterations => RuntimeLimitError::LoopIteration,
-        Abort::Recursion | Abort::VirtualTime | Abort::Tasks | Abort::Nodes => {
-            RuntimeLimitError::Recursion
-        }
+        Abort::Recursion
+        | Abort::VirtualTime
+        | Abort::Tasks
+        | Abort::EnqueuedJobs
+        | Abort::SelectorWork
+        | Abort::Nodes => RuntimeLimitError::Recursion,
     })
 }
 
@@ -214,6 +243,7 @@ enum Microtask {
 /// Event loop state, kept in [`super::State`].
 pub(crate) struct EventLoop {
     pub limits: Limits,
+    pub selector_work: raikiri_style::SelectorWorkBudget,
     /// Virtual time in milliseconds.
     pub now: f64,
     next_seq: u64,
@@ -234,6 +264,8 @@ pub(crate) struct EventLoop {
     current_nesting: Option<u32>,
     /// Tasks and microtasks run so far.
     jobs_run: u64,
+    /// Registrations accepted so far, including canceled jobs.
+    jobs_enqueued: u64,
     /// Set once a limit is reached; the runtime then refuses to run
     /// anything else.
     pub aborted: Option<Abort>,
@@ -256,6 +288,7 @@ enum Next {
 impl EventLoop {
     pub(crate) fn new(limits: Limits) -> Self {
         Self {
+            selector_work: raikiri_style::SelectorWorkBudget::new(limits.max_selector_work),
             limits,
             now: 0.0,
             next_seq: 0,
@@ -270,12 +303,38 @@ impl EventLoop {
             next_cancellable: 0,
             current_nesting: None,
             jobs_run: 0,
+            jobs_enqueued: 0,
             aborted: None,
             uncaught_errors: Vec::new(),
         }
     }
 
-    fn queue_task(&mut self, delay: f64, task: Task) {
+    fn reserve_job(&mut self) -> Result<(), Abort> {
+        if let Some(reason) = &self.aborted {
+            return Err(reason.clone());
+        }
+        if self.jobs_enqueued >= self.limits.max_enqueued_jobs {
+            self.abort(Abort::EnqueuedJobs);
+            return Err(Abort::EnqueuedJobs);
+        }
+        self.jobs_enqueued += 1;
+        Ok(())
+    }
+
+    fn queue_microtask(&mut self, task: Microtask) -> Result<(), Abort> {
+        self.reserve_job()?;
+        self.microtasks.push_back(task);
+        Ok(())
+    }
+
+    fn queue_task(&mut self, delay: f64, task: Task) -> Result<(), Abort> {
+        self.reserve_job()?;
+        self.push_task(delay, task);
+        Ok(())
+    }
+
+    // The registration was already charged by a callback or timer owner.
+    fn push_task(&mut self, delay: f64, task: Task) {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.tasks.push(Queued {
@@ -293,7 +352,7 @@ impl EventLoop {
         if nesting > 5 && timeout < 4 {
             timeout = 4;
         }
-        self.queue_task(
+        self.push_task(
             f64::from(timeout),
             Task::Timer {
                 id,
@@ -352,11 +411,13 @@ impl EventLoop {
     /// a more specific reason this method already recorded for the very same
     /// abort.
     fn abort(&mut self, reason: Abort) {
-        self.tasks.clear();
-        self.microtasks.clear();
-        self.timers.clear();
-        self.frame_callbacks.clear();
+        self.tasks = BinaryHeap::new();
+        self.microtasks = VecDeque::new();
+        self.timers = HashMap::new();
+        self.frame_callbacks = BTreeMap::new();
+        self.cancellable = HashMap::new();
         self.frame_scheduled = false;
+        self.current_nesting = None;
         self.aborted.get_or_insert(reason);
     }
 }
@@ -365,6 +426,13 @@ impl EventLoop {
 /// jobs become microtasks; Boa timeout and interval jobs become tasks on
 /// the virtual clock. All queues live in [`super::State`], never in the
 /// executor itself, so the executor keeps no handle to shared state.
+///
+/// Boa's enqueue hook returns `()`, so it cannot propagate an engine error.
+/// Overflow immediately drops queued jobs and refuses future registrations;
+/// [`with_state`] rejects the next host operation, and [`settle`] or
+/// [`microtask_checkpoint`] reports the abort when control returns. Pure
+/// JavaScript may still run between those boundaries. Optional finalization
+/// cleanup and unsupported jobs are dropped without registration.
 pub(crate) struct RaikiriJobExecutor;
 
 impl JobExecutor for RaikiriJobExecutor {
@@ -377,9 +445,9 @@ impl JobExecutor for RaikiriJobExecutor {
         let _ = with_state(context, |state| {
             let event_loop = &mut state.event_loop;
             match job {
-                Job::PromiseJob(job) => event_loop.microtasks.push_back(Microtask::Promise(job)),
-                Job::GenericJob(job) => event_loop.microtasks.push_back(Microtask::Generic(job)),
-                Job::AsyncJob(job) => event_loop.microtasks.push_back(Microtask::Async(job)),
+                Job::PromiseJob(job) => event_loop.queue_microtask(Microtask::Promise(job)),
+                Job::GenericJob(job) => event_loop.queue_microtask(Microtask::Generic(job)),
+                Job::AsyncJob(job) => event_loop.queue_microtask(Microtask::Async(job)),
                 Job::TimeoutJob(job) => {
                     let delay = job.timeout().as_millis() as f64;
                     let native = NativeJob::new(move |context| {
@@ -388,7 +456,7 @@ impl JobExecutor for RaikiriJobExecutor {
                         }
                         job.call(context)
                     });
-                    event_loop.queue_task(delay, Task::Native(native));
+                    event_loop.queue_task(delay, Task::Native(native))
                 }
                 Job::IntervalJob(job) => {
                     let delay = job.interval().as_millis() as f64;
@@ -400,13 +468,13 @@ impl JobExecutor for RaikiriJobExecutor {
                         context.enqueue_job(Job::IntervalJob(job));
                         result
                     });
-                    event_loop.queue_task(delay, Task::Native(native));
+                    event_loop.queue_task(delay, Task::Native(native))
                 }
                 // Finalization registry cleanup is optional (ECMA-262
                 // `HostEnqueueFinalizationRegistryCleanupJob`); this
                 // runtime never runs it. Any other future job kind is
                 // dropped the same way.
-                _ => {}
+                _ => Ok(()),
             }
         });
     }
@@ -423,6 +491,10 @@ impl JobExecutor for RaikiriJobExecutor {
     }
 }
 
+/// How many focus fixups one settling of the page runs with events before
+/// it drops a still-invalid focus silently.
+const MAX_IDLE_FOCUS_FIXUPS: u32 = 16;
+
 /// Native stack guaranteed to everything a [`super::DomRuntime`] entry point
 /// runs: parsing, script, callbacks, and the microtasks and tasks that
 /// follow.
@@ -433,10 +505,6 @@ impl JobExecutor for RaikiriJobExecutor {
 /// is reserved as address space and only touched as deep as the run
 /// actually recurses.
 #[cfg(not(target_arch = "wasm32"))]
-/// How many focus fixups one settling of the page runs with events before
-/// it drops a still-invalid focus silently.
-const MAX_IDLE_FOCUS_FIXUPS: u32 = 16;
-
 const ENGINE_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 /// Run `f` with at least [`ENGINE_STACK_BYTES`] of native stack, switching
@@ -461,7 +529,7 @@ pub(crate) fn with_engine_stack<R>(f: impl FnOnce() -> R) -> R {
 
 /// The runtime's abort reason, if a limit was reached earlier.
 pub(crate) fn aborted(context: &mut Context) -> Option<Abort> {
-    with_state(context, |state| state.event_loop.aborted.clone())
+    with_state_unchecked(context, |state| state.event_loop.aborted.clone())
         .ok()
         .flatten()
 }
@@ -472,7 +540,7 @@ pub(crate) fn aborted(context: &mut Context) -> Option<Abort> {
 /// is the reason now on record, which is `reason` itself only the first time
 /// this is called.
 pub(crate) fn abort(context: &mut Context, reason: Abort) -> Abort {
-    with_state(context, |state| {
+    with_state_unchecked(context, |state| {
         state.event_loop.abort(reason.clone());
         state.event_loop.aborted.clone()
     })
@@ -489,6 +557,9 @@ pub(crate) fn abort(context: &mut Context, reason: Abort) -> Abort {
 /// `window.onerror` handler that does), which must abort the run too rather
 /// than being silently absorbed.
 fn settle(context: &mut Context, result: JsResult<JsValue>) -> Result<(), Abort> {
+    if let Some(reason) = aborted(context) {
+        return Err(reason);
+    }
     let Err(error) = result else {
         return Ok(());
     };
@@ -509,6 +580,9 @@ fn settle(context: &mut Context, result: JsResult<JsValue>) -> Result<(), Abort>
 /// HTML "perform a microtask checkpoint": run microtasks until the queue is
 /// empty, including ones queued along the way.
 pub(crate) fn microtask_checkpoint(context: &mut Context) -> Result<(), Abort> {
+    if let Some(reason) = aborted(context) {
+        return Err(reason);
+    }
     loop {
         let next = with_state(context, |state| state.event_loop.next_microtask());
         let microtask = match next {
@@ -544,19 +618,27 @@ fn poll_async_job(job: NativeAsyncJob, context: &mut Context) -> JsResult<JsValu
 /// the next time the event loop drains.
 pub(crate) fn queue_native_task(context: &mut Context, job: NativeJob) -> JsResult<()> {
     with_state(context, |state| {
-        state.event_loop.queue_task(0.0, Task::Native(job));
-    })
+        state
+            .event_loop
+            .queue_task(0.0, Task::Native(job))
+            .map_err(abort_error)
+    })?
 }
 
 impl EventLoop {
     /// Queue `job` as a task due `delay_ms` after the current virtual time,
     /// returning a token that [`Self::cancel_native_task`] accepts.
-    pub(crate) fn queue_cancellable_native_task(&mut self, delay_ms: f64, job: NativeJob) -> u64 {
+    pub(crate) fn queue_cancellable_native_task(
+        &mut self,
+        delay_ms: f64,
+        job: NativeJob,
+    ) -> JsResult<u64> {
+        self.reserve_job().map_err(abort_error)?;
         let token = self.next_cancellable;
         self.next_cancellable += 1;
         self.cancellable.insert(token, job);
-        self.queue_task(delay_ms, Task::Cancellable(token));
-        token
+        self.push_task(delay_ms, Task::Cancellable(token));
+        Ok(token)
     }
 
     /// Drop a job queued by [`Self::queue_cancellable_native_task`] that
@@ -645,11 +727,12 @@ fn run_timer(context: &mut Context, id: i32, nesting: u32) -> Result<(), Abort> 
     // "Clean up after running script": the checkpoint belongs to the timer
     // task, so timers its microtasks set inherit the task's nesting level.
     microtask_checkpoint(context)?;
-    let _ = with_state(context, |state| {
+    with_state(context, |state| {
         let event_loop = &mut state.event_loop;
         match event_loop.timers.get(&id) {
             Some(timer) if timer.repeat => {
                 let timeout = timer.timeout;
+                event_loop.reserve_job()?;
                 event_loop.schedule_timer(id, timeout);
             }
             _ => {
@@ -657,7 +740,9 @@ fn run_timer(context: &mut Context, id: i32, nesting: u32) -> Result<(), Abort> 
             }
         }
         event_loop.current_nesting = None;
-    });
+        Ok::<_, Abort>(())
+    })
+    .map_err(|_| aborted(context).unwrap_or(Abort::Recursion))??;
     Ok(())
 }
 
@@ -733,6 +818,7 @@ fn set_timer(args: &[JsValue], repeat: bool, context: &mut Context) -> JsResult<
     let rest = args.get(2..).unwrap_or_default().to_vec();
     with_state(context, |state| {
         let event_loop = &mut state.event_loop;
+        event_loop.reserve_job().map_err(abort_error)?;
         let id = event_loop.next_timer_id;
         event_loop.next_timer_id = id.saturating_add(1);
         event_loop.timers.insert(
@@ -745,8 +831,8 @@ fn set_timer(args: &[JsValue], repeat: bool, context: &mut Context) -> JsResult<
             },
         );
         event_loop.schedule_timer(id, timeout);
-        JsValue::from(id)
-    })
+        Ok(JsValue::from(id))
+    })?
 }
 
 fn set_timeout(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -777,6 +863,7 @@ fn request_animation_frame(
     let callback = callable_arg(args, "requestAnimationFrame callback")?;
     with_state(context, |state| {
         let event_loop = &mut state.event_loop;
+        event_loop.reserve_job().map_err(abort_error)?;
         let handle = event_loop.next_frame_handle;
         event_loop.next_frame_handle = handle.saturating_add(1);
         event_loop.frame_callbacks.insert(handle, callback);
@@ -784,10 +871,10 @@ fn request_animation_frame(
             event_loop.frame_scheduled = true;
             let next_frame = ((event_loop.now / 16.0).floor() + 1.0) * 16.0;
             let delay = next_frame - event_loop.now;
-            event_loop.queue_task(delay, Task::AnimationFrame);
+            event_loop.push_task(delay, Task::AnimationFrame);
         }
-        JsValue::from(handle)
-    })
+        Ok(JsValue::from(handle))
+    })?
 }
 
 fn cancel_animation_frame(
@@ -808,9 +895,9 @@ fn queue_microtask(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     with_state(context, |state| {
         state
             .event_loop
-            .microtasks
-            .push_back(Microtask::Callback(callback));
-    })?;
+            .queue_microtask(Microtask::Callback(callback))
+            .map_err(abort_error)
+    })??;
     Ok(JsValue::undefined())
 }
 

@@ -3,10 +3,12 @@
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use raikiri_dom::Document;
+use raikiri_dom::inline_svg_cache::InlineSvgRaster;
 use raikiri_dom::inline_svg_style::InlineSvgElementDeclarations;
 use raikiri_layout_geometry::Edges;
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::{DecodedImage, NodeId, RenderWarning, ResourceKind, WarningKind};
+use std::sync::Arc;
 
 /// One inline SVG root, painted as a raster of its subtree in the content
 /// box of the element.
@@ -85,12 +87,12 @@ impl<'a> InlineSvg<'a> {
     }
 
     /// The raster of the subtree, or `None` when nothing is to be drawn.
-    fn rasterize(&self, warnings: &mut Vec<RenderWarning>) -> Option<DecodedImage> {
+    fn rasterize(&self, warnings: &mut Vec<RenderWarning>) -> Option<InlineSvgRaster> {
         let visible = !raikiri_dom::paint_rules::hides_own_box(self.cv);
 
         let source = self
             .document
-            .serialize_svg_subtree(self.node_id)
+            .cached_svg_subtree(self.node_id)
             .ok()
             .flatten();
         // The declarations the page's stylesheets give to the descendants, which
@@ -108,6 +110,27 @@ impl<'a> InlineSvg<'a> {
         if !visible && !mentions_visibility(source.as_deref(), &descendants) {
             return None;
         }
+        // Compare all current rasterizer inputs exactly. Public cascade values
+        // are mutable without changing their generation, so styles are collected
+        // again on every paint rather than trusting a generation-only key.
+        let style_key = format!(
+            "{:?}|{:?}|{:?}",
+            self.root_style(visible),
+            (
+                self.cv.font_size.0.to_bits(),
+                self.cv.font_weight.to_bits(),
+                self.cv.font_style.as_css_str(),
+                raikiri_dom::inline_svg_style::svg_font_family(self.cv)
+            ),
+            descendants
+        );
+        let viewport_key = (self.content.width.to_bits(), self.content.height.to_bits());
+        if let Some(raster) =
+            self.document
+                .cached_inline_svg_raster(self.node_id, viewport_key, &style_key)
+        {
+            return Some(raster);
+        }
         let Some(decoded) = source.and_then(|source| self.decode(&source, &descendants, visible))
         else {
             // Nothing was expected to show from a root that is not visible.
@@ -122,8 +145,20 @@ impl<'a> InlineSvg<'a> {
 
         // A root that is not visible draws only the descendants that are
         // visible themselves, so most of these paint nothing at all.
-        require_pixels(decoded, self.node_id, warnings)
-            .filter(|decoded| visible || has_ink(decoded))
+        let decoded = require_pixels(decoded, self.node_id, warnings)
+            .filter(|decoded| visible || has_ink(decoded))?;
+        let raster = InlineSvgRaster {
+            width: decoded.width,
+            height: decoded.height,
+            rgba: Arc::new(decoded.rgba),
+        };
+        self.document.cache_inline_svg_raster(
+            self.node_id,
+            viewport_key,
+            style_key,
+            raster.clone(),
+        );
+        Some(raster)
     }
 
     /// Parses `source` and rasterizes it at the size of the content box, with
@@ -194,7 +229,7 @@ impl<'a> InlineSvg<'a> {
     }
 
     /// Fills the content box with `decoded`, clipped to its exact extent.
-    fn draw(&self, scene: &mut impl PaintScene, decoded: DecodedImage) {
+    fn draw(&self, scene: &mut impl PaintScene, decoded: InlineSvgRaster) {
         let ContentBox {
             x: content_x,
             y: content_y,
@@ -204,7 +239,7 @@ impl<'a> InlineSvg<'a> {
         let raster_w = f64::from(decoded.width);
         let raster_h = f64::from(decoded.height);
         let image_data = peniko::ImageData {
-            data: peniko::Blob::from(decoded.rgba),
+            data: peniko::Blob::new(decoded.rgba),
             format: peniko::ImageFormat::Rgba8,
             alpha_type: peniko::ImageAlphaType::Alpha,
             width: decoded.width,

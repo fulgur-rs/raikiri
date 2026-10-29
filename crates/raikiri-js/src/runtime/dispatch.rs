@@ -29,7 +29,7 @@ use super::event_loop;
 use super::events::{self, Listener};
 use super::interfaces::{self, Members, protos, wrap};
 use super::node::js_str;
-use super::webidl::{throw_dom_exception, with_state};
+use super::webidl::{guard_active, throw_dom_exception, with_state};
 
 // ---- Native data --------------------------------------------------------
 
@@ -722,15 +722,22 @@ fn call_callback(
     event: &JsObject,
     this_value: &JsValue,
 ) -> JsResult<JsValue> {
+    guard_active(context)?;
     let event_value = JsValue::from(event.clone());
-    if callback.is_callable() {
-        return callback.call(this_value, &[event_value], context);
-    }
-    let handle_event = callback.get(JsString::from("handleEvent"), context)?;
-    match handle_event.as_callable() {
-        Some(handler) => handler.call(&JsValue::from(callback.clone()), &[event_value], context),
-        None => Err(type_error("handleEvent is not a function")),
-    }
+    let result = if callback.is_callable() {
+        callback.call(this_value, &[event_value], context)
+    } else {
+        let handle_event = callback.get(JsString::from("handleEvent"), context)?;
+        guard_active(context)?;
+        match handle_event.as_callable() {
+            Some(handler) => {
+                handler.call(&JsValue::from(callback.clone()), &[event_value], context)
+            }
+            None => Err(type_error("handleEvent is not a function")),
+        }
+    };
+    guard_active(context)?;
+    result
 }
 
 /// HTML's special "event handler processing algorithm" for `window`'s
@@ -767,7 +774,9 @@ fn call_window_on_error(
         JsValue::from(colno),
         error,
     ];
+    guard_active(context)?;
     let result = callback.call(&this_value, &args, context)?;
+    guard_active(context)?;
     if result.to_boolean() {
         let _ = event_data(event, cancel_if_appropriate);
     }

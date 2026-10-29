@@ -24,6 +24,7 @@ mod closing_edge_tests;
 mod column_projection_tests;
 mod fragment_sources_tests;
 mod geometry_lookup_tests;
+mod line_ranges_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
 mod options_tests;
@@ -19589,4 +19590,8 @@ fn a_tall_block_whose_first_line_is_inline_markup_moves_whole() {
         );
         assert_eq!(ys, [0.0, 100.0], "{leading_text:?}");
     }
+}
+
+thread_local! {
+    pub(super) static LINE_CENTER_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

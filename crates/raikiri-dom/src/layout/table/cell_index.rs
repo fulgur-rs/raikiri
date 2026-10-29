@@ -3,10 +3,10 @@ use std::collections::BTreeSet;
 use super::{CellPlacement, TableGrid};
 
 #[derive(Clone, Copy)]
-struct Interval {
-    start: u16,
-    end: u16,
-    cell: usize,
+pub(super) struct Interval {
+    pub(super) start: u16,
+    pub(super) end: u16,
+    pub(super) cell: usize,
 }
 
 /// Transient placement lookup shared by collapsed-border resolution and sizing.
@@ -19,6 +19,7 @@ pub(super) struct CellIndex<'a> {
     column_count: u16,
     placements: &'a [CellPlacement],
     nodes: Vec<Vec<Interval>>,
+    boundaries: std::cell::OnceCell<Option<super::boundaries::BoundarySegments>>,
 }
 
 impl<'a> CellIndex<'a> {
@@ -30,6 +31,7 @@ impl<'a> CellIndex<'a> {
             row_count,
             column_count: grid.n_cols,
             placements: &grid.cells,
+            boundaries: std::cell::OnceCell::new(),
             nodes: if row_count == 0 || grid.n_cols == 0 {
                 Vec::new()
             } else {
@@ -122,6 +124,46 @@ impl<'a> CellIndex<'a> {
         first
     }
 
+    pub(super) fn boundary_segments(
+        &self,
+        grid: &TableGrid,
+    ) -> Option<&super::boundaries::BoundarySegments> {
+        self.boundaries
+            .get_or_init(|| super::boundaries::BoundarySegments::new(grid, self))
+            .as_ref()
+    }
+
+    #[cfg(test)]
+    pub(super) fn disable_sparse(&self) {
+        assert!(self.boundaries.set(None).is_ok());
+    }
+
+    /// Merge every tree level by placement ordinal, preserving holes.
+    pub(super) fn row_runs(&self, row: usize, limit: usize) -> Option<Vec<Interval>> {
+        if row >= self.row_count || self.nodes.is_empty() {
+            return Some(Vec::new());
+        }
+        let mut runs = Vec::new();
+        let mut node = self.leaf_count + row;
+        while node > 0 {
+            let intervals = &self.nodes[node];
+            super::boundaries::interval_visits(intervals.len());
+            if !intervals.is_empty() {
+                if runs.is_empty() {
+                    if intervals.len() > limit {
+                        return None;
+                    }
+                    runs.try_reserve_exact(intervals.len()).ok()?;
+                    runs.extend_from_slice(intervals);
+                } else {
+                    runs = merge_runs(&runs, intervals, limit)?;
+                }
+            }
+            node /= 2;
+        }
+        Some(runs)
+    }
+
     #[cfg(test)]
     pub(super) fn storage_entries(&self) -> usize {
         self.nodes.iter().map(Vec::len).sum()
@@ -185,4 +227,58 @@ fn make_disjoint(intervals: &mut Vec<Interval>) {
 fn lookup_step() {
     #[cfg(test)]
     crate::layout::test_support::TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.set(steps.get() + 1));
+}
+
+/// Overlay two disjoint sorted lists without expanding their coordinates.
+fn merge_runs(a: &[Interval], b: &[Interval], limit: usize) -> Option<Vec<Interval>> {
+    let mut result: Vec<Interval> = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    let mut x = a.first()?.start.min(b.first()?.start);
+    loop {
+        while i < a.len() && a[i].end <= x {
+            i += 1;
+        }
+        while j < b.len() && b[j].end <= x {
+            j += 1;
+        }
+        super::boundaries::merge_visits(1);
+        let next_edge = |list: &[Interval], offset: usize| {
+            list.get(offset)
+                .map(|run| if run.start > x { run.start } else { run.end })
+        };
+        let end = match (next_edge(a, i), next_edge(b, j)) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => break,
+        };
+        let cell_at = |list: &[Interval], offset: usize| {
+            list.get(offset)
+                .filter(|run| run.start <= x)
+                .map(|run| run.cell)
+        };
+        let cell = match (cell_at(a, i), cell_at(b, j)) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if let Some(cell) = cell {
+            if let Some(last) = result.last_mut()
+                && last.cell == cell
+                && last.end == x
+            {
+                last.end = end;
+            } else {
+                super::boundaries::bounded_push(
+                    &mut result,
+                    Interval {
+                        start: x,
+                        end,
+                        cell,
+                    },
+                    limit,
+                )?;
+            }
+        }
+        x = end;
+    }
+    Some(result)
 }

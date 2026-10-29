@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -15,10 +15,14 @@ use crate::style_dom::{
 };
 use crate::{Direction, PseudoElem, RaikiriSelectorImpl};
 
+use crate::error::{CascadeError, CascadeLimitKind};
+
 use super::collect::{Specificity, specificity_of};
 use super::lang::{effective_language, lang_pseudo_matches};
 use super::resolve_directionality;
 
+mod class_index;
+use class_index::ClassLookup;
 mod filtered_nth;
 use filtered_nth::FilteredNthCache;
 mod later_sibling;
@@ -107,6 +111,7 @@ const SIBLING_CACHE_MIN_CHILDREN: usize = 8;
 pub(crate) struct MatchCaches {
     /// A single-candidate query cannot amortize indexing a wide sibling list.
     single_match: bool,
+    work: Rc<SelectorWork>,
     /// Filtered sibling ranks, bounded per immutable match operation.
     filtered_nth: RefCell<FilteredNthCache>,
     /// Left-side results of `~` frames; see [`LaterSiblingCache`].
@@ -138,15 +143,93 @@ struct HasScratch {
     stack: Vec<(StyleNodeId, usize)>,
 }
 
+/// Shared deterministic work count for one immutable matching operation.
+/// Keep the remaining count separate so the hot path updates just one word.
+pub(super) struct SelectorWork {
+    left: Cell<u64>,
+    limit: Cell<Option<u64>>,
+}
+
+impl Default for SelectorWork {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl SelectorWork {
+    pub(super) fn new(limit: Option<u64>) -> Self {
+        Self {
+            left: Cell::new(limit.unwrap_or(u64::MAX)),
+            limit: Cell::new(limit),
+        }
+    }
+
+    #[inline]
+    pub(super) fn charge(&self, amount: u64) -> Result<(), CascadeError> {
+        let left = self.left.get();
+        if amount > left {
+            return self.overflow(amount, left);
+        }
+        self.left.set(left - amount);
+        Ok(())
+    }
+
+    pub(super) fn count(&self) -> u64 {
+        self.limit.get().unwrap_or(u64::MAX) - self.left.get()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn overflow(&self, amount: u64, left: u64) -> Result<(), CascadeError> {
+        if let Some(limit) = self.limit.get() {
+            return Err(CascadeError::LimitExceeded {
+                kind: CascadeLimitKind::SelectorWork,
+                limit,
+                actual: (limit - left).saturating_add(amount),
+            });
+        }
+        self.left.set(0);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn reset(&self, limit: Option<u64>) {
+        self.limit.set(limit);
+        self.left.set(limit.unwrap_or(u64::MAX));
+    }
+}
+
 impl MatchCaches {
+    pub(crate) fn with_work_limit(limit: Option<u64>) -> Self {
+        Self::with_query_work(Rc::new(SelectorWork::new(limit)), false)
+    }
+
+    pub(super) fn with_query_work(work: Rc<SelectorWork>, single_match: bool) -> Self {
+        Self {
+            single_match,
+            work,
+            filtered_nth: RefCell::new(if single_match {
+                FilteredNthCache::with_limits(0, 0)
+            } else {
+                FilteredNthCache::default()
+            }),
+            later_siblings: RefCell::default(),
+            siblings: RefCell::default(),
+            languages: RefCell::default(),
+            directions: RefCell::default(),
+            has: RefCell::default(),
+            has_scratch: RefCell::default(),
+        }
+    }
+
+    pub(crate) fn work_count(&self) -> u64 {
+        self.work.count()
+    }
+
     /// One-shot queries scan filtered ranks and `:has()` sibling roots directly
     /// rather than building indexes intended for repeated candidates.
     pub(super) fn for_single_match() -> Self {
-        Self {
-            single_match: true,
-            filtered_nth: RefCell::new(FilteredNthCache::with_limits(0, 0)),
-            ..Self::default()
-        }
+        Self::with_query_work(Rc::default(), true)
     }
 
     /// Takes a cleared [`HasScratch`] from the pool (or a new one).
@@ -176,19 +259,23 @@ impl MatchCaches {
         elem: &E,
         elem_id: StyleNodeId,
         ancestors: &[StyleNodeId],
-    ) -> Rc<str> {
+    ) -> Result<Rc<str>, CascadeError> {
         if let Some(lang) = self.languages.borrow().get(&elem_id) {
-            return Rc::clone(lang);
+            return Ok(Rc::clone(lang));
         }
-        let (lang, walked) = effective_language(dom, elem, ancestors, |ancestor_id| {
-            self.languages.borrow().get(&ancestor_id).cloned()
-        });
+        let (lang, walked) = effective_language(
+            dom,
+            elem,
+            ancestors,
+            |ancestor_id| self.languages.borrow().get(&ancestor_id).cloned(),
+            || self.work.charge(1),
+        )?;
         let mut languages = self.languages.borrow_mut();
         for &ancestor_id in &ancestors[walked..] {
             languages.insert(ancestor_id, Rc::clone(&lang));
         }
         languages.insert(elem_id, Rc::clone(&lang));
-        lang
+        Ok(lang)
     }
 
     /// The directionality of `elem`, computed once per element.
@@ -198,13 +285,13 @@ impl MatchCaches {
         elem: &E,
         elem_id: StyleNodeId,
         ancestors: &[StyleNodeId],
-    ) -> Direction {
+    ) -> Result<Direction, CascadeError> {
         if let Some(&dir) = self.directions.borrow().get(&elem_id) {
-            return dir;
+            return Ok(dir);
         }
-        let dir = resolve_directionality(dom, elem, elem_id, ancestors);
+        let dir = resolve_directionality(dom, elem, elem_id, ancestors, || self.work.charge(1))?;
         self.directions.borrow_mut().insert(elem_id, dir);
-        dir
+        Ok(dir)
     }
 
     /// The cached [`SiblingInfo`] for `parent_id`, built on first use, or
@@ -220,22 +307,27 @@ impl MatchCaches {
         dom: &D,
         parent_id: StyleNodeId,
         allow_detached: bool,
-    ) -> Option<Rc<SiblingInfo>> {
+    ) -> Result<Option<Rc<SiblingInfo>>, CascadeError> {
         let key = (parent_id, allow_detached);
         if let Some(info) = self.siblings.borrow().get(&key) {
-            return Some(Rc::clone(info));
+            return Ok(Some(Rc::clone(info)));
         }
-        if dom
-            .child_ids(parent_id)
-            .take(SIBLING_CACHE_MIN_CHILDREN)
-            .count()
-            < SIBLING_CACHE_MIN_CHILDREN
-        {
-            return None;
+        let mut children = 0;
+        for _ in dom.child_ids(parent_id).take(SIBLING_CACHE_MIN_CHILDREN) {
+            self.work.charge(1)?;
+            children += 1;
         }
-        let info = Rc::new(SiblingInfo::build(dom, parent_id, allow_detached));
+        if children < SIBLING_CACHE_MIN_CHILDREN {
+            return Ok(None);
+        }
+        let info = Rc::new(SiblingInfo::build(
+            dom,
+            parent_id,
+            allow_detached,
+            &self.work,
+        )?);
         self.siblings.borrow_mut().insert(key, Rc::clone(&info));
-        Some(info)
+        Ok(Some(info))
     }
 }
 
@@ -257,7 +349,12 @@ struct SiblingInfo {
 }
 
 impl SiblingInfo {
-    fn build<D: StyleDom>(dom: &D, parent_id: StyleNodeId, allow_detached: bool) -> Self {
+    fn build<D: StyleDom>(
+        dom: &D,
+        parent_id: StyleNodeId,
+        allow_detached: bool,
+        work: &SelectorWork,
+    ) -> Result<Self, CascadeError> {
         let mut elements = Vec::new();
         // Per element: its tag group and its 1-based index within that group.
         let mut groups: Vec<(usize, i32)> = Vec::new();
@@ -267,6 +364,7 @@ impl SiblingInfo {
         let mut group_of_tag: HashMap<String, usize> = HashMap::new();
         let mut group_totals: Vec<i32> = Vec::new();
         for child_id in dom.child_ids(parent_id) {
+            work.charge(1)?;
             if !is_candidate_element(dom, child_id, allow_detached) {
                 continue;
             }
@@ -298,11 +396,11 @@ impl SiblingInfo {
             .into_iter()
             .map(|(group, index)| (index, group_totals[group]))
             .collect();
-        Self {
+        Ok(Self {
             elements,
             index_of,
             of_type,
-        }
+        })
     }
 }
 
@@ -431,12 +529,14 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     relative_anchor: Option<StyleNodeId>,
-) -> bool {
+) -> Result<bool, CascadeError> {
     use selectors::parser::Component;
 
     let dom = ctx.dom;
+    let mut classes = ClassLookup::default();
 
     for component in iter {
+        ctx.caches.work.charge(1)?;
         let component_matches = match component {
             Component::LocalName(local) => {
                 // `local.name` is an Atom (`raikiri-style::Atom`); compare it to the tag name.
@@ -465,12 +565,12 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     elem.id() == Some(id.0.as_str())
                 }
             },
-            Component::Class(class) => match ctx.quirks_mode {
-                StyleQuirksMode::Quirks => elem.has_class_ascii_case_insensitive(class.0.as_str()),
-                StyleQuirksMode::NoQuirks | StyleQuirksMode::LimitedQuirks => {
-                    elem.has_class(class.0.as_str())
-                }
-            },
+            Component::Class(class) => classes.matches(
+                elem,
+                class.0.as_str(),
+                ctx.quirks_mode == StyleQuirksMode::Quirks,
+                &ctx.caches.work,
+            )?,
             Component::AttributeInNoNamespaceExists {
                 local_name,
                 local_name_lower,
@@ -531,6 +631,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 crate::PseudoClass::FocusWithin => {
                     let mut current = dom.focused_element();
                     while let Some(id) = current {
+                        ctx.caches.work.charge(1)?;
                         if id == elem_id {
                             break;
                         }
@@ -542,10 +643,10 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 // per element for the lifetime of `ctx.caches`.
                 crate::PseudoClass::Lang(ranges) => lang_pseudo_matches(
                     ranges,
-                    &ctx.caches.content_language(dom, elem, elem_id, ancestors),
+                    &ctx.caches.content_language(dom, elem, elem_id, ancestors)?,
                 ),
                 crate::PseudoClass::Dir(dir) => {
-                    ctx.caches.directionality(dom, elem, elem_id, ancestors) == *dir
+                    ctx.caches.directionality(dom, elem, elem_id, ancestors)? == *dir
                 }
                 // `:hover` and `:active` remain unsupported dynamic pseudo-classes.
                 // `is_supported_selector_list` drops them when building the rule tree (pinned
@@ -559,7 +660,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 Some(scope_id) => elem_id == scope_id,
                 None => is_document_root_element(dom, elem_id, ancestors),
             },
-            Component::Empty => matches_empty(dom, elem_id),
+            Component::Empty => matches_empty(ctx, elem_id)?,
             Component::Negation(selectors) => !selector_slice_matches_with_anchor(
                 selectors.slice(),
                 ctx,
@@ -567,7 +668,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 elem_id,
                 ancestors,
                 relative_anchor,
-            ),
+            )?,
             Component::Is(selectors) | Component::Where(selectors) => {
                 selector_slice_matches_with_anchor(
                     selectors.slice(),
@@ -576,11 +677,11 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     elem_id,
                     ancestors,
                     relative_anchor,
-                )
+                )?
             }
             Component::Has(_) if relative_anchor.is_some() => false,
             Component::Has(relative_selectors) => {
-                has_cache::matches(ctx, relative_selectors, elem_id, ancestors)
+                has_cache::matches(ctx, relative_selectors, elem_id, ancestors)?
             }
             Component::Nth(data) => {
                 // Sibling-list parent: the element parent when present,
@@ -591,15 +692,15 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 let Some(sibling_parent) =
                     ancestors.last().copied().or_else(|| dom.parent_id(elem_id))
                 else {
-                    return false;
+                    return Ok(false);
                 };
-                matches_nth(ctx, sibling_parent, elem_id, elem.tag_name(), data)
+                matches_nth(ctx, sibling_parent, elem_id, elem.tag_name(), data)?
             }
             Component::NthOf(data) => {
                 let Some(sibling_parent) =
                     ancestors.last().copied().or_else(|| dom.parent_id(elem_id))
                 else {
-                    return false;
+                    return Ok(false);
                 };
                 matches_nth_of(
                     ctx,
@@ -608,7 +709,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     elem.tag_name(),
                     data,
                     ancestors,
-                )
+                )?
             }
             Component::RelativeSelectorAnchor => relative_anchor == Some(elem_id),
             _ => {
@@ -618,10 +719,10 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
             }
         };
         if !component_matches {
-            return false;
+            return Ok(false);
         }
     }
-    true
+    Ok(true)
 }
 
 /// CSS Text Module Level 4 "document white space character" (see
@@ -674,9 +775,14 @@ fn is_document_white_space(c: char) -> bool {
 /// here regardless) fall through to "does not affect emptiness", matching
 /// the spec text's "comments, processing instructions, and other nodes
 /// must not affect" clause.
-pub(crate) fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
-    dom.child_ids(elem_id)
-        .all(|child_id| match dom.node(child_id) {
+pub(crate) fn matches_empty<D: StyleDom>(
+    ctx: MatchContext<'_, D>,
+    elem_id: StyleNodeId,
+) -> Result<bool, CascadeError> {
+    let dom = ctx.dom;
+    for child_id in dom.child_ids(elem_id) {
+        ctx.caches.work.charge(1)?;
+        let empty = match dom.node(child_id) {
             Some(node) => match node.kind() {
                 StyleNodeKind::Element => false,
                 StyleNodeKind::Text => node
@@ -695,7 +801,12 @@ pub(crate) fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool 
             // defensive fallback in the same posture as `match_from_element`'s
             // own `dom.node(elem_id)` guard.
             None => true,
-        })
+        };
+        if !empty {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// 1-based sibling position of `elem_id` among `parent_id`'s element children
@@ -739,11 +850,12 @@ pub(crate) fn sibling_position<D: StyleDom>(
     of_type: bool,
     selector_filter: Option<&[Selector<RaikiriSelectorImpl>]>,
     ancestors: &[StyleNodeId],
-) -> (i32, i32, i32) {
+) -> Result<(i32, i32, i32), CascadeError> {
     let dom = ctx.dom;
     let mut total = 0i32;
     let mut index_from_start = 0i32;
     for child_id in dom.child_ids(parent_id) {
+        ctx.caches.work.charge(1)?;
         let Some(child_node) = dom.node(child_id) else {
             continue; // cov:ignore: defensive against a detached/inert child_id that dom.node() can't resolve; no StyleDom impl in this crate's test corpus produces one.
         };
@@ -760,7 +872,7 @@ pub(crate) fn sibling_position<D: StyleDom>(
             continue;
         }
         if let Some(selectors) = selector_filter
-            && !selector_slice_matches(selectors, ctx, &sibling, child_id, ancestors)
+            && !selector_slice_matches(selectors, ctx, &sibling, child_id, ancestors)?
         {
             continue;
         }
@@ -770,7 +882,7 @@ pub(crate) fn sibling_position<D: StyleDom>(
         }
     }
     let index_from_end = total - index_from_start + 1;
-    (index_from_start, index_from_end, total)
+    Ok((index_from_start, index_from_end, total))
 }
 
 /// `Component::Nth` — covers `:first-child`/`:last-child`/`:only-child`/
@@ -829,12 +941,12 @@ fn matches_nth<D: StyleDom>(
     elem_id: StyleNodeId,
     elem_tag: &str,
     data: &NthSelectorData,
-) -> bool {
+) -> Result<bool, CascadeError> {
     let of_type = data.ty.is_of_type();
     let (from_start, from_end, total) =
         match ctx
             .caches
-            .sibling_info(ctx.dom, parent_id, ctx.allow_detached)
+            .sibling_info(ctx.dom, parent_id, ctx.allow_detached)?
         {
             Some(info) => match info.index_of.get(&elem_id) {
                 Some(&index) => {
@@ -855,9 +967,9 @@ fn matches_nth<D: StyleDom>(
             },
             // Without a selector filter `sibling_position` never reads the
             // ancestor chain.
-            None => sibling_position(ctx, parent_id, elem_id, elem_tag, of_type, None, &[]),
+            None => sibling_position(ctx, parent_id, elem_id, elem_tag, of_type, None, &[])?,
         };
-    matches_nth_position(from_start, from_end, total, data)
+    Ok(matches_nth_position(from_start, from_end, total, data))
 }
 
 /// `Component::NthOf` matching for CSS Selectors L4's `:nth-child(An+B of S)`
@@ -875,11 +987,12 @@ fn matches_nth_of<D: StyleDom>(
     elem_tag: &str,
     data: &NthOfSelectorData<RaikiriSelectorImpl>,
     ancestors: &[StyleNodeId],
-) -> bool {
+) -> Result<bool, CascadeError> {
     let nth_data = data.nth_data();
     let (from_start, from_end, total) =
-        filtered_nth::position(ctx, parent_id, elem_id, data, ancestors).unwrap_or_else(|| {
-            sibling_position(
+        match filtered_nth::position(ctx, parent_id, elem_id, data, ancestors)? {
+            Some(position) => position,
+            None => sibling_position(
                 ctx,
                 parent_id,
                 elem_id,
@@ -887,9 +1000,9 @@ fn matches_nth_of<D: StyleDom>(
                 nth_data.ty.is_of_type(),
                 Some(data.selectors()),
                 ancestors,
-            )
-        });
-    matches_nth_position(from_start, from_end, total, nth_data)
+            )?,
+        };
+    Ok(matches_nth_position(from_start, from_end, total, nth_data))
 }
 
 fn matches_nth_position(
@@ -977,10 +1090,21 @@ pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     elem: &E,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
-) -> Option<Specificity> {
+) -> Result<Option<Specificity>, CascadeError> {
+    match_complex_selectors(list.slice().iter(), ctx, elem, elem_id, ancestors)
+}
+
+/// Returns the maximum specificity among the supplied conservative candidates.
+pub(crate) fn match_complex_selectors<'s, D: StyleDom, E: StyleElement>(
+    selectors: impl IntoIterator<Item = &'s Selector<RaikiriSelectorImpl>>,
+    ctx: MatchContext<'_, D>,
+    elem: &E,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+) -> Result<Option<Specificity>, CascadeError> {
     let mut best: Option<Specificity> = None;
-    for selector in list.slice() {
-        if selector_matches(ctx, selector, elem, elem_id, ancestors) {
+    for selector in selectors {
+        if selector_matches(ctx, selector, elem, elem_id, ancestors)? {
             let spec = specificity_of(selector);
             best = Some(match best {
                 Some(prev) => prev.max(spec),
@@ -988,7 +1112,7 @@ pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
             });
         }
     }
-    best
+    Ok(best)
 }
 
 fn selector_slice_matches<D: StyleDom, E: StyleElement>(
@@ -997,7 +1121,7 @@ fn selector_slice_matches<D: StyleDom, E: StyleElement>(
     elem: &E,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
-) -> bool {
+) -> Result<bool, CascadeError> {
     selector_slice_matches_with_anchor(selectors, ctx, elem, elem_id, ancestors, None)
 }
 
@@ -1008,10 +1132,13 @@ fn selector_slice_matches_with_anchor<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     relative_anchor: Option<StyleNodeId>,
-) -> bool {
-    selectors.iter().any(|selector| {
-        selector_matches_with_anchor(ctx, selector, elem, elem_id, ancestors, relative_anchor)
-    })
+) -> Result<bool, CascadeError> {
+    for selector in selectors {
+        if selector_matches_with_anchor(ctx, selector, elem, elem_id, ancestors, relative_anchor)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn selector_matches<D: StyleDom, E: StyleElement>(
@@ -1020,7 +1147,7 @@ fn selector_matches<D: StyleDom, E: StyleElement>(
     elem: &E,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
-) -> bool {
+) -> Result<bool, CascadeError> {
     selector_matches_with_anchor(ctx, selector, elem, elem_id, ancestors, None)
 }
 
@@ -1035,21 +1162,23 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     relative_anchor: Option<StyleNodeId>,
-) -> bool {
+) -> Result<bool, CascadeError> {
     let mut iter = selector.iter();
-    compound_matches(ctx, &mut iter, elem, elem_id, ancestors, relative_anchor)
-        && match iter.next_sequence() {
-            None => true,
-            Some(combinator) => match_combinator_chain(
-                ctx,
-                combinator,
-                elem_id,
-                ancestors,
-                selector,
-                iter,
-                relative_anchor,
-            ),
-        }
+    Ok(
+        compound_matches(ctx, &mut iter, elem, elem_id, ancestors, relative_anchor)?
+            && match iter.next_sequence() {
+                None => true,
+                Some(combinator) => match_combinator_chain(
+                    ctx,
+                    combinator,
+                    elem_id,
+                    ancestors,
+                    selector,
+                    iter,
+                    relative_anchor,
+                )?,
+            },
+    )
 }
 
 /// Matches the relative selector list stored by `:has()` against an anchor
@@ -1065,19 +1194,22 @@ fn has_relative_selector_matches<D: StyleDom>(
     relative_selectors: &[RelativeSelector<RaikiriSelectorImpl>],
     anchor_id: StyleNodeId,
     anchor_ancestors: &[StyleNodeId],
-) -> bool {
+) -> Result<bool, CascadeError> {
     let mut scratch = ctx.caches.take_has_scratch();
-    let matched = relative_selectors.iter().any(|relative_selector| {
-        relative_selector_matches(
+    for relative_selector in relative_selectors {
+        if relative_selector_matches(
             ctx,
             relative_selector,
             anchor_id,
             anchor_ancestors,
             &mut scratch,
-        )
-    });
+        )? {
+            ctx.caches.return_has_scratch(scratch);
+            return Ok(true);
+        }
+    }
     ctx.caches.return_has_scratch(scratch);
-    matched
+    Ok(false)
 }
 
 /// One relative selector of [`has_relative_selector_matches`]: seeds
@@ -1089,22 +1221,24 @@ fn relative_selector_matches<D: StyleDom>(
     anchor_id: StyleNodeId,
     anchor_ancestors: &[StyleNodeId],
     scratch: &mut HasScratch,
-) -> bool {
+) -> Result<bool, CascadeError> {
     scratch.path.clear();
     scratch.stack.clear();
+    ctx.caches.work.charge(anchor_ancestors.len() as u64)?;
     scratch.path.extend_from_slice(anchor_ancestors);
     match relative_selector.selector.combinator_at_parse_order(1) {
         Combinator::Child | Combinator::Descendant => {
             // The roots are the anchor's element children, so the anchor
             // joins their ancestor chain.
+            ctx.caches.work.charge(1)?;
             scratch.path.push(anchor_id);
             let depth = scratch.path.len();
-            scratch.stack.extend(
-                ctx.dom
-                    .child_ids(anchor_id)
-                    .filter(|&id| is_candidate_element(ctx.dom, id, ctx.allow_detached))
-                    .map(|id| (id, depth)),
-            );
+            for id in ctx.dom.child_ids(anchor_id) {
+                ctx.caches.work.charge(1)?;
+                if is_candidate_element(ctx.dom, id, ctx.allow_detached) {
+                    scratch.stack.push((id, depth));
+                }
+            }
         }
         Combinator::NextSibling | Combinator::LaterSibling => {
             let Some(parent_id) = anchor_ancestors
@@ -1112,7 +1246,7 @@ fn relative_selector_matches<D: StyleDom>(
                 .copied()
                 .or_else(|| ctx.dom.parent_id(anchor_id))
             else {
-                return false;
+                return Ok(false);
             };
             // The roots are the anchor's following element siblings, which
             // share the anchor's own ancestor chain.
@@ -1120,17 +1254,19 @@ fn relative_selector_matches<D: StyleDom>(
             let only_first = relative_selector.match_hint.is_next_sibling();
             if only_first
                 && !ctx.caches.single_match
-                && let Some(info) = ctx
-                    .caches
-                    .sibling_info(ctx.dom, parent_id, ctx.allow_detached)
+                && let Some(info) =
+                    ctx.caches
+                        .sibling_info(ctx.dom, parent_id, ctx.allow_detached)?
                 && let Some(&index) = info.index_of.get(&anchor_id)
             {
                 if let Some(&next) = info.elements.get(index + 1) {
+                    ctx.caches.work.charge(1)?;
                     scratch.stack.push((next, depth));
                 }
             } else {
                 let mut following = false;
                 for child_id in ctx.dom.child_ids(parent_id) {
+                    ctx.caches.work.charge(1)?;
                     if child_id == anchor_id {
                         following = true;
                         continue;
@@ -1149,7 +1285,7 @@ fn relative_selector_matches<D: StyleDom>(
         // constructs one anyway.
         // cov:ignore: `selectors` does not construct these combinators in a :has() relative selector
         Combinator::PseudoElement | Combinator::Part | Combinator::SlotAssignment => {
-            return false;
+            return Ok(false);
         }
     }
     // The stack is LIFO and the roots were pushed in document order; reverse
@@ -1174,7 +1310,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
     scratch: &mut HasScratch,
     include_descendants: bool,
     anchor_id: StyleNodeId,
-) -> bool {
+) -> Result<bool, CascadeError> {
     let dom = ctx.dom;
     // Keep one mutable ancestor path and record only its length in each stack
     // entry. Cloning the full path into every pending child makes a deep,
@@ -1186,6 +1322,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
         stack,
     } = scratch;
     while let Some((candidate_id, depth)) = stack.pop() {
+        ctx.caches.work.charge(1)?;
         ancestor_path.truncate(depth);
         if !is_candidate_element(dom, candidate_id, ctx.allow_detached) {
             continue;
@@ -1203,8 +1340,8 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
             candidate_id,
             ancestor_path,
             Some(anchor_id),
-        ) {
-            return true;
+        )? {
+            return Ok(true);
         }
         if !include_descendants {
             continue;
@@ -1213,15 +1350,15 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
         ancestor_path.push(candidate_id);
         let child_depth = ancestor_path.len();
         let start = stack.len();
-        stack.extend(
-            dom.child_ids(candidate_id)
-                .map(|child_id| (child_id, child_depth)),
-        );
+        for child_id in dom.child_ids(candidate_id) {
+            ctx.caches.work.charge(1)?;
+            stack.push((child_id, child_depth));
+        }
         // The stack is LIFO, but child_ids is in document order. Reverse only
         // the newly appended entries so traversal remains pre-order.
         stack[start..].reverse();
     }
-    false
+    Ok(false)
 }
 
 /// `::before`/`::after` counterpart of [`selector_matches`]: if `selector`
@@ -1258,23 +1395,27 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
     elem: &E,
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
-) -> Option<PseudoElem> {
+) -> Result<Option<PseudoElem>, CascadeError> {
     let ctx = MatchContext { scope: None, ..ctx };
-    let pseudo = *selector.pseudo_element()?;
+    let Some(&pseudo) = selector.pseudo_element() else {
+        return Ok(None);
+    };
     // These valid names preserve their selector-list siblings, but this
     // renderer has no top-layer or native file-button boxes to match.
     if matches!(
         pseudo,
         PseudoElem::Backdrop | PseudoElem::FileSelectorButton
     ) {
-        return None;
+        return Ok(None);
     }
     let mut iter = selector.iter();
     // Skip past the (sole) pseudo-element compound — same idiom the
     // `selectors` crate's own `Selector::parts()` uses to skip a leading
     // pseudo-element compound before inspecting the rest of the selector
     // (`selectors` v0.39.0 `parser.rs`).
-    for _ in &mut iter {}
+    for _ in &mut iter {
+        ctx.caches.work.charge(1)?;
+    }
     let combinator = iter.next_sequence();
     // cov:ignore: panic-message literal only executed on assertion failure
     // — this crate's whole selector-parsing surface (see this function's
@@ -1289,7 +1430,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
          doc for why that's the only shape a successfully-parsed selector \
          can take here"
     );
-    let matches = compound_matches(ctx, &mut iter, elem, elem_id, ancestors, None)
+    let matches = compound_matches(ctx, &mut iter, elem, elem_id, ancestors, None)?
         && match iter.next_sequence() {
             None => true,
             Some(next_combinator) => match_combinator_chain(
@@ -1300,9 +1441,9 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
                 selector,
                 iter,
                 None,
-            ),
+            )?,
         };
-    matches.then_some(pseudo)
+    Ok(matches.then_some(pseudo))
 }
 
 /// After [`match_complex_selector_list`] matches the rightmost compound
@@ -1562,7 +1703,7 @@ fn match_combinator_chain<D: StyleDom>(
     selector: &Selector<RaikiriSelectorImpl>,
     iter: SelectorIter<'_, RaikiriSelectorImpl>,
     relative_anchor: Option<StyleNodeId>,
-) -> bool {
+) -> Result<bool, CascadeError> {
     struct Frame<'a, 's, D: StyleDom> {
         candidates: PendingCandidates<'a, D>,
         /// Ancestors [`Combinator::NextSibling`]/[`Combinator::LaterSibling`]
@@ -1603,6 +1744,7 @@ fn match_combinator_chain<D: StyleDom>(
     // combinators (stack length 1 through 4) without regrowing; a selector
     // with 4 crossed combinators (5 frames) still regrows once, from
     // capacity 4 to 8.
+    ctx.caches.work.charge(1)?;
     let mut stack = Vec::with_capacity(4);
     stack.push(Frame {
         candidates: pending_candidates_for(
@@ -1613,7 +1755,7 @@ fn match_combinator_chain<D: StyleDom>(
             selector,
             &iter,
             relative_anchor,
-        ),
+        )?,
         ancestors_unchanged: ancestors,
         iter,
         origin: None,
@@ -1626,17 +1768,17 @@ fn match_combinator_chain<D: StyleDom>(
         let depth = stack.len();
         let Some(frame) = stack.last_mut() else {
             // Outermost choice point exhausted with no full match found.
-            return false;
+            return Ok(false);
         };
         if matches!(frame.candidates, PendingCandidates::Satisfied) {
             // A `~` frame whose left side an earlier sibling is already
             // known to satisfy: everything right of it matched on the way
             // here, so the whole selector matches.
             record_later_sibling_matches(ctx, stack.iter().map(|frame| &frame.candidates));
-            return true;
+            return Ok(true);
         }
         let Some((candidate_id, candidate_ancestors)) =
-            frame.candidates.next(ctx, frame.ancestors_unchanged)
+            frame.candidates.next(ctx, frame.ancestors_unchanged)?
         else {
             // This level's candidates are exhausted — backtrack to the
             // parent choice point's next candidate. Everything this frame
@@ -1663,7 +1805,8 @@ fn match_combinator_chain<D: StyleDom>(
             candidate_ancestors,
             candidate_iter,
             relative_anchor,
-        ) else {
+        )?
+        else {
             // Candidate's compound didn't match — try this frame's next
             // candidate (loop back without push/pop). Immediate failure,
             // same as an exhausted pushed frame would record. Skipped at
@@ -1684,11 +1827,12 @@ fn match_combinator_chain<D: StyleDom>(
             // memoize, there is no later query this result could serve.
             None => {
                 record_later_sibling_matches(ctx, stack.iter().map(|frame| &frame.candidates));
-                return true;
+                return Ok(true);
             }
             Some(next_combinator) => {
                 // Compound matched and more remains further left — descend
                 // one level (push a new choice point) rather than recurse.
+                ctx.caches.work.charge(1)?;
                 stack.push(Frame {
                     candidates: pending_candidates_for(
                         ctx,
@@ -1698,7 +1842,7 @@ fn match_combinator_chain<D: StyleDom>(
                         selector,
                         &matched_iter,
                         relative_anchor,
-                    ),
+                    )?,
                     ancestors_unchanged: candidate_ancestors,
                     iter: matched_iter,
                     origin: Some((candidate_id, depth)),
@@ -1785,11 +1929,14 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
         &mut self,
         ctx: MatchContext<'_, D>,
         ancestors_unchanged: &'a [StyleNodeId],
-    ) -> Option<(StyleNodeId, &'a [StyleNodeId])> {
-        match self {
+    ) -> Result<Option<(StyleNodeId, &'a [StyleNodeId])>, CascadeError> {
+        ctx.caches.work.charge(1)?;
+        Ok(match self {
             Self::Child(slot) => slot.take(),
             Self::Descendant(remaining) => {
-                let (&candidate_id, further) = remaining.split_last()?;
+                let Some((&candidate_id, further)) = remaining.split_last() else {
+                    return Ok(None);
+                };
                 *remaining = further;
                 Some((candidate_id, further))
             }
@@ -1805,7 +1952,7 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
                 // `is_candidate_element`.
                 later_sibling::record_scanned(ctx.caches, key, *next);
                 if *next >= *end {
-                    return None;
+                    return Ok(None);
                 }
                 let candidate_id = info.elements[*next];
                 *next += 1;
@@ -1819,6 +1966,7 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
                 stop_at,
             } => {
                 for candidate_id in child_iter.by_ref() {
+                    ctx.caches.work.charge(1)?;
                     if candidate_id == *stop_at {
                         // Reached `current_id` itself: no more candidates
                         // are ever valid past this point (mirrors the
@@ -1826,10 +1974,10 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
                         // iterator is fine — a choice point that returned
                         // `None` once is never queried again by
                         // `match_combinator_chain`'s driving loop.
-                        return None;
+                        return Ok(None);
                     }
                     if is_candidate_element(ctx.dom, candidate_id, ctx.allow_detached) {
-                        return Some((candidate_id, ancestors_unchanged));
+                        return Ok(Some((candidate_id, ancestors_unchanged)));
                     }
                 }
                 // cov:ignore: same invariant as `immediate_preceding_sibling`'s
@@ -1842,7 +1990,7 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
                 // omits an id it itself supplied as `current_id` to exercise.
                 None
             }
-        }
+        })
     }
 }
 
@@ -1861,9 +2009,9 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
     selector: &Selector<RaikiriSelectorImpl>,
     iter: &SelectorIter<'_, RaikiriSelectorImpl>,
     relative_anchor: Option<StyleNodeId>,
-) -> PendingCandidates<'a, D> {
+) -> Result<PendingCandidates<'a, D>, CascadeError> {
     let dom = ctx.dom;
-    match combinator {
+    Ok(match combinator {
         Combinator::Child => PendingCandidates::Child(
             ancestors
                 .split_last()
@@ -1876,9 +2024,9 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
                 .copied()
                 .or_else(|| dom.parent_id(current_id))
             else {
-                return PendingCandidates::Child(None);
+                return Ok(PendingCandidates::Child(None));
             };
-            PendingCandidates::NextSibling(immediate_preceding_sibling(ctx, parent_id, current_id))
+            PendingCandidates::NextSibling(immediate_preceding_sibling(ctx, parent_id, current_id)?)
         }
         Combinator::LaterSibling => {
             let Some(parent_id) = ancestors
@@ -1886,23 +2034,24 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
                 .copied()
                 .or_else(|| dom.parent_id(current_id))
             else {
-                return PendingCandidates::Child(None);
+                return Ok(PendingCandidates::Child(None));
             };
-            match later_sibling::plan(ctx, parent_id, current_id, selector, iter, relative_anchor) {
-                Some(LaterSiblingPlan::Known(true)) => return PendingCandidates::Satisfied,
-                Some(LaterSiblingPlan::Known(false)) => return PendingCandidates::Child(None),
+            match later_sibling::plan(ctx, parent_id, current_id, selector, iter, relative_anchor)?
+            {
+                Some(LaterSiblingPlan::Known(true)) => return Ok(PendingCandidates::Satisfied),
+                Some(LaterSiblingPlan::Known(false)) => return Ok(PendingCandidates::Child(None)),
                 Some(LaterSiblingPlan::Scan {
                     info,
                     key,
                     start,
                     end,
                 }) => {
-                    return PendingCandidates::IndexedLaterSibling {
+                    return Ok(PendingCandidates::IndexedLaterSibling {
                         info,
                         key,
                         next: start,
                         end,
-                    };
+                    });
                 }
                 None => {}
             }
@@ -1943,7 +2092,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
         // already-exhausted `Child(None)` cursor — same "no candidate ever
         // succeeds" outcome the pre-fix `_ => false` arm produced.
         _ => PendingCandidates::Child(None),
-    }
+    })
 }
 
 /// Shared predicate: whether `id` is an `Element` candidate for sibling and
@@ -2017,18 +2166,24 @@ fn immediate_preceding_sibling<D: StyleDom>(
     ctx: MatchContext<'_, D>,
     parent_id: StyleNodeId,
     current_id: StyleNodeId,
-) -> Option<StyleNodeId> {
+) -> Result<Option<StyleNodeId>, CascadeError> {
     let dom = ctx.dom;
-    if let Some(info) = ctx.caches.sibling_info(dom, parent_id, ctx.allow_detached) {
+    if let Some(info) = ctx
+        .caches
+        .sibling_info(dom, parent_id, ctx.allow_detached)?
+    {
         // A missing position means `current_id` is not a candidate; see the
         // doc above for why that yields `None` here.
-        let index = *info.index_of.get(&current_id)?;
-        return index.checked_sub(1).map(|prev| info.elements[prev]);
+        let Some(&index) = info.index_of.get(&current_id) else {
+            return Ok(None);
+        };
+        return Ok(index.checked_sub(1).map(|prev| info.elements[prev]));
     }
     let mut last_element = None;
     for candidate_id in dom.child_ids(parent_id) {
+        ctx.caches.work.charge(1)?;
         if candidate_id == current_id {
-            return last_element;
+            return Ok(last_element);
         }
         if is_candidate_element(dom, candidate_id, ctx.allow_detached) {
             last_element = Some(candidate_id);
@@ -2042,7 +2197,7 @@ fn immediate_preceding_sibling<D: StyleDom>(
     // `match_combinator_chain`'s callers). Would need a `StyleDom` impl
     // whose `child_ids(parent_id)` omits an id it itself supplied as
     // `ancestors.last()` / a sibling candidate to exercise this branch.
-    None
+    Ok(None)
 }
 
 /// Resolve the element identified by `elem_id` and match the compound at
@@ -2072,7 +2227,7 @@ fn match_from_element<'s, D: StyleDom>(
     ancestors: &[StyleNodeId],
     mut iter: SelectorIter<'s, RaikiriSelectorImpl>,
     relative_anchor: Option<StyleNodeId>,
-) -> Option<SelectorIter<'s, RaikiriSelectorImpl>> {
+) -> Result<Option<SelectorIter<'s, RaikiriSelectorImpl>>, CascadeError> {
     // Both guards below are defensive and not reachable via the real
     // `Collector::collect` → `match_complex_selector_list` call path: every
     // `elem_id` this function is ever invoked with comes from one of two
@@ -2093,9 +2248,13 @@ fn match_from_element<'s, D: StyleDom>(
     // would need a `StyleDom` impl that returns `None`/non-Element for an id
     // it itself supplied as an ancestor or a filtered sibling candidate to
     // exercise.
-    let node = ctx.dom.node(elem_id)?;
+    let Some(node) = ctx.dom.node(elem_id) else {
+        return Ok(None);
+    };
     // cov:ignore: see the guard immediately above — same invariant.
-    let elem = node.as_element()?;
+    let Some(elem) = node.as_element() else {
+        return Ok(None);
+    };
     // `ancestors` here is *this* element's own remaining ancestor chain
     // (root-most first) — `pending_candidates_for`'s `Child`/`Descendant`
     // arms hand out `rest`/`further` (everything left after popping
@@ -2107,10 +2266,10 @@ fn match_from_element<'s, D: StyleDom>(
     // not `elem`'s (the search's original caller's) parent. Sibling jumps
     // pass `ancestors` through unchanged (siblings
     // share a parent), so this holds for those candidates too.
-    if !compound_matches(ctx, &mut iter, &elem, elem_id, ancestors, relative_anchor) {
-        return None;
+    if !compound_matches(ctx, &mut iter, &elem, elem_id, ancestors, relative_anchor)? {
+        return Ok(None);
     }
-    Some(iter)
+    Ok(Some(iter))
 }
 
 // ---------------------------------------------------------------------------

@@ -141,7 +141,7 @@ impl FirstLetter {
                     if !crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo) {
                         continue;
                     }
-                    let Some((cv, value)) = crate::generated_content::generated_text(
+                    let Some((cv, value)) = crate::generated_content::generated_text_compact(
                         doc,
                         cascade,
                         id,

@@ -6,7 +6,7 @@ use raikiri_js::runtime::{
 pub use raikiri_js::runtime::{DecodedImage, ImagePixels};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -57,6 +57,13 @@ pub enum HostOperation {
         namespace: String,
         markup: String,
     },
+    // cov:ignore: protocol DTO declaration; roundtrips run in the separate tools workspace.
+    BudgetedFragment {
+        tag: String,
+        namespace: String,
+        markup: String,
+        remaining_nodes: u64,
+    },
     Fetch(String),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol users; tools/ is outside the workspace llvm-cov run.
     LoadImage(String),
@@ -85,6 +92,7 @@ pub enum HostValue {
     Geometry(Option<GeometryDto>),
     Text(Option<String>),
     Document(LogicalSnapshot),
+    FragmentNodes,
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Flag(bool),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
@@ -204,19 +212,25 @@ pub mod base64 {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// cov:ignore: protocol DTO declaration has no executable body; tools workspace roundtrips verify it.
 pub struct LimitsDto {
     pub virtual_time: f64,
     pub tasks: u64,
+    pub enqueued_jobs: u64,
+    pub selector_work: Option<u64>,
     pub loops: u64,
     pub recursion: usize,
     pub nodes: usize,
 }
 impl From<RunOptions> for LimitsDto {
+    // cov:ignore: limits roundtrips and real-AOT tests run in the separate tools workspace.
     fn from(o: RunOptions) -> Self {
         let l = o.limits;
         Self {
             virtual_time: l.max_virtual_time_ms,
             tasks: l.max_tasks,
+            enqueued_jobs: l.max_enqueued_jobs,
+            selector_work: l.max_selector_work,
             loops: l.max_loop_iterations,
             recursion: l.max_recursion,
             nodes: l.max_nodes,
@@ -224,11 +238,14 @@ impl From<RunOptions> for LimitsDto {
     }
 }
 impl LimitsDto {
+    // cov:ignore: limits roundtrips and real-AOT tests run in the separate tools workspace.
     pub fn into_options(self) -> RunOptions {
         RunOptions {
             limits: Limits {
                 max_virtual_time_ms: self.virtual_time,
                 max_tasks: self.tasks,
+                max_enqueued_jobs: self.enqueued_jobs,
+                max_selector_work: self.selector_work,
                 max_loop_iterations: self.loops,
                 max_recursion: self.recursion,
                 max_nodes: self.nodes,
@@ -262,6 +279,7 @@ pub enum GuestValue {
     Report(ReportDto),
     Delivery(Option<DeliveryDto>),
     Document(LogicalSnapshot),
+    FragmentNodes, // cov:ignore: protocol DTO variant has no executable body.
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GuestResponse {
@@ -293,6 +311,8 @@ fn serialize_harness_status<S: serde::Serializer>(
 pub enum AbortDto {
     VirtualTime,
     Tasks,
+    EnqueuedJobs, // cov:ignore: protocol DTO variant; roundtrip tests run in the tools workspace.
+    SelectorWork, // cov:ignore: protocol DTO variant; roundtrip tests run in the tools workspace.
     LoopIterations,
     Recursion,
     Nodes,
@@ -307,6 +327,7 @@ pub struct ReportDto {
     pub console: Vec<(String, String)>,
 }
 impl From<RunReport> for ReportDto {
+    // cov:ignore: all abort variants roundtrip in the separate tools workspace; real-AOT tests verify new reasons.
     fn from(r: RunReport) -> Self {
         Self {
             scripts_run: r.scripts_run,
@@ -315,6 +336,8 @@ impl From<RunReport> for ReportDto {
             aborted: r.aborted.map(|a| match a {
                 Abort::VirtualTime => AbortDto::VirtualTime,
                 Abort::Tasks => AbortDto::Tasks,
+                Abort::EnqueuedJobs => AbortDto::EnqueuedJobs,
+                Abort::SelectorWork => AbortDto::SelectorWork,
                 Abort::LoopIterations => AbortDto::LoopIterations,
                 Abort::Recursion => AbortDto::Recursion,
                 Abort::Nodes => AbortDto::Nodes,
@@ -325,6 +348,7 @@ impl From<RunReport> for ReportDto {
     }
 }
 impl ReportDto {
+    // cov:ignore: all abort variants roundtrip in the separate tools workspace; native coverage does not build it.
     pub fn into_native(self) -> RunReport {
         RunReport {
             scripts_run: self.scripts_run,
@@ -333,6 +357,8 @@ impl ReportDto {
             aborted: self.aborted.map(|a| match a {
                 AbortDto::VirtualTime => Abort::VirtualTime,
                 AbortDto::Tasks => Abort::Tasks,
+                AbortDto::EnqueuedJobs => Abort::EnqueuedJobs,
+                AbortDto::SelectorWork => Abort::SelectorWork,
                 AbortDto::LoopIterations => Abort::LoopIterations,
                 AbortDto::Recursion => Abort::Recursion,
                 AbortDto::Nodes => Abort::Nodes,

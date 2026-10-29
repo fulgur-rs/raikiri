@@ -10,7 +10,7 @@ use boa_engine::{
 };
 use raikiri_dom::NodeKind;
 
-use super::webidl::{dom_string, with_state};
+use super::webidl::{dom_string, guard_active, with_state};
 
 pub(crate) const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
 pub(crate) const SVG_NS: &str = "http://www.w3.org/2000/svg";
@@ -113,6 +113,20 @@ pub(crate) fn set_to_string_tag(
     Ok(())
 }
 
+/// Guard both sides of a native call, including bindings that only mutate
+/// their own object data. Trace the wrapped function's captures normally.
+pub(crate) fn guarded_native(native: NativeFunction) -> NativeFunction {
+    NativeFunction::from_copy_closure_with_captures(
+        |this, args, native, context| {
+            guard_active(context)?;
+            let result = native.call(this, args, context);
+            guard_active(context)?;
+            result
+        },
+        native,
+    )
+}
+
 /// A native getter/setter/method function object with the given `name` and
 /// `length` (ECMA-262 §10.2.9: `length` is non-writable, non-enumerable,
 /// configurable), built from `native`.
@@ -127,7 +141,7 @@ fn function_with_length(
     length: usize,
     native: NativeFunction,
 ) -> JsResult<JsFunction> {
-    let function = FunctionObjectBuilder::new(context.realm(), native)
+    let function = FunctionObjectBuilder::new(context.realm(), guarded_native(native))
         .name(JsString::from(name))
         .build();
     let length = PropertyDescriptor::builder()
@@ -264,7 +278,8 @@ fn interface(
         .flat_map(|m| m.methods.iter())
         .map(|&(n, length, f)| Ok((n, function(context, n, length, f)?)))
         .collect::<JsResult<_>>()?;
-    let mut builder = ConstructorBuilder::new(context, NativeFunction::from_fn_ptr(ctor));
+    let mut builder =
+        ConstructorBuilder::new(context, guarded_native(NativeFunction::from_fn_ptr(ctor)));
     builder.name(name).length(ctor_length).constructor(true);
     if let Some(proto) = parent_prototype {
         builder.inherit(proto.clone());
@@ -300,7 +315,7 @@ fn interface(
 fn install_image_factory(context: &mut Context, prototype: &JsObject) -> JsResult<()> {
     let factory = FunctionObjectBuilder::new(
         context.realm(),
-        NativeFunction::from_fn_ptr(super::image::image_constructor),
+        guarded_native(NativeFunction::from_fn_ptr(super::image::image_constructor)),
     )
     .name(js_string!("Image"))
     .length(0)

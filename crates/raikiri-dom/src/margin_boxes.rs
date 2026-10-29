@@ -1039,7 +1039,7 @@ impl NamedValues {
             .collect();
         // Counters are only read for the document that sets strings.
         let snapshots = (!last_strings.is_empty())
-            .then(|| document.shared_counter_snapshots(cascade).ok())
+            .then(|| document.shared_compact_counter_snapshots(cascade).ok())
             .flatten();
         let strings = last_strings
             .into_iter()
@@ -1048,7 +1048,7 @@ impl NamedValues {
                     document,
                     idx,
                     components,
-                    element_counters(snapshots.as_deref(), idx),
+                    &element_counters(snapshots.as_deref(), idx),
                     &cascade.counter_styles,
                 );
                 (name.clone(), value)

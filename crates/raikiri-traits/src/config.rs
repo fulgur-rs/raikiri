@@ -1,7 +1,7 @@
 //! Render entry-point configuration (Finding #5: remove iteration inside raikiri).
 //!
 //! The three entry points, `plan()`, `render_streaming()`, and `render_batch()`,
-//! each accept configuration and enforce resource and cost limits. Round 4 review #1
+//! each accept configuration and enforce the limits documented as active below. Round 4 review #1
 //! promoted these limits to `RenderLimits` (formerly limited to BatchConfig, now
 //! shared by plan and Streaming).
 
@@ -12,8 +12,14 @@ use crate::page::TargetRegistry;
 /// Resource and cost limits accepted by all entry points (plan /
 /// render_streaming / render_batch; Finding #5 + round 4 review #1).
 ///
-/// Defaults suitable for fulgur: pages=10_000, nodes=1M, slots=100k,
-/// buffer=10k, bytes=1GB (see §4).
+/// Defaults include 10,000 pages and one million DOM nodes. Each field
+/// documents what it bounds and where it is enforced.
+///
+/// [`Self::max_target_slots`], [`Self::max_layout_buffer_entries`] and
+/// [`Self::max_aggregate_bytes`] are reserved and not enforced by built-in
+/// stages. Their default values are retained for API compatibility; setting
+/// them to any value, including `None`, does not change resource control.
+/// In particular, these limits do not impose a process heap or RSS bound.
 ///
 /// # `max_input_bytes` promotion
 ///
@@ -38,13 +44,22 @@ pub struct RenderLimits {
     /// allocation policy to those sinks. Configurable entry points may
     /// explicitly disable the limit with `None`.
     pub max_dom_nodes: Option<u64>,
-    /// Maximum number of per-document target references.
+    /// Reserved maximum number of per-document target references.
+    ///
+    /// Not enforced by built-in stages. The default `Some(100_000)` is
+    /// retained for compatibility and does not bound target references.
     pub max_target_slots: Option<u32>,
-    /// Maximum entries stored in LayoutBuffer.
+    /// Reserved maximum entries stored in [`crate::LayoutBuffer`].
+    ///
+    /// Not enforced: the buffer is a placeholder. The default `Some(10_000)`
+    /// is retained for compatibility and does not bound layout storage.
     pub max_layout_buffer_entries: Option<u32>,
-    /// Maximum approximate memory footprint. No stage consults it yet; the
-    /// cascade's result has its own bound,
-    /// [`Self::max_cascade_output_bytes`].
+    /// Reserved maximum approximate post-parse memory footprint.
+    ///
+    /// No built-in stage consults it. The default `Some(1_073_741_824)`
+    /// (1 GiB) is retained for compatibility and does not bound memory.
+    /// The cascade's result has its own enforced bound,
+    /// [`Self::max_cascade_output_bytes`]; it is not a process heap or RSS cap.
     pub max_aggregate_bytes: Option<u64>,
     /// Maximum raw input bytes read before parsing. Exceeding it yields
     /// `LimitExceeded { kind: InputBytes }`.
@@ -58,11 +73,10 @@ pub struct RenderLimits {
     /// if you depart from the default (`Some(32 MiB)`), provide another
     /// upstream bound.
     ///
-    /// **Semantic**: [`max_aggregate_bytes`](Self::max_aggregate_bytes) checks
-    /// approximate post-parse memory usage (the DOM node arena, cascade
-    /// table, etc.), whereas `max_input_bytes` checks the parse-time raw
-    /// byte stream (enforceable before parsing for direct DoS protection
-    /// and fail-closed early return).
+    /// **Semantic**: this bounds the parse-time raw byte stream, allowing
+    /// fail-closed early return. It does not bound post-parse memory usage.
+    /// [`Self::max_aggregate_bytes`] is reserved and provides no additional
+    /// protection; DOM nodes and cascade output have their own limits.
     pub max_input_bytes: Option<u64>,
     /// Maximum number of non-fatal parse errors reported by html5ever during
     /// HTML parsing that are recorded as warnings. Once exceeded, subsequent
@@ -105,6 +119,9 @@ pub struct RenderLimits {
     /// whose default this takes. Exceeding it yields
     /// `LimitExceeded { kind: CascadeSelectorTests }`.
     pub max_cascade_selector_tests: Option<u64>,
+    /// Logical selector component evaluations and DOM exploration visits.
+    /// See [`CascadeLimits::max_selector_work`]. `None` disables the limit.
+    pub max_cascade_selector_work: Option<u64>,
     /// The most bytes of candidate declarations the cascade's result may keep;
     /// see
     /// [`CascadeLimits::max_retained_bytes`](raikiri_style::CascadeLimits::max_retained_bytes),
@@ -166,6 +183,7 @@ impl Default for RenderLimits {
             max_cascade_candidates_per_element: cascade.max_candidates_per_element,
             max_cascade_declarations: cascade.max_declarations_visited,
             max_cascade_selector_tests: cascade.max_selector_tests,
+            max_cascade_selector_work: cascade.max_selector_work,
             max_cascade_retained_bytes: cascade.max_retained_bytes,
             max_cascade_output_bytes: cascade.max_output_bytes,
             max_style_rules: rule_tree.max_rules,
@@ -193,6 +211,7 @@ impl RenderLimits {
         limits.max_candidates_per_element = self.max_cascade_candidates_per_element;
         limits.max_declarations_visited = self.max_cascade_declarations;
         limits.max_selector_tests = self.max_cascade_selector_tests;
+        limits.max_selector_work = self.max_cascade_selector_work;
         limits.max_retained_bytes = self.max_cascade_retained_bytes;
         limits.max_output_bytes = self.max_cascade_output_bytes;
         limits
@@ -222,6 +241,7 @@ pub struct RenderLimitsBuilder {
     max_cascade_candidates_per_element: Option<Option<u32>>,
     max_cascade_declarations: Option<Option<u64>>,
     max_cascade_selector_tests: Option<Option<u64>>,
+    max_cascade_selector_work: Option<Option<u64>>,
     max_cascade_retained_bytes: Option<Option<u64>>,
     max_cascade_output_bytes: Option<Option<u64>>,
     max_style_rules: Option<Option<u64>>,
@@ -242,19 +262,22 @@ impl RenderLimitsBuilder {
         self
     }
 
-    /// Set `max_target_slots`.
+    /// Set the reserved [`RenderLimits::max_target_slots`] value.
+    /// Built-in stages do not enforce it.
     pub fn max_target_slots(mut self, v: Option<u32>) -> Self {
         self.max_target_slots = Some(v);
         self
     }
 
-    /// Set `max_layout_buffer_entries`.
+    /// Set the reserved [`RenderLimits::max_layout_buffer_entries`] value.
+    /// Built-in stages do not enforce it.
     pub fn max_layout_buffer_entries(mut self, v: Option<u32>) -> Self {
         self.max_layout_buffer_entries = Some(v);
         self
     }
 
-    /// Set `max_aggregate_bytes`.
+    /// Set the reserved [`RenderLimits::max_aggregate_bytes`] value.
+    /// Built-in stages do not enforce it.
     pub fn max_aggregate_bytes(mut self, v: Option<u64>) -> Self {
         self.max_aggregate_bytes = Some(v);
         self
@@ -281,6 +304,12 @@ impl RenderLimitsBuilder {
     /// Set `max_cascade_declarations` (`None` disables the limit).
     pub fn max_cascade_declarations(mut self, v: Option<u64>) -> Self {
         self.max_cascade_declarations = Some(v);
+        self
+    }
+
+    /// Set `max_cascade_selector_work` (`None` disables the limit).
+    pub fn max_cascade_selector_work(mut self, v: Option<u64>) -> Self {
+        self.max_cascade_selector_work = Some(v);
         self
     }
 
@@ -339,6 +368,9 @@ impl RenderLimitsBuilder {
             max_cascade_declarations: self
                 .max_cascade_declarations
                 .unwrap_or(d.max_cascade_declarations),
+            max_cascade_selector_work: self
+                .max_cascade_selector_work
+                .unwrap_or(d.max_cascade_selector_work),
             max_cascade_selector_tests: self
                 .max_cascade_selector_tests
                 .unwrap_or(d.max_cascade_selector_tests),

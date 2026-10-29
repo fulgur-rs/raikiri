@@ -503,6 +503,56 @@ fn query_selector_all_nth_child_sees_mutations_between_queries() {
     );
 }
 
+#[test]
+fn selector_native_work_zero_budget_stops_before_later_script_effects() {
+    let (host, _, _, body) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        crate::runtime::RunOptions {
+            limits: crate::runtime::Limits {
+                max_selector_work: Some(0),
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    expose(&mut rt, "subject", body);
+    let result = rt.evaluate("var reached=false; subject.matches('*'); reached=true");
+    assert!(
+        result.is_err(),
+        "native selector work must obey a zero budget"
+    );
+}
+
+mod budget_tests;
+mod native_budget_probe_tests;
+mod native_work_probe_tests;
+
+#[test]
+fn detached_roots_have_no_siblings_until_attached_to_a_fragment() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        r#"(() => {
+        const root = document.createElement('div');
+        const before = document.createElement('div');
+        const after = document.createElement('div');
+        before.className = 'before';
+        after.className = 'after';
+        const probes = [':nth-child(2)', '.before + div', '.before ~ div',
+                        ':has(+ .after)', ':has(~ .after)'];
+        if (probes.some(selector => root.matches(selector))) return false;
+        const fragment = document.createDocumentFragment();
+        fragment.appendChild(before);
+        fragment.appendChild(root);
+        fragment.appendChild(after);
+        if (!probes.every(selector => root.matches(selector))) return false;
+        fragment.removeChild(root);
+        return probes.every(selector => !root.matches(selector));
+    })()"#,
+    );
+}
+
 mod id_cache_tests;
 
 thread_local! {

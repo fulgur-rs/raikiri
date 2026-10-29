@@ -64,9 +64,6 @@ impl CachedBackgroundImage {
     }
 }
 
-/// Most scenes of SVG images that a resource set keeps at once.
-pub(super) const MAX_CACHED_SCENES: usize = 16;
-
 /// A scene of an SVG image, built for one box.
 struct CachedScene {
     url: Url,
@@ -366,15 +363,13 @@ impl DecodedImageCache {
         size: ImageRasterSize,
         scene: Arc<VectorImage>,
     ) {
-        let bytes = u64::try_from(scene.estimated_heap_bytes()).unwrap_or(u64::MAX);
+        let bytes = Self::scene_bytes(&url, &scene);
         self.remove_scene(&url, size);
         // A scene the rasters leave no room for would only push the others out.
         if self.decoded_bytes.saturating_add(bytes) > self.max_bytes {
             return;
         }
-        while self.scenes.len() >= MAX_CACHED_SCENES
-            || (!self.scene_fits(bytes) && !self.scenes.is_empty())
-        {
+        while !self.scene_fits(bytes) && !self.scenes.is_empty() {
             self.release_scene(0);
         }
         if !self.scene_fits(bytes) || !self.process_budget.try_reserve(bytes) {
@@ -387,6 +382,16 @@ impl DecodedImageCache {
             scene,
             bytes,
         });
+    }
+
+    pub(super) fn scene_bytes(url: &Url, scene: &VectorImage) -> u64 {
+        // Charge metadata even for an empty scene, so entry count stays bounded.
+        u64::try_from(scene.estimated_heap_bytes())
+            .unwrap_or(u64::MAX)
+            .saturating_add(
+                (std::mem::size_of::<CachedScene>() + 2 * std::mem::size_of::<usize>()) as u64,
+            )
+            .saturating_add(url.as_str().len() as u64)
     }
 
     /// Whether `bytes` more of scene fit this set's byte budget.

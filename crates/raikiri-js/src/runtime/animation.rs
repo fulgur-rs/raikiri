@@ -14,7 +14,7 @@ use raikiri_style::is_valid_easing_function;
 use raikiri_style::property::is_animatable_property_name;
 
 use super::interfaces::{Members, protos};
-use super::webidl::{this_element, throw_dom_exception, with_state};
+use super::webidl::{guard_active, this_element, throw_dom_exception, with_state};
 
 /// A CSS property supported by the static animation sampler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,23 +248,31 @@ fn for_each_iterated(
     context: &mut Context,
     mut each: impl FnMut(JsValue, &mut Context) -> JsResult<()>,
 ) -> JsResult<()> {
+    guard_active(context)?;
     let iterator = method.call(iterable, &[], context)?;
+    guard_active(context)?;
     let iterator = iterator
         .as_object()
         .ok_or_else(|| type_error("iterator must be an object"))?;
     let next = iterator.get(js_string!("next"), context)?;
+    guard_active(context)?;
     let next = next
         .as_callable()
         .ok_or_else(|| type_error("iterator next must be callable"))?;
     loop {
         let result = next.call(&iterator.clone().into(), &[], context)?;
+        guard_active(context)?;
         let result = result
             .as_object()
             .ok_or_else(|| type_error("iterator result must be an object"))?;
-        if result.get(js_string!("done"), context)?.to_boolean() {
+        let done = result.get(js_string!("done"), context)?.to_boolean();
+        guard_active(context)?;
+        if done {
             return Ok(());
         }
-        each(result.get(js_string!("value"), context)?, context)?;
+        let value = result.get(js_string!("value"), context)?;
+        guard_active(context)?;
+        each(value, context)?;
     }
 }
 
@@ -309,7 +317,10 @@ fn offset_value(value: &JsValue, context: &mut Context) -> JsResult<Option<f64>>
 }
 
 fn dom_string(value: &JsValue, context: &mut Context) -> JsResult<String> {
-    Ok(value.to_string(context)?.to_std_string_escaped())
+    guard_active(context)?;
+    let value = value.to_string(context)?;
+    guard_active(context)?;
+    Ok(value.to_std_string_escaped())
 }
 
 /// The converted values of one keyframe property: a single value (whose
@@ -972,9 +983,10 @@ fn schedule_finish(animation: &JsObject, context: &mut Context) -> JsResult<()> 
             with_state(context, |state| {
                 let token = state
                     .event_loop
-                    .queue_cancellable_native_task(remaining, job);
+                    .queue_cancellable_native_task(remaining, job)?;
                 state.animations[id].finish_task = Some(token);
-            })?;
+                Ok::<_, boa_engine::JsError>(())
+            })??;
         }
     }
     Ok(())
@@ -1080,6 +1092,7 @@ fn animation_id_get(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
 fn animation_id_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let animation = this_animation(this)?;
     let id = dom_string(&args.first().cloned().unwrap_or_default(), context)?;
+    guard_active(context)?;
     animation_data_mut(&animation).animation_id = id;
     Ok(JsValue::undefined())
 }

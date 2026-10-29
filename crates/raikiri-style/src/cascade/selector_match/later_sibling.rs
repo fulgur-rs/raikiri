@@ -90,12 +90,19 @@ pub(super) fn plan<D: StyleDom>(
     selector: &Selector<RaikiriSelectorImpl>,
     iter: &SelectorIter<'_, RaikiriSelectorImpl>,
     relative_anchor: Option<StyleNodeId>,
-) -> Option<LaterSiblingPlan> {
-    let compound = iter.clone().next()?;
-    let info = ctx
+) -> Result<Option<LaterSiblingPlan>, CascadeError> {
+    let Some(compound) = iter.clone().next() else {
+        return Ok(None); // cov:ignore: pending_candidates_for receives an iterator advanced across a parsed combinator, which always has a nonempty left compound
+    };
+    let Some(info) = ctx
         .caches
-        .sibling_info(ctx.dom, parent_id, ctx.allow_detached)?;
-    let end = *info.index_of.get(&current_id)?;
+        .sibling_info(ctx.dom, parent_id, ctx.allow_detached)?
+    else {
+        return Ok(None);
+    };
+    let Some(&end) = info.index_of.get(&current_id) else {
+        return Ok(None); // cov:ignore: cascade subjects and chain candidates pass the same element eligibility filter as SiblingInfo; query subjects allow detached elements
+    };
     let key = LaterSiblingKey {
         parent: parent_id,
         compound: std::ptr::from_ref(compound) as usize,
@@ -107,7 +114,7 @@ pub(super) fn plan<D: StyleDom>(
     let mut cache = ctx.caches.later_siblings.borrow_mut();
     let start = match cache.entries.get(&key) {
         Some(state) => match state.first_match {
-            Some(first) => return Some(LaterSiblingPlan::Known(first < end)),
+            Some(first) => return Ok(Some(LaterSiblingPlan::Known(first < end))),
             None => state.scanned,
         },
         None if cache.entries.len() < cache.max_entries => {
@@ -121,17 +128,17 @@ pub(super) fn plan<D: StyleDom>(
             );
             0
         }
-        None => return None,
+        None => return Ok(None),
     };
     if start >= end {
-        return Some(LaterSiblingPlan::Known(false));
+        return Ok(Some(LaterSiblingPlan::Known(false)));
     }
-    Some(LaterSiblingPlan::Scan {
+    Ok(Some(LaterSiblingPlan::Scan {
         info,
         key,
         start,
         end,
-    })
+    }))
 }
 
 /// Records that every candidate sibling before `index` fails the left side.

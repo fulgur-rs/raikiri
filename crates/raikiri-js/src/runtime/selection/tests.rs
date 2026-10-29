@@ -242,3 +242,70 @@ fn selection_rejects_non_range_and_out_of_bounds_range_indexes() {
          badRange && badIndex",
     );
 }
+
+#[test]
+fn silent_enqueue_abort_does_not_mutate_tree_walker_data() {
+    use crate::runtime::{Abort, Limits, RunOptions, RuntimeError};
+    let (host, ..) = StubHost::page();
+    let mut runtime = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_enqueued_jobs: 0,
+                ..Limits::default()
+            },
+        },
+    )
+    .unwrap();
+    let walker = runtime.evaluate("var walker=document.createTreeWalker(document.body); var other=document.createElement('p'); walker").unwrap().as_object().unwrap();
+    let before = walker
+        .downcast_ref::<super::TreeWalkerData>()
+        .unwrap()
+        .current_node
+        .get();
+    assert_eq!(
+        runtime.evaluate("Promise.resolve().then(()=>{}); walker.currentNode=other;"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    assert_eq!(
+        walker
+            .downcast_ref::<super::TreeWalkerData>()
+            .unwrap()
+            .current_node
+            .get(),
+        before
+    );
+}
+
+#[test]
+fn silent_enqueue_abort_does_not_mutate_highlight_data() {
+    use crate::runtime::{Abort, Limits, RunOptions, RuntimeError};
+    let (host, ..) = StubHost::page();
+    let mut runtime = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_enqueued_jobs: 0,
+                ..Limits::default()
+            },
+        },
+    )
+    .unwrap();
+    let highlight = runtime
+        .evaluate("var highlight=new Highlight(); var range=document.createRange(); highlight")
+        .unwrap()
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        runtime.evaluate("Promise.resolve().then(()=>{}); highlight.add(range);"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    assert!(
+        highlight
+            .downcast_ref::<super::HighlightData>()
+            .unwrap()
+            .ranges
+            .borrow()
+            .is_empty()
+    );
+}

@@ -4,16 +4,99 @@
 //! Reuses the cascade's own complex-selector matcher so query results agree
 //! with how the same selector matches during style resolution.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use super::selector_match::SelectorWork;
+use crate::CascadeError;
+
 use selectors::parser::{Component, Selector, SelectorList};
 
 use super::selector_match::{MatchCaches, MatchContext, match_complex_selector_list};
 use crate::{RaikiriSelectorImpl, StyleDom, StyleNode, StyleNodeId, parse_selector_list};
 
 /// A parsed selector list ready to test elements of a [`StyleDom`].
+///
+/// The compatibility bool methods are unlimited. Use a bounded matcher
+/// and a shared work budget for fallible cumulative work limits.
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub struct SelectorQuery {
     list: SelectorList<RaikiriSelectorImpl>,
+}
+
+/// Cumulative logical selector work, independent of any DOM or query cache.
+///
+/// Share one budget across candidates, queries and immutable DOM borrows.
+/// `None` disables the limit while retaining counts. A failed charge keeps
+/// its first error permanently: unused remaining work cannot be spent after
+/// failure, and rejected bulk work is never reported as executed.
+/// The units match cascade selector work. Callers may additionally charge
+/// their outer traversal before inspecting or enqueueing nodes. Class-token
+/// index source bytes are reserved before construction. Other string bytes,
+/// selector parsing and arbitrary DOM implementations are outside this bound.
+pub struct SelectorWorkBudget {
+    work: Rc<SelectorWork>,
+    failed: RefCell<Option<CascadeError>>,
+}
+
+impl SelectorWorkBudget {
+    /// Starts a budget. Its lifetime, rather than a matcher or DOM lifetime,
+    /// determines when cumulative accounting starts again.
+    pub fn new(limit: Option<u64>) -> Self {
+        Self {
+            work: Rc::new(SelectorWork::new(limit)),
+            failed: RefCell::new(None),
+        }
+    }
+
+    /// Logical units accepted so far, saturating at the integer maximum.
+    /// Rejected bulk charges add nothing.
+    pub fn count(&self) -> u64 {
+        self.work.count()
+    }
+
+    /// Charges outer traversal work before its inspection or allocation.
+    /// Returns the first terminal work error after any failed charge.
+    pub fn charge(&self, units: u64) -> Result<(), CascadeError> {
+        self.check()?;
+        self.remember(self.work.charge(units))
+    }
+
+    fn check(&self) -> Result<(), CascadeError> {
+        match self.failed.borrow().as_ref() {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+
+    fn remember<T>(&self, result: Result<T, CascadeError>) -> Result<T, CascadeError> {
+        result.map_err(|error| self.failed.borrow_mut().get_or_insert(error).clone())
+    }
+}
+
+/// Fallible matcher with per-query immutable DOM caches and a shared budget.
+///
+/// It has no bool matching method. Every call checks terminal failure before
+/// reading the DOM, including after an internal bulk reservation failed.
+pub struct BoundedSelectorMatcher<'a, D: StyleDom> {
+    matcher: SelectorMatcher<'a, D>,
+    budget: &'a SelectorWorkBudget,
+}
+
+impl<D: StyleDom> BoundedSelectorMatcher<'_, D> {
+    /// Matches a subject using its real element ancestor chain. The subject
+    /// visit costs one unit before its node is read; inner matching uses the
+    /// same cumulative budget. Failure never becomes a successful no-match.
+    pub fn try_matches(
+        &self,
+        elem_id: StyleNodeId,
+        ancestors: &[StyleNodeId],
+    ) -> Result<bool, CascadeError> {
+        self.budget.charge(1)?;
+        self.budget
+            .remember(self.matcher.try_matches(elem_id, ancestors))
+    }
 }
 
 impl SelectorQuery {
@@ -106,6 +189,50 @@ impl SelectorQuery {
         self.matcher_with_caches(dom, scope, MatchCaches::default())
     }
 
+    /// A fallible matcher borrowing one immutable DOM, with a budget shared
+    /// across all subjects and later queries. Caches end with this matcher;
+    /// consuming or dropping it never refunds the budget.
+    pub fn bounded_matcher<'a, D: StyleDom>(
+        &'a self,
+        dom: &'a D,
+        scope: Option<StyleNodeId>,
+        budget: &'a SelectorWorkBudget,
+    ) -> BoundedSelectorMatcher<'a, D> {
+        self.bounded_with_caches(dom, scope, budget, false)
+    }
+
+    /// Fallible one-subject matching. The caller supplies a cumulative budget;
+    /// it is not reset by this call. Single-subject filtered nth matching scans
+    /// directly instead of building a reusable rank cache.
+    pub fn try_matches_scoped<D: StyleDom>(
+        &self,
+        dom: &D,
+        elem_id: StyleNodeId,
+        ancestors: &[StyleNodeId],
+        scope: Option<StyleNodeId>,
+        budget: &SelectorWorkBudget,
+    ) -> Result<bool, CascadeError> {
+        self.bounded_with_caches(dom, scope, budget, true)
+            .try_matches(elem_id, ancestors)
+    }
+
+    fn bounded_with_caches<'a, D: StyleDom>(
+        &'a self,
+        dom: &'a D,
+        scope: Option<StyleNodeId>,
+        budget: &'a SelectorWorkBudget,
+        single: bool,
+    ) -> BoundedSelectorMatcher<'a, D> {
+        BoundedSelectorMatcher {
+            matcher: self.matcher_with_caches(
+                dom,
+                scope,
+                MatchCaches::with_query_work(Rc::clone(&budget.work), single),
+            ),
+            budget,
+        }
+    }
+
     fn matcher_with_caches<'a, D: StyleDom>(
         &'a self,
         dom: &'a D,
@@ -138,11 +265,20 @@ impl<D: StyleDom> SelectorMatcher<'_, D> {
     /// follows the same contract as [`SelectorQuery::matches`]: `elem_id`'s
     /// ancestor element ids, root side first, ending with its parent.
     pub fn matches(&self, elem_id: StyleNodeId, ancestors: &[StyleNodeId]) -> bool {
+        self.try_matches(elem_id, ancestors)
+            .expect("query matching has no selector work limit")
+    }
+
+    fn try_matches(
+        &self,
+        elem_id: StyleNodeId,
+        ancestors: &[StyleNodeId],
+    ) -> Result<bool, CascadeError> {
         let Some(node) = self.dom.node(elem_id) else {
-            return false;
+            return Ok(false);
         };
         let Some(elem) = node.as_element() else {
-            return false;
+            return Ok(false);
         };
         // DOM query entry points allow detached candidates (same-tree gating);
         // the stylesheet cascade passes `false` to keep inert/template-contents
@@ -154,7 +290,8 @@ impl<D: StyleDom> SelectorMatcher<'_, D> {
             true,
             &self.caches,
         );
-        match_complex_selector_list(&self.query.list, ctx, &elem, elem_id, ancestors).is_some()
+        match_complex_selector_list(&self.query.list, ctx, &elem, elem_id, ancestors)
+            .map(|specificity| specificity.is_some())
     }
 
     #[cfg(test)]

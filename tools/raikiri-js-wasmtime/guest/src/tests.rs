@@ -37,7 +37,7 @@ fn rpc_flush_and_services() {
                 }),
                 _ => None,
             })),
-            HostOperation::Fragment { .. } => {
+            HostOperation::Fragment { .. } | HostOperation::BudgetedFragment { .. } => {
                 Ok(HostValue::Document(Document::new().logical_snapshot()))
             }
         }),
@@ -90,7 +90,9 @@ fn hostile_wrong_response_kinds_are_rejected() {
                 HostOperation::Viewport => HostValue::Unit,
                 HostOperation::FixedToViewport(_) => HostValue::Unit,
                 HostOperation::ImagePixels(..) => HostValue::Unit,
-                HostOperation::Fragment { .. } => HostValue::Unit,
+                HostOperation::Fragment { .. } | HostOperation::BudgetedFragment { .. } => {
+                    HostValue::Unit
+                }
             })
         }),
     );
@@ -152,7 +154,7 @@ fn hostile_geometry_and_fragment_validation_are_rejected() {
         100,
         Box::new(|op| {
             Ok(match op {
-                HostOperation::Fragment { .. } => {
+                HostOperation::Fragment { .. } | HostOperation::BudgetedFragment { .. } => {
                     HostValue::Document(raikiri_dom::snapshot::LogicalSnapshot {
                         root: 0,
                         nodes: Vec::new(),
@@ -183,4 +185,76 @@ fn hostile_geometry_and_fragment_validation_are_rejected() {
         }),
     );
     assert!(missing.fetch_script("x").is_err());
+}
+
+#[test]
+fn fragment_budget_crosses_rpc_and_nodes_error_stays_typed() {
+    let mut host = RpcDocumentHost::new(
+        Document::new(),
+        None,
+        100,
+        Box::new(|operation| match operation {
+            HostOperation::BudgetedFragment {
+                remaining_nodes,
+                tag,
+                ..
+            } => {
+                assert_eq!(remaining_nodes, 2);
+                assert_eq!(tag, "div");
+                Ok(HostValue::FragmentNodes)
+            }
+            _ => panic!("expected budgeted fragment"),
+        }),
+    );
+    assert!(matches!(
+        host.parse_fragment_with_budget("div", "", "huge", 2),
+        Err(raikiri_js::runtime::FragmentParseError::Nodes)
+    ));
+}
+
+#[test]
+fn oversized_budgeted_fragment_response_is_a_node_abort() {
+    let mut fragment = Document::new();
+    for _ in 0..10 {
+        fragment.create_detached_element("b").unwrap();
+    }
+    let snapshot = fragment.logical_snapshot();
+    let mut host = RpcDocumentHost::new(
+        Document::new(),
+        None,
+        100,
+        Box::new(move |_| Ok(HostValue::Document(snapshot.clone()))),
+    );
+    assert!(matches!(
+        host.parse_fragment_with_budget("div", "", "", 1),
+        Err(raikiri_js::runtime::FragmentParseError::Nodes)
+    ));
+}
+
+#[test]
+fn selector_budget_and_sticky_abort_cross_the_guest_protocol() {
+    use raikiri_js::runtime::{Abort, DomRuntime, Limits, RunOptions, RuntimeError};
+    let mut document = Document::new();
+    let root = document.root_index();
+    document.append_element(Some(root), "html", None::<&str>);
+    let native = RunOptions {
+        limits: Limits {
+            max_selector_work: Some(0),
+            ..Limits::default()
+        },
+    };
+    let dto: LimitsDto = decode(&encode(&LimitsDto::from(native)).unwrap()).unwrap();
+    let host = RpcDocumentHost::new(document, None, 100, Box::new(|_| Ok(HostValue::Unit)));
+    let mut runtime = DomRuntime::with_options(host, dto.into_options()).unwrap();
+    assert_eq!(
+        runtime.evaluate("document.querySelector('*')"),
+        Err(RuntimeError::Aborted(Abort::SelectorWork))
+    );
+    let report: ReportDto =
+        decode(&encode(&ReportDto::from(runtime.run_document())).unwrap()).unwrap();
+    assert_eq!(report.into_native().aborted, Some(Abort::SelectorWork));
+    assert_eq!(
+        runtime.evaluate("true"),
+        Err(RuntimeError::Aborted(Abort::SelectorWork))
+    );
 }

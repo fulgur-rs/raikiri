@@ -198,14 +198,21 @@ pub(crate) struct IndexedRule<'a> {
     pub(crate) has_element_selector: bool,
     /// Some selector in the list targets a pseudo-element.
     pub(crate) has_pseudo_selector: bool,
-    /// The selector tests matching the rule against one element takes: one
-    /// per selector of its list in each of the element and pseudo-element
-    /// passes it needs.
+    /// Conservative legacy selector-test charge: the full list length in
+    /// each original element/pseudo pass, even when selector-level filtering
+    /// skips matching. The separate selector-work counter measures actual work.
     pub(crate) selector_tests: u64,
 }
 
+/// A surviving selector position, ordered by rule source order and list order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CandidateSelector {
+    pub(crate) rule: u32,
+    pub(crate) selector: u32,
+}
+
 struct SelectorEntry {
-    rule: u32,
+    candidate: CandidateSelector,
     ancestor_hashes: [u32; MAX_ANCESTOR_HASHES],
     ancestor_hash_count: u8,
 }
@@ -233,8 +240,9 @@ pub(crate) struct RuleIndex<'a> {
 
 impl<'a> RuleIndex<'a> {
     /// Builds the index. `rules` must already be in the order candidates are
-    /// to be pushed (ascending source order); [`Self::candidate_rules`]
-    /// returns rule indices in that same order. `layers` is the cascade's
+    /// to be pushed (ascending source order); [`Self::candidate_selectors`]
+    /// returns selector positions grouped in that same rule order and then
+    /// in selector-list order. `layers` is the cascade's
     /// layer order, which gives each rule its layer position.
     ///
     /// Candidates refer to a declaration by the `u32` positions of its rule
@@ -259,7 +267,7 @@ impl<'a> RuleIndex<'a> {
                 .map_err(|_| too_many("declarations in one style rule"))?;
             let mut has_element_selector = false;
             let mut has_pseudo_selector = false;
-            for selector in rule.selectors.slice() {
+            for (position, selector) in rule.selectors.slice().iter().enumerate() {
                 if let Some(&pseudo) = selector.pseudo_element() {
                     has_pseudo_selector = true;
                     index.pseudo_targets |= pseudo_bit(pseudo);
@@ -272,7 +280,10 @@ impl<'a> RuleIndex<'a> {
                 let entry_idx =
                     u32::try_from(index.entries.len()).map_err(|_| too_many("selectors"))?;
                 index.entries.push(SelectorEntry {
-                    rule: rule_idx,
+                    candidate: CandidateSelector {
+                        rule: rule_idx,
+                        selector: position as u32,
+                    },
                     ancestor_hashes,
                     ancestor_hash_count: hashes.len() as u8,
                 });
@@ -310,26 +321,26 @@ impl<'a> RuleIndex<'a> {
         self.pseudo_targets & pseudo_bit(pseudo) != 0
     }
 
-    /// The active rules, at the positions [`Self::candidate_rules`] returns.
+    /// The active rules, indexed by the rule field of [`Self::candidate_selectors`].
     pub(crate) fn rules(&self) -> &[IndexedRule<'a>] {
         &self.rules
     }
 
-    /// Writes to `out` the indices of every rule that might match `elem`
-    /// (directly or through one of its pseudo-elements), ascending and
-    /// deduplicated. Rules absent from `out` are guaranteed not to match.
-    pub(crate) fn candidate_rules<E: StyleElement>(
+    /// Writes surviving (rule, selector) positions in source/list order,
+    /// deduplicated. Omitted selectors are guaranteed not to match `elem`
+    /// directly or through its pseudo-elements.
+    pub(crate) fn candidate_selectors<E: StyleElement>(
         &self,
         elem: &E,
         ancestors: &AncestorFilter,
-        out: &mut Vec<u32>,
+        out: &mut Vec<CandidateSelector>,
     ) {
         out.clear();
         let mut take = |bucket: Option<&Vec<u32>>| {
             for &entry_idx in bucket.into_iter().flatten() {
                 let entry = &self.entries[entry_idx as usize];
                 if ancestors.might_contain_all(entry.ancestor_hashes()) {
-                    out.push(entry.rule);
+                    out.push(entry.candidate);
                 }
             }
         };
@@ -342,6 +353,20 @@ impl<'a> RuleIndex<'a> {
         take(self.by_tag.get(&tag_hash(elem.tag_name())));
         take(Some(&self.universal));
         out.sort_unstable();
+        out.dedup();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn candidate_rules<E: StyleElement>(
+        &self,
+        elem: &E,
+        ancestors: &AncestorFilter,
+        out: &mut Vec<u32>,
+    ) {
+        let mut selectors = Vec::new();
+        self.candidate_selectors(elem, ancestors, &mut selectors);
+        out.clear();
+        out.extend(selectors.into_iter().map(|candidate| candidate.rule));
         out.dedup();
     }
 

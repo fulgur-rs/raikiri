@@ -29,13 +29,13 @@ use raikiri_traits::{LayoutError, NodeId, PageBox, PaintRect};
 use smol_str::SmolStr;
 
 use crate::document::Document;
+use crate::generated_content::CounterSnapshotLookup;
 use crate::generated_content::{content_components_to_text_with_quotes, element_counters};
 use crate::layout::{
     PageContentInsets, PageLayoutControl, PageMargins, PageSlice, layout_pages_with_options,
     page_content_insets_for_page, page_margins_for_page,
 };
 use crate::node::NodeData;
-use crate::target::CounterSnapshot;
 
 /// Height of the page a running element is measured on. A running element
 /// is not fragmented: everything it holds lands on this one page.
@@ -538,7 +538,7 @@ pub(crate) fn string_set_value(
     doc: &Document,
     idx: usize,
     components: &[ContentComponent],
-    counters: &CounterSnapshot,
+    counters: &impl CounterSnapshotLookup,
     registry: &CounterStyleRegistry,
 ) -> String {
     let mut value = String::new();
@@ -577,12 +577,12 @@ pub(crate) fn string_set_text(
         .string_set
         .iter()
         .rfind(|(set, _)| set == name)?;
-    let snapshots = doc.shared_counter_snapshots(cascade).ok();
+    let snapshots = doc.shared_compact_counter_snapshots(cascade).ok();
     Some(string_set_value(
         doc,
         idx,
         components,
-        element_counters(snapshots.as_deref(), idx),
+        &element_counters(snapshots.as_deref(), idx),
         &cascade.counter_styles,
     ))
 }

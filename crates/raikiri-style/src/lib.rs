@@ -150,9 +150,9 @@ pub use specified::SpecifiedValues;
 
 pub mod cascade;
 pub use cascade::{
-    CascadeLimits, CascadeOptions, CascadeResult, FirstLineCascade, FirstLineStyles,
-    SelectorMatcher, SelectorQuery, cascade, cascade_with_first_line,
-    cascade_with_first_line_options, cascade_with_media_context,
+    BoundedSelectorMatcher, CascadeLimits, CascadeOptions, CascadeResult, FirstLineCascade,
+    FirstLineStyles, SelectorMatcher, SelectorQuery, SelectorWorkBudget, cascade,
+    cascade_with_first_line, cascade_with_first_line_options, cascade_with_media_context,
     cascade_with_media_context_for_page, cascade_with_options,
 };
 

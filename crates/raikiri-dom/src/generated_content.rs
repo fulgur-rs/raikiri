@@ -8,7 +8,7 @@
 pub mod markers;
 
 use crate::Document;
-use crate::target::{CounterSnapshot, CounterSnapshots};
+use crate::target::{CompactCounterSnapshots, CounterSnapshot, CounterSnapshots};
 use raikiri_style::property::{
     ContentComponent, CounterStyle, DisplayValue, FloatValue, PositionValue, QuoteKeyword,
 };
@@ -316,6 +316,8 @@ pub fn content_images_are_placed(
         return false;
     }
     !document.inclusive_ancestors(element).any(|id| {
+        #[cfg(test)]
+        tests::IMAGE_VISIBILITY_VISITS.with(|count| count.set(count.get() + 1));
         cascade
             .computed
             .get(id)
@@ -346,6 +348,28 @@ pub fn generated_pieces<'a>(
     element: usize,
     pseudo: PseudoElem,
     snapshots: &CounterSnapshots,
+) -> Option<(&'a ComputedValues, Vec<GeneratedPiece>)> {
+    generated_pieces_impl(document, cascade, element, pseudo, snapshots)
+}
+
+/// Resolve generated content from compact snapshots without owned expansion.
+#[doc(hidden)]
+pub fn generated_pieces_compact<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &CompactCounterSnapshots,
+) -> Option<(&'a ComputedValues, Vec<GeneratedPiece>)> {
+    generated_pieces_impl(document, cascade, element, pseudo, snapshots)
+}
+
+fn generated_pieces_impl<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &impl SnapshotCollection,
 ) -> Option<(&'a ComputedValues, Vec<GeneratedPiece>)> {
     if !matches!(pseudo, PseudoElem::Before | PseudoElem::After) {
         return None;
@@ -388,8 +412,30 @@ pub fn generated_text<'a>(
     pseudo: PseudoElem,
     snapshots: &CounterSnapshots,
 ) -> Option<(&'a ComputedValues, String)> {
+    generated_text_impl(document, cascade, element, pseudo, snapshots)
+}
+
+/// Resolve generated content from compact snapshots without owned expansion.
+#[doc(hidden)]
+pub fn generated_text_compact<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &CompactCounterSnapshots,
+) -> Option<(&'a ComputedValues, String)> {
+    generated_text_impl(document, cascade, element, pseudo, snapshots)
+}
+
+fn generated_text_impl<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &impl SnapshotCollection,
+) -> Option<(&'a ComputedValues, String)> {
     if pseudo == PseudoElem::Marker {
-        return markers::marker_render_info_with_snapshots(document, cascade, element, snapshots);
+        return markers::marker_render_info_impl(document, cascade, element, snapshots);
     }
     let computed = cascade
         .pseudo
@@ -420,6 +466,28 @@ pub fn generated_alt_text(
     pseudo: PseudoElem,
     snapshots: &CounterSnapshots,
 ) -> Option<String> {
+    generated_alt_text_impl(document, cascade, element, pseudo, snapshots)
+}
+
+/// Resolve generated content from compact snapshots without owned expansion.
+#[doc(hidden)]
+pub fn generated_alt_text_compact(
+    document: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &CompactCounterSnapshots,
+) -> Option<String> {
+    generated_alt_text_impl(document, cascade, element, pseudo, snapshots)
+}
+
+fn generated_alt_text_impl(
+    document: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &impl SnapshotCollection,
+) -> Option<String> {
     let computed = cascade
         .pseudo
         .get(&(StyleNodeId::new(element as u64), pseudo))?;
@@ -442,35 +510,110 @@ pub fn generated_alt_text(
 /// directives applied locally. The view also carries the quote depth at which
 /// the content starts.
 fn pseudo_counters<'a>(
-    snapshots: &'a CounterSnapshots,
+    snapshots: &'a impl SnapshotCollection,
     element: usize,
     pseudo: PseudoElem,
     computed: &'a ComputedValues,
 ) -> CounterSnapshotView<'a> {
-    match snapshots.pseudo(element, pseudo) {
-        Some(snapshot) => CounterSnapshotView::new(snapshot, None),
-        None => CounterSnapshotView::new(
-            snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT),
-            Some(computed),
-        ),
-    }
-    .starting_quotes_at(snapshots.quote_depth(element, pseudo))
+    let mut view = match snapshots.pseudo_view(element, pseudo) {
+        Some(snapshot) => snapshot,
+        None => {
+            let mut view = snapshots
+                .node_view(element)
+                .unwrap_or_else(|| CounterSnapshotView::new(&EMPTY_COUNTER_SNAPSHOT, None));
+            view.computed = Some(computed);
+            view
+        }
+    };
+    view.open_quotes = snapshots.quote_start(element, pseudo);
+    view
 }
 
 static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =
     std::sync::LazyLock::new(std::collections::HashMap::new);
+
+pub(crate) trait SnapshotCollection {
+    fn node_view(&self, element: usize) -> Option<CounterSnapshotView<'_>>;
+    fn pseudo_view(&self, element: usize, pseudo: PseudoElem) -> Option<CounterSnapshotView<'_>>;
+    fn quote_start(&self, element: usize, pseudo: PseudoElem) -> usize;
+}
+
+impl SnapshotCollection for CounterSnapshots {
+    fn node_view(&self, element: usize) -> Option<CounterSnapshotView<'_>> {
+        self.get(element)
+            .map(|snapshot| CounterSnapshotView::new(snapshot, None))
+    }
+    fn pseudo_view(&self, element: usize, pseudo: PseudoElem) -> Option<CounterSnapshotView<'_>> {
+        self.pseudo(element, pseudo)
+            .map(|snapshot| CounterSnapshotView::new(snapshot, None))
+    }
+    fn quote_start(&self, element: usize, pseudo: PseudoElem) -> usize {
+        self.quote_depth(element, pseudo)
+    }
+}
+
+impl SnapshotCollection for CompactCounterSnapshots {
+    fn node_view(&self, element: usize) -> Option<CounterSnapshotView<'_>> {
+        self.get(element)
+    }
+    fn pseudo_view(&self, element: usize, pseudo: PseudoElem) -> Option<CounterSnapshotView<'_>> {
+        self.pseudo(element, pseudo)
+    }
+    fn quote_start(&self, element: usize, pseudo: PseudoElem) -> usize {
+        self.quote_depth(element, pseudo)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CounterStack<'a> {
+    Slice(&'a [i32]),
+    Prefix(&'a CompactCounterSnapshots, usize),
+}
+
+impl<'a> CounterStack<'a> {
+    fn last(self) -> Option<i32> {
+        match self {
+            Self::Slice(values) => values.last().copied(),
+            Self::Prefix(arena, head) => arena.last(head),
+        }
+    }
+    fn is_empty(self) -> bool {
+        self.last().is_none()
+    }
+    fn iter(self) -> CounterStackIter<'a> {
+        match self {
+            Self::Slice(values) => CounterStackIter::Slice(values.iter().copied()),
+            Self::Prefix(arena, head) => CounterStackIter::Prefix(arena.values(head).into_iter()),
+        }
+    }
+}
+
+enum CounterStackIter<'a> {
+    Slice(std::iter::Copied<std::slice::Iter<'a, i32>>),
+    Prefix(std::vec::IntoIter<i32>),
+}
+
+impl Iterator for CounterStackIter<'_> {
+    type Item = i32;
+    fn next(&mut self) -> Option<i32> {
+        match self {
+            Self::Slice(values) => values.next(),
+            Self::Prefix(values) => values.next(),
+        }
+    }
+}
 
 /// The counters in effect at `element` once its own directives are applied,
 /// before its `::before` (CSS Lists 3 §4), as `snapshots` hold them. No
 /// counter exists when there are no snapshots, as for a document whose
 /// snapshots passed the memory budget.
 pub(crate) fn element_counters(
-    snapshots: Option<&CounterSnapshots>,
+    snapshots: Option<&impl SnapshotCollection>,
     element: usize,
-) -> &CounterSnapshot {
+) -> CounterSnapshotView<'_> {
     snapshots
-        .and_then(|all| all.get(element))
-        .unwrap_or(&EMPTY_COUNTER_SNAPSHOT)
+        .and_then(|all| all.node_view(element))
+        .unwrap_or_else(|| CounterSnapshotView::new(&EMPTY_COUNTER_SNAPSHOT, None))
 }
 
 /// Read-only access to the effective stack for a counter name.
@@ -493,13 +636,17 @@ pub trait CounterSnapshotLookup {
 #[derive(Clone, Copy, Debug)]
 #[doc(hidden)]
 pub struct CounterValues<'a> {
-    base: &'a [i32],
+    base: CounterStack<'a>,
     effective_last: Option<i32>,
     appended: bool,
 }
 
 impl<'a> CounterValues<'a> {
     fn unchanged(base: &'a [i32]) -> Self {
+        Self::from_stack(CounterStack::Slice(base))
+    }
+
+    fn from_stack(base: CounterStack<'a>) -> Self {
         Self {
             base,
             effective_last: None,
@@ -507,9 +654,13 @@ impl<'a> CounterValues<'a> {
         }
     }
 
-    fn with_directives(base: &'a [i32], computed: Option<&ComputedValues>, name: &str) -> Self {
+    fn with_directives(
+        base: CounterStack<'a>,
+        computed: Option<&ComputedValues>,
+        name: &str,
+    ) -> Self {
         let Some(computed) = computed else {
-            return Self::unchanged(base);
+            return Self::from_stack(base);
         };
         let list_item = computed.display == DisplayValue::ListItem;
         let mut effective_last = None;
@@ -535,7 +686,7 @@ impl<'a> CounterValues<'a> {
             }
             effective_last = Some(
                 effective_last
-                    .or_else(|| base.last().copied())
+                    .or_else(|| base.last())
                     .map_or(*delta, |value| value.saturating_add(*delta)),
             );
             appended |= base.is_empty() && !appended;
@@ -557,7 +708,7 @@ impl<'a> CounterValues<'a> {
 
     /// The innermost effective value, if the counter exists.
     pub fn last(self) -> Option<i32> {
-        self.effective_last.or_else(|| self.base.last().copied())
+        self.effective_last.or_else(|| self.base.last())
     }
 
     /// Whether the effective stack has no values.
@@ -567,15 +718,17 @@ impl<'a> CounterValues<'a> {
 
     /// Iterate the effective stack from outermost to innermost.
     pub fn iter(self) -> impl Iterator<Item = i32> + 'a {
-        let prefix_end = if self.effective_last.is_some() && !self.appended {
-            self.base.len().saturating_sub(1)
-        } else {
-            self.base.len()
-        };
-        self.base[..prefix_end]
-            .iter()
-            .copied()
-            .chain(self.effective_last)
+        let replaced = self.effective_last.is_some() && !self.appended;
+        let mut values = self.base.iter().peekable();
+        std::iter::from_fn(move || {
+            let value = values.next()?;
+            if replaced && values.peek().is_none() {
+                None
+            } else {
+                Some(value)
+            }
+        })
+        .chain(self.effective_last)
     }
 }
 
@@ -584,10 +737,15 @@ impl<'a> CounterValues<'a> {
 /// copies neither the whole map nor unaffected counter stacks.
 #[doc(hidden)]
 pub struct CounterSnapshotView<'a> {
-    snapshot: &'a CounterSnapshot,
+    snapshot: SnapshotSource<'a>,
     computed: Option<&'a ComputedValues>,
-    list_item_fallback: Option<&'a [i32]>,
+    list_item_fallback: Option<CounterStack<'a>>,
     open_quotes: usize,
+}
+
+enum SnapshotSource<'a> {
+    Owned(&'a CounterSnapshot),
+    Compact(&'a CompactCounterSnapshots, usize),
 }
 
 impl<'a> CounterSnapshotView<'a> {
@@ -595,23 +753,31 @@ impl<'a> CounterSnapshotView<'a> {
     /// directives on lookup.
     pub fn new(snapshot: &'a CounterSnapshot, computed: Option<&'a ComputedValues>) -> Self {
         Self {
-            snapshot,
+            snapshot: SnapshotSource::Owned(snapshot),
             computed,
             list_item_fallback: None,
             open_quotes: 0,
         }
     }
 
-    pub(crate) fn with_list_item_fallback(
-        snapshot: &'a CounterSnapshot,
-        computed: Option<&'a ComputedValues>,
-        list_item_fallback: Option<&'a [i32]>,
-    ) -> Self {
+    pub(crate) fn compact(snapshot: &'a CompactCounterSnapshots, root: usize) -> Self {
         Self {
-            snapshot,
-            computed,
-            list_item_fallback,
+            snapshot: SnapshotSource::Compact(snapshot, root),
+            computed: None,
+            list_item_fallback: None,
             open_quotes: 0,
+        }
+    }
+
+    pub(crate) fn stack(&self, name: &str) -> CounterStack<'a> {
+        match self.snapshot {
+            SnapshotSource::Owned(snapshot) => CounterStack::Slice(
+                snapshot
+                    .get(&raikiri_traits::Symbol::new(name))
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+            ),
+            SnapshotSource::Compact(snapshot, root) => snapshot.stack(root, name),
         }
     }
 
@@ -625,11 +791,7 @@ impl<'a> CounterSnapshotView<'a> {
 
 impl CounterSnapshotLookup for CounterSnapshotView<'_> {
     fn values_for(&self, name: &str) -> CounterValues<'_> {
-        let snapshot_values = self
-            .snapshot
-            .get(&raikiri_traits::Symbol::new(name))
-            .map(Vec::as_slice)
-            .unwrap_or_default();
+        let snapshot_values = self.stack(name);
         let base = if name == "list-item" && snapshot_values.is_empty() {
             self.list_item_fallback.unwrap_or(snapshot_values)
         } else {

@@ -18,11 +18,12 @@ use super::generated_blocks::GeneratedBlock;
 use super::style;
 use crate::Document;
 use crate::generated_content::{
-    GeneratedPiece, generated_image_node_id, generated_node_id, generated_pieces, generated_text,
+    GeneratedPiece, generated_image_node_id, generated_node_id,
+    generated_pieces_compact as generated_pieces, generated_text_compact as generated_text,
     is_in_flow_generated_text,
 };
 use crate::node::BoxPropertiesRef;
-use crate::target::{CounterSnapshotLimitExceeded, CounterSnapshots};
+use crate::target::{CompactCounterSnapshots, CounterSnapshotLimitExceeded};
 use raikiri_layout_style::values::Clear;
 use raikiri_style::property::{
     ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
@@ -206,11 +207,11 @@ fn line_height_quirk(doc: &Document) -> bool {
 }
 
 /// The counters of the document, read from
-/// [`Document::shared_counter_snapshots`] only when some paragraph lays out
+/// [`Document::shared_compact_counter_snapshots`] only when some paragraph lays out
 /// generated text.
 #[derive(Default)]
 pub(crate) struct GeneratedCounters {
-    counters: std::cell::OnceCell<crate::target::SharedCounterSnapshots>,
+    counters: std::cell::OnceCell<crate::target::SharedCompactCounterSnapshots>,
     pub(super) predecessors: super::first_letter::PredecessorCache,
 }
 
@@ -219,10 +220,10 @@ impl GeneratedCounters {
         &self,
         doc: &Document,
         cascade: &CascadeResult,
-    ) -> Result<&CounterSnapshots, CounterSnapshotLimitExceeded> {
+    ) -> Result<&CompactCounterSnapshots, CounterSnapshotLimitExceeded> {
         match self
             .counters
-            .get_or_init(|| doc.shared_counter_snapshots(cascade))
+            .get_or_init(|| doc.shared_compact_counter_snapshots(cascade))
         {
             Ok(snapshots) => Ok(snapshots),
             Err(error) => Err(*error),
@@ -243,7 +244,7 @@ pub(crate) fn has_in_flow_generated_text(
         }
         if pseudo != PseudoElem::Marker
             || doc.list_marker_image_size(element).is_some()
-            || crate::generated_content::markers::marker_render_info_with_snapshots(
+            || crate::generated_content::markers::marker_render_info_with_compact_snapshots(
                 doc,
                 cascade,
                 element,

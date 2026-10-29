@@ -14,7 +14,7 @@
 //! source location, etc.) do not leak into the trait layer. Add variants as
 //! needed under `#[non_exhaustive]`.
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum CascadeError {
     /// An unrecoverable internal error in raikiri-style (a bug, or input
     /// disallowed by an explicit strict mode). raikiri-style constructs the
@@ -54,6 +54,8 @@ pub enum CascadeLimitKind {
     DeclarationsVisited,
     /// [`crate::CascadeLimits::max_selector_tests`].
     SelectorTests,
+    /// [`crate::CascadeLimits::max_selector_work`].
+    SelectorWork,
     /// [`crate::CascadeLimits::max_retained_bytes`].
     RetainedBytes,
     /// [`crate::CascadeLimits::max_output_bytes`].

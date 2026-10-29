@@ -1506,6 +1506,50 @@ fn document_write_parses_markup_after_the_script_with_the_real_parser() {
 }
 
 #[test]
+fn fragment_parser_budget_counts_templates_and_keeps_live_arena_unchanged() {
+    use raikiri_js::runtime::FragmentParseError;
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = host_at(dir.path(), dir.path());
+    let before = host.document().node_count();
+    for (markup, count) in [("<b>x</b>", 2), ("<template>x</template>", 3)] {
+        assert!(
+            host.parse_fragment_with_budget("div", "http://www.w3.org/1999/xhtml", markup, count)
+                .is_ok()
+        );
+        assert!(matches!(
+            host.parse_fragment_with_budget(
+                "div",
+                "http://www.w3.org/1999/xhtml",
+                markup,
+                count - 1
+            ),
+            Err(FragmentParseError::Nodes)
+        ));
+    }
+    assert_eq!(host.document().node_count(), before);
+}
+
+#[test]
+fn legacy_fragment_entry_preserves_input_byte_errors_and_live_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut host = host_at(dir.path(), dir.path());
+    let before = host.document().node_count();
+    let fragment = host
+        .parse_fragment("div", "http://www.w3.org/1999/xhtml", "<b>ok</b>")
+        .unwrap();
+    assert!(fragment.node_count() > 3);
+    let cap = raikiri_traits::RenderLimits::default()
+        .max_input_bytes
+        .unwrap();
+    let markup = "x".repeat(usize::try_from(cap).unwrap() + 1);
+    let error = host
+        .parse_fragment("div", "http://www.w3.org/1999/xhtml", &markup)
+        .unwrap_err();
+    assert!(error.0.contains("InputBytes"), "{error:?}");
+    assert_eq!(host.document().node_count(), before);
+}
+
+#[test]
 fn cssom_edits_relayout_from_current_sources_without_changing_dom_text() {
     let (_dir, mut rt) = runtime("<style id=s>#t { height: 5px }</style><div id=t></div>");
     rt.evaluate(

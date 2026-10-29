@@ -39,7 +39,9 @@ fn matches_with(
     let node = doc.node(id).unwrap();
     let elem = node.as_element().unwrap();
     let ctx = MatchContext::new(doc, StyleQuirksMode::NoQuirks, None, false, caches);
-    match_complex_selector_list(list, ctx, &elem, id, ancestors).is_some()
+    match_complex_selector_list(list, ctx, &elem, id, ancestors)
+        .unwrap()
+        .is_some()
 }
 
 #[test]
@@ -134,7 +136,12 @@ fn content_language_records_the_ancestors_it_walks() {
         let id = StyleNodeId::new(span as u64);
         let node = doc.node(id).unwrap();
         let elem = node.as_element().unwrap();
-        assert_eq!(&*caches.content_language(&doc, &elem, id, &ancestors), "en");
+        assert_eq!(
+            &*caches
+                .content_language(&doc, &elem, id, &ancestors)
+                .unwrap(),
+            "en"
+        );
     }
     // The three divs and both spans; `html` has its own `lang`.
     assert_eq!(caches.languages.borrow().len(), 5);
@@ -161,7 +168,12 @@ fn content_language_without_any_lang_records_the_empty_tag() {
     let id = StyleNodeId::new(span as u64);
     let node = doc.node(id).unwrap();
     let elem = node.as_element().unwrap();
-    assert_eq!(&*caches.content_language(&doc, &elem, id, &ancestors), "");
+    assert_eq!(
+        &*caches
+            .content_language(&doc, &elem, id, &ancestors)
+            .unwrap(),
+        ""
+    );
     assert_eq!(caches.languages.borrow().len(), 3);
 }
 
@@ -312,4 +324,30 @@ fn single_adjacent_has_miss_does_not_index_a_wide_parent() {
         "visited {} children",
         counted.visits.get()
     );
+}
+
+#[test]
+fn different_length_has_argument_lists_keep_independent_results() {
+    let (doc, body, cards, paragraphs) = cards(2, 1);
+    let caches = MatchCaches::default();
+    let sources = [
+        (".card:has(video) p", false),
+        (".card:has(video, img) p", true),
+        (".card:has(video, audio, canvas) p", false),
+    ];
+    let lists = sources.map(|(source, _)| crate::parse_selector_list(source).unwrap());
+    let ancestors = [
+        StyleNodeId::new(body as u64),
+        StyleNodeId::new(cards[0] as u64),
+    ];
+    for index in [0, 1, 2, 2, 1, 0] {
+        assert_eq!(
+            matches_with(&doc, &caches, &lists[index], paragraphs[0].0, &ancestors),
+            sources[index].1,
+            "{}",
+            sources[index].0
+        );
+    }
+    assert_eq!(caches.has_lists(), 3);
+    assert_eq!(caches.has_entries(), 3);
 }

@@ -419,6 +419,10 @@ impl<'a> StyleElement for ElementRef<'a> {
         }
     }
 
+    fn class_attribute_for_matching(&self) -> Option<&str> {
+        Some(self.attr("class").unwrap_or(""))
+    }
+
     // NB: has_class() uses the default implementation of raikiri_style::StyleElement.
     // The default looks up the class through self.attr(...), so overriding attr()
     // also updates has_class (DRY and contract compliance). Unlike attr(), id()

@@ -2,6 +2,7 @@ mod grid_area_tests;
 mod layer_tests;
 mod nesting_tests;
 mod principal_flow_tests;
+mod selector_index_tests;
 
 use super::*;
 use crate::cascade::test_support::*;

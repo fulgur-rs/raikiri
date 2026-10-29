@@ -996,3 +996,56 @@ fn inner_html_replacement_keeps_idl_handler_slots_elsewhere() {
         "document.body.dispatchEvent(new Event('click')); window.kept === true",
     );
 }
+
+#[test]
+fn silent_enqueue_abort_does_not_invoke_a_handler_returned_by_a_getter() {
+    let (host, ..) = StubHost::page();
+    let mut runtime = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_enqueued_jobs: 0,
+                ..Limits::default()
+            },
+        },
+    )
+    .unwrap();
+    runtime.evaluate("var called=false; document.body.addEventListener('x',{get handleEvent(){Promise.resolve().then(()=>{}); return ()=>{called=true}}});").unwrap();
+    assert_eq!(
+        runtime.evaluate("document.body.dispatchEvent(new Event('x'));"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    let context = runtime.context_mut();
+    assert!(
+        !context
+            .global_object()
+            .get(boa_engine::js_string!("called"), context)
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn silent_enqueue_abort_does_not_change_event_data() {
+    let (host, ..) = StubHost::page();
+    let mut runtime = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_enqueued_jobs: 0,
+                ..Limits::default()
+            },
+        },
+    )
+    .unwrap();
+    let event = runtime
+        .evaluate("var event=new Event('x',{cancelable:true}); event")
+        .unwrap()
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        runtime.evaluate("Promise.resolve().then(()=>{}); event.preventDefault();"),
+        Err(RuntimeError::Aborted(Abort::EnqueuedJobs))
+    );
+    assert!(!super::default_prevented(&event));
+}

@@ -963,7 +963,8 @@ fn dir_auto_scan_cycle_terminates_within_budget() {
         let cycle = doc.push_element(auto, "div", None);
         doc.nodes[cycle].children.push(cycle);
         assert_eq!(
-            auto_directionality(&doc, StyleNodeId::new(auto as u64)),
+            contained_text_auto_directionality(&doc, StyleNodeId::new(auto as u64), &mut || Ok(()))
+                .unwrap(),
             None,
         );
         return;
@@ -979,7 +980,8 @@ fn dir_auto_scan_stops_before_reading_over_budget_text() {
     let text = "a".repeat(9 * 1024 * 1024);
     doc.push_text(auto, &text);
     assert_eq!(
-        auto_directionality(&doc, StyleNodeId::new(auto as u64)),
+        contained_text_auto_directionality(&doc, StyleNodeId::new(auto as u64), &mut || Ok(()))
+            .unwrap(),
         None,
     );
 }
@@ -993,7 +995,8 @@ fn dir_auto_scan_continues_after_an_invalid_child_id() {
     doc.push_text(auto, "\u{05D0}");
 
     assert_eq!(
-        auto_directionality(&doc, StyleNodeId::new(auto as u64)),
+        contained_text_auto_directionality(&doc, StyleNodeId::new(auto as u64), &mut || Ok(()))
+            .unwrap(),
         Some(Direction::Rtl),
     );
 }
@@ -1008,7 +1011,8 @@ fn dir_auto_scans_nested_text_before_later_direct_text() {
     doc.push_text(auto, "Hello");
 
     assert_eq!(
-        auto_directionality(&doc, StyleNodeId::new(auto as u64)),
+        contained_text_auto_directionality(&doc, StyleNodeId::new(auto as u64), &mut || Ok(()))
+            .unwrap(),
         Some(Direction::Rtl),
     );
 }
@@ -1023,7 +1027,8 @@ fn dir_auto_skips_textarea_descendant_text() {
     doc.push_text(auto, "Hello");
 
     assert_eq!(
-        auto_directionality(&doc, StyleNodeId::new(auto as u64)),
+        contained_text_auto_directionality(&doc, StyleNodeId::new(auto as u64), &mut || Ok(()))
+            .unwrap(),
         Some(Direction::Ltr),
     );
 }

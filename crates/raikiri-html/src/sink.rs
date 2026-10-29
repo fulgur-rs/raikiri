@@ -43,6 +43,7 @@ pub struct RaikiriTreeSink {
     /// `Ref<'_, QualName>` returned by `elem_name()`. On `finish()`, copy only
     /// non-HTML namespaces to raikiri-dom::Node.namespace.
     qual_names: RefCell<FxHashMap<usize, QualName>>,
+    overflow_element_handle: Cell<usize>,
     /// Handle → attributes. During parsing, `add_attrs_if_missing` merges them.
     /// On `finish()`, copy null-namespace attributes to raikiri-dom::Node.attributes,
     /// separate the `style` attribute into raikiri-dom::Node.inline_style,
@@ -129,6 +130,7 @@ impl RaikiriTreeSink {
                 );
                 names
             }),
+            overflow_element_handle: Cell::new(OVERFLOW_HANDLE),
             attributes: RefCell::new(FxHashMap::default()),
             warnings: RefCell::new(Vec::new()),
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
@@ -206,7 +208,13 @@ impl RaikiriTreeSink {
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
         self.flush_text();
         if !self.try_allocate_dom_node() {
-            return OVERFLOW_HANDLE;
+            // One tree-builder token can reconstruct several formatting
+            // elements. Keep their identities and names distinct until the
+            // driver suspends, without allocating any DOM arena nodes.
+            let handle = self.overflow_element_handle.get();
+            self.overflow_element_handle.set(handle.saturating_sub(1));
+            self.qual_names.borrow_mut().insert(handle, name);
+            return handle;
         }
         let tag: SmolStr = AsRef::<str>::as_ref(&name.local).into();
         let idx = self
@@ -240,7 +248,9 @@ impl RaikiriTreeSink {
         #[cfg(test)]
         self.snapshot_calls.update(|calls| calls + 1);
         self.flush_text();
-        let qual_names = self.qual_names.borrow();
+        let mut qual_names = self.qual_names.borrow().clone();
+        let node_count = self.document.borrow().node_count();
+        qual_names.retain(|index, _| *index < node_count);
         assemble_document(
             self.document.borrow().clone(),
             self.warnings.borrow().clone(),
@@ -411,7 +421,8 @@ impl TreeSink for RaikiriTreeSink {
     fn finish(self) -> UncascadedDocument {
         self.flush_text();
         let mut qual_names = self.qual_names.into_inner();
-        qual_names.remove(&OVERFLOW_HANDLE);
+        let node_count = self.document.borrow().node_count();
+        qual_names.retain(|index, _| *index < node_count);
         assemble_document(
             self.document.into_inner(),
             self.warnings.into_inner(),

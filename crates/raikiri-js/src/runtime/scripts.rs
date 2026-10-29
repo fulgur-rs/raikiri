@@ -475,8 +475,11 @@ pub(crate) fn run(runtime: &mut DomRuntime) -> RunReport {
         s.host.document_mut().mark_in_document_flags();
         s.ready_state = ReadyState::Loading;
     });
-    let uncaught_before = with_state(context, |s| s.event_loop.uncaught_errors.len()).unwrap_or(0);
-    let console_before = with_state(context, |s| s.console.len()).unwrap_or(0);
+    let uncaught_before =
+        super::webidl::with_state_unchecked(context, |s| s.event_loop.uncaught_errors.len())
+            .unwrap_or(0);
+    let console_before =
+        super::webidl::with_state_unchecked(context, |s| s.console.len()).unwrap_or(0);
 
     // Compile parsed `on*` attributes, then start each parsed `<img>`'s
     // request as the parser would on insertion; their `load`/`error` tasks
@@ -532,11 +535,11 @@ pub(crate) fn run(runtime: &mut DomRuntime) -> RunReport {
         }
     }
 
-    report.uncaught_errors = with_state(context, |s| {
+    report.uncaught_errors = super::webidl::with_state_unchecked(context, |s| {
         s.event_loop.uncaught_errors[uncaught_before..].to_vec()
     })
     .unwrap_or_default();
-    report.console = with_state(context, |s| {
+    report.console = super::webidl::with_state_unchecked(context, |s| {
         s.console[console_before..]
             .iter()
             .map(|m| (m.level.as_str().to_owned(), m.message.clone()))

@@ -544,6 +544,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         Some(v) if v.is_null() => String::new(),
         _ => dom_string(args, 0, context)?,
     };
+    let remaining = fragment_node_budget(context, 0)?;
     let parsed = with_state(context, |s| {
         let doc = s.host.document();
         let tag = doc
@@ -555,14 +556,15 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
             .element_namespace_uri(index)
             .unwrap_or(super::interfaces::HTML_NS)
             .to_owned();
-        s.host.parse_fragment(&tag, &ns, &markup)
+        s.host
+            .parse_fragment_with_budget(&tag, &ns, &markup, remaining)
     })?;
     let fragment = match parsed {
         Ok(fragment) => fragment,
-        Err(error) => return Err(host_failure(context, error)),
+        Err(error) => return Err(fragment_parse_failure(context, error)),
     };
     let root = fragment.root_index();
-    guard_fragment_budget(context, &fragment)?;
+    guard_fragment_budget(context, &fragment, 0)?;
     with_state(context, |s| {
         let removed = s
             .host
@@ -581,26 +583,46 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     Ok(JsValue::undefined())
 }
 
+/// Remaining live arena capacity after reserving `reserved` future nodes.
+pub(crate) fn fragment_node_budget(context: &mut Context, reserved: usize) -> JsResult<usize> {
+    let remaining = with_state(context, |s| {
+        s.event_loop
+            .limits
+            .max_nodes
+            .checked_sub(s.host.document().node_count())
+            .and_then(|remaining| remaining.checked_sub(reserved))
+    })?;
+    remaining.ok_or_else(|| {
+        let reason = super::event_loop::abort(context, super::event_loop::Abort::Nodes);
+        super::event_loop::abort_error(reason)
+    })
+}
+
+/// Preserve typed node-budget failures as sticky runtime aborts.
+pub(crate) fn fragment_parse_failure(
+    context: &mut Context,
+    error: super::host::FragmentParseError,
+) -> boa_engine::JsError {
+    match error {
+        super::host::FragmentParseError::Nodes => {
+            let reason = super::event_loop::abort(context, super::event_loop::Abort::Nodes);
+            super::event_loop::abort_error(reason)
+        }
+        super::host::FragmentParseError::Host(error) => host_failure(context, error),
+    }
+}
+
 /// Abort the run unless the live arena plus every node copying the
 /// children of `fragment`'s root will allocate, including template-content
 /// fragment roots, stays within the runtime's node limit.
 pub(crate) fn guard_fragment_budget(
     context: &mut Context,
     fragment: &raikiri_dom::Document,
+    reserved: usize,
 ) -> JsResult<()> {
     let root = fragment.root_index();
-    let within_node_budget = with_state(context, |s| {
-        let document = s.host.document();
-        let Some(remaining_nodes) = s
-            .event_loop
-            .limits
-            .max_nodes
-            .checked_sub(document.node_count())
-        else {
-            return false;
-        };
-        copied_child_node_count(fragment, root, remaining_nodes).is_some()
-    })?;
+    let remaining = fragment_node_budget(context, reserved)?;
+    let within_node_budget = copied_child_node_count(fragment, root, remaining).is_some();
     if !within_node_budget {
         let reason = super::event_loop::abort(context, super::event_loop::Abort::Nodes);
         return Err(super::event_loop::abort_error(reason));

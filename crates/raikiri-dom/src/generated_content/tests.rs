@@ -4,6 +4,37 @@ use raikiri_style::{PseudoElem, StyleNodeId, build_rule_tree, cascade};
 use raikiri_traits::Symbol;
 
 #[test]
+fn owned_and_compact_alt_text_keep_counter_attribute_and_empty_semantics() {
+    let mut document = Document::new();
+    let style = document.append_element(Some(0), "style", None::<&str>);
+    document.append_text(
+        style,
+        "div { counter-reset: c 7 } div::before { content: 'visible' / attr(data-label) ':' counter(c); counter-increment: c 2 } div::after { content: 'visible' / '' }",
+    );
+    let node = document.append_element(Some(0), "div", None::<&str>);
+    document.set_element_attributes(node, vec![("data-label".into(), "label".into())]);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let computed = cascade(&document, &rules).unwrap();
+    let owned = crate::target::counter_snapshots(&document, &computed).unwrap();
+    let compact = crate::target::compact_counter_snapshots(&document, &computed).unwrap();
+    for (pseudo, expected) in [
+        (PseudoElem::Before, Some("label:9")),
+        (PseudoElem::After, Some("")),
+        (PseudoElem::Marker, None),
+    ] {
+        assert_eq!(
+            generated_alt_text(&document, &computed, node, pseudo, &owned).as_deref(),
+            expected
+        );
+        assert_eq!(
+            generated_alt_text_compact(&document, &computed, node, pseudo, &compact).as_deref(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn generated_ids_round_trip_and_stay_above_document_ids() {
     for element in [0, 1, 42, usize::MAX >> 4] {
         for pseudo in [
@@ -384,4 +415,54 @@ fn a_closing_after_closes_the_opening_before_of_its_element() {
         .1
     };
     assert_eq!(alone(PseudoElem::After), "");
+}
+
+thread_local! {
+    pub(super) static IMAGE_VISIBILITY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct NoGeneratedImages;
+
+impl raikiri_traits::ImagePixelSource for NoGeneratedImages {
+    fn get_decoded(&self, _: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        panic!("text-only generated content must not request an image");
+    }
+}
+
+fn nested_generated_content(depth: usize, content: ContentComponent) -> (Document, CascadeResult) {
+    let mut document = Document::new();
+    let mut parent = document.root_index();
+    let mut elements = Vec::with_capacity(depth);
+    for _ in 0..depth {
+        parent = document.append_element(Some(parent), "div", None::<&str>);
+        elements.push(parent);
+    }
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let mut cascade = cascade(&document, &rules).unwrap();
+    let mut style = ComputedValues::initial();
+    style.content = std::sync::Arc::new(vec![content].into());
+    let style = raikiri_style::PseudoValueArc::new(style);
+    for element in elements {
+        cascade.pseudo.insert(
+            (StyleNodeId::new(element as u64), PseudoElem::Before),
+            style.clone(),
+        );
+    }
+    (document, cascade)
+}
+
+#[test]
+fn preparing_text_only_pseudos_skips_image_visibility_walks() {
+    let visits: Vec<_> = [32, 64, 128]
+        .into_iter()
+        .map(|depth| {
+            let (mut document, cascade) =
+                nested_generated_content(depth, ContentComponent::Literal("x".into()));
+            IMAGE_VISIBILITY_VISITS.with(|count| count.set(0));
+            document.prepare_list_marker_images(&cascade, &NoGeneratedImages, None);
+            IMAGE_VISIBILITY_VISITS.with(std::cell::Cell::get)
+        })
+        .collect();
+    assert_eq!(visits, [0, 0, 0]);
 }

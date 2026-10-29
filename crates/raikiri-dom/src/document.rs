@@ -232,6 +232,7 @@ pub struct Document {
     stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
+    pub(crate) inline_svg_cache: crate::inline_svg_cache::InlineSvgCache,
     pub(crate) nodes: crate::node::arena::NodeArena,
     /// The style facts pagination reads, by layout key, while it runs on
     /// transposed axes (see `LayoutSession::block_axis`); empty otherwise.
@@ -260,14 +261,18 @@ pub struct Document {
     /// outlives the preparation of the other generated images.
     pub(crate) margin_box_images:
         std::collections::HashMap<String, raikiri_traits::ImageRasterSize>,
-    /// Named-counter snapshots of the tree, built once for the element
-    /// cascade whose [`CascadeResult::element_generation`] is stored beside
-    /// them and shared by layout, page projection and paint (see
-    /// [`Document::shared_counter_snapshots`]). Tree mutations clear it.
+    /// Legacy owned counter snapshots, cached for explicit callers of
+    /// [`Document::shared_counter_snapshots`] by the element cascade's
+    /// [`CascadeResult::element_generation`]. Tree mutations clear it;
+    /// built-in rendering uses the independent compact cache below.
     ///
     /// [`CascadeResult::element_generation`]: raikiri_style::CascadeResult::element_generation
     pub(crate) counter_snapshot_cache:
         std::sync::OnceLock<(u64, crate::target::SharedCounterSnapshots)>,
+    /// Compact counters shared by built-in layout, projection and paint.
+    /// The legacy owned cache above remains independently budgeted.
+    pub(crate) compact_counter_snapshot_cache:
+        std::sync::OnceLock<(u64, crate::target::SharedCompactCounterSnapshots)>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -523,6 +528,7 @@ impl Document {
             stylesheet_sources: HashMap::new(),
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
+            inline_svg_cache: Default::default(),
             nodes: nodes.into(),
             pagination_block_styles: Vec::new(),
             box_style_data: Default::default(),
@@ -536,6 +542,7 @@ impl Document {
             content_images: Default::default(),
             margin_box_images: Default::default(),
             counter_snapshot_cache: std::sync::OnceLock::new(),
+            compact_counter_snapshot_cache: std::sync::OnceLock::new(),
             root: 0,
             layout_dirty: false,
             forced_break_clearance: Vec::new(),
@@ -1037,6 +1044,7 @@ impl Document {
         prefix: Option<SmolStr>,
     ) {
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let (namespace_changed, affects_tree_flags, affects_layout) = {
             let e = self.nodes[id]
                 .data
@@ -1081,6 +1089,7 @@ impl Document {
         let had_css_type = self.stylesheet_has_css_type(id);
         self.note_named_element_change();
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -1113,6 +1122,7 @@ impl Document {
         }
         let value = value.into();
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -1188,6 +1198,7 @@ impl Document {
             .eq_ignore_ascii_case("type")
             .then(|| self.stylesheet_has_css_type(id));
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("set_element_attribute called on non-Element");
         };
@@ -1290,6 +1301,7 @@ impl Document {
             self.note_named_element_change();
         }
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -1328,6 +1340,7 @@ impl Document {
             return Err(format!("invalid attribute name: {local}"));
         }
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
             panic!("remove_element_attribute called on non-Element");
         };
@@ -1884,6 +1897,7 @@ impl Document {
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_inline_style(&mut self, id: usize, inline_style: Option<SmolStr>) {
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let e = self.nodes[id]
             .data
             .as_element_mut()
@@ -1900,6 +1914,7 @@ impl Document {
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_animation_style(&mut self, id: usize, animation_style: Option<SmolStr>) {
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
@@ -1932,6 +1947,7 @@ impl Document {
             stylesheet_sources,
             table_objects: _,
             page_projection: _,
+            inline_svg_cache: _,
             nodes: arena,
             resolved_image_urls,
             selected_image_urls,
@@ -1942,6 +1958,7 @@ impl Document {
             content_images,
             margin_box_images,
             counter_snapshot_cache: _,
+            compact_counter_snapshot_cache: _,
             root: _,
             layout_dirty: _,
             forced_break_clearance: _,
@@ -2127,6 +2144,7 @@ impl Document {
         // Counter snapshots skip nodes outside the document, so ones taken
         // before the bits below were refreshed are stale.
         self.counter_snapshot_cache.take();
+        self.compact_counter_snapshot_cache.take();
         // Step 1: Clear every arena node's bit. Node::new_* constructors set
         // true by default as an optimistic "attached" value; clearing here
         // makes detached and unreachable nodes false.
@@ -2939,7 +2957,9 @@ impl Document {
     pub(crate) fn invalidate_layout_cache(&mut self) {
         self.box_style_data.invalidate_source();
         self.page_projection.clear();
+        self.inline_svg_cache.clear();
         self.counter_snapshot_cache.take();
+        self.compact_counter_snapshot_cache.take();
         self.drop_retained_paragraphs();
         self.oof_coordinates.clear();
         self.layout_dirty = true;
@@ -3189,11 +3209,16 @@ impl Document {
         let mut pseudos: Vec<_> = cascade
             .pseudo
             .iter()
-            .filter(|((_, pseudo), _)| {
+            .filter(|((_, pseudo), cv)| {
                 matches!(
                     pseudo,
                     raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
-                )
+                ) && cv.content.iter().any(|component| {
+                    matches!(
+                        component,
+                        raikiri_style::property::ContentComponent::Image { .. }
+                    )
+                })
             })
             .filter_map(|(&(owner, pseudo), cv)| {
                 Some((
