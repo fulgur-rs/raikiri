@@ -944,3 +944,6 @@ fn page_scene_maps_vertical_text_lines_to_physical_rectangles() {
         }
     }
 }
+
+pub(super) mod indexed_tests;
+mod old_walk_tests;
