@@ -782,16 +782,22 @@ pub(crate) fn project_ifc_text_run_builder(
     let mut reached_root = false;
     for (member, content, member_cv) in members {
         reached_root |= member == text;
+        text_nowrap.insert(
+            member as u64,
+            member_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        );
+        // The text before the root holds only white space, which no box
+        // renders at the start of the item whatever its `white-space` is (as
+        // for a flex container's own white space), so it adds nothing.
+        if !reached_root {
+            continue;
+        }
         // A text node under a `display: contents` element has the values that
         // element gives it, which can shape the text differently from the
         // item's. The element is no box here, so the text alone gets an inline
-        // box to carry its own style. The text before the root holds only
-        // white space, which the start of the line removes: it shapes nothing.
-        let own_style = if reached_root {
-            Some(styled(doc, cascade, member_cv, member, fonts)?).filter(|own| *own != root_style)
-        } else {
-            None
-        };
+        // box to carry its own style.
+        let own_style =
+            Some(styled(doc, cascade, member_cv, member, fonts)?).filter(|own| *own != root_style);
         if let Some(own) = &own_style {
             builder.open_inline(NodeId(member as u64), own, InlineEdges::default());
         }
@@ -805,10 +811,6 @@ pub(crate) fn project_ifc_text_run_builder(
         if own_style.is_some() {
             builder.close_inline();
         }
-        text_nowrap.insert(
-            member as u64,
-            member_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
-        );
     }
     if let Some(error) = builder.error() {
         return Err(IfcError::Limit(error));

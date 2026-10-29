@@ -269,3 +269,48 @@ fn the_strut_of_the_item_comes_from_the_container() {
         ],
     );
 }
+
+/// White space alone before the first text of an item is not rendered, whatever
+/// its `white-space` is; white space inside that text, or between the texts, is.
+#[test]
+fn white_space_before_the_first_text_of_an_item_is_not_rendered() {
+    check(
+        "display:inline-flex;white-space:pre",
+        &[
+            (
+                "collapsing white space in a contents element",
+                "<span style='display:contents;white-space:normal'> </span>a",
+                10.0,
+                10.0,
+            ),
+            (
+                "preserved white space as a child",
+                " <b style='display:contents'>a</b>",
+                10.0,
+                10.0,
+            ),
+            (
+                "preserved tab and newline as a child",
+                "\n\t<b style='display:contents'>a</b>",
+                10.0,
+                10.0,
+            ),
+            ("preserved space in the first text", " a", 20.0, 10.0),
+            (
+                "preserved space between the texts",
+                "a<b style='display:contents'> </b>c",
+                30.0,
+                10.0,
+            ),
+        ],
+    );
+    check(
+        "display:inline-flex",
+        &[(
+            "preserved white space in a contents element",
+            "<span style='display:contents;white-space:pre'> </span>a",
+            10.0,
+            10.0,
+        )],
+    );
+}
