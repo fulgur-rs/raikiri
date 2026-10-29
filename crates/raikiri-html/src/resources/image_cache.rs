@@ -542,19 +542,18 @@ impl DecodedImageCache {
                 .iter()
                 .try_fold(0_u64, |sum, (_, image)| sum.checked_add(image_bytes(image)));
             let next = total.and_then(|total| base.checked_add(total));
-            if let Some(next) = next {
-                if next <= self.max_bytes.saturating_sub(self.scene_bytes)
-                    && self.reserve_decoded(next)
-                {
-                    self.commit_entry(
-                        url,
-                        CachedBackgroundImage { source, rasters },
-                        change,
-                        next,
-                        invalidate,
-                    );
-                    return Ok(());
-                }
+            if let Some(next) = next
+                && next <= self.max_bytes.saturating_sub(self.scene_bytes)
+                && self.reserve_decoded(next)
+            {
+                self.commit_entry(
+                    url,
+                    CachedBackgroundImage { source, rasters },
+                    change,
+                    next,
+                    invalidate,
+                );
+                return Ok(());
             }
             if rasters.len() == 1 {
                 let limit = self
