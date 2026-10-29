@@ -807,7 +807,7 @@ fn a_paragraph_split_below_earlier_content_has_column_local_origins() {
             ("D".into(), (60.0, 16.0)),
             ("E".into(), (60.0, 48.0)),
             ("F".into(), (60.0, 68.0)),
-            ("G".into(), (0.0, 96.0)),
+            ("G".into(), (0.0, 92.0)),
         ]
     );
     let page = document.page(0).unwrap();
@@ -868,7 +868,7 @@ fn an_overflow_clip_follows_each_group_paragraph_piece() {
         [
             Some(PaintRect::new(0.0, 0.0, 40.0, 40.0)),
             Some(PaintRect::new(0.0, 0.0, 40.0, 40.0)),
-            Some(PaintRect::new(0.0, 52.0, 40.0, 28.0)),
+            Some(PaintRect::new(0.0, 52.0, 40.0, 24.0)),
             Some(PaintRect::new(60.0, 0.0, 40.0, 20.0)),
             Some(PaintRect::new(60.0, 32.0, 40.0, 40.0)),
             Some(PaintRect::new(60.0, 32.0, 40.0, 40.0)),
@@ -967,7 +967,7 @@ fn empty_paragraph_margin_chains_keep_both_signed_extrema() {
             ("D".into(), (60.0, 16.0)),
             ("E".into(), (60.0, 48.0)),
             ("F".into(), (60.0, 68.0)),
-            ("G".into(), (0.0, 96.0)),
+            ("G".into(), (0.0, 94.0)),
         ]
     );
 }

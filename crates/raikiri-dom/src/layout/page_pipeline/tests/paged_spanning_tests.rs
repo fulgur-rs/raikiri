@@ -381,3 +381,58 @@ fn geometry_discovery_keeps_the_pages_a_spanner_reaches_before_the_page_limit() 
     assert_eq!(result.unwrap().len(), 3);
     assert!(control.page_limit_reached());
 }
+
+/// A balanced two-column owner of three paragraphs of two lines with 10px
+/// below each, then a spanner, on a page tall enough to hold them all. The
+/// spanner is the node returned with the document.
+fn balanced_paragraphs_before_a_spanner() -> (Document, CascadeResult, usize, PageBox) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(
+        Some(html),
+        "body",
+        Some("display:block;margin:0;font:20px/20px Ahem"),
+    );
+    let owner = document.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:100px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    for _ in 0..3 {
+        let paragraph = document.append_element(
+            Some(owner),
+            "p",
+            Some("display:block;white-space:pre;margin:0 0 10px"),
+        );
+        document.append_text(paragraph, "A\nA");
+    }
+    let spanner = document.append_element(
+        Some(owner),
+        "div",
+        Some("display:block;column-span:all;height:20px"),
+    );
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    with_ahem(&mut document);
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 300.0;
+    (document, cascade, spanner, page)
+}
+
+#[test]
+fn the_columns_before_a_spanner_are_as_tall_as_their_content_in_one_column_divided_among_them() {
+    // 150px of paragraphs and margins make columns of 75px, where the
+    // paragraphs alone would fit 70px.
+    let (mut document, cascade, spanner, page) = balanced_paragraphs_before_a_spanner();
+    layout_pages(&mut document, &cascade, page).unwrap();
+    let tops: Vec<_> = document
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == spanner)
+        .map(|fragment| fragment.rect.y)
+        .collect();
+    assert_eq!(tops, [75.0]);
+}
