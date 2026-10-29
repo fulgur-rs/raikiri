@@ -209,3 +209,27 @@ fn retained_byte_budget_is_independent_of_local_hash_iteration_order() {
         }
     }
 }
+
+#[test]
+fn equal_value_redeclaration_preserves_root_through_both_child_paths() {
+    let local = HashMap::from([
+        (SmolStr::from("--alpha"), Some(SmolStr::from("same"))),
+        (SmolStr::from("--middle"), Some(SmolStr::from("same"))),
+        (SmolStr::from("--zeta"), Some(SmolStr::from("same"))),
+    ]);
+    let (parent, _) = CustomPropertyIndex::with_local(&CustomPropertyIndex::default(), &local, 1);
+    for name in ["--alpha", "--middle", "--zeta"] {
+        let (redeclared, bytes) = CustomPropertyIndex::with_local(
+            &parent,
+            &HashMap::from([(name.into(), Some("same".into()))]),
+            2,
+        );
+        assert!(Arc::ptr_eq(
+            parent.root.as_ref().unwrap(),
+            redeclared.root.as_ref().unwrap()
+        ));
+        verify_owned(&parent, &redeclared, bytes);
+        assert_eq!(bytes, 0);
+        assert_eq!(redeclared.get::<false>(name), Some("same".into()));
+    }
+}
