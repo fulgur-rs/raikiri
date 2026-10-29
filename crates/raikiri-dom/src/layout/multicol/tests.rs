@@ -7440,6 +7440,43 @@ fn balanced_columns_keep_an_empty_block_that_the_last_column_would_overflow() {
 }
 
 #[test]
+fn the_margins_of_an_empty_block_in_percent_collapse_between_the_paragraphs_around_it() {
+    // The 10px above and below the empty box, a tenth of the 100px column,
+    // collapse into one gap, so the second paragraph starts 10px under the
+    // first one's two lines and stays in the column.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 2), ("margin:10% 0", 0), ("margin:0", 2)]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 30.0)], [(0, 30.0)]]
+    );
+}
+
+#[test]
+fn the_margins_of_an_empty_block_in_percent_are_cut_where_a_column_breaks() {
+    // The first paragraph fills the column down to 40px, and the margin of the
+    // empty box takes the rest, so the box sits at the column's end and the
+    // paragraph after it starts the next column at its top.
+    let (doc, _, children) = boxes_and_paragraphs_in_container(
+        "orphans:2;widows:2",
+        &[("margin:0", 4), ("margin:10% 0", 0), ("margin:0", 3)],
+    );
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 50.0)], [(1, 0.0)]]
+    );
+}
+
+#[test]
+fn the_margins_of_a_first_empty_block_in_percent_collapse_through_it() {
+    // The margins above and below the box meet at the top of the column and
+    // count once, so the paragraph starts 10px down.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:10% 0", 0), ("margin:0", 2)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 10.0)], [(0, 10.0)]]);
+}
+
+#[test]
 fn a_block_with_nothing_but_margins_enters_the_stream_only_beside_a_paragraph() {
     for (spacer, paragraph, enters) in [
         ("margin:10px 0", Some("margin:0"), true),
@@ -7452,7 +7489,7 @@ fn a_block_with_nothing_but_margins_enters_the_stream_only_beside_a_paragraph() 
             true,
         ),
         ("margin:10px 5px", Some("margin:0"), false),
-        ("margin:5% 0", Some("margin:0"), false),
+        ("margin:5% 0", Some("margin:0"), true),
         ("margin-top:auto", Some("margin:0"), false),
         ("margin:10px 0;padding-top:5px", Some("margin:0"), false),
         (
