@@ -11857,6 +11857,61 @@ fn a_relative_offset_on_the_first_box_does_not_move_the_page_it_starts_on() {
 }
 
 #[test]
+fn a_relative_offset_that_crosses_a_page_edge_does_not_move_the_page_a_later_box_starts_on() {
+    // The second box sits in the flow at 20 and is painted at 120, on the
+    // second page. Its siblings follow the flow: the break after it opens the
+    // second page for the last box, and a box that needs a page to itself
+    // moves there from the first.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![0.0, 120.0, 100.0], 2)
+    );
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px",
+            "height:20px;break-before:page",
+        ]),
+        (vec![0.0, 120.0, 100.0], 2)
+    );
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px",
+            "height:90px;break-inside:avoid",
+        ]),
+        (vec![0.0, 120.0, 100.0], 2)
+    );
+    // Without a break the last box stays where the flow puts it.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px",
+            "height:20px",
+        ]),
+        (vec![0.0, 120.0, 40.0], 2)
+    );
+}
+
+#[test]
+fn a_negative_relative_offset_does_not_move_a_box_back_to_the_previous_page() {
+    // The second box starts the second page in the flow and is painted 30px
+    // above it; the box after it stays on the second page.
+    assert_eq!(
+        page_box_positions(&[
+            "height:100px",
+            "position:relative;top:-30px;height:20px",
+            "height:10px"
+        ]),
+        (vec![0.0, 70.0, 120.0], 2)
+    );
+}
+
+#[test]
 fn an_absolutely_positioned_first_box_does_not_move_the_flow_to_its_page() {
     // The tall absolutely positioned box is a candidate, but it takes no part
     // in the flow: the box after it stays on the first page, and the break
@@ -18513,7 +18568,7 @@ fn a_box_meeting_no_page_transition_starts_on_the_page_its_position_falls_on() {
             &env,
             &candidate,
             page_break,
-            &mut position,
+            (&mut position, 0.0),
         );
         (started, position)
     };
