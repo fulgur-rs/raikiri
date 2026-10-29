@@ -562,10 +562,10 @@ fn a_run_that_starts_the_block_stays_when_the_page_breaks_better_inside_its_firs
 }
 
 #[test]
-fn an_avoided_break_between_a_block_and_the_box_before_it_is_left_to_the_block_around_it() {
-    // The run starts the inner block, which has no edges of its own: a break
-    // before the inner block would be a better one, and is not this block's
-    // to take.
+fn a_block_of_tied_boxes_that_ends_its_parent_moves_whole_with_the_parents_edges() {
+    // The run is all the inner block holds, and the padding of the parent
+    // below it does not fit: the page breaks before the inner block, which is
+    // a better place than the avoided break inside it.
     let (mut inner, mut last) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         let parent = block(doc, body, "display:block;padding-bottom:30px");
@@ -574,12 +574,12 @@ fn an_avoided_break_between_a_block_and_the_box_before_it_is_left_to_the_block_a
         block(doc, inner, "display:block;height:30px;break-after:avoid");
         last = block(doc, inner, "display:block;height:20px");
     });
-    assert_eq!(page_flow_y(&doc, inner), 40.0);
-    assert_eq!(page_flow_y(&doc, last), 70.0);
+    assert_eq!(page_flow_y(&doc, inner), 100.0);
+    assert_eq!(page_flow_y(&doc, last), 130.0);
 }
 
 #[test]
-fn a_run_that_starts_an_inner_block_with_edges_of_its_own_is_left_to_the_block_around_it() {
+fn a_block_of_tied_boxes_with_edges_of_its_own_moves_whole_with_the_parents_edges() {
     // The padding of the outer block below the inner one does not fit, and a
     // break before the inner block is a better one than the avoided break
     // before its last box.
@@ -591,8 +591,8 @@ fn a_run_that_starts_an_inner_block_with_edges_of_its_own_is_left_to_the_block_a
         block(doc, inner, "display:block;height:40px;break-after:avoid");
         last = block(doc, inner, "display:block;height:20px");
     });
-    assert_eq!(page_flow_y(&doc, inner), 20.0);
-    assert_eq!(page_flow_y(&doc, last), 60.0);
+    assert_eq!(page_flow_y(&doc, inner), 100.0);
+    assert_eq!(page_flow_y(&doc, last), 140.0);
 }
 
 #[test]
@@ -1177,4 +1177,225 @@ fn the_edges_of_the_body_are_not_closing_edges() {
     page.height = 100.0;
     layout_pages(&mut doc, &cascade, page).unwrap();
     assert_eq!(page_flow_y(&doc, last), 70.0);
+}
+
+/// `body > [div(parent_css) > [div(30px), div(inner_css) > boxes], div(10px)]`
+/// on 100px pages, each of the `boxes` being a div of the given height and
+/// style. Returns the page-flow y of each of them and of the block after the
+/// parent.
+fn inner_block_of_boxes(parent_css: &str, inner_css: &str, boxes: &[(u32, &str)]) -> Vec<f32> {
+    let (mut ids, mut after) = (Vec::new(), 0);
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, &format!("display:block;{parent_css}"));
+        block(doc, parent, "display:block;height:30px");
+        let inner = block(doc, parent, &format!("display:block;{inner_css}"));
+        for &(height, css) in boxes {
+            ids.push(block(
+                doc,
+                inner,
+                &format!("display:block;height:{height}px;{css}"),
+            ));
+        }
+        after = block(doc, body, "display:block;height:10px");
+    });
+    ids.push(after);
+    ids.into_iter().map(|id| page_flow_y(&doc, id)).collect()
+}
+
+#[test]
+fn a_last_box_that_holds_only_tied_boxes_moves_whole_with_the_closing_edges() {
+    let tied_pair = [(30, "break-after:avoid"), (35, "")];
+    // The last box of the parent holds two boxes that an avoided break ties.
+    // It ends at 95 and fits the page, the 15px of padding below it do not,
+    // and the page cannot break inside it at a place better than before it:
+    // it moves whole, as the two boxes would if they were the parent's own.
+    assert_eq!(
+        inner_block_of_boxes("padding-bottom:15px", "", &tied_pair),
+        [100.0, 130.0, 180.0]
+    );
+    // The avoided break may come from the box after it.
+    assert_eq!(
+        inner_block_of_boxes(
+            "padding-bottom:15px",
+            "",
+            &[(30, ""), (35, "break-before:avoid")]
+        ),
+        [100.0, 130.0, 180.0]
+    );
+    // A chain of three.
+    assert_eq!(
+        inner_block_of_boxes(
+            "padding-bottom:15px",
+            "",
+            &[
+                (20, "break-after:avoid"),
+                (20, "break-after:avoid"),
+                (25, "")
+            ]
+        ),
+        [100.0, 120.0, 140.0, 180.0]
+    );
+    // The padding and border of the block itself move with it.
+    assert_eq!(
+        inner_block_of_boxes(
+            "padding-bottom:15px",
+            "padding-bottom:5px",
+            &[(30, "break-after:avoid"), (30, "")]
+        ),
+        [100.0, 130.0, 180.0]
+    );
+    assert_eq!(
+        inner_block_of_boxes(
+            "padding-bottom:15px",
+            "padding-top:5px",
+            &[(30, "break-after:avoid"), (30, "")]
+        ),
+        [105.0, 135.0, 180.0]
+    );
+    // The edges fit the page: nothing moves.
+    assert_eq!(
+        inner_block_of_boxes("padding-bottom:5px", "", &tied_pair),
+        [30.0, 60.0, 100.0]
+    );
+}
+
+#[test]
+fn a_last_box_that_holds_boxes_with_a_break_to_take_between_them_keeps_its_place() {
+    // The last box of the parent can break after its second box, where the
+    // third box follows with the edges: that one moves, as the last box of the
+    // parent would.
+    assert_eq!(
+        inner_block_of_boxes(
+            "padding-bottom:15px",
+            "",
+            &[(30, "break-after:avoid"), (30, ""), (10, "")]
+        ),
+        [30.0, 60.0, 100.0, 125.0]
+    );
+}
+
+/// `body > [div(parent_css) > [div(30px), div > <built boxes>], div(10px)]`
+/// on 100px pages. `build_inner` adds the boxes to the inner block and
+/// returns them. Returns the page-flow y of each of them and of the block
+/// after the parent, which has `tail_css` as well.
+fn inner_block_built(
+    parent_css: &str,
+    build_inner: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+    tail_css: &str,
+) -> Vec<f32> {
+    let (mut ids, mut after) = (Vec::new(), 0);
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, &format!("display:block;{parent_css}"));
+        block(doc, parent, "display:block;height:30px");
+        let inner = block(doc, parent, "display:block");
+        ids = build_inner(doc, inner);
+        after = block(doc, body, &format!("display:block;height:10px;{tail_css}"));
+    });
+    ids.push(after);
+    ids.into_iter().map(|id| page_flow_y(&doc, id)).collect()
+}
+
+fn tied_pair(doc: &mut Document, inner: usize) -> Vec<usize> {
+    vec![
+        block(doc, inner, "display:block;height:30px;break-after:avoid"),
+        block(doc, inner, "display:block;height:35px"),
+    ]
+}
+
+#[test]
+fn boxes_tied_through_a_contents_wrapper_move_whole_in_their_order() {
+    // The wrapper generates no box: its two boxes and the one after it make a
+    // chain of three, which the closing edges of the parent take along. The
+    // second break is avoided by the box after it, so the order of the boxes
+    // matters.
+    assert_eq!(
+        inner_block_built(
+            "padding-bottom:15px",
+            |doc, inner| {
+                let wrapper = block(doc, inner, "display:contents");
+                vec![
+                    block(doc, wrapper, "display:block;height:20px;break-after:avoid"),
+                    block(doc, wrapper, "display:block;height:20px"),
+                    block(doc, inner, "display:block;height:20px;break-before:avoid"),
+                ]
+            },
+            ""
+        ),
+        [100.0, 120.0, 140.0, 175.0]
+    );
+}
+
+#[test]
+fn a_last_box_whose_boxes_are_not_all_tied_by_avoided_breaks_keeps_its_place() {
+    let keeps_place = |tied: &dyn Fn(&mut Document, usize) -> Vec<usize>, tail_css: &str| {
+        let ys = inner_block_built(
+            "padding-bottom:15px",
+            |doc, inner| tied(doc, inner),
+            tail_css,
+        );
+        ys[0] < 100.0
+    };
+    // A forced break between the boxes starts a page there whatever tied them.
+    assert!(keeps_place(
+        &|doc, inner| vec![
+            block(doc, inner, "display:block;height:30px;break-after:page"),
+            block(doc, inner, "display:block;height:35px"),
+        ],
+        ""
+    ));
+    // Neither does a box that is not a plain block box.
+    assert!(keeps_place(
+        &|doc, inner| vec![
+            block(doc, inner, "display:block;height:30px;break-after:avoid"),
+            block(doc, inner, "display:flex;height:35px"),
+        ],
+        ""
+    ));
+    // Nor does a box that has a break to take inside it.
+    assert!(keeps_place(
+        &|doc, inner| {
+            let first = block(doc, inner, "display:block;break-after:avoid");
+            block(doc, first, "display:block;height:15px");
+            block(doc, first, "display:block;height:15px");
+            vec![first, block(doc, inner, "display:block;height:35px")]
+        },
+        ""
+    ));
+    // A named page may start between the boxes whatever ties them.
+    assert!(keeps_place(&tied_pair, "page:chapter"));
+    // The same boxes without any of that move whole.
+    assert!(!keeps_place(&tied_pair, ""));
+}
+
+#[test]
+fn a_last_box_that_holds_a_box_with_generated_boxes_keeps_its_place() {
+    // The generated box is not among the children of its block, which looks
+    // like one that holds one box, but the page can break between the two.
+    let ys = |generated: bool| {
+        let (mut pair, mut after) = (Vec::new(), 0);
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = block(doc, body, "display:block;padding-bottom:15px");
+            block(doc, parent, "display:block;height:30px");
+            let inner = block(doc, parent, "display:block");
+            let first = doc.append_element(
+                Some(inner),
+                "section",
+                Some("display:block;break-after:avoid"),
+            );
+            block(doc, first, "display:block;height:25px");
+            pair = vec![first, block(doc, inner, "display:block;height:35px")];
+            after = block(doc, body, "display:block;height:10px");
+            if generated {
+                let style = doc.append_element(Some(0), "style", None::<&str>);
+                doc.append_text(
+                    style,
+                    "section::before { content: \"x\"; display: block; height: 10px }",
+                );
+            }
+        });
+        [pair[0], pair[1], after].map(|id| page_flow_y(&doc, id))
+    };
+    // Without it the two boxes move whole with the edges of the parent.
+    assert_eq!(ys(false), [100.0, 125.0, 175.0]);
+    assert!(ys(true)[0] < 100.0);
 }

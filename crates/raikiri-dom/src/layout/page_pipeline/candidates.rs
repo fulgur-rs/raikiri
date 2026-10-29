@@ -940,7 +940,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // run was.
                 let unbreakable = lines_shape
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
-                        || breaks_only_around(document, cascade, node_id));
+                        || breaks_only_around(document, cascade, node_id, self.has_named_pages));
                 let closing_edges_base = closing_edges_shape && unbreakable;
                 // A block that holds one box moves whole with the edges that
                 // would break away from it, its own and those of the blocks
@@ -1215,16 +1215,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 &child_order,
                                 &flow_flags,
                                 last,
-                                |id| {
-                                    self.has_named_pages
-                                        && named_page_subtree_has_name(
-                                            document,
-                                            cascade,
-                                            id,
-                                            document.context.pagination_on_transposed_axes,
-                                            &mut self.named_page_subtree_cache,
-                                        )
-                                },
+                                self.has_named_pages.then_some(|id| {
+                                    named_page_subtree_has_name(
+                                        document,
+                                        cascade,
+                                        id,
+                                        document.context.pagination_on_transposed_axes,
+                                        &mut self.named_page_subtree_cache,
+                                    )
+                                }),
                             )
                         });
                 // Where the run starts, the block size from the bottom of its
