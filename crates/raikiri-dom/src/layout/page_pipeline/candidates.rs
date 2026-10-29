@@ -391,6 +391,12 @@ struct CandidateFrame<'name> {
     /// The box before the node in the flow of its parent, which a break can
     /// fall after, when the node ends the blocks that `closing_edges` counts.
     previous_box: Option<usize>,
+    /// Whether no box comes before the node in its parent or in any block the
+    /// node starts, up to the outermost block whose bottom padding or border
+    /// follows the node: no page break before the node falls inside that
+    /// block. It is read only where `closing_edges` follows the node, and the
+    /// boxes before it are known only for the blocks on that path.
+    lone_in_edges: bool,
     /// The block size of the bottom padding and border that follow the last
     /// line of the paragraph the node is in or is the text of.
     lines_closing_edges: f32,
@@ -436,6 +442,7 @@ impl CandidateFrame<'_> {
             clip_end: f32::INFINITY,
             closing_edges: 0.0,
             previous_box: None,
+            lone_in_edges: true,
             lines_closing_edges: 0.0,
             tie: AvoidTie::None,
             run_unit: None,
@@ -1006,10 +1013,13 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     .filter(|_| can_move_nested)
                     .map(|tail| tail.max(0.0));
                 // The edges also follow the lines of a paragraph that breaks
-                // between them.
+                // between them. With no box before it in the block that the
+                // edges close, the page cannot break before the paragraph at
+                // a better place than between its lines (class C against
+                // class B), so the orphans it cannot keep do not stop it.
                 let lines_closing_edges = if lines_shape
                     && can_move_nested
-                    && !unbreakable
+                    && (!unbreakable || frame.lone_in_edges)
                     && !avoids_break
                     && node.is_ifc_root()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. })
@@ -1254,6 +1264,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     Vec::new()
                 };
                 let mut previous_box = None;
+                // Whether any in-flow box comes before the child, text
+                // included: `previous_box` forgets a text box, which is no box
+                // to break from for some rules but is one for this.
+                let mut box_before = false;
+                // A block whose edges nothing around it carries is where the
+                // boxes below it stop looking for a box before them.
+                let child_scope_is_lone = (own_closing_edges.is_some_and(|own| own > 0.0)
+                    && inherited_edges == 0.0)
+                    || frame.lone_in_edges;
                 for (index, child_id) in child_order.iter().copied().enumerate() {
                     let at_chain_start = chain_run.filter(|&(first, ..)| index == first);
                     let child_closing_edges = match at_chain_start {
@@ -1279,6 +1298,8 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         AvoidTie::None
                     };
                     let child_previous_box = previous_box;
+                    let child_box_before = box_before;
+                    box_before |= matches!(flow_flags.get(index), Some((Some(_), _)));
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
                         // A box that takes no block space is no box to break
                         // from, and breaking after it may be avoided.
@@ -1326,6 +1347,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             clip_end,
                             closing_edges: child_closing_edges,
                             previous_box: child_previous_box,
+                            lone_in_edges: !child_box_before && child_scope_is_lone,
                             lines_closing_edges,
                             tie,
                             run_unit: run_units.get(index).copied().flatten(),

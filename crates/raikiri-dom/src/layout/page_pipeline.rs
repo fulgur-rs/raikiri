@@ -6502,10 +6502,12 @@ fn nested_run_units(
 /// bottom padding and border that close the blocks around it, when the lines
 /// fit the page but the edges do not. A break between the last line and the
 /// edges (class C) is not taken while one between lines (class B) honors
-/// `orphans` and `widows`, as in [`closing_edges_move`]. `line_metrics` is as
-/// for [`widows_break_on_next_page`]. `None` when the lines or the edges do
-/// not run past the page end the way that needs, there are no more lines than
-/// `orphans`, or the next page cannot hold the lines with the edges.
+/// `orphans` and `widows`, as in [`closing_edges_move`]. A paragraph with no
+/// more lines than `orphans` keeps the orphans it can, down to one line, and
+/// its last line moves. `line_metrics` is as for
+/// [`widows_break_on_next_page`]. `None` when the lines or the edges do not
+/// run past the page end the way that needs, there is only one line, or the
+/// next page cannot hold the lines with the edges.
 fn closing_edges_line_move(
     line_metrics: &[(f32, f32)],
     edges: f32,
@@ -6522,7 +6524,7 @@ fn closing_edges_line_move(
     let fits_lines = first_top >= page_start - 0.001
         && first_top < page_end
         && last_bottom <= page_end + 0.001
-        && line_metrics.len() > orphans;
+        && line_metrics.len() > 1;
     if !fits_lines || last_bottom + edges <= page_end + 0.001 {
         return None;
     }
