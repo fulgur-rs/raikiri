@@ -21,24 +21,26 @@ fn first_query_scans_and_second_query_indexes_only_the_queried_parent() {
     assert_eq!(index.positions.len(), 32);
     assert_eq!(index.position(&document, another), Some((other, 0)));
     assert_eq!(index.positions.len(), 32);
-    assert_eq!(index.seen_parents.len(), 2);
+    assert_eq!(index.seen_parents.len(), 1);
     assert_eq!(index.position(&document, another), Some((other, 0)));
-    assert_eq!(index.positions.len(), 33);
+    assert_eq!(index.positions.len(), 32);
     for (at, &child) in children.iter().enumerate() {
         assert_eq!(index.position(&document, child), Some((parent, at)));
     }
-    assert_eq!(index.positions.len(), 33);
-    assert_eq!(index.seen_parents.len(), 2);
+    assert_eq!(index.positions.len(), 32);
+    assert_eq!(index.seen_parents.len(), 1);
 }
 
 #[test]
 fn new_revision_discards_old_entries_even_on_detached_or_invalid_queries() {
     let mut document = Document::new();
     let node = document.append_element(Some(0), "div", None::<&str>);
+    document.append_text(0, "a");
+    document.append_text(0, "b");
     let mut index = SiblingIndex::default();
     index.position(&document, node);
     index.position(&document, node);
-    assert_eq!(index.positions.len(), 1);
+    assert_eq!(index.positions.len(), 3);
     document.detach_from_parent(node);
     assert_eq!(index.position(&document, node), None);
     assert_eq!(index.positions.capacity(), 0);
@@ -116,7 +118,8 @@ fn identical_generation_in_another_document_cannot_reuse_positions() {
         let fragment = document.create_detached_fragment();
         let a = document.create_detached_element("a").unwrap();
         let b = document.create_detached_element("b").unwrap();
-        for child in if reverse { [b, a] } else { [a, b] } {
+        let c = document.create_detached_element("c").unwrap();
+        for child in if reverse { [b, a, c] } else { [a, b, c] } {
             document.attach_child(fragment, child);
         }
         (document, a)
@@ -130,4 +133,21 @@ fn identical_generation_in_another_document_cannot_reuse_positions() {
     assert_eq!(index.position(&second, a).unwrap().1, 1);
     assert!(index.positions.is_empty());
     assert_eq!(index.position(&second, a).unwrap().1, 1);
+}
+
+#[test]
+fn small_parent_queries_keep_position_metadata_unallocated() {
+    for count in [1, 2] {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", None::<&str>);
+        let children: Vec<_> = (0..count).map(|_| doc.append_text(parent, "x")).collect();
+        let mut index = SiblingIndex::default();
+        for _ in 0..3 {
+            for (position, &child) in children.iter().enumerate() {
+                assert_eq!(index.position(&doc, child), Some((parent, position)));
+            }
+        }
+        assert_eq!(index.positions.capacity(), 0);
+        assert_eq!(index.seen_parents.capacity(), 0);
+    }
 }

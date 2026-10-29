@@ -1,6 +1,7 @@
 //! Lazy sibling positions for one native document revision.
 //!
-//! A parent's first query scans once; its second query indexes its children.
+//! Parents with at most two children use bounded scans without position metadata.
+//! A larger parent's first query scans once; its second query indexes its children.
 //! Cached position lookup uses average O(1) hash access. Scalar metadata is
 //! bounded by queried parents and indexed children of the observed revision.
 //! A changed version discards that metadata on the next query; releasing the
@@ -11,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use raikiri_dom::Document;
 use raikiri_dom::document::NamedElementVersion;
 
-/// One marker for each queried parent and one position for each indexed child.
+/// One marker for each queried larger parent and one position per indexed child.
 /// No wrappers are retained, and unrelated arena history is never scanned.
 #[derive(Default)]
 pub(crate) struct SiblingIndex {
@@ -32,6 +33,13 @@ impl SiblingIndex {
         document.get_node(node)?;
         let parent = document.parent_of(node)?;
         let children = &document.get_node(parent)?.children;
+        if children.len() <= 2 {
+            let mut scan = children.iter();
+            let position = scan.position(|&child| child == node);
+            #[cfg(test)]
+            super::tests::record_sibling_work(0, children.len() - scan.len());
+            return Some((parent, position?));
+        }
         if let Some(&position) = self.positions.get(&node) {
             return Some((parent, position));
         }
