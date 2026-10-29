@@ -222,3 +222,50 @@ fn the_text_under_a_contents_element_keeps_its_own_style() {
         ],
     );
 }
+
+/// The strut of the item's lines comes from the container: a text node under a
+/// `display: contents` element with another `line-height` makes only its own
+/// line taller, whichever text of the run it is.
+#[test]
+fn the_strut_of_the_item_comes_from_the_container() {
+    check(
+        "display:inline-flex;width:30px",
+        &[
+            (
+                "taller first text, only the first line grows",
+                "<span style='display:contents;line-height:100px'>a </span>b c d",
+                30.0,
+                110.0,
+            ),
+            (
+                "taller text in the middle",
+                "a <span style='display:contents;line-height:100px'>b </span>c d",
+                30.0,
+                110.0,
+            ),
+            (
+                "white space that the line start removes does not make a line taller",
+                "<span style='display:contents;line-height:100px'> </span>a b c d",
+                30.0,
+                20.0,
+            ),
+        ],
+    );
+    check(
+        "display:inline-flex",
+        &[
+            (
+                "taller first text in a single line",
+                "<span style='display:contents;line-height:100px'>a</span>b",
+                20.0,
+                100.0,
+            ),
+            (
+                "kept white space makes the line taller",
+                "a<span style='display:contents;line-height:100px'> </span>c",
+                30.0,
+                100.0,
+            ),
+        ],
+    );
+}

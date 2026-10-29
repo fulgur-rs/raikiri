@@ -618,6 +618,7 @@ fn collect_text_candidates(
             match project_ifc_text_run_builder(
                 doc,
                 cascade,
+                container,
                 root,
                 &members,
                 &state.fonts,

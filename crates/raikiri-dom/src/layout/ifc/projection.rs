@@ -711,32 +711,35 @@ pub(crate) fn project_ifc_text(
     fonts: &FontCollection,
     limits: &Limits,
 ) -> Result<ProjectedIfc, IfcError> {
-    project_ifc_text_run_builder(doc, cascade, text, &[text], fonts, limits)?.build(cx, fonts)
+    let container = doc.parent_of(text).unwrap_or(text);
+    project_ifc_text_run_builder(doc, cascade, container, text, &[text], fonts, limits)?
+        .build(cx, fonts)
 }
 
 /// Fill a paragraph builder with the text nodes of `run`, in order: the
-/// contents of one anonymous flex or grid item. The node `text` of the run is
-/// the root of the paragraph and styles it.
+/// contents of one anonymous flex or grid item of `container`. The node `text`
+/// of the run is the node the paragraph is owned by.
 ///
 /// A flex or grid container wraps each run of its text in an anonymous item
 /// (CSS Flexbox 1, 4; CSS Grid 1, 6), whose box has no edges of its own and
-/// whose inherited properties come from the container. The text node's own
-/// computed values are those inherited values, so they style the paragraph.
+/// whose inherited properties come from the container. Those values style the
+/// paragraph, and so give its strut and line options.
 ///
 /// Text nodes that are not siblings can still make one run, since a `display:
 /// contents` element between them generates no box (CSS Display 3, 2.5). Such
-/// an element is no inline box here; a node whose values shape its text
-/// differently from the root's is wrapped in an inline box of its own, with no
-/// edges, and the rest is pushed with the root's style.
+/// an element is no inline box here; a text node whose values shape its text
+/// differently from the item's is wrapped in an inline box of its own, with no
+/// edges, and the rest is pushed with the item's style.
 ///
 /// # Errors
 /// [`IfcError::InvalidNode`] for a run without `text`, or an unknown, detached
-/// or non-text node in it, [`IfcError::Unsupported`] for a style the inline
-/// engine does not map, and [`IfcError::Limit`] when a shodo resource limit
-/// is exceeded.
+/// or non-text node in it, or an unknown `container`,
+/// [`IfcError::Unsupported`] for a style the inline engine does not map, and
+/// [`IfcError::Limit`] when a shodo resource limit is exceeded.
 pub(crate) fn project_ifc_text_run_builder(
     doc: &Document,
     cascade: &CascadeResult,
+    container: usize,
     text: usize,
     run: &[usize],
     fonts: &FontCollection,
@@ -755,30 +758,39 @@ pub(crate) fn project_ifc_text_run_builder(
         let content = node.text_content().ok_or(IfcError::InvalidNode(member))?;
         members.push((member, content, member_cv));
     }
-    let cv = members
-        .iter()
-        .find(|(member, ..)| *member == text)
-        .map(|(.., member_cv)| *member_cv)
-        .ok_or(IfcError::InvalidNode(text))?;
+    if !members.iter().any(|(member, ..)| *member == text) {
+        return Err(IfcError::InvalidNode(text));
+    }
+    // The anonymous item inherits from the container, not from the text node
+    // the run happens to start with: that node can sit under a `display:
+    // contents` element with values of its own.
+    let container_cv = cascade
+        .computed
+        .get(container)
+        .ok_or(IfcError::InvalidNode(container))?;
+    let cv = &ComputedValues::inherit_from(container_cv);
     // As for an element root: right-to-left content is ordered without
     // reading `unicode-bidi`.
-    let (options, indent) = style::line_options(cv, text, fonts)?;
-    let root_style = styled(doc, cascade, cv, text, fonts)?;
-    let mut paragraph_style = style::paragraph_style(cv, text, root_style.clone())?;
+    let (options, indent) = style::line_options(cv, container, fonts)?;
+    let root_style = styled(doc, cascade, cv, container, fonts)?;
+    let mut paragraph_style = style::paragraph_style(cv, container, root_style.clone())?;
     paragraph_style.line_height_quirk = line_height_quirk(doc);
     let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let cleared_breaks = Vec::new();
     let mut text_nowrap = HashMap::new();
+    let mut reached_root = false;
     for (member, content, member_cv) in members {
+        reached_root |= member == text;
         // A text node under a `display: contents` element has the values that
         // element gives it, which can shape the text differently from the
-        // root's. The element is no box here, so the text alone gets an
-        // inline box to carry its own style.
-        let own_style = if member == text {
-            None
-        } else {
+        // item's. The element is no box here, so the text alone gets an inline
+        // box to carry its own style. The text before the root holds only
+        // white space, which the start of the line removes: it shapes nothing.
+        let own_style = if reached_root {
             Some(styled(doc, cascade, member_cv, member, fonts)?).filter(|own| *own != root_style)
+        } else {
+            None
         };
         if let Some(own) = &own_style {
             builder.open_inline(NodeId(member as u64), own, InlineEdges::default());
