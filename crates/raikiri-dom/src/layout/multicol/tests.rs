@@ -6396,14 +6396,16 @@ fn a_paragraph_without_block_edges_keeps_its_box_as_the_lines_it_holds() {
 }
 
 #[test]
-fn a_single_paragraph_enters_the_stream_only_with_block_edges() {
+fn a_single_paragraph_enters_the_stream_only_with_padding_or_border() {
     for (css, enters) in [
         ("background:green", false),
-        ("padding-left:4px", false),
+        ("padding-left:4px", true),
+        ("border-right:2px solid", true),
         ("padding-top:4px", true),
         ("border-bottom:2px solid", true),
         ("padding-top:4px;box-decoration-break:clone", false),
         ("padding-bottom:4px;box-shadow:0 0 2px", false),
+        ("padding-left:4px;box-shadow:0 0 2px", false),
     ] {
         let (mut doc, container, _) = padded_paragraph_columns(css, 4);
         assert_eq!(
@@ -7112,6 +7114,95 @@ fn a_margin_and_padding_on_a_paragraph_split_between_the_lines() {
         [10.0, 0.0]
     );
     assert_eq!(boxes[1].1, 30.0);
+}
+
+#[test]
+fn the_padding_of_a_paragraph_in_percent_is_a_share_of_the_column_width() {
+    // The columns are 100px wide, so the 10% of padding is 10px, not the 30px
+    // that a tenth of the container makes. The padded first paragraph is 30px
+    // high, and the lines of the second go on under it until the column ends.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("padding-bottom:10%;background:green", 2),
+        ("margin:0", 3),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 30.0)]);
+    assert_eq!(
+        fragment_places(&doc, children[1]),
+        [(0, 30.0, 20.0), (1, 0.0, 10.0)]
+    );
+    // A paragraph that stands alone goes through the same planner.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("padding-top:10%;background:green", 3)]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 40.0)]);
+}
+
+#[test]
+fn the_margin_above_a_paragraph_in_percent_is_a_share_of_the_column_width() {
+    // The 10% is 10px of the 100px column, so the second paragraph starts at
+    // 30px and its two lines fit in the first column.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 2), ("margin-top:10%", 2)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(0, 30.0)]]);
+}
+
+/// A document with a container of three 100px columns, 50px high and filled
+/// one after another, whose only child is a paragraph of `text` styled
+/// `paragraph_css`. The document and the paragraph.
+fn text_paragraph_in_columns(paragraph_css: &str, text: &str) -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            "display:block;width:300px;height:50px;columns:3;column-gap:0;column-fill:auto;\
+             orphans:1;widows:1",
+        ),
+    );
+    let paragraph = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("display:block;{paragraph_css}").as_str()),
+    );
+    doc.append_text(paragraph, text);
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+    (doc, paragraph)
+}
+
+#[test]
+fn a_lone_paragraph_with_padding_or_border_at_its_sides_breaks_between_its_lines() {
+    // The 80px that the padding or the border leaves in a column holds one of
+    // the twelve words of four letters, so five lines fill each column. The
+    // box is a column wide, not the width of the container.
+    let words = ["xxxx"; 12].join(" ");
+    for css in ["padding:0 10px", "border-right:20px solid", "padding:0 10%"] {
+        let (doc, paragraph) = text_paragraph_in_columns(css, &words);
+        let (ranges, _) = paragraph_pieces(&doc, paragraph);
+        assert_eq!(ranges, [(0, 5, 0), (5, 10, 1), (10, 12, 2)], "{css}");
+        assert_eq!(
+            fragment_places(&doc, paragraph),
+            [(0, 0.0, 50.0), (1, 0.0, 50.0), (2, 0.0, 20.0)],
+            "{css}"
+        );
+        let widths: Vec<_> = doc
+            .fragment_tree
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.node_id == paragraph)
+            .map(|fragment| fragment.rect.width)
+            .collect();
+        assert_eq!(widths, [100.0; 3], "{css}");
+    }
+}
+
+#[test]
+fn the_padding_of_a_paragraph_at_its_sides_in_percent_narrows_its_lines_to_the_column() {
+    // The column is 100px wide, so the padding of 10% leaves 80px and the six
+    // words fill two lines. A tenth of the container would leave 40px and fill
+    // three.
+    let (doc, paragraph) = text_paragraph_in_columns("padding:0 10%", "xx x xx x xx x");
+    assert_eq!(fragment_places(&doc, paragraph), [(0, 0.0, 20.0)]);
 }
 
 /// The column and top of each fragment of the boxes `nodes`, in order.

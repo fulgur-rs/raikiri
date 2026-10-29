@@ -630,6 +630,13 @@ pub(super) fn has_block_edge_decorations(style: &LayoutStyleView<'_>) -> bool {
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
 }
 
+/// Whether `style` has padding or border on the left or right.
+pub(super) fn has_inline_edge_decorations(style: &LayoutStyleView<'_>) -> bool {
+    let zero = LengthPercentage::length(0.0);
+    let (padding, border) = (style.padding(), style.border());
+    padding.left != zero || padding.right != zero || border.left != zero || border.right != zero
+}
+
 #[derive(Clone, Copy, Default)]
 struct WrapperLayout {
     leading: f32,

@@ -22,7 +22,7 @@ use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{
     AlignItems, BoxSizing, Clear, Contain, Dimension, Direction, Display, ExpandedDimension,
     ExpandedLengthPercentage, Float, LengthPercentage, LengthPercentageAuto, MaybeResolve,
-    Overflow, Position,
+    Overflow, Position, ResolveOrZero,
 };
 
 pub(super) use paged_spanning::{
@@ -616,6 +616,40 @@ fn column_definite_margins(
     (resolve(margin.left), resolve(margin.right))
 }
 
+/// The layout block flow stored for `child`, with the padding and the margins
+/// above and below it that depend on a percentage basis resolved against the
+/// column of `column_width` that it is measured in. Block flow resolved them
+/// against the whole container, but the column is the containing block of a
+/// box in it.
+fn column_child_layout(tree: &LayoutSession<'_>, child: usize, column_width: f32) -> BoxLayout {
+    let mut layout = tree.nodes[child].layout;
+    if layout_node(tree, child).kind() != NodeKind::Element {
+        return layout;
+    }
+    let style = style_of(tree, child);
+    let padding = style.padding();
+    let depends_on_basis = |value: LengthPercentage| {
+        value.is_calc() || value.resolve_or_zero(Some(0.0)) != value.resolve_or_zero(Some(1.0))
+    };
+    if [padding.top, padding.right, padding.bottom, padding.left]
+        .into_iter()
+        .any(depends_on_basis)
+    {
+        layout.padding = padding.resolve_or_zero(Some(column_width));
+    }
+    let margin = style.margin();
+    let resolved = |value: LengthPercentageAuto, used: f32| {
+        if value.is_calc() || value.resolve(Some(0.0)) != value.resolve(Some(1.0)) {
+            value.maybe_resolve(Some(column_width)).unwrap_or(0.0)
+        } else {
+            used
+        }
+    };
+    layout.margin.top = resolved(margin.top, layout.margin.top);
+    layout.margin.bottom = resolved(margin.bottom, layout.margin.bottom);
+    layout
+}
+
 /// The room between the horizontal margins of a box in a column of
 /// `column_width`, where an auto margin counts as zero.
 fn column_room(style: &LayoutStyleView<'_>, column_width: f32) -> f32 {
@@ -861,7 +895,11 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
         let style = style_of(tree, child);
         let margin = style.margin();
         let block_edges = lineless::has_block_edge_decorations(&style);
-        decorated |= block_edges;
+        // A paragraph that stands alone with padding or border at its sides
+        // also needs the planner: the path it would take otherwise lays it
+        // out at the width of the container.
+        decorated |= block_edges
+            || (lineless::has_inline_edge_decorations(&style) && slices_block_edges(node));
         paragraphs += 1;
         // Block-edge decoration needs slice geometry for each piece, which the
         // stream gives the lines it places; the planner collapses the adjoining
@@ -1287,7 +1325,7 @@ fn layout_column_group(
                 tree.nodes[child].cache.clear();
             }
             let output = tree.compute_child_layout(NodeId::from(child), child_inputs);
-            let layout = tree.nodes[child].layout;
+            let layout = column_child_layout(tree, child, context.column_width);
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
             let needed = margin_top + output.size.height + margin_bottom;
@@ -1385,7 +1423,7 @@ fn layout_column_group(
                     return fallback_height;
                 }
                 refresh_nested_text_fragments(tree, child, context);
-                let layout = tree.nodes[child].layout;
+                let layout = column_child_layout(tree, child, context.column_width);
                 let margin_top = layout.margin.top;
                 let margin_bottom = layout.margin.bottom;
                 let needed = margin_top + output.size.height + margin_bottom;
