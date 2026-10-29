@@ -202,6 +202,37 @@ fn ownership_diagnostics_are_optional_and_preserve_public_query_results() {
 }
 
 #[test]
+fn glyph_owner_diagnostics_preserve_single_line_owners() {
+    use crate::continuation_diagnostics::{
+        ContinuationWork, begin_continuation_diagnostics, finish_continuation_diagnostics,
+    };
+    use crate::layout::ifc::text_lines::glyph_owners;
+
+    let (mut doc, cascade, text) = paragraph();
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let root = doc.ifc_text_lines(text).unwrap().root;
+    let paragraph = doc.ifc_layout_node(root).unwrap().ifc.as_ref().unwrap();
+    let lines = &paragraph.lines.as_ref().unwrap().lines;
+    assert_eq!(lines.len(), 1);
+    let expected = glyph_owners(&lines[0]);
+    assert!(expected.contains(&text));
+    begin_continuation_diagnostics();
+    assert_eq!(glyph_owners(&lines[0]), expected);
+    assert_eq!(
+        finish_continuation_diagnostics(),
+        ContinuationWork {
+            text_line_visits: 0,
+            glyph_owner_calls: 1,
+        }
+    );
+    assert_eq!(glyph_owners(&lines[0]), expected);
+    assert_eq!(
+        finish_continuation_diagnostics(),
+        ContinuationWork::default()
+    );
+}
+
+#[test]
 fn all_page_queries_do_not_recollect_paragraph_ownership() {
     use crate::continuation_diagnostics::{
         begin_continuation_diagnostics, finish_continuation_diagnostics,

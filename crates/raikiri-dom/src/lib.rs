@@ -156,6 +156,7 @@ pub use scene_geometry::{SceneGeometry, SceneGeometryNode};
 mod continuation_diagnostics;
 #[cfg(feature = "continuation-diagnostics")]
 #[doc(hidden)]
+// cov:ignore: public re-exports have no executable coverage mapping.
 pub use continuation_diagnostics::{
     ContinuationWork, begin_continuation_diagnostics, finish_continuation_diagnostics,
 };
