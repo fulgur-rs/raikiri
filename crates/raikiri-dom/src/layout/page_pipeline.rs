@@ -4183,11 +4183,12 @@ struct HeldPart {
 /// its lines, flows on to the next page, but not the padding and border that
 /// close the box right below it, which would be alone there. The first box of
 /// a block of boxes holds the same, and with it the boxes after it that
-/// avoided breaks tie to it, when `join_ties` is set. A box that avoids breaks
-/// inside it, a box that is not a plain block, a paragraph that cannot move
-/// its lines down inside it, a block that moves whole with its closing edges
-/// (see [`lone_box_tail`]), and anything with a break, a float or generated
-/// content at its start is kept whole.
+/// avoided breaks tie to it, when `join_ties` is set. A table holds its first
+/// row (see [`held_table_end`]). A box that avoids breaks inside it, a box
+/// that is not a plain block or table, a paragraph that cannot move its lines
+/// down inside it, a block that moves whole with its closing edges (see
+/// [`lone_box_tail`]), and anything with a break, a float or generated content
+/// at its start is kept whole.
 fn avoided_run_head(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -4266,10 +4267,11 @@ fn held_step(
     join_ties: bool,
 ) -> HeldStep {
     let node = &document.nodes[current];
+    let is_table = is_plain_table_box(document, current);
     if node.multicol.is_some()
         || node.has_before_or_after_content
         || avoids_page_break_inside(cascade.computed[current].break_inside)
-        || !is_plain_block_box(document, current)
+        || !(is_table || is_plain_block_box(document, current))
     {
         return HeldStep::Whole;
     }
@@ -4280,6 +4282,10 @@ fn held_step(
         if forced || avoided {
             return HeldStep::Whole;
         }
+    }
+    // A table holds its first row, which moves whole.
+    if is_table {
+        return held_table_end(document, cascade, current).map_or(HeldStep::Whole, HeldStep::End);
     }
     // A block whose box is followed by closing edges alone moves whole
     // rather than leave them on the next page (see `lone_box_tail`), and
@@ -4316,9 +4322,10 @@ fn held_step(
                 continue;
             };
             if is_plain_block_box(document, before)
-                && is_plain_block_box(document, next)
                 && !takes_no_block_space(document, next)
                 && boxes_are_tied(document, cascade, before, next)
+                && (is_plain_block_box(document, next)
+                    || ends_a_run_as_table(document, cascade, next))
             {
                 last = Some(next);
             } else {
@@ -4387,6 +4394,77 @@ fn held_lines_end(
     } else {
         held_end
     })
+}
+
+/// How far below the border-box top of the plain block table `table` the part
+/// of it ends that the page cannot break away from the box before it: its
+/// first row, which moves whole, or the row group around that row when the
+/// group avoids breaks inside it. `None` when the table is held whole, which
+/// is also the case when it may repeat a header group or something comes
+/// before its first row.
+fn held_table_end(document: &Document, cascade: &CascadeResult, table: usize) -> Option<f32> {
+    let children = document.children_through_contents(table);
+    if !rows_start_the_grid(document, cascade, table)
+        || children
+            .iter()
+            .any(|&child| document.nodes[child].display() == DisplayValue::TableHeaderGroup)
+    {
+        return None;
+    }
+    let (row, _) = children
+        .iter()
+        .flat_map(|&child| {
+            let in_group = matches!(
+                document.nodes[child].display(),
+                DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
+            );
+            let inside = if in_group {
+                document.children_through_contents(child)
+            } else {
+                Vec::new()
+            };
+            std::iter::once(child).chain(inside)
+        })
+        .filter(|&row| document.nodes[row].display() == DisplayValue::TableRow)
+        .map(|row| (row, current_abs_y(document, row)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    if forced_break_before_first_row(document, cascade, table, row) {
+        return None;
+    }
+    // A forced break between the rows of a group splits it: the rows before
+    // the break are what the page holds.
+    let held = document
+        .parent_of(row)
+        .filter(|&group| {
+            group != table && avoids_page_break_inside(cascade.computed[group].break_inside)
+        })
+        .map_or(row, |group| {
+            let mut held = row;
+            let rows = document
+                .children_through_contents(group)
+                .into_iter()
+                .filter(|&sibling| document.nodes[sibling].display() == DisplayValue::TableRow);
+            for next in rows.skip_while(|&sibling| sibling != row).skip(1) {
+                if page_break_is_forced(document, held, cascade.computed[held].break_after)
+                    || page_break_is_forced(document, next, cascade.computed[next].break_before)
+                {
+                    break;
+                }
+                held = next;
+            }
+            held
+        });
+    Some(
+        current_abs_y(document, held) + document.nodes[held].layout.size.height
+            - current_abs_y(document, table),
+    )
+}
+
+/// Whether `node_id` is a table that ends a run of boxes tied by avoided
+/// breaks: one whose first row is the part the page holds with the box before
+/// it (see [`held_table_end`]). Any other table is left out of the run.
+fn ends_a_run_as_table(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    is_plain_table_box(document, node_id) && held_table_end(document, cascade, node_id).is_some()
 }
 
 /// Whether an avoided break (`break-after` of the box `before` or
@@ -6379,8 +6457,9 @@ fn avoid_chain_before_last_box(
 /// `children` and `flow_flags` are as for [`avoid_chain_before_last_box`].
 ///
 /// Only block boxes next to each other make a run: a float or text between
-/// them ends it. The run ends where its last box holds the page (see
-/// [`avoided_run_head`]).
+/// them ends it, and a table ends it by joining it (see
+/// [`ends_a_run_as_table`]). The run ends where its last box holds the page
+/// (see [`avoided_run_head`]).
 fn nested_run_units(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6388,13 +6467,17 @@ fn nested_run_units(
     children: &[usize],
     flow_flags: &[(Option<usize>, bool)],
 ) -> Vec<Option<f32>> {
-    let is_box = |index: usize| {
+    // A table ends a run it joins and starts none: only its first row stays
+    // with the box before it.
+    let is_flow_box = |index: usize| {
         let id = children[index];
         let (in_flow, floated) = flow_flags[index];
-        in_flow == Some(id)
-            && !floated
-            && is_plain_block_box(document, id)
-            && !takes_no_block_space(document, id)
+        in_flow == Some(id) && !floated && !takes_no_block_space(document, id)
+    };
+    let is_box = |index: usize| is_flow_box(index) && is_plain_block_box(document, children[index]);
+    let is_run_end = |index: usize| {
+        is_box(index)
+            || (is_flow_box(index) && ends_a_run_as_table(document, cascade, children[index]))
     };
     let first_in_flow = flow_flags
         .iter()
@@ -6426,8 +6509,8 @@ fn nested_run_units(
         }
         let tied_before = previous.filter(|&before| {
             is_box(before)
-                && is_box(index)
                 && boxes_are_tied(document, cascade, children[before], children[index])
+                && is_run_end(index)
         });
         match (tied_before, run) {
             (Some(_), Some((start, _))) => run = Some((start, index)),
