@@ -1055,3 +1055,104 @@ fn inherit_from_initial_parent_yields_initial() {
         ComputedValues::initial(),
     );
 }
+
+#[test]
+fn custom_property_lookup_diagnostics_are_optional_and_thread_local() {
+    use super::custom_property_diagnostics::{
+        CustomPropertyLookupWork, begin_custom_property_diagnostics,
+        finish_custom_property_diagnostics,
+    };
+    let root =
+        CustomPropertyEnvironment::from_map(HashMap::from([("--base".into(), "7px".into())]));
+    let child = CustomPropertyEnvironment::from_local(
+        &root,
+        HashMap::from([("--layer".into(), Some("1".into()))]),
+    );
+    assert_eq!(child.get("--base"), Some("7px".into()));
+    assert_eq!(
+        finish_custom_property_diagnostics(),
+        CustomPropertyLookupWork::default()
+    );
+    begin_custom_property_diagnostics();
+    assert_eq!(child.get("--base"), Some("7px".into()));
+    assert_eq!(child.get("--missing"), None);
+    assert_eq!(child.get_local("--base"), None);
+    let work = finish_custom_property_diagnostics();
+    assert!(work.ancestor_visits + work.index_visits > 0);
+    assert_eq!((work.created_nodes, work.ownership_visits), (0, 0));
+    assert_eq!(
+        finish_custom_property_diagnostics(),
+        CustomPropertyLookupWork::default()
+    );
+    begin_custom_property_diagnostics();
+    std::thread::spawn(move || {
+        assert_eq!(child.get("--base"), Some("7px".into()));
+        assert_eq!(
+            finish_custom_property_diagnostics(),
+            CustomPropertyLookupWork::default()
+        );
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        finish_custom_property_diagnostics(),
+        CustomPropertyLookupWork::default()
+    );
+}
+
+#[test]
+fn inherited_custom_property_work_stays_linear_when_name_count_is_fixed() {
+    use super::custom_property_diagnostics::{
+        begin_custom_property_diagnostics, finish_custom_property_diagnostics,
+    };
+    for depth in [64, 128, 256] {
+        let mut environment =
+            CustomPropertyEnvironment::from_map(HashMap::from([("--base".into(), "7px".into())]));
+        begin_custom_property_diagnostics();
+        for index in 0..depth {
+            environment = CustomPropertyEnvironment::from_local(
+                &environment,
+                HashMap::from([("--layer".into(), Some(index.to_string().into()))]),
+            );
+            assert_eq!(environment.get("--base"), Some("7px".into()));
+            assert_eq!(environment.get("--missing"), None);
+        }
+        let work = finish_custom_property_diagnostics();
+        let total =
+            work.ancestor_visits + work.index_visits + work.created_nodes + work.ownership_visits;
+        assert!(total <= 32 * depth, "depth={depth}: {work:?}");
+    }
+}
+
+#[test]
+fn static_empty_environment_is_free_but_new_index_bookkeeping_is_charged() {
+    assert_eq!(empty_custom_properties().local_heap_bytes(), 0);
+    let local_only = CustomPropertyEnvironment::from_local_only(HashMap::new());
+    assert_eq!(local_only.local_heap_bytes(), INDEX_BOOKKEEPING_BYTES);
+    assert_eq!(local_only.owned_index_bytes, 0);
+}
+
+#[test]
+fn distinct_queries_on_growing_environments_do_not_restore_ancestor_scans() {
+    use super::custom_property_diagnostics::{
+        begin_custom_property_diagnostics, finish_custom_property_diagnostics,
+    };
+    for depth in [128usize, 256, 512] {
+        let missing: Vec<_> = (0..depth)
+            .map(|i| format!("--different-missing{i}"))
+            .collect();
+        let mut environment = empty_custom_properties();
+        begin_custom_property_diagnostics();
+        for (index, name) in missing.iter().enumerate() {
+            environment = CustomPropertyEnvironment::from_local(
+                &environment,
+                HashMap::from([(format!("--local{index}").into(), Some("1".into()))]),
+            );
+            assert_eq!(environment.get(name), None);
+        }
+        let work = finish_custom_property_diagnostics();
+        assert_eq!(work.ancestor_visits, 0);
+        let total = work.index_visits + work.created_nodes + work.ownership_visits;
+        assert!(total <= 32 * depth as u64 * (depth.ilog2() + 1) as u64);
+    }
+}

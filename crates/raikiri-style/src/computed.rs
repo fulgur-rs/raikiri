@@ -150,15 +150,29 @@ pub(crate) fn medium_font_size_px(family: &[FontFamilyName]) -> f32 {
     }
 }
 
+pub(crate) mod custom_property_diagnostics;
+mod custom_property_index;
+use custom_property_index::CustomPropertyIndex;
+
+// Charge the added fields and resulting padding beyond the old parent/map
+// storage, which both have pointer alignment on supported targets.
+const INDEX_BOOKKEEPING_BYTES: u64 = (std::mem::size_of::<CustomPropertyEnvironment>()
+    - std::mem::size_of::<Option<Arc<CustomPropertyEnvironment>>>()
+    - std::mem::size_of::<HashMap<SmolStr, Option<SmolStr>>>())
+    as u64;
+
 /// Persistent custom-property environment used by computed values.
 ///
 /// CSS Variables 1 §2 makes custom properties inherited. Each environment
-/// therefore stores only the declarations resolved at one element and points
-/// at the parent's environment. Cloning an environment is an `Arc` bump;
-/// adding a declaration allocates only the local delta instead of copying the
-/// complete inherited map.
+/// stores the declarations resolved at one element and shares its parent's
+/// environment. An immutable AVL index shares unchanged subtrees and bounds
+/// effective lookup by the number of distinct names, rather than tree depth.
+/// Local maps preserve declaration boundaries for consumer properties.
 #[derive(Clone)]
 pub(crate) struct CustomPropertyEnvironment {
+    index: CustomPropertyIndex,
+    generation: u64,
+    owned_index_bytes: u64,
     parent: Option<Arc<CustomPropertyEnvironment>>,
     /// `Some(value)` is a resolved declaration. `None` is a local
     /// guaranteed-invalid tombstone: it must hide an inherited value while
@@ -172,7 +186,19 @@ impl CustomPropertyEnvironment {
         parent: &Arc<CustomPropertyEnvironment>,
         local: HashMap<SmolStr, Option<SmolStr>>,
     ) -> Arc<Self> {
+        // Parent ownership keeps every ancestor alive. On <=64-bit targets,
+        // address space cannot hold u64::MAX nonempty environment allocations.
+        // Revisit this invariant if parent-chain retention is ever removed.
+        let generation = parent
+            .generation
+            .checked_add(1)
+            .expect("addressable environment depth");
+        let (index, owned_index_bytes) =
+            CustomPropertyIndex::with_local(&parent.index, &local, generation);
         Arc::new(Self {
+            index,
+            generation,
+            owned_index_bytes,
             parent: Some(parent.clone()),
             local,
         })
@@ -183,7 +209,12 @@ impl CustomPropertyEnvironment {
     /// This intentionally has no parent so local bookkeeping cannot retain an
     /// inherited environment chain.
     pub(crate) fn from_local_only(local: HashMap<SmolStr, Option<SmolStr>>) -> Arc<Self> {
+        let (index, owned_index_bytes) =
+            CustomPropertyIndex::with_local(&CustomPropertyIndex::default(), &local, 1);
         Arc::new(Self {
+            index,
+            generation: 1,
+            owned_index_bytes,
             parent: None,
             local,
         })
@@ -200,9 +231,15 @@ impl CustomPropertyEnvironment {
     }
 
     /// The heap this environment's own declarations hold, not those of the
-    /// ancestor environments it shares: the map's entries and the strings of
-    /// their names and values.
+    /// ancestor environments it shares: local map entries and text plus the
+    /// final index nodes and index bookkeeping this environment adds. Index text shares those local
+    /// or retained ancestor buffers and is not charged again.
     pub(crate) fn local_heap_bytes(&self) -> u64 {
+        // Generation zero is the shared static empty environment. It adds no
+        // allocation to a cascade, including when replacing a parent's locals.
+        if self.generation == 0 {
+            return 0;
+        }
         let text = |value: &SmolStr| {
             if value.is_heap_allocated() {
                 value.len() as u64
@@ -210,7 +247,9 @@ impl CustomPropertyEnvironment {
                 0
             }
         };
-        (self.local.capacity() * std::mem::size_of::<(SmolStr, Option<SmolStr>)>()) as u64
+        INDEX_BOOKKEEPING_BYTES
+            + self.owned_index_bytes
+            + (self.local.capacity() * std::mem::size_of::<(SmolStr, Option<SmolStr>)>()) as u64
             + self
                 .local
                 .iter()
@@ -218,16 +257,17 @@ impl CustomPropertyEnvironment {
                 .sum::<u64>()
     }
 
-    /// Look up the effective value, walking shared ancestor environments.
+    /// Look up the effective value through the shared balanced index.
     pub(crate) fn get(&self, name: &str) -> Option<SmolStr> {
-        let mut current = Some(self);
-        while let Some(environment) = current {
-            if let Some(value) = environment.local.get(name) {
-                return value.clone();
-            }
-            current = environment.parent.as_deref();
+        #[cfg(any(test, feature = "custom-property-diagnostics"))]
+        if custom_property_diagnostics::enabled() {
+            return self.get_impl::<true>(name);
         }
-        None
+        self.get_impl::<false>(name)
+    }
+
+    fn get_impl<const COUNT: bool>(&self, name: &str) -> Option<SmolStr> {
+        self.index.get::<COUNT>(name)
     }
 
     /// Look up a value declared on this node, without walking inherited
@@ -334,6 +374,9 @@ pub(crate) fn empty_custom_properties() -> Arc<CustomPropertyEnvironment> {
     EMPTY
         .get_or_init(|| {
             Arc::new(CustomPropertyEnvironment {
+                index: CustomPropertyIndex::default(),
+                generation: 0,
+                owned_index_bytes: 0,
                 parent: None,
                 local: HashMap::new(),
             })
