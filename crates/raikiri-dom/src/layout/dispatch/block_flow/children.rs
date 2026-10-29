@@ -3,6 +3,7 @@
 use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context, shares_parent_context};
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::content_limits;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
     FloatDirection, LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RunMode,
@@ -474,6 +475,17 @@ pub(super) fn layout(
             continue;
         }
         let same = shares_parent_context(tree, node, child, &style);
+        // A `stretch` height limit of the child leaves out the margins this
+        // box holds in.
+        let held_margins = content_limits::has_stretch_height_limit(tree, usize::from(child));
+        if held_margins {
+            tree.context
+                .held_margins
+                .push(content_limits::HeldMargins::new(
+                    usize::from(child),
+                    holds_margin,
+                ));
+        }
         // The box after the float that starts a page lines up beside that
         // float, but below the floats of the pages before it.
         let floor = tree
@@ -495,28 +507,42 @@ pub(super) fn layout(
             _ => false,
         };
         let natural_stretch = content_width - margin.horizontal_axis_sum();
+        // A `min-width` or `max-width` of `stretch` fills the room the child
+        // finds, which beside a float is the room the float leaves.
+        let stretch_widths = content_limits::stretch_widths(tree, usize::from(child));
         // `Width`: the border-box width the child gets where an `auto` width
         // resolves to `stretch`. `Height`: its border-box height at `width`.
         let mut measure = |probe: BoxProbe| match probe {
             BoxProbe::Width { stretch } => {
-                if let Some(preferred) = child_metrics.preferred.width
-                    && !child_metrics.ratio_width
-                {
-                    return preferred;
-                }
-                if stretches && !child_metrics.ratio_width {
-                    return child_metrics.clamp_width(stretch.max(0.0));
-                }
-                let mut measure = child_input;
-                measure.run_mode = RunMode::ComputeSize;
-                measure.available_space.width = match style.size.width.expand() {
-                    ExpandedDimension::MinContent => AvailableSpace::MinContent,
-                    ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
-                    _ => AvailableSpace::Definite(stretch.max(0.0)),
+                let width = 'width: {
+                    if let Some(preferred) = child_metrics.preferred.width
+                        && !child_metrics.ratio_width
+                    {
+                        break 'width preferred;
+                    }
+                    if stretches && !child_metrics.ratio_width {
+                        break 'width child_metrics.clamp_width(stretch.max(0.0));
+                    }
+                    let mut measure = child_input;
+                    measure.run_mode = RunMode::ComputeSize;
+                    measure.available_space.width = match style.size.width.expand() {
+                        ExpandedDimension::MinContent => AvailableSpace::MinContent,
+                        ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
+                        _ => AvailableSpace::Definite(stretch.max(0.0)),
+                    };
+                    tree.compute_child_layout_with_block_ctx(child, measure, None)
+                        .size
+                        .width
                 };
-                tree.compute_child_layout_with_block_ctx(child, measure, None)
-                    .size
-                    .width
+                if stretch_widths.any() {
+                    stretch_widths.clamp(
+                        width,
+                        (child_metrics.min.width, child_metrics.max.width),
+                        stretch.max(0.0),
+                    )
+                } else {
+                    width
+                }
             }
             BoxProbe::Height { width } => {
                 let mut measure = child_input;
@@ -688,6 +714,9 @@ pub(super) fn layout(
                 adjoining,
             );
         };
+        if held_margins {
+            tree.context.held_margins.pop();
+        }
         ctx.add_child_floated_content_height_contribution(guess + floated_end);
         ctx.merge_adjoining_floats(adjoining);
         if joins && separated {

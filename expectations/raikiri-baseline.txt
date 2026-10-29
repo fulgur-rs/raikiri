@@ -5409,3 +5409,11 @@ css/css-display/display-contents-inline-flex-001.html
 # --- a block-level replaced element keeps clear of floats (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
 # A block-level replaced element (a canvas or an image) does not share the float context of its parent: its border box lies beside the floats that leave it room and below them when it does not fit (CSS 2.1 section 9.5), where it was drawn over the float. The `width: stretch` canvas fills the room beside the float. This test failed before the change (the canvas covered the float, 11600 pixels differ) and KEEPs in two audit-vacuous-passes runs.
 css/css-sizing/stretch/replaced-next-to-float-1.html
+
+# --- `stretch` as a minimum or maximum size (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# `min-width`, `max-width`, `min-height` and `max-height` accept `stretch` (and `-webkit-fill-available`): it is the size `width: stretch` or `height: stretch` would give the box, the room beside a float for a box that keeps clear of floats, and without effect (a minimum of 0, no maximum) where the containing block has no definite size. Five tests failed before the change (the minimum or maximum was dropped at parse time); four KEEP in two audit-vacuous-passes runs. The min-width test reports VACUOUS-UNSTYLED because a plain 100px block also draws the green square once its declarations are removed; it failed before the change (the box stayed 50px wide), so it stays as a guard.
+css/css-sizing/stretch/min-width-1.html
+css/css-sizing/stretch/block-height-009.html
+css/css-sizing/stretch/block-height-010.html
+css/css-sizing/stretch/bfc-next-to-float-2.html
+css/css-sizing/stretch/replaced-next-to-float-2.html

@@ -799,18 +799,11 @@ fn layout_values<'a>(
     let cv = vertical_sized.unwrap_or(&cascade.computed[idx]);
     // Only intrinsic keywords need contextual normalization. Keep the ordinary
     // scalar path free of repeated ancestor and formatting-context queries.
-    if ![
-        cv.width,
-        cv.height,
-        cv.min_width,
-        cv.max_width,
-        cv.min_height,
-        cv.max_height,
-        cv.min_block_size
-            .unwrap_or(ComputedLengthPercentageOrAuto::Auto),
-    ]
-    .into_iter()
-    .any(is_sizing_keyword)
+    if ![cv.width, cv.height].into_iter().any(is_sizing_keyword)
+        && ![cv.min_width, cv.max_width, cv.min_height, cv.max_height]
+            .into_iter()
+            .any(is_limit_keyword)
+        && !cv.min_block_size.is_some_and(is_sizing_keyword)
     {
         return std::borrow::Cow::Borrowed(cv);
     }
@@ -823,7 +816,7 @@ fn layout_values<'a>(
     let plain_limits = flags.contains(F::IGNORE_LIMIT_KEYWORDS)
         && [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
             .into_iter()
-            .any(is_sizing_keyword);
+            .any(is_limit_keyword);
     let ignore_logical_min_block = flags.contains(F::IGNORE_LOGICAL_MIN_BLOCK);
     if !(width || height || plain_limits || ignore_logical_min_block) {
         return std::borrow::Cow::Borrowed(cv);
@@ -842,7 +835,7 @@ fn layout_values<'a>(
             &mut plain.min_height,
             &mut plain.max_height,
         ] {
-            if is_sizing_keyword(*size) {
+            if is_limit_keyword(*size) {
                 *size = ComputedLengthPercentageOrAuto::Auto;
             }
         }
@@ -881,6 +874,14 @@ pub(super) fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
             | ComputedLengthPercentageOrAuto::FitContent
             | ComputedLengthPercentageOrAuto::FitContentOf(_)
     )
+}
+
+/// Whether the `min-*` or `max-*` size `size` is a keyword the layout resolves
+/// to a length when it lays the box out: an intrinsic sizing keyword, or
+/// `stretch`. Taffy's minimum and maximum sizes hold neither (see
+/// [`ContentLimits`]).
+pub(super) fn is_limit_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
+    is_sizing_keyword(size) || size == ComputedLengthPercentageOrAuto::Stretch
 }
 
 /// Whether element `idx`, whose computed values are `cv`, uses an intrinsic
@@ -1204,7 +1205,7 @@ fn bridge_content_limits(
     diag: &mut Vec<LayoutWarn>,
 ) -> ContentLimits {
     let mut keyword = |size, site| {
-        if is_sizing_keyword(size) {
+        if is_limit_keyword(size) {
             computed_length_percentage_or_auto_to_taffy_dimension(calc_values, size, site, diag)
         } else {
             Dimension::auto()

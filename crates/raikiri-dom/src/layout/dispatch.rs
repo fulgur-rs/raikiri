@@ -881,7 +881,10 @@ impl LayoutSession<'_> {
         let uncached = block_ctx.is_some()
             || std::mem::take(&mut self.context.group_child_uncached)
             || (paragraph && ifc_basis.is_some() && has_percent_edge(&self.physical_style(idx)))
-            || self.context.size_contained_measure.last() == Some(&idx);
+            || self.context.size_contained_measure.last() == Some(&idx)
+            // The margins a `stretch` height limit leaves out of its room come
+            // from the parent that lays the box out, not from the inputs.
+            || content_limits::has_stretch_height_limit(self, idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against
