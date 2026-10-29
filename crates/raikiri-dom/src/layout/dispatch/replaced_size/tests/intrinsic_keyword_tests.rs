@@ -329,8 +329,10 @@ fn cyclic_percentage_still_uses_zero_basis_with_intrinsic_limits() {
         },
         Size::splat(Dimension::auto()),
     );
+    // The height is the axis that is measured, so its percentage resolves
+    // against zero.
     let mut layout_inputs = inputs();
-    layout_inputs.available_space.width = AvailableSpace::MinContent;
+    layout_inputs.available_space.height = AvailableSpace::MinContent;
 
     assert_eq!(
         auto_sides_size(&style, &layout_inputs, natural_size(), limits, true),
@@ -338,5 +340,35 @@ fn cyclic_percentage_still_uses_zero_basis_with_intrinsic_limits() {
             width: 40.0,
             height: 40.0,
         })
+    );
+}
+
+#[test]
+fn cyclic_percentage_in_the_other_axis_counts_as_auto_with_intrinsic_limits() {
+    let mut arena = Vec::new();
+    let height = Dimension::calc(crate::layout::dispatch::push_calc(
+        &mut arena,
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 50.0,
+            px: 40.0,
+        },
+        true,
+    ));
+    let style = ratio_style(Dimension::auto(), height);
+    let limits = limits(
+        Size {
+            width: Dimension::min_content(),
+            height: Dimension::auto(),
+        },
+        Size::splat(Dimension::auto()),
+    );
+    // Only the width is measured, so the percentage height is `auto` and the
+    // box keeps its natural size.
+    let mut layout_inputs = inputs();
+    layout_inputs.available_space.width = AvailableSpace::MinContent;
+
+    assert_eq!(
+        auto_sides_size(&style, &layout_inputs, natural_size(), limits, true),
+        Some(natural_size())
     );
 }
