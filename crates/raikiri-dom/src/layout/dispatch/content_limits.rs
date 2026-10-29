@@ -1331,10 +1331,7 @@ fn replaced_keyword_bounds(
     if is_replaced_content(tree, idx) {
         let (min, max) = (limits.min.width, limits.max.width);
         if is_stretch(min) || is_stretch(max) {
-            let stretch = match inputs.available_space.width {
-                AvailableSpace::Definite(room) => Some(stretch_fit_width(tree, idx, inputs, room)),
-                AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
-            };
+            let stretch = stretch_width(tree, idx, inputs);
             if is_stretch(min) {
                 width.min = stretch;
             }
@@ -1477,10 +1474,7 @@ fn width_bounds(
     {
         let expanded = keyword.expand();
         if matches!(expanded, ExpandedDimension::Stretch) {
-            *slot = match inputs.available_space.width {
-                AvailableSpace::Definite(room) => Some(stretch_fit_width(tree, idx, inputs, room)),
-                AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
-            };
+            *slot = stretch_width(tree, idx, inputs);
             continue;
         }
         if !matches!(
@@ -1630,6 +1624,16 @@ fn content_percentage_height_basis(
         .map(|height| height + box_sizing_adjustment)
         .unwrap_or(0.0);
     Some((preferred.max(minimum) - edges).max(0.0))
+}
+
+/// The border-box width the box `idx` stretches to in the width `inputs`
+/// offer it, which an intrinsic sizing pass leaves open (see
+/// [`stretch_fit_width`]).
+fn stretch_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+    match inputs.available_space.width {
+        AvailableSpace::Definite(room) => Some(stretch_fit_width(tree, idx, inputs, room)),
+        AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+    }
 }
 
 /// The border-box width the box `idx` would stretch to in the room `inputs`

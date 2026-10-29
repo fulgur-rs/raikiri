@@ -388,4 +388,49 @@ cases! {
     abspos_min_height_below_an_inset_past_the_edge:
         r#"<div id=o style="position:relative;width:50px;height:40px;padding:3px 5px;margin:5px"><div id=c style="position:absolute;top:60px;width:10px;min-height:stretch;"></div></div>"# =>
         [("o", (5.0, 5.0, 50.0, 40.0)), ("c", (10.0, 65.0, 10.0, 0.0))];
+    replaced_height_a_min_stretch_of_a_canvas:
+        r#"<div id=o style="width:200px;height:100px;"><canvas id=c width=40 height=20 style="display:block;width:50px;height:20px;min-height:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_height_a_max_stretch_of_a_canvas:
+        r#"<div id=o style="width:200px;height:100px;"><canvas id=c width=40 height=20 style="display:block;width:50px;height:500px;max-height:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_height_a_min_stretch_of_an_image:
+        r#"<div id=o style="width:200px;height:100px;"><img id=c src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" style="display:block;width:50px;height:20px;min-height:stretch"></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_height_a_max_stretch_of_an_image:
+        r#"<div id=o style="width:200px;height:100px;"><img id=c src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" style="display:block;width:50px;height:500px;max-height:stretch"></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_height_a_min_stretch_with_a_top_margin:
+        r#"<div id=o style="width:200px;height:100px;"><canvas id=c width=40 height=20 style="display:block;width:50px;height:20px;min-height:stretch;margin-top:10px"></canvas></div>"# =>
+        [("o", (0.0, 10.0, 200.0, 100.0)), ("c", (0.0, 10.0, 50.0, 100.0))];
+    replaced_height_a_max_stretch_with_a_bottom_margin:
+        r#"<div id=o style="width:200px;height:100px;"><canvas id=c width=40 height=20 style="display:block;width:50px;height:500px;max-height:stretch;margin-bottom:10px"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_height_a_min_stretch_in_an_auto_height_parent:
+        r#"<div id=o style="width:200px"><canvas id=c width=40 height=20 style="display:block;width:50px;height:20px;min-height:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 20.0)), ("c", (0.0, 0.0, 50.0, 20.0))];
+    replaced_height_a_max_stretch_in_an_auto_height_parent:
+        r#"<div id=o style="width:200px"><canvas id=c width=40 height=20 style="display:block;width:50px;height:500px;max-height:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 500.0)), ("c", (0.0, 0.0, 50.0, 500.0))];
+    replaced_height_both_stretch:
+        r#"<div id=o style="width:200px;height:100px;"><canvas id=c width=40 height=20 style="display:block;width:50px;height:20px;min-height:stretch;max-height:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_height_a_min_stretch_of_an_inline_canvas:
+        r#"<div id=o style="width:200px;height:100px;"><canvas id=c width=40 height=20 style="width:50px;height:20px;min-height:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_height_a_max_stretch_with_a_ratio:
+        r#"<div id=o style="width:200px;height:100px;"><canvas id=c width=40 height=20 style="display:block;width:50px;height:auto;max-height:stretch;aspect-ratio:1/10"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 200.0, 100.0)), ("c", (0.0, 0.0, 50.0, 100.0))];
+    replaced_width_a_stretch_in_a_shrink_to_fit_float:
+        r#"<div id=o style="float:left"><canvas id=c width=40 height=20 style="display:block;width:50px;height:20px;min-width:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 50.0, 20.0)), ("c", (0.0, 0.0, 50.0, 20.0))];
+    replaced_width_a_max_stretch_in_a_shrink_to_fit_float:
+        r#"<div id=o style="float:left"><canvas id=c width=40 height=20 style="display:block;width:500px;height:20px;max-width:stretch"></canvas></div>"# =>
+        [("o", (0.0, 0.0, 500.0, 20.0)), ("c", (0.0, 0.0, 500.0, 20.0))];
+    width_a_min_stretch_in_a_shrink_to_fit_float:
+        r#"<div id=o style="float:left"><div id=c style="width:30px;min-width:stretch;height:20px"></div></div>"# =>
+        [("o", (0.0, 0.0, 30.0, 20.0)), ("c", (0.0, 0.0, 30.0, 20.0))];
+    width_a_max_stretch_in_a_shrink_to_fit_float:
+        r#"<div id=o style="float:left"><div id=c style="width:300px;max-width:stretch;height:20px"></div></div>"# =>
+        [("o", (0.0, 0.0, 300.0, 20.0)), ("c", (0.0, 0.0, 300.0, 20.0))];
 }
