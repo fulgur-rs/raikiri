@@ -1960,12 +1960,8 @@ css/css-backgrounds/background-image-001.html
 css/css-backgrounds/background-image-003.html
 css/css-backgrounds/background-image-005.html
 css/css-backgrounds/background-image-gradient-currentcolor-conic-repaint.html
-css/css-backgrounds/background-origin/origin-border-box.html
-css/css-backgrounds/background-origin/origin-border-box_with_size.html
 css/css-backgrounds/background-origin/origin-content-box_with_position.html
-css/css-backgrounds/background-origin/origin-content-box_with_size.html
 css/css-backgrounds/background-origin/origin-padding-box_with_position.html
-css/css-backgrounds/background-origin/origin-padding-box_with_size.html
 css/css-backgrounds/background-size-021.html
 css/css-backgrounds/background-size-025.html
 css/css-backgrounds/background-size-contain-001.html
