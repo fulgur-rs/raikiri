@@ -4,7 +4,7 @@ use super::boxes::IfcBoxKind;
 use super::error::IfcError;
 use super::projection::{
     GeneratedCounters, ProjectedBuilder, ProjectedIfc, box_kind, has_in_flow_generated_text,
-    project_anonymous_cell_builder, project_ifc_builder_with, project_ifc_text_builder,
+    project_anonymous_cell_builder, project_ifc_builder_with, project_ifc_text_run_builder,
 };
 use super::root::{IfcBuildMode, IfcRoot, IfcState, RetainedKey, RetainedParagraphs};
 use super::style;
@@ -527,44 +527,109 @@ pub(super) fn is_css_whitespace(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
 }
 
-/// Whether `text` is laid out by a flex or grid container as an anonymous
-/// item of its own: it is a child of the container (through `display:
-/// contents` elements) and holds more than
-/// collapsible white space (CSS Flexbox 1, 4; CSS Grid 1, 6). The white-space
-/// test matches the item collection of the taffy tree.
-fn is_anonymous_item_text(doc: &Document, text: usize) -> bool {
-    let node = &doc.nodes[text];
-    if node.kind() != NodeKind::Text || !node.is_in_document() {
-        return false;
-    }
-    let Some(parent) = BoxTree::for_layout(doc).parent(text, BoxParentScope::LayoutRoot) else {
-        return false;
-    };
-    doc.nodes[parent].display().is_flex_or_grid_container()
-        && node.text_content().is_some_and(|text| {
-            !text
-                .chars()
-                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
-        })
+/// Whether `text` holds more than collapsible white space, so that a run of
+/// text it belongs to is laid out as an anonymous flex or grid item (CSS
+/// Flexbox 1, 4; CSS Grid 1, 6). The white-space test matches the item
+/// collection of the taffy tree.
+fn text_holds_more_than_white_space(doc: &Document, text: usize) -> bool {
+    doc.nodes[text].text_content().is_some_and(|text| {
+        !text
+            .chars()
+            .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+    })
 }
 
-/// The text nodes that are anonymous flex or grid items and can be laid out
-/// as paragraphs of their own, with their builders. Such a text node is the
-/// root of its paragraph; it has no boxes, so only the checks on its style and
-/// its ancestors apply.
+/// An anonymous flex or grid item made of text: the text nodes of a run, in
+/// order, and the first of them that holds more than collapsible white space.
+/// That node is the root of the item's paragraph, which keeps it in the
+/// sequence of boxes that taffy lays out.
+struct TextRun {
+    root: usize,
+    members: Vec<usize>,
+}
+
+/// The runs of text that the flex or grid container `container` wraps in
+/// anonymous items.
+///
+/// A run is a sequence of text nodes that no box separates (CSS Flexbox 1, 4;
+/// CSS Grid 1, 6). The text of a `display: contents` child counts as the
+/// container's own text, since the element generates no box (CSS Display 3,
+/// 2.5), so a run can take in text nodes that are not siblings. An element
+/// that generates no box, a comment and a node outside the document do not
+/// split a run. A run of collapsible white space alone makes no item.
+fn anonymous_text_runs(doc: &Document, container: usize) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    let mut members: Vec<usize> = Vec::new();
+    let mut close = |members: &mut Vec<usize>| {
+        let root = members
+            .iter()
+            .copied()
+            .find(|&text| text_holds_more_than_white_space(doc, text));
+        match root {
+            Some(root) => runs.push(TextRun {
+                root,
+                members: std::mem::take(members),
+            }),
+            None => members.clear(),
+        }
+    };
+    for child in doc.children_through_contents(container) {
+        let node = &doc.nodes[child];
+        if !node.is_in_document() {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => members.push(child),
+            NodeKind::Element
+                if node.display() != DisplayValue::None && !node.is_non_rendered_html_element() =>
+            {
+                close(&mut members);
+            }
+            _ => {}
+        }
+    }
+    close(&mut members);
+    runs
+}
+
+/// The anonymous flex and grid items made of text, which can be laid out as
+/// paragraphs of their own, with their builders. The root text node of an
+/// item is the root of its paragraph; it has no boxes, so only the checks on
+/// its style and its ancestors apply.
 fn collect_text_candidates(
     doc: &Document,
     cascade: &CascadeResult,
     state: &IfcState,
 ) -> Result<Vec<Candidate>, LayoutError> {
     let mut candidates = Vec::new();
-    for idx in 0..doc.nodes.len() {
-        if !is_anonymous_item_text(doc, idx) {
+    // Elements inside a `display: none` subtree generate no boxes, so their
+    // items would be shaped for nothing.
+    let hidden = inside_hidden_subtrees(doc);
+    for (container, &in_hidden_subtree) in hidden.iter().enumerate() {
+        let node = &doc.nodes[container];
+        if node.kind() != NodeKind::Element
+            || !node.is_in_document()
+            || in_hidden_subtree
+            || !node.display().is_flex_or_grid_container()
+        {
             continue;
         }
-        match project_ifc_text_builder(doc, cascade, idx, &state.fonts, &state.limits) {
-            Ok(projected) => candidates.push(Candidate { idx, projected }),
-            Err(error) => return Err(projection_error(idx, error)),
+        for TextRun { root, members } in anonymous_text_runs(doc, container) {
+            match project_ifc_text_run_builder(
+                doc,
+                cascade,
+                container,
+                root,
+                &members,
+                &state.fonts,
+                &state.limits,
+            ) {
+                Ok(projected) => candidates.push(Candidate {
+                    idx: root,
+                    projected,
+                }),
+                Err(error) => return Err(projection_error(root, error)),
+            }
         }
     }
     Ok(candidates)
@@ -632,7 +697,15 @@ fn write_roots(doc: &mut Document, built: Vec<(usize, IfcRoot)>) {
             .collect::<HashSet<_>>();
         let root = doc.table_layout_node_mut(idx);
         root.flags.insert(NodeFlags::IS_IFC_ROOT);
+        let run_tail = paragraph.run_tail.clone();
         root.ifc = Some(Box::new(paragraph));
+        // The rest of an anonymous item's run of text is not a child of the
+        // root: the paragraph owns it all the same.
+        for tail in run_tail {
+            doc.nodes[tail].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+            doc.table_objects.paragraph_owner[tail] = Some(idx);
+        }
+        let root = doc.table_layout_node_mut(idx);
         let mut stack = root.children.clone();
         while let Some(id) = stack.pop() {
             #[cfg(test)]

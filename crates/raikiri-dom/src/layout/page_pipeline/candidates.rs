@@ -562,7 +562,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
         }
         match node.kind() {
             NodeKind::Text => {
+                // A text node after the first of the run that makes one
+                // anonymous flex or grid item is laid out with it: the first
+                // node is the candidate for the whole item.
+                let later_text_of_item = node.in_ifc_subtree()
+                    && document
+                        .ifc_root_of(node_id)
+                        .and_then(|root| document.get_node(root))
+                        .is_some_and(|root| root.kind() == NodeKind::Text);
                 if (direct_body_child || parent_height > 0.0)
+                    && !later_text_of_item
                     && matches!(
                         &node.data,
                         crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()

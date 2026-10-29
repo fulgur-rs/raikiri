@@ -78,6 +78,36 @@ fn an_uncascaded_descendant_keeps_the_existing_decoration_context() {
 }
 
 #[test]
+fn a_later_text_of_an_anonymous_item_has_the_context_of_its_first_text() {
+    let mut document = Document::new();
+    let flex = document.append_element(
+        Some(0),
+        "div",
+        Some("display:flex;text-decoration:underline"),
+    );
+    let first = document.append_text(flex, "a ");
+    let contents = document.append_element(Some(flex), "b", Some("display:contents"));
+    let later = document.append_text(contents, "b");
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    // The first text is the root of the item's paragraph. Its context holds
+    // the container's underline already, which the later text must not fold
+    // in a second time.
+    let base = context_for_root(&document, &cascade, first);
+    assert_eq!(base.specs().len(), 1);
+    let result = context_for_text(
+        &document,
+        &cascade,
+        first,
+        later,
+        &base,
+        &HashMap::new(),
+        false,
+    );
+    assert_eq!(result.specs(), base.specs());
+}
+
+#[test]
 fn inline_baseline_shifts_require_the_documents_font_collection() {
     use crate::layout::layout_single_page;
     use crate::layout::test_support::{ahem_paragraph_with, page_box_800x600, with_ahem};

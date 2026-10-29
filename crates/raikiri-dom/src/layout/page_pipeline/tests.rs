@@ -2808,6 +2808,52 @@ fn layout_pages_keeps_column_reverse_visual_last_item_at_page_edge() {
 }
 
 #[test]
+fn layout_pages_orders_the_text_of_one_anonymous_item_as_a_single_flex_item() {
+    use crate::layout::test_support::with_ahem;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("font:10px/10px Ahem"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:flex;flex-direction:column-reverse;width:100px"),
+    );
+    // One anonymous item: the `display: contents` element joins the text on
+    // both sides of it.
+    let first = doc.append_text(flex, "ab ");
+    let contents = doc.append_element(Some(flex), "b", Some("display:contents"));
+    let second = doc.append_text(contents, "cd");
+    let third = doc.append_text(flex, " ef");
+    let block = doc.append_element(Some(flex), "div", Some("order:1;height:30px"));
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 200.0;
+    page.height = 100.0;
+    layout_pages(with_ahem(&mut doc), &cascade, page).expect("pagination Ok");
+
+    // The later text nodes are not items: layout and pagination see the
+    // block and the first text, reversed for the pagination order.
+    assert_eq!(
+        doc.layout_child_ids(flex).collect::<Vec<_>>(),
+        [first, block]
+    );
+    let items: Vec<_> = crate::layout::page::pagination_child_order(&doc, &cascade, flex)
+        .into_iter()
+        .filter(|&id| crate::layout::page::is_in_flow_flex_child_for_pagination(&doc, flex, id))
+        .collect();
+    assert_eq!(items, [block, first]);
+    assert!(doc.nodes[first].is_ifc_root());
+    assert!(doc.nodes[second].in_ifc_subtree());
+    assert!(doc.nodes[third].in_ifc_subtree());
+    assert_eq!(doc.ifc_root_of(third), Some(first));
+}
+
+#[test]
 fn layout_pages_orders_grid_rows_by_resolved_placement_before_forced_break() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
