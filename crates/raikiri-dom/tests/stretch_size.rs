@@ -5,6 +5,11 @@
 //! (a box that roots its own formatting context, or one with a border or
 //! padding on that side), and otherwise behaves as `auto`.
 //!
+//! An auto margin counts as zero when `stretch` sizes the box, so the box
+//! fills the room even beside `margin: 0 auto`; what a `max-width` then
+//! leaves over is shared by the auto margins. The same holds for an
+//! absolutely positioned box between its insets.
+//!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
 
@@ -390,4 +395,85 @@ cases! {
     limits_flex_item_max_width:
         r#"<div style="display:flex;width:200px"><div id=a style="width:stretch;max-width:50px;height:10px"></div></div>"# =>
         [("a", (8.0, 8.0, 50.0, 10.0))];
+}
+
+cases! {
+    auto_margins_both:
+        r#"<div style="width:100px"><div id=a style="margin:0 auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_left:
+        r#"<div style="width:100px"><div id=a style="margin-left:auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_right:
+        r#"<div style="width:100px"><div id=a style="margin-right:auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margin_beside_length_right:
+        r#"<div style="width:100px"><div id=a style="margin:0 auto 0 10px;width:stretch;height:10px"></div></div>"# =>
+        [("a", (18.0, 8.0, 90.0, 10.0))];
+    auto_margin_beside_length_left:
+        r#"<div style="width:100px"><div id=a style="margin:0 20px 0 auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 80.0, 10.0))];
+    auto_margins_stretch_clamped_by_max_width:
+        r#"<div style="width:100px"><div id=a style="margin:0 auto;width:stretch;max-width:50px;height:10px"></div></div>"# =>
+        [("a", (33.0, 8.0, 50.0, 10.0))];
+    auto_margins_max_width_stretch_clamps_width:
+        r#"<div style="width:100px"><div id=a style="margin:0 auto;width:30px;max-width:stretch;height:10px"></div></div>"# =>
+        [("a", (43.0, 8.0, 30.0, 10.0))];
+    auto_margins_min_width_stretch_raises_width:
+        r#"<div style="width:100px"><div id=a style="margin:0 auto;min-width:stretch;width:25px;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_min_width_stretch_beside_length:
+        r#"<div style="width:100px"><div id=a style="margin:0 auto 0 10px;min-width:stretch;width:25px;height:10px"></div></div>"# =>
+        [("a", (18.0, 8.0, 90.0, 10.0))];
+    auto_margins_block_formatting_context:
+        r#"<div style="width:100px"><div id=a style="margin:0 auto;width:stretch;height:10px;overflow:hidden"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_flex_item:
+        r#"<div style="display:flex;width:100px"><div id=a style="margin:0 auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_grid_item:
+        r#"<div style="display:grid;width:100px"><div id=a style="margin:0 auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_float:
+        r#"<div style="width:100px"><div id=a style="float:left;margin:0 auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_inline_block:
+        r#"<div style="width:100px"><div id=a style="display:inline-block;margin:0 auto;width:stretch;height:10px"></div></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    auto_margins_canvas:
+        r#"<div style="width:100px"><canvas id=a style="display:block;margin:0 auto;width:stretch;height:10px"></canvas></div>"# =>
+        [("a", (8.0, 8.0, 100.0, 10.0))];
+    abspos_auto_margins_width_stretch:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;inset:0;width:stretch;height:100px"></div></div>"# =>
+        [("a", (8.0, 58.0, 200.0, 100.0))];
+    abspos_auto_margins_max_width_stretch:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;inset:0;max-width:stretch;height:100px"></div></div>"# =>
+        [("a", (8.0, 58.0, 200.0, 100.0))];
+    abspos_auto_margins_height_stretch:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;inset:0;height:stretch;width:100px"></div></div>"# =>
+        [("a", (58.0, 8.0, 100.0, 200.0))];
+    abspos_auto_margins_max_height_stretch:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;inset:0;max-height:stretch;width:100px"></div></div>"# =>
+        [("a", (58.0, 8.0, 100.0, 200.0))];
+    abspos_auto_margins_width_stretch_between_insets:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;top:0;bottom:0;left:25px;right:25px;width:stretch"></div></div>"# =>
+        [("a", (33.0, 8.0, 150.0, 200.0))];
+    abspos_auto_margins_height_stretch_between_insets:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;top:25px;bottom:25px;left:0;right:0;height:stretch"></div></div>"# =>
+        [("a", (8.0, 33.0, 200.0, 150.0))];
+    abspos_auto_margins_width_stretch_without_insets:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;width:stretch;height:50px"></div></div>"# =>
+        [("a", (8.0, 8.0, 200.0, 50.0))];
+    abspos_auto_margins_width_stretch_with_left_inset:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;left:20px;width:stretch;height:50px"></div></div>"# =>
+        [("a", (28.0, 8.0, 180.0, 50.0))];
+    abspos_auto_margins_width_stretch_with_right_inset:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;right:20px;width:stretch;height:50px"></div></div>"# =>
+        [("a", (8.0, 8.0, 180.0, 50.0))];
+    abspos_lengths_margins_width_stretch:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:0 10px 0 5px;inset:0;width:stretch;height:50px"></div></div>"# =>
+        [("a", (13.0, 8.0, 185.0, 50.0))];
+    abspos_auto_margins_min_width_stretch:
+        r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;inset:0;min-width:stretch;width:50px;height:50px"></div></div>"# =>
+        [("a", (8.0, 83.0, 200.0, 50.0))];
 }
