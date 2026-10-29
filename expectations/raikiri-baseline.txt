@@ -1960,12 +1960,8 @@ css/css-backgrounds/background-image-001.html
 css/css-backgrounds/background-image-003.html
 css/css-backgrounds/background-image-005.html
 css/css-backgrounds/background-image-gradient-currentcolor-conic-repaint.html
-css/css-backgrounds/background-origin/origin-border-box.html
-css/css-backgrounds/background-origin/origin-border-box_with_size.html
 css/css-backgrounds/background-origin/origin-content-box_with_position.html
-css/css-backgrounds/background-origin/origin-content-box_with_size.html
 css/css-backgrounds/background-origin/origin-padding-box_with_position.html
-css/css-backgrounds/background-origin/origin-padding-box_with_size.html
 css/css-backgrounds/background-size-021.html
 css/css-backgrounds/background-size-025.html
 css/css-backgrounds/background-size-contain-001.html
@@ -5363,3 +5359,62 @@ css/filter-effects/svg-empty-element-with-filter-001.html
 css/css-break/break-at-end-container-edge-000.html
 css/css-break/break-at-end-container-edge-001.html
 css/css-break/break-at-end-container-edge-002.html
+
+# --- a block with a height and nothing inside it among paragraphs in definite-height columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# An empty block with a height, followed by a padded paragraph in the definite-height columns of a `column-fill: auto` container, takes its place in the column like a one-line paragraph, so the paragraph breaks between its lines under it as in Chromium. The test failed before the change (the paragraph stayed whole in one column) and KEEPs in two audit-vacuous-passes runs.
+css/css-break/break-at-end-container-edge-004.html
+
+# --- repeating conic gradients repeat their periods (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A `repeating-conic-gradient()` repeats the span from its first stop to its last, from the `from` angle around the turn, instead of padding the last color over the rest of the turn; a span of no length shows the last color, as in Chromium. The degenerate-period test KEEPs in two audit-vacuous-passes runs. The other reports VACUOUS-UNSTYLED because its `background-color: red` is only a fallback that the gradient covers completely and the reference never repeats it; it failed before the fix (the second half of the box was filled with the last color), so it stays as a guard.
+css/css-images/normalization-conic-degenerate.html
+css/css-images/repeating-conic-gradient.html
+
+# --- the automatic minimum size of a flex container with an aspect-ratio (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A flex container that has an aspect-ratio and an auto height was held at the height the ratio gives instead of growing to the height of its content, up to its max-height. This test renders a green square that max-block-size caps at 100px while the item is 200px tall; it failed before the fix (the container was 100x50). flex-aspect-ratio-040, 041 and 043 pass too, but their item is 100px tall on its own, so the reference still matches without aspect-ratio, and they stay out of the baseline.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-044.html
+
+# --- the automatic width of a block-level button (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A button that is block-level takes the fit-content size as its `auto` width, as an inline-block does, instead of the room of its container (HTML Standard 15.5.3). In this test a button with a percentage height and an aspect-ratio sits in a flex item: the percentage is cyclic while the flex container is sized, so the button is 50x50 there and the item 100px tall, and the stretched item then gives the button its 100px height. The audit reports VACUOUS-UNSTYLED in two runs because the reference still matches once the aspect-ratio is removed (the item alone draws the green square); it was an expected failure before the fix (the stretching button was 150x150 and made the item 150px tall), so it stays as a guard.
+css/css-sizing/aspect-ratio/flex-aspect-ratio-042.html
+
+# --- a percentage height below an inline element (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A block inside an inline element that holds no text takes the percentage base of its height and maximum height from the block container around the inline (CSS 2.1 10.1), instead of the auto height of the inline, which left the image at its 1000px height. The test fails before the fix and KEEPs in two audit-vacuous-passes runs.
+css/css-sizing/block-image-percentage-max-height-inside-inline.html
+
+# --- the automatic minimum size of a grid container clamped by max-width (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# A grid container that has an aspect-ratio and an auto height keeps the height its content raised it to when max-width clamps its width, instead of taffy carrying max-width through the ratio into a max-height and cutting the container back to it (50x25 instead of Chromium's 50x100). The audit reports VACUOUS-UNSTYLED in two runs because the reference still matches once the grid declarations are removed (the 100px child alone draws the square); it was an expected failure before the fix (the container was 50x25), so it stays as a guard.
+css/css-grid/alignment/grid-content-distribution-029.html
+
+# --- `stretch` as the size of a box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
+# `width`, `height`, `inline-size` and `block-size` accept `stretch` (and `-webkit-fill-available`): the margin box fills the containing block, the inline axis less its margins, the block axis less the margins its parent holds in, and an indefinite containing block makes it `auto`. Eight tests failed before the change and each KEEPs in two audit-vacuous-passes runs. The fixed-table test reports VACUOUS-UNSTYLED because a plain block with the same text also draws the green square; it failed before the fix (the table took the 200px of its cell instead of the 100px of its container), so it stays as a guard.
+css/css-sizing/stretch/abspos-1.html
+css/css-sizing/stretch/abspos-2.html
+css/css-sizing/stretch/block-height-003.html
+css/css-sizing/stretch/block-height-006.html
+css/css-sizing/stretch/cache-miss-001.html
+css/css-sizing/stretch/cache-miss-002.html
+css/css-sizing/stretch/fixed-table-1.html
+css/css-sizing/stretch/positioned-replaced-2.html
+css/css-sizing/stretch/positioned-replaced-3.html
+
+# --- `contain-intrinsic-size` for a box with size containment (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# `contain-intrinsic-width`, `contain-intrinsic-height` and the `contain-intrinsic-size` shorthand give a box with size containment the size it takes in place of the size of its contents (CSS Box Sizing 4 section 5), so a `width: max-content` fieldset with `contain: size` is the stated 111px by 222px instead of 0x0. It was an expected failure before the change (the test matched only while the fieldset ignored its width) and KEEPs in two audit-vacuous-passes runs.
+css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-014.html
+
+# --- text on both sides of a `display: contents` element in a flex container is one anonymous item (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# A flex or grid container wraps each run of text that no box separates in one anonymous item (CSS Flexbox 1 section 4), and a `display: contents` element generates no box, so `a <b style="display: contents">b</b> c` is one item. It was laid out as three, which dropped the spaces between the runs. These were expected failures before the change and KEEP in two audit-vacuous-passes runs.
+css/css-display/display-contents-dynamic-inline-flex-001-inline.html
+css/css-display/display-contents-dynamic-inline-flex-001-none.html
+css/css-display/display-contents-inline-flex-001.html
+
+# --- a block-level replaced element keeps clear of floats (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# A block-level replaced element (a canvas or an image) does not share the float context of its parent: its border box lies beside the floats that leave it room and below them when it does not fit (CSS 2.1 section 9.5), where it was drawn over the float. The `width: stretch` canvas fills the room beside the float. This test failed before the change (the canvas covered the float, 11600 pixels differ) and KEEPs in two audit-vacuous-passes runs.
+css/css-sizing/stretch/replaced-next-to-float-1.html
+
+# --- `stretch` as a minimum or maximum size (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# `min-width`, `max-width`, `min-height` and `max-height` accept `stretch` (and `-webkit-fill-available`): it is the size `width: stretch` or `height: stretch` would give the box, the room beside a float for a box that keeps clear of floats, and without effect (a minimum of 0, no maximum) where the containing block has no definite size. Five tests failed before the change (the minimum or maximum was dropped at parse time); four KEEP in two audit-vacuous-passes runs. The min-width test reports VACUOUS-UNSTYLED because a plain 100px block also draws the green square once its declarations are removed; it failed before the change (the box stayed 50px wide), so it stays as a guard.
+css/css-sizing/stretch/min-width-1.html
+css/css-sizing/stretch/block-height-009.html
+css/css-sizing/stretch/block-height-010.html
+css/css-sizing/stretch/bfc-next-to-float-2.html
+css/css-sizing/stretch/replaced-next-to-float-2.html

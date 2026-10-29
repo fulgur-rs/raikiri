@@ -291,7 +291,7 @@ impl Axis {
 }
 
 /// The first `<html>` element child of the document node.
-fn root_element(document: &Document) -> Option<usize> {
+pub(super) fn root_element(document: &Document) -> Option<usize> {
     document
         .get_node(document.root_index())?
         .children

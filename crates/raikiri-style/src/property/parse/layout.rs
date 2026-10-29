@@ -104,6 +104,12 @@ pub(crate) fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisVa
     {
         return Some(FlexBasisValue::FitContent);
     }
+    if input
+        .try_parse(|i| i.expect_ident_matching("stretch"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::Stretch);
+    }
     // A mixed-unit `calc()` reaches this parser only after substitution or
     // simplification failed to fold it to one dimension; keep its terms.
     if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
@@ -448,6 +454,56 @@ pub(crate) fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNorm
     }
     let length = parse_length_value(input, true)?;
     (length.payload() >= 0.0).then_some(LengthOrNormal::Length(length))
+}
+
+/// Parser for `contain-intrinsic-width` and `-height`:
+/// `auto? [ none | <length [0,∞]> ]` (CSS Box Sizing 4 §5
+/// <https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override>).
+///
+/// `auto` alone is not a value, and neither is a percentage or a negative
+/// length.
+pub(crate) fn parse_contain_intrinsic_size(
+    input: &mut Parser<'_, '_>,
+) -> Option<ContainIntrinsicSize> {
+    let auto = input.try_parse(|i| i.expect_ident_matching("auto")).is_ok();
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(ContainIntrinsicSize { auto, length: None });
+    }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. Percentages are not
+    // allowed, even inside the calculation.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return (calc.percent == 0.0).then_some(ContainIntrinsicSize {
+            auto,
+            length: Some(ContainIntrinsicLength::Calc(calc)),
+        });
+    }
+    let length = parse_length_value(input, false)?;
+    (length.payload() >= 0.0).then_some(ContainIntrinsicSize {
+        auto,
+        length: Some(ContainIntrinsicLength::Length(length)),
+    })
+}
+
+/// The `Result` form of [`parse_contain_intrinsic_size`], for the `try_parse`
+/// of the second component of the shorthand.
+fn parse_contain_intrinsic_size_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<ContainIntrinsicSize, ParseError<'i, ()>> {
+    parse_contain_intrinsic_size(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// Parses the shorthand `contain-intrinsic-size: [ auto? [ none | <length> ] ]{1,2}`
+/// (CSS Box Sizing 4 §5.1). When the second component is omitted, the first
+/// is copied, `auto` included.
+pub(crate) fn parse_contain_intrinsic_size_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<ContainIntrinsicSizeShorthand> {
+    let width = parse_contain_intrinsic_size(input)?;
+    let height = input
+        .try_parse(parse_contain_intrinsic_size_res)
+        .unwrap_or(width);
+    Some(ContainIntrinsicSizeShorthand { width, height })
 }
 
 /// The `Result` form of [`parse_gap_value`], following the wrapper

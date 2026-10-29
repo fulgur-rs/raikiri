@@ -10,6 +10,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Optional thread-local counters used by the external lookup benchmark.
+custom-property-diagnostics = []
+
 [dependencies]
 # NB: this crate is the leaf of raikiri's Stylo-pattern DOM abstraction.
 # Its consumers depend on it; it does not

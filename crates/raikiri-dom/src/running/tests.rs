@@ -455,17 +455,104 @@ fn the_text_of_a_string_assignment_is_its_last_value_for_the_name() {
     let (doc, cascade, [_, heading, hidden, ..]) = string_document();
     assert_eq!(
         string_set_text(&doc, &cascade, heading, "title").as_deref(),
-        Some("Last Alpha")
+        Some("Last introAlpha")
     );
-    // `attr()` needs more than the element's text and adds nothing yet.
     // An element that does not set the name, or does not exist, gives nothing.
     assert_eq!(string_set_text(&doc, &cascade, heading, "other"), None);
     assert_eq!(string_set_text(&doc, &cascade, usize::MAX, "title"), None);
-    // The text is the element's, whether or not it has a box.
+    // The text is the element's, whether or not it has a box, and an
+    // attribute it does not have adds nothing.
     assert_eq!(
         string_set_text(&doc, &cascade, hidden, "title").as_deref(),
         Some("Last ")
     );
+}
+
+/// A document of two chapters, each with two sections, whose headings set
+/// strings from their attributes and the counters in effect at them.
+fn counted_document() -> (Document, CascadeResult, [usize; 6]) {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", None::<&str>);
+    doc.append_text(
+        style,
+        "body { counter-reset: chapter } \
+         h1 { counter-increment: chapter; counter-reset: section; \
+              string-set: chapter 'Chapter ' counter(chapter, upper-roman) ': ' \
+                  attr(data-title, 'Untitled'), \
+                  where counters(chapter, '.') '/' counter(missing) } \
+         h2 { counter-increment: section; \
+              string-set: where counters(chapter, '.') '/' counters(section, '-') \
+                  ' ' attr(data-title) } \
+         .quiet { string-set: where counter(chapter) }",
+    );
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let titled = doc.append_element(Some(body), "h1", None::<&str>);
+    doc.set_element_attributes(
+        titled,
+        vec![(SmolStr::new("data-title"), SmolStr::new("Origins"))],
+    );
+    let first = doc.append_element(Some(body), "h2", None::<&str>);
+    doc.set_element_attributes(
+        first,
+        vec![(SmolStr::new("data-title"), SmolStr::new("Dawn"))],
+    );
+    let second = doc.append_element(Some(body), "h2", None::<&str>);
+    let untitled = doc.append_element(Some(body), "h1", None::<&str>);
+    let third = doc.append_element(Some(body), "h2", None::<&str>);
+    let quiet = doc.append_element(Some(body), "p", None::<&str>);
+    doc.set_element_attributes(quiet, vec![(SmolStr::new("class"), SmolStr::new("quiet"))]);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+    (
+        doc,
+        cascade,
+        [titled, first, second, untitled, third, quiet],
+    )
+}
+
+#[test]
+fn counters_of_a_counter_that_does_not_exist_reads_zero_in_a_string_assignment() {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", None::<&str>);
+    doc.append_text(
+        style,
+        "h1 { string-set: where '[' counters(missing, '.') ']' }",
+    );
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let heading = doc.append_element(Some(body), "h1", None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+    assert_eq!(
+        string_set_text(&doc, &cascade, heading, "where").as_deref(),
+        Some("[0]")
+    );
+}
+
+#[test]
+fn a_string_assignment_reads_the_attributes_and_counters_at_its_element() {
+    let (doc, cascade, [titled, first, second, untitled, third, quiet]) = counted_document();
+    let text = |idx, name| string_set_text(&doc, &cascade, idx, name);
+    // `counter()` and `counters()` read the values after the element's own
+    // directives, in the style they name, and a counter that does not exist
+    // reads as zero.
+    assert_eq!(
+        text(titled, "chapter").as_deref(),
+        Some("Chapter I: Origins")
+    );
+    assert_eq!(text(titled, "where").as_deref(), Some("1/0"));
+    assert_eq!(text(first, "where").as_deref(), Some("1/1 Dawn"));
+    assert_eq!(text(second, "where").as_deref(), Some("1/2 "));
+    // The fallback of `attr()` stands in for the attribute the element lacks.
+    assert_eq!(
+        text(untitled, "chapter").as_deref(),
+        Some("Chapter II: Untitled")
+    );
+    assert_eq!(text(third, "where").as_deref(), Some("2/1 "));
+    // An element without a counter directive reads the counters it inherits
+    // from the elements before it.
+    assert_eq!(text(quiet, "where").as_deref(), Some("2"));
 }
 
 #[test]

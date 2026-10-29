@@ -1,6 +1,6 @@
 //! `NodeList` and `HTMLCollection` (DOM §4.2.10).
 //!
-//! Both are [`indexed_object`]s. A live collection (`childNodes`,
+//! Both are [`super::indexed::indexed_object`]s. A live collection (`childNodes`,
 //! `children`, `getElementsByTagName`, `getElementsByClassName`) stores
 //! only what it enumerates -- a root node plus a filter -- and resolves it
 //! against the current tree on access, caching the resolved list per
@@ -17,13 +17,14 @@
 //!   functions themselves)
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{Context, JsNativeError, JsResult, JsSymbol, JsValue};
 use raikiri_dom::Document;
 
-use super::indexed::{IndexedSource, indexed_object, this_indexed};
+use super::indexed::{IndexedSource, indexed_object_with_owners, this_indexed};
 use super::interfaces::{HTML_NS, Members, protos, wrap};
 use super::query::{elements_by_tag_name, elements_with_class_tokens};
 use super::tree::element_children_of;
@@ -56,10 +57,12 @@ pub(crate) enum CollectionSource {
 /// Resolved nodes for one live collection at one generation. Each collection
 /// object owns one; a mutation bumps the shared generation (see the state
 /// field it is cached against), so the next access re-walks once and later
-/// accesses in the same generation reuse it.
+/// accesses in the same generation reuse it. Window named collections also
+/// compare the native document version so host-side changes remain live.
 #[derive(Debug, Default)]
 struct CollectionCache {
     generation: Cell<Option<u64>>,
+    named_version: RefCell<Option<raikiri_dom::document::NamedElementVersion>>,
     nodes: RefCell<Vec<usize>>,
 }
 
@@ -96,21 +99,26 @@ fn with_live_nodes<T>(
         }
         _ => {}
     }
-    let generation = with_state(context, |s| s.generation)?;
-    if cache.generation.get() == Some(generation) {
+    let (generation, named_version_matches) = with_state(context, |s| {
+        let named_version_matches = !matches!(source, CollectionSource::WindowNamed(_))
+            || cache.named_version.borrow().as_ref()
+                == Some(s.host.document().named_element_version());
+        (s.generation, named_version_matches)
+    })?;
+    if cache.generation.get() == Some(generation) && named_version_matches {
         let cached = cache.nodes.borrow();
         return with_state(context, |s| {
             let doc = s.host.document();
             f(doc, &cached)
         });
     }
-    let fresh = with_state(context, |s| {
+    let (fresh, named_version) = with_state(context, |s| {
         #[cfg(test)]
         {
             s.live_walks += 1;
         }
         let doc = s.host.document();
-        match source {
+        let fresh = match source {
             CollectionSource::Children(node) => element_children_of(doc, *node),
             CollectionSource::TagName(root, query) => elements_by_tag_name(doc, *root, query),
             CollectionSource::ClassNames(root, tokens) => {
@@ -119,9 +127,13 @@ fn with_live_nodes<T>(
             CollectionSource::WindowNamed(name) => super::window::named::nodes(doc, name),
             // cov:ignore: Static and ChildNodes return through the fast paths above.
             CollectionSource::Static(_) | CollectionSource::ChildNodes(_) => Vec::new(),
-        }
+        };
+        let named_version = matches!(source, CollectionSource::WindowNamed(_))
+            .then(|| doc.named_element_version().clone());
+        (fresh, named_version)
     })?;
     *cache.nodes.borrow_mut() = fresh;
+    *cache.named_version.borrow_mut() = named_version;
     cache.generation.set(Some(generation));
     let cached = cache.nodes.borrow();
     with_state(context, |s| {
@@ -196,17 +208,18 @@ impl HtmlCollectionSource {
     fn supported_names(&self, context: &mut Context) -> JsResult<Vec<String>> {
         self.with_nodes(context, |doc, nodes| {
             let mut out: Vec<String> = Vec::new();
+            let mut seen = HashSet::new();
             for &node in nodes {
                 if let Some(id) = doc.element_attribute(node, "id")
                     && !id.is_empty()
-                    && !out.iter().any(|s| s == id)
+                    && seen.insert(id)
                 {
                     out.push(id.to_owned());
                 }
                 if doc.element_namespace_uri(node) == Some(HTML_NS)
                     && let Some(name) = doc.element_attribute(node, "name")
                     && !name.is_empty()
-                    && !out.iter().any(|s| s == name)
+                    && seen.insert(name)
                 {
                     out.push(name.to_owned());
                 }
@@ -262,13 +275,15 @@ impl IndexedSource for HtmlCollectionSource {
 /// A new `NodeList` over `source`.
 pub(crate) fn node_list(context: &mut Context, source: CollectionSource) -> JsResult<JsObject> {
     let prototype = protos(context).node_list.clone();
-    indexed_object(
+    let owners = source_owners(&source, context)?;
+    indexed_object_with_owners(
         context,
         prototype,
         NodeListSource {
             source,
             cache: CollectionCache::default(),
         },
+        owners,
     )
 }
 
@@ -278,14 +293,33 @@ pub(crate) fn html_collection(
     source: CollectionSource,
 ) -> JsResult<JsObject> {
     let prototype = protos(context).html_collection.clone();
-    indexed_object(
+    let owners = source_owners(&source, context)?;
+    indexed_object_with_owners(
         context,
         prototype,
         HtmlCollectionSource {
             source,
             cache: CollectionCache::default(),
         },
+        owners,
     )
+}
+
+fn source_owners(
+    source: &CollectionSource,
+    context: &mut Context,
+) -> JsResult<Vec<boa_gc::Gc<super::node_gc::NodeRecord>>> {
+    with_state(context, |state| match source {
+        CollectionSource::Static(nodes) => nodes.iter().map(|&id| state.node_record(id)).collect(),
+        CollectionSource::ChildNodes(root)
+        | CollectionSource::Children(root)
+        | CollectionSource::TagName(root, _)
+        | CollectionSource::ClassNames(root, _) => vec![state.node_record(*root)],
+        CollectionSource::WindowNamed(_) => {
+            let root = state.host.document().root_index();
+            vec![state.node_record(root)]
+        }
+    })
 }
 
 fn node_list_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

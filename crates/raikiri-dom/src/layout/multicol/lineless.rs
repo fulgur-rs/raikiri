@@ -112,6 +112,37 @@ fn supported_with_wrapped_blocks(
     (sized || sized_flex || holds_absolute_boxes).then_some(children)
 }
 
+/// Whether `child` is a plain block with a block size of its own, nothing
+/// rendered inside it and no block margins: a box that a stream of paragraphs
+/// places whole in one column, as it has no lines to break between.
+pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let style = style_of(tree, child);
+    is_plain_block_ignoring_insets(tree, child)
+        && !has_rendered_content(tree, child, false)
+        && has_block_size(&style)
+        && block_margins(&style) == Some((0.0, 0.0))
+}
+
+/// Whether `child` is a plain block with nothing inside it, no block size and
+/// no padding or border: a box that takes no room, so that only its margins
+/// count, collapsing through it with the ones around it. Its block margins may
+/// be of either sign, and a percentage of the column width, which the columns
+/// resolve before the stream reads them; inline margins would narrow it, so it
+/// has none.
+pub(super) fn is_margin_only_block(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let style = style_of(tree, child);
+    let margin = style.margin();
+    let zero = LengthPercentageAuto::length(0.0);
+    margin.left == zero
+        && margin.right == zero
+        && !margin.top.is_auto()
+        && !margin.bottom.is_auto()
+        && is_plain_block_apart_from_margins(tree, child, false, false)
+        && !has_rendered_content(tree, child, false)
+        && !has_block_size(&style)
+        && !has_block_edge_decorations(&style)
+}
+
 /// Whether `c` is white space that collapses away, as opposed to the other
 /// characters Unicode counts as white space, such as a no-break space, which
 /// render.
@@ -192,6 +223,18 @@ fn is_plain_block_with_display(
     allow_flow_root: bool,
     allow_lines: bool,
 ) -> bool {
+    block_margins(&style_of(tree, child)).is_some()
+        && is_plain_block_apart_from_margins(tree, child, allow_flow_root, allow_lines)
+}
+
+/// [`is_plain_block_with_display`] for a box whose margins the caller has
+/// checked.
+fn is_plain_block_apart_from_margins(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    allow_flow_root: bool,
+    allow_lines: bool,
+) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     let display = node.display();
@@ -204,7 +247,6 @@ fn is_plain_block_with_display(
             && node.layout_position() != Position::Static
         || style.float().is_floated()
         || style.clear() != Clear::None
-        || block_margins(&style).is_none()
         || style.overflow()
             != (Point {
                 x: TaffyOverflow::Visible,
@@ -587,6 +629,13 @@ pub(super) fn has_block_edge_decorations(style: &LayoutStyleView<'_>) -> bool {
     let zero = LengthPercentage::length(0.0);
     let (padding, border) = (style.padding(), style.border());
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
+}
+
+/// Whether `style` has padding or border on the left or right.
+pub(super) fn has_inline_edge_decorations(style: &LayoutStyleView<'_>) -> bool {
+    let zero = LengthPercentage::length(0.0);
+    let (padding, border) = (style.padding(), style.border());
+    padding.left != zero || padding.right != zero || border.left != zero || border.right != zero
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1459,10 +1508,13 @@ fn push_wrapped_wrapper(
     tree.set_unrounded_layout(NodeId::from(wrapper), &layout);
     let mut records = Vec::with_capacity(pieces.len());
     for (index, piece) in pieces.iter().enumerate() {
-        let parent_index = parents
-            .iter()
-            .position(|parent| parent.column == piece.column)?;
-        let parent = &parents[parent_index];
+        // Wrapper parents come from wrapper_pieces: one contiguous column range.
+        let parent_index = piece.column.checked_sub(parent_first.column)?;
+        let parent = parents.get(parent_index).filter(|parent| {
+            #[cfg(test)]
+            tests::record_parent_comparison(0);
+            parent.column == piece.column
+        })?;
         let x_offset =
             context.column_offset_x(piece.column) - context.column_offset_x(parent.column);
         let record = tree.fragment_tree.try_push(LayoutFragment {
@@ -1534,10 +1586,13 @@ fn push_wrapped_block(
     let sliced = pieces.len() > 1 && slices_decorations(tree, leaf);
     let mut taken = 0.0f32;
     for (index, piece) in pieces.iter().enumerate() {
-        let parent_index = parents
-            .iter()
-            .position(|parent| parent.column == piece.column)?;
-        let parent = &parents[parent_index];
+        // Wrapper parents come from wrapper_pieces: one contiguous column range.
+        let parent_index = piece.column.checked_sub(wrapper_first.column)?;
+        let parent = parents.get(parent_index).filter(|parent| {
+            #[cfg(test)]
+            tests::record_parent_comparison(1);
+            parent.column == piece.column
+        })?;
         tree.fragment_tree.try_push(LayoutFragment {
             node_id: leaf,
             parent: Some(records[parent_index]),

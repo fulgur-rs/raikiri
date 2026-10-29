@@ -657,7 +657,7 @@ impl<'a> Page<'a> {
         let Some(prepared) = self.prepare_inline_svg(id, viewport, computed, rendering)? else {
             return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
         };
-        self.svg_sources.insert(key, prepared.clone());
+        let prepared = self.svg_sources.insert(key, prepared);
         Ok(Some((viewport, prepared)))
     }
 
@@ -1020,9 +1020,14 @@ impl<'a> Page<'a> {
     /// every paint event included (CSS Transforms 1 §6). `None` when the
     /// document has no root element.
     ///
-    /// An auto-height root spans the pages of the document. On a page
-    /// streamed before the number of pages is known, it spans the pages
-    /// streamed so far.
+    /// An auto-height root is as tall as the laid-out content. A page
+    /// streamed before the input ended comes from a layout of the content
+    /// that had arrived, so the box ends where that content ended, and one
+    /// from a layout resumed after delivered pages starts where it resumed.
+    /// The canvas background does not show it: a streaming layout holds the
+    /// pages back while images of the canvas fill the box or are placed by
+    /// its height, and lays the whole document out for tiles that start at
+    /// its top.
     pub fn root_box(&self) -> Option<super::RootBox> {
         let page_count = if self.page_count_deferred {
             self.slice.page_index + 1

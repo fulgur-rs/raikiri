@@ -8,6 +8,30 @@ use shodo::limits::Limits;
 type Build = fn(&mut crate::Document, usize);
 
 #[test]
+fn a_counters_marker_of_a_counter_that_does_not_exist_reads_zero_and_qualifies_the_parent() {
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {content:counters(absent, '.')}",
+        "display:list-item;list-style:inside disc",
+        |doc, root| {
+            let child = doc.append_element(Some(root), "p", Some("display:block"));
+            doc.append_text(child, "body");
+        },
+    );
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    assert_eq!(
+        fixture.doc.nodes[fixture.root]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .paragraph
+            .text(),
+        "\u{2066}0\u{2069}\u{2029}"
+    );
+}
+
+#[test]
 fn vertical_block_children_with_inside_counter_text_qualify_the_parent() {
     let mut child = 0;
     let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
@@ -75,10 +99,6 @@ fn suppressed_inside_markers_leave_block_children_on_the_block_path() {
         ("", "display:list-item;list-style:inside ''"),
         (
             "div::marker {content:''}",
-            "display:list-item;list-style:inside disc",
-        ),
-        (
-            "div::marker {content:counters(absent, '.')}",
             "display:list-item;list-style:inside disc",
         ),
         (
@@ -1408,6 +1428,32 @@ fn a_paragraph_that_fails_to_build_is_a_limit_error() {
     assert!(fixture.doc.nodes[fixture.root].ifc.is_none());
     // The engine state is kept for the next pass.
     assert!(fixture.doc.has_font_collection());
+}
+
+#[test]
+fn a_text_run_over_a_limit_fails_the_layout_with_its_root() {
+    // The item budget is spent while the run is projected, before any
+    // shaping: the layout fails with the text node that owns the paragraph, and
+    // nothing is marked.
+    let mut fixture = block_fixture("display:flex", |doc, root| {
+        doc.append_text(root, "aa ");
+        let contents = span(doc, root, "display:contents");
+        doc.append_text(contents, "bb");
+    });
+    fixture.doc.set_font_collection_with_limits(
+        ahem_fonts(),
+        Limits {
+            max_items: Some(0),
+            ..Limits::default()
+        },
+    );
+    let result = assign_ifc_roots(&mut fixture.doc, &fixture.cascade);
+    let owner = fixture.doc.nodes[fixture.root].children[0];
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { node, .. }) if node == owner),
+        "{result:?}"
+    );
+    assert!(!is_root(&fixture, owner));
 }
 
 #[test]

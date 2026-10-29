@@ -4,6 +4,7 @@
 use super::boxes::IfcBox;
 use super::clear_breaks::ClearBreakIndex;
 use super::first_letter::LetterStyle;
+use super::positioned_runs::objects::ObjectTextPrefixes;
 use super::projection::{Projected, ProjectedIfc};
 use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use raikiri_style::ComputedTextIndent;
@@ -14,8 +15,8 @@ use shodo::style::LineOptions;
 use shodo::{LayoutContext, Line, Paragraph};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, OnceLock};
 
 /// How many paragraphs resolved for earlier percentage bases a root keeps.
 const MAX_EDGE_PARAGRAPHS: usize = 3;
@@ -64,6 +65,9 @@ pub(crate) struct IfcRoot {
     /// Paint offsets of the relatively positioned inline elements of the
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// First entry of each owner in `offsets`. Keys and order remain fixed
+    /// for this paragraph; percentage resolution only updates the values.
+    offset_index: Option<Arc<HashMap<usize, usize>>>,
     /// The insets of the elements in `offsets` whose offset depends on the
     /// root's size or writing mode, by index in `offsets`, which
     /// [`Self::resolve_percent_offsets`] applies.
@@ -82,6 +86,9 @@ pub(crate) struct IfcRoot {
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
+    /// The text nodes after the root in the anonymous flex or grid item it
+    /// starts, which the paragraph holds too.
+    pub(crate) run_tail: Vec<usize>,
     /// The root is a fixed box: its containing block is the page area.
     pub(crate) fixed: bool,
     /// Line ranges of the last performed lines and where each range is drawn
@@ -156,6 +163,9 @@ pub(crate) struct IfcLines {
     pub(crate) width: f32,
     /// Shared, so cloning a root or a document does not copy them.
     pub(crate) lines: Arc<Vec<Line>>,
+    /// Lazily prepared bidi states for these retained text datasets. Warm
+    /// clones share the states; cold clones initialize independently.
+    pub(crate) object_text_prefixes: OnceLock<Arc<ObjectTextPrefixes>>,
     /// Out-of-flow candidates bubbled from in-flow child layouts.
     pub(crate) oof_candidates: OofCandidates,
     /// Sum of the line advances.
@@ -353,6 +363,15 @@ impl IfcRoot {
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
         let Projected { paragraph, meta } = projected;
         let letter_style_index = Arc::new(LetterStyleIndex::new(&meta.letter_styles));
+        let offset_index = (!meta.offsets.is_empty()).then(|| {
+            let mut index = HashMap::with_capacity(meta.offsets.len());
+            for (entry, &(owner, _)) in meta.offsets.iter().enumerate() {
+                #[cfg(test)]
+                super::positioned_runs::tests::offset_tests::note_index_entry();
+                index.entry(owner).or_insert(entry);
+            }
+            Arc::new(index)
+        });
         Self {
             line_paragraph: paragraph.clone(),
             paragraph,
@@ -369,11 +388,13 @@ impl IfcRoot {
             generated_boxes: meta.generated_boxes.into(),
             rtl: meta.rtl,
             offsets: meta.offsets,
+            offset_index,
             percent_insets: meta.percent_insets,
             definite_height: None,
             containing_width: None,
             vertical_width: None,
             cleared_breaks: meta.cleared_breaks.into_iter().collect(),
+            run_tail: meta.run_tail,
             fixed: meta.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
@@ -385,6 +406,14 @@ impl IfcRoot {
             first_line_styles: meta.first_line_styles,
             letter_style_index,
         }
+    }
+
+    /// Read the current relative offset without scanning the paragraph's owners.
+    pub(crate) fn relative_offset(&self, owner: usize) -> Option<(f32, f32)> {
+        #[cfg(test)]
+        super::positioned_runs::tests::offset_tests::note_probe();
+        let index = *self.offset_index.as_ref()?.get(&owner)?;
+        Some(self.offsets[index].1)
     }
 
     /// Resolve the offsets that depend on the root's size against a content
@@ -467,11 +496,13 @@ impl IfcRoot {
             generated_boxes: self.generated_boxes.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
+            offset_index: self.offset_index.clone(),
             percent_insets: self.percent_insets.clone(),
             definite_height: self.definite_height,
             containing_width: self.containing_width,
             vertical_width: self.vertical_width,
             cleared_breaks: self.cleared_breaks.clone(),
+            run_tail: self.run_tail.clone(),
             fixed: self.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,

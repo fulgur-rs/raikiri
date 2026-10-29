@@ -552,3 +552,13 @@ fn detached_roots_have_no_siblings_until_attached_to_a_fragment() {
     })()"#,
     );
 }
+
+mod id_cache_tests;
+
+thread_local! {
+    static ID_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn record_id_visits(visits: usize) {
+    ID_VISITS.with(|count| count.set(count.get() + visits));
+}

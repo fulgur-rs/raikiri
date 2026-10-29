@@ -23,6 +23,7 @@ fn native_class_index_reflects_attribute_replacement_and_removal() {
     doc.set_element_attributes(id, vec![]);
     let element = ElementRef {
         node: &doc.nodes[id],
+        stylesheet_source: None,
     };
     assert_eq!(
         StyleElement::class_attribute_for_matching(&element),

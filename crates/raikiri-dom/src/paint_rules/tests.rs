@@ -222,6 +222,38 @@ fn overflow_and_opacity_predicates() {
 }
 
 #[test]
+fn a_contents_document_element_paints_the_box_of_a_block() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(doc.root_index()),
+        "html",
+        Some("display:contents;opacity:0.5"),
+    );
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let contents = doc.append_element(Some(body), "div", Some("display:contents;opacity:0.5"));
+    let hidden = doc.append_element(Some(body), "div", Some("display:none;opacity:0.5"));
+    doc.mark_in_document_flags();
+    let cr = cascaded(&doc);
+    let cv = |id: usize| &cr.computed[id];
+    // The document element has no parent to take its contents.
+    assert_eq!(painted_display(&doc, html, cv(html)), DisplayValue::Block);
+    assert!(element_generates_box(&doc, html, cv(html)));
+    assert_eq!(element_opacity_layer(&doc, html, cv(html)), Some(0.5));
+    // Any other contents element keeps its display and has no box.
+    assert_eq!(
+        painted_display(&doc, contents, cv(contents)),
+        DisplayValue::Contents
+    );
+    assert!(!element_generates_box(&doc, contents, cv(contents)));
+    assert_eq!(element_opacity_layer(&doc, contents, cv(contents)), None);
+    assert_eq!(
+        painted_display(&doc, hidden, cv(hidden)),
+        DisplayValue::None
+    );
+    assert!(!element_generates_box(&doc, hidden, cv(hidden)));
+}
+
+#[test]
 fn internal_table_tracks_do_not_clip_but_containers_do() {
     for (display, clips) in [
         ("table-row", false),
@@ -795,16 +827,17 @@ fn positioned_frames_go_back_to_their_place_in_tree_order() {
     let c = block(&mut doc, body);
     doc.mark_in_document_flags();
 
-    assert!(precedes_in_tree(&doc, a, b1));
-    assert!(precedes_in_tree(&doc, b, b1));
-    assert!(!precedes_in_tree(&doc, b1, b));
-    assert!(!precedes_in_tree(&doc, c, a));
-    assert!(!precedes_in_tree(&doc, a, a));
-    assert!(!precedes_in_tree(&doc, a, usize::MAX));
+    let mut order = DocumentOrder::new(&doc);
+    assert!(order.precedes(a, b1));
+    assert!(order.precedes(b, b1));
+    assert!(!order.precedes(b1, b));
+    assert!(!order.precedes(c, a));
+    assert!(!order.precedes(a, a));
+    assert!(!order.precedes(a, usize::MAX));
 
     use PositionedFrame::{Box, Close, Open};
-    let insert = |mut frames: Vec<PositionedFrame>, frame| {
-        insert_positioned_frame(&doc, &mut frames, frame, |frame| *frame);
+    let mut insert = |mut frames: Vec<PositionedFrame>, frame| {
+        insert_positioned_frame(&mut order, &mut frames, frame, |frame| *frame);
         frames
     };
     // A box goes back past the boxes after it, and past a clip around
@@ -829,6 +862,7 @@ fn positioned_frames_go_back_to_their_place_in_tree_order() {
 }
 
 mod first_line_membership_tests;
+mod positioned_order_tests;
 
 thread_local! {
     static FIRST_LINE_WORK: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };

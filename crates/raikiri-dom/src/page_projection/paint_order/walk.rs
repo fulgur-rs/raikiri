@@ -15,6 +15,7 @@ use std::collections::HashSet;
 /// The state of the walk of one page.
 pub(super) struct PaintWalk<'a, 'l> {
     document: &'a Document,
+    order: paint_rules::DocumentOrder<'a>,
     cascade: &'a CascadeResult,
     items: &'l PageItems<'a>,
     lines: Option<&'l TextLines>,
@@ -51,6 +52,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     ) -> Self {
         Self {
             document,
+            order: paint_rules::DocumentOrder::new(document),
             cascade,
             items,
             lines,
@@ -162,7 +164,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
                 &self.paragraphs,
             ) {
                 paint_rules::insert_positioned_frame(
-                    self.document,
+                    &mut self.order,
                     &mut layer.positioned,
                     frame,
                     positioned_frame,
@@ -192,7 +194,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             )
         {
             paint_rules::insert_positioned_frame(
-                self.document,
+                &mut self.order,
                 &mut layer.positioned,
                 frame,
                 positioned_frame,
@@ -508,7 +510,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         }
         // The group stays open until the element's whole subtree has been
         // listed.
-        if let Some(alpha) = paint_rules::opacity_layer(cv) {
+        if let Some(alpha) = paint_rules::element_opacity_layer(self.document, node_id, cv) {
             self.push_opacity(alpha);
         }
         let own: Vec<&PageFragmentItem> = items
@@ -517,7 +519,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             .copied()
             .filter(|item| item.kind != PageFragmentKind::Text)
             .collect();
-        if paint_rules::generates_box(cv)
+        if paint_rules::element_generates_box(self.document, node_id, cv)
             && !paint_rules::is_visibility_hidden_table(cv)
             && !node.hides_empty_table_cell
         {
@@ -753,7 +755,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         }
         // A `display: contents` element has no box, so its children share the
         // enclosing layer.
-        if !defers && paint_rules::generates_box(cv) {
+        if !defers && paint_rules::element_generates_box(document, node_id, cv) {
             self.open_layer(node_id, node, deferring, merges);
         }
         if node.is_ifc_root() {

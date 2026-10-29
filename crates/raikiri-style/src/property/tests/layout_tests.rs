@@ -1110,6 +1110,43 @@ fn flex_shorthand_content_basis() {
 }
 
 #[test]
+fn flex_basis_takes_the_stretch_keyword_but_not_its_legacy_spelling() {
+    // CSS Sizing 4 §5.1 adds `stretch` to `flex-basis`; Chromium does not
+    // accept `-webkit-fill-available` there.
+    assert_eq!(
+        parse("stretch", "flex-basis"),
+        Some(PropertyValue::FlexBasis(FlexBasisValue::Stretch))
+    );
+    assert_eq!(
+        parse("STRETCH", "flex-basis"),
+        Some(PropertyValue::FlexBasis(FlexBasisValue::Stretch))
+    );
+    assert_eq!(parse_entire("-webkit-fill-available", "flex-basis"), None);
+    assert_eq!(parse_entire("-moz-available", "flex-basis"), None);
+}
+
+#[test]
+fn flex_shorthand_stretch_basis() {
+    assert_eq!(
+        parse("1 0 stretch", "flex"),
+        Some(PropertyValue::Flex(FlexShorthand {
+            grow: 1.0,
+            shrink: 0.0,
+            basis: FlexBasisValue::Stretch,
+        }))
+    );
+    // The basis may also lead the numbers.
+    assert_eq!(
+        parse("stretch 2 3", "flex"),
+        Some(PropertyValue::Flex(FlexShorthand {
+            grow: 2.0,
+            shrink: 3.0,
+            basis: FlexBasisValue::Stretch,
+        }))
+    );
+}
+
+#[test]
 fn flex_shorthand_empty_is_none() {
     assert_eq!(parse("", "flex"), None);
 }
@@ -1643,6 +1680,200 @@ fn gap_shorthand_normal() {
             column: LengthOrNormal::Normal,
         }))
     );
+}
+
+// ── contain-intrinsic-size (CSS Box Sizing 4 §5) ────────────────────
+
+fn intrinsic(auto: bool, length: Option<Length>) -> ContainIntrinsicSize {
+    ContainIntrinsicSize {
+        auto,
+        length: length.map(ContainIntrinsicLength::Length),
+    }
+}
+
+#[test]
+fn contain_intrinsic_longhands_take_none_a_length_or_auto_with_either() {
+    for (source, want) in [
+        ("none", intrinsic(false, None)),
+        ("100px", intrinsic(false, Some(Length::Px(100.0)))),
+        ("0", intrinsic(false, Some(Length::Px(0.0)))),
+        ("3em", intrinsic(false, Some(Length::Em(3.0)))),
+        ("auto 100px", intrinsic(true, Some(Length::Px(100.0)))),
+        ("auto none", intrinsic(true, None)),
+        ("AUTO NONE", intrinsic(true, None)),
+    ] {
+        assert_eq!(
+            parse_entire(source, "contain-intrinsic-width"),
+            Some(PropertyValue::ContainIntrinsicWidth(want)),
+            "contain-intrinsic-width: {source}"
+        );
+        assert_eq!(
+            parse_entire(source, "contain-intrinsic-height"),
+            Some(PropertyValue::ContainIntrinsicHeight(want)),
+            "contain-intrinsic-height: {source}"
+        );
+    }
+}
+
+#[test]
+fn contain_intrinsic_longhands_refuse_what_is_not_a_non_negative_length() {
+    for source in [
+        "",
+        "auto",
+        "-1px",
+        "50%",
+        "10",
+        "100px 50px",
+        "none none",
+        "auto auto 10px",
+        "10px auto",
+        "min-content",
+        "calc(1px + 2%)",
+    ] {
+        for name in ["contain-intrinsic-width", "contain-intrinsic-height"] {
+            assert_eq!(parse_entire(source, name), None, "{name}: {source}");
+        }
+    }
+}
+
+#[test]
+fn contain_intrinsic_size_shorthand_copies_one_value_to_both_axes() {
+    assert_eq!(
+        parse_entire("60px", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(false, Some(Length::Px(60.0))),
+                height: intrinsic(false, Some(Length::Px(60.0))),
+            }
+        ))
+    );
+    assert_eq!(
+        parse_entire("auto 60px", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(true, Some(Length::Px(60.0))),
+                height: intrinsic(true, Some(Length::Px(60.0))),
+            }
+        ))
+    );
+}
+
+#[test]
+fn contain_intrinsic_size_shorthand_takes_the_width_then_the_height() {
+    assert_eq!(
+        parse_entire("100px 50px", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(false, Some(Length::Px(100.0))),
+                height: intrinsic(false, Some(Length::Px(50.0))),
+            }
+        ))
+    );
+    assert_eq!(
+        parse_entire("auto 100px none", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(true, Some(Length::Px(100.0))),
+                height: intrinsic(false, None),
+            }
+        ))
+    );
+    assert_eq!(
+        parse_entire("none auto 2em", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(false, None),
+                height: intrinsic(true, Some(Length::Em(2.0))),
+            }
+        ))
+    );
+}
+
+#[test]
+fn contain_intrinsic_size_shorthand_refuses_a_bad_axis_or_a_third_value() {
+    for source in [
+        "",
+        "auto",
+        "10px -5px",
+        "10px 50%",
+        "10px 20px 30px",
+        "10px auto",
+        "10px calc(1px + 2%)",
+    ] {
+        assert_eq!(
+            parse_entire(source, "contain-intrinsic-size"),
+            None,
+            "contain-intrinsic-size: {source}"
+        );
+    }
+}
+
+/// The value `source` has under the property grammar, which is what the
+/// cascade reads a `calc()` through once it cannot fold to one dimension.
+fn grammar(source: &str, name: &str) -> Option<PropertyValue> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let value = parse_property_grammar(name, &mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(value)
+}
+
+#[test]
+fn contain_intrinsic_size_keeps_a_mixed_unit_calc_until_the_font_size_is_known() {
+    // `calc(2em + 10px)` cannot fold to one dimension: the `em` term waits for
+    // the element's computed font size.
+    let Some(PropertyValue::ContainIntrinsicWidth(ContainIntrinsicSize {
+        auto: false,
+        length: Some(ContainIntrinsicLength::Calc(calc)),
+    })) = grammar("calc(2em + 10px)", "contain-intrinsic-width")
+    else {
+        panic!("expected a kept calc() for the width");
+    };
+    assert_eq!(calc.px, 10.0);
+    assert_eq!(calc.percent, 0.0);
+    assert_eq!(
+        calc.relative_terms().collect::<Vec<_>>(),
+        [(RelativeCalcUnit::Em, 2.0)]
+    );
+
+    // Each axis of the shorthand keeps its own, with `auto` and `none` around.
+    let Some(PropertyValue::ContainIntrinsicSize(shorthand)) = grammar(
+        "auto calc(1rem + 4px) calc(100vh - 2em)",
+        "contain-intrinsic-size",
+    ) else {
+        panic!("expected the shorthand");
+    };
+    assert!(shorthand.width.auto && !shorthand.height.auto);
+    assert!(matches!(
+        shorthand.width.length,
+        Some(ContainIntrinsicLength::Calc(_))
+    ));
+    assert!(matches!(
+        shorthand.height.length,
+        Some(ContainIntrinsicLength::Calc(_))
+    ));
+}
+
+#[test]
+fn contain_intrinsic_size_refuses_a_calc_with_a_percentage() {
+    for name in ["contain-intrinsic-width", "contain-intrinsic-height"] {
+        assert_eq!(grammar("calc(2em + 10%)", name), None, "{name}");
+    }
+    assert_eq!(
+        grammar("10px calc(2em + 10%)", "contain-intrinsic-size"),
+        None
+    );
+}
+
+#[test]
+fn contain_intrinsic_properties_keep_css_wide_keywords() {
+    for name in [
+        "contain-intrinsic-width",
+        "contain-intrinsic-height",
+        "contain-intrinsic-size",
+    ] {
+        assert_css_wide_keywords_deferred(name);
+    }
 }
 
 // ── place-content shorthand (CSS Box Alignment Module Level 3 §5.2) ─

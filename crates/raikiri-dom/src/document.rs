@@ -44,7 +44,13 @@ pub(crate) struct OofCoordinate {
 
 pub(crate) mod ancestors;
 mod mutation;
+mod named_elements;
+mod parser_snapshot;
+mod stylesheet_source;
+mod tree_changes;
 pub use mutation::DomMutationError;
+pub use named_elements::NamedElementVersion;
+pub use stylesheet_source::StylesheetVersion;
 
 const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
 const MATHML_NAMESPACE_URI: &str = "http://www.w3.org/1998/Math/MathML";
@@ -220,6 +226,10 @@ struct PreparedImage {
 /// element at index 1 or later, as a child of root index 0.
 #[derive(Debug, Clone)]
 pub struct Document {
+    tree_changes: tree_changes::TreeChanges,
+    named_elements: named_elements::Tracker,
+    stylesheet_revision: stylesheet_source::Tracker,
+    stylesheet_sources: HashMap<usize, std::sync::Arc<str>>,
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) inline_svg_cache: crate::inline_svg_cache::InlineSvgCache,
@@ -512,6 +522,10 @@ impl Document {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
         Self {
+            tree_changes: Default::default(),
+            named_elements: Default::default(),
+            stylesheet_revision: Default::default(),
+            stylesheet_sources: HashMap::new(),
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             inline_svg_cache: Default::default(),
@@ -598,6 +612,7 @@ impl Document {
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
+            self.note_tree_change(id);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -613,6 +628,7 @@ impl Document {
         self.nodes.push(Node::new_text(text.into()));
         self.nodes[parent].children.push(id);
         self.nodes[id].parent = Some(parent);
+        self.note_tree_change(id);
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         id
@@ -632,6 +648,7 @@ impl Document {
             merged.push_str(data.text_content.as_str());
             merged.push_str(text.as_str());
             data.text_content = SmolStr::new(merged);
+            self.reset_stylesheet_source(parent);
             self.invalidate_layout_cache();
             self.flags_dirty = true;
             return last;
@@ -667,6 +684,7 @@ impl Document {
             merged.push_str(data.text_content.as_str());
             merged.push_str(text.as_str());
             data.text_content = SmolStr::new(merged);
+            self.reset_stylesheet_source(parent);
             self.invalidate_layout_cache();
             self.flags_dirty = true;
             return previous;
@@ -701,6 +719,7 @@ impl Document {
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
+            self.note_tree_change(id);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -730,6 +749,7 @@ impl Document {
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
+            self.note_tree_change(id);
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -782,12 +802,14 @@ impl Document {
             for moved_child in moved {
                 if let Some(node) = self.nodes.get_mut(moved_child) {
                     node.parent = Some(parent);
+                    self.note_tree_change(moved_child);
                 }
             }
         } else {
             self.nodes[parent].children.push(child);
             if let Some(node) = self.nodes.get_mut(child) {
                 node.parent = Some(parent);
+                self.note_tree_change(child);
             }
         }
         self.invalidate_layout_cache();
@@ -860,6 +882,7 @@ impl Document {
             for moved_child in moved {
                 if let Some(node) = self.nodes.get_mut(moved_child) {
                     node.parent = Some(parent);
+                    self.note_tree_change(moved_child);
                 }
             }
         } else {
@@ -878,6 +901,7 @@ impl Document {
             }
             if let Some(node) = self.nodes.get_mut(child) {
                 node.parent = Some(parent);
+                self.note_tree_change(child);
             }
         }
         self.invalidate_layout_cache();
@@ -951,12 +975,14 @@ impl Document {
     /// Primitive for html5ever's `TreeSink::remove_from_parent(target)`.
     pub fn detach_from_parent(&mut self, child: usize) -> Option<usize> {
         let parent = self.parent_of(child)?;
+        self.reset_stylesheet_source(parent);
         let kids = &mut self.nodes[parent].children;
         if let Some(pos) = kids.iter().position(|&c| c == child) {
             kids.remove(pos);
         }
         if let Some(node) = self.nodes.get_mut(child) {
             node.parent = None;
+            self.note_tree_change(child);
         }
         // Removal clears focus even when the node is inserted again right
         // away, as `appendChild` and `insertBefore` moves do (HTML removing
@@ -970,11 +996,14 @@ impl Document {
     /// Move all children of `from` to the end of `to`'s children, leaving
     /// `from` empty. Primitive for html5ever's `TreeSink::reparent_children`.
     pub fn reparent_children(&mut self, from: usize, to: usize) {
+        self.reset_stylesheet_source(from);
+        self.reset_stylesheet_source(to);
         let moved: Vec<usize> = self.nodes[from].children.drain(..).collect();
         self.nodes[to].children.extend(moved.iter().copied());
         for moved_child in moved {
             if let Some(node) = self.nodes.get_mut(moved_child) {
                 node.parent = Some(to);
+                self.note_tree_change(moved_child);
             }
         }
         self.invalidate_layout_cache();
@@ -1033,6 +1062,10 @@ impl Document {
             e.prefix = prefix;
             (changed, affects_tree_flags, affects_layout)
         };
+        if namespace_changed {
+            self.note_named_element_change();
+            self.reset_stylesheet_source(id);
+        }
         if namespace_changed && affects_tree_flags {
             self.flags_dirty = true;
         }
@@ -1053,6 +1086,8 @@ impl Document {
     ///
     /// Panics (debug and release): if `id` is not an Element.
     pub fn set_element_attributes(&mut self, id: usize, attrs: Vec<(SmolStr, SmolStr)>) {
+        let had_css_type = self.stylesheet_has_css_type(id);
+        self.note_named_element_change();
         self.page_projection.clear();
         self.inline_svg_cache.clear();
         let e = self.nodes[id]
@@ -1068,6 +1103,7 @@ impl Document {
                 value,
             })
             .collect();
+        self.reset_stylesheet_if_type_changed(id, had_css_type);
     }
 
     /// Set one namespace-qualified attribute on an element.
@@ -1158,6 +1194,9 @@ impl Document {
         if !is_valid_attribute_local_name(local.as_str()) {
             return Err(format!("invalid attribute name: {local}"));
         }
+        let had_css_type = local
+            .eq_ignore_ascii_case("type")
+            .then(|| self.stylesheet_has_css_type(id));
         self.page_projection.clear();
         self.inline_svg_cache.clear();
         let NodeData::Element(element) = &self.nodes[id].data else {
@@ -1186,6 +1225,9 @@ impl Document {
             return Ok(());
         }
 
+        if matches!(local.as_str(), "id" | "name") {
+            self.note_named_element_change();
+        }
         // Whether this write resizes a canvas bitmap. Computed before the
         // exclusive borrow below so the immutable canvas check does not
         // conflict with it.
@@ -1224,6 +1266,9 @@ impl Document {
         // and changes the intrinsic size, so layout caches must be
         // invalidated the same way image resolution does. Oversized or
         // over-budget bitmaps remain implicitly transparent without storage.
+        if let Some(had_css_type) = had_css_type {
+            self.reset_stylesheet_if_type_changed(id, had_css_type);
+        }
         if is_canvas_size_attr {
             self.reset_canvas_bitmap_for_current_size(id);
             self.invalidate_layout_cache();
@@ -1252,13 +1297,24 @@ impl Document {
         let position = element.attributes.iter().position(|attribute| {
             attribute.namespace.as_deref() == namespace && attribute.local == local
         })?;
+        if namespace.is_none() && matches!(local, "id" | "name") {
+            self.note_named_element_change();
+        }
         self.page_projection.clear();
         self.inline_svg_cache.clear();
         let element = self.nodes[id]
             .data
             .as_element_mut()
             .expect("remove_element_attribute_ns called on non-Element");
-        Some(element.attributes.remove(position).value)
+        let value = element.attributes.remove(position).value;
+        if namespace.is_none()
+            && local == "type"
+            && !value.is_empty()
+            && !value.eq_ignore_ascii_case("text/css")
+        {
+            self.reset_stylesheet_source(id);
+        }
+        Some(value)
     }
 
     /// Remove one null-namespace attribute from an element and return its
@@ -1299,6 +1355,7 @@ impl Document {
         };
         let is_canvas_size_attr =
             matches!(local.as_str(), "width" | "height") && self.is_canvas_element(id);
+        let had_css_type = (local == "type").then(|| self.stylesheet_has_css_type(id));
         let first_value = {
             let element = self.nodes[id]
                 .data
@@ -1328,10 +1385,16 @@ impl Document {
                 .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
             first_value
         };
+        if first_value.is_some() && matches!(local.as_str(), "id" | "name") {
+            self.note_named_element_change();
+        }
         // Removing a canvas width/height attribute reverts to the default
         // size (HTML Standard §4.12.5), clearing the bitmap and changing the
         // intrinsic size. Only when the attribute actually existed: removing
         // a missing attribute is a no-op.
+        if let Some(had_css_type) = had_css_type {
+            self.reset_stylesheet_if_type_changed(id, had_css_type);
+        }
         if is_canvas_size_attr && first_value.is_some() {
             self.reset_canvas_bitmap_for_current_size(id);
             self.invalidate_layout_cache();
@@ -1373,12 +1436,14 @@ impl Document {
             return Err(format!("textContent target index {id} is not an Element"));
         }
         let text = text.into();
+        self.reset_stylesheet_source(id);
         let removed: Vec<usize> = std::mem::take(&mut self.nodes[id].children);
         for old_child in removed {
             if let Some(node) = self.nodes.get_mut(old_child)
                 && node.parent == Some(id)
             {
                 node.parent = None;
+                self.note_tree_change(old_child);
             }
         }
         if !text.is_empty() {
@@ -1387,6 +1452,7 @@ impl Document {
             self.nodes[id].children.push(text_id);
             if let Some(node) = self.nodes.get_mut(text_id) {
                 node.parent = Some(id);
+                self.note_tree_change(text_id);
             }
         }
         self.invalidate_layout_cache();
@@ -1421,6 +1487,7 @@ impl Document {
         let target_parent = self.nodes[target_parent]
             .template_contents()
             .unwrap_or(target_parent);
+        self.reset_stylesheet_source(target_parent);
         if !self.nodes[target_parent].children.is_empty() {
             // The parent is already known. Avoid a whole-arena parent lookup
             // and shifting the remaining child IDs for every removed child.
@@ -1430,6 +1497,7 @@ impl Document {
                     && node.parent == Some(target_parent)
                 {
                     node.parent = None;
+                    self.note_tree_change(old_child);
                 }
             }
             self.invalidate_layout_cache();
@@ -1815,6 +1883,7 @@ impl Document {
             .as_element_mut()
             .expect("allocate_template_fragment_root: element vanished between checks");
         e.template_contents = Some(frag_root);
+        self.note_tree_change(template_id);
         frag_root
     }
 
@@ -1872,6 +1941,10 @@ impl Document {
     pub fn extract_nodes(&self, nodes: &[usize]) -> Document {
         // Every field is named so that a new one has to be considered here.
         let Document {
+            tree_changes: _,
+            named_elements: _,
+            stylesheet_revision: _,
+            stylesheet_sources,
             table_objects: _,
             page_projection: _,
             inline_svg_cache: _,
@@ -1945,6 +2018,7 @@ impl Document {
         let mut document = Document::new();
         document.nodes = copied.into();
         document.root = 0;
+        document.stylesheet_sources = remap_keys(stylesheet_sources, nodes);
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
         document.focused = focused.and_then(|old| new_of_old.get(&old).copied());
@@ -1995,10 +2069,12 @@ impl Document {
                     kept.push(child);
                 } else {
                     any_removed = true;
+                    self.reset_stylesheet_source(parent_id);
                     if let Some(node) = self.nodes.get_mut(child)
                         && node.parent == Some(parent_id)
                     {
                         node.parent = None;
+                        self.note_tree_change(child);
                     }
                 }
             }
@@ -2651,7 +2727,7 @@ impl Document {
     }
 
     /// Serialize an inline SVG element and its subtree as a standalone XML
-    /// source, retaining element/attribute namespace URIs and prefixes.
+    /// source for rendering, retaining namespaces and current CSSOM sources.
     pub fn serialize_svg_subtree(&self, id: usize) -> Result<Option<String>, String> {
         const SVG_NS: &str = "http://www.w3.org/2000/svg";
         const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
@@ -2787,7 +2863,11 @@ impl Document {
                             }
                             output.push('>');
                             pending.push(Task::End(name));
-                            pending.extend(node.children.iter().rev().copied().map(Task::Node));
+                            if let Some(source) = self.stylesheet_source(node_id) {
+                                push_xml_escaped(&mut output, source, false);
+                            } else {
+                                pending.extend(node.children.iter().rev().copied().map(Task::Node));
+                            }
                         }
                         NodeData::Text(text) => {
                             push_xml_escaped(&mut output, text.text_content.as_str(), false);

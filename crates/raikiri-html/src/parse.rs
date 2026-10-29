@@ -254,6 +254,13 @@ pub(crate) fn finish_document(
     // Paint resolves the relative `url()` values that computed values keep,
     // such as those of `style` attributes, against this base.
     doc.dom.set_base_url(effective_base.clone());
+    resolve_stylesheet_sources(&mut doc, options);
+
+    Ok(doc)
+}
+
+fn resolve_stylesheet_sources(doc: &mut UncascadedDocument, options: &ParseOptions<'_>) {
+    let effective_base = effective_document_base_url(doc, options.base_url.as_ref());
     // Share import limits across every stylesheet root in this document. A
     // separate per-root expander would let many inline/link sheets multiply
     // the fetch and expansion caps.
@@ -279,9 +286,7 @@ pub(crate) fn finish_document(
     // Find `<link rel="stylesheet" href="...">` elements, fetch via
     // ParseOptions::network, and merge the CSS text into
     // doc.stylesheet_sources as Author stylesheet sources.
-    fetch_external_stylesheets(&mut doc, options, &mut import_budget);
-
-    Ok(doc)
+    fetch_external_stylesheets(doc, options, &mut import_budget);
 }
 
 /// Process stylesheet-bearing `<head>` elements in document order, adding
@@ -520,3 +525,17 @@ pub fn effective_document_base_url(
 
 #[cfg(test)]
 mod tests;
+
+/// Rebuild parsed stylesheets after native DOM or CSSOM changes.
+/// Current CSSOM overrides take precedence over DOM child text. Consumer
+/// sheets are rebuilt from `options.extra_stylesheets`; author sheets and
+/// imports are fetched with one budget shared with those consumer sheets.
+/// DOM-associated UA/user sheets are preserved.
+pub fn refresh_stylesheets(doc: &mut UncascadedDocument, options: &ParseOptions<'_>) {
+    doc.stylesheet_sources = crate::sink::extract_inline_stylesheets(&doc.dom)
+        .into_iter()
+        .map(|(source, media)| StylesheetSource::new(source, media))
+        .collect();
+    doc.user_stylesheet_sources.clear();
+    resolve_stylesheet_sources(doc, options);
+}

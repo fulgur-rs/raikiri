@@ -2149,6 +2149,22 @@ fn a_calc_size_is_handed_to_taffy_as_a_calc_length() {
 }
 
 #[test]
+fn a_stretch_size_is_handed_to_taffy_as_stretch() {
+    let mut calc_values = Vec::new();
+    let mut diag = Vec::new();
+    let size = computed_length_percentage_or_auto_to_taffy_dimension(
+        &mut calc_values,
+        ComputedLengthPercentageOrAuto::Stretch,
+        "width",
+        &mut diag,
+    );
+
+    assert_eq!(size, Dimension::stretch());
+    assert!(calc_values.is_empty());
+    assert!(diag.is_empty());
+}
+
+#[test]
 fn a_size_that_is_no_keyword_is_no_content_limit() {
     use crate::layout::dispatch::content_limits::ContentLimits;
 

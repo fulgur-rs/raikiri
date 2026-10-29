@@ -30,7 +30,7 @@ use crate::layout::protocol::{
     SizingMode,
 };
 use raikiri_layout_geometry::{Edges, Line, Size};
-use raikiri_layout_style::values::{Position, ResolveOrZero};
+use raikiri_layout_style::values::{ExpandedDimension, Position, ResolveOrZero};
 
 use super::block_flow::compute_block_flow;
 use super::transposed_axes::{
@@ -137,12 +137,6 @@ impl TransposedBlock {
     /// The container the frame was built for.
     pub(super) fn container(&self) -> usize {
         self.container
-    }
-
-    /// The writing mode the container is laid out on the axes of, when it is
-    /// a flex or grid container.
-    pub(super) fn own_writing_mode(&self) -> Option<WritingMode> {
-        self.own_axes
     }
 
     /// Resolve the percentages of the padding of the container against
@@ -520,6 +514,8 @@ impl LayoutSession<'_> {
             let physical_padding_basis = resolves_padding_on_physical_axes(tree, idx)
                 .then_some(inputs.parent_size.height)
                 .flatten();
+            let inputs =
+                with_orthogonal_keyword_width(tree, node_id, inputs, physical_padding_basis);
             let child_block_ctx = if share_context { block_ctx } else { None };
             let output = tree.dispatch_physical_child(
                 node_id,
@@ -620,6 +616,27 @@ fn orthogonal_child_inputs(
             AvailableSpace::Definite((space - margin.left - margin.right).max(0.0));
     }
     inputs
+}
+
+/// `inputs` for the orthogonal flow `node_id` with the width its `fit-content`,
+/// `min-content` or `max-content` keyword measures as the known width, as
+/// [`with_orthogonal_fit_content`] gives it. An `auto` width stays with the
+/// room `inputs` offer: a block container stretches to it, and a paragraph
+/// shrinks to fit it. The probes resolve percentage padding against
+/// `padding_basis` like the layout of the child does.
+fn with_orthogonal_keyword_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    padding_basis: Option<f32>,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
+    if !flows_horizontally(tree, idx) || tree.physical_style(idx).size().width.is_auto() {
+        return inputs;
+    }
+    with_orthogonal_fit_content(tree, node_id, inputs, |tree, probe| {
+        tree.dispatch_physical_child(node_id, probe, padding_basis, None)
+    })
 }
 
 /// Resolve the percentage paddings of the children of the transposed
@@ -841,14 +858,58 @@ fn fit_content_inline_size(
     )
 }
 
+/// What the `width` of an orthogonal flow asks for along its inline axis.
+#[derive(Clone, Copy)]
+enum OrthogonalWidth {
+    /// `auto` or `fit-content`: the room the container leaves, but at least
+    /// the min-content and at most the max-content size (CSS Writing Modes 4
+    /// §7.3.1, CSS Sizing 3 §3.1.1).
+    Fit,
+    /// `min-content`.
+    MinContent,
+    /// `max-content`.
+    MaxContent,
+}
+
+/// The size the `width` of `idx`, a horizontal box in a vertical container,
+/// takes from its content and the room it is offered; `None` for a width that
+/// does not: a length or percentage, and `fit-content()` with a limit, which
+/// the leaf layout of the box sizes itself.
+fn orthogonal_width(tree: &LayoutSession<'_>, idx: usize) -> Option<OrthogonalWidth> {
+    match tree.physical_style(idx).size().width.expand() {
+        ExpandedDimension::Auto | ExpandedDimension::FitContent => Some(OrthogonalWidth::Fit),
+        ExpandedDimension::MinContent => Some(OrthogonalWidth::MinContent),
+        ExpandedDimension::MaxContent => Some(OrthogonalWidth::MaxContent),
+        _ => None,
+    }
+}
+
+/// The room the orthogonal flow `idx` is offered along its inline axis: the
+/// definite width `inputs` offer, net of its margins already; with none, the
+/// width of the initial containing block less the margins, the page area here.
+fn orthogonal_room(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> f32 {
+    if let AvailableSpace::Definite(room) = inputs.available_space.width {
+        return room;
+    }
+    // Without a page area there is no room to limit the child to.
+    let page_width = tree.fixed_page_area.unwrap_or_default().0;
+    let page_width = (page_width > 0.0).then_some(page_width);
+    let margin = tree
+        .physical_style(idx)
+        .margin()
+        .map(|margin| margin.resolve_or_zero(inputs.parent_size.height));
+    (page_width.unwrap_or(f32::INFINITY) - margin.left - margin.right).max(0.0)
+}
+
 /// `inputs` for the orthogonal flow `node_id`, a horizontal child of a vertical
 /// paragraph root, with its fit-content width as the known width when its
-/// `width` is `auto` (CSS Writing Modes 4 §7.3.1). The room is the definite
-/// width `inputs` offer, net of the child's margins already; with none, the
-/// width of the initial containing block less the margins, the page area here.
-/// Fixing the width makes the lines of the child break at the room instead of
-/// staying whole, as they do when the child is measured under its max-content
-/// size. `measure` lays the child out under the probe inputs it is given.
+/// `width` is `auto` or `fit-content` (CSS Writing Modes 4 §7.3.1), and its
+/// min-content or max-content width when it is that keyword. The room is the definite width
+/// `inputs` offer, net of the child's margins already; with none, the width of
+/// the initial containing block less the margins, the page area here. Fixing
+/// the width makes the lines of the child break at the room instead of staying
+/// whole, as they do when the child is measured under its max-content size.
+/// `measure` lays the child out under the probe inputs it is given.
 pub(crate) fn with_orthogonal_fit_content(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -860,29 +921,33 @@ pub(crate) fn with_orthogonal_fit_content(
         || inputs.sizing_mode != SizingMode::InherentSize
         || !flows_horizontally(tree, idx)
         || tree.nodes[idx].layout_position() == Position::Absolute
-        || !tree.physical_style(idx).size().width.is_auto()
     {
         return inputs;
     }
-    let room = match inputs.available_space.width {
-        AvailableSpace::Definite(room) => room,
-        _ => {
-            // Without a page area there is no room to limit the child to.
-            let page_width = tree.fixed_page_area.unwrap_or_default().0;
-            let page_width = (page_width > 0.0).then_some(page_width);
-            let margin = tree
-                .physical_style(idx)
-                .margin()
-                .map(|margin| margin.resolve_or_zero(inputs.parent_size.height));
-            (page_width.unwrap_or(f32::INFINITY) - margin.left - margin.right).max(0.0)
+    let Some(sizing) = orthogonal_width(tree, idx) else {
+        return inputs;
+    };
+    let width = match sizing {
+        OrthogonalWidth::MinContent => {
+            measure(tree, probe_inputs(inputs, AvailableSpace::MinContent))
+                .size
+                .width
+        }
+        OrthogonalWidth::MaxContent => {
+            measure(tree, probe_inputs(inputs, AvailableSpace::MaxContent))
+                .size
+                .width
+        }
+        OrthogonalWidth::Fit => {
+            let room = orthogonal_room(tree, idx, &inputs);
+            fit_content_size(
+                tree,
+                AvailableSpace::Definite(room),
+                0.0,
+                |tree, available| measure(tree, probe_inputs(inputs, available)).size.width,
+            )
         }
     };
-    let width = fit_content_size(
-        tree,
-        AvailableSpace::Definite(room),
-        0.0,
-        |tree, available| measure(tree, probe_inputs(inputs, available)).size.width,
-    );
     LayoutInput {
         known_dimensions: Size {
             width: Some(width),

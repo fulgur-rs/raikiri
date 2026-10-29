@@ -47,6 +47,8 @@ pub use cascade::{
 };
 pub use document::HtmlDocument;
 // cov:ignore: these type/function re-exports have no executable code; API integration tests and rustdoc verify them.
+#[cfg(feature = "streaming-diagnostics")]
+pub use document_layout::StreamingDiagnostics;
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle,
     DeferredGlyph, DeferredSlot, DeferredValue, DocumentLayout, DomView, FontBlob, FontId, FontRef,
@@ -75,6 +77,8 @@ pub use parse::{
 pub use render::continuation::{Continuation, ContinuationInputs, continue_at_page_widths};
 pub use resources::RenderSvgImages;
 pub use resources::parse_xhtml_with_resources;
+#[cfg(feature = "cache-accounting-diagnostics")]
+pub use resources::{CacheAccountingCase, CacheAccountingProbe, CacheAccountingResult};
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
     ResourceLimits, parse_html_with_resources,
@@ -136,3 +140,5 @@ mod document_tests;
 #[cfg(test)]
 #[allow(clippy::needless_lifetimes, clippy::collapsible_if)]
 mod tests;
+
+pub use parse::refresh_stylesheets;

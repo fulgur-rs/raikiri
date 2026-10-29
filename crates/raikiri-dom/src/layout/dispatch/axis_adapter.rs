@@ -251,10 +251,22 @@ fn item_baseline(
     if same_block_direction && let Some(baseline) = output.baselines.first {
         return baseline;
     }
-    let block_size = output.size.width;
-    if tree.nodes[frame.container()].central_baseline {
+    synthesized_baseline(tree, frame.container(), output.size.width)
+}
+
+/// The baseline of a box that has none of its own, synthesized from its border
+/// box, whose size along the block axis of the flex or grid container
+/// `container` is `block_size`: on the dominant baseline of the container, the
+/// middle of the box for the central one, and its line-under edge for the
+/// alphabetic one (CSS Align 3 §9.1).
+pub(super) fn synthesized_baseline(
+    tree: &LayoutSession<'_>,
+    container: usize,
+    block_size: f32,
+) -> f32 {
+    if tree.nodes[container].central_baseline {
         block_size / 2.0
-    } else if frame.own_writing_mode() == Some(WritingMode::VerticalLr) {
+    } else if used_writing_mode(tree, container) == WritingMode::VerticalLr {
         // Line-under is the left edge, where the block axis starts.
         0.0
     } else {

@@ -527,6 +527,12 @@ pub struct Node {
     /// [`Self::opposed_baseline_group`] holds back from the algorithm of its
     /// parent keeps its own: the parent reads this one to align the box by it.
     pub(crate) own_first_baseline: Option<f32>,
+    /// First baseline the box handed to its parent in its last performed
+    /// layout, as an offset from its block-start border edge along the block
+    /// axis the parent's algorithm runs on, or `None` when it exported none. A
+    /// grid container reads it from the item that gives the container its own
+    /// baseline.
+    pub(crate) exported_first_baseline: Option<f32>,
     /// Whether the box is an item of a vertical flex row or grid that aligns
     /// by a baseline against the block direction of its container, and so
     /// forms a baseline-sharing group of its own. The algorithm of the
@@ -625,6 +631,10 @@ pub struct Node {
     /// The physical axes in which size containment sizes this box as if it
     /// had no content (CSS Containment 2 §3.1, §3.2).
     pub(crate) size_containment: Size<bool>,
+    /// The `contain-intrinsic-width` and `contain-intrinsic-height` lengths of
+    /// this box, which stand in for the size of its content in the axes of
+    /// `size_containment` (CSS Box Sizing 4 §5). `None` is the keyword `none`.
+    pub(crate) contain_intrinsic: Size<Option<f32>>,
     /// The `min-*` and `max-*` sizes of this box that are intrinsic sizing
     /// keywords, which Taffy's style cannot hold; layout resolves them to
     /// lengths when it lays the box out.
@@ -768,6 +778,7 @@ impl Node {
             flex_first_baseline: None,
             vertical_first_baseline: None,
             own_first_baseline: None,
+            exported_first_baseline: None,
             opposed_baseline_group: false,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
@@ -807,6 +818,10 @@ impl Node {
             size_containment: Size {
                 width: false,
                 height: false,
+            },
+            contain_intrinsic: Size {
+                width: None,
+                height: None,
             },
             content_limits: crate::layout::dispatch::content_limits::ContentLimits::NONE,
             text_group_align: shodo::style::TextGroupAlign::None,
@@ -1303,6 +1318,14 @@ impl Node {
             NodeData::Element(element) => element.namespace.as_deref(),
             _ => None,
         }
+    }
+
+    /// Whether the node is an HTML `<button>`. Its `auto` inline size is the
+    /// fit-content size even where it is block-level (HTML Standard §15.5.3),
+    /// so it does not stretch to the room of its container.
+    #[inline]
+    pub(crate) fn is_html_button(&self) -> bool {
+        self.tag_name() == Some("button") && self.namespace_uri().is_none()
     }
 
     /// Return a null-namespace element attribute value, if present.

@@ -8,8 +8,8 @@ use crate::property::{
 };
 use crate::resolve::ComputedLengthPercentageOrCalc;
 use crate::resolve::{
-    ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
-    ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
+    ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedContainIntrinsicSize,
+    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLetterSpacing,
     ComputedLineHeight, ComputedOutline, ComputedTabSize, ComputedTextDecorationInset,
@@ -374,6 +374,14 @@ fn parent_fixture() -> ComputedValues {
         align_self: AlignSelfValue::Value(SelfAlignmentValue::Center),
         row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
         column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
+        contain_intrinsic_width: ComputedContainIntrinsicSize {
+            auto: true,
+            length: Some(ComputedLength(7.0)),
+        },
+        contain_intrinsic_height: ComputedContainIntrinsicSize {
+            auto: false,
+            length: Some(ComputedLength(9.0)),
+        },
         quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
         quotes_auto: false,
         text_shadow: Arc::new(vec![ComputedTextShadow {
@@ -881,6 +889,15 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     // CSS Box Alignment Module Level 3 §8.1: row-gap and column-gap are non-inherited.
     assert_eq!(child.row_gap, initial.row_gap);
     assert_eq!(child.column_gap, initial.column_gap);
+    // CSS Box Sizing 4 §5: contain-intrinsic-width and -height are non-inherited.
+    assert_eq!(
+        child.contain_intrinsic_width,
+        initial.contain_intrinsic_width
+    );
+    assert_eq!(
+        child.contain_intrinsic_height,
+        initial.contain_intrinsic_height
+    );
     // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3: all grid-* properties are non-inherited.
     assert_eq!(child.grid_template_columns, initial.grid_template_columns);
     assert_eq!(child.grid_template_rows, initial.grid_template_rows);

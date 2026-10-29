@@ -118,10 +118,11 @@ pub mod computed_api;
 pub mod resolve;
 pub use resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
-    ComputedBoxShadowItem, ComputedColumnWidth, ComputedCssPosition, ComputedCssPositionOffset,
-    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
-    ComputedGridTrackListComponent, ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+    ComputedBoxShadowItem, ComputedColumnWidth, ComputedContainIntrinsicSize, ComputedCssPosition,
+    ComputedCssPositionOffset, ComputedFlexBasis, ComputedGridTemplateTracks,
+    ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
+    ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
     ComputedLengthPercentageOrNormal, ComputedLetterSpacing, ComputedLineHeight, ComputedOutline,
     ComputedTabSize, ComputedTextDecorationInset, ComputedTextDecorationThickness,
     ComputedTextIndent, ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
@@ -648,3 +649,9 @@ pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorIm
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "custom-property-diagnostics")]
+#[doc(hidden)]
+pub use computed::custom_property_diagnostics::{
+    CustomPropertyLookupWork, begin_custom_property_diagnostics, finish_custom_property_diagnostics,
+};

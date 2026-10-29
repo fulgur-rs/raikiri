@@ -451,6 +451,8 @@ pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
         PropertyKey::FlexWrap => "flex-wrap",
         PropertyKey::RowGap => "row-gap",
         PropertyKey::ColumnGap => "column-gap",
+        PropertyKey::ContainIntrinsicWidth => "contain-intrinsic-width",
+        PropertyKey::ContainIntrinsicHeight => "contain-intrinsic-height",
         PropertyKey::AlignContent => "align-content",
         PropertyKey::JustifyContent => "justify-content",
         PropertyKey::AlignItems => "align-items",
@@ -1027,6 +1029,15 @@ pub(crate) fn project_deferred_value(
         PropertyValue::Gap(shorthand) => match key {
             crate::property::PropertyKey::RowGap => PropertyValue::RowGap(shorthand.row),
             crate::property::PropertyKey::ColumnGap => PropertyValue::ColumnGap(shorthand.column),
+            _ => return None,
+        },
+        PropertyValue::ContainIntrinsicSize(shorthand) => match key {
+            PropertyKey::ContainIntrinsicWidth => {
+                PropertyValue::ContainIntrinsicWidth(shorthand.width)
+            }
+            PropertyKey::ContainIntrinsicHeight => {
+                PropertyValue::ContainIntrinsicHeight(shorthand.height)
+            }
             _ => return None,
         },
         PropertyValue::PlaceContent(shorthand) => match key {
@@ -1940,60 +1951,162 @@ impl CustomPropertyResolver<'_> {
     }
 }
 
-pub(crate) fn find_cycle_members(local: &HashMap<SmolStr, SmolStr>) -> HashSet<SmolStr> {
-    let mut dependencies: HashMap<SmolStr, Vec<SmolStr>> = HashMap::new();
-    for (name, value) in local {
-        let mut references = Vec::new();
-        if collect_var_references(value, &mut references).is_ok() {
-            references.retain(|reference| local.contains_key(reference));
-            dependencies.insert(name.clone(), references);
-        } else {
-            dependencies.insert(name.clone(), Vec::new());
+// Non-test builds carry a zero-sized counter. Tests measure graph events
+// independently of elapsed time and record the raw input/reference size.
+#[derive(Default)]
+struct CycleWork {
+    #[cfg(test)]
+    steps: usize,
+    #[cfg(test)]
+    references: usize,
+    #[cfg(test)]
+    input_bytes: usize,
+}
+
+impl CycleWork {
+    fn step(&mut self) {
+        #[cfg(test)]
+        {
+            self.steps += 1;
         }
     }
+}
 
-    // Iterative depth-first search keeps a stylesheet with a long variable
-    // chain from consuming the Rust call stack while still identifying every
-    // back-edge cycle in the per-element dependency graph.
-    let mut states: HashMap<SmolStr, u8> = HashMap::new();
-    let mut cycle_members = HashSet::new();
-    for start in local.keys() {
-        if states.get(start).copied().unwrap_or_default() != 0 {
+pub(crate) fn find_cycle_members(local: &HashMap<SmolStr, SmolStr>) -> HashSet<SmolStr> {
+    find_cycle_members_with_work(local, &mut CycleWork::default())
+}
+
+fn find_cycle_members_with_work(
+    local: &HashMap<SmolStr, SmolStr>,
+    work: &mut CycleWork,
+) -> HashSet<SmolStr> {
+    let names: Vec<_> = local.keys().inspect(|_| work.step()).collect();
+    // Borrow names and store compact IDs on edges; clone only final members.
+    let indices: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            work.step();
+            (name.as_str(), index)
+        })
+        .collect();
+    let mut graph = Vec::with_capacity(names.len());
+    for name in &names {
+        work.step();
+        let value = &local[*name];
+        #[cfg(test)]
+        {
+            work.input_bytes += value.len();
+        }
+        let mut references = Vec::new();
+        let valid = collect_var_references(value, &mut references).is_ok();
+        #[cfg(test)]
+        {
+            work.references += references.len();
+        }
+        // A malformed raw value contributes no edges, even if parsing had
+        // already collected a valid reference before it failed.
+        graph.push(if valid {
+            references
+                .iter()
+                .filter_map(|reference| {
+                    work.step();
+                    indices.get(reference.as_str()).copied()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        });
+    }
+    let cyclic = cycle_members_in_graph(&graph, work);
+    names
+        .into_iter()
+        .zip(cyclic)
+        .inspect(|_| work.step())
+        .filter(|(_, cyclic)| *cyclic)
+        .map(|(name, _)| (*name).clone())
+        .collect()
+}
+
+struct CycleFrame {
+    node: usize,
+    next_edge: usize,
+    self_loop: bool,
+}
+
+// Iterative Tarjan traversal separates unfinished DFS frames from active
+// component members. A finished frame can still belong to an open SCC.
+fn cycle_members_in_graph(graph: &[Vec<usize>], work: &mut CycleWork) -> Vec<bool> {
+    let mut indices = vec![usize::MAX; graph.len()];
+    let mut lowlink = vec![0; graph.len()];
+    let mut on_stack = vec![false; graph.len()];
+    let mut cyclic = vec![false; graph.len()];
+    let mut frames = Vec::with_capacity(graph.len());
+    let mut component = Vec::with_capacity(graph.len());
+    let mut next_discovery = 0;
+    for start in 0..graph.len() {
+        work.step();
+        if indices[start] != usize::MAX {
             continue;
         }
-        let mut stack = vec![(start.clone(), 0usize)];
-        let mut path = vec![start.clone()];
-        states.insert(start.clone(), 1);
-        while let Some((node, next_index)) = stack.last_mut() {
-            let node_name = node.clone();
-            let deps = dependencies
-                .get(&node_name)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            if *next_index >= deps.len() {
-                states.insert(node_name, 2);
-                stack.pop();
-                path.pop();
-                continue;
-            }
-            let target = deps[*next_index].clone();
-            *next_index += 1;
-            match states.get(&target).copied().unwrap_or_default() {
-                0 => {
-                    states.insert(target.clone(), 1);
-                    path.push(target.clone());
-                    stack.push((target, 0));
+        indices[start] = next_discovery;
+        lowlink[start] = next_discovery;
+        next_discovery += 1;
+        work.step();
+        component.push(start);
+        on_stack[start] = true;
+        frames.push(CycleFrame {
+            node: start,
+            next_edge: 0,
+            self_loop: false,
+        });
+        while let Some(frame) = frames.last_mut() {
+            let node = frame.node;
+            if let Some(&target) = graph[node].get(frame.next_edge) {
+                frame.next_edge += 1;
+                frame.self_loop |= target == node;
+                work.step();
+                if indices[target] == usize::MAX {
+                    indices[target] = next_discovery;
+                    lowlink[target] = next_discovery;
+                    next_discovery += 1;
+                    work.step();
+                    component.push(target);
+                    on_stack[target] = true;
+                    frames.push(CycleFrame {
+                        node: target,
+                        next_edge: 0,
+                        self_loop: false,
+                    });
+                } else if on_stack[target] {
+                    // An active target contributes its discovery index,
+                    // including when its own DFS frame already finished.
+                    lowlink[node] = lowlink[node].min(indices[target]);
                 }
-                1 => {
-                    if let Some(cycle_start) = path.iter().position(|name| name == &target) {
-                        cycle_members.extend(path[cycle_start..].iter().cloned());
+            } else {
+                let frame = frames.pop().expect("the current DFS frame exists");
+                work.step();
+                if lowlink[node] == indices[node] {
+                    let mut multiple = false;
+                    loop {
+                        let member = component.pop().expect("an SCC root remains on its stack");
+                        on_stack[member] = false;
+                        work.step();
+                        if member == node {
+                            cyclic[member] = multiple || frame.self_loop;
+                            break;
+                        }
+                        cyclic[member] = true;
+                        multiple = true;
                     }
                 }
-                _ => {}
+                if let Some(parent) = frames.last() {
+                    lowlink[parent.node] = lowlink[parent.node].min(lowlink[node]);
+                }
             }
         }
     }
-    cycle_members
+    cyclic
 }
 
 pub(crate) fn collect_var_references(input: &str, references: &mut Vec<SmolStr>) -> Result<(), ()> {

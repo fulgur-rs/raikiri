@@ -320,7 +320,10 @@ pub(crate) fn with_state_unchecked<T>(
         record_failure(context, MESSAGE);
         return Err(JsNativeError::error().with_message(MESSAGE).into());
     };
-    Ok(f(&mut state))
+    state.synchronize_node_graph();
+    let result = f(&mut state);
+    state.synchronize_node_graph();
+    Ok(result)
 }
 
 /// The shared guard every node-creation binding

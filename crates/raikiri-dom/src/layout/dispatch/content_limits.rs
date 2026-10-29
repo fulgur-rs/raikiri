@@ -1,5 +1,5 @@
-//! Intrinsic sizing keywords on `min-width`, `max-width`, `min-height` and
-//! `max-height` (CSS Sizing 3 §4 and §5).
+//! Intrinsic sizing keywords and `stretch` on `min-width`, `max-width`,
+//! `min-height` and `max-height` (CSS Sizing 3 §4 and §5, CSS Sizing 4 §5.1).
 //!
 //! Taffy's `min_size` and `max_size` hold lengths, percentages and `calc()`,
 //! not the keywords. The bridge therefore leaves them `auto` and records each
@@ -7,6 +7,12 @@
 //! names when the box is laid out and puts the resulting lengths in the style
 //! for the duration of that layout. Every algorithm that clamps the box to its
 //! `min_size` and `max_size` then reads the sizes the keywords stand for.
+//!
+//! `stretch` needs no measure: it is the room the containing block offers, less
+//! the margins of the box, which is what `width: stretch` and `height: stretch`
+//! fill. Where that room is indefinite the keyword has no effect, as a
+//! percentage that cannot resolve has none: a minimum is `0` and a maximum is
+//! `none`.
 
 use raikiri_layout_style::values::{
     BoxSizing, Dimension, Display, ExpandedDimension, LengthIdentity, LengthPercentage,
@@ -28,9 +34,10 @@ use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
-/// (`min-content`, `max-content`, `fit-content`, `fit-content(<length-percentage>)`),
-/// as the keyword [`Dimension`]s the `width` bridge produces. A size that is no
-/// such keyword is `auto` here; Taffy's style carries every other size.
+/// (`min-content`, `max-content`, `fit-content`, `fit-content(<length-percentage>)`)
+/// or `stretch`, as the keyword [`Dimension`]s the `width` bridge produces. A
+/// size that is no such keyword is `auto` here; Taffy's style carries every
+/// other size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ContentLimits {
     pub min: Size<Dimension>,
@@ -50,6 +57,22 @@ impl ContentLimits {
     fn has_height(&self) -> bool {
         !self.min.height.is_auto() || !self.max.height.is_auto()
     }
+
+    /// These limits without the `stretch` widths, which a parent that places
+    /// the box beside floats resolves in the room it finds there.
+    fn without_stretch_widths(mut self) -> Self {
+        for width in [&mut self.min.width, &mut self.max.width] {
+            if is_stretch(*width) {
+                *width = Dimension::auto();
+            }
+        }
+        self
+    }
+}
+
+/// Whether `dimension` is the `stretch` keyword.
+fn is_stretch(dimension: Dimension) -> bool {
+    matches!(dimension.expand(), ExpandedDimension::Stretch)
 }
 
 /// Whether node `idx`, whose keyword sizes are `limits`, is laid out with
@@ -589,7 +612,9 @@ pub(super) fn resolve_width_in_style(
     inputs: &LayoutInput,
 ) {
     let idx = usize::from(child);
-    let limits = tree.nodes[idx].content_limits;
+    // The parent resolves a `stretch` width itself, in the room it finds for
+    // the child.
+    let limits = tree.nodes[idx].content_limits.without_stretch_widths();
     if !limits.has_width() || !applies(tree, idx, &limits) {
         return;
     }
@@ -668,9 +693,9 @@ pub(super) fn with_item_content_limits(
     with_item_content_limits_for_parent_sizes(tree, node_id, inputs, |_| parent_size, dispatch)
 }
 
-/// Resolve percentage fit-content limits on grid items against the grid area
-/// sizes from a preliminary track layout, then lay out the grid with those
-/// resolved limits installed.
+/// Resolve percentage fit-content and `stretch` limits on grid items against
+/// the grid area sizes from a preliminary track layout, then lay out the grid
+/// with those resolved limits installed.
 pub(super) fn with_grid_item_content_limits(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -682,7 +707,7 @@ pub(super) fn with_grid_item_content_limits(
     let has_percentage_limit = children.iter().any(|&child| {
         let idx = usize::from(child);
         let limits = tree.nodes[idx].content_limits;
-        applies_to_parent_item(tree, idx, &limits) && has_percentage_fit_content(&limits)
+        applies_to_parent_item(tree, idx, &limits) && has_area_relative_limit(&limits)
     });
     if !has_percentage_limit {
         return with_item_content_limits(tree, node_id, inputs, parent_size, dispatch);
@@ -1045,7 +1070,9 @@ fn with_item_content_limits_for_parent_sizes(
     })
 }
 
-fn has_percentage_fit_content(limits: &ContentLimits) -> bool {
+/// Whether a limit of `limits` resolves against the size of the area a grid
+/// item sits in: a percentage `fit-content()` limit, or `stretch`.
+fn has_area_relative_limit(limits: &ContentLimits) -> bool {
     [
         limits.min.width,
         limits.max.width,
@@ -1054,10 +1081,11 @@ fn has_percentage_fit_content(limits: &ContentLimits) -> bool {
     ]
     .into_iter()
     .any(|dimension| {
-        matches!(
-            dimension.expand(),
-            ExpandedDimension::FitContentPercent(_) | ExpandedDimension::FitContentCalc(_)
-        ) && dimension.uses_percentage()
+        is_stretch(dimension)
+            || (matches!(
+                dimension.expand(),
+                ExpandedDimension::FitContentPercent(_) | ExpandedDimension::FitContentCalc(_)
+            ) && dimension.uses_percentage())
     })
 }
 
@@ -1296,6 +1324,40 @@ fn replaced_keyword_bounds(
     limits: &ContentLimits,
     inputs: &LayoutInput,
 ) -> (Bounds, Bounds) {
+    let (mut width, mut height) = intrinsic_replaced_bounds(tree, idx, limits, inputs);
+    // `stretch` fills the room the same way for a replaced box; it takes no
+    // part in the ratio the intrinsic keywords are carried across, which the
+    // layout of the box does with the length it gets.
+    if is_replaced_content(tree, idx) {
+        let (min, max) = (limits.min.width, limits.max.width);
+        if is_stretch(min) || is_stretch(max) {
+            let stretch = stretch_width(tree, idx, inputs);
+            if is_stretch(min) {
+                width.min = stretch;
+            }
+            if is_stretch(max) {
+                width.max = stretch;
+            }
+        }
+        let stretch = stretch_fit_height(tree, idx, inputs);
+        if is_stretch(limits.min.height) {
+            height.min = stretch;
+        }
+        if is_stretch(limits.max.height) {
+            height.max = stretch;
+        }
+    }
+    (width, height)
+}
+
+/// The border-box bounds the intrinsic keywords among the `min-*` and `max-*`
+/// sizes of a replaced box stand for.
+fn intrinsic_replaced_bounds(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> (Bounds, Bounds) {
     if !is_replaced_content(tree, idx) {
         return (Bounds::default(), Bounds::default());
     }
@@ -1411,6 +1473,10 @@ fn width_bounds(
         .zip([limits.min.width, limits.max.width])
     {
         let expanded = keyword.expand();
+        if matches!(expanded, ExpandedDimension::Stretch) {
+            *slot = stretch_width(tree, idx, inputs);
+            continue;
+        }
         if !matches!(
             expanded,
             ExpandedDimension::MinContent
@@ -1446,9 +1512,11 @@ fn width_bounds(
 }
 
 /// The border-box heights the keyword `min-height` and `max-height` of
-/// `node_id` stand for: along the block axis every keyword is the automatic
-/// height of the box at the width `inputs` give it, within the `width` bounds
-/// already installed in its style (CSS Sizing 3 §5.1).
+/// `node_id` stand for: along the block axis every intrinsic keyword is the
+/// automatic height of the box at the width `inputs` give it, within the
+/// `width` bounds already installed in its style (CSS Sizing 3 §5.1), and
+/// `stretch` is the definite height of the containing block less the margins
+/// the box takes off it.
 fn height_bounds(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -1456,6 +1524,34 @@ fn height_bounds(
     inputs: &LayoutInput,
     width: Bounds,
 ) -> Bounds {
+    let idx = usize::from(node_id);
+    let stretch = stretch_fit_height(tree, idx, inputs);
+    let is_measured = |size: Dimension| !size.is_auto() && !is_stretch(size);
+    let measured = (is_measured(limits.min.height) || is_measured(limits.max.height))
+        .then(|| automatic_height(tree, node_id, inputs, width));
+    let bound = |size: Dimension| {
+        if is_stretch(size) {
+            stretch
+        } else if size.is_auto() {
+            None
+        } else {
+            measured
+        }
+    };
+    Bounds {
+        min: bound(limits.min.height),
+        max: bound(limits.max.height),
+    }
+}
+
+/// The automatic border-box height of `node_id` at the width `inputs` give it,
+/// within the `width` bounds already installed in its style.
+fn automatic_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+    width: Bounds,
+) -> f32 {
     let idx = usize::from(node_id);
     let flex_grid_container = is_flex_grid_container(tree, idx);
     let width_adjustment =
@@ -1491,10 +1587,7 @@ fn height_bounds(
     if percentage_height_basis.is_some() {
         tree.context.content_limit_percentage_height_bases.pop();
     }
-    Bounds {
-        min: (!limits.min.height.is_auto()).then_some(height),
-        max: (!limits.max.height.is_auto()).then_some(height),
-    }
+    height
 }
 
 /// The content-box height the measured box's authored size or its caller's
@@ -1533,6 +1626,16 @@ fn content_percentage_height_basis(
     Some((preferred.max(minimum) - edges).max(0.0))
 }
 
+/// The border-box width the box `idx` stretches to in the width `inputs`
+/// offer it, which an intrinsic sizing pass leaves open (see
+/// [`stretch_fit_width`]).
+fn stretch_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+    match inputs.available_space.width {
+        AvailableSpace::Definite(room) => Some(stretch_fit_width(tree, idx, inputs, room)),
+        AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+    }
+}
+
 /// The border-box width the box `idx` would stretch to in the room `inputs`
 /// offers it: the width of its containing block less its margins, an `auto`
 /// margin counting for nothing, and no more than the `room` the parent leaves
@@ -1546,6 +1649,101 @@ fn stretch_fit_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput,
     (basis - side(margin.left) - side(margin.right))
         .min(room)
         .max(0.0)
+}
+
+/// The border-box height the box `idx` would stretch to in the room `inputs`
+/// offers it: the definite height of its containing block less the margins it
+/// takes off it (CSS Sizing 4 §5.1). A box that is not a block child keeps all
+/// its margins out of the room; a block child keeps those its parent holds in
+/// (see [`HeldMargins`]). Without a definite height the keyword has no effect.
+/// An out-of-flow box stretches to the room between its insets instead.
+fn stretch_fit_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+    // The room of an out-of-flow box is what its containing block leaves it
+    // between its insets and margins, which is the space it is offered.
+    if is_oof_box(tree, idx) {
+        return match inputs.available_space.height {
+            AvailableSpace::Definite(room) => Some(room.max(0.0)),
+            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+        };
+    }
+    let room = inputs.parent_size.height?;
+    let margin = tree.physical_style(idx).margin();
+    let side = |side: LengthPercentageAuto| side.resolve(inputs.parent_size.width).unwrap_or(0.0);
+    let held = tree
+        .context
+        .held_margins
+        .iter()
+        .rev()
+        .find(|held| held.node == idx)
+        .map_or(Line::TRUE, |held| held.holds);
+    let taken = if held.start { side(margin.top) } else { 0.0 }
+        + if held.end { side(margin.bottom) } else { 0.0 };
+    Some((room - taken).max(0.0))
+}
+
+/// The vertical margins of a block child that its parent holds in, which a
+/// `stretch` height of the child leaves out of the room, while the parent lays
+/// the child out. A margin that would escape the parent takes none.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct HeldMargins {
+    node: usize,
+    holds: Line<bool>,
+}
+
+impl HeldMargins {
+    pub(crate) fn new(node: usize, holds: Line<bool>) -> Self {
+        Self { node, holds }
+    }
+}
+
+/// Whether the box `child` states a `stretch` height as a `min-height` or a
+/// `max-height`.
+pub(crate) fn has_stretch_height_limit(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let limits = tree.nodes[child].content_limits;
+    is_stretch(limits.min.height) || is_stretch(limits.max.height)
+}
+
+/// Whether the box `child` states a `stretch` width as a `min-width` and as a
+/// `max-width`. A parent that places the box beside floats finds the room it
+/// stretches to there, so it applies these itself (see [`StretchWidths::clamp`]).
+pub(crate) fn stretch_widths(tree: &LayoutSession<'_>, child: usize) -> StretchWidths {
+    let limits = tree.nodes[child].content_limits;
+    StretchWidths {
+        min: is_stretch(limits.min.width),
+        max: is_stretch(limits.max.width),
+    }
+}
+
+/// Which of the `min-width` and `max-width` of a box are `stretch`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StretchWidths {
+    min: bool,
+    max: bool,
+}
+
+impl StretchWidths {
+    pub(crate) fn any(self) -> bool {
+        self.min || self.max
+    }
+
+    /// `width`, a border-box width that already respects the lengths stated as
+    /// `min-width` and `max-width`, within the `stretch` ones: the border-box
+    /// `minimum` and `maximum` that `bounds` hold, and the room `stretch` fills.
+    /// The minimum wins over the maximum.
+    pub(crate) fn clamp(self, width: f32, bounds: (Option<f32>, Option<f32>), stretch: f32) -> f32 {
+        let minimum = if self.min {
+            Some(bounds.0.map_or(stretch, |minimum| minimum.max(stretch)))
+        } else {
+            bounds.0
+        };
+        let maximum = if self.max {
+            Some(bounds.1.map_or(stretch, |maximum| maximum.min(stretch)))
+        } else {
+            bounds.1
+        };
+        let width = maximum.map_or(width, |maximum| width.min(maximum));
+        minimum.map_or(width, |minimum| width.max(minimum))
+    }
 }
 
 #[cfg(test)]

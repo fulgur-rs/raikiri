@@ -8,7 +8,7 @@
 //! (counters, `string()`, `element()` and quotes) and shaped with the
 //! document's fonts.
 
-use crate::generated_content::{QuoteDepth, format_counter};
+use crate::generated_content::{QuoteDepth, element_counters, format_counter};
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
 use crate::paint_rules::OverflowClipGeometry;
@@ -1037,10 +1037,21 @@ impl NamedValues {
             .into_iter()
             .map(|(name, idx)| (name.clone(), element_string_value(document, idx)))
             .collect();
+        // Counters are only read for the document that sets strings.
+        let snapshots = (!last_strings.is_empty())
+            .then(|| document.shared_compact_counter_snapshots(cascade).ok())
+            .flatten();
         let strings = last_strings
             .into_iter()
             .map(|(name, (idx, components))| {
-                (name.clone(), string_set_value(document, idx, components))
+                let value = string_set_value(
+                    document,
+                    idx,
+                    components,
+                    &element_counters(snapshots.as_deref(), idx),
+                    &cascade.counter_styles,
+                );
+                (name.clone(), value)
             })
             .collect();
         Self { elements, strings }

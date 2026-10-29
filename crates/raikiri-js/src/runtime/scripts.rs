@@ -430,8 +430,16 @@ impl ScriptExecutor for Executor<'_> {
         // ones a script writes run before scripts written earlier but placed
         // after it. The stack keeps that depth-first order without
         // recursing however deeply writes nest.
-        let mut pending = vec![index];
-        while let Some(script) = pending.pop() {
+        // Pending and executing scripts keep their wrapper identity even if
+        // script removes them from the document before another allocation.
+        let Ok(Some(owner)) = with_state(self.context, |s| {
+            s.host.document().get_node(index)?;
+            Some(s.node_record(index))
+        }) else {
+            return ScriptExecution::Continue;
+        };
+        let mut pending = vec![(index, owner)];
+        while let Some((script, _owner)) = pending.pop() {
             if event_loop::aborted(self.context).is_some() {
                 break;
             }
@@ -485,6 +493,13 @@ pub(crate) fn run(runtime: &mut DomRuntime) -> RunReport {
     }
 
     let elements = collect_script_elements(context);
+    let _owners = with_state(context, |s| {
+        elements
+            .iter()
+            .map(|&index| s.node_record(index))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
     {
         let mut executor = Executor::new(context, &mut report);
         for index in elements {

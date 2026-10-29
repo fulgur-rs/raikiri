@@ -158,6 +158,11 @@ impl Document {
                 ));
             }
         }
+        if matches!(self.nodes[id].data, NodeData::Text(_))
+            && let Some(parent) = self.parent_of(id)
+        {
+            self.reset_stylesheet_source(parent);
+        }
         self.invalidate_layout_cache();
         Ok(())
     }
@@ -230,6 +235,7 @@ impl Document {
                 };
                 self.nodes[target].children.push(child_copy);
                 self.nodes[child_copy].parent = Some(target);
+                self.note_tree_change(child_copy);
                 self.queue_clone_children(child, child_copy, &mut pending);
             }
         }

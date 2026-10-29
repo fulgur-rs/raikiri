@@ -359,6 +359,7 @@ fn lift_length_percentage_or_auto(computed: ComputedLengthPercentageOrAuto) -> L
         ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
         ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::FitContent,
+        ComputedLengthPercentageOrAuto::Stretch => LengthOrAuto::Stretch,
         ComputedLengthPercentageOrAuto::FitContentOf(limit) => {
             LengthOrAuto::FitContentOf(lift_length_percentage_or_calc(limit))
         }
@@ -600,6 +601,9 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
         | PropertyValue::Contain(_)
+        | PropertyValue::ContainIntrinsicWidth(_)
+        | PropertyValue::ContainIntrinsicHeight(_)
+        | PropertyValue::ContainIntrinsicSize(_)
         | PropertyValue::WillChange(_)
 
         | PropertyValue::ClipPath(_)

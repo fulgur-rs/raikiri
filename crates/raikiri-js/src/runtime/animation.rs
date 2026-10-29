@@ -104,6 +104,7 @@ impl AnimationEffect {
 /// Native data behind an `Animation` instance.
 #[derive(Debug, Trace, Finalize, JsData)]
 pub(crate) struct AnimationData {
+    target_owner: boa_gc::Gc<super::node_gc::NodeRecord>,
     #[unsafe_ignore_trace]
     id: usize,
     /// The script-visible `Animation.id`.
@@ -879,7 +880,9 @@ pub(crate) fn element_animate(
     })?;
     refresh_animation_styles(context)?;
     let prototype = protos(context).animation.clone();
+    let target_owner = with_state(context, |state| state.node_record(target))?;
     let data = AnimationData {
+        target_owner,
         id,
         animation_id,
         ready: None,

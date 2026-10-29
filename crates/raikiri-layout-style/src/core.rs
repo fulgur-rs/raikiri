@@ -335,9 +335,15 @@ fn preferred_aspect_ratio_with(
         L::Calc(calc) => cyclic_percentage && calc.percent != 0.0,
         _ => false,
     };
+    // A `stretch` height fills a containing block that may have no definite
+    // height, and then behaves as `auto`: like a percentage, it leaves the
+    // ratio its work where it does not resolve. A `stretch` width always
+    // resolves, so the ratio has nothing to do for it.
+    let stretch_height = cyclic_percentage && matches!(height, L::Stretch);
     if cyclic(width)
         || (natural.is_none() && !size_contained && width.is_content_keyword())
         || cyclic(height)
+        || stretch_height
     {
         ratio.preferred(natural)
     } else {

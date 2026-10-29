@@ -38,9 +38,9 @@ use crate::property::{
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxDecorationBreak, BoxShadowItem, BoxSizing, BreakBetween,
     BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue,
-    ColumnSpanValue, ColumnWidthValue, Contain, ContentAlignmentValue, ContentComponent,
-    ContentList, CounterResetValue, CssColor, CssPosition, CssPositionOffset, Direction,
-    DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
+    ColumnSpanValue, ColumnWidthValue, Contain, ContainIntrinsicSize, ContentAlignmentValue,
+    ContentComponent, ContentList, CounterResetValue, CssColor, CssPosition, CssPositionOffset,
+    Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
     FlexWrapValue, FloatValue, FontFamilyName, FontFeatureSettings, FontKerning,
     FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
     FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
@@ -73,11 +73,12 @@ use crate::resolve::{
     lift_text_underline_offset, lift_word_spacing, resolve_background_image,
     resolve_background_size, resolve_border_radius, resolve_border_spacing,
     resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_column_width,
-    resolve_css_position, resolve_css_position_offset, resolve_flex_basis, resolve_font_size,
-    resolve_font_size_calc, resolve_grid_auto_track_list, resolve_grid_template_tracks,
-    resolve_length, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    resolve_contain_intrinsic_size, resolve_css_position, resolve_css_position_offset,
+    resolve_flex_basis, resolve_font_size, resolve_font_size_calc, resolve_grid_auto_track_list,
+    resolve_grid_template_tracks, resolve_length, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal, resolve_letter_spacing,
+    resolve_line_height, resolve_margin_length_or_auto,
+    resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
     resolve_text_decoration_thickness, resolve_text_indent_calc_with_context,
     resolve_text_shadow_item, resolve_text_underline_offset, resolve_transform_function,
@@ -569,6 +570,11 @@ pub struct SpecifiedValues {
     pub row_gap: LengthOrNormal,
     /// **Specified** `column-gap`; absolutized in the same phase as [`Self::row_gap`].
     pub column_gap: LengthOrNormal,
+    /// **Specified** `contain-intrinsic-width`; phase 3 absolutizes its length.
+    pub contain_intrinsic_width: ContainIntrinsicSize,
+    /// **Specified** `contain-intrinsic-height`; absolutized like
+    /// [`Self::contain_intrinsic_width`].
+    pub contain_intrinsic_height: ContainIntrinsicSize,
     /// Staging value for [`ComputedValues::quotes`]; computed-equivalent because it has no
     /// lengths to absolutize.
     pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
@@ -1124,6 +1130,10 @@ impl SpecifiedValues {
             // CSS Box Alignment Module Level 3 §8.1: row-gap and column-gap are initially `normal`.
             row_gap: LengthOrNormal::Normal,
             column_gap: LengthOrNormal::Normal,
+            // CSS Box Sizing 4 §5: contain-intrinsic-width and -height are
+            // initially `none`.
+            contain_intrinsic_width: ContainIntrinsicSize::NONE,
+            contain_intrinsic_height: ContainIntrinsicSize::NONE,
             // CSS Content 3 §2.4.1: the specified initial quotes value "depends on user agent".
             // Following the independent-implementation policy, we represent it as an empty list
             // (see the `ComputedValues::quotes` docs).
@@ -1518,6 +1528,9 @@ impl SpecifiedValues {
             // "Inherited: no").
             row_gap: LengthOrNormal::Normal,
             column_gap: LengthOrNormal::Normal,
+            // non-inherited (CSS Box Sizing 4 §5, "Inherited: no").
+            contain_intrinsic_width: ContainIntrinsicSize::NONE,
+            contain_intrinsic_height: ContainIntrinsicSize::NONE,
             // non-inherited (CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/
             // §7.7/§8.3, all "Inherited: no").
             grid_template_columns: GridTemplateTracks::None,
@@ -2753,6 +2766,18 @@ impl SpecifiedValues {
             ),
             column_gap: resolve_length_percentage_or_normal(
                 self.column_gap,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            contain_intrinsic_width: resolve_contain_intrinsic_size(
+                self.contain_intrinsic_width,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            contain_intrinsic_height: resolve_contain_intrinsic_size(
+                self.contain_intrinsic_height,
                 font_size,
                 own_line_height,
                 ctx,

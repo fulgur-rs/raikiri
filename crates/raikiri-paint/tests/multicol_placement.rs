@@ -164,7 +164,7 @@ fn a_child_paragraph_bottom_margin_advances_following_flow_once() {
     compare(
         "<div class=mc><p style='margin-bottom:10px'>A<br>B<br>C<br>D</p></div><p>E</p>",
         "",
-        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:50px'>E</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:45px'>E</div>",
     );
 }
 
@@ -843,7 +843,7 @@ fn paragraph_bottom_margins_participate_in_balancing() {
     compare(
         "<div class=mc><p>A<br>B<br>C<br>D</p><p>E<br>F</p></div><p>G</p>",
         ".mc p{margin-bottom:8px}",
-        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:28px'>E<br>F</div><div style='position:absolute;left:0;top:76px'>G</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:28px'>E<br>F</div><div style='position:absolute;left:0;top:68px'>G</div>",
     );
 }
 
@@ -852,7 +852,7 @@ fn adjoining_paragraph_margins_collapse_within_a_column() {
     compare(
         "<div class=mc><p>A<br>B</p><p>C<br>D</p><p>E<br>F</p></div><p>G</p>",
         ".mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
-        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:80px'>G</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:76px'>G</div>",
     );
 }
 
@@ -904,7 +904,7 @@ fn empty_paragraphs_preserve_positive_and_negative_collapsed_margins() {
     compare(
         "<div class=mc><p>A<br>B</p><p class=empty></p><p class=later>C<br>D</p><p class=last>E<br>F</p></div><p>G</p>",
         ".mc p{margin-bottom:8px}.mc .empty{margin-top:12px;margin-bottom:-4px}.mc .later{margin-top:20px}.mc .last{margin-top:12px}",
-        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:56px'>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:80px'>G</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:56px'>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:78px'>G</div>",
     );
 }
 
@@ -931,7 +931,7 @@ fn an_inline_background_moves_with_its_continuation_glyphs() {
     compare(
         "<div class=mc><p>A<br>B</p><p><span style='background:lime'>C<br>D</span></p><p>E<br>F</p></div><p>G</p>",
         ".mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
-        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'><span style='background:lime'>C</span></div><div style='position:absolute;left:60px;top:0'><span style='background:lime'>D</span></div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:80px'>G</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'><span style='background:lime'>C</span></div><div style='position:absolute;left:60px;top:0'><span style='background:lime'>D</span></div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:76px'>G</div>",
     );
 }
 

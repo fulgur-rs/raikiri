@@ -3072,6 +3072,24 @@ fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() 
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
 }
 
+#[test]
+fn the_last_paragraph_row_of_a_nested_multicol_holds_the_margin_below_its_paragraph() {
+    // The last row's five lines make 50px, and the 10px margin below the
+    // paragraph is part of what the row's columns divide, which is one column
+    // here, so the row is 60px high.
+    let (mut doc, inner, _) =
+        styled_nested_paragraph_document(2, 0.0, "", "margin-bottom:10px", 25);
+    layout_nested_flex_float_fixture(&mut doc);
+    let heights: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == inner && fragment.fragment_index > 0)
+        .map(|fragment| fragment.rect.height)
+        .collect();
+    assert_eq!(heights, [100.0, 100.0, 60.0]);
+}
+
 /// Lay out `styled_nested_paragraph_document` after a block of `lead` px under a
 /// fragment budget of `limit`.
 fn nested_paragraph_with_limit(
@@ -4838,6 +4856,9 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     // between the pieces.
     assert!(paragraphs("display:block;margin:0;padding-top:2px"));
     assert!(paragraphs("display:block;margin:0;border-bottom:2px solid"));
+    // The planner collapses the margins of lengths and drops them at a break.
+    assert!(paragraphs("display:block;margin-top:20px"));
+    assert!(paragraphs("display:block;margin-bottom:20px"));
     // A box that repeats its edges at every break, or paints an effect sized
     // from its whole border box, is not sliced.
     assert!(!paragraphs(
@@ -4854,8 +4875,6 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;height:20px",
         "display:block;min-height:20px",
         "display:block;max-height:20px",
-        "display:block;margin-top:20px",
-        "display:block;margin-bottom:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
         "display:block;margin:0;position:sticky;left:10px",
         "display:block;margin:0;position:sticky;top:5px",
@@ -6377,14 +6396,16 @@ fn a_paragraph_without_block_edges_keeps_its_box_as_the_lines_it_holds() {
 }
 
 #[test]
-fn a_single_paragraph_enters_the_stream_only_with_block_edges() {
+fn a_single_paragraph_enters_the_stream_only_with_padding_or_border() {
     for (css, enters) in [
         ("background:green", false),
-        ("padding-left:4px", false),
+        ("padding-left:4px", true),
+        ("border-right:2px solid", true),
         ("padding-top:4px", true),
         ("border-bottom:2px solid", true),
         ("padding-top:4px;box-decoration-break:clone", false),
         ("padding-bottom:4px;box-shadow:0 0 2px", false),
+        ("padding-left:4px;box-shadow:0 0 2px", false),
     ] {
         let (mut doc, container, _) = padded_paragraph_columns(css, 4);
         assert_eq!(
@@ -6760,4 +6781,784 @@ fn a_padded_paragraph_after_another_follows_it_in_columns_with_gaps_and_containe
         .map(|fragment| (fragment.fragmentainer, fragment.rect.x))
         .collect();
     assert_eq!(columns, [(0, 7.0), (1, 107.0)]);
+}
+
+/// A document with a container of three 100px columns, 50px high and filled
+/// one after another, whose children are boxes styled `css`: a box with `lines`
+/// lines of 10px, or one with nothing inside it when `lines` is 0. The
+/// document, the container and the children.
+fn boxes_and_paragraphs_in_columns(children: &[(&str, usize)]) -> (Document, usize, Vec<usize>) {
+    boxes_and_paragraphs_in_container("", children)
+}
+
+/// [`boxes_and_paragraphs_in_columns`] in a container that `container_css`
+/// styles further.
+fn boxes_and_paragraphs_in_container(
+    container_css: &str,
+    children: &[(&str, usize)],
+) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            format!(
+                "display:block;width:300px;height:50px;columns:3;column-gap:0;\
+                 column-fill:auto;orphans:1;widows:1;{container_css}"
+            )
+            .as_str(),
+        ),
+    );
+    let ids = children
+        .iter()
+        .map(|&(css, lines)| {
+            let child = doc.append_element(
+                Some(container),
+                "div",
+                Some(format!("display:block;{css}").as_str()),
+            );
+            for line in 0..lines {
+                doc.append_text(child, "x");
+                if line + 1 < lines {
+                    doc.append_element(Some(child), "br", None::<&str>);
+                }
+            }
+            child
+        })
+        .collect();
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+    (doc, container, ids)
+}
+
+/// The column, top and height of each fragment of `node`.
+fn fragment_places(doc: &Document, node: usize) -> Vec<(usize, f32, f32)> {
+    doc.fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == node)
+        .map(|fragment| {
+            (
+                fragment.fragmentainer,
+                fragment.rect.y,
+                fragment.rect.height,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_sized_box_before_a_padded_paragraph_shares_its_column() {
+    // The 20px box takes the top of the first column, so three lines of the
+    // paragraph fit under it. The last two lines and the 20px of padding below
+    // them fill the next column, as in a browser.
+    let (doc, container, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:20px;background:green", 0),
+        ("padding-bottom:20px;background:green", 5),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 20.0)]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 3, 0), (3, 5, 1)]);
+    assert_eq!(
+        boxes,
+        [
+            (20.0, 50.0, Some((0.0, 50.0))),
+            (0.0, 40.0, Some((0.0, 50.0)))
+        ]
+    );
+    // The lines are measured from the content box of each piece, which begins
+    // under the sized box in the first column.
+    assert_eq!(line_tops_in_column(&doc, children[1], 0), [0.0, 10.0, 20.0]);
+    assert_eq!(line_tops_in_column(&doc, children[1], 1), [0.0, 10.0]);
+    assert_eq!(fragment_places(&doc, container)[0].2, 50.0);
+}
+
+#[test]
+fn a_paragraph_without_block_edges_breaks_between_its_lines_after_a_sized_box() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:20px;background:green", 0),
+        ("background:green", 6),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 20.0)]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 3, 0), (3, 6, 1)]);
+    assert_eq!((boxes[0].0, boxes[0].1), (20.0, 30.0));
+    assert_eq!((boxes[1].0, boxes[1].1), (0.0, 30.0));
+}
+
+#[test]
+fn a_sized_box_between_paragraphs_follows_the_first_and_leads_the_second() {
+    // Two lines, the 20px box, and one line of the second paragraph fill the
+    // first column; its other three lines go to the second.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("background:green", 2),
+        ("height:20px;background:green", 0),
+        ("background:green", 4),
+    ]);
+    assert_eq!(fragment_places(&doc, children[1]), [(0, 20.0, 20.0)]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[2]);
+    assert_eq!(ranges, [(0, 1, 0), (1, 4, 1)]);
+    assert_eq!((boxes[0].0, boxes[0].1), (40.0, 10.0));
+    assert_eq!((boxes[1].0, boxes[1].1), (0.0, 30.0));
+}
+
+#[test]
+fn a_sized_box_that_does_not_fit_under_the_lines_goes_whole_to_the_next_column() {
+    // Ten pixels are left in the first column. The planner does not split the
+    // box between the two columns, so it starts the second.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("background:green", 4),
+        ("height:20px;background:green", 0),
+    ]);
+    assert_eq!(fragment_places(&doc, children[1]), [(1, 0.0, 20.0)]);
+}
+
+#[test]
+fn a_sized_box_taller_than_a_column_leaves_the_paragraphs_to_the_other_strategies() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:60px;background:green", 0),
+        ("background:green", 2),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 60.0)]);
+}
+
+#[test]
+fn a_sized_box_enters_the_stream_only_beside_a_paragraph() {
+    for (leaf, paragraph, enters) in [
+        ("height:20px", Some("background:green"), true),
+        ("height:20px", None, false),
+        ("min-height:20px", Some("background:green"), true),
+        (
+            "height:20px;position:relative;top:5px",
+            Some("background:green"),
+            true,
+        ),
+        (
+            "height:20px;margin-top:5px",
+            Some("background:green"),
+            false,
+        ),
+        ("height:20px;float:left", Some("background:green"), false),
+        (
+            "height:20px;overflow:hidden",
+            Some("background:green"),
+            false,
+        ),
+        (
+            "height:20px;position:absolute",
+            Some("background:green"),
+            false,
+        ),
+    ] {
+        let mut children = vec![(leaf, 0)];
+        children.extend(paragraph.map(|css| (css, 3)));
+        let (mut doc, container, _) = boxes_and_paragraphs_in_columns(&children);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container)
+            }),
+            enters,
+            "{leaf} {paragraph:?}"
+        );
+    }
+}
+
+#[test]
+fn a_margin_above_a_paragraph_at_the_start_of_a_column_is_dropped() {
+    // The first paragraph fills the column, so the second starts the next one,
+    // where the break discards the 20px of its margin.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 5px;background:green", 5),
+        ("margin:20px 0 0;background:green", 2),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 50.0)]);
+    assert_eq!(fragment_places(&doc, children[1]), [(1, 0.0, 20.0)]);
+}
+
+#[test]
+fn a_margin_above_the_first_paragraph_stays_at_the_top_of_the_first_column() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:15px 0;background:green", 2),
+        ("margin:0;background:green", 2),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 15.0, 20.0)]);
+    // 15 + 20 + 15 leaves no room for a line under it, so the second
+    // paragraph starts the next column.
+    assert_eq!(fragment_places(&doc, children[1]), [(1, 0.0, 20.0)]);
+}
+
+#[test]
+fn adjoining_margins_of_paragraphs_in_a_column_collapse() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 10px;background:green", 1),
+        ("margin:20px 0 0;background:green", 1),
+        ("margin:0;background:green", 1),
+    ]);
+    let tops: Vec<_> = children
+        .iter()
+        .map(|&child| fragment_places(&doc, child))
+        .collect();
+    assert_eq!(
+        tops,
+        [[(0, 0.0, 10.0)], [(0, 30.0, 10.0)], [(0, 40.0, 10.0)]]
+    );
+}
+
+#[test]
+fn negative_margins_of_paragraphs_pull_the_next_one_up() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 -10px;background:green", 3),
+        ("margin:0;background:green", 3),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 30.0)]);
+    assert_eq!(fragment_places(&doc, children[1]), [(0, 20.0, 30.0)]);
+}
+
+#[test]
+fn a_paragraph_after_a_split_one_keeps_its_margin_below_the_split() {
+    // The first paragraph ends 20px down the second column; the 20px margin of
+    // the next one keeps it from starting before 40px, where one line fits.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 10px;background:green", 7),
+        ("margin:20px 0 0;background:green", 2),
+    ]);
+    let (ranges, _) = paragraph_pieces(&doc, children[0]);
+    assert_eq!(ranges, [(0, 5, 0), (5, 7, 1)]);
+    let (ranges, _) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 1, 1), (1, 2, 2)]);
+    assert_eq!(
+        fragment_places(&doc, children[1]),
+        [(1, 40.0, 10.0), (2, 0.0, 10.0)]
+    );
+}
+
+#[test]
+fn a_paragraph_under_a_margin_breaks_between_the_lines_that_fit() {
+    // The 10px margin leaves two of the four lines in the first column.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 10px;background:green", 2),
+        ("margin:0;background:green", 4),
+    ]);
+    let (ranges, _) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 4, 1)]);
+    assert_eq!(
+        fragment_places(&doc, children[1]),
+        [(0, 30.0, 20.0), (1, 0.0, 20.0)]
+    );
+}
+
+#[test]
+fn the_margin_below_the_last_paragraph_does_not_count_against_the_column() {
+    // The last paragraph fills the column to its end, and its 20px margin
+    // reaches past it, which a container with a height of its own ignores.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0;background:green", 1),
+        ("margin:0 0 20px;background:green", 4),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 10.0)]);
+    assert_eq!(fragment_places(&doc, children[1]), [(0, 10.0, 40.0)]);
+}
+
+#[test]
+fn a_paragraph_with_a_margin_that_is_not_auto_enters_the_stream() {
+    for (css, enters) in [
+        ("margin:10px 0", true),
+        ("margin:-5px 0", true),
+        ("margin:0", true),
+        ("margin:5% 0", true),
+        ("margin:calc(5% + 2px) 0", true),
+        ("margin-top:auto", false),
+        ("margin-bottom:auto", false),
+    ] {
+        let (mut doc, container, _) =
+            boxes_and_paragraphs_in_columns(&[(css, 3), ("background:green", 3)]);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container)
+            }),
+            enters,
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_under_a_margin_splits_with_orphans_ahead_of_widows() {
+    // The margin leaves room for two of the three lines, so the second
+    // paragraph splits after them, giving up its widows as a browser does,
+    // instead of moving to the next column whole.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 10px;orphans:2;widows:2;background:green", 2),
+        ("margin:0 0 10px;orphans:2;widows:2;background:green", 3),
+    ]);
+    let (ranges, _) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 3, 1)]);
+    assert_eq!(
+        fragment_places(&doc, children[1]),
+        [(0, 30.0, 20.0), (1, 0.0, 10.0)]
+    );
+}
+
+#[test]
+fn a_margin_and_padding_on_a_paragraph_split_between_the_lines() {
+    // The margin sits above the first line in the first column, and the last
+    // line goes on with the padding below it in the next.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[(
+        "margin-top:10px;padding-bottom:20px;background:green",
+        3,
+    )]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[0]);
+    assert_eq!(ranges, [(0, 2, 0), (2, 3, 1)]);
+    assert_eq!(
+        boxes.iter().map(|piece| piece.0).collect::<Vec<_>>(),
+        [10.0, 0.0]
+    );
+    assert_eq!(boxes[1].1, 30.0);
+}
+
+#[test]
+fn the_padding_of_a_paragraph_in_percent_is_a_share_of_the_column_width() {
+    // The columns are 100px wide, so the 10% of padding is 10px, not the 30px
+    // that a tenth of the container makes. The padded first paragraph is 30px
+    // high, and the lines of the second go on under it until the column ends.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("padding-bottom:10%;background:green", 2),
+        ("margin:0", 3),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 30.0)]);
+    assert_eq!(
+        fragment_places(&doc, children[1]),
+        [(0, 30.0, 20.0), (1, 0.0, 10.0)]
+    );
+    // A paragraph that stands alone goes through the same planner.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("padding-top:10%;background:green", 3)]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 40.0)]);
+}
+
+#[test]
+fn the_margin_above_a_paragraph_in_percent_is_a_share_of_the_column_width() {
+    // The 10% is 10px of the 100px column, so the second paragraph starts at
+    // 30px and its two lines fit in the first column.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 2), ("margin-top:10%", 2)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(0, 30.0)]]);
+}
+
+#[test]
+fn the_margin_above_a_paragraph_in_calc_is_resolved_against_the_column_width() {
+    // 10% of the 100px column and 5px make the margin 15px, so the one line of
+    // the second paragraph starts at 35px, under the two lines above it.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 2), ("margin-top:calc(10% + 5px)", 1)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(0, 35.0)]]);
+}
+
+#[test]
+fn a_margin_in_percent_above_a_paragraph_is_cut_where_a_column_breaks() {
+    // The first paragraph leaves 10px of the column, which the 10px margin
+    // takes, so the three lines of the second go to the next column, at its
+    // top: a margin that adjoins a break is discarded.
+    let (doc, _, children) = boxes_and_paragraphs_in_container(
+        "orphans:2;widows:2",
+        &[("margin:0", 4), ("margin-top:10%", 3)],
+    );
+    assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(1, 0.0)]]);
+}
+
+#[test]
+fn a_paragraph_with_a_margin_in_percent_and_padding_splits_between_its_lines() {
+    // The margin takes the top 10px of the first column and the padding below
+    // the fourth line does not fit under the line, so that line goes on in the
+    // next column with the padding, and the paragraph after it starts below.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin-top:10%;padding-bottom:5px;background:green", 4),
+        ("margin:0", 2),
+    ]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[0]);
+    assert_eq!(ranges, [(0, 3, 0), (3, 4, 1)]);
+    assert_eq!(
+        boxes.iter().map(|piece| piece.0).collect::<Vec<_>>(),
+        [10.0, 0.0]
+    );
+    assert_eq!(column_places(&doc, &children[1..]), [[(1, 15.0)]]);
+}
+
+/// A document with a container of three 100px columns, 50px high and filled
+/// one after another, whose only child is a paragraph of `text` styled
+/// `paragraph_css`. The document and the paragraph.
+fn text_paragraph_in_columns(paragraph_css: &str, text: &str) -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            "display:block;width:300px;height:50px;columns:3;column-gap:0;column-fill:auto;\
+             orphans:1;widows:1",
+        ),
+    );
+    let paragraph = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("display:block;{paragraph_css}").as_str()),
+    );
+    doc.append_text(paragraph, text);
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+    (doc, paragraph)
+}
+
+#[test]
+fn a_lone_paragraph_with_padding_or_border_at_its_sides_breaks_between_its_lines() {
+    // The 80px that the padding or the border leaves in a column holds one of
+    // the twelve words of four letters, so five lines fill each column. The
+    // box is a column wide, not the width of the container.
+    let words = ["xxxx"; 12].join(" ");
+    for css in ["padding:0 10px", "border-right:20px solid", "padding:0 10%"] {
+        let (doc, paragraph) = text_paragraph_in_columns(css, &words);
+        let (ranges, _) = paragraph_pieces(&doc, paragraph);
+        assert_eq!(ranges, [(0, 5, 0), (5, 10, 1), (10, 12, 2)], "{css}");
+        assert_eq!(
+            fragment_places(&doc, paragraph),
+            [(0, 0.0, 50.0), (1, 0.0, 50.0), (2, 0.0, 20.0)],
+            "{css}"
+        );
+        let widths: Vec<_> = doc
+            .fragment_tree
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.node_id == paragraph)
+            .map(|fragment| fragment.rect.width)
+            .collect();
+        assert_eq!(widths, [100.0; 3], "{css}");
+    }
+}
+
+#[test]
+fn the_padding_of_a_paragraph_at_its_sides_in_percent_narrows_its_lines_to_the_column() {
+    // The column is 100px wide, so the padding of 10% leaves 80px and the six
+    // words fill two lines. A tenth of the container would leave 40px and fill
+    // three.
+    let (doc, paragraph) = text_paragraph_in_columns("padding:0 10%", "xx x xx x xx x");
+    assert_eq!(fragment_places(&doc, paragraph), [(0, 0.0, 20.0)]);
+}
+
+/// The column and top of each fragment of the boxes `nodes`, in order.
+fn column_places(doc: &Document, nodes: &[usize]) -> Vec<Vec<(usize, f32)>> {
+    nodes
+        .iter()
+        .map(|&node| {
+            fragment_places(doc, node)
+                .into_iter()
+                .map(|(column, top, _)| (column, top))
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn an_empty_block_among_paragraphs_sits_at_its_collapsed_margin() {
+    // The 10px margin below the first paragraph collapses with the 30px above
+    // and below the empty box, which takes no room, so the box and the
+    // paragraph after it start 30px under the first line.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 10px", 1),
+        ("margin:30px 0", 0),
+        ("margin:0", 1),
+    ]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 40.0)], [(0, 40.0)]]
+    );
+    // The columns lay the boxes out, at the width of a column.
+    let widths: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| children.contains(&fragment.node_id))
+        .map(|fragment| fragment.rect.width)
+        .collect();
+    assert_eq!(widths, [100.0, 100.0, 100.0]);
+}
+
+#[test]
+fn the_margins_of_an_empty_block_before_the_first_paragraph_stay_in_the_first_column() {
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:20px 0 30px", 0), ("margin:0", 2)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 20.0)], [(0, 30.0)]]);
+}
+
+#[test]
+fn consecutive_empty_blocks_collapse_their_margins_together() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0", 1),
+        ("margin:10px 0", 0),
+        ("margin:15px 0", 0),
+        ("margin:0", 1),
+    ]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 20.0)], [(0, 25.0)], [(0, 25.0)]]
+    );
+}
+
+#[test]
+fn negative_margins_of_an_empty_block_pull_the_next_paragraph_up() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0 0 10px", 1),
+        ("margin:-5px 0", 0),
+        ("margin:0", 1),
+    ]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 15.0)], [(0, 15.0)]]
+    );
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0", 1),
+        ("margin:10px 0 -5px", 0),
+        ("margin:0", 1),
+    ]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 20.0)], [(0, 15.0)]]
+    );
+}
+
+#[test]
+fn an_empty_block_whose_margin_reaches_past_the_column_starts_the_next_one() {
+    // The column is full, and the box would sit 20px under its end: it starts
+    // the next column, and the break discards the margins around it, so the
+    // paragraph after it is at the top too.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0", 5),
+        ("margin:20px 0", 0),
+        ("margin:5px 0 0", 1),
+    ]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(1, 0.0)], [(1, 0.0)]]
+    );
+}
+
+#[test]
+fn an_empty_block_past_the_end_of_the_lines_before_it_is_kept_out_of_the_column() {
+    for (lines, margin) in [(3, "margin:25px 0"), (4, "margin:20px 0")] {
+        let (doc, _, children) =
+            boxes_and_paragraphs_in_columns(&[("margin:0", lines), (margin, 0), ("margin:0", 1)]);
+        assert_eq!(
+            column_places(&doc, &children),
+            [vec![(0, 0.0)], vec![(1, 0.0)], vec![(1, 0.0)]],
+            "{lines} {margin}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_block_at_the_end_of_the_content_moves_to_the_next_column() {
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 4), ("margin:20px 0", 0)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(1, 0.0)]]);
+}
+
+#[test]
+fn an_empty_block_that_lands_exactly_at_the_column_end_stays() {
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 3), ("margin:20px 0", 0), ("margin:0", 1)]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 50.0)], [(1, 0.0)]]
+    );
+}
+
+#[test]
+fn a_paragraph_that_does_not_fit_under_an_empty_block_starts_the_next_column() {
+    // The box sits at 45px, which leaves no room for a line of the next
+    // paragraph, so both its lines go to the next column.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 3), ("margin:15px 0", 0), ("margin:0", 2)]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 45.0)], [(1, 0.0)]]
+    );
+    assert_eq!(fragment_places(&doc, children[2]), [(1, 0.0, 20.0)]);
+}
+
+#[test]
+fn the_margins_of_empty_blocks_stay_cut_until_the_next_paragraph() {
+    // The first empty box starts the second column, where its margins and the
+    // ones of the paragraph after it are cut. The margins of the second empty
+    // box count again below that paragraph.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin:0", 5),
+        ("margin:20px 0", 0),
+        ("margin:0", 1),
+        ("margin:30px 0", 0),
+        ("margin:0", 1),
+    ]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(1, 0.0)], [(1, 0.0)], [(1, 40.0)], [(1, 40.0)]]
+    );
+}
+
+#[test]
+fn balanced_columns_send_an_empty_block_past_a_column_s_end_to_the_next_one() {
+    // The columns hold the 70px of the boxes and the margin between them in
+    // one column divided by three, and the box 30px under the first paragraph
+    // starts the second column, with the paragraph after it.
+    let (doc, container, children) = boxes_and_paragraphs_in_container(
+        "height:auto;column-fill:balance",
+        &[("margin:0", 2), ("margin:30px 0", 0), ("margin:0", 2)],
+    );
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(1, 0.0)], [(1, 0.0)]]
+    );
+    assert!((fragment_places(&doc, container)[0].2 - 70.0 / 3.0).abs() < 0.001);
+}
+
+#[test]
+fn balanced_columns_keep_an_empty_block_that_the_last_column_would_overflow() {
+    // At 10px the box would start a fourth column. The columns are 20px high,
+    // and the box is exactly at their end.
+    let (doc, container, children) = boxes_and_paragraphs_in_container(
+        "height:auto;column-fill:balance",
+        &[
+            ("margin:0", 1),
+            ("margin:0", 1),
+            ("margin:0", 1),
+            ("margin:10px 0", 0),
+        ],
+    );
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 10.0)], [(1, 0.0)], [(1, 20.0)]]
+    );
+    assert_eq!(fragment_places(&doc, container)[0].2, 20.0);
+}
+
+#[test]
+fn the_margins_of_an_empty_block_in_percent_collapse_between_the_paragraphs_around_it() {
+    // The 10px above and below the empty box, a tenth of the 100px column,
+    // collapse into one gap, so the second paragraph starts 10px under the
+    // first one's two lines and stays in the column.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 2), ("margin:10% 0", 0), ("margin:0", 2)]);
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 30.0)], [(0, 30.0)]]
+    );
+}
+
+#[test]
+fn the_margins_of_an_empty_block_in_percent_are_cut_where_a_column_breaks() {
+    // The first paragraph fills the column down to 40px, and the margin of the
+    // empty box takes the rest, so the box sits at the column's end and the
+    // paragraph after it starts the next column at its top.
+    let (doc, _, children) = boxes_and_paragraphs_in_container(
+        "orphans:2;widows:2",
+        &[("margin:0", 4), ("margin:10% 0", 0), ("margin:0", 3)],
+    );
+    assert_eq!(
+        column_places(&doc, &children),
+        [[(0, 0.0)], [(0, 50.0)], [(1, 0.0)]]
+    );
+}
+
+#[test]
+fn the_margins_of_a_first_empty_block_in_percent_collapse_through_it() {
+    // The margins above and below the box meet at the top of the column and
+    // count once, so the paragraph starts 10px down.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:10% 0", 0), ("margin:0", 2)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 10.0)], [(0, 10.0)]]);
+}
+
+#[test]
+fn a_block_with_nothing_but_margins_enters_the_stream_only_beside_a_paragraph() {
+    for (spacer, paragraph, enters) in [
+        ("margin:10px 0", Some("margin:0"), true),
+        ("margin:-5px 0", Some("margin:0"), true),
+        ("", Some("margin:0"), true),
+        ("margin:10px 0", None, false),
+        (
+            "margin:10px 0;position:relative;top:5px",
+            Some("margin:0"),
+            true,
+        ),
+        ("margin:10px 5px", Some("margin:0"), false),
+        ("margin:5% 0", Some("margin:0"), true),
+        ("margin-top:auto", Some("margin:0"), false),
+        ("margin:10px 0;padding-top:5px", Some("margin:0"), false),
+        (
+            "margin:10px 0;border-bottom:1px solid",
+            Some("margin:0"),
+            false,
+        ),
+        ("margin:10px 0;height:10px", Some("margin:0"), false),
+        ("margin:10px 0;float:left", Some("margin:0"), false),
+        ("margin:10px 0;clear:both", Some("margin:0"), false),
+        ("margin:10px 0;overflow:hidden", Some("margin:0"), false),
+        ("margin:10px 0;position:absolute", Some("margin:0"), false),
+    ] {
+        let mut children = vec![(spacer, 0)];
+        children.extend(paragraph.map(|css| (css, 3)));
+        let (mut doc, container, _) = boxes_and_paragraphs_in_columns(&children);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container)
+            }),
+            enters,
+            "{spacer} {paragraph:?}"
+        );
+    }
+}
+
+#[test]
+fn balanced_columns_are_as_tall_as_the_content_in_one_column_divided_among_them() {
+    // The height is the content in one column, with the margin below the last
+    // paragraph, divided by the number of columns, or the least height that
+    // holds the paragraphs when that is more. The margin below the last
+    // paragraph is not part of what has to fit, so [4, 4, 4] stays at 135px
+    // though the columns' content reaches 140px with it.
+    for (lines, orphans, widows, height) in [
+        (&[2, 2][..], 2, 2, 50.0),
+        (&[3, 3], 1, 1, 70.0),
+        (&[4, 4], 2, 2, 90.0),
+        (&[2, 2, 2], 1, 1, 75.0),
+        (&[3, 4, 3], 2, 2, 115.0),
+        (&[4, 4, 4], 2, 2, 135.0),
+        // 105px divided does not hold the widows, which stretch the columns to
+        // the least height that does.
+        (&[3, 3, 3], 1, 3, 110.0),
+    ] {
+        let (doc, container, _, below) =
+            balanced_paragraphs_in(&format!("orphans:{orphans};widows:{widows}"), "", lines);
+        assert_eq!(
+            doc.nodes[container].layout.size.height, height,
+            "{lines:?} {orphans}/{widows}"
+        );
+        assert_eq!(doc.nodes[below].layout.location.y, height, "{lines:?}");
+    }
+}
+
+#[test]
+fn balanced_columns_break_between_the_lines_at_the_height_they_are_divided_to() {
+    // Three paragraphs of two lines with 10px between them make 150px, which
+    // gives columns of 75px: the second paragraph has room for one of its two
+    // lines under the first, and its other line tops the second column.
+    let (doc, _, paragraphs, _) = balanced_paragraphs_in("orphans:1;widows:1", "", &[2, 2, 2]);
+    let (ranges, _) = paragraph_pieces(&doc, paragraphs[1]);
+    assert_eq!(ranges, [(0, 1, 0), (1, 2, 1)]);
+    assert_eq!(doc.nodes[paragraphs[2]].layout.location.y, 30.0);
+}
+
+#[test]
+fn the_margin_below_the_last_balanced_paragraph_does_not_add_to_the_columns() {
+    // Two paragraphs of three lines fit 60px columns once each, and their
+    // 10px margins make 140px, which is 70px for each column.
+    let (doc, container, _, _) = balanced_paragraphs_in("", "", &[3, 3]);
+    assert_eq!(doc.nodes[container].layout.size.height, 70.0);
 }

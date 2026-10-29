@@ -4255,3 +4255,8 @@ fn emphasis_marks_split_a_ligature_among_its_characters() {
     let marks = placed.iter().filter(|g| g.3 == red).count();
     assert_eq!(marks, 3, "{placed:?}");
 }
+
+mod emphasis_scaling_tests;
+
+mod emphasis_oracle_tests;
+mod horizontal_emphasis_tests;

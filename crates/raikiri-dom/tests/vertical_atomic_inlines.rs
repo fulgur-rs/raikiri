@@ -1188,3 +1188,546 @@ fn a_vertical_inline_block_in_a_horizontal_line_is_as_tall_as_the_horizontal_box
         &line,
     );
 }
+
+/// `html` on a page without the body margin, so that the boxes sit at the
+/// origin.
+fn on_a_bare_page(html: &str) -> String {
+    format!("<style>body{{margin:0}}</style>{html}")
+}
+
+/// A vertical root of the width of 100px that is a float, so that its height
+/// is the extent its lines take, holding `aa` and the float `f` of `float_css`.
+fn float_root(float_css: &str, content: &str) -> String {
+    on_a_bare_page(&paragraph_with_float(
+        "float:left;width:100px",
+        float_css,
+        content,
+    ))
+}
+
+#[test]
+fn a_float_adds_its_height_to_the_height_a_vertical_root_takes_from_its_lines() {
+    // The 20px of `aa` and the 40px of the float make 60px along the lines.
+    check_modes(
+        &float_root("width:20px", "bbbb"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+        ],
+    );
+    // A height of its own counts the same.
+    check_modes(
+        &float_root("width:20px;height:40px", "bbbb"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+        ],
+    );
+    // The float is the only content of its line, and the root follows it.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">\
+             <div id=f style=\"float:left;width:20px\">bbbbbb</div></div>",
+        ),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 60.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 60.0)),
+        ],
+    );
+    // The text takes 100px, so the root takes 140px.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">aaaaaaaaaa\
+             <div id=f style=\"float:left;width:20px\">bbbb</div></div>",
+        ),
+        &[("r", (0.0, 0.0, 100.0, 140.0))],
+        &[("r", (0.0, 0.0, 100.0, 140.0))],
+    );
+}
+
+#[test]
+fn the_margins_of_a_float_count_along_the_lines_of_a_vertical_root() {
+    let along = [
+        ("r", (0.0, 0.0, 100.0, 70.0)),
+        ("f", (0.0, 5.0, 20.0, 40.0)),
+    ];
+    let along_rl = [
+        ("r", (0.0, 0.0, 100.0, 70.0)),
+        ("f", (80.0, 5.0, 20.0, 40.0)),
+    ];
+    check_modes(
+        &float_root("width:20px;margin:5px 0", "bbbb"),
+        &along,
+        &along_rl,
+    );
+}
+
+#[test]
+fn a_float_on_the_far_side_of_a_vertical_root_counts_too() {
+    // A right float sits at the end of the line, below the text.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">aa\
+             <div id=f style=\"float:right;width:20px\">bbbb</div></div>",
+        ),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 20.0, 20.0, 40.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 20.0, 20.0, 40.0)),
+        ],
+    );
+}
+
+#[test]
+fn the_floats_of_a_vertical_root_add_up_along_its_lines() {
+    // 20px of text, 40px and 60px of floats on one line.
+    check_modes(
+        &on_a_bare_page(
+            "<div id=r style=\"float:left;writing-mode:MODE;width:100px\">aa\
+             <div id=f style=\"float:left;width:20px\">bbbb</div>\
+             <div id=g style=\"float:left;width:20px\">cccccc</div></div>",
+        ),
+        &[
+            ("r", (0.0, 0.0, 100.0, 120.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+            ("g", (0.0, 40.0, 20.0, 60.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 120.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+            ("g", (80.0, 40.0, 20.0, 60.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_horizontal_float_counts_the_height_it_has_at_the_width_it_fits() {
+    // Of the width of 60px, the text breaks in two lines of 10px.
+    check_modes(
+        &float_root("writing-mode:horizontal-tb;width:60px", "bb cc dd ee"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 40.0)),
+            ("f", (0.0, 0.0, 60.0, 20.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 40.0)),
+            ("f", (40.0, 0.0, 60.0, 20.0)),
+        ],
+    );
+    // Without a width it fits the 100px of the root, not the 110px of its text.
+    let fits = [
+        ("r", (0.0, 0.0, 100.0, 40.0)),
+        ("f", (0.0, 0.0, 100.0, 20.0)),
+    ];
+    check_modes(
+        &float_root("writing-mode:horizontal-tb", "bb cc dd ee"),
+        &fits,
+        &fits,
+    );
+}
+
+#[test]
+fn the_percentage_height_of_a_float_follows_the_height_a_vertical_root_takes() {
+    // The root is 60px high, as its lines are, and the float takes half of it.
+    check_modes(
+        &float_root("width:20px;height:50%", "bbbb"),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 30.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 30.0)),
+        ],
+    );
+    // The height of a root that is no float follows its lines just the same.
+    check_modes(
+        &on_a_bare_page(&paragraph_with_float(
+            "width:100px",
+            "width:20px;height:50%",
+            "bbbb",
+        )),
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 30.0)),
+        ],
+        &[
+            ("r", (0.0, 0.0, 100.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 30.0)),
+        ],
+    );
+    // A height of its own is what the percentage is of.
+    check_modes(
+        &on_a_bare_page(&paragraph_with_float(
+            "width:100px;height:100px",
+            "width:20px;height:50%",
+            "bbbb",
+        )),
+        &[("f", (0.0, 0.0, 20.0, 50.0))],
+        &[("f", (80.0, 0.0, 20.0, 50.0))],
+    );
+}
+
+#[test]
+fn a_float_counts_in_every_kind_of_vertical_root_sized_by_its_lines() {
+    let float = "<div id=f style=\"float:left;width:20px\">bbbb</div>";
+    let lr = [
+        ("r", (0.0, 0.0, 100.0, 60.0)),
+        ("f", (0.0, 0.0, 20.0, 40.0)),
+    ];
+    let rl = [
+        ("r", (0.0, 0.0, 100.0, 60.0)),
+        ("f", (80.0, 0.0, 20.0, 40.0)),
+    ];
+    for root_css in ["display:inline-block", "position:absolute"] {
+        check_modes(
+            &on_a_bare_page(&format!(
+                "<div id=r style=\"writing-mode:MODE;width:100px;{root_css}\">aa{float}</div>"
+            )),
+            &lr,
+            &rl,
+        );
+    }
+    // A flex item takes the height of its content as well.
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=x style=\"display:flex\"><div id=r style=\"writing-mode:MODE;width:100px\">\
+             aa{float}</div></div>"
+        )),
+        &[
+            ("x", (0.0, 0.0, 800.0, 60.0)),
+            ("f", (0.0, 0.0, 20.0, 40.0)),
+        ],
+        &[
+            ("x", (0.0, 0.0, 800.0, 60.0)),
+            ("f", (80.0, 0.0, 20.0, 40.0)),
+        ],
+    );
+    // A root of auto width is as wide as its widest line, here the float.
+    let narrow = [("r", (0.0, 0.0, 20.0, 60.0)), ("f", (0.0, 0.0, 20.0, 40.0))];
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=r style=\"float:left;writing-mode:MODE\">aa{float}</div>"
+        )),
+        &narrow,
+        &narrow,
+    );
+}
+
+/// Eight words of 90px with a space of 10px between them: 790px of text.
+fn eight_words() -> String {
+    ["wwwwwwwww"; 8].join(" ")
+}
+
+/// A vertical inline-block `o` holding `content`, styled with `css`, in a line
+/// of the horizontal box `p` of `p_css`, which is 300px wide.
+fn vertical_inline_block(p_css: &str, css: &str, content: &str) -> String {
+    on_a_bare_page(&format!(
+        "<div id=p style=\"width:300px;{p_css}\"><span id=o \
+         style=\"display:inline-block;writing-mode:MODE;{css}\">{content}</span></div>"
+    ))
+}
+
+#[test]
+fn a_vertical_inline_block_in_a_horizontal_line_wraps_at_the_page_height() {
+    // A horizontal line sets no limit on the height of the vertical box, so
+    // the page height stands in for it (CSS Writing Modes 4 §7.3.1): the
+    // 790px of text break in two columns of 600px, not in one column. The
+    // line is 602px tall in Chromium, and the page cuts it at 600px: the
+    // other 2px of its strut go to the next page.
+    let fitted = [
+        ("p", (0.0, 0.0, 300.0, 600.0)),
+        ("o", (0.0, 0.0, 20.0, 600.0)),
+    ];
+    check_modes(
+        &vertical_inline_block("", "", &eight_words()),
+        &fitted,
+        &fitted,
+    );
+    // With the body margin of 8px, the page cuts the box 8px short of its
+    // 600px.
+    let cut = [
+        ("p", (8.0, 8.0, 300.0, 592.0)),
+        ("o", (8.0, 8.0, 20.0, 592.0)),
+    ];
+    check_modes(
+        &format!(
+            "<div id=p style=\"width:300px\"><span id=o \
+             style=\"display:inline-block;writing-mode:MODE\">{}</span></div>",
+            eight_words()
+        ),
+        &cut,
+        &cut,
+    );
+}
+
+#[test]
+fn a_vertical_inline_block_that_the_page_holds_keeps_its_max_content_height() {
+    let three = ["wwwwwwwww"; 3].join(" ");
+    let kept = [
+        ("p", (0.0, 0.0, 300.0, 292.0)),
+        ("o", (0.0, 0.0, 10.0, 290.0)),
+    ];
+    check_modes(&vertical_inline_block("", "", &three), &kept, &kept);
+}
+
+#[test]
+fn a_vertical_inline_block_takes_the_page_height_less_its_margins_and_edges() {
+    // The margins leave 580px of the page, and the edges are inside the box.
+    let margins = [
+        ("p", (0.0, 0.0, 300.0, 600.0)),
+        ("o", (0.0, 10.0, 20.0, 580.0)),
+    ];
+    check_modes(
+        &vertical_inline_block("", "margin:10px 0", &eight_words()),
+        &margins,
+        &margins,
+    );
+    // A percentage margin is of the width of the line: 30px of 300px.
+    let percent = [
+        ("p", (0.0, 0.0, 300.0, 600.0)),
+        ("o", (0.0, 30.0, 20.0, 540.0)),
+    ];
+    check_modes(
+        &vertical_inline_block("", "margin:10% 0", &eight_words()),
+        &percent,
+        &percent,
+    );
+    // Two columns of 10px and two borders of 2px.
+    let edges = [
+        ("p", (0.0, 0.0, 300.0, 600.0)),
+        ("o", (0.0, 0.0, 24.0, 600.0)),
+    ];
+    check_modes(
+        &vertical_inline_block("", "padding:5px 0;border:2px solid", &eight_words()),
+        &edges,
+        &edges,
+    );
+}
+
+#[test]
+fn each_vertical_inline_block_of_a_horizontal_line_takes_the_page_height_for_itself() {
+    let words = eight_words();
+    let two = [
+        ("p", (0.0, 0.0, 300.0, 600.0)),
+        ("o", (0.0, 0.0, 20.0, 600.0)),
+        ("q", (20.0, 0.0, 20.0, 600.0)),
+    ];
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=p style=\"width:300px\"><span id=o \
+             style=\"display:inline-block;writing-mode:MODE\">{words}</span>\
+             <span id=q style=\"display:inline-block;writing-mode:MODE\">{words}</span></div>"
+        )),
+        &two,
+        &two,
+    );
+    let beside_text = [
+        ("p", (0.0, 0.0, 300.0, 600.0)),
+        ("o", (20.0, 0.0, 20.0, 600.0)),
+    ];
+    check_modes(
+        &format!(
+            "<style>body{{margin:0}}</style><div id=p style=\"width:300px\">aa{}</div>",
+            {
+                format!(
+                    "<span id=o style=\"display:inline-block;writing-mode:MODE\">{words}</span>"
+                )
+            }
+        ),
+        &beside_text,
+        &beside_text,
+    );
+}
+
+#[test]
+fn the_blocks_of_a_vertical_inline_block_wrap_at_the_page_height_with_it() {
+    let block = [
+        ("p", (0.0, 0.0, 300.0, 600.0)),
+        ("o", (0.0, 0.0, 20.0, 600.0)),
+        ("i", (0.0, 0.0, 20.0, 600.0)),
+    ];
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=p style=\"width:300px\"><div id=o \
+             style=\"display:inline-block;writing-mode:MODE\"><div id=i>{}</div></div></div>",
+            eight_words()
+        )),
+        &block,
+        &block,
+    );
+}
+
+#[test]
+fn a_definite_height_of_the_line_box_is_the_room_of_a_vertical_inline_block() {
+    // The height of the paragraph is what the vertical box fits when it is
+    // definite: three columns of 10px in 300px, four in the half of 400px.
+    let height = [
+        ("p", (0.0, 0.0, 300.0, 300.0)),
+        ("o", (0.0, 0.0, 30.0, 300.0)),
+    ];
+    check_modes(
+        &vertical_inline_block("height:300px", "", &eight_words()),
+        &height,
+        &height,
+    );
+    let percent = [
+        ("p", (0.0, 0.0, 300.0, 200.0)),
+        ("o", (0.0, 0.0, 40.0, 200.0)),
+    ];
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div style=\"height:400px\"><div id=p style=\"width:300px;height:50%\">\
+             <span id=o style=\"display:inline-block;writing-mode:MODE\">{}</span></div></div>",
+            eight_words()
+        )),
+        &percent,
+        &percent,
+    );
+}
+
+#[test]
+fn a_vertical_inline_block_with_a_height_of_its_own_wraps_at_it() {
+    let own = [
+        ("p", (0.0, 0.0, 300.0, 202.0)),
+        ("o", (0.0, 0.0, 40.0, 200.0)),
+    ];
+    check_modes(
+        &vertical_inline_block("", "height:200px", &eight_words()),
+        &own,
+        &own,
+    );
+    let capped = [
+        ("p", (0.0, 0.0, 300.0, 302.0)),
+        ("o", (0.0, 0.0, 30.0, 300.0)),
+    ];
+    check_modes(
+        &vertical_inline_block("", "max-height:300px", &eight_words()),
+        &capped,
+        &capped,
+    );
+}
+
+#[test]
+fn a_vertical_float_of_a_horizontal_line_takes_the_page_height() {
+    let left = [
+        ("p", (0.0, 0.0, 300.0, 10.0)),
+        ("o", (0.0, 0.0, 20.0, 600.0)),
+    ];
+    let right = [
+        ("p", (0.0, 0.0, 300.0, 10.0)),
+        ("o", (280.0, 0.0, 20.0, 600.0)),
+    ];
+    for (side, expected) in [("left", &left), ("right", &right)] {
+        check_modes(
+            &on_a_bare_page(&format!(
+                "<div id=p style=\"width:300px\">aa<div id=o \
+                 style=\"float:{side};writing-mode:MODE\">{}</div></div>",
+                eight_words()
+            )),
+            expected,
+            expected,
+        );
+    }
+}
+
+#[test]
+fn a_horizontal_box_that_fits_its_content_is_as_wide_as_the_vertical_inline_block_it_holds() {
+    // The columns that the page height asks for count in the width of the
+    // float, not the single column of the max-content height.
+    let alone = [
+        ("h", (0.0, 0.0, 20.0, 600.0)),
+        ("p", (0.0, 0.0, 20.0, 600.0)),
+        ("o", (0.0, 0.0, 20.0, 600.0)),
+    ];
+    let words = eight_words();
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=h style=\"float:left\"><div id=p><span id=o \
+             style=\"display:inline-block;writing-mode:MODE\">{words}</span></div></div>"
+        )),
+        &alone,
+        &alone,
+    );
+    let with_text = [
+        ("h", (0.0, 0.0, 40.0, 600.0)),
+        ("p", (0.0, 0.0, 40.0, 600.0)),
+        ("o", (20.0, 0.0, 20.0, 600.0)),
+    ];
+    check_modes(
+        &on_a_bare_page(&format!(
+            "<div id=h style=\"float:left\"><div id=p>aa<span id=o \
+             style=\"display:inline-block;writing-mode:MODE\">{words}</span></div></div>"
+        )),
+        &with_text,
+        &with_text,
+    );
+}
+
+/// `depth` boxes of `css`, each inside the one before, in a vertical float
+/// whose width the content decides, with a column of text in the innermost.
+fn nested_in_a_vertical_float(depth: usize, css: &str) -> String {
+    let mut body = String::from("<div id=r style=\"float:left;writing-mode:vertical-rl\">");
+    for level in 0..depth {
+        body.push_str(&format!("<div id=c{level} style=\"{css}\">"));
+    }
+    body.push_str("bbbb");
+    body.push_str(&"</div>".repeat(depth + 1));
+    body
+}
+
+#[test]
+fn a_deep_chain_of_percentage_width_floats_is_as_wide_as_the_text_it_holds() {
+    // The percentage widths count as auto while the root takes its width from
+    // its lines, so every float is the one column of text wide. A float is laid
+    // out once for each way its parent tries it, however deep the chain is.
+    let depth = 12;
+    let expected: Vec<(String, Rect)> = std::iter::once("r".to_owned())
+        .chain((0..depth).map(|level| format!("c{level}")))
+        .map(|id| (id, (8.0, 8.0, 10.0, 40.0)))
+        .collect();
+    let expected: Vec<(&str, Rect)> = expected
+        .iter()
+        .map(|(id, rect)| (id.as_str(), *rect))
+        .collect();
+    check(
+        &nested_in_a_vertical_float(depth, "float:left;width:50%"),
+        &expected,
+    );
+}
+
+#[test]
+fn a_deep_chain_of_percentage_width_atomic_inlines_keeps_the_width_of_its_root() {
+    // Laying each box out once for every layout of the one around it took time
+    // exponential in the depth, 42 seconds at eight levels. (The inner boxes
+    // are not compared: they take their percentages of the width the box
+    // around them ends up with, which Chromium leaves as `auto`.)
+    for css in [
+        "display:inline-block;width:50%",
+        "display:inline-block;min-width:30%",
+        "display:inline-block;max-width:50%",
+    ] {
+        check(
+            &nested_in_a_vertical_float(12, css),
+            &[
+                ("r", (8.0, 8.0, 10.0, 40.0)),
+                ("c0", (8.0, 8.0, 10.0, 40.0)),
+            ],
+        );
+    }
+}

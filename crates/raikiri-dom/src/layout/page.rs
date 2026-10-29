@@ -110,7 +110,8 @@ pub(crate) fn used_computed_length_percentage_or_auto(
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent
-        | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
+        | ComputedLengthPercentageOrAuto::FitContentOf(_)
+        | ComputedLengthPercentageOrAuto::Stretch => {
             return None;
         }
     };
@@ -930,6 +931,13 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
     }
 }
 
+/// Whether `child` is a text node after the first of the run of text that
+/// makes one anonymous flex or grid item: the paragraph of that first node
+/// lays it out, so it is not an item of its own.
+fn is_later_text_of_item(child: &crate::Node) -> bool {
+    child.kind() == NodeKind::Text && child.in_ifc_subtree()
+}
+
 /// Whether `child_id` participates in its flex parent's ordered item sequence.
 /// Match Taffy's flat-tree, box-generation, out-of-flow, and whitespace-text
 /// filters so reversing the sequence changes only actual flex items.
@@ -941,6 +949,7 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
     let child = &document.nodes[child_id];
     child.is_in_document()
         && !child.is_display_none()
+        && !is_later_text_of_item(child)
         && child.layout_position() != Position::Absolute
         && !matches!(
             &child.data,
@@ -978,6 +987,7 @@ fn flex_pagination_child_order(
     let is_in_flow = |child_id: usize| {
         let child = &document.nodes[child_id];
         child.is_in_document()
+            && !is_later_text_of_item(child)
             && boxes.identity(child_id).display() != DisplayValue::None
             && !matches!(
                 boxes.identity(child_id).position(),
@@ -1211,10 +1221,9 @@ fn table_pagination_child_order(
     let header = first(DisplayValue::TableHeaderGroup);
     let footer = first(DisplayValue::TableFooterGroup);
     // Table layout renders only the first caption among the table's own
-    // children, so other captions, including ones inside `display: contents`
-    // wrappers, have no box to paginate or to take a page name from.
-    let caption = document.nodes[table]
-        .children
+    // children, those of `display: contents` wrappers included, so other
+    // captions have no box to paginate or to take a page name from.
+    let caption = children
         .iter()
         .copied()
         .find(|&id| boxes.identity(id).display() == DisplayValue::TableCaption);

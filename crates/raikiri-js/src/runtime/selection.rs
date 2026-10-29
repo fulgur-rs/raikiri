@@ -32,6 +32,7 @@ impl BoundaryPoints {
 struct RangeData {
     #[unsafe_ignore_trace]
     points: Cell<BoundaryPoints>,
+    owners: GcRefCell<Vec<boa_gc::Gc<super::node_gc::NodeRecord>>>,
 }
 
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -40,6 +41,8 @@ struct TreeWalkerData {
     root: usize,
     #[unsafe_ignore_trace]
     current_node: Cell<usize>,
+    root_owner: boa_gc::Gc<super::node_gc::NodeRecord>,
+    current_owner: GcRefCell<boa_gc::Gc<super::node_gc::NodeRecord>>,
     #[unsafe_ignore_trace]
     what_to_show: u32,
 }
@@ -170,10 +173,17 @@ fn range_select_node_contents(
         end_container: node,
         end_offset: length,
     };
+    let owners = with_state(context, |state| {
+        vec![
+            state.node_record(points.start_container),
+            state.node_record(points.end_container),
+        ]
+    })?;
     let updated = this.as_object().and_then(|object| {
-        object
-            .downcast_ref::<RangeData>()
-            .map(|data| data.points.set(points))
+        object.downcast_ref::<RangeData>().map(|data| {
+            data.points.set(points);
+            *data.owners.borrow_mut() = owners;
+        })
     });
     // The Range brand was checked above, and no script callback runs before this update.
     // cov:ignore: this defensive guard cannot fail between the immediately preceding brand check and update.
@@ -208,10 +218,17 @@ fn range_set_boundary(
         points.end_container = container;
         points.end_offset = offset;
     }
+    let owners = with_state(context, |state| {
+        vec![
+            state.node_record(points.start_container),
+            state.node_record(points.end_container),
+        ]
+    })?;
     let updated = this.as_object().and_then(|object| {
-        object
-            .downcast_ref::<RangeData>()
-            .map(|data| data.points.set(points))
+        object.downcast_ref::<RangeData>().map(|data| {
+            data.points.set(points);
+            *data.owners.borrow_mut() = owners;
+        })
     });
     if updated.is_none() {
         return Err(JsNativeError::typ()
@@ -274,11 +291,12 @@ fn tree_walker_set_current_node(
     // https://dom.spec.whatwg.org/#dom-treewalker-currentnode
     let object = tree_walker_object(this)?;
     let index = arg_node(std::slice::from_ref(value), 0, context)?;
-    object
+    let owner = with_state(context, |state| state.node_record(index))?;
+    let data = object
         .downcast_ref::<TreeWalkerData>()
-        .expect("TreeWalker brand was checked")
-        .current_node
-        .set(index);
+        .expect("TreeWalker brand was checked");
+    data.current_node.set(index);
+    *data.current_owner.borrow_mut() = owner;
     Ok(())
 }
 
@@ -308,19 +326,21 @@ fn tree_walker_what_to_show(this: &JsValue, _: &[JsValue], _: &mut Context) -> J
 /// allows that), the walk runs to the end of the document and then returns
 /// `None`, as browsers do; the spec's nextNode steps would instead filter
 /// the unchanged node again once no following node is left.
-fn next_tree_node(document: &raikiri_dom::Document, root: usize, current: usize) -> Option<usize> {
+fn next_tree_node(
+    document: &raikiri_dom::Document,
+    order: &mut super::tree::SiblingIndex,
+    root: usize,
+    current: usize,
+) -> Option<usize> {
     if let Some(child) = document.get_node(current)?.children.first() {
         return Some(*child);
     }
     let mut index = current;
     while index != root {
-        let parent = document.parent_of(index)?;
-        let siblings = &document.get_node(parent)?.children;
-        let position = siblings.iter().position(|sibling| *sibling == index)?;
-        if let Some(next) = siblings.get(position + 1) {
-            return Some(*next);
+        if let Some(next) = super::tree::next_sibling_index(document, order, index) {
+            return Some(next);
         }
-        index = parent;
+        index = document.parent_of(index)?;
     }
     None
 }
@@ -339,7 +359,7 @@ fn tree_walker_next_node(
     };
     let next = with_state(context, |state| {
         let document = state.host.document();
-        let mut candidate = next_tree_node(document, root, current);
+        let mut candidate = next_tree_node(document, &mut state.sibling_order, root, current);
         while let Some(index) = candidate {
             let kind = document.get_node(index).map(|node| node.kind());
             let accepted = match kind {
@@ -349,18 +369,14 @@ fn tree_walker_next_node(
             if accepted {
                 return Some(index);
             }
-            candidate = next_tree_node(document, root, index);
+            candidate = next_tree_node(document, &mut state.sibling_order, root, index);
         }
         None
     })?;
     let Some(next) = next else {
         return Ok(JsValue::null());
     };
-    object
-        .downcast_ref::<TreeWalkerData>()
-        .expect("TreeWalker brand was checked")
-        .current_node
-        .set(next);
+    tree_walker_set_current_node(this, &wrap(context, next)?.into(), context)?;
     Ok(wrap(context, next)?.into())
 }
 
@@ -388,11 +404,14 @@ pub(crate) fn create_tree_walker(
         Some(_) => arg_unsigned_long(args, 1, context)? as u32,
         None => u32::MAX,
     };
+    let owner = with_state(context, |state| state.node_record(root))?;
     Ok(JsObject::from_proto_and_data(
         Some(protos(context).tree_walker.clone()),
         TreeWalkerData {
             root,
             current_node: Cell::new(root),
+            root_owner: owner.clone(),
+            current_owner: GcRefCell::new(owner),
             what_to_show,
         },
     )
@@ -427,10 +446,12 @@ pub(crate) fn create_range(
         end_container: document,
         end_offset: 0,
     };
+    let owner = with_state(context, |state| state.node_record(document))?;
     let object = JsObject::from_proto_and_data(
         Some(protos(context).range.clone()),
         RangeData {
             points: Cell::new(points),
+            owners: GcRefCell::new(vec![owner]),
         },
     );
     Ok(object.into())

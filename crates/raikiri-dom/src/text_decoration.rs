@@ -9,7 +9,7 @@ use raikiri_style::property::{
 use raikiri_style::{
     CascadeResult, ComputedTextDecorationInset, ComputedTextUnderlineOffset, ComputedValues,
 };
-use raikiri_traits::NodeId;
+use raikiri_traits::{NodeId, NodeKind};
 use shodo::Fragment;
 use shodo::geometry::BaselineKind;
 use std::collections::HashMap;
@@ -454,8 +454,15 @@ fn context_for_text(
     );
     let root_id = document.ifc_source_owner(root_id);
     // Anonymous flex/grid text roots already carry their complete ancestor
-    // context. Starting at their parent would fold those ancestors twice.
-    if root_id == text_node {
+    // context. Starting at their parent would fold those ancestors twice. The
+    // text after the root in the same item has the context of the root too:
+    // the elements between it and the container are `display: contents`
+    // ones, which generate no box to draw a line on.
+    if root_id == text_node
+        || document
+            .get_node(root_id)
+            .is_some_and(|root| root.kind() == NodeKind::Text)
+    {
         return base.clone();
     }
     let mut chain = Vec::new();

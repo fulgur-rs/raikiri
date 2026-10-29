@@ -272,6 +272,7 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].flex_first_baseline = None;
         doc.nodes[idx].vertical_first_baseline = None;
         doc.nodes[idx].own_first_baseline = None;
+        doc.nodes[idx].exported_first_baseline = None;
         doc.nodes[idx].opposed_baseline_group = false;
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
@@ -500,6 +501,10 @@ fn apply_computed_to_style_in_session_inner(
         let cv = &*values;
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
+        doc.nodes[idx].contain_intrinsic = Size {
+            width: cv.contain_intrinsic_width.length.map(|length| length.px()),
+            height: cv.contain_intrinsic_height.length.map(|length| length.px()),
+        };
         doc.nodes[idx].text_group_align = shodo_group_align(cv.text_group_align);
         // Size containment removes the natural size and aspect ratio of
         // replaced content, so only an `aspect-ratio` of the box itself can
@@ -794,18 +799,11 @@ fn layout_values<'a>(
     let cv = vertical_sized.unwrap_or(&cascade.computed[idx]);
     // Only intrinsic keywords need contextual normalization. Keep the ordinary
     // scalar path free of repeated ancestor and formatting-context queries.
-    if ![
-        cv.width,
-        cv.height,
-        cv.min_width,
-        cv.max_width,
-        cv.min_height,
-        cv.max_height,
-        cv.min_block_size
-            .unwrap_or(ComputedLengthPercentageOrAuto::Auto),
-    ]
-    .into_iter()
-    .any(is_sizing_keyword)
+    if ![cv.width, cv.height].into_iter().any(is_sizing_keyword)
+        && ![cv.min_width, cv.max_width, cv.min_height, cv.max_height]
+            .into_iter()
+            .any(is_limit_keyword)
+        && !cv.min_block_size.is_some_and(is_sizing_keyword)
     {
         return std::borrow::Cow::Borrowed(cv);
     }
@@ -818,7 +816,7 @@ fn layout_values<'a>(
     let plain_limits = flags.contains(F::IGNORE_LIMIT_KEYWORDS)
         && [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
             .into_iter()
-            .any(is_sizing_keyword);
+            .any(is_limit_keyword);
     let ignore_logical_min_block = flags.contains(F::IGNORE_LOGICAL_MIN_BLOCK);
     if !(width || height || plain_limits || ignore_logical_min_block) {
         return std::borrow::Cow::Borrowed(cv);
@@ -837,7 +835,7 @@ fn layout_values<'a>(
             &mut plain.min_height,
             &mut plain.max_height,
         ] {
-            if is_sizing_keyword(*size) {
+            if is_limit_keyword(*size) {
                 *size = ComputedLengthPercentageOrAuto::Auto;
             }
         }
@@ -876,6 +874,14 @@ pub(super) fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
             | ComputedLengthPercentageOrAuto::FitContent
             | ComputedLengthPercentageOrAuto::FitContentOf(_)
     )
+}
+
+/// Whether the `min-*` or `max-*` size `size` is a keyword the layout resolves
+/// to a length when it lays the box out: an intrinsic sizing keyword, or
+/// `stretch`. Taffy's minimum and maximum sizes hold neither (see
+/// [`ContentLimits`]).
+pub(super) fn is_limit_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
+    is_sizing_keyword(size) || size == ComputedLengthPercentageOrAuto::Stretch
 }
 
 /// Whether element `idx`, whose computed values are `cv`, uses an intrinsic
@@ -1199,7 +1205,7 @@ fn bridge_content_limits(
     diag: &mut Vec<LayoutWarn>,
 ) -> ContentLimits {
     let mut keyword = |size, site| {
-        if is_sizing_keyword(size) {
+        if is_limit_keyword(size) {
             computed_length_percentage_or_auto_to_taffy_dimension(calc_values, size, site, diag)
         } else {
             Dimension::auto()
@@ -1241,6 +1247,8 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
         ComputedLengthPercentageOrAuto::MinContent => Dimension::min_content(),
         ComputedLengthPercentageOrAuto::MaxContent => Dimension::max_content(),
         ComputedLengthPercentageOrAuto::FitContent => Dimension::fit_content(),
+        // CSS Sizing 4 §5.1: the margin box fills the containing block.
+        ComputedLengthPercentageOrAuto::Stretch => Dimension::stretch(),
         // `fit-content(<length-percentage>)`: the limit keeps its percentage
         // for Taffy to resolve against the containing block.
         ComputedLengthPercentageOrAuto::FitContentOf(limit) => match limit {

@@ -22,7 +22,7 @@ use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::values::{
     AlignItems, BoxSizing, Clear, Contain, Dimension, Direction, Display, ExpandedDimension,
     ExpandedLengthPercentage, Float, LengthPercentage, LengthPercentageAuto, MaybeResolve,
-    Overflow, Position,
+    Overflow, Position, ResolveOrZero,
 };
 
 pub(super) use paged_spanning::{
@@ -616,6 +616,47 @@ fn column_definite_margins(
     (resolve(margin.left), resolve(margin.right))
 }
 
+/// The layout block flow stored for `child`, with the padding and the margins
+/// above and below it that depend on a percentage basis resolved against the
+/// column of `column_width` that it is measured in. Block flow resolved them
+/// against the whole container, but the column is the containing block of a
+/// box in it.
+fn column_child_layout(tree: &LayoutSession<'_>, child: usize, column_width: f32) -> BoxLayout {
+    let mut layout = tree.nodes[child].layout;
+    if layout_node(tree, child).kind() != NodeKind::Element {
+        return layout;
+    }
+    let style = style_of(tree, child);
+    let padding = style.padding();
+    let depends_on_basis = |value: LengthPercentage| {
+        value.is_calc() || value.resolve_or_zero(Some(0.0)) != value.resolve_or_zero(Some(1.0))
+    };
+    if [padding.top, padding.right, padding.bottom, padding.left]
+        .into_iter()
+        .any(depends_on_basis)
+    {
+        layout.padding = padding.resolve_or_zero(Some(column_width));
+    }
+    let margin = style.margin();
+    let resolved = |value: LengthPercentageAuto, used: f32| {
+        if value.is_calc() || value.resolve(Some(0.0)) != value.resolve(Some(1.0)) {
+            value.maybe_resolve(Some(column_width)).unwrap_or(0.0)
+        } else {
+            used
+        }
+    };
+    layout.margin.top = resolved(margin.top, layout.margin.top);
+    layout.margin.bottom = resolved(margin.bottom, layout.margin.bottom);
+    layout
+}
+
+/// The room between the horizontal margins of a box in a column of
+/// `column_width`, where an auto margin counts as zero.
+fn column_room(style: &LayoutStyleView<'_>, column_width: f32) -> f32 {
+    let (left, right) = column_definite_margins(style, column_width);
+    (column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
+}
+
 /// The left and right margins of a box when its border box is `child_width`
 /// wide in a column of `column_width`. Auto margins share the room the width
 /// and the other margin leave (CSS 2, 10.3.3), except on a float, where they
@@ -640,8 +681,8 @@ fn column_horizontal_margins(
 }
 
 /// The input that lays `child` out in a column of `column_width`: at the
-/// width the column imposes on it, if any, and for a float with an auto width
-/// within the room its margins leave.
+/// width the column imposes on it, if any, and for a float or a button with an
+/// auto width within the room its margins leave.
 fn column_child_layout_input(
     tree: &LayoutSession<'_>,
     child: usize,
@@ -659,18 +700,15 @@ fn column_child_layout_input(
     }
     let style = style_of(tree, child);
     let floated = style.float().is_floated();
-    // The room between the horizontal margins, where an auto margin counts as
-    // zero.
-    let room = || {
-        let (left, right) = column_definite_margins(&style, column_width);
-        (column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
-    };
+    let room = || column_room(&style, column_width);
     // An authored width resolves against the column width instead, and a
-    // float with an auto width shrinks to fit its content within the column.
-    let imposed_width = (style.size().width == Dimension::auto() && !floated).then(room);
+    // float or a button with an auto width shrinks to fit its content within
+    // the column (HTML Standard 15.5.3 for the button).
+    let shrinks = floated || layout_node(tree, child).is_html_button();
+    let imposed_width = (style.size().width == Dimension::auto() && !shrinks).then(room);
     let mut input =
         column_child_input(imposed_width, column_width, parent_height, available_height);
-    if input.known_dimensions.width.is_none() && floated {
+    if input.known_dimensions.width.is_none() && shrinks {
         input.available_space.width = AvailableSpace::Definite(room());
     }
     input
@@ -831,7 +869,10 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // Whether `node_id` has several child boxes, or one with block-edge padding
 // or border, and every one is an in-flow block of lines whose height comes from
 // its content and whose block edges, if any, its pieces slice, which the custom
-// path breaks between lines in a definite-height container as well.
+// path breaks between lines in a definite-height container as well. A box with
+// nothing inside it may stand among them, if one of the others holds lines: one
+// with a block size of its own, which the planner places whole in a column, or
+// one with no room of its own, whose margins collapse through it.
 fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize) -> bool {
     let mut children = tree
         .children_through_contents(node_id)
@@ -845,26 +886,35 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
     // existing path.
     let several = children.clone().nth(1).is_some();
     let mut decorated = false;
+    let mut paragraphs = 0usize;
     let plain = children.all(|child| {
-        let zero_margin = LengthPercentageAuto::length(0.0);
+        if lineless::is_sized_leaf(tree, child) || lineless::is_margin_only_block(tree, child) {
+            return insets_are_a_relative_offset(tree, child);
+        }
         let node = &tree.nodes[child];
         let style = style_of(tree, child);
         let margin = style.margin();
         let block_edges = lineless::has_block_edge_decorations(&style);
-        decorated |= block_edges;
+        // A paragraph that stands alone with padding or border at its sides
+        // also needs the planner: the path it would take otherwise lays it
+        // out at the width of the container.
+        decorated |= block_edges
+            || (lineless::has_inline_edge_decorations(&style) && slices_block_edges(node));
+        paragraphs += 1;
         // Block-edge decoration needs slice geometry for each piece, which the
-        // stream gives the lines it places; the pieces are stacked without
-        // collapsing adjoining margins; and the line offsets are read as
-        // horizontal block offsets.
+        // stream gives the lines it places; the planner collapses the adjoining
+        // margins as numbers, which `auto` would leave to the layout of the box
+        // (a percentage is a share of the column width, which
+        // `column_child_layout` resolves before the planner reads it); and the
+        // line offsets are read as horizontal block offsets.
         node.formatting_context == FormattingContext::Inline
             && !node
                 .authored_writing_mode
                 .is_some_and(WritingMode::is_vertical)
             && matches!(node.display(), DisplayValue::Block)
             && (!block_edges || slices_block_edges(node))
-            && [margin.top, margin.bottom]
-                .into_iter()
-                .all(|edge| edge == zero_margin)
+            && !margin.top.is_auto()
+            && !margin.bottom.is_auto()
             && node.layout_position() != Position::Absolute
             && insets_are_a_relative_offset(tree, child)
             && !style.float().is_floated()
@@ -872,7 +922,7 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
             && style.min_size().height.is_auto()
             && style.max_size().height.is_auto()
     });
-    plain && (several || decorated)
+    plain && paragraphs > 0 && (several || decorated)
 }
 
 /// Whether the insets of `child` can be left to the painter once the columns
@@ -1220,6 +1270,8 @@ struct ParagraphBalance {
     fragments: Vec<MulticolTextFragment>,
     /// The height of the tallest column.
     height: f32,
+    /// The height of the paragraph's lines in one column.
+    stacked: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1273,7 +1325,7 @@ fn layout_column_group(
                 tree.nodes[child].cache.clear();
             }
             let output = tree.compute_child_layout(NodeId::from(child), child_inputs);
-            let layout = tree.nodes[child].layout;
+            let layout = column_child_layout(tree, child, context.column_width);
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
             let needed = margin_top + output.size.height + margin_bottom;
@@ -1322,11 +1374,14 @@ fn layout_column_group(
         }
         let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
         let (fragments, height) = root_column_fragments(lines, context);
+        let (first, last) = (lines.lines.first()?, lines.lines.last()?);
+        let stacked = last.block_offset() + last.block_size() - first.block_offset();
         (fragments.len() > 1).then_some(ParagraphBalance {
             child: *child,
             leaf,
             fragments,
             height,
+            stacked,
         })
     });
     let mut avoid_column_break_after_previous = false;
@@ -1368,7 +1423,7 @@ fn layout_column_group(
                     return fallback_height;
                 }
                 refresh_nested_text_fragments(tree, child, context);
-                let layout = tree.nodes[child].layout;
+                let layout = column_child_layout(tree, child, context.column_width);
                 let margin_top = layout.margin.top;
                 let margin_bottom = layout.margin.bottom;
                 let needed = margin_top + output.size.height + margin_bottom;
@@ -1650,7 +1705,14 @@ fn layout_column_group(
         if let Some(placement) = planned {
             column = placement.last_column;
             cursor = placement.last_y;
-            maximum = maximum.max(group_balance.as_ref().map_or(0.0, |group| group.height));
+            let group_height = group_balance.as_ref().map_or(0.0, |group| group.height);
+            maximum = maximum.max(group_height);
+            // The margin below the last box of balanced columns stays inside
+            // them: it counted in the height divided among the columns, and
+            // does not add to it.
+            if fragment_height.is_none() {
+                cursor = cursor.min(group_height);
+            }
         } else if let Some((last_column, end)) = definite_paragraphs
             .then(|| paragraph_end_in_later_column(tree, child, column))
             .flatten()
@@ -1662,6 +1724,17 @@ fn layout_column_group(
             cursor = end + margin_bottom;
         } else {
             cursor = y - content_origin.y + child_output.size.height + margin_bottom;
+            if let Some(balance) = &paragraph_balance
+                && balance.child == child
+            {
+                // The columns are as tall as the paragraph and its margins in
+                // one column divided among them, or as the tallest piece when
+                // that is more; the margin below the paragraph does not add to
+                // them.
+                let columns = context.column_count.saturating_sub(context.column_index);
+                let divided = (margin_top + balance.stacked + margin_bottom) / columns as f32;
+                cursor = (cursor - margin_bottom).max(divided);
+            }
         }
         if tree.nodes[child].kind() == NodeKind::Element {
             avoid_column_break_after_previous =
@@ -3474,8 +3547,10 @@ impl AncestorFacts {
             || cv.width != ComputedLengthPercentageOrAuto::Auto
             || !matches!(node.position(), PositionValue::Static)
             || has_nonzero_horizontal_margin(cv)
-            // A float shrinks to fit, and a box whose width follows its
-            // height through the aspect ratio does not stretch.
+            // A float shrinks to fit, and so does a button, whose `auto` width
+            // is the fit-content one; a box whose width follows its height
+            // through the aspect ratio does not stretch.
+            || node.is_html_button()
             || AuthoredBox::new(doc, cascade, id).is_floated()
             || width_follows_height(doc, cascade, id)
             || self.out_of_flow_ancestor[id]

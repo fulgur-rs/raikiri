@@ -21,8 +21,8 @@ fn counter_snapshot_limit_error_has_stable_display() {
 // literal-constructed here even with every field supplied — there is no
 // builder either (matching `crate::running`'s own tests, which never
 // construct `ComputedValues` directly). `CounterScopes` is therefore
-// exercised only through real `cascade()` output, below, via
-// `counter_snapshots`.
+// exercised through real `cascade()` output, below. Additional low-level
+// cases clone that output before changing individual directives.
 
 // ── counter_snapshots (arena-walk integration) ──────────────────
 #[test]
@@ -1002,4 +1002,18 @@ fn compact_construction_shares_nested_stack_and_name_prefixes() {
             Some(511)
         );
     }
+}
+
+mod name_work_tests;
+
+thread_local! {
+    static COUNTER_NAME_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
+
+pub(super) fn record_counter_name_work(kind: usize) {
+    COUNTER_NAME_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += 1;
+        work.set(counts);
+    });
 }

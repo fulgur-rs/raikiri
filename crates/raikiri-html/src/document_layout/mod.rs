@@ -12,6 +12,8 @@ pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::PlacedRunningElement;
 pub use page::{ImageContent, InlineSvg, Page, PageGeometry, PageMode, PlacedImage, RasterImage};
 pub use running::RunningElementLayout;
+#[cfg(feature = "streaming-diagnostics")]
+pub use streaming::StreamingDiagnostics;
 pub use streaming::{
     PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
 };

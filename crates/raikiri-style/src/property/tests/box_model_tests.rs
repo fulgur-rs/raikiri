@@ -2247,6 +2247,99 @@ fn min_and_max_sizes_keep_the_sizing_keywords() {
 }
 
 #[test]
+fn every_preferred_size_property_keeps_the_stretch_keyword() {
+    // CSS Sizing 4 §5.1: `stretch` is a `<box-size>`, so each preferred size,
+    // in physical and logical form, takes it.
+    for (property, wrap) in [
+        (
+            "width",
+            PropertyValue::Width as fn(LengthOrAuto) -> PropertyValue,
+        ),
+        ("height", PropertyValue::Height),
+        ("inline-size", PropertyValue::InlineSize),
+        ("block-size", PropertyValue::BlockSize),
+    ] {
+        assert_eq!(
+            parse("stretch", property),
+            Some(wrap(LengthOrAuto::Stretch)),
+            "{property}"
+        );
+        assert_eq!(
+            parse("STRETCH", property),
+            Some(wrap(LengthOrAuto::Stretch)),
+            "{property}"
+        );
+        // `-webkit-fill-available` is the legacy spelling of the same keyword.
+        assert_eq!(
+            parse("-webkit-fill-available", property),
+            Some(wrap(LengthOrAuto::Stretch)),
+            "{property}"
+        );
+        // It is a keyword of its own, neither `auto` nor a content keyword.
+        assert_ne!(parse("stretch", property), parse("auto", property));
+        assert_ne!(parse("stretch", property), parse("fit-content", property));
+    }
+}
+
+#[test]
+fn every_minimum_and_maximum_size_property_keeps_the_stretch_keyword() {
+    // CSS Sizing 4 §5.1: `stretch` is a `<box-size>`, so the minimum and
+    // maximum sizes take it in physical and logical form, with its legacy
+    // spelling.
+    for (property, wrap) in [
+        (
+            "min-width",
+            PropertyValue::MinWidth as fn(LengthOrAuto) -> PropertyValue,
+        ),
+        ("min-height", PropertyValue::MinHeight),
+        ("min-inline-size", PropertyValue::MinInlineSize),
+        ("min-block-size", PropertyValue::MinBlockSize),
+        ("max-width", PropertyValue::MaxWidth),
+        ("max-height", PropertyValue::MaxHeight),
+        ("max-inline-size", PropertyValue::MaxInlineSize),
+        ("max-block-size", PropertyValue::MaxBlockSize),
+    ] {
+        for value in ["stretch", "STRETCH", "-webkit-fill-available"] {
+            assert_eq!(
+                parse_entire(value, property),
+                Some(wrap(LengthOrAuto::Stretch)),
+                "{property}: {value}"
+            );
+        }
+        // It is a keyword of its own: not the property's no-limit keyword.
+        assert_ne!(parse("stretch", property), parse("auto", property));
+        assert_ne!(parse("stretch", property), parse("none", property));
+        // It stands alone, as it does for the preferred sizes.
+        assert_eq!(
+            parse_entire("calc(10px + stretch)", property),
+            None,
+            "{property}"
+        );
+        assert_eq!(parse_entire("stretch 10px", property), None, "{property}");
+        assert_eq!(parse_entire("-moz-available", property), None, "{property}");
+    }
+}
+
+#[test]
+fn the_stretch_keyword_is_not_a_math_function_operand_or_a_list() {
+    // Chromium drops each of these declarations; `stretch` stands alone.
+    for property in ["width", "height", "inline-size", "block-size"] {
+        assert_eq!(
+            parse_entire("calc(10px + stretch)", property),
+            None,
+            "{property}"
+        );
+        assert_eq!(parse_entire("stretch 10px", property), None, "{property}");
+        assert_eq!(
+            parse_entire("stretch stretch", property),
+            None,
+            "{property}"
+        );
+        assert_eq!(parse_entire("-moz-available", property), None, "{property}");
+    }
+}
+
+#[test]
 fn min_and_max_sizes_keep_their_own_no_constraint_keyword() {
     // `auto` is the initial minimum size and `none` the initial maximum size;
     // each is invalid for the other. Both stand for "no constraint".

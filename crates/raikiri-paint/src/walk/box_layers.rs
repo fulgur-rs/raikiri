@@ -26,7 +26,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         // until the deferred `PaintAfter` and overflow clip frames
         // have finished so overlapping descendants are composited as
         // one group instead of being alpha-blended individually.
-        let has_opacity_layer = raikiri_dom::paint_rules::opacity_layer(cv).is_some();
+        let has_opacity_layer =
+            raikiri_dom::paint_rules::element_opacity_layer(self.document, node_id, cv).is_some();
         if has_opacity_layer {
             let opacity_clip = Rect::new(
                 0.0,

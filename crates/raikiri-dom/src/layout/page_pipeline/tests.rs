@@ -3,6 +3,18 @@ use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use crate::layout::test_support::{bridged_display, bridged_style, with_pass_view};
 use raikiri_layout_style::values::Clear;
 
+thread_local! {
+    pub(super) static GEOMETRY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
+    pub(super) static SIBLING_ADJACENCY_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+}
+
+pub(super) fn record_sibling_adjacency_work(work: [usize; 3]) {
+    SIBLING_ADJACENCY_WORK.with(|counts| {
+        let old = counts.get();
+        counts.set(std::array::from_fn(|i| old[i] + work[i]));
+    });
+}
+
 mod ancestor_walk_tests;
 mod avoid_followup_tests;
 mod avoided_run_tests;
@@ -11,12 +23,14 @@ mod candidate_text_tests;
 mod closing_edge_tests;
 mod column_projection_tests;
 mod fragment_sources_tests;
+mod geometry_lookup_tests;
 mod line_ranges_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
 mod options_tests;
 mod page_name_storage_tests;
 mod paged_spanning_tests;
+mod sibling_adjacency_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 mod vertical_grid_tests;
@@ -154,7 +168,7 @@ fn paginating<'a>(
 fn set_committed_column_fragments(doc: &mut Document, root: usize) {
     use crate::fragment::{FragmentRect, LayoutFragment};
     use crate::node::MulticolTextFragment;
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     // Supply an independently specified producer stream. The second source
     // box starts above its column so its original lines 2 and 3 start at y=0.
     doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(vec![
@@ -280,8 +294,8 @@ fn column_break_clips_intersect_the_explicit_ancestor_clip() {
             line_end: None,
         })
         .unwrap();
-    for fragment in &mut doc.fragment_tree.fragments[..2] {
-        fragment.parent = Some(parent);
+    for index in 0..2 {
+        doc.fragment_tree.attach_root(index, parent);
     }
     doc.project_pages(
         &cascade,
@@ -763,6 +777,8 @@ fn margin_box_starts_page_on_a_later_page_or_at_the_page_start() {
     assert!(margin_box_starts_page(&origins, 100.0, 0, 0.0));
     assert!(margin_box_starts_page(&origins, 100.0, 1, 100.0));
     assert!(!margin_box_starts_page(&origins, 150.0, 1, 100.0));
+    // Part-way down a later page, the margin box follows content that runs on.
+    assert!(!margin_box_starts_page(&origins, 105.0, 0, 0.0));
     assert!(!margin_box_starts_page(&origins, 50.0, 0, 0.0));
     // Positions outside the flow stay on the current page.
     assert!(!margin_box_starts_page(&origins, -10.0, 0, 0.0));
@@ -2804,6 +2820,52 @@ fn layout_pages_keeps_column_reverse_visual_last_item_at_page_edge() {
         bottom_y < 60.0 && bottom_y + 70.0 > 100.0,
         "visual last item may continue across the page edge: y={bottom_y}"
     );
+}
+
+#[test]
+fn layout_pages_orders_the_text_of_one_anonymous_item_as_a_single_flex_item() {
+    use crate::layout::test_support::with_ahem;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("font:10px/10px Ahem"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:flex;flex-direction:column-reverse;width:100px"),
+    );
+    // One anonymous item: the `display: contents` element joins the text on
+    // both sides of it.
+    let first = doc.append_text(flex, "ab ");
+    let contents = doc.append_element(Some(flex), "b", Some("display:contents"));
+    let second = doc.append_text(contents, "cd");
+    let third = doc.append_text(flex, " ef");
+    let block = doc.append_element(Some(flex), "div", Some("order:1;height:30px"));
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 200.0;
+    page.height = 100.0;
+    layout_pages(with_ahem(&mut doc), &cascade, page).expect("pagination Ok");
+
+    // The later text nodes are not items: layout and pagination see the
+    // block and the first text, reversed for the pagination order.
+    assert_eq!(
+        doc.layout_child_ids(flex).collect::<Vec<_>>(),
+        [first, block]
+    );
+    let items: Vec<_> = crate::layout::page::pagination_child_order(&doc, &cascade, flex)
+        .into_iter()
+        .filter(|&id| crate::layout::page::is_in_flow_flex_child_for_pagination(&doc, flex, id))
+        .collect();
+    assert_eq!(items, [block, first]);
+    assert!(doc.nodes[first].is_ifc_root());
+    assert!(doc.nodes[second].in_ifc_subtree());
+    assert!(doc.nodes[third].in_ifc_subtree());
+    assert_eq!(doc.ifc_root_of(third), Some(first));
 }
 
 #[test]
@@ -10054,7 +10116,7 @@ fn many_column_fixture(count: usize) -> (Document, CascadeResult, usize) {
     let text = vec!["A"; count].join("\n");
     let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph(&text, "width:20px");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(
         (0..count)
             .map(|column| MulticolTextFragment {
@@ -10207,7 +10269,7 @@ fn duplicate_column_placements_charge_their_selected_records_before_copying() {
             doc.append_text(root, vec!["A"; 128].join("\n"));
         });
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-    doc.fragment_tree.fragments.clear();
+    doc.fragment_tree.replace_finalized_fragments(Vec::new());
     doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(vec![MulticolTextFragment {
         line_start: 0,
         line_end: count,
@@ -11666,6 +11728,216 @@ fn a_root_margin_crossing_scheduled_pages_breaks_at_the_first_page_origin() {
     assert_eq!(
         crate::layout::test_support::absolute_rect(&doc, child).1,
         158.0
+    );
+}
+
+#[test]
+fn a_forced_break_after_the_first_box_of_a_later_page_opens_the_page_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // A short first page ends where the root's margin does, so the first box
+    // sits at the top of the second page, as in a relayout that resumes after
+    // pages already delivered. The break after it opens the third page, not
+    // the one the box is on.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin-top:5px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let boxes: Vec<_> = (0..4)
+        .map(|_| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;height:90px;break-after:page"),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    let pages = layout_pages_with_options(
+        &mut doc,
+        &cascade,
+        page,
+        crate::PageLayoutOptions {
+            page_steps: &[5.0, 100.0, 100.0, 100.0, 100.0],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let ys: Vec<_> = boxes
+        .iter()
+        .map(|&id| crate::layout::test_support::absolute_rect(&doc, id).1)
+        .collect();
+    assert_eq!(ys, [5.0, 105.0, 205.0, 305.0]);
+    assert_eq!(pages.len(), 5);
+}
+
+#[test]
+fn a_forced_break_after_a_box_crossing_a_page_edge_opens_the_page_it_ends_on_next() {
+    // The second box runs from 5 to 105, over the edge at 100. The break after
+    // it opens the page after the one it ends on, so the last box starts on the
+    // fourth page rather than overlapping the second box's tail on the second.
+    assert_eq!(
+        page_box_positions(&["height:5px", "height:100px;break-after:page", "height:20px",]),
+        (vec![0.0, 5.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_forced_break_before_a_box_after_one_crossing_a_page_edge_opens_the_page_after_it() {
+    // The break before the last box sits after the second box, which ends on
+    // the second page.
+    assert_eq!(
+        page_box_positions(&[
+            "height:5px",
+            "height:100px",
+            "height:20px;break-before:page",
+        ]),
+        (vec![0.0, 5.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_chain_of_forced_breaks_after_boxes_crossing_page_edges_opens_a_page_after_each() {
+    // Every 100px box starts 5px down its page and runs 5px onto the next.
+    assert_eq!(
+        page_box_positions(&[
+            "height:5px",
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+        ]),
+        (vec![0.0, 5.0, 200.0, 300.0, 400.0], 5)
+    );
+}
+
+#[test]
+fn a_forced_break_after_a_box_that_fills_a_page_exactly_opens_the_next_page() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![0.0, 100.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_box_avoiding_a_break_inside_it_moves_off_the_page_edge_a_box_before_it_crossed() {
+    // The second box starts on the first page and ends 90px down the second,
+    // so the last box starts there and would cross the edge below it.
+    assert_eq!(
+        page_box_positions(&[
+            "height:40px",
+            "height:150px",
+            "height:60px;break-inside:avoid"
+        ]),
+        (vec![0.0, 40.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_taller_than_a_page_box_avoiding_a_break_inside_it_moves_off_a_page_edge_crossed_before_it() {
+    // Neither avoiding box fits a page, but both start part-way down one, so
+    // each moves to the top of the next.
+    assert_eq!(
+        page_box_positions(&[
+            "height:40px",
+            "height:150px;break-inside:avoid",
+            "height:150px;break-inside:avoid",
+        ]),
+        (vec![0.0, 100.0, 300.0], 5)
+    );
+}
+
+#[test]
+fn a_relative_offset_on_the_first_box_does_not_move_the_page_it_starts_on() {
+    // The offset only paints the box lower. It stays on the first page, so
+    // the break after it opens the second page for the next box.
+    assert_eq!(
+        page_box_positions(&[
+            "position:relative;top:100px;height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![100.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_relative_offset_that_crosses_a_page_edge_does_not_move_the_page_a_later_box_starts_on() {
+    // The second box sits in the flow at 20 and is painted at 120, on the
+    // second page. Its siblings follow the flow: the break after it opens the
+    // second page for the last box, and a box that needs a page to itself
+    // moves there from the first.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![0.0, 120.0, 100.0], 2)
+    );
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px",
+            "height:20px;break-before:page",
+        ]),
+        (vec![0.0, 120.0, 100.0], 2)
+    );
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px",
+            "height:90px;break-inside:avoid",
+        ]),
+        (vec![0.0, 120.0, 100.0], 2)
+    );
+    // Without a break the last box stays where the flow puts it.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "position:relative;top:100px;height:20px",
+            "height:20px",
+        ]),
+        (vec![0.0, 120.0, 40.0], 2)
+    );
+}
+
+#[test]
+fn a_negative_relative_offset_does_not_move_a_box_back_to_the_previous_page() {
+    // The second box starts the second page in the flow and is painted 30px
+    // above it; the box after it stays on the second page.
+    assert_eq!(
+        page_box_positions(&[
+            "height:100px",
+            "position:relative;top:-30px;height:20px",
+            "height:10px"
+        ]),
+        (vec![0.0, 70.0, 120.0], 2)
+    );
+}
+
+#[test]
+fn an_absolutely_positioned_first_box_does_not_move_the_flow_to_its_page() {
+    // The tall absolutely positioned box is a candidate, but it takes no part
+    // in the flow: the box after it stays on the first page, and the break
+    // after that opens the second page for the last one.
+    assert_eq!(
+        page_box_positions(&[
+            "position:absolute;top:100px;height:120px",
+            "height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![100.0, 0.0, 100.0], 3)
     );
 }
 
@@ -15633,6 +15905,8 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
     let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
+    // Four lines hold two orphans and two widows, so the widows stay at two.
+    assert_eq!(fit.widows, 2);
     // Room for both constraints and shiftable lines: the break moves up.
     assert_eq!(
         fit.fix(&lines, 70.0, 0, &pages, true, || true),
@@ -15648,12 +15922,31 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
         fit.fix(&lines, 70.0, 0, &pages, false, || false),
         LineBreakFix::Keep
     );
-    // Too few lines for both constraints never ask whether lines can shift.
-    let short = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)];
-    let fit = ParagraphLineFit::measure(&short, 80.0, 0.0, 100.0, 2, 2);
+    // Too few lines for the orphans never ask whether lines can shift.
+    let short = [(0.0, 10.0), (10.0, 20.0)];
+    let fit = ParagraphLineFit::measure(&short, 90.0, 0.0, 100.0, 2, 2);
     assert_eq!(
-        fit.fix(&short, 80.0, 0, &pages, true, || unreachable!()),
+        fit.fix(&short, 90.0, 0, &pages, true, || unreachable!()),
         LineBreakFix::MoveBlock
+    );
+    let three = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)];
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 3, 1);
+    assert_eq!(
+        fit.fix(&three, 80.0, 0, &pages, true, || unreachable!()),
+        LineBreakFix::MoveBlock
+    );
+    // Three lines under the default orphans and widows of 2: the paragraph
+    // keeps its orphans and the last piece takes the one line they leave.
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 2, 2);
+    assert_eq!(
+        fit.fix(&three, 80.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // With one orphan and two widows the break moves up to leave two lines.
+    let fit = ParagraphLineFit::measure(&three, 80.0, 0.0, 100.0, 1, 2);
+    assert_eq!(
+        fit.fix(&three, 80.0, 0, &pages, true, || true),
+        LineBreakFix::MoveLines([Some((1, 10.0, 1)), None])
     );
     // A break that honors both constraints needs no repair.
     let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2);
@@ -16194,7 +16487,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     doc.nodes[third].layout.margin.top = 30.0;
     let origins = PageOrigins::new(&[], 100.0);
     let truncation = |doc: &mut Document,
-                      margins: &SiblingMargins,
+                      margins: &mut SiblingMargins,
                       cascade: &CascadeResult,
                       at: &MarginBreak| {
         let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
@@ -16215,7 +16508,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     };
 
     // The block moves up to the top of the page.
-    let found = truncation(&mut doc, &margins, &cascade, &at).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &at).unwrap();
     assert_eq!(found.delta, -20.0);
     assert_eq!(found.underflow, None);
 
@@ -16225,7 +16518,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         forced_before: true,
         ..at
     };
-    let found = truncation(&mut doc, &margins, &cascade, &forced).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &forced).unwrap();
     assert_eq!(found.delta, 10.0);
     assert_eq!(found.underflow, None);
     let pulled_up = MarginBreak {
@@ -16233,7 +16526,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         margin_top: -5.0,
         ..at
     };
-    let found = truncation(&mut doc, &margins, &cascade, &pulled_up).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &pulled_up).unwrap();
     assert_eq!(found.delta, -25.0);
     assert_eq!(found.underflow, Some(5.0));
 
@@ -16243,14 +16536,14 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         collapses_with_previous_block: false,
         ..at
     };
-    assert!(truncation(&mut doc, &margins, &cascade, &apart).is_none());
+    assert!(truncation(&mut doc, &mut margins, &cascade, &apart).is_none());
     let first_page = MarginBreak {
         natural_page: 0,
         ..at
     };
-    assert!(truncation(&mut doc, &margins, &cascade, &first_page).is_none());
+    assert!(truncation(&mut doc, &mut margins, &cascade, &first_page).is_none());
     // Nor when no block before it was recorded.
-    assert!(truncation(&mut doc, &SiblingMargins::default(), &cascade, &at).is_none());
+    assert!(truncation(&mut doc, &mut SiblingMargins::default(), &cascade, &at).is_none());
 
     // A box that clears floats keeps the gap, which may hold clearance. The
     // gap above it is judged from the bottom recorded for the block before.
@@ -16262,9 +16555,9 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         natural_page: 2,
         ..at
     };
-    assert!(truncation(&mut doc, &margins, &cascade, &clearing).is_none());
+    assert!(truncation(&mut doc, &mut margins, &cascade, &clearing).is_none());
     cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
-    let found = truncation(&mut doc, &margins, &cascade, &clearing).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &clearing).unwrap();
     assert_eq!(found.delta, -20.0);
 }
 
@@ -17029,9 +17322,9 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
             flex_item: false,
             grid_item: false,
         },
+        fit_page: 0,
         forced_before: false,
         forced_transition: false,
-        named_page_change: false,
         margins_collapse_through: false,
         collapses_with_previous_block: false,
         pending_break_applies: false,
@@ -17119,7 +17412,7 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
         &candidate(body, 30.0, None),
         &entry(true, None, false),
     );
-    assert!(!page_break.forced_before && !page_break.named_page_change);
+    assert!(!page_break.forced_before);
     assert!(!page_break.forced_transition && !page_break.pending_break_applies);
     assert!(!page_break.is_page_transition());
     let (page_break, _) = meet(
@@ -17127,7 +17420,7 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
         &candidate(body, 30.0, Some("b")),
         &entry(true, Some("a"), false),
     );
-    assert!(!page_break.forced_before && page_break.named_page_change);
+    assert!(!page_break.forced_before && !page_break.pending_break_applies);
     assert!(page_break.forced_transition && page_break.is_page_transition());
 
     // A box that follows its containing box through positioned insets starts
@@ -18136,9 +18429,9 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
             flex_item: false,
             grid_item: false,
         },
+        fit_page: 0,
         forced_before: forced,
         forced_transition: forced,
-        named_page_change: false,
         margins_collapse_through: true,
         collapses_with_previous_block: true,
         pending_break_applies: forced,
@@ -18290,7 +18583,7 @@ fn a_box_meeting_no_page_transition_starts_on_the_page_its_position_falls_on() {
             &env,
             &candidate,
             page_break,
-            &mut position,
+            (&mut position, 0.0),
         );
         (started, position)
     };

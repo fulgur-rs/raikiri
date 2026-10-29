@@ -87,6 +87,9 @@ pub enum LogicalData {
         /// Sampled animation-origin declarations.
         #[cfg_attr(feature = "snapshot-serde", serde(default))]
         animation_style: Option<String>,
+        /// Current CSSOM source, separate from the element's DOM children.
+        #[cfg_attr(feature = "snapshot-serde", serde(default))]
+        stylesheet_source: Option<String>,
         /// Template fragment arena index.
         template: Option<usize>,
     },
@@ -149,6 +152,15 @@ impl LogicalSnapshot {
             ) && !node.children.is_empty()
             {
                 return fail("leaf children");
+            }
+            if let LogicalData::Element {
+                tag,
+                stylesheet_source: Some(_),
+                ..
+            } = &node.data
+                && tag != "style"
+            {
+                return fail("stylesheet source target");
             }
             edges[id].extend_from_slice(&node.children);
             if let LogicalData::Element {
@@ -239,7 +251,8 @@ impl Document {
             nodes: self
                 .nodes
                 .iter()
-                .map(|n| LogicalNode {
+                .enumerate()
+                .map(|(id, n)| LogicalNode {
                     children: n.children.clone(),
                     data: match &n.data {
                         NodeData::Document => LogicalData::Document,
@@ -255,6 +268,7 @@ impl Document {
                             prefix: e.prefix.as_ref().map(ToString::to_string),
                             inline_style: e.inline_style.as_ref().map(ToString::to_string),
                             animation_style: e.animation_style.as_ref().map(ToString::to_string),
+                            stylesheet_source: self.stylesheet_source(id).map(str::to_owned),
                             template: e.template_contents,
                             attributes: e
                                 .attributes
@@ -310,6 +324,22 @@ impl Document {
                 },
             );
         }
+        let stylesheet_sources: Vec<_> = snapshot
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(id, node)| {
+                if let LogicalData::Element {
+                    stylesheet_source: Some(source),
+                    ..
+                } = &node.data
+                {
+                    Some((id, source.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
         doc.nodes = snapshot
             .nodes
             .into_iter()
@@ -329,6 +359,7 @@ impl Document {
                         attributes,
                         inline_style,
                         animation_style,
+                        stylesheet_source: _,
                         template,
                     } => {
                         let mut node = Node::new_element(tag.into(), inline_style.map(Into::into));
@@ -363,6 +394,10 @@ impl Document {
                     node.parent = Some(parent_id);
                 }
             }
+        }
+        for (element, source) in stylesheet_sources {
+            doc.set_stylesheet_source(element, source)
+                .expect("validated stylesheet source target");
         }
         doc.flags_dirty = true;
         doc.mark_in_document_flags();

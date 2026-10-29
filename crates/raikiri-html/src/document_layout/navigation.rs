@@ -12,7 +12,8 @@ pub struct Anchor {
     /// Top-left of the target's first fragment, CSS px from the page box
     /// origin, where the built-in painter draws it: the layout corner mapped
     /// through the fragment's transform (see [`super::Page::paint_transform`]).
-    /// A target a singular transform hides keeps its layout corner.
+    /// A target a singular transform hides keeps its layout corner. The root
+    /// element's own transform ([`super::Page::root_box`]) is not applied.
     pub point: (f32, f32),
 }
 

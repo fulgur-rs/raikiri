@@ -1,95 +1,92 @@
-//! Peak heap and time of a streaming layout against a batch layout, by page
-//! count.
+//! Parser, batch and streaming heap costs with deterministic bundled fonts.
 //!
-//! A streaming layout should hold less memory than a batch layout once its
-//! pages are delivered: ideally its peak stays flat as the document grows,
-//! while a batch layout's peak grows with the page count. This bench lays
-//! the same text document out both ways at several lengths and prints, for
-//! each, the peak of live heap bytes during the run and the wall time, then
-//! the growth per page between the shortest and the longest document.
-//!
-//! The peak counts the allocations of every thread, because paragraphs are
-//! built on several threads. It is the heap the layout holds, not the
-//! process RSS, so it does not depend on the allocator's caching.
-//!
-//! Run with:
-//!
-//! ```text
-//! cargo bench -p raikiri-bench --bench streaming_memory
-//! ```
-//!
-//! Set `RAIKIRI_STREAM_SECTIONS` to a comma separated list of section counts
-//! (for example `200,800,2000`) to measure other lengths. A section is three
-//! paragraphs, and two sections fill about one page.
+//! Run `cargo bench -p raikiri-bench --bench streaming_memory`.
+//! `RAIKIRI_STREAM_SECTIONS=200,400,800,1600` selects the input lengths.
+//! Each row measures requested allocation/reallocation bytes and peak live
+//! heap, then times a separate run with allocation counting disabled. Realloc
+//! bytes are the requested new sizes, not measured bytes copied by the allocator.
+//! The parser retains the full source DOM; a flat streaming heap is not assumed.
 
-// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace` never
-// build this bench target, so nothing in this file has coverage
-// instrumentation to attribute to.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+mod common {
+    pub mod workloads;
+}
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering::Relaxed};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 use raikiri_html::{
-    ConsumerPropertyEvent, LayoutConfig, LayoutOptions, LayoutStatus, PageDefaults, PageSink,
-    RenderResources, StreamPage, StreamStatus, StreamSummary, StreamingLayout, layout,
-    parse_html_with_resources,
+    ConsumerPropertyEvent, ConsumerPropertyRegistration, LayoutConfig, LayoutOptions, LayoutStatus,
+    PageDefaults, PageSink, ParseOptions, RenderResources, StreamPage, StreamStatus, StreamSummary,
+    StreamingDiagnostics, StreamingLayout, layout, parse, parse_html_with_resources,
 };
 
 struct Counting;
-
 static MEASURING: AtomicBool = AtomicBool::new(false);
 static LIVE: AtomicIsize = AtomicIsize::new(0);
 static PEAK: AtomicIsize = AtomicIsize::new(0);
+static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
+static REALLOC_BYTES: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
+static ALLOC_CALLS: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
+static REALLOC_CALLS: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
 
-// cov:ignore: bench harness — same reason as the file header.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn record(delta: isize) {
-    if MEASURING.load(Relaxed) {
-        let live = LIVE.fetch_add(delta, Relaxed).saturating_add(delta);
-        PEAK.fetch_max(live, Relaxed);
-    }
+    let live = LIVE.fetch_add(delta, Relaxed).saturating_add(delta);
+    PEAK.fetch_max(live, Relaxed);
 }
 
-// cov:ignore: bench harness — same reason as the file header.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn size(layout: Layout) -> isize {
     isize::try_from(layout.size()).unwrap_or(isize::MAX)
 }
 
-// Counting allocations needs a `GlobalAlloc`, whose methods are unsafe to
-// implement; nothing else in this file uses unsafe code.
-// SAFETY: every method forwards its arguments unchanged to `System` and only
-// updates counters on the side, so `System`'s guarantees carry over.
+// SAFETY: every call forwards the allocator contract unchanged to System;
+// counters do not allocate or affect the returned pointer.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 #[allow(unsafe_code)]
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract.
+        // SAFETY: the caller upholds GlobalAlloc's allocation contract.
         let ptr = unsafe { System.alloc(layout) };
-        if !ptr.is_null() {
+        if !ptr.is_null() && MEASURING.load(Relaxed) {
+            ALLOC_BYTES.fetch_add(layout.size() as u64, Relaxed);
+            ALLOC_CALLS.fetch_add(1, Relaxed);
             record(size(layout));
         }
         ptr
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: the caller upholds `GlobalAlloc::alloc_zeroed`'s contract.
+        // SAFETY: the caller upholds GlobalAlloc's allocation contract.
         let ptr = unsafe { System.alloc_zeroed(layout) };
-        if !ptr.is_null() {
+        if !ptr.is_null() && MEASURING.load(Relaxed) {
+            ALLOC_BYTES.fetch_add(layout.size() as u64, Relaxed);
+            ALLOC_CALLS.fetch_add(1, Relaxed);
             record(size(layout));
         }
         ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: `ptr` was returned by this allocator for `layout`.
+        // SAFETY: ptr and layout satisfy System's deallocation contract.
         unsafe { System.dealloc(ptr, layout) };
-        record(-size(layout));
+        if MEASURING.load(Relaxed) {
+            record(-size(layout));
+        }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        // SAFETY: the caller upholds `GlobalAlloc::realloc`'s contract.
+        // SAFETY: the caller upholds GlobalAlloc's reallocation contract.
         let new = unsafe { System.realloc(ptr, layout, new_size) };
-        if !new.is_null() {
+        if !new.is_null() && MEASURING.load(Relaxed) {
+            REALLOC_BYTES.fetch_add(new_size as u64, Relaxed);
+            REALLOC_CALLS.fetch_add(1, Relaxed);
             record(isize::try_from(new_size).unwrap_or(isize::MAX) - size(layout));
         }
         new
@@ -99,44 +96,47 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
-/// Peak live heap bytes of every thread during `f`.
-///
-/// Memory released during the call that was allocated before it lowers the
-/// live count, so `f` should own everything it measures.
-// cov:ignore: bench harness — same reason as the file header.
-fn peak<T>(f: impl FnOnce() -> T) -> (T, usize) {
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+#[derive(Debug)]
+struct Heap {
+    peak: isize,
+    end_live: isize,
+    alloc_bytes: u64,
+    realloc_bytes: u64,
+    alloc_calls: u64,
+    realloc_calls: u64,
+}
+
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+fn measure<T>(f: impl Fn() -> T) -> (T, Heap, Duration) {
     LIVE.store(0, Relaxed);
     PEAK.store(0, Relaxed);
+    ALLOC_BYTES.store(0, Relaxed);
+    REALLOC_BYTES.store(0, Relaxed);
+    ALLOC_CALLS.store(0, Relaxed);
+    REALLOC_CALLS.store(0, Relaxed);
     MEASURING.store(true, Relaxed);
     let value = f();
     MEASURING.store(false, Relaxed);
-    (value, usize::try_from(PEAK.load(Relaxed)).unwrap_or(0))
-}
-
-/// Wall time of `f`, with the allocation counters off: counting makes every
-/// allocation on every thread update shared atomics, which would add to the
-/// time unevenly.
-// cov:ignore: bench harness — same reason as the file header.
-fn time<T>(f: impl FnOnce() -> T) -> Duration {
+    let heap = Heap {
+        peak: PEAK.load(Relaxed),
+        end_live: LIVE.load(Relaxed),
+        alloc_bytes: ALLOC_BYTES.load(Relaxed),
+        realloc_bytes: REALLOC_BYTES.load(Relaxed),
+        alloc_calls: ALLOC_CALLS.load(Relaxed),
+        realloc_calls: REALLOC_CALLS.load(Relaxed),
+    };
     let start = Instant::now();
     let _ = f();
-    start.elapsed()
+    (value, heap, start.elapsed())
 }
 
-/// Result, peak heap and wall time of `f`, from two runs.
-// cov:ignore: bench harness — same reason as the file header.
-fn measure<T>(f: impl Fn() -> T) -> (T, usize, Duration) {
-    let (value, peak) = peak(&f);
-    (value, peak, time(&f))
-}
-
-/// A document of `sections` times three paragraphs of about 120 words; the
-/// default page size fits about six of them.
-// cov:ignore: bench harness — same reason as the file header.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn text_document(sections: usize) -> String {
     const WORDS: [&str; 5] = ["lorem ", "ipsum ", "dolor ", "sit ", "amet "];
     let mut html = String::from(
-        "<!doctype html><html><head><style>p { margin: 0 0 1em }</style></head><body>",
+        "<!doctype html><html><head><style>body { font-family: Ahem } \
+         p { margin: 0 0 1em; bookmark-level: 1 }</style></head><body>",
     );
     for paragraph in 0..sections * 3 {
         html.push_str("<p>Paragraph ");
@@ -151,94 +151,155 @@ fn text_document(sections: usize) -> String {
     html
 }
 
-/// A sink that drops every page, as a sink that writes pages out would.
-struct Discard;
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+#[derive(Default)]
+struct Output {
+    pages: u32,
+    text: Vec<u8>,
+    events: Vec<ConsumerPropertyEvent>,
+    first_feed: Option<usize>,
+    diagnostics: StreamingDiagnostics,
+}
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+struct Discard {
+    output: Output,
+    verify: bool,
+    fed: Rc<Cell<Option<usize>>>,
+}
+
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 impl PageSink for Discard {
-    type Output = u32;
+    type Output = Output;
 
-    // cov:ignore: bench harness — same reason as the file header.
     fn page(
         &mut self,
-        _page: StreamPage<'_>,
-        _events: Vec<ConsumerPropertyEvent>,
+        page: StreamPage<'_>,
+        events: Vec<ConsumerPropertyEvent>,
     ) -> std::io::Result<()> {
+        assert_eq!(page.index(), self.output.pages);
+        if self.output.pages == 0 {
+            self.output.first_feed = self.fed.get();
+        }
+        self.output.pages += 1;
+        if self.verify {
+            for run in page.page().text_runs() {
+                self.output
+                    .text
+                    .extend(run.text.bytes().filter(|b| !b.is_ascii_whitespace()));
+            }
+            self.output.events.extend(events);
+        }
         Ok(())
     }
 
-    // cov:ignore: bench harness — same reason as the file header.
-    fn finish(self, summary: StreamSummary) -> std::io::Result<u32> {
-        Ok(summary.page_count)
+    fn finish(mut self, summary: StreamSummary) -> std::io::Result<Output> {
+        assert_eq!(self.output.pages, summary.page_count);
+        assert!(summary.unplaced_events.is_empty());
+        self.output.diagnostics = summary.diagnostics;
+        Ok(self.output)
     }
 }
 
-/// Pages, peak heap and time of a streaming layout fed in 4 KiB writes.
-// cov:ignore: bench harness — same reason as the file header.
-fn stream(html: &str, resources: &RenderResources<'_>) -> (u32, usize, Duration) {
-    measure(|| {
-        let mut stream = StreamingLayout::new(
-            resources,
-            PageDefaults::default(),
-            LayoutConfig::default(),
-            Discard,
-        );
-        for chunk in html.as_bytes().chunks(4096) {
-            stream.write_all(chunk).expect("the input is accepted");
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+fn stream(html: &str, resources: &RenderResources<'_>, verify: bool) -> Output {
+    let fed = Rc::new(Cell::new(None));
+    let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+    let sink = Discard {
+        output: Output::default(),
+        verify,
+        fed: Rc::clone(&fed),
+    };
+    let mut stream = StreamingLayout::new(
+        resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        sink,
+    )
+    .consumer_properties(&registrations);
+    for (index, chunk) in html.as_bytes().chunks(4096).enumerate() {
+        fed.set(Some(index * 4096 + chunk.len()));
+        stream.write_all(chunk).expect("stream input");
+    }
+    fed.set(None);
+    let StreamStatus::Completed(result) = stream.finish().expect("stream finish") else {
+        panic!("stream aborted without a signal");
+    };
+    assert!(result.first_feed.is_some_and(|bytes| bytes < html.len()));
+    result
+}
+
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+fn batch(html: &str, resources: &RenderResources<'_>, verify: bool) -> Output {
+    let document = parse_html_with_resources(html.as_bytes(), resources).expect("batch parse");
+    let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+    let mut events = Vec::new();
+    let mut observer = |event| {
+        if verify {
+            events.push(event);
         }
-        match stream.finish().expect("the streaming layout succeeds") {
-            StreamStatus::Completed(pages) => pages,
-            _ => unreachable!("nothing aborts the layout"),
-        }
-    })
+        Ok(())
+    };
+    let LayoutStatus::Completed(laid_out) = layout(
+        &document,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new()
+            .resources(resources)
+            .consumer_properties(&registrations, &mut observer),
+    )
+    .expect("batch layout") else {
+        panic!("batch aborted without a signal");
+    };
+    let text = if verify {
+        laid_out
+            .pages()
+            .flat_map(|page| page.text_runs())
+            .flat_map(|run| {
+                run.text
+                    .bytes()
+                    .filter(|b| !b.is_ascii_whitespace())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Output {
+        pages: laid_out.page_count(),
+        text,
+        events,
+        ..Output::default()
+    }
 }
 
-/// Pages, peak heap and time of a parse and a batch layout.
-// cov:ignore: bench harness — same reason as the file header.
-fn batch(html: &str, resources: &RenderResources<'_>) -> (u32, usize, Duration) {
-    measure(|| {
-        let document =
-            parse_html_with_resources(html.as_bytes(), resources).expect("the document parses");
-        let status = layout(
-            &document,
-            PageDefaults::default(),
-            LayoutConfig::default(),
-            LayoutOptions::new().resources(resources),
-        )
-        .expect("the layout succeeds");
-        let LayoutStatus::Completed(laid_out) = status else {
-            unreachable!("nothing aborts the layout");
-        };
-        laid_out.page_count()
-    })
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
+fn print_row(
+    sections: usize,
+    input: usize,
+    mode: &str,
+    nodes: usize,
+    output: &Output,
+    heap: &Heap,
+    time: Duration,
+) {
+    println!(
+        "sections={sections} input={input} mode={mode} parser_nodes={nodes} pages={} peak={} end_live={} alloc_bytes={} realloc_bytes={} alloc_calls={} realloc_calls={} ms={:.6} first_feed={:?} diagnostics={:?}",
+        output.pages,
+        heap.peak,
+        heap.end_live,
+        heap.alloc_bytes,
+        heap.realloc_bytes,
+        heap.alloc_calls,
+        heap.realloc_calls,
+        time.as_secs_f64() * 1000.0,
+        output.first_feed,
+        output.diagnostics
+    );
 }
 
-/// One measured length.
-struct Row {
-    pages: u32,
-    input_bytes: usize,
-    batch_peak: usize,
-    batch_time: Duration,
-    stream_peak: usize,
-    stream_time: Duration,
-}
-
-// cov:ignore: bench harness — same reason as the file header.
-fn kib(bytes: usize) -> f64 {
-    bytes as f64 / 1024.0
-}
-
-/// Heap growth per page from `first` to `last`, in KiB. `last` has more
-/// pages than `first`.
-// cov:ignore: bench harness — same reason as the file header.
-fn slope(first: (u32, usize), last: (u32, usize)) -> f64 {
-    let pages = f64::from(last.0 - first.0);
-    (kib(last.1) - kib(first.1)) / pages
-}
-
-// cov:ignore: bench harness — same reason as the file header.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn main() {
-    // `cargo bench` passes `--bench`; `cargo test --benches` runs the
-    // target without it, in a debug build where the numbers mean nothing.
     if !std::env::args().any(|arg| arg == "--bench") {
         return;
     }
@@ -246,70 +307,57 @@ fn main() {
         .ok()
         .map(|list| {
             list.split(',')
-                .map(|n| {
-                    n.trim()
-                        .parse()
-                        .expect("RAIKIRI_STREAM_SECTIONS holds numbers")
-                })
+                .map(|n| n.trim().parse().expect("section count"))
                 .collect()
         })
-        .unwrap_or_else(|| vec![25, 50, 100, 200]);
-    let resources = RenderResources::new();
-    // A first layout fills the process-wide caches, such as loaded fonts,
-    // that every later one reuses, so they stay out of the measurements.
-    let _ = batch(&text_document(1), &resources);
-
-    let mut rows = Vec::new();
-    for &sections in &lengths {
+        .unwrap_or_else(|| vec![200, 400, 800, 1600]);
+    let resources = common::workloads::resources();
+    let _ = batch(&text_document(1), &resources, false);
+    for sections in lengths {
         let html = text_document(sections);
-        let (batch_pages, batch_peak, batch_time) = batch(&html, &resources);
-        let (stream_pages, stream_peak, stream_time) = stream(&html, &resources);
-        assert_eq!(
-            batch_pages, stream_pages,
-            "both layouts give the same pages"
-        );
-        rows.push(Row {
-            pages: batch_pages,
-            input_bytes: html.len(),
-            batch_peak,
-            batch_time,
-            stream_peak,
-            stream_time,
+        let (nodes, heap, duration) = measure(|| {
+            parse(html.as_bytes(), &ParseOptions::new())
+                .expect("parse only")
+                .dom
+                .node_count()
         });
-    }
-
-    println!(
-        "{:>6} {:>10} {:>14} {:>10} {:>14} {:>10}",
-        "pages", "input KiB", "batch peak KiB", "batch ms", "stream peak KiB", "stream ms"
-    );
-    for row in &rows {
-        println!(
-            "{:>6} {:>10.0} {:>14.0} {:>10.1} {:>15.0} {:>10.1}",
-            row.pages,
-            kib(row.input_bytes),
-            kib(row.batch_peak),
-            row.batch_time.as_secs_f64() * 1000.0,
-            kib(row.stream_peak),
-            row.stream_time.as_secs_f64() * 1000.0,
+        print_row(
+            sections,
+            html.len(),
+            "parse",
+            nodes,
+            &Output::default(),
+            &heap,
+            duration,
         );
-    }
-    let first = rows.iter().min_by_key(|row| row.pages);
-    let last = rows.iter().max_by_key(|row| row.pages);
-    if let (Some(first), Some(last)) = (first, last)
-        && last.pages > first.pages
-    {
-        println!(
-            "peak heap per page from {} to {} pages: batch {:.1} KiB, stream {:.1} KiB",
-            first.pages,
-            last.pages,
-            slope(
-                (first.pages, first.batch_peak),
-                (last.pages, last.batch_peak)
-            ),
-            slope(
-                (first.pages, first.stream_peak),
-                (last.pages, last.stream_peak)
-            ),
+        let expected = batch(&html, &resources, true);
+        let actual = stream(&html, &resources, true);
+        assert_eq!(actual.pages, expected.pages);
+        assert_eq!(actual.text, expected.text);
+        assert_eq!(actual.events, expected.events);
+        assert_eq!(actual.events.len(), sections * 3);
+        drop((actual, expected));
+        let (output, heap, duration) = measure(|| batch(&html, &resources, false));
+        print_row(
+            sections,
+            html.len(),
+            "batch",
+            nodes,
+            &output,
+            &heap,
+            duration,
         );
+        let (output, heap, duration) = measure(|| stream(&html, &resources, false));
+        assert_eq!(output.diagnostics.parser_nodes, nodes as u64);
+        print_row(
+            sections,
+            html.len(),
+            "stream",
+            nodes,
+            &output,
+            &heap,
+            duration,
+        );
+        std::io::stdout().flush().expect("flush evidence");
     }
 }

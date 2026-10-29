@@ -1588,6 +1588,113 @@ fn a_ratio_only_svg_in_a_shrink_to_fit_container_stays_empty() {
     }
 }
 
+/// The boxes that size themselves to their content, as the style of the box
+/// around them and the style of the box itself.
+const SHRINK_TO_FIT_BOXES: [(&str, &str, &str); 5] = [
+    ("inline-block", "", "display:inline-block"),
+    ("float", "", "float:left"),
+    ("table cell", "display:table", "display:table-cell"),
+    ("flex item", "display:flex", ""),
+    ("absolute", "position:relative", "position:absolute"),
+];
+
+/// The width of a box that sizes itself to its content, and the size of the
+/// only `<img>` (25x50) in it.
+fn image_in_shrink_to_fit_box(
+    outer_css: &str,
+    box_css: &str,
+    image_css: &str,
+) -> (f32, (f32, f32)) {
+    let (mut shrink, mut image) = (0, 0);
+    let doc = laid_out(|doc, body| {
+        let outer = doc.append_element(Some(body), "div", Some(outer_css));
+        shrink = doc.append_element(Some(outer), "div", Some(box_css));
+        image = doc.append_element(Some(shrink), "img", Some(image_css));
+    });
+    (size(&doc, shrink).0, size(&doc, image))
+}
+
+#[test]
+fn a_percentage_width_of_an_image_does_not_widen_the_box_that_sizes_to_it() {
+    // The percentage counts as the initial value in the max-content width of
+    // the box, so the box is as wide as the image is, and the image then
+    // resolves the percentage against that width. The sizes are those
+    // Chromium gives.
+    for (name, outer, container) in SHRINK_TO_FIT_BOXES {
+        for (css, expected) in [
+            ("max-width:100%", (25.0, (25.0, 50.0))),
+            ("width:50%", (25.0, (12.5, 25.0))),
+            ("width:100%", (25.0, (25.0, 50.0))),
+            ("min-width:50%", (25.0, (25.0, 50.0))),
+            ("margin-left:10%", (25.0, (25.0, 50.0))),
+            ("width:50%;max-width:20px", (20.0, (10.0, 20.0))),
+        ] {
+            assert_eq!(
+                image_in_shrink_to_fit_box(outer, container, css),
+                expected,
+                "{name} {css}"
+            );
+        }
+    }
+}
+
+/// The size of a vertical box that sizes itself to its content, and of the
+/// `<svg>` of 100x50 in it with `svg_css`.
+fn svg_in_vertical_shrink_to_fit_box(box_css: &str, svg_css: &str) -> ((f32, f32), (f32, f32)) {
+    let (mut shrink, mut svg) = (0, 0);
+    let doc = laid_out(|doc, body| {
+        shrink = doc.append_element(
+            Some(body),
+            "div",
+            Some(format!("writing-mode:vertical-rl;{box_css}").as_str()),
+        );
+        svg = doc.append_element(Some(shrink), "svg", Some(svg_css));
+        doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+        doc.set_element_attributes(
+            svg,
+            vec![
+                ("width".into(), "100".into()),
+                ("height".into(), "50".into()),
+            ],
+        );
+    });
+    (size(&doc, shrink), size(&doc, svg))
+}
+
+#[test]
+fn a_percentage_height_of_an_svg_does_not_lengthen_the_vertical_box_that_sizes_to_it() {
+    // The block axis of a vertical box is horizontal, and its inline axis is
+    // the one a percentage height contributes to as `auto`.
+    for box_css in ["display:inline-block", "float:left"] {
+        for (css, expected) in [
+            ("", ((100.0, 50.0), (100.0, 50.0))),
+            ("max-height:100%", ((100.0, 50.0), (100.0, 50.0))),
+            ("height:50%", ((100.0, 50.0), (100.0, 25.0))),
+            ("height:100%", ((100.0, 50.0), (100.0, 50.0))),
+            ("min-height:50%", ((100.0, 50.0), (100.0, 50.0))),
+        ] {
+            assert_eq!(
+                svg_in_vertical_shrink_to_fit_box(box_css, css),
+                expected,
+                "{box_css} {css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_percentage_margin_of_an_svg_does_not_lengthen_the_vertical_box_that_sizes_to_it() {
+    // A percentage margin counts as zero in the contribution, so the box is
+    // 50px long whatever the margin is.
+    for box_css in ["display:inline-block", "float:left"] {
+        assert_eq!(
+            svg_in_vertical_shrink_to_fit_box(box_css, "margin-top:10%").0,
+            (100.0, 50.0),
+            "{box_css}"
+        );
+    }
+}
+
 #[test]
 fn a_keyword_min_or_max_width_of_a_ratio_only_svg_takes_the_width_its_height_gives() {
     // The width an authored height gives through the ratio is not limited by
@@ -2152,7 +2259,7 @@ fn an_image_with_an_authored_height_takes_the_same_width_in_any_parent() {
             (20.0, 50.0),
         ),
         (
-            Some("height:200px"),
+            Some("display:block;height:200px"),
             "display:block;height:50%;padding-right:80px",
             (120.0, 100.0),
         ),

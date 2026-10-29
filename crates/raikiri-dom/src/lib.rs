@@ -113,6 +113,8 @@ pub use layout::{
 pub use layout::pages_follow_x_axis;
 #[doc(hidden)]
 pub use layout::placed_without_relative_offset;
+#[doc(hidden)]
+pub use layout::{CanvasBoxUse, canvas_background_owner, canvas_box_use};
 pub use layout::{RootBox, root_box};
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneImage, StandaloneStyle, StandaloneText};
@@ -149,3 +151,7 @@ pub mod snapshot;
 
 #[cfg(test)]
 mod tests;
+
+mod scene_geometry;
+#[doc(hidden)]
+pub use scene_geometry::{SceneGeometry, SceneGeometryNode};

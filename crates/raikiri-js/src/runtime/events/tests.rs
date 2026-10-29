@@ -21,7 +21,7 @@ fn body_index(rt: &mut DomRuntime) -> usize {
 
 fn listener_count(rt: &mut DomRuntime, key: Option<usize>) -> usize {
     with_state(rt.context_mut(), |s| {
-        s.listeners.get(&key).map_or(0, Vec::len)
+        s.with_listeners(key, |list| list.len())
     })
     .unwrap()
 }

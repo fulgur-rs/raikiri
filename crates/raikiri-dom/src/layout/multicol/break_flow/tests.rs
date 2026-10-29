@@ -1452,7 +1452,8 @@ fn measurement_work_in_a_large_document_does_not_need_free_fragment_slots() {
     };
     let filler = fragment(root, None, 0, rect);
     let limit = doc.fragment_tree.limit;
-    doc.fragment_tree.fragments = vec![filler; limit];
+    doc.fragment_tree
+        .replace_finalized_fragments(vec![filler; limit]);
     assert!(with_bridged_session(&mut doc, |session| {
         reserve_measurement_work(session, root)
     }));

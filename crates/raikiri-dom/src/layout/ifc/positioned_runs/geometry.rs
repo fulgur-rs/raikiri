@@ -142,7 +142,8 @@ impl PositionedLineGeometry {
         fragmentainer: Option<usize>,
     ) -> Option<PreparedPositionedLines<'a>> {
         let node = document.ifc_layout_node(self.root)?;
-        let lines = node.ifc_lines()?;
+        let line_data = node.ifc.as_ref()?.lines.as_ref()?;
+        let lines = line_data.lines.as_slice();
         let ranges = match fragmentainer {
             Some(column) if !self.unfragmented => self
                 .columns
@@ -158,6 +159,7 @@ impl PositionedLineGeometry {
                 writing_mode: self.writing_mode,
                 converter_size: self.converter_size,
                 offsets: node.ifc_relative_offsets(),
+                line_data,
             },
             geometry: self,
             lines,

@@ -1,24 +1,47 @@
 //! The live inline stylesheet surface used by DOM scripts.
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 
+use super::node_gc::{NodeObject, NodeRecord};
 use boa_engine::gc::GcRefCell;
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{
     Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, Trace, js_string,
 };
+use boa_gc::{Gc, WeakGc};
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss, Token,
 };
+use raikiri_dom::document::StylesheetVersion;
 use raikiri_dom::{Document, NodeKind};
 
+mod parsed;
+pub(crate) use parsed::RuleMemo;
+mod list_index;
+pub(crate) use list_index::SheetList;
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static COLLECT_CSS_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+fn css_allocation_checkpoint() {
+    if COLLECT_CSS_ALLOCATIONS.get() {
+        boa_gc::force_collect();
+    }
+}
+
 use super::State;
-use super::indexed::{IndexedSource, indexed_object, this_indexed};
+use super::indexed::{
+    IndexedSource, indexed_object, indexed_object_retaining, indexed_object_with_owners,
+    this_indexed,
+};
 use super::interfaces::function;
 use super::webidl::{
     arg_unsigned_long, dom_string, this_document, throw_dom_exception, with_state,
@@ -39,6 +62,8 @@ pub(crate) struct CssRuleInfo {
 /// its `{` block (a `;` does not end it), an at-rule without a block may end
 /// at EOF, and top-level `<!--`/`-->` are skipped.
 pub(crate) fn parse_css_rules(source: &str) -> Vec<CssRuleInfo> {
+    #[cfg(test)]
+    tests::record_sheet_work(0);
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     let mut ranges = RuleRangeParser { source };
@@ -368,16 +393,24 @@ impl<'i> QualifiedRuleParser<'i> for RuleRangeParser<'_> {
 }
 
 pub(crate) fn stylesheet_text(document: &Document, style_element: usize) -> String {
+    #[cfg(test)]
+    tests::record_sheet_work(1);
     document
-        .element_text_content(style_element)
-        .unwrap_or_default()
+        .stylesheet_source(style_element)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            document
+                .element_text_content(style_element)
+                .unwrap_or_default()
+        })
 }
 
 /// The sheet of one style element as the CSSOM last saw or wrote it: its
 /// child nodes and their text.
 pub(crate) struct SheetVersion {
     children: Vec<usize>,
-    text: String,
+    text: Rc<str>,
+    verified: StylesheetVersion,
     /// Set when the element's children or their data changed outside the
     /// CSSOM, which replaces the sheet even when the text ends up the same.
     stale: bool,
@@ -411,10 +444,8 @@ pub(crate) fn has_css_type(document: &Document, element: usize) -> bool {
 /// when `had_css_type` is set. A write that turns a style element's sheet
 /// off or back on destroys the sheet the CSSOM handed out objects for.
 pub(crate) fn note_attribute_change(state: &mut State, element: usize, had_css_type: bool) {
-    if has_css_type(state.host.document(), element) != had_css_type
-        && let Some(version) = state.css_sheet_versions.get_mut(&element)
-    {
-        version.stale = true;
+    if has_css_type(state.host.document(), element) != had_css_type {
+        invalidate_sheet(state, element);
     }
 }
 
@@ -439,10 +470,24 @@ pub(crate) fn note_child_list_change(state: &mut State, parent: usize, moved: &[
         })
         .collect();
     for style_element in replaced {
-        if let Some(version) = state.css_sheet_versions.get_mut(&style_element) {
-            version.stale = true;
-        }
+        invalidate_sheet(state, style_element);
     }
+}
+
+// Release obsolete rules when their native sheet is replaced, even if no
+// script ever reads the CSSOM again. Live old rules keep their own text;
+// the connected style element no longer owns them through its cache.
+fn invalidate_sheet(state: &mut State, element: usize) {
+    let Some(version) = state.css_sheet_versions.get_mut(&element) else {
+        return;
+    };
+    if version.stale {
+        return;
+    }
+    version.stale = true;
+    let old_text = version.text.clone();
+    state.css_rule_memo.clear_for(SheetKey::Element(element));
+    detach_sheet_rules(state, element, &old_text);
 }
 
 /// The nodes inserting `node` adds as children: a `DocumentFragment`'s
@@ -479,16 +524,30 @@ fn sheet_children(document: &Document, style_element: usize) -> Vec<usize> {
 /// later changes through it no longer reach the sheet.
 fn sync_sheet(state: &mut State, style_element: usize) {
     let document = state.host.document();
+    if state
+        .css_sheet_versions
+        .get(&style_element)
+        .is_some_and(|version| !version.stale && &version.verified == document.stylesheet_version())
+    {
+        return;
+    }
+    let verified = document.stylesheet_version().clone();
     let children = sheet_children(document, style_element);
-    let text = stylesheet_text(document, style_element);
+    let text: Rc<str> = state
+        .css_rule_memo
+        .native(SheetKey::Element(style_element), &verified)
+        .map(|parsed| Rc::clone(&parsed.text))
+        .unwrap_or_else(|| stylesheet_text(document, style_element).into());
     let version = state
         .css_sheet_versions
         .entry(style_element)
         .or_insert_with(|| SheetVersion {
             children: children.clone(),
             text: text.clone(),
+            verified: verified.clone(),
             stale: false,
         });
+    version.verified = verified;
     if !version.stale && version.children == children && version.text == text {
         return;
     }
@@ -511,38 +570,138 @@ fn detach_sheet_rules(state: &mut State, style_element: usize, old_text: &str) {
     let rules: Vec<_> = state
         .css_style_rules
         .extract_if(|&(key, _), _| key == sheet)
-        .map(|((_, rule), object)| (rule, None, object))
+        .filter_map(|((_, rule), object)| {
+            object
+                .upgrade()
+                .map(|object| (rule, None, (*object).clone()))
+        })
         .collect();
     let margins: Vec<_> = state
         .css_margin_rules
         .extract_if(|&(key, ..), _| key == sheet)
-        .map(|((_, rule, margin), object)| (rule, Some(margin), object))
+        .filter_map(|((_, rule, margin), object)| {
+            object
+                .upgrade()
+                .map(|object| (rule, Some(margin), (*object).clone()))
+        })
         .collect();
     let parsed = parse_css_rules(old_text);
     let mut detached: HashMap<usize, SheetKey> = HashMap::new();
-    for (rule, margin, object) in rules.into_iter().chain(margins) {
+    // Borrow the batch so processed wrappers still root their new groups
+    // until later margins have been transferred to those same groups.
+    for (rule, margin, object) in rules.iter().chain(&margins) {
+        let (rule, margin) = (*rule, *margin);
         let key = *detached.entry(rule).or_insert_with(|| {
             let text = parsed
                 .get(rule)
                 .map_or("", |info| &old_text[info.source.clone()]);
             detached_rule_text(state, text.to_owned())
         });
-        if let Some(slot) = rule_object_slot(&object) {
+        if let Some(slot) = rule_object_slot(object) {
             slot.sheet.set(key);
             slot.rule_index.set(0);
         }
+        transfer_rule_owner(state, key, object);
         match margin {
-            Some(margin) => state.css_margin_rules.insert((key, 0, margin), object),
-            None => state.css_style_rules.insert((key, 0), object),
+            Some(margin) => state
+                .css_margin_rules
+                .insert((key, 0, margin), weak_rule(object)),
+            None => state.css_style_rules.insert((key, 0), weak_rule(object)),
         };
     }
 }
 
+/// A traced ownership group for an attached sheet or a detached top-level
+/// rule and its margins. The weak runtime indices never root this group.
+#[derive(Trace, Finalize)]
+pub(super) struct CssOwner {
+    node: Option<Gc<NodeRecord>>,
+    text: GcRefCell<Rc<str>>,
+    objects: GcRefCell<HashSet<JsObject>>,
+}
+
+impl State {
+    fn css_owner(&mut self, sheet: SheetKey) -> Gc<CssOwner> {
+        match sheet {
+            SheetKey::Element(index) => {
+                let node = self.node_record(index);
+                if let Some(owner) = node.state.borrow().css_owner.clone() {
+                    return owner;
+                }
+                let owner = Gc::new(CssOwner {
+                    node: Some(node.clone()),
+                    text: GcRefCell::default(),
+                    objects: GcRefCell::default(),
+                });
+                node.state.borrow_mut().css_owner = Some(owner.clone());
+                owner
+            }
+            SheetKey::Detached(id) => self
+                .css_detached_rules
+                .get(&id)
+                .and_then(WeakGc::upgrade)
+                .expect("a live rule keeps its detached text owner"),
+        }
+    }
+}
+
+fn weak_rule(object: &JsObject) -> WeakGc<JsObject> {
+    #[cfg(test)]
+    css_allocation_checkpoint();
+    let anchor = Gc::new(object.clone());
+    let weak = WeakGc::new(&anchor);
+    if let Some(data) = object.downcast_ref::<CssStyleRuleData>() {
+        *data.anchor.borrow_mut() = Some(anchor);
+    } else if let Some(data) = object.downcast_ref::<MarginRuleData>() {
+        *data.anchor.borrow_mut() = Some(anchor);
+    }
+    weak
+}
+
+fn transfer_rule_owner(state: &mut State, sheet: SheetKey, object: &JsObject) {
+    let owner = state.css_owner(sheet);
+    let previous = if let Some(data) = object.downcast_ref::<CssStyleRuleData>() {
+        data.owner.borrow_mut().replace(owner.clone())
+    } else {
+        object
+            .downcast_ref::<MarginRuleData>()
+            .expect("rule indices contain only style/page or margin rules")
+            .owner
+            .borrow_mut()
+            .replace(owner.clone())
+    };
+    if let Some(previous) = previous {
+        previous.objects.borrow_mut().remove(object);
+    }
+    owner.objects.borrow_mut().insert(object.clone());
+}
+
 /// Stores `text`, a rule taken out of its sheet, and returns its key.
 fn detached_rule_text(state: &mut State, text: String) -> SheetKey {
+    #[cfg(test)]
+    css_allocation_checkpoint();
     let id = state.next_detached_rule;
     state.next_detached_rule += 1;
-    state.css_detached_rules.insert(id, text);
+    let owner = Gc::new(CssOwner {
+        node: None,
+        text: GcRefCell::new(text.into()),
+        objects: GcRefCell::new(HashSet::new()),
+    });
+    // Sweep only after proportional growth, so detaching many live rules
+    // does not repeatedly scan all earlier detached groups.
+    if state.css_detached_rules.len() >= state.css_cache_sweep_at {
+        state
+            .css_detached_rules
+            .retain(|_, owner| owner.upgrade().is_some());
+        state
+            .css_style_rules
+            .retain(|_, object| object.upgrade().is_some());
+        state
+            .css_margin_rules
+            .retain(|_, object| object.upgrade().is_some());
+        state.css_cache_sweep_at = state.css_detached_rules.len().saturating_mul(2).max(64);
+    }
+    state.css_detached_rules.insert(id, WeakGc::new(&owner));
     SheetKey::Detached(id)
 }
 
@@ -562,10 +721,15 @@ fn record_sheet_text(state: &mut State, style_element: usize) {
     let document = state.host.document();
     let children = sheet_children(document, style_element);
     let text = stylesheet_text(document, style_element);
+    let verified = document.stylesheet_version().clone();
     if let Some(version) = state.css_sheet_versions.get_mut(&style_element) {
         version.children = children;
-        version.text = text;
+        version.text = text.into();
+        version.verified = verified;
     }
+    state
+        .css_rule_memo
+        .clear_for(SheetKey::Element(style_element));
 }
 
 /// The text a rule object reads and writes: the sheet of a style element,
@@ -583,8 +747,52 @@ pub(crate) fn sheet_text(state: &State, sheet: SheetKey) -> String {
         SheetKey::Detached(id) => state
             .css_detached_rules
             .get(&id)
-            .cloned()
+            .and_then(WeakGc::upgrade)
+            .map(|owner| owner.text.borrow().to_string())
             .unwrap_or_default(),
+    }
+}
+
+/// One coherent source/metadata snapshot, selected after any slot synchronization.
+fn sheet_snapshot(state: &mut State, sheet: SheetKey) -> Rc<parsed::ParsedSheet> {
+    let source = match sheet {
+        SheetKey::Element(element) => {
+            if !state.css_sheet_versions.contains_key(&element) {
+                let document = state.host.document();
+                let verified = document.stylesheet_version().clone();
+                if let Some(parsed) = state.css_rule_memo.native(sheet, &verified) {
+                    return parsed;
+                }
+                let source = stylesheet_text(document, element).into();
+                return state.css_rule_memo.store_native(sheet, source, verified);
+            }
+            sync_sheet(state, element);
+            Rc::clone(&state.css_sheet_versions[&element].text)
+        }
+        SheetKey::Detached(id) => state
+            .css_detached_rules
+            .get(&id)
+            .and_then(WeakGc::upgrade)
+            .map(|owner| Rc::clone(&owner.text.borrow()))
+            .unwrap_or_default(),
+    };
+    state.css_rule_memo.get(sheet, source)
+}
+
+pub(crate) fn sheet_rule_is_page(state: &mut State, sheet: SheetKey, rule: usize) -> bool {
+    sheet_snapshot(state, sheet).is_page(rule)
+}
+
+pub(crate) fn declared_rule_text(
+    state: &mut State,
+    sheet: SheetKey,
+    rule: usize,
+    margin: Option<usize>,
+) -> (Option<String>, bool) {
+    let parsed = sheet_snapshot(state, sheet);
+    match margin {
+        Some(margin) => (parsed.margin_body(rule, margin), false),
+        None => (parsed.rule_body(rule), parsed.is_page(rule)),
     }
 }
 
@@ -595,7 +803,8 @@ fn write_sheet_text(context: &mut Context, sheet: SheetKey, text: String) -> JsR
         SheetKey::Element(style_element) => style_element,
         SheetKey::Detached(id) => {
             return with_state(context, |state| {
-                state.css_detached_rules.insert(id, text);
+                *state.css_owner(SheetKey::Detached(id)).text.borrow_mut() = text.into();
+                state.css_rule_memo.clear_for(sheet);
             });
         }
     };
@@ -603,7 +812,7 @@ fn write_sheet_text(context: &mut Context, sheet: SheetKey, text: String) -> JsR
         let written = state
             .host
             .document_mut()
-            .set_element_text_content(style_element, text);
+            .set_stylesheet_source(style_element, text);
         record_sheet_text(state, style_element);
         written
     })?;
@@ -648,6 +857,8 @@ impl RuleSlot {
 }
 
 fn stylesheet_nodes(document: &Document) -> Vec<usize> {
+    #[cfg(test)]
+    tests::record_list_work(0, 1);
     let root = document.root_index();
     let Some(root_node) = document.get_node(root) else {
         return Vec::new(); // cov:ignore: A Document always retains its initialized root node.
@@ -655,6 +866,8 @@ fn stylesheet_nodes(document: &Document) -> Vec<usize> {
     let mut pending: Vec<usize> = root_node.children.iter().rev().copied().collect();
     let mut nodes = Vec::new();
     while let Some(index) = pending.pop() {
+        #[cfg(test)]
+        tests::record_list_work(1, 1);
         let Some(node) = document.get_node(index) else {
             continue; // cov:ignore: Child indices are created and retained by the same append-only document arena.
         };
@@ -682,13 +895,17 @@ struct StyleSheetListSource;
 impl IndexedSource for StyleSheetListSource {
     fn length(&self, context: &mut Context) -> JsResult<usize> {
         with_state(context, |state| {
-            stylesheet_nodes(state.host.document()).len()
+            state.css_sheet_index.nodes(state.host.document()).len()
         })
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
         let node = with_state(context, |state| {
-            stylesheet_nodes(state.host.document()).get(index).copied()
+            state
+                .css_sheet_index
+                .nodes(state.host.document())
+                .get(index)
+                .copied()
         })?;
         node.map(|node| style_sheet_object(context, node).map(JsValue::from))
             .transpose()
@@ -702,17 +919,20 @@ struct CssRuleListSource {
 impl IndexedSource for CssRuleListSource {
     fn length(&self, context: &mut Context) -> JsResult<usize> {
         let style_element = self.style_element;
-        let text = with_state(context, |state| {
-            stylesheet_text(state.host.document(), style_element)
-        })?;
-        Ok(parse_css_rules(&text).len())
+        with_state(context, |state| {
+            sheet_snapshot(state, SheetKey::Element(style_element))
+                .rules
+                .len()
+        })
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
         let style_element = self.style_element;
         let exists = with_state(context, |state| {
-            let text = stylesheet_text(state.host.document(), style_element);
-            index < parse_css_rules(&text).len()
+            index
+                < sheet_snapshot(state, SheetKey::Element(style_element))
+                    .rules
+                    .len()
         })?;
         if exists {
             css_style_rule_object(context, SheetKey::Element(style_element), index)
@@ -844,12 +1064,15 @@ pub(crate) const HTML_STYLE_ELEMENT_MEMBERS: super::interfaces::Members =
 struct StyleSheetData {
     #[unsafe_ignore_trace]
     style_element: usize,
+    owner: Gc<NodeRecord>,
 }
 
 #[derive(Trace, Finalize, JsData)]
 struct CssStyleRuleData {
     #[unsafe_ignore_trace]
     slot: Rc<RuleSlot>,
+    owner: GcRefCell<Option<Gc<CssOwner>>>,
+    anchor: GcRefCell<Option<Gc<JsObject>>>,
     /// The rule's `style`, created on first access.
     style: GcRefCell<Option<JsObject>>,
 }
@@ -909,12 +1132,19 @@ fn define_method(
 
 fn style_sheet_object(context: &mut Context, style_element: usize) -> JsResult<JsObject> {
     if let Some(existing) = with_state(context, |state| {
-        state.style_sheets.get(&style_element).cloned()
+        state.node_object(style_element, NodeObject::StyleSheet)
     })? {
         return Ok(existing);
     }
     let prototype = context.intrinsics().constructors().object().prototype();
-    let object = JsObject::from_proto_and_data(Some(prototype), StyleSheetData { style_element });
+    let owner = with_state(context, |state| state.node_record(style_element))?;
+    let object = JsObject::from_proto_and_data(
+        Some(prototype),
+        StyleSheetData {
+            style_element,
+            owner,
+        },
+    );
     define_getter(&object, "cssRules", style_sheet_rules, context)?;
     // `rules` is the legacy alias of `cssRules` (CSSOM §6.1.2.1).
     define_getter(&object, "rules", style_sheet_rules, context)?;
@@ -932,7 +1162,7 @@ fn style_sheet_object(context: &mut Context, style_element: usize) -> JsResult<J
         context,
     )?; // cov:ignore: The newly created ordinary object is extensible and has no conflicting own symbol.
     with_state(context, |state| {
-        state.style_sheets.insert(style_element, object.clone())
+        state.set_node_object(style_element, NodeObject::StyleSheet, object.clone())
     })?;
     Ok(object)
 }
@@ -954,7 +1184,7 @@ fn style_sheet_node(this: &JsValue) -> JsResult<usize> {
 fn style_sheet_rules(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let style_element = style_sheet_node(this)?;
     if let Some(existing) = with_state(context, |state| {
-        state.css_rule_lists.get(&style_element).cloned()
+        state.node_object(style_element, NodeObject::RuleList)
     })? {
         return Ok(existing.into());
     }
@@ -964,9 +1194,15 @@ fn style_sheet_rules(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
         css_rule_list_length,
         css_rule_list_item,
     )?; // cov:ignore: The fresh realm's built-in object prototype accepts these fixed list members.
-    let list = indexed_object(context, prototype, CssRuleListSource { style_element })?;
+    let owner = with_state(context, |state| state.node_record(style_element))?;
+    let list = indexed_object_with_owners(
+        context,
+        prototype,
+        CssRuleListSource { style_element },
+        vec![owner],
+    )?; // cov:ignore: Fresh proxy targets accept the fixed native members and private WeakMap registration.
     with_state(context, |state| {
-        state.css_rule_lists.insert(style_element, list.clone())
+        state.set_node_object(style_element, NodeObject::RuleList, list.clone())
     })?;
     Ok(list.into())
 }
@@ -1293,15 +1529,26 @@ fn shift_sheet_rules(
     let rules: Vec<_> = state
         .css_style_rules
         .extract_if(|&(key, _), _| key == sheet)
-        .map(|((_, rule), object)| (rule, None, object))
+        .filter_map(|((_, rule), object)| {
+            object
+                .upgrade()
+                .map(|object| (rule, None, (*object).clone()))
+        })
         .collect();
     let margins: Vec<_> = state
         .css_margin_rules
         .extract_if(|&(key, ..), _| key == sheet)
-        .map(|((_, rule, margin), object)| (rule, Some(margin), object))
+        .filter_map(|((_, rule, margin), object)| {
+            object
+                .upgrade()
+                .map(|object| (rule, Some(margin), (*object).clone()))
+        })
         .collect();
     let mut removed: Option<SheetKey> = None;
-    for (rule, margin, object) in rules.into_iter().chain(margins) {
+    // Borrow the batch so processed wrappers still root their new groups
+    // until later margins have been transferred to those same groups.
+    for (rule, margin, object) in rules.iter().chain(&margins) {
+        let (rule, margin) = (*rule, *margin);
         let (key, index) = match shift(rule) {
             Some(index) => (sheet, index),
             None => {
@@ -1314,13 +1561,18 @@ fn shift_sheet_rules(
                 (key, 0)
             }
         };
-        if let Some(slot) = rule_object_slot(&object) {
+        if let Some(slot) = rule_object_slot(object) {
             slot.sheet.set(key);
             slot.rule_index.set(index);
         }
+        transfer_rule_owner(state, key, object);
         match margin {
-            Some(margin) => state.css_margin_rules.insert((key, index, margin), object),
-            None => state.css_style_rules.insert((key, index), object),
+            Some(margin) => state
+                .css_margin_rules
+                .insert((key, index, margin), weak_rule(object)),
+            None => state
+                .css_style_rules
+                .insert((key, index), weak_rule(object)),
         };
     }
 }
@@ -1337,18 +1589,25 @@ fn css_style_rule_object(
         if let SheetKey::Element(style_element) = sheet {
             sync_sheet(state, style_element);
         }
-        let cached = state.css_style_rules.get(&key).cloned();
-        (cached, is_page_rule(&sheet_text(state, sheet), rule_index))
+        let cached = state
+            .css_style_rules
+            .get(&key)
+            .and_then(WeakGc::upgrade)
+            .map(|object| (*object).clone());
+        (cached, sheet_snapshot(state, sheet).is_page(rule_index))
     })?;
     if let Some(existing) = cached {
         return Ok(existing);
     }
+    let owner = with_state(context, |state| state.css_owner(sheet))?;
     let slot = RuleSlot::new(sheet, rule_index, None);
     let prototype = context.intrinsics().constructors().object().prototype();
     let object = JsObject::from_proto_and_data(
         Some(prototype),
         CssStyleRuleData {
             slot: slot.clone(),
+            owner: GcRefCell::new(Some(owner)),
+            anchor: GcRefCell::new(None),
             style: GcRefCell::new(None),
         },
     );
@@ -1374,7 +1633,12 @@ fn css_style_rule_object(
             margin_rule_list_length,
             margin_rule_list_item,
         )?; // cov:ignore: The fresh realm's built-in object prototype accepts these fixed list members.
-        let list = indexed_object(context, prototype, MarginRuleListSource { page: slot })?;
+        let list = indexed_object_retaining(
+            context,
+            prototype,
+            MarginRuleListSource { page: slot },
+            vec![object.clone()],
+        )?; // cov:ignore: Fresh proxy targets accept the fixed native members and private WeakMap registration.
         let descriptor = PropertyDescriptor::builder()
             .value(list)
             .writable(false)
@@ -1400,7 +1664,8 @@ fn css_style_rule_object(
         context,
     )?; // cov:ignore: The newly created ordinary object is extensible and has no conflicting own symbol.
     with_state(context, |state| {
-        state.css_style_rules.insert(key, object.clone())
+        transfer_rule_owner(state, sheet, &object);
+        state.css_style_rules.insert(key, weak_rule(&object))
     })?;
     Ok(object)
 }
@@ -1422,15 +1687,12 @@ fn css_rule_data(this: &JsValue) -> JsResult<Rc<RuleSlot>> {
 /// The text `slot` points into and the top-level rule it points at (the
 /// page rule, for a margin rule's slot). A slot always points at a rule of
 /// its text, since a rule its sheet loses moves to a text of its own.
-fn rule_info(context: &mut Context, slot: &RuleSlot) -> JsResult<(SheetKey, String, CssRuleInfo)> {
+fn rule_info(context: &mut Context, slot: &RuleSlot) -> JsResult<(SheetKey, Rc<str>, CssRuleInfo)> {
     with_state(context, |state| {
         let (sheet, rule_index, _) = slot.location(state);
-        let text = sheet_text(state, sheet);
-        let rule = parse_css_rules(&text)
-            .get(rule_index)
-            .cloned()
-            .unwrap_or_default();
-        (sheet, text, rule)
+        let parsed = sheet_snapshot(state, sheet);
+        let rule = parsed.rules.get(rule_index).cloned().unwrap_or_default();
+        (sheet, Rc::clone(&parsed.text), rule)
     })
 }
 
@@ -1467,7 +1729,7 @@ fn css_rule_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
     if (rule.prelude.starts_with('@') && !is_page_prelude(&rule.prelude)) || rule.body.is_none() {
         return Ok(JsValue::undefined());
     }
-    let style = super::style::rule_style_object(context, slot)?;
+    let style = super::style::rule_style_object(context, slot, object.clone())?;
     if is_page_prelude(&rule.prelude) {
         super::style::install_page_descriptor_accessors(context, &style)?;
     }
@@ -1515,24 +1777,6 @@ pub(crate) fn parent_rule(context: &mut Context, slot: &RuleSlot) -> JsResult<Js
         (sheet, rule, Some(margin)) => Ok(margin_rule_object(context, sheet, rule, margin)?.into()),
         (sheet, rule, None) => Ok(css_style_rule_object(context, sheet, rule)?.into()),
     }
-}
-
-/// Whether the top-level rule `rule_index` of the sheet `text` is an
-/// `@page` rule.
-pub(crate) fn is_page_rule(text: &str, rule_index: usize) -> bool {
-    parse_css_rules(text)
-        .get(rule_index)
-        .is_some_and(|rule| is_page_prelude(&rule.prelude))
-}
-
-/// The declaration text of the top-level rule `rule_index` of the sheet
-/// `text`.
-pub(crate) fn rule_body(text: &str, rule_index: usize) -> Option<String> {
-    let rule = parse_css_rules(text).get(rule_index)?.clone();
-    Some(
-        rule.body
-            .map_or_else(String::new, |range| text[range].to_owned()),
-    )
 }
 
 /// Replaces the declarations of the top-level rule `rule_index` of `sheet`
@@ -1600,12 +1844,18 @@ struct PageRuleParts {
 /// The `@page` rule `this` names.
 fn page_rule_parts(this: &JsValue, context: &mut Context) -> JsResult<PageRuleParts> {
     let slot = css_rule_data(this)?;
-    let (sheet, text, rule) = rule_info(context, &slot)?;
+    let (sheet, _, rule) = rule_info(context, &slot)?;
     let body = rule
         .body
         .filter(|_| is_page_prelude(&rule.prelude))
         .ok_or_else(|| JsNativeError::typ().with_message("'this' is not a CSSPageRule"))?;
-    let margins = nested_at_rule_ranges(&text[body.clone()]);
+    let margins = with_state(context, |state| {
+        sheet_snapshot(state, sheet)
+            .margins(slot.rule_index.get())
+            .iter()
+            .map(|range| range.start - body.start..range.end - body.start)
+            .collect()
+    })?;
     Ok(PageRuleParts {
         slot,
         sheet,
@@ -1718,6 +1968,7 @@ fn shift_margin_rules(
     let rules: Vec<_> = state
         .css_margin_rules
         .extract_if(|&(sheet, rule, _), _| (sheet, rule) == page_key)
+        .filter_map(|(key, object)| object.upgrade().map(|object| (key, (*object).clone())))
         .collect();
     for ((sheet, rule, margin), object) in rules {
         let (key, index) = match shift(margin) {
@@ -1734,7 +1985,10 @@ fn shift_margin_rules(
                 cell.set(index);
             }
         }
-        state.css_margin_rules.insert((key.0, key.1, index), object);
+        transfer_rule_owner(state, key.0, &object);
+        state
+            .css_margin_rules
+            .insert((key.0, key.1, index), weak_rule(&object));
     }
 }
 
@@ -1746,7 +2000,10 @@ struct MarginRuleListSource {
 
 impl IndexedSource for MarginRuleListSource {
     fn length(&self, context: &mut Context) -> JsResult<usize> {
-        Ok(margin_rule_texts(context, &self.page)?.len())
+        with_state(context, |state| {
+            let (sheet, rule, _) = self.page.location(state);
+            sheet_snapshot(state, sheet).margins(rule).len()
+        })
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
@@ -1770,14 +2027,22 @@ fn margin_rule_object(
     margin_index: usize,
 ) -> JsResult<JsObject> {
     let key = (sheet, rule_index, margin_index);
-    if let Some(existing) = with_state(context, |state| state.css_margin_rules.get(&key).cloned())?
-    {
+    if let Some(existing) = with_state(context, |state| {
+        state
+            .css_margin_rules
+            .get(&key)
+            .and_then(WeakGc::upgrade)
+            .map(|object| (*object).clone())
+    })? {
         return Ok(existing);
     }
+    let owner = with_state(context, |state| state.css_owner(sheet))?;
     let object = JsObject::from_proto_and_data(
         Some(context.intrinsics().constructors().object().prototype()),
         MarginRuleData {
             slot: RuleSlot::new(sheet, rule_index, Some(margin_index)),
+            owner: GcRefCell::new(Some(owner)),
+            anchor: GcRefCell::new(None),
             style: GcRefCell::new(None),
         },
     );
@@ -1792,7 +2057,8 @@ fn margin_rule_object(
     )?;
     super::interfaces::set_to_string_tag(&object, "CSSMarginRule", context)?;
     with_state(context, |state| {
-        state.css_margin_rules.insert(key, object.clone())
+        transfer_rule_owner(state, sheet, &object);
+        state.css_margin_rules.insert(key, weak_rule(&object))
     })?;
     Ok(object)
 }
@@ -1812,7 +2078,7 @@ fn margin_rule_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
     }
     // Kept on the rule object itself, so the rule keeps the same
     // declaration object after it moves or is detached.
-    let style = super::style::rule_style_object(context, slot)?;
+    let style = super::style::rule_style_object(context, slot, object.clone())?;
     if let Some(data) = object.downcast_ref::<MarginRuleData>() {
         *data.style.borrow_mut() = Some(style.clone());
     }
@@ -1868,17 +2134,6 @@ fn margin_body_range(text: &str, rule_index: usize, margin_index: usize) -> Opti
     Some(start + inner.start..start + inner.end)
 }
 
-/// The declaration text of margin rule `margin_index` in the page rule
-/// `rule_index` of the sheet `text`.
-pub(crate) fn margin_rule_body(
-    text: &str,
-    rule_index: usize,
-    margin_index: usize,
-) -> Option<String> {
-    let range = margin_body_range(text, rule_index, margin_index)?;
-    Some(text[range].to_owned())
-}
-
 /// Replaces the declarations of margin rule `margin_index` in the page rule
 /// `rule_index` of `sheet` with `body`.
 pub(crate) fn write_margin_rule_body(
@@ -1902,22 +2157,10 @@ pub(crate) fn write_margin_rule_body(
 struct MarginRuleData {
     #[unsafe_ignore_trace]
     slot: Rc<RuleSlot>,
+    owner: GcRefCell<Option<Gc<CssOwner>>>,
+    anchor: GcRefCell<Option<Gc<JsObject>>>,
     /// The rule's `style`, created on first access.
     style: GcRefCell<Option<JsObject>>,
-}
-
-/// The source text of each margin rule nested in the page rule `page`;
-/// empty once that rule is no longer an `@page` rule.
-fn margin_rule_texts(context: &mut Context, page: &RuleSlot) -> JsResult<Vec<String>> {
-    let (_, text, rule) = rule_info(context, page)?;
-    let Some(body) = rule.body.filter(|_| is_page_prelude(&rule.prelude)) else {
-        return Ok(Vec::new());
-    };
-    let body = &text[body];
-    Ok(nested_at_rule_ranges(body)
-        .into_iter()
-        .map(|range| body[range].to_owned())
-        .collect())
 }
 
 fn margin_rule_list_length(
@@ -1957,12 +2200,15 @@ fn margin_rule_data(this: &JsValue) -> JsResult<Rc<RuleSlot>> {
 /// The current text of the margin rule `this` names.
 fn this_margin_rule_text(this: &JsValue, context: &mut Context) -> JsResult<String> {
     let slot = margin_rule_data(this)?;
-    let (_, _, margin_index) = with_state(context, |state| slot.location(state))?;
-    let margin_index = margin_index.unwrap_or_default();
-    Ok(margin_rule_texts(context, &slot)?
-        .into_iter()
-        .nth(margin_index)
-        .unwrap_or_default())
+    with_state(context, |state| {
+        let (sheet, rule, margin) = slot.location(state);
+        let parsed = sheet_snapshot(state, sheet);
+        parsed
+            .margins(rule)
+            .get(margin.unwrap_or_default())
+            .map(|range| parsed.text[range.clone()].to_owned())
+            .unwrap_or_default()
+    })
 }
 
 /// `CSSMarginRule.name`: the margin rule's at-keyword, ASCII-lowercased.

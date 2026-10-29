@@ -26,6 +26,7 @@ pub(crate) mod image;
 pub(crate) mod indexed;
 pub(crate) mod interfaces;
 pub(crate) mod node;
+mod node_gc;
 pub(crate) mod query;
 pub(crate) mod scripts;
 pub(crate) mod scroll_into_view;
@@ -55,9 +56,7 @@ pub use scripts::RunReport;
 /// Mutable runtime state shared by every native binding.
 pub(crate) struct State {
     pub host: Box<dyn DocumentHost>,
-    /// Arena index -> wrapper. Strong references: raikiri-dom never frees
-    /// arena slots, so wrappers live exactly as long as the runtime.
-    pub wrappers: Vec<Option<JsObject>>,
+    node_graph: node_gc::NodeGraph,
     /// Set by every DOM mutation; cleared by a successful host flush.
     pub dirty: bool,
     /// Monotonic DOM mutation generation, bumped by every mutation alongside
@@ -65,6 +64,10 @@ pub(crate) struct State {
     /// successful host flush clears `dirty` while the DOM stays changed, so
     /// `dirty` alone cannot tell a cached collection it is stale.
     pub generation: u64,
+    window_named_cache: window::named::NamedAccessCache,
+    sibling_order: tree::SiblingIndex,
+    element_counts: tree::ElementCounts,
+    id_lookups: query::IdLookupCache,
     /// Live-collection tree walks since the runtime was created. Counts cache
     /// misses (fresh walks) only, never cache hits; tests use it to prove
     /// repeated `length`/index accesses do not re-walk.
@@ -72,38 +75,25 @@ pub(crate) struct State {
     pub live_walks: usize,
     /// First host failure seen during the current evaluation.
     pub host_failure: Option<String>,
-    /// Per-element `style` objects so `el.style === el.style`.
-    pub style_objects: HashMap<usize, JsObject>,
     /// Animation effects in creation order; the vector index is their stable ID.
     pub animations: Vec<animation::AnimationEffect>,
     /// The live `document.styleSheets` list.
     pub style_sheet_list: Option<JsObject>,
-    /// Per-style-element `CSSStyleSheet` wrappers.
-    pub style_sheets: HashMap<usize, JsObject>,
-    /// Per-style-element live `CSSRuleList` wrappers.
-    pub css_rule_lists: HashMap<usize, JsObject>,
-    /// Per-style-rule `CSSStyleRule` wrappers, keyed by sheet and rule index.
-    pub css_style_rules: HashMap<(stylesheet::SheetKey, usize), JsObject>,
-    /// Per-margin-rule `CSSMarginRule` wrappers, keyed by sheet, page rule,
-    /// and margin rule index.
-    pub css_margin_rules: HashMap<(stylesheet::SheetKey, usize, usize), JsObject>,
+    css_sheet_index: stylesheet::SheetList,
+    /// Weak lookup tables for CSS rules. Their traced sheet/rule owner groups
+    /// preserve identity while reachable without permanently rooting scripts.
+    pub css_style_rules: HashMap<(stylesheet::SheetKey, usize), boa_gc::WeakGc<JsObject>>,
+    pub css_margin_rules: HashMap<(stylesheet::SheetKey, usize, usize), boa_gc::WeakGc<JsObject>>,
     /// Per-style-element sheet text the rule objects above were handed out
     /// for.
     pub css_sheet_versions: HashMap<usize, stylesheet::SheetVersion>,
+    css_rule_memo: stylesheet::RuleMemo,
     /// The text of each rule detached from its sheet, which its rule
     /// objects keep reading and writing.
-    pub css_detached_rules: HashMap<u64, String>,
+    css_detached_rules: HashMap<u64, boa_gc::WeakGc<stylesheet::CssOwner>>,
     /// The key the next detached rule text is stored under.
     pub next_detached_rule: u64,
-    /// Per-element `getComputedStyle` objects so
-    /// `getComputedStyle(el) === getComputedStyle(el)`.
-    pub computed_style_objects: HashMap<usize, JsObject>,
-    /// Per-element `classList` objects so `el.classList === el.classList`.
-    pub class_lists: HashMap<usize, JsObject>,
-    /// Per-node `childNodes` lists so `n.childNodes === n.childNodes`.
-    pub child_node_lists: HashMap<usize, JsObject>,
-    /// Per-node `children` collections so `n.children === n.children`.
-    pub children_collections: HashMap<usize, JsObject>,
+    css_cache_sweep_at: usize,
     /// The pending image request of each `<img>` that has one, by arena
     /// index; a queued request whose number is no longer here is stale.
     pub image_requests: HashMap<usize, u64>,
@@ -127,12 +117,9 @@ pub(crate) struct State {
     pub selection_ranges: Vec<JsObject>,
     /// Registered CSS custom highlights, keyed by highlight name.
     pub custom_highlights: HashMap<String, JsObject>,
-    /// Registered `EventTarget` listeners, keyed by node arena index; `None`
-    /// is the window/global object, which has no arena index of its own.
-    /// [`dispatch`] both adds and removes entries here (`addEventListener`/
-    /// `removeEventListener`) and reads them back to run a target's
-    /// listeners when `dispatchEvent` or a trusted event fires.
-    pub listeners: HashMap<Option<usize>, Vec<events::Listener>>,
+    /// Listeners belonging to the permanent window root. Node listeners live
+    /// in the traced node ownership graph.
+    pub window_listeners: Vec<events::Listener>,
     /// Task and microtask queues, timers, and the virtual clock.
     pub event_loop: event_loop::EventLoop,
     /// Set while [`dispatch::report_exception`] is dispatching its own
@@ -174,11 +161,9 @@ pub(crate) struct State {
     pub write_point: Option<document::WritePoint>,
     /// `<script>` elements `document.write` inserted, in insertion order,
     /// waiting to run once the script that wrote them finishes.
-    pub written_scripts: Vec<usize>,
+    written_scripts: Vec<(usize, boa_gc::Gc<node_gc::NodeRecord>)>,
     /// `console.*` calls recorded during evaluation, in call order.
     pub console: Vec<window::ConsoleMessage>,
-    /// Per-canvas 2d contexts so `canvas.getContext('2d') === canvas.getContext('2d')`.
-    pub canvas_contexts: HashMap<usize, JsObject>,
     /// Current `fillStyle` per canvas, `(serialized, rgba)`. Defaults to
     /// opaque black (`"#000000"`) per HTML Standard §4.12.5.
     pub canvas_fill_styles: HashMap<usize, (String, [u8; 4])>,
@@ -355,33 +340,33 @@ impl DomRuntime {
 
     /// [`DomRuntime::new`] with explicit resource limits.
     pub fn with_options<H: DocumentHost>(
-        host: H,
+        mut host: H,
         options: RunOptions,
     ) -> Result<Self, RuntimeError> {
         let limits = options.limits;
-        let node_count = host.document().node_count();
+        let node_graph = node_gc::NodeGraph::new(host.document_mut());
         let state = State {
             host: Box::new(host),
-            wrappers: vec![None; node_count],
+            node_graph,
             dirty: true,
             generation: 0,
+            window_named_cache: Default::default(),
+            sibling_order: Default::default(),
+            element_counts: Default::default(),
+            id_lookups: Default::default(),
             #[cfg(test)]
             live_walks: 0,
             host_failure: None,
-            style_objects: HashMap::new(),
             animations: Vec::new(),
             style_sheet_list: None,
-            style_sheets: HashMap::new(),
-            css_rule_lists: HashMap::new(),
+            css_sheet_index: stylesheet::SheetList::default(),
             css_style_rules: HashMap::new(),
             css_margin_rules: HashMap::new(),
             css_sheet_versions: HashMap::new(),
+            css_rule_memo: stylesheet::RuleMemo::default(),
             css_detached_rules: HashMap::new(),
             next_detached_rule: 0,
-            computed_style_objects: HashMap::new(),
-            class_lists: HashMap::new(),
-            child_node_lists: HashMap::new(),
-            children_collections: HashMap::new(),
+            css_cache_sweep_at: 64,
             image_requests: HashMap::new(),
             next_image_request: 0,
             inert_images: HashSet::new(),
@@ -390,7 +375,7 @@ impl DomRuntime {
             selection_object: None,
             selection_ranges: Vec::new(),
             custom_highlights: HashMap::new(),
-            listeners: HashMap::new(),
+            window_listeners: Vec::new(),
             event_loop: event_loop::EventLoop::new(limits.clone()),
             reporting_exception: false,
             dispatch_depth: 0,
@@ -399,7 +384,6 @@ impl DomRuntime {
             write_point: None,
             written_scripts: Vec::new(),
             console: Vec::new(),
-            canvas_contexts: HashMap::new(),
             canvas_fill_styles: HashMap::new(),
             viewport_scroll_x: 0.0,
             viewport_scroll_y: 0.0,

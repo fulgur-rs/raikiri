@@ -1329,9 +1329,9 @@ fn percent(value: f32) -> LengthPercentageOrCalc {
     LengthPercentageOrCalc::Length(Length::Percent(value))
 }
 
-fn oklab_shorter() -> GradientColorInterpolation {
+fn srgb_shorter() -> GradientColorInterpolation {
     GradientColorInterpolation {
-        color_space: MixColorSpace::Oklab,
+        color_space: MixColorSpace::Srgb,
         hue_method: HueInterpolationMethod::Shorter,
     }
 }
@@ -1377,8 +1377,8 @@ fn expect_conic_gradient(value: Option<PropertyValue>) -> ConicGradient {
 
 #[test]
 fn background_image_parses_linear_gradient_with_default_direction_and_interpolation() {
-    // No direction, no `in ...` clause — both spec-mandated defaults
-    // (`to bottom` / `Oklab`) are baked in.
+    // No direction, no `in ...` clause — both defaults (`to bottom` / `sRGB`
+    // for legacy colors) are baked in.
     assert_eq!(
         parse("linear-gradient(red, blue)", "background-image"),
         Some(PropertyValue::BackgroundImage(Arc::from([
@@ -1388,7 +1388,7 @@ fn background_image_parses_linear_gradient_with_default_direction_and_interpolat
                     horizontal: None,
                     vertical: Some(VerticalSide::Bottom),
                 }),
-                interpolation: oklab_shorter(),
+                interpolation: srgb_shorter(),
                 stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None),]),
             })))
         ])))
@@ -1526,7 +1526,7 @@ fn background_image_parses_linear_gradient_side_and_corner_any_order() {
                 horizontal: Some(HorizontalSide::Left),
                 vertical: Some(VerticalSide::Top),
             }),
-            interpolation: oklab_shorter(),
+            interpolation: srgb_shorter(),
             stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None)]),
         }))),
     ])));
@@ -1691,6 +1691,112 @@ fn background_image_parses_linear_gradient_color_interpolation_method() {
     );
 }
 
+/// The color space a gradient written as `function(<stops>)` interpolates in.
+fn default_interpolation_space(function: &str, stops: &str) -> MixColorSpace {
+    let value = parse(&format!("{function}({stops})"), "background-image");
+    let gradient = background_gradient(&value).expect("the callers pass gradients that parse");
+    match gradient {
+        Gradient::Linear(g) => g.interpolation.color_space,
+        Gradient::Radial(g) => g.interpolation.color_space,
+        Gradient::Conic(g) => g.interpolation.color_space,
+    }
+}
+
+#[test]
+fn a_gradient_of_legacy_colors_interpolates_in_srgb_when_no_space_is_given() {
+    for stops in [
+        "#e53935, #1e88e5",
+        "crimson, dodgerblue",
+        "rgb(229, 57, 53), rgb(30, 136, 229)",
+        "rgb(229 57 53), rgba(30 136 229 / 50%)",
+        "hsl(1, 77%, 55%), hsla(208 79% 51% / 0.5)",
+        "hwb(1 21% 10%), hwb(208 12% 10%)",
+        "transparent, #1e88e5",
+        "currentcolor, #1e88e5",
+        "red 0%, 30%, blue 80%, #fff",
+        "light-dark(#e53935, oklch(0.6 0.2 25)), #1e88e5",
+        "contrast-color(#e53935), #1e88e5",
+        "alpha(from #e53935 / 0.5), #1e88e5",
+        "HIGHLIGHT, Canvas",
+    ] {
+        for function in [
+            "linear-gradient",
+            "repeating-linear-gradient",
+            "radial-gradient",
+            "conic-gradient",
+        ] {
+            assert_eq!(
+                default_interpolation_space(function, stops),
+                MixColorSpace::Srgb,
+                "{function}({stops})"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_gradient_with_a_color_in_a_modern_syntax_interpolates_in_oklab_when_no_space_is_given() {
+    for stops in [
+        "color(srgb 0.9 0.2 0.2), #1e88e5",
+        "#e53935, color(display-p3 0.2 0.5 0.85)",
+        "oklch(0.6 0.2 25), #1e88e5",
+        "#e53935, oklab(0.6 -0.03 -0.17)",
+        "lab(50% 60 40), #1e88e5",
+        "#e53935, lch(55% 60 270)",
+        "#e53935, color-mix(in srgb, #1e88e5, #1e88e5)",
+        "#e53935 10%, 40%, #1e88e5, oklch(0.6 0.2 25)",
+        "rgb(from #e53935 r g b), #1e88e5",
+        "hsl(from #e53935 h s l), #1e88e5",
+        "#e53935, rgb(none 136 229)",
+        "hsl(none 77% 55%), #1e88e5",
+        "#e53935, hwb(208 12% 10% / none)",
+        "light-dark(oklch(0.6 0.2 25), #000), #1e88e5",
+        "alpha(from oklch(0.6 0.2 25) / 0.5), #1e88e5",
+    ] {
+        for function in ["linear-gradient", "radial-gradient", "conic-gradient"] {
+            assert_eq!(
+                default_interpolation_space(function, stops),
+                MixColorSpace::Oklab,
+                "{function}({stops})"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_gradient_stop_nested_deeper_than_colors_may_be_is_rejected() {
+    // The stop is classified before it is parsed, and neither follows a color
+    // past the depth the color parser reads.
+    for (open, close) in [("alpha(from ", ")"), ("light-dark(", ", red)")] {
+        let depth = MAX_COLOR_MIX_NESTING_DEPTH + 1;
+        let stop = format!("{}red{}", open.repeat(depth), close.repeat(depth));
+        assert_eq!(
+            parse(
+                &format!("linear-gradient({stop}, blue)"),
+                "background-image"
+            ),
+            None,
+            "{open}"
+        );
+    }
+}
+
+#[test]
+fn a_space_given_in_a_gradient_wins_over_the_color_syntax_of_its_stops() {
+    assert_eq!(
+        default_interpolation_space("linear-gradient", "in oklab, #e53935, #1e88e5"),
+        MixColorSpace::Oklab
+    );
+    assert_eq!(
+        default_interpolation_space("radial-gradient", "in srgb, oklch(0.6 0.2 25), #1e88e5"),
+        MixColorSpace::Srgb
+    );
+    assert_eq!(
+        default_interpolation_space("conic-gradient", "in lab, #e53935, #1e88e5"),
+        MixColorSpace::Lab
+    );
+}
+
 #[test]
 fn background_image_rejects_hue_method_on_non_polar_interpolation_space() {
     // `<hue-interpolation-method>` is only valid for a polar `<color-space>`
@@ -1791,7 +1897,7 @@ fn background_image_rejects_conic_gradient_position_before_from_angle() {
 #[test]
 fn background_image_parses_radial_gradient_with_default_shape_size_and_position() {
     // No shape/size/position/interpolation — `ellipse farthest-corner at
-    // center` / `Oklab` are all spec-mandated defaults.
+    // center` / `sRGB` for legacy colors are all defaults.
     assert_eq!(
         parse("radial-gradient(red, blue)", "background-image"),
         Some(PropertyValue::BackgroundImage(Arc::from([
@@ -1803,7 +1909,7 @@ fn background_image_parses_radial_gradient_with_default_shape_size_and_position(
                     horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                     vertical: CssPositionOffset::Start(Length::Percent(50.0)),
                 },
-                interpolation: oklab_shorter(),
+                interpolation: srgb_shorter(),
                 stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None)]),
             })))
         ])))
@@ -2062,7 +2168,7 @@ fn background_image_parses_conic_gradient_with_default_angle_and_position() {
                     horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
                     vertical: CssPositionOffset::Start(Length::Percent(50.0)),
                 },
-                interpolation: oklab_shorter(),
+                interpolation: srgb_shorter(),
                 stops: Arc::new(vec![
                     AngularColorStop {
                         color: GradientStopColor::Resolved(RED),

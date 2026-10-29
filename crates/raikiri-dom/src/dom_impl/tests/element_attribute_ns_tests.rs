@@ -5,6 +5,7 @@ const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 fn element_ref(doc: &Document, id: usize) -> ElementRef<'_> {
     ElementRef {
+        stylesheet_source: None,
         node: &doc.nodes[id],
     }
 }

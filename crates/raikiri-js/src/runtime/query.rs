@@ -18,6 +18,9 @@
 //! in-document), never a disconnected root or `DocumentFragment` top-level
 //! child.
 
+mod id_cache;
+pub(super) use id_cache::IdLookupCache;
+
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::{Document, NodeKind};
@@ -237,14 +240,8 @@ fn scope_for_root(doc: &Document, root: usize) -> Option<StyleNodeId> {
 fn get_element_by_id(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_non_element_parent_node(this, context)?;
     let id = dom_string(args, 0, context)?;
-    if id.is_empty() {
-        return Ok(JsValue::null());
-    }
     let found = with_state(context, |s| {
-        let doc = s.host.document();
-        find_in_tree(doc, index, |e, _| {
-            (doc.element_attribute(e, "id") == Some(id.as_str())).then_some(e)
-        })
+        s.id_lookups.find(s.host.document(), index, &id)
     })?;
     wrap_optional(context, found)
 }

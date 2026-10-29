@@ -10,6 +10,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+streaming-diagnostics = []
+cache-accounting-diagnostics = []
+
 [dependencies]
 raikiri-traits = { workspace = true }
 raikiri-dom    = { workspace = true }

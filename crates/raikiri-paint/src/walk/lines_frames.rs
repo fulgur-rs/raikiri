@@ -298,7 +298,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             .map(|lines| lines.finish_leaving_groups(leaves_groups(&self.deferral_scopes)))
             .unwrap_or_default();
         leave_groups(
-            self.document,
+            &mut self.order,
             &mut self.deferral_scopes,
             &mut self.left_groups,
             frame.node_id,
@@ -329,7 +329,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             if leaves_groups(&self.deferral_scopes) {
                 let left = finish_lines_leaving_groups(self.scene, lines);
                 leave_groups(
-                    self.document,
+                    &mut self.order,
                     &mut self.deferral_scopes,
                     &mut self.left_groups,
                     frame.node_id,

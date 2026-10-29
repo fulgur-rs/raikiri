@@ -4050,3 +4050,5 @@ fn ruby_elements_take_their_ua_display_types() {
     assert_eq!(display("rtc"), DisplayValue::RubyTextContainer);
     assert_eq!(display("rt"), DisplayValue::RubyText);
 }
+
+mod stylesheet_source_tests;

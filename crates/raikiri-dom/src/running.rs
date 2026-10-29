@@ -22,11 +22,15 @@ use raikiri_style::computed::ComputedValues;
 use raikiri_style::property::{
     BreakBetween, ContentComponent, DisplayValue, FloatValue, PositionValue, StringFetchMode,
 };
-use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, PageCascadeResult};
+use raikiri_style::{
+    CascadeResult, ComputedLengthPercentageOrAuto, CounterStyleRegistry, PageCascadeResult,
+};
 use raikiri_traits::{LayoutError, NodeId, PageBox, PaintRect};
 use smol_str::SmolStr;
 
 use crate::document::Document;
+use crate::generated_content::CounterSnapshotLookup;
+use crate::generated_content::{content_components_to_text_with_quotes, element_counters};
 use crate::layout::{
     PageContentInsets, PageLayoutControl, PageMargins, PageSlice, layout_pages_with_options,
     page_content_insets_for_page, page_margins_for_page,
@@ -525,19 +529,34 @@ pub fn element_string_value(doc: &Document, idx: usize) -> String {
 }
 
 /// The text that the `string-set` value `components` of element `idx` gives a
-/// named string: its literals and its `content()` as the element's string
-/// value. Components that need more than the element's text add nothing.
+/// named string (CSS GCPM 3 §1.1.1 `<content-list>`,
+/// <https://www.w3.org/TR/css-gcpm-3/#content-list>): its literals, its
+/// `content()` as the element's string value, its attributes, and the values
+/// of the counters in `counters` in the styles of `registry`. Other
+/// components add nothing.
 pub(crate) fn string_set_value(
     doc: &Document,
     idx: usize,
     components: &[ContentComponent],
+    counters: &impl CounterSnapshotLookup,
+    registry: &CounterStyleRegistry,
 ) -> String {
     let mut value = String::new();
     for component in components {
         match component {
-            ContentComponent::Literal(text) => value.push_str(text.as_str()),
             ContentComponent::Content { .. } => value.push_str(&element_string_value(doc, idx)),
-            _ => {}
+            _ => value.push_str(
+                &content_components_to_text_with_quotes::<&str, _>(
+                    doc,
+                    idx,
+                    std::slice::from_ref(component),
+                    &[],
+                    false,
+                    counters,
+                    registry,
+                )
+                .unwrap_or_default(),
+            ),
         }
     }
     value
@@ -558,7 +577,14 @@ pub(crate) fn string_set_text(
         .string_set
         .iter()
         .rfind(|(set, _)| set == name)?;
-    Some(string_set_value(doc, idx, components))
+    let snapshots = doc.shared_compact_counter_snapshots(cascade).ok();
+    Some(string_set_value(
+        doc,
+        idx,
+        components,
+        &element_counters(snapshots.as_deref(), idx),
+        &cascade.counter_styles,
+    ))
 }
 
 /// The predicate behind [`element_string_value`]'s whitespace

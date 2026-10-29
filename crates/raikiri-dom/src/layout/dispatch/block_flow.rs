@@ -25,10 +25,13 @@ use raikiri_layout_style::values::{
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
 
-/// Whether a block child's normal flow shares its parent's float context.
+/// Whether a block child's normal flow shares its parent's float context. A
+/// table and a replaced box do not: their border boxes keep clear of the
+/// margin boxes of the floats in the context they sit in (CSS 2.1 §9.5).
 fn shares_context(style: &Style) -> bool {
     style.is_block()
         && !style.item_is_table
+        && !style.item_is_replaced
         && style.float == Float::None
         && style.position != Position::Absolute
         && !style.overflow.x.is_scroll_container()
@@ -225,6 +228,19 @@ fn min_content_width(
     }
 }
 
+/// Whether `node` is an inline box that stays inline: a float, an absolutely
+/// positioned box and an item of a flex or grid container are blockified
+/// (CSS Display 3 §2.7) and are the containing block of their children.
+fn is_inline_box(tree: &LayoutSession<'_>, node: NodeId, style: &Style) -> bool {
+    use crate::layout::{BoxParentScope, box_tree::BoxTree};
+    children::is_non_atomic_inline(tree, node)
+        && style.float == Float::None
+        && style.position != Position::Absolute
+        && !BoxTree::for_layout(tree.document)
+            .parent(usize::from(node), BoxParentScope::LayoutRoot)
+            .is_some_and(|parent| tree.nodes[parent].display().is_flex_or_grid_container())
+}
+
 pub(crate) fn compute_block_flow(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
@@ -234,7 +250,25 @@ pub(crate) fn compute_block_flow(
     let style = style_input::container(tree, usize::from(node));
     let content_box_ratio = tree.nodes[usize::from(node)].ratio_in_content_box;
     let width_stands_in = tree.nodes[usize::from(node)].svg_width_follows_available;
-    let metrics = Metrics::resolve(&style, width_stands_in, content_box_ratio, inputs);
+    // An inline laid out here as a block holds blocks of the paragraph around
+    // it, whose containing block is that paragraph's content box (CSS 2.1
+    // §10.1): a percentage height below the inline resolves against the
+    // height the inline was given, not against its own `auto` one.
+    let inline = is_inline_box(tree, node, &style);
+    let in_the_block_around = |metrics: Metrics| Metrics {
+        percent_height: if inline {
+            inputs.parent_size.height
+        } else {
+            metrics.percent_height
+        },
+        ..metrics
+    };
+    let metrics = in_the_block_around(Metrics::resolve(
+        &style,
+        width_stands_in,
+        content_box_ratio,
+        inputs,
+    ));
     let width = if let Some(width) = metrics.preferred.width {
         if metrics.ratio_width {
             let minimum = min_content_width(tree, node, metrics.percent_height)
@@ -278,6 +312,14 @@ pub(crate) fn compute_block_flow(
         let width = match style.size.width.expand() {
             ExpandedDimension::MinContent => minimum,
             ExpandedDimension::MaxContent => maximum,
+            // `stretch` fills the room the parent offers, which is the border
+            // box left after the margins (CSS Sizing 4 §5.1); without a
+            // definite room it sizes like `auto`.
+            ExpandedDimension::Stretch => match inputs.available_space.width {
+                AvailableSpace::Definite(room) => room,
+                AvailableSpace::MaxContent => maximum,
+                AvailableSpace::MinContent => minimum,
+            },
             // `fit-content(<length-percentage>)` takes the room its limit
             // makes, which `with_fit_content_room` offers before this runs.
             _ => match inputs.available_space.width {
@@ -296,7 +338,12 @@ pub(crate) fn compute_block_flow(
     {
         let mut sized = inputs;
         sized.known_dimensions.width = Some(width);
-        Metrics::resolve(&style, width_stands_in, content_box_ratio, sized)
+        in_the_block_around(Metrics::resolve(
+            &style,
+            width_stands_in,
+            content_box_ratio,
+            sized,
+        ))
     } else {
         metrics
     };
@@ -364,7 +411,10 @@ fn layout_context(
     let collapse_end = shares_context(style)
         && inputs.vertical_margins_are_collapsible.end
         && metrics.inset.bottom == 0.0
-        && style.size.height.is_auto()
+        && matches!(
+            style.size.height.expand(),
+            ExpandedDimension::Auto | ExpandedDimension::Stretch
+        )
         && metrics.preferred.height.is_none();
     if ctx.is_bfc_root() {
         ctx.set_width(width);

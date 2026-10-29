@@ -282,7 +282,11 @@ const LAYOUT_WORK_PER_NODE: usize = 32;
 /// Per-layout-pass fragment storage.
 #[derive(Clone, Debug)]
 pub(crate) struct FragmentTree {
+    /// Fragment records; topology changes must use the tree's mutation methods.
     pub(crate) fragments: Vec<LayoutFragment>,
+    /// Child edges registered once on push or root attachment, retained until
+    /// clear or an arena rebuild, including edges of retired records.
+    children_by_parent: std::collections::HashMap<usize, Vec<usize>>,
     /// Preliminary records retired after recursive source layout finishes.
     retired: std::collections::HashSet<usize>,
     /// Indices of the records pushed without a parent, by source node, so a
@@ -302,6 +306,7 @@ impl Default for FragmentTree {
     fn default() -> Self {
         Self {
             fragments: Vec::new(),
+            children_by_parent: std::collections::HashMap::new(),
             retired: std::collections::HashSet::new(),
             roots_by_node: std::collections::HashMap::new(),
             break_tokens: Vec::new(),
@@ -315,6 +320,7 @@ impl Default for FragmentTree {
 impl FragmentTree {
     pub(crate) fn clear(&mut self) {
         self.fragments.clear();
+        self.children_by_parent.clear();
         self.retired.clear();
         self.roots_by_node.clear();
         self.break_tokens.clear();
@@ -346,8 +352,59 @@ impl FragmentTree {
                 .or_default()
                 .push(id);
         }
+        if let Some(parent) = fragment.parent {
+            self.children_by_parent.entry(parent).or_default().push(id);
+        }
+        #[cfg(test)]
+        tests::record_index_work(1, usize::from(fragment.parent.is_some()));
         self.fragments.push(fragment);
         Some(id)
+    }
+
+    /// Attach an unparented record to a container emitted later.
+    /// Already-parented records are unchanged, so each edge is registered once.
+    pub(crate) fn attach_root(&mut self, index: usize, parent: usize) {
+        let Some(fragment) = self.fragments.get_mut(index) else {
+            return;
+        };
+        if fragment.parent.is_some() {
+            return;
+        }
+        fragment.parent = Some(parent);
+        self.children_by_parent
+            .entry(parent)
+            .or_default()
+            .push(index);
+        #[cfg(test)]
+        tests::record_index_work(1, 1);
+    }
+
+    /// Install a new arena after pending retirements have been finalized.
+    /// Limits, work accounting, break tokens and failure flags are preserved.
+    pub(crate) fn replace_finalized_fragments(&mut self, fragments: Vec<LayoutFragment>) {
+        debug_assert!(self.retired.is_empty());
+        self.fragments = fragments;
+        self.rebuild_indexes();
+    }
+
+    fn rebuild_indexes(&mut self) {
+        self.roots_by_node.clear();
+        self.children_by_parent.clear();
+        #[cfg(test)]
+        tests::record_index_work(0, self.fragments.len());
+        for (index, fragment) in self.fragments.iter().enumerate() {
+            if let Some(parent) = fragment.parent {
+                self.children_by_parent
+                    .entry(parent)
+                    .or_default()
+                    .push(index);
+            } else {
+                self.roots_by_node
+                    .entry(fragment.node_id)
+                    .or_default()
+                    .push(index);
+            }
+        }
     }
 
     pub(crate) fn record_break(&mut self, token: BreakToken) {
@@ -394,17 +451,15 @@ impl FragmentTree {
         if pending.is_empty() {
             return;
         }
-        // Reparenting can point a record at a later index, so collect the
-        // subtrees through an explicit child list.
-        let mut children = std::collections::HashMap::<usize, Vec<usize>>::new();
-        for (index, fragment) in self.fragments.iter().enumerate() {
-            if let Some(parent) = fragment.parent {
-                children.entry(parent).or_default().push(index);
-            }
-        }
         while let Some(index) = pending.pop() {
             if self.retired.insert(index) {
-                pending.extend(children.get(&index).into_iter().flatten().copied());
+                let children = self
+                    .children_by_parent
+                    .get(&index)
+                    .map_or(&[][..], Vec::as_slice);
+                #[cfg(test)]
+                tests::record_index_work(2, children.len());
+                pending.extend(children.iter().copied());
             }
         }
     }
@@ -425,15 +480,7 @@ impl FragmentTree {
             }
             self.retired.clear();
         }
-        self.roots_by_node.clear();
-        for (index, fragment) in self.fragments.iter().enumerate() {
-            if fragment.parent.is_none() {
-                self.roots_by_node
-                    .entry(fragment.node_id)
-                    .or_default()
-                    .push(index);
-            }
-        }
+        self.rebuild_indexes();
         let mut counts = std::collections::HashMap::<usize, usize>::new();
         for fragment in &self.fragments {
             *counts.entry(fragment.node_id).or_default() += 1;
@@ -459,11 +506,12 @@ impl FragmentTree {
         // Every record pushed without a parent is indexed, so the records of
         // other nodes are not visited. Reparented records are no longer roots.
         for index in self.roots_by_node.remove(&node_id).unwrap_or_default() {
-            if let Some(fragment) = self.fragments.get_mut(index)
-                && fragment.node_id == node_id
-                && fragment.parent.is_none()
+            if self
+                .fragments
+                .get(index)
+                .is_some_and(|fragment| fragment.node_id == node_id && fragment.parent.is_none())
             {
-                fragment.parent = Some(parent);
+                self.attach_root(index, parent);
             }
         }
     }

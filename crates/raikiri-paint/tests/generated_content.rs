@@ -130,3 +130,43 @@ img::after { content: "cd" }"#,
         .collect();
     assert_eq!(generated_text_x, [20.0, 60.0, 130.0, 170.0]);
 }
+
+#[test]
+fn counters_of_a_counter_that_does_not_exist_paint_a_zero() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
+    document.append_text(
+        style,
+        r#"* { font-family: Ahem; font-size: 20px }
+body, div { display: block }
+div::before { content: "[" counters(absent, ".") "]" }"#,
+    );
+    let body = document.append_element(Some(html), "body", None::<&str>);
+    document.append_element(Some(body), "div", None::<&str>);
+
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    )))
+    .expect("Ahem font collection");
+    document.set_font_collection(fonts);
+    layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
+
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
+    // The generated text is `[0]`, three glyphs of Ahem, where a counter that
+    // read as empty would leave `[]`.
+    let glyph_counts: Vec<usize> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(glyph_counts, [3]);
+}

@@ -1,5 +1,5 @@
 use super::convert::{FromTaffy, IntoTaffy};
-use crate::layout::protocol::{LayoutInput, LayoutOutput};
+use crate::layout::protocol::{LayoutInput, LayoutOutput, RunMode};
 
 /// How many intrinsic widths a node keeps besides its measured sizes.
 pub(super) const MAX_WIDTHS: usize = 128;
@@ -18,6 +18,9 @@ pub(super) const MAX_WIDTHS: usize = 128;
 pub(crate) struct LayoutCache {
     cache: taffy::Cache,
     widths: Vec<(LayoutInput, f32)>,
+    /// Whether the final layout it holds no longer stands for the boxes inside
+    /// the box (see [`LayoutCache::forget_final_layout`]).
+    final_layout_stale: bool,
 }
 
 impl LayoutCache {
@@ -27,12 +30,16 @@ impl LayoutCache {
         Self {
             cache: taffy::Cache::new(),
             widths: Vec::new(),
+            final_layout_stale: false,
         }
     }
 
     /// The stored result for `input`, if there is one.
     #[inline]
     pub(crate) fn get(&mut self, input: &LayoutInput) -> Option<LayoutOutput> {
+        if self.final_layout_stale && input.run_mode == RunMode::PerformLayout {
+            return None;
+        }
         self.cache
             .get(&(*input).into_taffy())
             .map(LayoutOutput::from_taffy)
@@ -41,8 +48,23 @@ impl LayoutCache {
     /// Store the `output` computed for `input`.
     #[inline]
     pub(crate) fn store(&mut self, input: &LayoutInput, output: LayoutOutput) {
+        if input.run_mode == RunMode::PerformLayout {
+            self.final_layout_stale = false;
+        }
         self.cache
             .store(&(*input).into_taffy(), output.into_taffy());
+    }
+
+    /// Stop answering a performed layout from the final layout held.
+    ///
+    /// A performed layout leaves the lines and the layouts of the boxes inside
+    /// the box as it sets them, and the final layout stands for what it left.
+    /// A later layout of the same box through another cache replaces them, so
+    /// the final layout held here must not answer again until the box is laid
+    /// out through this cache once more. The sizes measured are unaffected: a
+    /// size depends on the inputs and the style alone.
+    pub(crate) fn forget_final_layout(&mut self) {
+        self.final_layout_stale = true;
     }
 
     /// The width stored for `input` by [`LayoutCache::store_width`].
@@ -78,5 +100,6 @@ impl LayoutCache {
     pub(crate) fn clear(&mut self) {
         self.cache.clear();
         self.widths.clear();
+        self.final_layout_stale = false;
     }
 }

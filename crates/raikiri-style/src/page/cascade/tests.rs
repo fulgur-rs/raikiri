@@ -26,32 +26,33 @@ use crate::property::{
     BackgroundRepeatKeyword, BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BoxDecorationBreak, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath,
-    ColumnCountValue, ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue,
-    ContentComponent, CssColor, CssPosition, CssPositionOffset, CssWideKeyword, CustomProperty,
-    Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
-    FlexFlow, FlexShorthand, FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings,
-    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand,
-    FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
-    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
-    FontVariationSetting, FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox,
-    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
-    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
-    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
-    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand,
-    PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition,
-    SelfAlignmentValue, StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll,
-    TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
-    TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationStyle, TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle,
-    TextEmphasisVEdge, TextIndentLength, TextIndentValue, TextJustify, TextOrientation,
-    TextShadowColor, TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform,
-    TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    ColumnCountValue, ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContainIntrinsicLength,
+    ContainIntrinsicSize, ContainIntrinsicSizeShorthand, ContentAlignmentValue, ContentComponent,
+    CssColor, CssPosition, CssPositionOffset, CssWideKeyword, CustomProperty, Direction,
+    DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow,
+    FlexShorthand, FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSetting,
+    FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox, GridAreaShorthand,
+    GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount,
+    GridShorthand, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars,
+    HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
+    LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
+    ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
+    StartEnd, TabSize, TableLayoutValue, TextAlign, TextAlignAll, TextAlignLast, TextAutospace,
+    TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
+    TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
+    TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition,
+    TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle, TextEmphasisVEdge,
+    TextIndentLength, TextIndentValue, TextJustify, TextOrientation, TextShadowColor,
+    TextShadowItem, TextSpacingShorthand, TextSpacingTrim, TextTransform, TextUnderlineOffset,
+    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
     WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
@@ -4527,7 +4528,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 192;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 195;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -5098,6 +5099,26 @@ property_key_samples! {
     BackgroundPositionY => PropertyValue::BackgroundPositionY(Arc::from([
         CssPositionOffset::End(Length::Rem(2.0)),
     ])),
+    // `Em`/`Rem` (not `Px`): a page context has no such property, so the
+    // value passes through unchanged, as the `Contain` sample does.
+    ContainIntrinsicWidth => PropertyValue::ContainIntrinsicWidth(ContainIntrinsicSize {
+        auto: true,
+        length: Some(ContainIntrinsicLength::Length(Length::Em(2.0))),
+    }),
+    ContainIntrinsicHeight => PropertyValue::ContainIntrinsicHeight(ContainIntrinsicSize {
+        auto: false,
+        length: Some(ContainIntrinsicLength::Length(Length::Rem(3.0))),
+    }),
+    ContainIntrinsicSize => PropertyValue::ContainIntrinsicSize(ContainIntrinsicSizeShorthand {
+        width: ContainIntrinsicSize {
+            auto: true,
+            length: Some(ContainIntrinsicLength::Length(Length::Em(2.0))),
+        },
+        height: ContainIntrinsicSize {
+            auto: false,
+            length: None,
+        },
+    }),
     // CSS Backgrounds and Borders 3 §2.3 — `Url` is the non-initial
     // worst case among the two payloads with no length component
     // (`None` is the spec initial value, same reasoning as
@@ -5706,6 +5727,9 @@ property_value_variant_registry! {
     BackgroundPosition,
     BackgroundPositionX,
     BackgroundPositionY,
+    ContainIntrinsicWidth,
+    ContainIntrinsicHeight,
+    ContainIntrinsicSize,
     BackgroundImage,
     Background,
     ObjectFit,
@@ -5919,7 +5943,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             LengthOrAuto::Auto
             | LengthOrAuto::MinContent
             | LengthOrAuto::MaxContent
-            | LengthOrAuto::FitContent => None,
+            | LengthOrAuto::FitContent
+            | LengthOrAuto::Stretch => None,
             LengthOrAuto::FitContentOf(limit) => length_percentage_or_calc(limit),
             LengthOrAuto::Calc(_) => Some("calc()"),
             LengthOrAuto::RelativeCalc(_) => Some("LengthOrAuto::RelativeCalc"),
@@ -5952,7 +5977,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | FlexBasisValue::Content
             | FlexBasisValue::MinContent
             | FlexBasisValue::MaxContent
-            | FlexBasisValue::FitContent => None,
+            | FlexBasisValue::FitContent
+            | FlexBasisValue::Stretch => None,
             FlexBasisValue::Calc(_) => Some("calc()"),
             FlexBasisValue::RelativeCalc(_) => Some("FlexBasisValue::RelativeCalc"),
             FlexBasisValue::Length(l) => length(l),
@@ -6326,6 +6352,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // Shorthand fall-through — either component being residue makes
             // the whole shorthand residue.
             PropertyValue::Gap(g) => length_or_normal(g.row).or_else(|| length_or_normal(g.column)),
+            // A page context has no `contain-intrinsic-*`; the value passes
+            // through as declared.
+            PropertyValue::ContainIntrinsicWidth(_)
+            | PropertyValue::ContainIntrinsicHeight(_)
+            | PropertyValue::ContainIntrinsicSize(_) => None,
             PropertyValue::GridArea(_) | PropertyValue::Grid(_) => None,
             PropertyValue::GridTemplateColumns(v) | PropertyValue::GridTemplateRows(v) => {
                 grid_template_tracks(v)
@@ -8327,6 +8358,17 @@ fn cascade_page_max_and_fit_content_widths_are_kept() {
     assert_eq!(
         fit.declarations().get(&PropertyKey::Width),
         Some(&PropertyValue::Width(LengthOrAuto::FitContent)),
+    );
+}
+
+/// `stretch` survives page-context absolutization.
+#[test]
+fn cascade_page_stretch_width_is_kept() {
+    let root = ComputedValues::initial();
+    let stretch = page("@page { width: stretch }", &root);
+    assert_eq!(
+        stretch.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::Stretch)),
     );
 }
 

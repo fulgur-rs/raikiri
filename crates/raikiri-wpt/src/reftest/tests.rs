@@ -69,7 +69,8 @@ fn animation_viewport_units_are_resolved_after_geometry_reparse() {
     let expected = format!(
         "<html><head><style>{rules}</style></head><body><div style='height:400px;background:green'></div></body></html>"
     );
-    let styles = [AnimationStyleSidecar {
+    let styles = [StyleSourceSidecar {
+        kind: StyleSourceKind::Animation,
         node_path: vec![0, 1, 0],
         declarations: "height:200vh".into(),
     }];
@@ -478,21 +479,23 @@ fn image_resolution_reparses_geometry_varying_pages() {
 #[test]
 fn animation_style_sidecar_restore_rejects_missing_and_non_element_paths() {
     let mut missing_path_document = raikiri_dom::Document::new();
-    let missing_path = [AnimationStyleSidecar {
+    let missing_path = [StyleSourceSidecar {
+        kind: StyleSourceKind::Animation,
         node_path: vec![0],
         declarations: "font-size: 20px;".into(),
     }];
-    let error = restore_animation_styles(&mut missing_path_document, &missing_path)
+    let error = restore_style_sources(&mut missing_path_document, &missing_path)
         .expect_err("a missing child path must be rejected");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     assert!(error.to_string().contains("is absent"));
 
     let mut non_element_document = raikiri_dom::Document::new();
-    let document_root = [AnimationStyleSidecar {
+    let document_root = [StyleSourceSidecar {
+        kind: StyleSourceKind::Animation,
         node_path: Vec::new(),
         declarations: "font-size: 20px;".into(),
     }];
-    let error = restore_animation_styles(&mut non_element_document, &document_root)
+    let error = restore_style_sources(&mut non_element_document, &document_root)
         .expect_err("the document node is not an element");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     assert!(error.to_string().contains("does not target an element"));
@@ -565,7 +568,8 @@ fn animation_style_sidecar_is_restored_after_geometry_reparse() {
     let expected = format!(
         "<html><head><style>{page_rules} html,body{{margin:0}}</style></head><body><div style=\"height:550px;font-size:20px;line-height:normal\">Animation sample</div></body></html>"
     );
-    let styles = [AnimationStyleSidecar {
+    let styles = [StyleSourceSidecar {
+        kind: StyleSourceKind::Animation,
         node_path: vec![0, 1, 0],
         declarations: "font-size: 20px;".into(),
     }];
@@ -714,14 +718,20 @@ fn named_page_does_not_receive_fallback_when_unqualified_rule_exists() {
 fn default_page_margin_is_mirrored_to_reference_without_page_edges() {
     let test = "<style>@page :first { size: portrait; } @page { size: landscape; }</style>";
     let reference = "<style>body { margin: 0; }</style>Landscape";
-    assert!(should_mirror_default_page_margin(test, reference));
+    assert!(should_mirror_default_page_margin(
+        &scan_page_rules(test),
+        &scan_page_rules(reference)
+    ));
 }
 
 #[test]
 fn explicit_reference_page_margin_is_not_overridden_by_mirroring() {
     let test = "<style>@page { size: 300px; }</style>";
     let reference = "<style>@page { margin: 0; }</style>Reference";
-    assert!(!should_mirror_default_page_margin(test, reference));
+    assert!(!should_mirror_default_page_margin(
+        &scan_page_rules(test),
+        &scan_page_rules(reference)
+    ));
 }
 
 #[test]
@@ -3051,9 +3061,11 @@ fn a_root_relative_margin_box_content_image_loads_from_the_checkout() {
     let document = render_in_checkout(
         root.path(),
         "<style>@page{size:100px 100px;margin:20px;\
-         @top-left{content:url(/images/green.png);vertical-align:top}}\
+         @top-left{content:url(/images/green.png);vertical-align:top;font-size:0;line-height:20px}}\
          html,body{margin:0}</style>",
     );
+    // Pin the line metrics so installed fallback fonts cannot place the
+    // tiny image between pixel rows and change the fully opaque pixel count.
     // The 2x2 image is drawn at its own size, on the baseline of the first
     // line of the top-left box, which starts at x = 20 inside the 20px margin.
     let green = green_pixels(&document, 0);
@@ -3071,7 +3083,7 @@ fn a_margin_box_content_image_of_a_later_page_survives_geometry_reparse() {
         root.path(),
         "<style>@page :first{size:100px 100px;margin:20px;@top-left{content:'x'}}\
          @page{size:120px 120px;margin:20px;\
-         @top-left{content:url(/images/green.png);vertical-align:top}}\
+         @top-left{content:url(/images/green.png);vertical-align:top;font-size:0;line-height:20px}}\
          html,body{margin:0}</style>\
          <div style=\"height:60px\"></div><div style=\"height:200px\"></div>",
     );
@@ -3206,4 +3218,292 @@ fn a_canvas_on_a_later_page_of_another_width_keeps_its_bitmap() {
         &wide.rgba[(5 * wide.width as usize + 5) * 4..][..4],
         &[0, 128, 0, 255]
     );
+}
+
+#[test]
+fn cssom_source_sidecar_survives_both_print_geometry_parses() {
+    for page_rules in [
+        "@page{size:300px 300px;margin:0}",
+        "@page{size:300px 300px;margin:0}@page:first{size:300px 200px}",
+    ] {
+        let rules =
+            format!("{page_rules}html,body{{margin:0}}div{{height:400px;background:green}}");
+        let source =
+            "<!DOCTYPE html><html><head><style></style></head><body><div></div></body></html>";
+        let expected = format!(
+            "<!DOCTYPE html><html><head><style>{rules}</style></head><body><div></div></body></html>"
+        );
+        let styles = [StyleSourceSidecar {
+            kind: StyleSourceKind::Stylesheet,
+            node_path: vec![0, 0, 0],
+            declarations: rules,
+        }];
+        let engine = InlineEngineChoice {
+            require_inline_fonts: false,
+            print_page_margin: false,
+            ..Default::default()
+        };
+        let actual = render_raikiri_pages_inner_with_canvases(
+            source,
+            800,
+            600,
+            None,
+            None,
+            engine,
+            Some(&styles),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let reference = render_raikiri_pages_inner_with_canvases(
+            &expected, 800, 600, None, None, engine, None, None, None, None,
+        )
+        .unwrap();
+        assert_eq!(actual.pages.len(), reference.pages.len());
+        assert!(reference.pages.len() >= 2);
+        for (actual, expected) in actual.pages.iter().zip(reference.pages) {
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            assert_eq!(actual.rgba, expected.rgba);
+        }
+    }
+}
+
+#[test]
+fn cssom_reparse_fetches_only_the_final_sheets_once() {
+    struct CountingNetwork(std::sync::Mutex<Vec<String>>);
+    impl raikiri_traits::NetworkProvider for CountingNetwork {
+        fn fetch_one_hop(
+            &self,
+            request: raikiri_traits::Request,
+        ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
+            self.0.lock().unwrap().push(request.url.to_string());
+            Err(raikiri_traits::NetworkError::Other("test fallback".into()))
+        }
+    }
+    let network = CountingNetwork(Default::default());
+    let base = raikiri::Url::parse("https://example.test/").unwrap();
+    let styles = [StyleSourceSidecar {
+        kind: StyleSourceKind::Stylesheet,
+        node_path: vec![0, 0, 1],
+        declarations: "@import 'edited.css'; body{background:green}".into(),
+    }];
+    render_raikiri_pages_with_resources("<!DOCTYPE html><head><link rel=stylesheet href='external.css'><style>@import 'original.css';</style></head><body></body>", 200,200,
+        PrintRenderResources { syntax:DocumentSyntax::Html, mirror_page_margin:false,network:Some(&network),parse_base_url:Some(&base),base_url:Some(&base),
+        replaced_resolver:None,image_pixel_source:None,font_loader:None,prepare_cascade_images:None,canvas_bitmaps:None,style_sources:Some(&styles),
+        custom_highlight_ranges:None,focused_path:None,require_inline_fonts:false,print_page_margin:false }).unwrap();
+    assert_eq!(
+        *network.0.lock().unwrap(),
+        [
+            "https://example.test/external.css",
+            "https://example.test/edited.css"
+        ]
+    );
+}
+
+fn assert_cssom_print_matches_static(html: &str, styles: &[StyleSourceSidecar], reference: &str) {
+    let engine = InlineEngineChoice {
+        require_inline_fonts: false,
+        print_page_margin: false,
+        ..Default::default()
+    };
+    let actual = render_raikiri_pages_inner_with_canvases(
+        html,
+        800,
+        600,
+        None,
+        None,
+        engine,
+        Some(styles),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let expected = render_raikiri_pages_inner_with_canvases(
+        reference, 800, 600, None, None, engine, None, None, None, None,
+    )
+    .unwrap();
+    assert_eq!(actual.pages.len(), expected.pages.len());
+    for (actual, expected) in actual.pages.iter().zip(&expected.pages) {
+        assert_eq!(
+            (actual.width, actual.height),
+            (expected.width, expected.height)
+        );
+        assert!(actual.rgba == expected.rgba, "print pixels differ");
+    }
+}
+
+#[test]
+fn cssom_print_preserves_default_and_explicit_page_margins() {
+    for margin in ["", "margin:0;", "margin-left:10px;"] {
+        for first in ["", "@page:first{size:300px 200px}"] {
+            let old = format!(
+                "@page{{size:300px 300px;{margin}}}{first}html,body{{margin:0}}div{{height:400px;background:red}}"
+            );
+            let edited = old.replace("background:red", "background:green");
+            let html = format!(
+                "<!DOCTYPE html><html><head><style>{old}</style></head><body><div></div></body></html>"
+            );
+            let reference = html.replace(&old, &edited);
+            let styles = [StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: vec![0, 0, 0],
+                declarations: edited,
+            }];
+            assert_cssom_print_matches_static(&html, &styles, &reference);
+        }
+    }
+}
+
+#[test]
+fn cssom_print_named_page_hint_uses_current_css_and_preserves_inline_order() {
+    for inline in ["", " style='page:old'"] {
+        for in_head in [true, false] {
+            let old = "@page old{size:300px 200px;margin:0}@page new{size:400px 300px;margin:0}html,body{margin:0}body{page:old}.box{width:100vw;height:100vh;background:green}";
+            let edited = old.replace("page:old", "page:new");
+            let (head, body, path) = if in_head {
+                (
+                    format!("<style>{old}</style>"),
+                    String::new(),
+                    vec![0, 0, 0],
+                )
+            } else {
+                (
+                    String::new(),
+                    format!("<style>{old}</style>"),
+                    vec![0, 1, 0],
+                )
+            };
+            let html = format!(
+                "<!DOCTYPE html><html><head>{head}</head><body{inline}>{body}<div class=box></div></body></html>"
+            );
+            let reference = html.replace(old, &edited);
+            let styles = [StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: path,
+                declarations: edited,
+            }];
+            assert_cssom_print_matches_static(&html, &styles, &reference);
+        }
+    }
+}
+
+#[test]
+fn cssom_print_page_defaults_use_all_current_inline_sheets() {
+    for keep_base in [true, false] {
+        let base = "@page{margin:0}";
+        let page = "/* 名 */ @page named{size:300px 200px}html,body{margin:0}body{page:named}div{height:240px;background:green}";
+        let html = format!(
+            "<!DOCTYPE html><html><head><style>{base}</style><style>{page}</style></head><body><div></div></body></html>"
+        );
+        let styles = if keep_base {
+            vec![StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: vec![0, 0, 1],
+                declarations: page.into(),
+            }]
+        } else {
+            vec![StyleSourceSidecar {
+                kind: StyleSourceKind::Stylesheet,
+                node_path: vec![0, 0, 0],
+                declarations: String::new(),
+            }]
+        };
+        let reference = if keep_base {
+            html.clone()
+        } else {
+            html.replace(base, "")
+        };
+        assert_cssom_print_matches_static(&html, &styles, &reference);
+    }
+}
+
+#[test]
+fn cssom_print_empty_source_discards_old_page_hint_and_keeps_inline_hint() {
+    for inline in ["", " style='page:new'"] {
+        let old = "body{page:old}";
+        let rules = "@page{size:500px 400px;margin:0}@page old{size:300px 200px;margin:0}@page new{size:400px 300px;margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}";
+        let html = format!(
+            "<!DOCTYPE html><html><head><style>{old}</style><style>{rules}</style></head><body{inline}><div class=box></div></body></html>"
+        );
+        let reference = html.replace(old, "");
+        let styles = [StyleSourceSidecar {
+            kind: StyleSourceKind::Stylesheet,
+            node_path: vec![0, 0, 0],
+            declarations: String::new(),
+        }];
+        assert_cssom_print_matches_static(&html, &styles, &reference);
+    }
+}
+
+#[test]
+fn print_normalization_keeps_sheet_boundaries_and_original_dom_text() {
+    let original = "/* 名 */ @page named{size:300px 200px}";
+    let html = format!("<head><style>@page {{</style><style>{original}</style></head>");
+    let mut parsed = raikiri_html::parse(html.as_bytes(), &raikiri::ParseOptions::new()).unwrap();
+    let ids = live_style_element_ids(&parsed.dom, parsed.dom.root_index());
+    let count = parsed.dom.node_count();
+    assert_eq!(current_inline_page_rules(&parsed.dom).len(), 1);
+    normalize_print_stylesheets(&mut parsed.dom);
+    assert_eq!(parsed.dom.node_count(), count);
+    assert_eq!(
+        parsed.dom.element_text_content(ids[1]).as_deref(),
+        Some(original)
+    );
+    assert!(
+        parsed
+            .dom
+            .stylesheet_source(ids[1])
+            .unwrap()
+            .contains("margin: 48px;")
+    );
+    assert_eq!(parsed.dom.stylesheet_source(ids[0]), None);
+}
+
+#[test]
+fn effective_page_hint_keeps_inline_declarations_after_empty_cssom_override() {
+    let mut parsed = raikiri_html::parse(
+        &b"<head><style>body{page:old}</style></head><body style='page:new'></body>"[..],
+        &raikiri::ParseOptions::new(),
+    )
+    .unwrap();
+    let style = live_style_element_ids(&parsed.dom, parsed.dom.root_index())[0];
+    assert_eq!(
+        first_effective_page_name(&parsed.dom).as_deref(),
+        Some("old")
+    );
+    parsed
+        .dom
+        .set_stylesheet_source(style, String::new())
+        .unwrap();
+    assert_eq!(
+        first_effective_page_name(&parsed.dom).as_deref(),
+        Some("new")
+    );
+}
+
+#[test]
+fn effective_page_hint_preserves_the_raw_html_hint_scope() {
+    let html = "<!-- ( --><style>@page{size:500px;margin:0}@page larger{size:500px 800px;margin:0}html,body{margin:0}</style><div style='height:200vh'></div><div style='page:larger'></div>";
+    assert_eq!(parsed_page_viewport(html, 800.0, 600.0), (500.0, 500.0));
+}
+
+#[test]
+fn cssom_print_added_page_hint_uses_current_projected_fallback() {
+    let old = "@page{size:500px 400px;margin:0}@page new{size:400px 300px;margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}";
+    let edited = format!("{old}body{{page:new}}");
+    let html = format!(
+        "<!DOCTYPE html><!-- ( --><html><head><style>{old}</style></head><body><div class=box></div></body></html>"
+    );
+    let reference = html.replace(old, &edited);
+    let styles = [StyleSourceSidecar {
+        kind: StyleSourceKind::Stylesheet,
+        node_path: vec![0, 0, 0],
+        declarations: edited,
+    }];
+    assert_cssom_print_matches_static(&html, &styles, &reference);
 }

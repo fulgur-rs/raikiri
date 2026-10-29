@@ -1,3 +1,6 @@
+mod cycle_probe_tests;
+mod cycle_tests;
+
 use super::*;
 use crate::cascade::test_support::*;
 use crate::cascade::{apply_value, cascade};
@@ -577,6 +580,14 @@ fn deferred_projection_covers_supported_shorthands() {
             "gap",
             "1px 2px",
             vec![PropertyKey::RowGap, PropertyKey::ColumnGap],
+        ),
+        (
+            "contain-intrinsic-size",
+            "auto 1px 2px",
+            vec![
+                PropertyKey::ContainIntrinsicWidth,
+                PropertyKey::ContainIntrinsicHeight,
+            ],
         ),
         (
             "place-content",

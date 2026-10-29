@@ -10,12 +10,19 @@
 //! - <https://dom.spec.whatwg.org/#interface-processinginstruction>
 //! - <https://dom.spec.whatwg.org/#converting-nodes-into-a-node>
 
+mod element_count;
+pub(super) use element_count::ElementCounts;
+
+mod sibling_order;
+pub(super) use sibling_order::SiblingIndex;
+
 use boa_engine::{Context, JsError, JsResult, JsValue};
 use raikiri_dom::{DomMutationError, NodeKind};
 
 use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::node::{js_str, mark_dirty};
+use super::node_gc::NodeObject;
 use super::webidl::{
     arg_node, arg_node_or_null, arg_required_node_or_null, arg_unsigned_long, dom_string,
     guard_node_budget, guard_node_budget_for, node_index, this_character_data, this_child_node,
@@ -176,11 +183,13 @@ pub(crate) fn replace_all(
 /// `node.childNodes === node.childNodes`.
 fn child_nodes(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    if let Some(existing) = with_state(context, |s| s.child_node_lists.get(&index).cloned())? {
+    if let Some(existing) = with_state(context, |s| s.node_object(index, NodeObject::ChildNodes))? {
         return Ok(existing.into());
     }
     let list = node_list(context, CollectionSource::ChildNodes(index))?;
-    with_state(context, |s| s.child_node_lists.insert(index, list.clone()))?;
+    with_state(context, |s| {
+        s.set_node_object(index, NodeObject::ChildNodes, list.clone())
+    })?;
     Ok(list.into())
 }
 
@@ -208,34 +217,40 @@ fn last_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 
 /// `node`'s previous sibling in its current parent's child order, or `None`
 /// if `node` is detached or is its parent's first child.
-fn previous_sibling_index(doc: &raikiri_dom::Document, node: usize) -> Option<usize> {
-    let parent = doc.parent_of(node)?;
-    let siblings = &doc.get_node(parent)?.children;
-    let position = siblings.iter().position(|&c| c == node)?;
+fn previous_sibling_index(
+    doc: &raikiri_dom::Document,
+    order: &mut SiblingIndex,
+    node: usize,
+) -> Option<usize> {
+    let (parent, position) = order.position(doc, node)?;
     let previous = position.checked_sub(1)?;
-    siblings.get(previous).copied()
+    doc.get_node(parent)?.children.get(previous).copied()
 }
 
 /// `node`'s next sibling in its current parent's child order, or `None` if
 /// `node` is detached or is its parent's last child.
-fn next_sibling_index(doc: &raikiri_dom::Document, node: usize) -> Option<usize> {
-    let parent = doc.parent_of(node)?;
-    let siblings = &doc.get_node(parent)?.children;
-    let position = siblings.iter().position(|&c| c == node)?;
-    siblings.get(position + 1).copied()
+pub(super) fn next_sibling_index(
+    doc: &raikiri_dom::Document,
+    order: &mut SiblingIndex,
+    node: usize,
+) -> Option<usize> {
+    let (parent, position) = order.position(doc, node)?;
+    doc.get_node(parent)?.children.get(position + 1).copied()
 }
 
 fn previous_sibling(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
     let sibling = with_state(context, |s| {
-        previous_sibling_index(s.host.document(), index)
+        previous_sibling_index(s.host.document(), &mut s.sibling_order, index)
     })?;
     wrap_optional(context, sibling)
 }
 
 fn next_sibling(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    let sibling = with_state(context, |s| next_sibling_index(s.host.document(), index))?;
+    let sibling = with_state(context, |s| {
+        next_sibling_index(s.host.document(), &mut s.sibling_order, index)
+    })?;
     wrap_optional(context, sibling)
 }
 
@@ -460,13 +475,16 @@ fn clone_into_wrapper(
         // cov:ignore: `clone_node_count` above returned non-zero, so the same
         // node is cloneable.
         .ok_or_else(unreachable_mutation_error)?;
+    // Keep the new detached component alive while handlers allocate and
+    // image requests are initialized, before the wrapper reaches script.
+    let object = wrap(context, copy)?;
     mark_dirty(context)?;
     // Each copied attribute is appended, so copied `on*` handlers compile
     // and every copied `<img>` starts its own request.
     super::dispatch::sync_event_handlers_in_tree(context, copy)?;
     if !adopt && super::image::is_inert(context, index)? {
         super::image::remember_inert_images(context, copy)?;
-        return Ok(wrap(context, copy)?.into());
+        return Ok(object.into());
     }
     super::image::update_images_below(context, copy)?;
     if with_state(context, |s| {
@@ -474,7 +492,7 @@ fn clone_into_wrapper(
     })? {
         super::image::update_image_data(context, copy)?;
     }
-    Ok(wrap(context, copy)?.into())
+    Ok(object.into())
 }
 
 /// `Node.cloneNode(subtree)`.
@@ -512,6 +530,8 @@ pub(crate) const NODE_TREE_MEMBERS: Members = Members {
 pub(crate) fn element_children_of(doc: &raikiri_dom::Document, parent: usize) -> Vec<usize> {
     doc.get_node(parent)
         .map(|n| {
+            #[cfg(test)]
+            tests::record_element_child_work(3, n.children.len());
             n.children
                 .iter()
                 .copied()
@@ -528,12 +548,12 @@ pub(crate) fn element_children_of(doc: &raikiri_dom::Document, parent: usize) ->
 /// `node.children === node.children`.
 fn children(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
-    if let Some(existing) = with_state(context, |s| s.children_collections.get(&index).cloned())? {
+    if let Some(existing) = with_state(context, |s| s.node_object(index, NodeObject::Children))? {
         return Ok(existing.into());
     }
     let collection = html_collection(context, CollectionSource::Children(index))?;
     with_state(context, |s| {
-        s.children_collections.insert(index, collection.clone())
+        s.set_node_object(index, NodeObject::Children, collection.clone())
     })?;
     Ok(collection.into())
 }
@@ -541,9 +561,18 @@ fn children(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<Js
 fn first_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let found = with_state(context, |s| {
-        element_children_of(s.host.document(), index)
-            .first()
-            .copied()
+        let doc = s.host.document();
+        let children = &doc.get_node(index)?.children;
+        let mut scan = children.iter();
+        let found = scan
+            .find(|&&c| {
+                doc.get_node(c)
+                    .is_some_and(|n| n.kind() == NodeKind::Element)
+            })
+            .copied();
+        #[cfg(test)]
+        tests::record_element_child_work(0, children.len() - scan.len());
+        found
     })?;
     wrap_optional(context, found)
 }
@@ -551,9 +580,18 @@ fn first_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> 
 fn last_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let found = with_state(context, |s| {
-        element_children_of(s.host.document(), index)
-            .last()
-            .copied()
+        let doc = s.host.document();
+        let children = &doc.get_node(index)?.children;
+        let mut scan = children.iter().rev();
+        let found = scan
+            .find(|&&c| {
+                doc.get_node(c)
+                    .is_some_and(|n| n.kind() == NodeKind::Element)
+            })
+            .copied();
+        #[cfg(test)]
+        tests::record_element_child_work(1, children.len() - scan.len());
+        found
     })?;
     wrap_optional(context, found)
 }
@@ -561,7 +599,7 @@ fn last_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
 fn child_element_count(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
     let count = with_state(context, |s| {
-        element_children_of(s.host.document(), index).len()
+        s.element_counts.count(s.host.document(), index)
     })?;
     Ok(JsValue::from(count as u32))
 }
@@ -674,7 +712,7 @@ fn before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     let reference = with_state(context, |s| {
         let doc = s.host.document();
         match viable_previous {
-            Some(previous) => next_sibling_index(doc, previous),
+            Some(previous) => next_sibling_index(doc, &mut s.sibling_order, previous),
             None => doc
                 .get_node(parent)
                 .and_then(|n| n.children.first().copied()),
@@ -799,17 +837,16 @@ fn previous_element_sibling(
     let index = this_child_node(this, context)?;
     let found = with_state(context, |s| {
         let doc = s.host.document();
-        let mut current = index;
-        while let Some(previous) = previous_sibling_index(doc, current) {
-            if doc
-                .get_node(previous)
-                .is_some_and(|n| n.kind() == NodeKind::Element)
-            {
-                return Some(previous);
-            }
-            current = previous;
-        }
-        None
+        let (parent, position) = s.sibling_order.position(doc, index)?;
+        let children = &doc.get_node(parent)?.children[..position];
+        let mut scan = children.iter().rev();
+        let found = scan.find(|&&sibling| {
+            doc.get_node(sibling)
+                .is_some_and(|node| node.kind() == NodeKind::Element)
+        });
+        #[cfg(test)]
+        tests::record_sibling_work(2, children.len() - scan.len());
+        found.copied()
     })?;
     wrap_optional(context, found)
 }
@@ -818,17 +855,16 @@ fn next_element_sibling(this: &JsValue, _: &[JsValue], context: &mut Context) ->
     let index = this_child_node(this, context)?;
     let found = with_state(context, |s| {
         let doc = s.host.document();
-        let mut current = index;
-        while let Some(next) = next_sibling_index(doc, current) {
-            if doc
-                .get_node(next)
-                .is_some_and(|n| n.kind() == NodeKind::Element)
-            {
-                return Some(next);
-            }
-            current = next;
-        }
-        None
+        let (parent, position) = s.sibling_order.position(doc, index)?;
+        let children = &doc.get_node(parent)?.children[position + 1..];
+        let mut scan = children.iter();
+        let found = scan.find(|&&sibling| {
+            doc.get_node(sibling)
+                .is_some_and(|node| node.kind() == NodeKind::Element)
+        });
+        #[cfg(test)]
+        tests::record_sibling_work(2, children.len() - scan.len());
+        found.copied()
     })?;
     wrap_optional(context, found)
 }
@@ -1053,7 +1089,7 @@ fn split_text(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         let new_node = document.create_detached_text(&tail);
         let result = match document.parent_of(index) {
             Some(parent) => {
-                let next = next_sibling_index(document, index);
+                let next = next_sibling_index(document, &mut s.sibling_order, index);
                 let result = document.pre_insert(parent, new_node, next);
                 if result.is_ok() {
                     super::stylesheet::note_child_list_change(s, parent, &[new_node]);

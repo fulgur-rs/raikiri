@@ -45,6 +45,43 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
         .map(|(width, height)| Size { width, height })
 }
 
+/// The natural size that `contain-intrinsic-width` and `-height` give a
+/// size-contained box measured as if it had no content (CSS Box Sizing 4 §5):
+/// the box is sized as a leaf of that size. An axis without a length has no
+/// size, as for `none`, which is the size of an empty box in that axis for
+/// everything but a grid container: its explicit tracks keep their size where
+/// no length is stated, so a grid that states one length only is not a leaf
+/// (see [`grid_with_one_intrinsic_length`]). `None` when the box is not sized
+/// as a leaf.
+fn contain_intrinsic_natural(node: &crate::node::Node) -> Option<Size<f32>> {
+    let lengths = node.contain_intrinsic;
+    let sized_as_leaf = match (lengths.width, lengths.height) {
+        (None, None) => false,
+        (Some(_), Some(_)) => true,
+        _ => !is_grid_container(node),
+    };
+    sized_as_leaf.then(|| Size {
+        width: lengths.width.unwrap_or(0.0),
+        height: lengths.height.unwrap_or(0.0),
+    })
+}
+
+fn is_grid_container(node: &crate::node::Node) -> bool {
+    node.formatting_context == FormattingContext::Grid
+}
+
+/// The natural size of a size-contained grid container that states a
+/// `contain-intrinsic-*` length in one axis only. The axis without a length
+/// keeps the size its explicit tracks give an empty grid, so the grid is laid
+/// out as without the length and only the axis that states one is replaced.
+fn grid_with_one_intrinsic_length(node: &crate::node::Node) -> Option<Size<f32>> {
+    let lengths = node.contain_intrinsic;
+    (is_grid_container(node) && lengths.width.is_some() != lengths.height.is_some()).then(|| Size {
+        width: lengths.width.unwrap_or(0.0),
+        height: lengths.height.unwrap_or(0.0),
+    })
+}
+
 /// Apply sizing entries to a local clone without publishing session state.
 /// Callers keep calc owners alive for every read of the clone.
 fn apply_local_sizing(style: &mut Style, entries: &[OwnedPropertyOverride]) {
@@ -382,6 +419,9 @@ pub(crate) struct TaffyChildIter<'a> {
     /// Whether the children are those of a source box, among which an
     /// anonymous table stands in for the rows it wraps.
     wrap_tables: bool,
+    /// Whether the children are those of a flex or grid container, whose
+    /// anonymous items of text each stand for a run of text nodes.
+    wraps_text_runs: bool,
     current: core::slice::Iter<'a, usize>,
     stack: Vec<core::slice::Iter<'a, usize>>,
 }
@@ -400,6 +440,7 @@ impl<'a> TaffyChildIter<'a> {
             doc,
             flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
             wrap_tables: !doc.is_anonymous_table(parent),
+            wraps_text_runs: node.display().is_flex_or_grid_container(),
             current: if hidden {
                 [].iter()
             } else {
@@ -419,8 +460,16 @@ impl<'a> TaffyChildIter<'a> {
             && !node.flags.contains(NodeFlags::IS_ROOT_ELEMENT)
     }
 
-    fn includes(doc: &Document, child: usize) -> bool {
+    fn includes(doc: &Document, child: usize, wraps_text_runs: bool) -> bool {
         if !doc.nodes[child].is_in_document() {
+            return false;
+        }
+        // A text node after the first of a run is laid out with it, by the
+        // paragraph of that first node: the run makes one anonymous item.
+        if wraps_text_runs
+            && doc.nodes[child].kind() == raikiri_traits::NodeKind::Text
+            && doc.nodes[child].in_ifc_subtree()
+        {
             return false;
         }
         // Whitespace-only text generates no box of its own:
@@ -565,7 +614,7 @@ impl Iterator for TaffyChildIter<'_> {
                 self.current = self.stack.pop()?;
                 continue;
             };
-            if !Self::includes(doc, child) {
+            if !Self::includes(doc, child, self.wraps_text_runs) {
                 continue;
             }
             if self.flatten && Self::is_flattened(doc, child) {
@@ -683,6 +732,7 @@ impl LayoutSession<'_> {
         let mut pending = vec![usize::from(node_id)];
         while let Some(idx) = pending.pop() {
             self.nodes[idx].cache.clear();
+            self.context.variant_caches.forget(idx);
             pending.extend(self.nodes[idx].children.iter().copied());
         }
     }
@@ -788,6 +838,12 @@ impl LayoutSession<'_> {
             self.context.text_group_shortest = shortest;
         }
         self.context.recursion.leave();
+        // A grid container reads this when its algorithm returns, and the
+        // last layout the algorithm performs of an item is the one that
+        // places it, so it is the baseline the container saw of the item.
+        if inputs.run_mode == RunMode::PerformLayout {
+            self.nodes[idx].exported_first_baseline = output.baselines.first;
+        }
         output
     }
 
@@ -825,7 +881,10 @@ impl LayoutSession<'_> {
         let uncached = block_ctx.is_some()
             || std::mem::take(&mut self.context.group_child_uncached)
             || (paragraph && ifc_basis.is_some() && has_percent_edge(&self.physical_style(idx)))
-            || self.context.size_contained_measure.last() == Some(&idx);
+            || self.context.size_contained_measure.last() == Some(&idx)
+            // The margins a `stretch` height limit leaves out of its room come
+            // from the parent that lays the box out, not from the inputs.
+            || content_limits::has_stretch_height_limit(self, idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against
@@ -891,7 +950,8 @@ impl LayoutSession<'_> {
                 let inline_shrink_wrap = ifc_table
                     || (tree.nodes[idx].display().is_atomic_inline_level()
                         && tree.nodes[idx].display() != DisplayValue::InlineTable)
-                    || is_floated_flex_or_grid(tree, idx);
+                    || is_floated_flex_or_grid(tree, idx)
+                    || is_button_in_multicol(tree, idx);
                 // Size containment already gave the box its width.
                 let contained_width = tree.nodes[idx].size_containment.width && !empty;
                 if inline_shrink_wrap
@@ -947,25 +1007,33 @@ impl LayoutSession<'_> {
                 && leaf_intrinsic_size(&tree.nodes[idx]).is_none()
                 && !tree.nodes[idx].is_inline_svg_root()
                 && tree.physical_style(idx).aspect_ratio().is_some();
-            let is_leaf = (tree.nodes[idx].children.is_empty()
-                && !ratio_block
-                && (!matches!(
-                    formatting_context,
-                    FormattingContext::Flex | FormattingContext::Grid
-                ) || item_is_replaced))
+            // The size of its contents is what a size-contained box gives up,
+            // and `contain-intrinsic-*` names the size it takes instead.
+            let contain_natural = contain_intrinsic_natural(&tree.nodes[idx]).filter(|_| empty);
+            let is_leaf = contain_natural.is_some()
+                || (tree.nodes[idx].children.is_empty()
+                    && !ratio_block
+                    && (!matches!(
+                        formatting_context,
+                        FormattingContext::Flex | FormattingContext::Grid
+                    ) || item_is_replaced))
                 || tree.nodes[idx].is_inline_svg_root();
             if empty && is_leaf {
                 // Replaced content with size containment has no natural size
                 // or aspect ratio; the style bridge left only the ratio the
                 // box states itself.
                 let style = tree.physical_style(idx);
+                let natural = contain_natural.unwrap_or(Size {
+                    width: 0.0,
+                    height: 0.0,
+                });
                 return compute_leaf_layout(
                     inputs,
                     &TaffyStyle::new(style),
                     resolve_calc,
                     |known, _| Size {
-                        width: known.width.unwrap_or(0.0),
-                        height: known.height.unwrap_or(0.0),
+                        width: known.width.unwrap_or(natural.width),
+                        height: known.height.unwrap_or(natural.height),
                     },
                 );
             }
@@ -1077,6 +1145,7 @@ impl LayoutSession<'_> {
             // A paragraph measured as if empty is a block container with no
             // lines.
             if formatting_context == FormattingContext::Inline && !empty {
+                let inputs = orthogonal_flow::with_page_room(tree, idx, inputs);
                 return compute_ifc_root(tree, node_id, inputs, block_ctx);
             }
             if is_leaf {
@@ -1257,6 +1326,8 @@ impl LayoutSession<'_> {
 #[cfg(test)]
 mod float_container_tests;
 #[cfg(test)]
+mod grid_baseline_tests;
+#[cfg(test)]
 mod item_width_tests;
 #[cfg(test)]
 mod self_alignment_tests;
@@ -1268,6 +1339,7 @@ mod tests;
 mod axis_adapter;
 pub(crate) mod block_flow;
 pub(crate) mod content_limits;
+pub(crate) mod grid_baseline;
 mod grid_oof;
 mod inline_baseline;
 mod intrinsic_scopes;
@@ -2462,6 +2534,17 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
     last_baseline
 }
 
+/// Whether `idx` is a block-level `<button>` that is a direct child of a
+/// multicol container. A column does not stretch it to its width, as a block
+/// does not (HTML Standard 15.5.3): its `auto` width is the fit-content one,
+/// which the column's width bounds.
+fn is_button_in_multicol(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].is_html_button()
+        && tree
+            .taffy_parent_of(idx)
+            .is_some_and(|parent| tree.nodes[parent].is_multicol_container())
+}
+
 /// Whether element `idx` is a flex or grid container that floats.
 ///
 /// A float is shrink-to-fit like an inline-level box (CSS 2.1 section 10.3.5);
@@ -2531,14 +2614,16 @@ fn compute_inline_block_shrink_wrap(
     let display = tree.nodes[idx].display();
     // An empty flex or grid container still runs its layout algorithm:
     // explicit grid tracks contribute even when there are no items.
-    let is_leaf = tree.nodes[idx].children.is_empty()
-        && !matches!(
-            display,
-            DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-        );
+    let contain_natural = contain_intrinsic_natural(&tree.nodes[idx]).filter(|_| empty);
+    let is_leaf = contain_natural.is_some()
+        || (tree.nodes[idx].children.is_empty()
+            && !matches!(
+                display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            ));
     let limits = tree.nodes[idx].content_limits;
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = block_flow::style_input::physical(tree, idx);
@@ -2561,7 +2646,9 @@ fn compute_inline_block_shrink_wrap(
             &[OwnedPropertyOverride::aspect_ratio(None)],
         );
     }
-    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]).filter(|_| !empty);
+    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx])
+        .filter(|_| !empty)
+        .or(contain_natural);
     // A replaced leaf with an `auto` side is sized by its ratio and its
     // min/max sizes, not by Taffy's ratio floor, before any width is fixed.
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
@@ -2826,7 +2913,7 @@ fn size_contained_inputs(
         return inputs;
     }
     tree.context.size_contained_measure.push(idx);
-    let empty = tree
+    let mut empty = tree
         .compute_child_layout(
             node_id,
             LayoutInput {
@@ -2837,6 +2924,30 @@ fn size_contained_inputs(
         )
         .size;
     tree.context.size_contained_measure.pop();
+    if let Some(natural) = grid_with_one_intrinsic_length(&tree.nodes[idx]) {
+        // A leaf of the stated length gives the size of that axis with the
+        // padding, the border and the limits of the box around it.
+        let stated = tree.nodes[idx].contain_intrinsic;
+        let leaf = compute_leaf_layout(
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                axis: RequestedAxis::Both,
+                ..inputs
+            },
+            &TaffyStyle::new(tree.physical_style(idx)),
+            resolve_calc,
+            |known, _| Size {
+                width: known.width.unwrap_or(natural.width),
+                height: known.height.unwrap_or(natural.height),
+            },
+        );
+        if stated.width.is_some() {
+            empty.width = leaf.size.width;
+        }
+        if stated.height.is_some() {
+            empty.height = leaf.size.height;
+        }
+    }
     let mut inputs = inputs;
     if width {
         inputs.known_dimensions.width = Some(empty.width);
@@ -3001,6 +3112,9 @@ pub(crate) fn flex_layout(
 ) -> LayoutOutput {
     let inputs = with_fit_content_width(tree, node_id, inputs);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, flex_layout_sized);
+    if block_right_to_left(tree, usize::from(node_id)).is_none() {
+        return laid_out_with_ratio_height(tree, node_id, inputs, flex_layout_sized);
+    }
     flex_layout_sized(tree, node_id, inputs)
 }
 
@@ -3273,35 +3387,52 @@ fn with_clamped_keyword_width(
 
 /// Lay out the grid container `node_id` with taffy's grid algorithm.
 ///
-/// A container with a preferred aspect ratio and an `auto` height takes the
-/// height the ratio gives for its width, whether the width is the one the
-/// container states or the one its parent imposes; taffy applies the ratio
-/// to the former only. Unless the container scrolls or states a `min-height`,
-/// its content raises that height up to the `max-height` it states: the
-/// automatic minimum size of CSS Sizing 4 §5.1.
+/// A container with a preferred aspect ratio and an `auto` height is given the
+/// height [`with_ratio_height`] settles for it.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
     let inputs = with_clamped_keyword_width(tree, node_id, inputs, grid_layout_sized);
+    if grid_oof::right_to_left(tree, idx).is_none() {
+        return laid_out_with_ratio_height(tree, node_id, inputs, grid_layout_sized);
+    }
+    grid_layout_sized(tree, node_id, inputs)
+}
+
+/// Give a flex or grid container with a preferred aspect ratio and an `auto`
+/// height the height the ratio gives for its width, whether the width is the
+/// one the container states or the one its parent imposes; taffy applies the
+/// ratio to the former only. Unless the container scrolls or states a
+/// `min-height`, its content raises that height up to the `max-height` it
+/// states: the automatic minimum size of CSS Sizing 4 §5.1.
+///
+/// `sized` is the layout of the container once its height is settled; it
+/// measures the content, and gives the width of a container whose width comes
+/// from its content.
+fn with_ratio_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutInput {
+    let idx = usize::from(node_id);
     let height_follows_width = inputs.known_dimensions.height.is_none()
-        && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal)
-        && grid_oof::right_to_left(tree, idx).is_none();
+        && !(inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal);
     if !height_follows_width {
-        return grid_layout_sized(tree, node_id, inputs);
+        return inputs;
     }
     let style = block_flow::style_input::physical(tree, idx);
     // A measure that ignores the sizes of the box (`ContentSize`) sees an
     // `auto` height whatever the style says.
     let auto_height = inputs.sizing_mode == SizingMode::ContentSize || style.size.height.is_auto();
     if style.aspect_ratio.is_none() || !auto_height {
-        return grid_layout_sized(tree, node_id, inputs);
+        return inputs;
     }
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
-    let mut inputs = inputs;
     let mut metrics = block_flow::Metrics::resolve(&style, false, content_box_ratio, inputs);
     if metrics.preferred.width.is_none() {
         // A width that comes from the content, as for an item of a flex row,
         // is settled first and the ratio then gives the height for it.
-        let width = grid_layout_sized(
+        let width = sized(
             tree,
             node_id,
             LayoutInput {
@@ -3316,23 +3447,62 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
         inputs.known_dimensions_are_definite.width = true;
         metrics = block_flow::Metrics::resolve(&style, false, content_box_ratio, inputs);
     }
-    let height = grid_ratio_height(tree, node_id, inputs, &metrics);
+    let height = ratio_height(tree, node_id, inputs, &metrics, sized);
     inputs.known_dimensions.height = height;
     inputs.known_dimensions_are_definite.height |= height.is_some();
-    grid_layout_sized(tree, node_id, inputs)
+    inputs
 }
 
-/// The border-box height a grid container takes from its aspect ratio at the
-/// width in `metrics`, or `None` while the ratio has no width to relate to.
+/// Lay out a flex or grid container with `sized` once [`with_ratio_height`] has
+/// settled its height.
+///
+/// When the width and height are then both settled, or the ratio gave the
+/// height, it has nothing left to give the sizes. Taffy would still carry a
+/// `max-width` through the ratio into a `max-height` and clamp the height back
+/// to it, which undoes a height the content raised (CSS Sizing 4 §5.1):
+/// `max-width: 50px` at 2/1 would cap a 100px-tall content at 25px. So the
+/// container is laid out without the ratio.
+fn laid_out_with_ratio_height(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    original: LayoutInput,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let inputs = with_ratio_height(tree, node_id, original, sized);
+    let height_from_ratio =
+        original.known_dimensions.height.is_none() && inputs.known_dimensions.height.is_some();
+    let both_settled =
+        inputs.known_dimensions.width.is_some() && inputs.known_dimensions.height.is_some();
+    let drop_ratio = (height_from_ratio || both_settled)
+        && block_flow::style_input::physical(tree, usize::from(node_id))
+            .aspect_ratio
+            .is_some();
+    if !drop_ratio {
+        return sized(tree, node_id, inputs);
+    }
+    let key = tree
+        .nodes
+        .box_key(usize::from(node_id))
+        .expect("live container box");
+    tree.with_overrides(
+        vec![(key, OwnedPropertyOverride::aspect_ratio(None))],
+        |tree| sized(tree, node_id, inputs),
+    )
+}
+
+/// The border-box height a flex or grid container takes from its aspect ratio
+/// at the width in `metrics`, or `None` while the ratio has no width to relate
+/// to.
 ///
 /// When the automatic minimum size applies, the height of the content raises
 /// it: that comes from laying the container out without the ratio at the
 /// width the ratio relates to.
-fn grid_ratio_height(
+fn ratio_height(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
     metrics: &block_flow::Metrics,
+    sized: fn(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> Option<f32> {
     let width = metrics.preferred.width?;
     let ratio_height = metrics.preferred.height?;
@@ -3359,11 +3529,11 @@ fn grid_ratio_height(
     let key = tree
         .nodes
         .box_key(usize::from(node_id))
-        .expect("live grid container box");
+        .expect("live container box");
     let content = tree
         .with_overrides(
             vec![(key, OwnedPropertyOverride::aspect_ratio(None))],
-            |tree| grid_layout_sized(tree, node_id, probe),
+            |tree| sized(tree, node_id, probe),
         )
         .size
         .height;
@@ -3390,6 +3560,18 @@ fn grid_layout_sized(
         inputs,
         parent_size,
         |tree, node_id, inputs| {
+            // The items are still where the algorithm placed them, on the
+            // axes it ran on, when the baseline is taken from one of them.
+            let algorithm = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
+                let output = compute_grid_layout(tree, node_id, inputs);
+                grid_baseline::with_first_baseline(
+                    tree,
+                    usize::from(node_id),
+                    right_to_left.is_some(),
+                    inputs.run_mode,
+                    output,
+                )
+            };
             if right_to_left.is_some() {
                 // The container runs its algorithm on the axes of its own
                 // writing mode.
@@ -3400,10 +3582,10 @@ fn grid_layout_sized(
                         inputs,
                         compute_grid_layout,
                     );
-                    compute_grid_layout(tree, node_id, inputs)
+                    algorithm(tree, node_id, inputs)
                 })
             } else {
-                compute_grid_layout(tree, node_id, inputs)
+                algorithm(tree, node_id, inputs)
             }
         },
     );

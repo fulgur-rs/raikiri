@@ -1246,6 +1246,14 @@ pub enum LengthOrAuto {
     /// percentage limit resolves against the containing block's inline size at
     /// used-value time; against an indefinite size the box sizes like `auto`.
     FitContentOf(LengthPercentageOrCalc),
+    /// The `stretch` sizing keyword (CSS Sizing 4 §5.1), and its legacy
+    /// spelling `-webkit-fill-available`: the margin box of the box fills the
+    /// containing block along the axis. Unlike the content keywords it takes
+    /// its size from the containing block, so a box whose containing block has
+    /// no definite size along the axis sizes like `auto`. Produced by the
+    /// preferred size parsers (`width`, `height` and their logical forms), not
+    /// by the minimum and maximum ones; a margin or an offset never holds it.
+    Stretch,
 }
 
 /// A `<length-percentage>` that keeps a mixed-unit `calc()` until it can be
@@ -3820,6 +3828,10 @@ pub enum FlexBasisValue {
     /// Bare `fit-content` keyword — same as above. The `fit-content()` function
     /// with a `<length-percentage>` argument is outside scope (absent from the WPT vector).
     FitContent,
+    /// `stretch` — CSS Sizing 4 §5.1 adds the keyword to `flex-basis`. The
+    /// legacy `-webkit-fill-available` spelling is not accepted here, as in
+    /// Chromium.
+    Stretch,
     /// `<length-percentage [0,∞]>` — the same non-negative constraint as `width`
     /// (see the [`parse_flex_basis`] doc).
     Length(Length),
@@ -4167,6 +4179,62 @@ pub struct GapShorthand {
     pub row: LengthOrNormal,
     /// The `column-gap` component — equals `row` when omitted (see [`parse_gap_shorthand`]).
     pub column: LengthOrNormal,
+}
+
+/// The specified value of `contain-intrinsic-width` and `-height`.
+///
+/// CSS Box Sizing 4 §5 "Intrinsic Size Override: the contain-intrinsic-size
+/// properties" propdef `contain-intrinsic-width`
+/// <https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override>: value
+/// grammar `auto? [ none | <length [0,∞]> ]`; initial `none`; not inherited.
+/// With `auto`, the box uses the size it last had while its contents were
+/// skipped, and the length (or `none`) only when there is no such size. A
+/// page has no skipped contents, so layout takes the length either way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ContainIntrinsicSize {
+    /// Whether the `auto` keyword is present.
+    pub auto: bool,
+    /// The length, or `None` for the keyword `none`.
+    pub length: Option<ContainIntrinsicLength>,
+}
+
+/// The `<length [0,∞]>` of a [`ContainIntrinsicSize`]: a plain length, or a
+/// mixed-unit `calc()` whose font-relative and viewport terms wait for
+/// computed-value time. The property takes no percentage, so a calculation
+/// with a percentage term never reaches this type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ContainIntrinsicLength {
+    /// A plain authored length.
+    Length(Length),
+    /// A `calc()` sum kept until the element's font size is known; a negative
+    /// result is clamped to zero when computed (CSS Values 4 §10.7).
+    Calc(RelativeCalcLengthPercentage),
+}
+
+impl ContainIntrinsicSize {
+    /// The initial value, `none`.
+    pub const NONE: Self = Self {
+        auto: false,
+        length: None,
+    };
+}
+
+/// The specified value of the `contain-intrinsic-size` shorthand.
+///
+/// CSS Box Sizing 4 §5.1 propdef `contain-intrinsic-size`
+/// <https://drafts.csswg.org/css-sizing-4/#propdef-contain-intrinsic-size>:
+/// value grammar `[ auto? [ none | <length> ] ]{1,2}`. The first component is
+/// the width and the second the height; when the second is omitted it copies
+/// the first, `auto` included.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ContainIntrinsicSizeShorthand {
+    /// The `contain-intrinsic-width` component.
+    pub width: ContainIntrinsicSize,
+    /// The `contain-intrinsic-height` component — equals `width` when omitted.
+    pub height: ContainIntrinsicSize,
 }
 
 /// The specified value of the `place-content` shorthand.
@@ -8071,6 +8139,7 @@ impl PropertyKey {
                 | PropertyKey::Flex
                 | PropertyKey::FlexFlow
                 | PropertyKey::Gap
+                | PropertyKey::ContainIntrinsicSize
                 | PropertyKey::PlaceContent
                 | PropertyKey::PlaceItems
                 | PropertyKey::PlaceSelf
@@ -8605,7 +8674,9 @@ pub struct LinearGradient {
     /// subsection defines interpolation for all 3 gradient shapes, not just
     /// linear — "If no `<color-interpolation-method>` is specified in the
     /// gradient function, the color space used for gradient interpolation
-    /// is the default interpolation color space, Oklab").
+    /// is the default interpolation color space, Oklab"), or to `Srgb` when
+    /// every stop is a color in a legacy syntax (hex, named, `rgb()`,
+    /// `hsl()`, `hwb()`), as CSS Color 4 requires for those.
     pub interpolation: GradientColorInterpolation,
     /// Color stop list. Contains at least 2 stops (see the scope-carving
     /// section of [`BackgroundImage`] docs). `Arc` follows the same cheap-clone
@@ -8690,7 +8761,7 @@ pub struct RadialGradient {
     /// Center of the gradient. Defaults to `center` if omitted.
     pub position: CssPosition,
     /// `in <color-space> <hue-interpolation-method>?` clause. Defaults to
-    /// `Oklab` if omitted, as in [`LinearGradient::interpolation`].
+    /// `Oklab` (or `Srgb`) if omitted, as in [`LinearGradient::interpolation`].
     pub interpolation: GradientColorInterpolation,
     /// Color stop list (same shape as [`LinearGradient::stops`]).
     pub stops: Arc<Vec<GradientColorStop>>,
@@ -8776,7 +8847,7 @@ pub struct ConicGradient {
     /// `at <position>`. Defaults to `center` if omitted.
     pub position: CssPosition,
     /// `in <color-space> <hue-interpolation-method>?` clause. Defaults to
-    /// `Oklab` if omitted, as in [`LinearGradient::interpolation`].
+    /// `Oklab` (or `Srgb`) if omitted, as in [`LinearGradient::interpolation`].
     pub interpolation: GradientColorInterpolation,
     /// Angular color stop list (same shape as [`LinearGradient::stops`],
     /// but with [`AngularColorStop`] as the position type).
@@ -12025,6 +12096,16 @@ pub enum PropertyValue {
     /// `background-position-y`, the vertical counterpart of
     /// [`Self::BackgroundPositionX`].
     BackgroundPositionY(Arc<[CssPositionOffset]>),
+    /// `contain-intrinsic-width` — **non-inherited**, initial:
+    /// [`ContainIntrinsicSize::NONE`] (CSS Box Sizing 4 §5; see
+    /// [`ContainIntrinsicSize`]).
+    ContainIntrinsicWidth(ContainIntrinsicSize),
+    /// `contain-intrinsic-height`; see [`Self::ContainIntrinsicWidth`].
+    ContainIntrinsicHeight(ContainIntrinsicSize),
+    /// `contain-intrinsic-size: [ auto? [ none | <length> ] ]{1,2}` shorthand;
+    /// [`crate::rule::expand_shorthand_into`] expands it into
+    /// [`Self::ContainIntrinsicWidth`] and [`Self::ContainIntrinsicHeight`].
+    ContainIntrinsicSize(ContainIntrinsicSizeShorthand),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12672,6 +12753,12 @@ pub enum PropertyKey {
     // slots. Each writes its own new field.
     BackgroundPositionX,
     BackgroundPositionY,
+    // CSS Box Sizing 4 contain-intrinsic-size longhands and shorthand
+    // (semantics on the matching PropertyValue variants); appended to preserve
+    // existing key slots. The shorthand follows its longhands.
+    ContainIntrinsicWidth,
+    ContainIntrinsicHeight,
+    ContainIntrinsicSize,
 }
 
 impl PropertyValue {
@@ -12827,6 +12914,9 @@ impl PropertyValue {
             PropertyValue::MaxBlockSize(_) => PropertyKey::MaxBlockSize,
             PropertyValue::BackgroundPositionX(_) => PropertyKey::BackgroundPositionX,
             PropertyValue::BackgroundPositionY(_) => PropertyKey::BackgroundPositionY,
+            PropertyValue::ContainIntrinsicWidth(_) => PropertyKey::ContainIntrinsicWidth,
+            PropertyValue::ContainIntrinsicHeight(_) => PropertyKey::ContainIntrinsicHeight,
+            PropertyValue::ContainIntrinsicSize(_) => PropertyKey::ContainIntrinsicSize,
             PropertyValue::TextUnderlineOffset(_) => PropertyKey::TextUnderlineOffset,
             PropertyValue::TextAutospace(_) => PropertyKey::TextAutospace,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
@@ -14097,6 +14187,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-position" => PropertyKey::BackgroundPosition,
         "background-position-x" => PropertyKey::BackgroundPositionX,
         "background-position-y" => PropertyKey::BackgroundPositionY,
+        "contain-intrinsic-width" => PropertyKey::ContainIntrinsicWidth,
+        "contain-intrinsic-height" => PropertyKey::ContainIntrinsicHeight,
+        "contain-intrinsic-size" => PropertyKey::ContainIntrinsicSize,
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,
         "border-image-source" => PropertyKey::BorderImageSource,

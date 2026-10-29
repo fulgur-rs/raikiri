@@ -4,16 +4,20 @@
 //! the two cannot place a glyph differently. Positions are relative to the
 //! root's content-box origin; each consumer adds its own page origin.
 
+use super::root::IfcLines;
 use crate::Document;
 use crate::generated_content::{computed_for_id, generated_image_origin, generated_origin};
+use objects::{ObjectTextPrefixes, object_text_offsets};
 use raikiri_style::CascadeResult;
 use raikiri_style::{PseudoElem, property::Visibility};
 use raikiri_traits::PaintRect;
 use shodo::Fragment;
 use shodo::geometry::{PhysicalConverter, PhysicalSize, WritingMode};
 use std::ops::Range;
+use std::sync::Arc;
 
 pub(crate) mod geometry;
+pub(crate) mod objects;
 
 /// One glyph of a run, at its outline origin.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -232,6 +236,7 @@ pub struct PositionedLines<'a> {
     pub size: (f32, f32),
     converter_size: PhysicalSize,
     line_offsets: Vec<Option<(f32, f32)>>,
+    line_data: &'a IfcLines,
     /// How far pagination moved each line down, by line index.
     pub shifts: Vec<f32>,
     /// Paint offsets of the relatively positioned inline elements.
@@ -252,7 +257,8 @@ impl<'a> PositionedLines<'a> {
         fragmentainer: Option<usize>,
     ) -> Option<Self> {
         let root_node = document.ifc_layout_node(root_id)?;
-        let lines = root_node.ifc_lines()?;
+        let line_data = root_node.ifc.as_ref()?.lines.as_ref()?;
+        let lines = line_data.lines.as_slice();
         #[cfg(test)]
         crate::page_projection::work_tests::geometry_lines(lines.len());
         let writing_mode = root_node
@@ -323,6 +329,7 @@ impl<'a> PositionedLines<'a> {
             line_offsets,
             shifts,
             offsets: root_node.ifc_relative_offsets(),
+            line_data,
         })
     }
 
@@ -355,6 +362,7 @@ impl<'a> PositionedLines<'a> {
             writing_mode: self.writing_mode,
             converter_size: self.converter_size,
             offsets: self.offsets,
+            line_data: self.line_data,
         }
         .line(index, line, offset)
     }
@@ -367,6 +375,7 @@ struct LineContext<'a> {
     writing_mode: WritingMode,
     converter_size: PhysicalSize,
     offsets: &'a [(usize, (f32, f32))],
+    line_data: &'a IfcLines,
 }
 
 impl<'a> LineContext<'a> {
@@ -394,15 +403,25 @@ impl<'a> LineContext<'a> {
                         let mut logical = atomic.border_rect;
                         logical.block_start += line.block_offset();
                         let rect = converter.rect(logical);
+                        #[cfg(test)]
+                        tests::image_offset_tests::note_lookup();
                         let text_offset = object_offsets
-                            .get_or_insert_with(|| object_text_offsets(line))
+                            .get_or_insert_with(|| {
+                                object_text_offsets(line, || {
+                                    self.line_data
+                                        .object_text_prefixes
+                                        .get_or_init(|| {
+                                            Arc::new(ObjectTextPrefixes::new(
+                                                self.line_data.lines.as_slice(),
+                                            ))
+                                        })
+                                        .closed_before(line)
+                                })
+                            })
                             .as_ref()
-                            .and_then(|offsets: &Vec<(usize, usize)>| {
-                                offsets
-                                    .iter()
-                                    .find(|(fragment, _)| *fragment == fragment_index)
-                                    .map(|&(_, offset)| offset)
-                            });
+                            .and_then(|offsets| offsets.get(fragment_index))
+                            .copied()
+                            .flatten();
                         content_images.push(PositionedContentImage {
                             owner,
                             pseudo,
@@ -694,12 +713,28 @@ pub fn cumulative_offset(
         return (0.0, 0.0);
     }
 
+    // Only the exact root slice uses its index. Independent slices retain
+    // their own values, order and first-match behavior.
+    let indexed = document
+        .ifc_layout_node(root_id)
+        .and_then(|node| node.ifc.as_ref())
+        .filter(|root| std::ptr::eq(offsets, root.offsets.as_slice()));
+    let offset_of = |owner| {
+        if let Some(root) = indexed {
+            return root.relative_offset(owner);
+        }
+        offsets.iter().find_map(|&(id, offset)| {
+            #[cfg(test)]
+            tests::offset_tests::note_probe();
+            (id == owner).then_some(offset)
+        })
+    };
     let (mut dx, mut dy) = (0.0, 0.0);
     // A pseudo-element moves by its own relative offset, and with its
     // element.
     let mut start = node;
     if let Some((element, _)) = generated_origin(node) {
-        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == node) {
+        if let Some((x, y)) = offset_of(node) {
             dx += x;
             dy += y;
         }
@@ -709,7 +744,9 @@ pub fn cumulative_offset(
         .inclusive_ancestors(start)
         .take_while(|&id| id != root_id)
     {
-        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == id) {
+        #[cfg(test)]
+        tests::offset_tests::note_ancestor();
+        if let Some((x, y)) = offset_of(id) {
             dx += x;
             dy += y;
         }
@@ -717,85 +754,5 @@ pub fn cumulative_offset(
     (dx, dy)
 }
 
-/// The UTF-8 offsets in `line`'s processed text of the object replacement
-/// characters that stand for its atomic inlines and out-of-flow anchors, by
-/// the index of their fragment in [`shodo::Line::fragments`].
-///
-/// The characters are the ones that no glyph run covers, in logical order.
-/// When every glyph run's bidi level has the parity of the line's direction,
-/// logical order runs from the line's inline start, so the objects sorted by
-/// inline position take the characters in turn. Objects have no bidi level
-/// of their own, so a bidi control on the line, or an embedding, override
-/// or isolate still open where the line starts, could reorder them unseen.
-/// A line that mixes directions, may hold such reordering, or whose counts
-/// disagree, yields `None`.
-fn object_text_offsets(line: &shodo::Line) -> Option<Vec<(usize, usize)>> {
-    let range = line.text_range();
-    if line.text().get(range.clone())?.chars().any(|c| {
-        matches!(
-            c,
-            '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
-        )
-    }) {
-        return None;
-    }
-    // The embeddings, overrides and isolates open where the line starts,
-    // `true` for an isolate. A PDF closes only an embedding or override
-    // above every isolate, and a PDI closes its isolate with everything
-    // opened inside it; unmatched closers are ignored (UAX #9 X6a, X7).
-    let mut open = Vec::new();
-    for c in line.text().get(..range.start)?.chars() {
-        match c {
-            '\u{202A}' | '\u{202B}' | '\u{202D}' | '\u{202E}' => open.push(false),
-            '\u{2066}'..='\u{2068}' => open.push(true),
-            '\u{202C}' if open.last() == Some(&false) => {
-                open.pop();
-            }
-            '\u{2069}' => {
-                if let Some(isolate) = open.iter().rposition(|&isolate| isolate) {
-                    open.truncate(isolate);
-                }
-            }
-            _ => {}
-        }
-    }
-    if !open.is_empty() {
-        return None;
-    }
-    let rtl = u8::from(line.used_direction() == shodo::geometry::Direction::Rtl);
-    let mut covered = Vec::new();
-    let mut objects = Vec::new();
-    for (index, fragment) in line.fragments().enumerate() {
-        match fragment {
-            Fragment::GlyphRun(run) => {
-                if run.bidi_level() % 2 != rtl {
-                    return None;
-                }
-                covered.push(run.text_range());
-            }
-            Fragment::Atomic(atomic) => objects.push((atomic.border_rect.inline_start, index)),
-            Fragment::OutOfFlowAnchor(anchor) => objects.push((anchor.inline_position, index)),
-            _ => {}
-        }
-    }
-    let text = line.text().get(range.clone())?;
-    let slots: Vec<usize> = text
-        .match_indices('\u{FFFC}')
-        .map(|(offset, _)| range.start + offset)
-        .filter(|offset| !covered.iter().any(|run| run.contains(offset)))
-        .collect();
-    if slots.len() != objects.len() {
-        return None;
-    }
-    objects.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    Some(
-        objects
-            .into_iter()
-            .zip(slots)
-            .map(|((_, fragment), offset)| (fragment, offset))
-            .collect(),
-    )
-}
-
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

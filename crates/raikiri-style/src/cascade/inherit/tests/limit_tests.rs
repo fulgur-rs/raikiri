@@ -796,3 +796,32 @@ fn selector_work_default_calibration_probe() {
         );
     }
 }
+
+#[test]
+fn custom_property_index_allocations_are_not_admitted_by_the_legacy_map_only_budget() {
+    let mut plain = TestDoc::new();
+    plain.push_element(0, "div", None);
+    let plain_tree = build_rule_tree(&plain);
+    let base = output_bytes(&plain, &plain_tree, false);
+    let mut styled = TestDoc::new();
+    styled.push_element(0, "div", Some("--tiny:1"));
+    let tree = build_rule_tree(&styled);
+    // Inline text needs no heap. This is exactly the old local-map-only
+    // allowance; the new index nodes and bookkeeping must also be budgeted.
+    let legacy = std::collections::HashMap::from([(
+        smol_str::SmolStr::from("--tiny"),
+        Some(smol_str::SmolStr::from("1")),
+    )]);
+    let old_map_bytes = (legacy.capacity()
+        * std::mem::size_of::<(smol_str::SmolStr, Option<smol_str::SmolStr>)>())
+        as u64;
+    let limit = base + old_map_bytes;
+    let actual = output_bytes(&styled, &tree, false);
+    assert!(actual > limit);
+    let (kind, reported, needed) =
+        exceeded(walk_within(&styled, &tree, output_limit(limit), false));
+    assert_eq!(kind, CascadeLimitKind::OutputBytes);
+    assert_eq!(reported, limit);
+    assert!(needed > limit);
+    assert!(walk_within(&styled, &tree, output_limit(actual), false).is_ok());
+}

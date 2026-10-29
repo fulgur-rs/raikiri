@@ -45,7 +45,11 @@ use crate::{
 use frontier::{Frontier, final_page_count, open_html_elements, stable_frontier};
 use resume::{can_resume, inside_subtrees, resume_point};
 
+#[cfg(feature = "streaming-diagnostics")]
+mod diagnostics;
 mod resume;
+#[cfg(feature = "streaming-diagnostics")]
+pub use diagnostics::StreamingDiagnostics;
 
 /// Input bytes between two layouts of the document parsed so far.
 const CHECKPOINT_BYTES: usize = 64 * 1024;
@@ -109,7 +113,8 @@ impl<'a> StreamPage<'a> {
     /// is not the box's last spans only the content that arrived so far.
     /// Its top, its width and everything painted on the page match a layout
     /// of the whole document; a box whose painting turns on its whole
-    /// height, such as one turned by a `transform`, is not delivered before
+    /// height, such as one turned by a `transform`, or the root element's
+    /// when images of the canvas background fill it, is not delivered before
     /// that height is known.
     pub fn page(&self) -> Page<'a> {
         let page = self.layout.page_at(self.index as usize);
@@ -140,6 +145,9 @@ impl<'a> StreamPage<'a> {
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct StreamSummary {
+    /// Optional work counts, including the final parse and layout.
+    #[cfg(feature = "streaming-diagnostics")]
+    pub diagnostics: StreamingDiagnostics,
     /// Number of pages, the value of `counter(pages)`.
     pub page_count: u32,
     /// In-document link destinations of the whole document.
@@ -254,6 +262,8 @@ pub enum StreamStatus<T> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct StreamingLayout<'r, 'a, S> {
+    /// Only uncascaded source nodes are recycled, never layout-owned nodes.
+    recycled_snapshot: Option<raikiri_dom::Document>,
     settings: Settings<'r, 'a>,
     sink: S,
     input: StreamInput,
@@ -329,6 +339,8 @@ impl Progress {
 
 /// What every layout of one stream shares.
 struct Settings<'r, 'a> {
+    #[cfg(feature = "streaming-diagnostics")]
+    diagnostics: std::cell::Cell<StreamingDiagnostics>,
     resources: &'r RenderResources<'a>,
     defaults: PageDefaults,
     config: LayoutConfig,
@@ -397,6 +409,8 @@ impl NetworkProvider for StreamNetwork<'_> {
 struct Cascaded {
     document: HtmlDocument,
     forward_dependent: bool,
+    /// Hiding late fixed or absolute elements changed authored source styles.
+    source_modified: bool,
     /// Warnings for the content left out.
     ignored: Vec<RenderWarning>,
 }
@@ -559,7 +573,8 @@ impl Settings<'_, '_> {
 
         let late =
             late_nodes_from.map_or_else(Vec::new, |from| late_fixed_elements(&document, from));
-        if !late.is_empty() || !hidden.is_empty() {
+        let source_modified = !late.is_empty() || !hidden.is_empty();
+        if source_modified {
             ignored.extend(late.iter().map(|&id| ignored_warning(id, LATE_FIXED)));
             ignored.extend(hidden.iter().map(|&id| ignored_warning(id, LATE_ABSOLUTE)));
             let all: Vec<usize> = late.iter().chain(hidden).copied().collect();
@@ -568,6 +583,7 @@ impl Settings<'_, '_> {
         Ok(Cascaded {
             document,
             forward_dependent,
+            source_modified,
             ignored,
         })
     }
@@ -655,10 +671,22 @@ impl Settings<'_, '_> {
         document: &HtmlDocument,
         resume: Option<&ResumePoint>,
     ) -> Result<Option<(DocumentLayout, Vec<ConsumerPropertyEvent>)>, RenderError> {
+        #[cfg(feature = "streaming-diagnostics")]
+        if resume.is_some() {
+            self.diagnostics.update(|mut stats| {
+                stats.resume_attempts += 1;
+                stats
+            });
+        }
         if let Some(resume) = resume
             && let Some((status, events)) = self.try_layout(document, Some(resume))?
         {
             self.last_resumed.set(true);
+            #[cfg(feature = "streaming-diagnostics")]
+            self.diagnostics.update(|mut stats| {
+                stats.resumed_layouts += 1;
+                stats
+            });
             #[cfg(test)]
             self.resumed.set(self.resumed.get() + 1);
             return Ok(completed(status, events));
@@ -748,6 +776,8 @@ impl StreamInput {
     /// The element handles the tree builder holds, in the order
     /// [`traced_handles`] reports them.
     fn traced_handles(&self) -> Vec<usize> {
+        #[cfg(test)]
+        self.sink().traced_handle_calls.update(|calls| calls + 1);
         match self {
             Self::Html(feed) => traced_handles(&feed.parser().tokenizer.sink),
             Self::Xhtml(feed) => traced_xml_handles(&feed.parser().parser().tokenizer.sink),
@@ -843,7 +873,10 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         input: StreamInput,
     ) -> Self {
         Self {
+            recycled_snapshot: None,
             settings: Settings {
+                #[cfg(feature = "streaming-diagnostics")]
+                diagnostics: std::cell::Cell::new(StreamingDiagnostics::default()),
                 resources,
                 defaults,
                 config,
@@ -971,18 +1004,37 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
 
     /// Lay out the document parsed so far and deliver its final pages.
     fn checkpoint(&mut self) -> Result<(), RenderError> {
+        // No page can be final before a body candidate exists. Avoid tracing
+        // and cloning a growing head; the reachable-body check below still
+        // rejects detached candidates and other conservative false positives.
+        if !self.input.sink().has_created_body_candidate() {
+            return Ok(());
+        }
         // `feed_unchecked` has just checked the parse budgets, and a snapshot
         // allocates no node of the parse, so they hold here.
         let traced = self.input.traced_handles();
-        let parsed = self.input.sink().snapshot();
+        let (parsed, _copied) = self
+            .input
+            .sink()
+            .snapshot_reusing(self.recycled_snapshot.take());
+        #[cfg(feature = "streaming-diagnostics")]
+        self.settings.diagnostics.update(|mut stats| {
+            let nodes = parsed.dom.node_count() as u64;
+            stats.snapshot_calls += 1;
+            stats.snapshot_nodes += nodes;
+            stats.snapshot_copied_nodes += _copied as u64;
+            stats
+        });
         // Layout needs a body to lay out. Until it starts, in a long head for
         // one, no page can be final.
         if !may_have_body(&parsed.dom) {
+            self.recycled_snapshot = Some(parsed.dom);
             return Ok(());
         }
         let Cascaded {
             document,
             forward_dependent,
+            source_modified,
             ..
         } = self.settings.cascade(
             parsed,
@@ -997,6 +1049,9 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             forward_dependent,
         );
         if frontier == Frontier::At(document.uncascaded.dom.root_index()) {
+            if !source_modified {
+                self.recycled_snapshot = Some(document.uncascaded.dom);
+            }
             return Ok(());
         }
         let Some((document, laid_out, events)) = self.progress.lay_out(&self.settings, document)?
@@ -1042,6 +1097,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             self.progress.late_nodes_from = Some(document.uncascaded.dom.node_count());
             self.input.sink().freeze_root_attributes();
         }
+        // Both the cascade and the layout retry can hide late content. Its
+        // replacement inline styles must never become canonical source data.
+        if !source_modified && self.progress.hidden_late.is_empty() {
+            self.recycled_snapshot = Some(document.uncascaded.dom);
+        }
         Ok(())
     }
 
@@ -1082,15 +1142,22 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             return Ok(StreamStatus::Aborted);
         }
         let Self {
+            recycled_snapshot,
             settings,
             input,
             mut sink,
             mut progress,
             ..
         } = self;
+        drop(recycled_snapshot);
         let node_limit = settings.resources.parse_limits().max_dom_nodes;
         let node_limit_signal = input.sink().dom_node_limit_signal();
         let parsed = input.finish().map_err(RenderError::Parse)?;
+        #[cfg(feature = "streaming-diagnostics")]
+        settings.diagnostics.update(|mut stats| {
+            stats.parser_nodes = parsed.dom.node_count() as u64;
+            stats
+        });
         if let Some(actual) = node_limit_signal.get() {
             return Err(RenderError::LimitExceeded {
                 kind: LimitKind::DomNodes,
@@ -1149,6 +1216,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             warnings.extend(missing);
         }
         let summary = StreamSummary {
+            #[cfg(feature = "streaming-diagnostics")]
+            diagnostics: settings.diagnostics.get(),
             page_count,
             anchors: all_anchors,
             warnings,

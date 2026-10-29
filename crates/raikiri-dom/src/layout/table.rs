@@ -178,12 +178,16 @@ fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
     doc.nodes[doc.ifc_source_owner(table_idx)].used_writing_mode
 }
 
-fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertical: bool) -> f32 {
-    let Some(caption) = doc.nodes[table]
-        .children
-        .iter()
-        .copied()
+/// The first `table-caption` box of `table`, looking through the
+/// `display: contents` children whose own children take their place.
+fn table_caption(doc: &Document, table: usize) -> Option<usize> {
+    doc.children_through_contents(table)
+        .into_iter()
         .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
+}
+
+fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertical: bool) -> f32 {
+    let Some(caption) = table_caption(doc, table)
         .filter(|&id| doc.nodes[id].layout_position() != Position::Absolute)
     else {
         return 0.0;
@@ -269,11 +273,7 @@ fn layout_table_caption(
     parent_width: f32,
     parent_height: Option<f32>,
 ) -> Option<(Size<f32>, OofCandidates)> {
-    let caption_id = doc.nodes[table_idx]
-        .children
-        .iter()
-        .copied()
-        .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption)?;
+    let caption_id = table_caption(doc, table_idx)?;
     let (size, margin, padding, border) = {
         let style = doc.table_style(caption_id);
         (
@@ -408,12 +408,7 @@ fn translate_table_caption_candidates(
     if candidates.is_empty() {
         return;
     }
-    if let Some(caption) = doc.nodes[table_idx]
-        .children
-        .iter()
-        .copied()
-        .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption)
-    {
+    if let Some(caption) = table_caption(doc, table_idx) {
         candidates.translate(doc.nodes[caption].layout.location);
     }
 }
@@ -425,11 +420,7 @@ fn position_table_caption(
     caption_size: Option<Size<f32>>,
     run_mode: RunMode,
 ) -> (Size<f32>, Point<f32>) {
-    let caption_id = doc.nodes[table_idx]
-        .children
-        .iter()
-        .copied()
-        .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption);
+    let caption_id = table_caption(doc, table_idx);
     // Keep the legacy positioned caption layout and ink, but exclude it from flow.
     let in_flow =
         caption_id.is_some_and(|id| doc.nodes[id].layout_position() != Position::Absolute);
@@ -578,10 +569,10 @@ fn compute_table_layout_checked(
         // taffy's Dimension::maybe_resolve not directly available; use helper below.
         let table_size = doc.table_style(table_idx).size();
         let effective_known = Size {
-            width: inputs.known_dimensions.width.or(resolve_dimension(
-                table_size.width,
-                inputs.parent_size.width,
-            )),
+            width: inputs
+                .known_dimensions
+                .width
+                .or(stated_table_width(table_size.width, &inputs)),
             height: inputs.known_dimensions.height.or(resolve_dimension(
                 table_size.height,
                 inputs.parent_size.height,
@@ -606,7 +597,7 @@ fn compute_table_layout_checked(
             // Empty tables shrink-wrap like the main path below: a specified
             // width wins; otherwise the container width is only a cap over the
             // padding/border extents (never stretch-to-fill).
-            let specified_w = resolve_dimension(table_size.width, inputs.parent_size.width);
+            let specified_w = stated_table_width(table_size.width, &inputs);
             // A flex/grid parent supplies the table item's used main size after
             // flexing/tracking. It must override the table's percentage width
             // (which is only the item's hypothetical basis); otherwise a
@@ -723,7 +714,7 @@ fn compute_table_layout_checked(
         // and must NOT stretch to fill the containing block: `effective_known`
         // carries the container-imposed width (800 for top-level blocks), which
         // is a cap for auto tables, the target only for specified widths.
-        let specified_width = resolve_dimension(table_size.width, inputs.parent_size.width);
+        let specified_width = stated_table_width(table_size.width, &inputs);
         // In fixed mode an unresolvable specified width (auto, or % of an
         // indefinite container) falls back to the auto algorithm below
         // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
@@ -3861,6 +3852,25 @@ fn reposition_cells_for_vertical_writing(
 
 fn resolve_dimension(d: Dimension, basis: Option<f32>) -> Option<f32> {
     super::resolve_dimension(d, basis)
+}
+
+/// The width the table states: its `width` as a length, or for `stretch` the
+/// border-box room the caller offers (CSS Sizing 4 §5.1), which also makes the
+/// width a specified one for the fixed layout algorithm. `None` for `auto` and
+/// for a `stretch` the caller gives no definite room.
+fn stated_table_width(width: Dimension, inputs: &LayoutInput) -> Option<f32> {
+    resolve_dimension(width, inputs.parent_size.width).or_else(|| {
+        if !matches!(width.expand(), ExpandedDimension::Stretch) {
+            return None;
+        }
+        inputs
+            .known_dimensions
+            .width
+            .or(match inputs.available_space.width {
+                AvailableSpace::Definite(room) => Some(room.max(0.0)),
+                _ => None,
+            })
+    })
 }
 
 fn resolve_length(lp: LengthPercentage, basis: Option<f32>) -> f32 {

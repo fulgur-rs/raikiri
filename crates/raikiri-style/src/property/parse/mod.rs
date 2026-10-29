@@ -351,8 +351,9 @@ fn parse_value_with_black_currentcolor(
                 // for the property (e.g. `margin-top: calc(...)` single value vs
                 // `margin-top: calc(...) auto` two values), treat as deferred.
                 // Tab-size never allows percentages, even inside calc (Percentages: N/A).
-                // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A).
-                if (normalized_name == "tab-size" || normalized_name == "border-spacing")
+                // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A), and
+                // so do the `contain-intrinsic-*` lengths (CSS Box Sizing 4 §5).
+                if is_percentage_free_length_property(&normalized_name)
                     && math_source_has_percentage(value.as_ref())
                 {
                     return None;
@@ -371,8 +372,9 @@ fn parse_value_with_black_currentcolor(
             }
             // If simplification itself fails (oversized), check if math syntax is valid and structurally valid before deferring.
             // Tab-size never allows percentages, even inside calc (Percentages: N/A).
-            // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A).
-            if (normalized_name == "tab-size" || normalized_name == "border-spacing")
+            // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A), and
+            // so do the `contain-intrinsic-*` lengths (CSS Box Sizing 4 §5).
+            if is_percentage_free_length_property(&normalized_name)
                 && math_source_has_percentage(value.as_ref())
             {
                 return None;
@@ -1095,6 +1097,16 @@ pub(crate) fn parse_property_grammar(
         // CSS Box Alignment Module Level 3 §8.2 "Gap Shorthand: the gap
         // property"
         // <https://www.w3.org/TR/css-align-3/#propdef-gap>.
+        // CSS Box Sizing 4 §5 <https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override>.
+        "contain-intrinsic-width" => {
+            parse_contain_intrinsic_size(input).map(PropertyValue::ContainIntrinsicWidth)
+        }
+        "contain-intrinsic-height" => {
+            parse_contain_intrinsic_size(input).map(PropertyValue::ContainIntrinsicHeight)
+        }
+        "contain-intrinsic-size" => {
+            parse_contain_intrinsic_size_shorthand(input).map(PropertyValue::ContainIntrinsicSize)
+        }
         "gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
         "grid-gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
         // CSS Multi-column Layout Module Level 1.
@@ -1475,6 +1487,20 @@ pub(crate) fn parse_property_grammar(
         }),
         _ => None,
     }
+}
+
+/// Whether `name` takes a `<length>` that never accepts a percentage, so a
+/// percentage inside its `calc()` makes the declaration invalid (CSS Values 4
+/// §10.1: a math function is valid only where its result type is).
+fn is_percentage_free_length_property(name: &str) -> bool {
+    matches!(
+        name,
+        "tab-size"
+            | "border-spacing"
+            | "contain-intrinsic-width"
+            | "contain-intrinsic-height"
+            | "contain-intrinsic-size"
+    )
 }
 
 /// Whether `input` has a relative color function (CSS Color 5 §4), whose

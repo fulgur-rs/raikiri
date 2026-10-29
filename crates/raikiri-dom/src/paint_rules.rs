@@ -458,6 +458,35 @@ pub fn opacity_layer(cv: &ComputedValues) -> Option<f32> {
     (cv.opacity < 1.0 && cv.display != DisplayValue::Contents).then_some(cv.opacity)
 }
 
+/// The `display` the box of element `id` is painted with.
+///
+/// The document element has no parent to take its contents, so a
+/// `display: contents` one computes to `block` (CSS Display 3 §2.8), as layout
+/// treats it. Every other element is painted with the `display` it computed.
+pub fn painted_display(document: &Document, id: usize, cv: &ComputedValues) -> DisplayValue {
+    if cv.display == DisplayValue::Contents && document.document_element_index() == Some(id) {
+        DisplayValue::Block
+    } else {
+        cv.display
+    }
+}
+
+/// [`generates_box`] for the element `id`, counting a `display: contents`
+/// document element, which paints the box of a block (see [`painted_display`]).
+pub fn element_generates_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    !matches!(
+        painted_display(document, id, cv),
+        DisplayValue::Contents | DisplayValue::None
+    )
+}
+
+/// [`opacity_layer`] for the element `id`, counting a `display: contents`
+/// document element, which paints the box of a block (see [`painted_display`]).
+pub fn element_opacity_layer(document: &Document, id: usize, cv: &ComputedValues) -> Option<f32> {
+    (cv.opacity < 1.0 && painted_display(document, id, cv) != DisplayValue::Contents)
+        .then_some(cv.opacity)
+}
+
 /// The group opacity a `::before`, `::after` or `::first-letter` laid out in
 /// its paragraph paints its boxes, images and text with, by the generated id
 /// of `generated_node_id`. Floated and
@@ -854,7 +883,7 @@ fn is_block_container(display: DisplayValue) -> bool {
 /// group, a transform or a filter. A transform on a box that is not
 /// transformable does not apply, so it forms no group (CSS Transforms 1 §3).
 fn establishes_stacking_context(document: &Document, id: usize, cv: &ComputedValues) -> bool {
-    opacity_layer(cv).is_some()
+    element_opacity_layer(document, id, cv).is_some()
         || !cv.filter.is_empty()
         || crate::layout::has_applied_transform(document, id, cv)
 }
@@ -885,7 +914,7 @@ pub fn defers_to_positioned_layer(
         document
             .get_node(node_id)
             .is_some_and(|node| node.kind() == NodeKind::Element)
-            && generates_box(cv)
+            && element_generates_box(document, node_id, cv)
             && (leveled || establishes_stacking_context(document, node_id, cv))
             && !negative
             && (leaves_paragraph_lines(document, cascade, node_id, paragraphs)
@@ -1035,35 +1064,100 @@ fn paragraph_of_line_box(
     })?
 }
 
-/// Whether node `a` comes before node `b` in tree order. A node comes before
-/// its descendants; nodes outside the tree, such as generated boxes, come
-/// before none and after none.
-fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
-    if a == b || document.get_node(a).is_none() || document.get_node(b).is_none() {
-        return false;
+/// Tree order and ancestor intervals shared by one immutable document walk.
+///
+/// Construction is constant-time. The first comparison in a source tree indexes
+/// that whole tree, including detached trees and template-content fragments.
+/// Other arena entries are neither visited nor allocated an index entry. Each
+/// queried tree costs O(V + E) preparation and O(V) space; subsequent comparisons
+/// use average O(1) hash lookups. The document borrow keeps the index valid.
+/// Generated layout boxes are not source nodes and remain incomparable.
+pub struct DocumentOrder<'a> {
+    document: &'a Document,
+    entries: rustc_hash::FxHashMap<usize, OrderEntry>,
+    #[cfg(test)]
+    index_work: usize,
+}
+
+#[derive(Clone, Copy)]
+struct OrderEntry {
+    component: usize,
+    start: usize,
+    end: usize,
+}
+
+impl<'a> DocumentOrder<'a> {
+    /// Creates an empty index to share across all layers of one document walk.
+    pub fn new(document: &'a Document) -> Self {
+        Self {
+            document,
+            entries: rustc_hash::FxHashMap::default(),
+            #[cfg(test)]
+            index_work: 0,
+        }
     }
-    let chain = |id: usize| {
-        let mut chain: Vec<usize> = document.inclusive_ancestors(id).collect();
-        chain.reverse();
-        chain
-    };
-    let (a_chain, b_chain) = (chain(a), chain(b));
-    let shared = a_chain
-        .iter()
-        .zip(&b_chain)
-        .take_while(|(x, y)| x == y)
-        .count();
-    match (a_chain.get(shared), b_chain.get(shared)) {
-        // `a` is an ancestor of `b`.
-        (None, Some(_)) => true,
-        (Some(&a_branch), Some(&b_branch)) if shared > 0 => document
-            .get_node(a_chain[shared - 1])
-            .and_then(|parent| {
-                let at = |id| parent.children.iter().position(|&child| child == id);
-                Some(at(a_branch)? < at(b_branch)?)
-            })
-            .unwrap_or(false),
-        _ => false,
+
+    fn entry(&mut self, id: usize) -> OrderEntry {
+        if let Some(&entry) = self.entries.get(&id) {
+            return entry;
+        }
+        let mut root = id;
+        while let Some(parent) = self.document.parent_of(root) {
+            root = parent;
+        }
+        // Source parent links form a forest, even after layout creates its
+        // separate anonymous boxes. Walk iteratively to support deep documents.
+        let mut pending = vec![(root, false)];
+        while let Some((node_id, leaving)) = pending.pop() {
+            if leaving {
+                let end = self.entries.len();
+                self.entries.get_mut(&node_id).unwrap().end = end;
+                continue;
+            }
+            #[cfg(test)]
+            {
+                self.index_work += 1;
+            }
+            let start = self.entries.len();
+            self.entries.insert(
+                node_id,
+                OrderEntry {
+                    component: root,
+                    start,
+                    end: start,
+                },
+            );
+            pending.push((node_id, true));
+            let node = self.document.get_node(node_id).unwrap();
+            for &child in node.children.iter().rev() {
+                #[cfg(test)]
+                {
+                    self.index_work += 1;
+                }
+                // Layout-only children must not become source-tree edges.
+                if self.document.get_node(child).is_some()
+                    && self.document.parent_of(child) == Some(node_id)
+                {
+                    pending.push((child, false));
+                }
+            }
+        }
+        self.entries[&id]
+    }
+
+    fn precedes(&mut self, a: usize, b: usize) -> bool {
+        if a == b || self.document.get_node(a).is_none() || self.document.get_node(b).is_none() {
+            return false;
+        }
+        let (a, b) = (self.entry(a), self.entry(b));
+        a.component == b.component && a.start < b.start
+    }
+
+    fn is_ancestor_or_self(&mut self, ancestor: usize, node: usize) -> bool {
+        let (ancestor, node) = (self.entry(ancestor), self.entry(node));
+        ancestor.component == node.component
+            && ancestor.start <= node.start
+            && node.start < ancestor.end
     }
 }
 
@@ -1078,8 +1172,12 @@ fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
 /// (see [`leaves_paragraph_lines`] and [`leaves_paragraph_content`]) after
 /// the boxes that follow it, so its boxes go back past them with this, past
 /// the clips around them as a whole.
+///
+/// Share `order` across the walk so tree comparisons do not revisit ancestors
+/// or siblings. Reverse insertion still shifts the vector; closed clips still
+/// scan back to their matching open frame.
 pub fn insert_positioned_frame<F>(
-    document: &Document,
+    order: &mut DocumentOrder<'_>,
     frames: &mut Vec<F>,
     frame: F,
     kind: impl Fn(&F) -> PositionedFrame,
@@ -1111,8 +1209,7 @@ pub fn insert_positioned_frame<F>(
         };
         match first {
             Some((index, other))
-                if precedes_in_tree(document, id, other)
-                    && !document.is_ancestor_or_self(other, id) =>
+                if order.precedes(id, other) && !order.is_ancestor_or_self(other, id) =>
             {
                 at = index;
             }
@@ -1863,7 +1960,7 @@ pub fn closes_deferred_inline_content(
     document
         .get_node(node_id)
         .is_some_and(|node| node.kind() == NodeKind::Element)
-        && generates_box(cv)
+        && element_generates_box(document, node_id, cv)
         && !below_inline_content
         && !defers_inline_content(document, cascade, node_id)
         && !merges_clipped_inline_content(document, cascade, node_id)

@@ -43,7 +43,7 @@ pub(super) fn balance(
     context: FragmentationContext,
 ) -> Option<Group> {
     let (paragraphs, paragraph_count, has_empty, mut high) =
-        collect(tree, entries, true, BlockEdges::Refused)?;
+        collect(tree, entries, true, BlockEdges::Refused, false)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
         || !high.is_finite()
@@ -51,6 +51,7 @@ pub(super) fn balance(
     {
         return None;
     }
+    let divided = divided_height(&paragraphs, context, FlowCursor::default(), high)?;
     // Trial work and storage depend on shaped lines, never the declared count.
     let mut low = 0.0;
     for _ in 0..32 {
@@ -58,13 +59,38 @@ pub(super) fn balance(
             break;
         }
         let trial = (low + high) * 0.5;
-        if fill(&paragraphs, context, trial).is_some() {
+        if fill(&paragraphs, context, trial, false).is_some() {
             high = trial;
         } else {
             low = trial;
         }
     }
-    fill(&paragraphs, context, high)
+    // The columns are as tall as the content in one column divided among them,
+    // or, when the breaks between the boxes leave no room for that, as the
+    // least height that holds them. The margin below the last box does not
+    // have to fit in the columns, but counts in what is divided.
+    let group = fill(&paragraphs, context, divided.max(high), false)?;
+    let height = divided.max(group.height);
+    Some(finish_group(group.placements, height))
+}
+
+/// The height of the paragraphs from `resume` in one column, with the margins
+/// between them and the one below the last, divided among the columns of
+/// `context`. `ceiling` is a height that holds them in one column.
+fn divided_height(
+    paragraphs: &[Option<Paragraph>],
+    context: FragmentationContext,
+    resume: FlowCursor,
+    ceiling: f32,
+) -> Option<f32> {
+    let one_column = FragmentationContext {
+        column_count: 1,
+        ..context
+    };
+    let stacked = fill_chunk(paragraphs, one_column, ceiling, resume, true)?
+        .group
+        .height;
+    Some(stacked / context.column_count as f32)
 }
 
 /// Place paragraphs in columns of the definite height `height` in source
@@ -76,7 +102,8 @@ pub(super) fn fill_definite(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) = collect(tree, entries, true, BlockEdges::Sliced)?;
+    let (paragraphs, paragraph_count, _, _) =
+        collect(tree, entries, true, BlockEdges::Sliced, true)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
     }
@@ -86,7 +113,7 @@ pub(super) fn fill_definite(
     };
     // A piece broken at a column's end runs to that end, as the columns
     // share the container's height.
-    let group = fill(&paragraphs, unbounded, height)?;
+    let group = fill(&paragraphs, unbounded, height, false)?;
     Some(finish_group(group.placements, height))
 }
 
@@ -96,12 +123,15 @@ pub(super) fn fill_definite(
 /// so they pass `false` and leave such a paragraph to the other strategies.
 /// With `edges` sliced, a paragraph may have padding and border above its
 /// first line and below its last, which its pieces slice; only a stream that
-/// places those edges with the lines passes that.
+/// places those edges with the lines passes that. With `boxes`, a sized box with
+/// nothing inside it may stand between the paragraphs; a column holds it
+/// whole, and only a stream that fills definite-height columns passes that.
 fn collect(
     tree: &LayoutSession<'_>,
     entries: &[Measurement],
     atomics: bool,
     edges: BlockEdges,
+    boxes: bool,
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
     let mut paragraphs = Vec::with_capacity(entries.len());
     let mut paragraph_count = 0;
@@ -112,6 +142,22 @@ fn collect(
         // Source whitespace between block elements has no formatting box.
         if node.kind() == NodeKind::Text && output.size.height == 0.0 && node.ifc.is_none() {
             paragraphs.push(None);
+            continue;
+        }
+        // A box with no lines has nowhere to break, so its block size is the
+        // one extent of a one-line paragraph: it goes whole to a column that
+        // holds it, and the plan fails when none does.
+        if boxes && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
+            high += output.size.height + margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph {
+                extents: vec![(0.0, output.size.height)],
+                margin_top,
+                margin_bottom,
+                orphans: 1,
+                widows: 1,
+                edge_start: 0.0,
+                edge_end: 0.0,
+            }));
             continue;
         }
         let empty = output.size.height == 0.0
@@ -230,8 +276,15 @@ fn fill(
     paragraphs: &[Option<Paragraph>],
     context: FragmentationContext,
     height: f32,
+    trailing_margin: bool,
 ) -> Option<Group> {
-    let chunk = fill_chunk(paragraphs, context, height, FlowCursor::default(), true)?;
+    let chunk = fill_chunk(
+        paragraphs,
+        context,
+        height,
+        FlowCursor::default(),
+        trailing_margin,
+    )?;
     chunk.next.is_none().then_some(chunk.group)
 }
 
@@ -251,6 +304,12 @@ fn fill_chunk(
     let mut pending_margin = Margins::default();
     let mut maximum = 0.0f32;
     let mut column_has_content = false;
+    // The margins that adjoin through empty boxes and the paragraph after them
+    // were cut at a break, and stay cut until that paragraph.
+    let mut cut_margins = resume != FlowCursor::default()
+        && paragraphs
+            .get(resume.paragraph)
+            .is_some_and(|resumed| resumed.as_ref().is_some_and(|box_| box_.extents.is_empty()));
     for (paragraph_index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
         placements.push(None);
         let slot = placements.len() - 1;
@@ -266,16 +325,46 @@ fn fill_chunk(
         // so a paragraph resumed from its start has none either.
         let at_resumed_start =
             paragraph_index == resume.paragraph && resume != FlowCursor::default();
-        let adjoining = pending_margin.with(if initial_line == 0 && !at_resumed_start {
-            paragraph.margin_top
+        let mut adjoining = if cut_margins {
+            Margins::default()
         } else {
-            0.0
-        });
+            pending_margin.with(if initial_line == 0 && !at_resumed_start {
+                paragraph.margin_top
+            } else {
+                0.0
+            })
+        };
         let mut top = cursor + adjoining.value();
         if paragraph.extents.is_empty() {
+            // An empty box takes no room, but its margins put it below the
+            // lines before it, and a place past the end of the column is an
+            // unforced break: the box starts the next column, and the margins
+            // adjoining through it are cut.
+            if top > height + f32::EPSILON && column_has_content {
+                maximum = maximum.max(cursor);
+                column = column.checked_add(1)?;
+                if column >= context.column_count {
+                    return Some(Chunk {
+                        group: finish_group(placements, height),
+                        next: Some(FlowCursor {
+                            paragraph: paragraph_index,
+                            line: 0,
+                        }),
+                    });
+                }
+                cursor = 0.0;
+                top = 0.0;
+                column_has_content = false;
+                cut_margins = true;
+                adjoining = Margins::default();
+            }
             // Retain both extrema across empty boxes: collapsing their summed
             // margins again would lose the negative member of the chain.
-            pending_margin = adjoining.with(paragraph.margin_bottom);
+            pending_margin = if cut_margins {
+                Margins::default()
+            } else {
+                adjoining.with(paragraph.margin_bottom)
+            };
             placements[slot] = Some(Placement {
                 first_column: column,
                 first_y: top,
@@ -286,6 +375,7 @@ fn fill_chunk(
             });
             continue;
         }
+        cut_margins = false;
         let mut start = initial_line;
         let mut fragments = Vec::new();
         let mut first_column = column;
@@ -535,8 +625,8 @@ pub(super) fn fill_rows(
     later: f32,
     budget: usize,
 ) -> Result<Rows, RowsStop> {
-    let (paragraphs, count, _, _) =
-        collect(tree, entries, false, BlockEdges::Refused).ok_or(RowsStop::Unsupported)?;
+    let (paragraphs, count, _, ceiling) =
+        collect(tree, entries, false, BlockEdges::Refused, false).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
         return Err(RowsStop::Unsupported);
     }
@@ -557,6 +647,7 @@ pub(super) fn fill_rows(
         // balanced row keeps the content the full row would hold.
         let balance = context.column_fill == ColumnFillValue::BalanceAll
             || (context.column_fill != ColumnFillValue::Auto && chunk.next.is_none());
+        let mut divided = 0.0;
         if balance {
             let next = chunk.next;
             let mut low = 0.0;
@@ -566,7 +657,7 @@ pub(super) fn fill_rows(
                     break;
                 }
                 let trial = (low + high) * 0.5;
-                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume, true)
+                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume, false)
                     && candidate.next == next
                 {
                     high = trial;
@@ -575,11 +666,27 @@ pub(super) fn fill_rows(
                     low = trial;
                 }
             }
+            // The last row is as tall as what remains in one column divided
+            // among the columns, if that is more than the least height that
+            // holds it; the margin below its last paragraph is part of what is
+            // divided, and does not have to fit.
+            if next.is_none() {
+                divided = divided_height(&paragraphs, context, resume, ceiling)
+                    .unwrap_or(0.0)
+                    .min(capacity);
+                if divided > chunk.group.height
+                    && let Some(candidate) =
+                        fill_chunk(&paragraphs, context, divided, resume, false)
+                    && candidate.next.is_none()
+                {
+                    chunk = candidate;
+                }
+            }
         }
         let height = if chunk.next.is_some() && !balance {
             capacity
         } else {
-            chunk.group.height
+            chunk.group.height.max(divided)
         };
         for (offset, placement) in chunk.group.placements.into_iter().enumerate() {
             let entry = resume.paragraph + offset;
@@ -685,7 +792,9 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let Some((paragraphs, count, _, _)) = collect(tree, entries, false, BlockEdges::Refused) else {
+    let Some((paragraphs, count, _, ceiling)) =
+        collect(tree, entries, false, BlockEdges::Refused, false)
+    else {
         return Ok(None);
     };
     if count == 0 || context.column_count == 0 {
@@ -722,6 +831,7 @@ pub(super) fn paginate(
             }
             return Ok(None);
         };
+        let mut divided = 0.0;
         if chunk.next.is_none() && context.column_fill != ColumnFillValue::Auto {
             let mut low = 0.0;
             let mut high = capacity;
@@ -741,11 +851,27 @@ pub(super) fn paginate(
                     low = trial;
                 }
             }
+            // The last page's columns are as tall as what remains in one
+            // column divided among them, if that is more than the least
+            // height that holds it.
+            work.charge(paragraphs.len().saturating_sub(resume.paragraph) + 1)?;
+            divided = divided_height(&paragraphs, context, resume, ceiling)
+                .unwrap_or(0.0)
+                .min(capacity);
+            if divided > chunk.group.height {
+                let filled = fill_chunk(&paragraphs, context, divided, resume, false);
+                work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
+                if let Some(candidate) = filled
+                    && candidate.next.is_none()
+                {
+                    chunk = candidate;
+                }
+            }
         }
         let height = if chunk.next.is_some() {
             capacity
         } else {
-            chunk.group.height
+            chunk.group.height.max(divided)
         };
         let group_y = absolute_y - owner_y;
         let mut occupied = std::collections::BTreeSet::new();

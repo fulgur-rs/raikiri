@@ -8,6 +8,7 @@ fn debug_reports_fragment_box_placement_count() {
     let lines = IfcLines {
         width: 100.0,
         lines: std::sync::Arc::new(Vec::new()),
+        object_text_prefixes: Default::default(),
         oof_candidates: OofCandidates::new(),
         height: 0.0,
         beside_floats: false,
@@ -317,4 +318,69 @@ fn an_empty_atomic_before_in_an_auto_width_vertical_root_keeps_its_width_through
     let laid_out = block_size(&doc);
     crate::layout::relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     assert_eq!(block_size(&doc), laid_out);
+}
+
+#[test]
+fn relative_offset_index_reads_current_percent_values_and_is_shared_by_copies() {
+    let mut owner = 0;
+    let fixture = block_fixture("width:100px;height:80px", |doc, root| {
+        owner = doc.append_element(
+            Some(root),
+            "span",
+            Some("position:relative;left:10%;top:25%"),
+        );
+        doc.append_text(owner, "abc");
+    });
+    let (mut doc, cascade, root_id) = (fixture.doc, fixture.cascade, fixture.root);
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let root = doc.nodes[root_id].ifc.as_mut().unwrap();
+    let before = root.relative_offset(owner).unwrap();
+    let copy = root.without_lines();
+    assert!(Arc::ptr_eq(
+        root.offset_index.as_ref().unwrap(),
+        copy.offset_index.as_ref().unwrap()
+    ));
+    root.containing_width = Some(200.0);
+    root.definite_height = Some(160.0);
+    root.resolve_percent_offsets(1.0);
+    assert_eq!(root.relative_offset(owner), Some((20.0, 40.0)));
+    assert_eq!(copy.relative_offset(owner), Some(before));
+    assert_eq!(root.clone().relative_offset(owner), Some((20.0, 40.0)));
+    assert_eq!(root.relative_offset(usize::MAX), None);
+}
+
+#[test]
+fn relative_offset_index_keeps_the_first_duplicate_and_skips_empty_allocation() {
+    let fixture = block_fixture("", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let mut projected = crate::layout::ifc::projection::project_ifc(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &mut LayoutContext::new(),
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .unwrap();
+    assert!(projected.meta.offsets.is_empty());
+    let empty = IfcRoot::new(
+        crate::layout::ifc::projection::project_ifc(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &mut LayoutContext::new(),
+            &ahem_fonts(),
+            &Limits::default(),
+        )
+        .unwrap(),
+    );
+    assert!(empty.offset_index.is_none());
+    projected.meta.offsets = vec![(7, (1.0, 2.0)), (7, (8.0, 9.0))];
+    assert_eq!(IfcRoot::new(projected).relative_offset(7), Some((1.0, 2.0)));
 }

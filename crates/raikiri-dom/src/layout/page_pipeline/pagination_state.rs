@@ -7,7 +7,7 @@ use super::{
     FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError, LineBreakFix,
     LineBreakMove, LineMove, MarginBreak, MarginTruncation, PageBox, PageCandidate,
     PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
-    PendingBreak, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
+    PendingBreak, PositionValue, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
     block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
     box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
@@ -79,6 +79,24 @@ fn reach_page(control: &PageLayoutControl<'_>, page_index: u32) -> Result<(), Ha
     }
 }
 
+/// The relative offsets that paint `candidate` away from its place in the flow,
+/// or `None` for a box outside the flow, which has no place there.
+fn flow_relative_offset_y(
+    document: &LayoutSession<'_>,
+    env: &FlowEnv<'_>,
+    candidate: &PageCandidate,
+    entry: &CandidateEntry,
+) -> Option<f32> {
+    let node_id = candidate.node_id;
+    let in_flow = !entry.uses_positioned_coordinates
+        && !candidate.context.is_out_of_flow_descendant()
+        && !matches!(
+            document.nodes[node_id].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        );
+    in_flow.then(|| accumulated_relative_offset_y(document, env.cascade, env.body_id, node_id))
+}
+
 /// What the start of a candidate settled for its placement.
 pub(super) struct CandidateEntry {
     /// Whether content already placed in the candidate's flow lets a named
@@ -122,14 +140,15 @@ pub(super) struct BoxBreak {
     pub(super) relative_offset: f32,
     /// How the box would cross the page edge.
     pub(super) overflow: BoxOverflow,
+    /// The page the box fits: the current page, or the later page the flow
+    /// has reached when the box before it ran over a page edge.
+    pub(super) fit_page: u32,
     /// Whether the box has a forced break before it.
     pub(super) forced_before: bool,
     /// Whether a break pending after the previous box, a forced break before
     /// the box that is not at a page edge, or a change of the page type opens
     /// a page for the box.
     pub(super) forced_transition: bool,
-    /// Whether the box names another page type than the flow it follows.
-    pub(super) named_page_change: bool,
     /// Whether the margins of the box collapse through it.
     pub(super) margins_collapse_through: bool,
     /// Whether the margins of the box collapse with those of the previous
@@ -689,7 +708,15 @@ impl PaginationState {
             if page_transition {
                 self.open_page_for_box(document, env, candidate, entry, page_break, position)?;
             } else if position.effective_y.is_finite() && position.effective_y >= 0.0 {
-                self.start_box_on_natural_page(document, env, candidate, page_break, position)?;
+                let relative_offset =
+                    flow_relative_offset_y(document, env, candidate, entry).unwrap_or(0.0);
+                self.start_box_on_natural_page(
+                    document,
+                    env,
+                    candidate,
+                    page_break,
+                    (position, relative_offset),
+                )?;
             }
             reset_inline_x_for_page_transition(
                 document,
@@ -699,9 +726,23 @@ impl PaginationState {
             );
         } else {
             // A forced break before the first class-A box does not manufacture
-            // a leading blank page.
+            // a leading blank page. The box starts on the page its top falls
+            // on, which is the second when the schedule opens with a short
+            // page that ends where the flow begins, as the one a relayout
+            // after delivered pages starts with: a forced break after the box
+            // then opens the third page, not the one the box is on. A
+            // relative offset only paints the box elsewhere, so the page is
+            // found from its position in the flow. A box outside the flow
+            // does not open the flow on its page.
             self.saw_child = true;
-            self.current_page = 0;
+            let flow_y = flow_relative_offset_y(document, env, candidate, entry)
+                .map(|relative_offset| position.effective_y - relative_offset);
+            self.current_page = match flow_y {
+                Some(flow_y) if flow_y.is_finite() && flow_y >= 0.0 => {
+                    env.page_origins.start_page(flow_y, candidate.height)
+                }
+                _ => 0,
+            };
         }
         Ok(page_transition)
     }
@@ -758,18 +799,25 @@ impl PaginationState {
         let (margin_top, trailing_margin) =
             break_margins(document, cascade, node_id, content_width);
         let page_start = page_origins.origin(self.current_page);
-        let page_end = page_start + page_origins.step_at(self.current_page);
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
         let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
+        // Content before the box that runs over a page edge leaves the page the
+        // box before it started on behind: the box fits the page the flow has
+        // reached.
+        let fit_page = page_origins
+            .page_index_in_flow(effective_y - relative_offset)
+            .filter(|&page| page > self.current_page && self.reach.flow_max >= page)
+            .unwrap_or(self.current_page);
+        let fit_page_start = page_origins.origin(fit_page);
         let fit = BoxFit {
             effective_y,
             flow_y: effective_y - relative_offset,
             margin_top,
             trailing_margin,
-            page_start,
-            page_end,
-            next_page_step: page_origins.step_at(self.current_page.saturating_add(1)),
+            page_start: fit_page_start,
+            page_end: fit_page_start + page_origins.step_at(fit_page),
+            next_page_step: page_origins.step_at(fit_page.saturating_add(1)),
         };
         let mut overflow = avoided_breaks.measure(
             document,
@@ -822,9 +870,9 @@ impl PaginationState {
             margin_top,
             relative_offset,
             overflow,
+            fit_page,
             forced_before,
             forced_transition,
-            named_page_change,
             margins_collapse_through,
             collapses_with_previous_block,
             pending_break_applies,
@@ -861,9 +909,9 @@ impl PaginationState {
             margin_top,
             relative_offset,
             ref overflow,
+            fit_page,
             forced_before,
             forced_transition,
-            named_page_change,
             margins_collapse_through,
             pending_break_applies,
             ..
@@ -876,9 +924,14 @@ impl PaginationState {
             margin_top,
             self.current_page,
             self.reach.flow_max,
-            named_page_change,
+            forced_transition,
         );
-        let target_page = forced_target_page(self.current_page, natural_page);
+        let mut target_page = forced_target_page(self.current_page, natural_page);
+        if !forced_transition {
+            // A box that moves because it would cross a page edge goes to the
+            // page after the one it lies on.
+            target_page = target_page.max(fit_page.saturating_add(1));
+        }
         reach_page(control, target_page)?;
         // A negative block-start margin can pull a forced-break box
         // back into the preceding page.  Keep the break boundary for
@@ -970,7 +1023,7 @@ impl PaginationState {
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         page_break: &BoxBreak,
-        position: &mut BoxPosition,
+        (position, relative_offset): (&mut BoxPosition, f32),
     ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
@@ -987,7 +1040,11 @@ impl PaginationState {
             ..
         } = *page_break;
         let node_id = candidate.node_id;
-        let mut natural_page = page_origins.start_page(position.effective_y, candidate.height);
+        // A relative offset only paints the box elsewhere: the page it starts
+        // on, and the page edge that cuts the margin above it, are found from
+        // its position in the flow.
+        let flow_y = position.effective_y - relative_offset;
+        let mut natural_page = page_origins.start_page(flow_y, candidate.height);
         // A forced break that coincides with a page edge also starts
         // that page.
         if forced_before {
@@ -1006,7 +1063,7 @@ impl PaginationState {
             &MarginBreak {
                 node_id,
                 raw_y: candidate.raw_y,
-                effective_y: position.effective_y,
+                effective_y: flow_y,
                 natural_page,
                 forced_before,
                 margin_top,
@@ -1023,7 +1080,7 @@ impl PaginationState {
                 // siblings still follow the forced break boundary.
                 self.deferred_shifts.underflow = Some((node_id, underflow));
             } else {
-                natural_page = page_origins.page_index_for_y(position.effective_y);
+                natural_page = page_origins.page_index_for_y(flow_y + delta);
             }
         }
         reach_page(control, natural_page)?;
@@ -1497,6 +1554,10 @@ impl PaginationState {
         let node_id = candidate.node_id;
         let name_participates_in_flow = candidate.context.page_name_in_flow();
         let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
+        // A relative offset only paints the text elsewhere: the page it starts
+        // on is the one its place in the flow falls on.
+        let relative_offset =
+            flow_relative_offset_y(document, env, candidate, entry).unwrap_or(0.0);
         // Text is not itself a class-A box, but non-empty text can be the
         // content that follows a nested named box.  Carry the containing
         // box's page type so that content after `page:b` inside a
@@ -1516,7 +1577,7 @@ impl PaginationState {
         if self.saw_child {
             if consumes_pending_break || named_page_change {
                 let natural_page = page_origins
-                    .page_index_in_flow(text.effective_y)
+                    .page_index_in_flow(text.effective_y - relative_offset)
                     .unwrap_or(self.current_page);
                 let target_page = forced_target_page(self.current_page, natural_page);
                 reach_page(control, target_page)?;
@@ -1541,7 +1602,9 @@ impl PaginationState {
                 }
                 self.current_page = target_page;
                 self.page_names.current = candidate.page_name.clone();
-            } else if let Some(natural_page) = page_origins.page_index_in_flow(text.effective_y) {
+            } else if let Some(natural_page) =
+                page_origins.page_index_in_flow(text.effective_y - relative_offset)
+            {
                 reach_page(control, natural_page)?;
                 self.current_page = self.current_page.max(natural_page);
             }

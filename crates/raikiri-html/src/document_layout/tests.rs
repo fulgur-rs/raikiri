@@ -1,4 +1,5 @@
 use super::*;
+mod inline_svg_storage_tests;
 use raikiri_traits::{NodeId, NodeKind, PaintRect, PaintTransform};
 
 fn dom(html: &str) -> crate::HtmlDocument {
@@ -1446,6 +1447,44 @@ fn link_paint_quads_follow_a_translation() {
     assert_eq!(
         layout.anchors().get("t").map(|anchor| anchor.point),
         Some((10.0, 5.0))
+    );
+}
+
+// spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
+// The transform of the root element moves the whole page, the clickable
+// areas and the anchors with it. They are reported inside it, as the paint
+// events are, and the caller moves them by the root box's transform.
+#[test]
+fn link_areas_and_anchors_are_reported_inside_the_root_transform() {
+    let layout = laid_out(
+        "<style>@page{size:200px 200px;margin:0} body{margin:0} \
+         html{transform:translate(30px,10px)} \
+         a{display:block;width:20px;height:10px}</style>\
+         <p id=t>text</p><a href=/go></a>",
+    );
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(links.len(), 1);
+    let area = links[0].quads[0];
+    assert_eq!(links[0].paint_quads.len(), 1);
+    assert_quad_near(
+        links[0].paint_quads[0],
+        [
+            (area.x, area.y),
+            (area.x + area.width, area.y),
+            (area.x + area.width, area.y + area.height),
+            (area.x, area.y + area.height),
+        ],
+    );
+    let anchor = layout.anchors().get("t").expect("anchor").point;
+    let p = find(&page.dom(), page.dom().root(), "p").unwrap();
+    assert_eq!(page.paint_transform(p), Some(PaintTransform::IDENTITY));
+    let root = page.root_box().expect("root box");
+    let transform = root.transform.expect("root transform");
+    assert_eq!(transform.apply(anchor), (anchor.0 + 30.0, anchor.1 + 10.0));
+    assert_eq!(
+        transform.apply((area.x, area.y)),
+        (area.x + 30.0, area.y + 10.0)
     );
 }
 

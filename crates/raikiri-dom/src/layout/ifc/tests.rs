@@ -685,6 +685,47 @@ fn nested_vertical_boxes_are_measured_a_few_times_each() {
 }
 
 #[test]
+fn nested_percentage_width_boxes_of_a_vertical_root_are_measured_a_few_times_each() {
+    // While a vertical root takes its width from its lines, the percentage
+    // `width`, `min-width` and `max-width` of its floats and atomic inlines
+    // stand aside for a layout of their own. That layout moved the cache
+    // generation and dropped what the box computed, so every layout of a box
+    // had the boxes inside it laid out again, and the scans of paragraphs grew
+    // by a factor of four with each level of such boxes nested in each other
+    // (42 seconds at eight levels). The caches of a box keep what each way of
+    // laying it out computed now, and the count follows the depth: linearly
+    // with a `min-width`, as its square with a `width`, and as its cube with a
+    // `max-width`, whose length the box is laid out with is another for each
+    // width its parent tries.
+    let depth: usize = 8;
+    for box_css in [
+        "display:inline-block;width:50%",
+        "float:left;width:50%",
+        "display:inline-block;min-width:30%",
+        "display:inline-block;max-width:50%",
+        "display:inline-block;width:50%;min-width:20%;max-width:80%",
+    ] {
+        let (mut doc, cascade, root) =
+            ahem_paragraph_with("float:left;writing-mode:vertical-rl", |doc, root| {
+                let mut parent = root;
+                for _ in 0..depth {
+                    parent = doc.append_element(Some(parent), "div", Some(box_css));
+                }
+                doc.append_text(parent, "X");
+            });
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert!(
+            intrinsic_measurements(&doc) < 4 * depth.pow(3),
+            "{box_css}: {} scans",
+            intrinsic_measurements(&doc)
+        );
+        // The root is as wide and as tall as the one `X` in its column.
+        let size = doc.nodes[root].layout.size;
+        assert_eq!((size.width, size.height), (10.0, 10.0), "{box_css}");
+    }
+}
+
+#[test]
 fn alternating_vertical_and_horizontal_boxes_are_measured_a_few_times_each() {
     // A box that a parent measures to size itself and then lays out is asked
     // under the margin collapsing of the layout the second time. Where the

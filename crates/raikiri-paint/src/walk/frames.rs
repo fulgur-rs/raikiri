@@ -290,7 +290,7 @@ pub(super) fn finish_lines_leaving_groups(
 /// Lets the groups a paragraph's lines left wait for the end of the
 /// layer, inside `clip`, the clip of the lines, if any.
 pub(super) fn leave_groups<'a>(
-    document: &Document,
+    order: &mut paint_rules::DocumentOrder<'_>,
     deferral_scopes: &mut [DeferralLayer<'a>],
     left_groups: &mut std::collections::HashMap<usize, anyrender::Scene>,
     root: usize,
@@ -310,7 +310,7 @@ pub(super) fn leave_groups<'a>(
         }
         if !waiting && let Some(layer) = deferral_scopes.last_mut() {
             raikiri_dom::paint_rules::insert_positioned_frame(
-                document,
+                order,
                 &mut layer.positioned,
                 PaintFrame::InlineGroup { root, node_id },
                 positioned_frame,
@@ -324,6 +324,7 @@ pub(super) fn leave_groups<'a>(
 pub(super) fn set_aside<'a>(
     mut frame: PaintFrame<'a>,
     document: &Document,
+    order: &mut paint_rules::DocumentOrder<'_>,
     cascade: &CascadeResult,
     paragraphs: &LeavingParagraphs,
     deferral_scopes: &mut [DeferralLayer<'a>],
@@ -339,7 +340,7 @@ pub(super) fn set_aside<'a>(
     {
         if paint_rules::leaves_paragraph_lines(document, cascade, *node_id, paragraphs) {
             paint_rules::insert_positioned_frame(
-                document,
+                order,
                 &mut layer.positioned,
                 frame,
                 positioned_frame,

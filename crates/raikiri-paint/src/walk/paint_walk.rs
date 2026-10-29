@@ -46,6 +46,7 @@ pub(super) fn index_fragments(
 pub(super) struct PaintWalk<'w, S> {
     pub(super) image_cache: &'w ImageBrushCache,
     pub(super) document: &'w Document,
+    pub(super) order: paint_rules::DocumentOrder<'w>,
     pub(super) cascade: &'w CascadeResult,
     pub(super) counter_snapshots: &'w CompactCounterSnapshots,
     pub(super) page_box: PageBox,
@@ -151,6 +152,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             let Some(frame) = set_aside(
                 frame,
                 self.document,
+                &mut self.order,
                 self.cascade,
                 &self.paragraphs,
                 &mut self.deferral_scopes,
@@ -365,7 +367,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             if leaves_groups(&self.deferral_scopes) {
                 let left = finish_lines_leaving_groups(self.scene, lines);
                 leave_groups(
-                    self.document,
+                    &mut self.order,
                     &mut self.deferral_scopes,
                     &mut self.left_groups,
                     root,

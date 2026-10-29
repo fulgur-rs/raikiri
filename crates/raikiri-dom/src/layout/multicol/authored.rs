@@ -158,7 +158,8 @@ fn definite_size(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f3
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent
-        | ComputedLengthPercentageOrAuto::FitContentOf(_) => return None,
+        | ComputedLengthPercentageOrAuto::FitContentOf(_)
+        | ComputedLengthPercentageOrAuto::Stretch => return None,
     };
     resolved.is_finite().then_some(resolved.max(0.0))
 }

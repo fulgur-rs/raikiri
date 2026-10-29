@@ -2795,3 +2795,5 @@ fn background_raster_converts_a_tagged_image_to_srgb() {
     let decoded = decode_background_raster(&swapped_primaries_png(), 1024).unwrap();
     assert_eq!(decoded.rgba, [0, 0x99, 0, 255]);
 }
+#[cfg(feature = "cache-accounting-diagnostics")]
+mod accounting_probe_tests;

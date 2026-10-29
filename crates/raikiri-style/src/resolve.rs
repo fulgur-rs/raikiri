@@ -175,14 +175,15 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxShadowItem, CalcLengthPercentage, ComparedPercentage,
-    ConicGradient, CssPosition, CssPositionOffset, FlexBasisValue, Gradient, GradientColorStop,
-    GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LengthPercentageCalc, LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient,
-    Outline, OutlineColor, OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage,
-    RelativeCalcUnit, TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength,
-    TextShadowColor, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
-    VerticalAlign, WordSpacingValue,
+    ConicGradient, ContainIntrinsicLength, ContainIntrinsicSize, CssPosition, CssPositionOffset,
+    FlexBasisValue, Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
+    LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor,
+    OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage, RelativeCalcUnit,
+    TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength, TextShadowColor,
+    TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, VerticalAlign,
+    WordSpacingValue,
 };
 
 // ---------------------------------------------------------------------------
@@ -504,6 +505,11 @@ pub enum ComputedLengthPercentageOrAuto {
     /// absolutized; a percentage in the limit stays unresolved until the
     /// containing block's inline size is known.
     FitContentOf(ComputedLengthPercentageOrCalc),
+    /// The `stretch` sizing keyword (and its legacy spelling
+    /// `-webkit-fill-available`), kept as specified. It takes its size from
+    /// the containing block, not from the content, so it is no content
+    /// keyword (see [`Self::is_content_keyword`]).
+    Stretch,
 }
 
 impl ComputedLengthPercentageOrAuto {
@@ -607,6 +613,9 @@ pub enum ComputedFlexBasis {
     MaxContent,
     /// The bare `fit-content` keyword — same approximation.
     FitContent,
+    /// The `stretch` keyword (CSS Sizing 4 §5.1): the flex container's inner
+    /// main size less the margins of the item.
+    Stretch,
     /// A mixed percentage and length, resolved against the flex container's
     /// inner main size at used-value time.
     Calc(CalcLengthPercentage),
@@ -632,6 +641,29 @@ pub enum ComputedLengthPercentageOrNormal {
     /// A percentage with an absolute-length offset, resolved against the
     /// percentage basis at used-value time and clamped to zero there.
     Calc(CalcLengthPercentage),
+}
+
+/// Computed `contain-intrinsic-width` / `contain-intrinsic-height`.
+///
+/// CSS Box Sizing 4 §5 propdef `contain-intrinsic-width`
+/// (<https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override>):
+/// "Computed value: the keyword `none` or an absolute length, optionally
+/// preceded by the keyword `auto`".
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ComputedContainIntrinsicSize {
+    /// Whether the `auto` keyword is present.
+    pub auto: bool,
+    /// The absolute length, or `None` for the keyword `none`.
+    pub length: Option<ComputedLength>,
+}
+
+impl ComputedContainIntrinsicSize {
+    /// The initial value, `none`.
+    pub const NONE: Self = Self {
+        auto: false,
+        length: None,
+    };
 }
 
 /// Computed `<track-breadth>` / `<inflexible-breadth>` (CSS Grid Layout
@@ -2777,6 +2809,7 @@ pub fn resolve_length_percentage_or_auto(
         LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::MinContent,
         LengthOrAuto::MaxContent => ComputedLengthPercentageOrAuto::MaxContent,
         LengthOrAuto::FitContent => ComputedLengthPercentageOrAuto::FitContent,
+        LengthOrAuto::Stretch => ComputedLengthPercentageOrAuto::Stretch,
         LengthOrAuto::FitContentOf(limit) => ComputedLengthPercentageOrAuto::FitContentOf(
             resolve_non_negative_length_percentage_or_calc(limit, font_size, own_line_height, ctx),
         ),
@@ -2991,7 +3024,8 @@ pub(crate) fn resolve_css_position_offset(
             | ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
             | ComputedLengthPercentageOrAuto::FitContent
-            | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
+            | ComputedLengthPercentageOrAuto::FitContentOf(_)
+            | ComputedLengthPercentageOrAuto::Stretch => {
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)) // cov:ignore: a relative calc resolves only to Px, Percent or Calc
             }
         },
@@ -3270,6 +3304,7 @@ pub fn resolve_flex_basis(
         FlexBasisValue::MinContent => ComputedFlexBasis::MinContent,
         FlexBasisValue::MaxContent => ComputedFlexBasis::MaxContent,
         FlexBasisValue::FitContent => ComputedFlexBasis::FitContent,
+        FlexBasisValue::Stretch => ComputedFlexBasis::Stretch,
         FlexBasisValue::Auto => ComputedFlexBasis::Auto,
         FlexBasisValue::Length(len) => {
             computed_flex_basis(LengthOrAuto::Length(len), font_size, own_line_height, ctx)
@@ -3304,7 +3339,8 @@ fn computed_flex_basis(
         ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent
-        | ComputedLengthPercentageOrAuto::FitContentOf(_) => ComputedFlexBasis::Auto,
+        | ComputedLengthPercentageOrAuto::FitContentOf(_)
+        | ComputedLengthPercentageOrAuto::Stretch => ComputedFlexBasis::Auto,
     }
 }
 
@@ -3477,6 +3513,31 @@ pub fn resolve_grid_auto_track_list(
     )
 }
 
+/// Absolutize a specified `contain-intrinsic-width` / `-height` (**phase 3**,
+/// using this node's basis): the length becomes absolute, the keywords stay.
+pub(crate) fn resolve_contain_intrinsic_size(
+    specified: ContainIntrinsicSize,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedContainIntrinsicSize {
+    ComputedContainIntrinsicSize {
+        auto: specified.auto,
+        length: specified.length.map(|length| match length {
+            ContainIntrinsicLength::Length(length) => {
+                resolve_length(length, font_size, own_line_height, ctx)
+            }
+            // A sum is clamped to `[0,∞]`; the percentage term was rejected
+            // when parsed, and an `lh` term without a basis, like a sum that
+            // overflows, falls back to zero as the other length properties do.
+            ContainIntrinsicLength::Calc(calc) => ComputedLength(
+                resolve_relative_calc_against_basis(calc, font_size, own_line_height, ctx)
+                    .unwrap_or(0.0),
+            ),
+        }),
+    }
+}
+
 /// Absolutize specified `row-gap` / `column-gap` values of
 /// `normal | <length-percentage [0,∞]>` (**phase 3**, using this node's basis).
 ///
@@ -3599,9 +3660,8 @@ fn fold_resolved_calc(resolved: ComputedLengthPercentageOrAuto) -> ComputedLengt
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent
-        | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
-            ComputedLengthPercentageOrCalc::Px(0.0)
-        }
+        | ComputedLengthPercentageOrAuto::FitContentOf(_)
+        | ComputedLengthPercentageOrAuto::Stretch => ComputedLengthPercentageOrCalc::Px(0.0),
     }
 }
 
@@ -3639,7 +3699,8 @@ pub fn resolve_margin_length_or_auto(
         LengthOrAuto::MinContent
         | LengthOrAuto::MaxContent
         | LengthOrAuto::FitContent
-        | LengthOrAuto::FitContentOf(_) => ComputedLengthPercentageOrAuto::Px(0.0),
+        | LengthOrAuto::FitContentOf(_)
+        | LengthOrAuto::Stretch => ComputedLengthPercentageOrAuto::Px(0.0),
         LengthOrAuto::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
@@ -4041,7 +4102,8 @@ pub(crate) fn lift_background_size(computed: ComputedBackgroundSize) -> Backgrou
             | ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
             | ComputedLengthPercentageOrAuto::FitContent
-            | ComputedLengthPercentageOrAuto::FitContentOf(_) => LengthOrAuto::Auto,
+            | ComputedLengthPercentageOrAuto::FitContentOf(_)
+            | ComputedLengthPercentageOrAuto::Stretch => LengthOrAuto::Auto,
         }
     }
     match computed {
@@ -4117,9 +4179,23 @@ pub(crate) fn lift_flex_basis(computed: ComputedFlexBasis) -> FlexBasisValue {
         ComputedFlexBasis::MinContent => FlexBasisValue::MinContent,
         ComputedFlexBasis::MaxContent => FlexBasisValue::MaxContent,
         ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
+        ComputedFlexBasis::Stretch => FlexBasisValue::Stretch,
         ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
         ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
         ComputedFlexBasis::Calc(calc) => FlexBasisValue::Calc(calc),
+    }
+}
+
+/// Lift a computed `contain-intrinsic-width` / `-height` back to its specified
+/// form.
+pub(crate) fn lift_contain_intrinsic_size(
+    computed: ComputedContainIntrinsicSize,
+) -> ContainIntrinsicSize {
+    ContainIntrinsicSize {
+        auto: computed.auto,
+        length: computed
+            .length
+            .map(|length| ContainIntrinsicLength::Length(Length::Px(length.px()))),
     }
 }
 

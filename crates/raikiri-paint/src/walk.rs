@@ -23,7 +23,7 @@ use raikiri_dom::image_geometry::{
     DeviceGrid, VisibleArea, background_image_dimensions, background_tiles, position_offset,
     rounded_background_tile_size,
 };
-use raikiri_dom::{CompactCounterSnapshots, Document, StandaloneAlign};
+use raikiri_dom::{CompactCounterSnapshots, Document, StandaloneAlign, canvas_background_owner};
 use raikiri_layout_geometry::{BoxLayout, Edges};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor, BorderStyle,
@@ -605,23 +605,6 @@ fn page_background_color(
         pixel_source,
     )
     .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
-}
-
-fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Option<usize> {
-    let html_id = find_html(document)?;
-    let html = cascade.computed.get(html_id)?;
-    let html_is_transparent = !html.has_background_image() && html.background_color.a == 0;
-    if !html_is_transparent {
-        return Some(html_id);
-    }
-
-    // Only a `body` propagates its background, not a `frameset` (CSS
-    // Backgrounds 3, 2.11.2).
-    let body_id = raikiri_dom::paint_rules::find_paint_root(document)
-        .filter(|&id| document.get_node(id).and_then(|node| node.tag_name()) == Some("body"))?;
-    let body = cascade.computed.get(body_id)?;
-    let body_has_background = body.has_background_image() || body.background_color.a != 0;
-    body_has_background.then_some(body_id)
 }
 
 fn canvas_background_color(
@@ -2100,6 +2083,7 @@ pub(crate) fn paint_document_impl(
     let mut walk = PaintWalk {
         image_cache,
         document,
+        order: raikiri_dom::paint_rules::DocumentOrder::new(document),
         cascade,
         counter_snapshots,
         page_box,
@@ -3798,7 +3782,9 @@ fn css_color_to_dynamic(color: CssColor) -> DynamicColor {
 
 /// Map the style interpolation space to the peniko tag for conic sweeps.
 ///
-/// CSS Images 4 defaults to Oklab when no interpolation clause is present.
+/// When no interpolation clause is present, the style parser has chosen sRGB or
+/// Oklab from the stop colors (`default_gradient_color_interpolation` in
+/// `raikiri-style`), so the space arrives here already decided.
 /// The hsl and hwb spaces have no gradient parser support here, so they
 /// fall back to sRGB rather than failing the whole background.
 fn conic_interpolation_tag(space: MixColorSpace) -> ColorSpaceTag {
@@ -3943,18 +3929,21 @@ fn conic_center(position: &CssPosition, positioning: Rect) -> Point {
     )
 }
 
-/// Build a peniko sweep gradient for a style conic gradient.
+/// Build a peniko sweep gradient for a style conic gradient, or the one
+/// color it paints.
 ///
 /// Returns missing when fewer than two stops survive, which cannot happen
 /// for parsed gradients but keeps paint total. The sweep spans one full
 /// turn from the authored from angle. CSS zero degrees points up while
 /// peniko zero points right in a y-down space, hence the minus 90 shift.
-/// Non-repeating sweeps pad beyond their stops, repeating sweeps repeat.
+/// Non-repeating sweeps pad beyond their stops. Repeating ones have their
+/// periods laid out as stops over the turn, or paint their average color
+/// when the periods are too short to tell apart.
 fn conic_to_peniko(
     conic: &ConicGradient,
     center: Point,
     current_color: CssColor,
-) -> Option<PenikoGradient> {
+) -> Option<gradient::GradientFill> {
     // cov:ignore: parser requires at least two stops, defensive only
     if conic.stops.len() < 2 {
         return None;
@@ -3968,11 +3957,19 @@ fn conic_to_peniko(
             color: gradient_stop_dynamic(stop.color, current_color),
         })
         .collect();
-    let peniko_stops: Vec<(f32, DynamicColor)> =
-        gradient::fixed_up_stops(&raw, &conic.interpolation)
-            .into_iter()
-            .map(|(offset, color)| (offset as f32, color))
-            .collect();
+    let mut fixed = gradient::fixed_up_stops(&raw, &conic.interpolation);
+    if conic.repeating {
+        match gradient::repeat_over_turn(fixed, &conic.interpolation) {
+            gradient::RepeatedTurn::Solid(color) => {
+                return Some(gradient::GradientFill::Solid(color));
+            }
+            gradient::RepeatedTurn::Stops(stops) => fixed = stops,
+        }
+    }
+    let peniko_stops: Vec<(f32, DynamicColor)> = fixed
+        .into_iter()
+        .map(|(offset, color)| (offset as f32, color))
+        .collect();
     let from_degrees = if conic.angle.0.is_finite() {
         conic.angle.0
     } else {
@@ -3993,16 +3990,17 @@ fn conic_to_peniko(
     // a sweep with a stop outside it gets clipped sRGB stops sampled from
     // the ramp in its own space instead. It also takes no stop outside the
     // turn it draws, so those are cut from the sampled ramp the same way.
-    if gradient::any_out_of_gamut(&peniko_stops) || gradient::any_outside_turn(&peniko_stops) {
-        let stops = gradient::expand_stops(&peniko_stops, space, direction, false);
-        return Some(gradient.with_stops(gradient::clip_to_one_turn(stops).as_slice()));
-    }
-    Some(
-        gradient
-            .with_interpolation_cs(space)
-            .with_hue_direction(direction)
-            .with_stops(peniko_stops.as_slice()),
-    )
+    let brush =
+        if gradient::any_out_of_gamut(&peniko_stops) || gradient::any_outside_turn(&peniko_stops) {
+            let stops = gradient::expand_stops(&peniko_stops, space, direction, false);
+            gradient.with_stops(gradient::clip_to_one_turn(stops).as_slice())
+        } else {
+            gradient
+                .with_interpolation_cs(space)
+                .with_hue_direction(direction)
+                .with_stops(peniko_stops.as_slice())
+        };
+    Some(gradient::GradientFill::Brush(Box::new(brush), None))
 }
 
 /// Paint one conic background over its painting area.
@@ -4023,10 +4021,17 @@ fn paint_conic_gradient(
     }
     let center = conic_center(&conic.position, positioning);
     // cov:ignore: parser guarantees at least two valid stops, so the sweep always builds
-    let Some(gradient) = conic_to_peniko(conic, center, current_color) else {
+    let Some(fill) = conic_to_peniko(conic, center, current_color) else {
         return;
     };
-    scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &painting);
+    match fill {
+        gradient::GradientFill::Brush(gradient, _) => {
+            scene.fill(Fill::NonZero, Affine::IDENTITY, &*gradient, None, &painting);
+        }
+        gradient::GradientFill::Solid(color) => {
+            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
+        }
+    }
 }
 
 /// Infer a solid color from a url() string for minimal painting.

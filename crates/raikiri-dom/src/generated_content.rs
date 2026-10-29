@@ -603,6 +603,19 @@ impl Iterator for CounterStackIter<'_> {
     }
 }
 
+/// The counters in effect at `element` once its own directives are applied,
+/// before its `::before` (CSS Lists 3 §4), as `snapshots` hold them. No
+/// counter exists when there are no snapshots, as for a document whose
+/// snapshots passed the memory budget.
+pub(crate) fn element_counters(
+    snapshots: Option<&impl SnapshotCollection>,
+    element: usize,
+) -> CounterSnapshotView<'_> {
+    snapshots
+        .and_then(|all| all.node_view(element))
+        .unwrap_or_else(|| CounterSnapshotView::new(&EMPTY_COUNTER_SNAPSHOT, None))
+}
+
 /// Read-only access to the effective stack for a counter name.
 #[doc(hidden)]
 pub trait CounterSnapshotLookup {
@@ -873,7 +886,8 @@ pub fn format_counter_component<C: CounterSnapshotLookup + ?Sized>(
 }
 
 /// Every value of the counter `name`, outermost first, in `style` and joined
-/// by `separator` (`counters()`).
+/// by `separator` (`counters()`). A counter that does not exist reads as a
+/// single `0`, as it does for `counter()`.
 #[doc(hidden)]
 pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
     snapshot: &C,
@@ -884,7 +898,7 @@ pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
 ) -> String {
     let values = snapshot.values_for(name);
     if values.is_empty() {
-        String::new()
+        format_counter(0, style, registry)
     } else {
         values
             .iter()

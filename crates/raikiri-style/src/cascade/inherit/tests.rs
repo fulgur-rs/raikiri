@@ -10,7 +10,8 @@ use crate::property::CssColor;
 use crate::property::DisplayValue;
 use crate::property::LengthPercentageOrCalc;
 use crate::property::{
-    Border, BorderColor, BorderStyle, CalcLengthPercentage, ColumnFillValue, ContentComponent,
+    Border, BorderColor, BorderStyle, CalcLengthPercentage, ColumnFillValue,
+    ContainIntrinsicLength, ContainIntrinsicSize, ContainIntrinsicSizeShorthand, ContentComponent,
     GridAreaShorthand, GridAutoFlowValue, GridLineValue, GridShorthand, GridTemplateAreasValue,
     GridTemplateTracks, HyphenateLimitChars, HyphenateLimitCharsValue, Length, LengthOrAuto,
     ListStylePosition, ListStyleType, Outline, OutlineColor, OutlineStyle, OverflowValue,
@@ -967,6 +968,77 @@ fn max_content_and_fit_content_preferred_widths_survive_the_cascade() {
     assert!(fit.width.is_content_keyword());
     assert!(!ComputedLengthPercentageOrAuto::Auto.is_content_keyword());
     assert!(!ComputedLengthPercentageOrAuto::Px(1.0).is_content_keyword());
+}
+
+#[test]
+fn the_stretch_keyword_survives_the_cascade_on_every_preferred_size() {
+    // Both spellings compute to the one keyword, on the physical and the
+    // logical properties alike.
+    for value in ["stretch", "-webkit-fill-available"] {
+        let style = format!("width: {value}; height: {value}");
+        let values = cascade_doc("", "div", Some(style.as_str()));
+        for (name, size) in [("width", values.width), ("height", values.height)] {
+            assert_eq!(size, ComputedLengthPercentageOrAuto::Stretch, "{name}");
+            assert!(!size.is_content_keyword(), "{name}");
+        }
+        let logical = format!("inline-size: {value}; block-size: {value}");
+        let values = cascade_doc("", "div", Some(logical.as_str()));
+        assert_eq!(values.width, ComputedLengthPercentageOrAuto::Stretch);
+        assert_eq!(values.height, ComputedLengthPercentageOrAuto::Stretch);
+    }
+}
+
+#[test]
+fn the_stretch_keyword_survives_the_cascade_on_every_minimum_and_maximum_size() {
+    // A later `stretch` replaces an earlier length, in both spellings, and the
+    // keyword is not a content keyword.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some(
+            "min-width: 10px; min-width: stretch; min-height: 20px; min-height: -webkit-fill-available; \
+             max-width: 30px; max-width: stretch; max-height: 40px; max-height: -webkit-fill-available",
+        ),
+    );
+    for (name, size) in [
+        ("min-width", values.min_width),
+        ("min-height", values.min_height),
+        ("max-width", values.max_width),
+        ("max-height", values.max_height),
+    ] {
+        assert_eq!(size, ComputedLengthPercentageOrAuto::Stretch, "{name}");
+        assert!(!size.is_content_keyword(), "{name}");
+    }
+    // The logical properties reach the physical axes of a horizontal box.
+    let logical = cascade_doc(
+        "",
+        "div",
+        Some(
+            "min-inline-size: stretch; max-inline-size: stretch; \
+             min-block-size: stretch; max-block-size: stretch",
+        ),
+    );
+    assert_eq!(logical.min_width, ComputedLengthPercentageOrAuto::Stretch);
+    assert_eq!(logical.max_width, ComputedLengthPercentageOrAuto::Stretch);
+    assert_eq!(logical.max_height, ComputedLengthPercentageOrAuto::Stretch);
+}
+
+#[test]
+fn the_stretch_keyword_of_a_vertical_box_lands_on_its_physical_axes() {
+    // `inline-size` runs along the height of a vertical box and `block-size`
+    // along its width, so each keyword reaches the axis it names.
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-rl; inline-size: stretch; block-size: stretch"),
+    );
+    assert_eq!(
+        values.vertical_logical_size,
+        Some(VerticalLogicalSize {
+            width: ComputedLengthPercentageOrAuto::Stretch,
+            height: ComputedLengthPercentageOrAuto::Stretch,
+        })
+    );
 }
 
 #[test]
@@ -6542,8 +6614,8 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
             ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
             | ComputedLengthPercentageOrAuto::FitContent
-            | ComputedLengthPercentageOrAuto::FitContentOf(_) =>
-                LengthOrAuto::Length(Length::Px(0.0)),
+            | ComputedLengthPercentageOrAuto::FitContentOf(_)
+            | ComputedLengthPercentageOrAuto::Stretch => LengthOrAuto::Length(Length::Px(0.0)),
         })))
     );
 }
@@ -8656,6 +8728,36 @@ fn apply_value_direct_position_sticky_and_fixed() {
     assert_eq!(cv.position, PositionValue::Sticky);
     apply_value(PropertyValue::Position(PositionValue::Fixed), &mut cv);
     assert_eq!(cv.position, PositionValue::Fixed);
+}
+
+#[test]
+fn apply_value_direct_contain_intrinsic_size_sets_both_axes() {
+    let size = |auto, px| ContainIntrinsicSize {
+        auto,
+        length: Some(ContainIntrinsicLength::Length(Length::Px(px))),
+    };
+    let mut cv = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::ContainIntrinsicSize(ContainIntrinsicSizeShorthand {
+            width: size(true, 3.0),
+            height: size(false, 4.0),
+        }),
+        &mut cv,
+    );
+    assert_eq!(cv.contain_intrinsic_width, size(true, 3.0));
+    assert_eq!(cv.contain_intrinsic_height, size(false, 4.0));
+    // A longhand after the shorthand replaces one axis only.
+    apply_value(
+        PropertyValue::ContainIntrinsicWidth(size(false, 5.0)),
+        &mut cv,
+    );
+    assert_eq!(cv.contain_intrinsic_width, size(false, 5.0));
+    assert_eq!(cv.contain_intrinsic_height, size(false, 4.0));
+    apply_value(
+        PropertyValue::ContainIntrinsicHeight(size(true, 6.0)),
+        &mut cv,
+    );
+    assert_eq!(cv.contain_intrinsic_height, size(true, 6.0));
 }
 
 #[test]

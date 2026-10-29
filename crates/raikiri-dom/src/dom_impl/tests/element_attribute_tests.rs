@@ -12,6 +12,7 @@ fn doc_with_attr(local: &str, value: &str) -> (Document, usize) {
 
 fn element_ref(doc: &Document, id: usize) -> ElementRef<'_> {
     ElementRef {
+        stylesheet_source: None,
         node: &doc.nodes[id],
     }
 }

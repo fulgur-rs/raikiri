@@ -165,7 +165,11 @@ fn parse_start_end_shorthand<T: Copy>(
     Some(StartEnd { start, end })
 }
 
-/// Parse `width: auto | min-content | max-content | fit-content | <length-percentage [0,∞]>`.
+/// Parse `width: auto | min-content | max-content | fit-content | stretch | <length-percentage [0,∞]>`.
+///
+/// `stretch` (CSS Sizing 4 §5.1) and its legacy spelling `-webkit-fill-available` are values of
+/// the preferred sizes as well as of the minimum and maximum sizes, which add the keyword to
+/// [`parse_box_size`] themselves (see [`parse_min_size`] and [`parse_max_size`]).
 ///
 /// Grammar reference: CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>
 /// "Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
@@ -196,7 +200,22 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
+    if input.try_parse(expect_stretch_keyword).is_ok() {
+        return Some(LengthOrAuto::Stretch);
+    }
     parse_box_size(input)
+}
+
+/// Consumes `stretch` or its legacy spelling `-webkit-fill-available`, which
+/// CSS Sizing 4 §5.1 defines as an alias of the keyword.
+fn expect_stretch_keyword<'i>(input: &mut Parser<'i, '_>) -> Result<(), ParseError<'i, ()>> {
+    let ident = input.expect_ident()?;
+    if ident.eq_ignore_ascii_case("stretch") || ident.eq_ignore_ascii_case("-webkit-fill-available")
+    {
+        Ok(())
+    } else {
+        Err(input.new_custom_error(()))
+    }
 }
 
 /// Parse `<box-size>`: a non-negative `<length-percentage>`, `min-content`, `max-content`,
@@ -958,29 +977,37 @@ pub(super) fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     parse_width(input)
 }
 
-/// Parse `max-width` / `max-height: none | <box-size>`.
+/// Parse `max-width` / `max-height: none | <box-size> | stretch`.
 ///
 /// CSS Sizing 3 §5 "Maximum Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#max-size-properties> specifies initial value `none` and
 /// inheritance `No`. `none` means no maximum and is the `Auto` placeholder; the other values are
-/// [`parse_box_size`], so the sizing keywords stay in the value as they do for `width`. `auto` is
-/// not a maximum size and drops the declaration.
+/// [`parse_box_size`], so the sizing keywords stay in the value as they do for `width`, and
+/// `stretch` (CSS Sizing 4 §5.1) with its legacy spelling. `auto` is not a maximum size and drops
+/// the declaration.
 pub(super) fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
+    if input.try_parse(expect_stretch_keyword).is_ok() {
+        return Some(LengthOrAuto::Stretch);
+    }
     parse_box_size(input)
 }
 
-/// Parse `min-width` / `min-height` / `min-block-size: auto | <box-size>`.
+/// Parse `min-width` / `min-height` / `min-block-size: auto | <box-size> | stretch`.
 ///
 /// CSS Sizing 3 §4 "Minimum Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties> specifies initial value `auto` and
 /// inheritance `No`. It is the shape of [`parse_max_size`] with the minimum size's `auto` in place of
-/// `none`; `none` is not a minimum size and drops the declaration.
+/// `none`; `none` is not a minimum size and drops the declaration. Like the maximum size it takes
+/// `stretch` (CSS Sizing 4 §5.1) and its legacy spelling `-webkit-fill-available`.
 pub(super) fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(expect_stretch_keyword).is_ok() {
+        return Some(LengthOrAuto::Stretch);
     }
     parse_box_size(input)
 }

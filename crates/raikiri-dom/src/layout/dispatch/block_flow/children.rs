@@ -1,8 +1,9 @@
 //! Place block-flow children while retaining one shared float transaction.
 
 use super::context::{BlockContext, BoxProbe};
-use super::{Metrics, child_inputs, child_style, commit, shares_parent_context};
+use super::{Metrics, child_inputs, child_style, commit, shares_context, shares_parent_context};
 use crate::layout::context::LayoutSession;
+use crate::layout::dispatch::content_limits;
 use crate::layout::protocol::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, CollapsibleMarginSet,
     FloatDirection, LayoutInput, LayoutOutput, NodeId, OofCandidates, OofPosition, RunMode,
@@ -85,7 +86,7 @@ fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> 
         )
 }
 
-fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> bool {
+pub(super) fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 
     let node = &tree.nodes[usize::from(child)];
@@ -273,6 +274,15 @@ pub(super) fn layout(
         width: Some(content_width),
         height: metrics.percent_height,
     };
+    // A margin at an edge of this box that its parent's margins cannot absorb
+    // stays inside it: it takes room off a child that stretches to the height
+    // of the content box. A margin that would escape takes none.
+    let holds_margin = Line {
+        start: !collapse_start,
+        end: !(shares_context(container)
+            && inputs.vertical_margins_are_collapsible.end
+            && metrics.inset.bottom == 0.0),
+    };
     let mut flow = Flow {
         end: metrics.inset.top,
         leading: CollapsibleMarginSet::ZERO,
@@ -379,6 +389,20 @@ pub(super) fn layout(
             .preferred
             .height
             .filter(|_| !child_metrics.ratio_height);
+        // `height: stretch` fills the content box of a parent whose height is
+        // definite, less the margins that do not escape it (CSS Sizing 4
+        // §5.1). A float's margins never escape. Without a definite room it
+        // sizes like `auto`.
+        if let (Some(room), ExpandedDimension::Stretch) =
+            (parent.height, style.size.height.expand())
+        {
+            let floated = style.float != Float::None;
+            let held = |holds: bool, margin: f32| if holds || floated { margin } else { 0.0 };
+            let taken =
+                held(holds_margin.start, margin.top) + held(holds_margin.end, margin.bottom);
+            child_input.known_dimensions.height =
+                Some(child_metrics.clamp_height((room - taken).max(0.0)));
+        }
         if style.float != Float::None {
             child_input.known_dimensions.width = child_metrics
                 .preferred
@@ -451,6 +475,17 @@ pub(super) fn layout(
             continue;
         }
         let same = shares_parent_context(tree, node, child, &style);
+        // A `stretch` height limit of the child leaves out the margins this
+        // box holds in.
+        let held_margins = content_limits::has_stretch_height_limit(tree, usize::from(child));
+        if held_margins {
+            tree.context
+                .held_margins
+                .push(content_limits::HeldMargins::new(
+                    usize::from(child),
+                    holds_margin,
+                ));
+        }
         // The box after the float that starts a page lines up beside that
         // float, but below the floats of the pages before it.
         let floor = tree
@@ -459,34 +494,55 @@ pub(super) fn layout(
             .is_ok()
             .then(|| ctx.page_start_float_floor())
             .flatten();
-        let stretches = matches!(
-            style.size.width.expand(),
-            ExpandedDimension::Auto | ExpandedDimension::Stretch
-        ) && !style.item_is_table
-            && !style.is_compressible_replaced();
+        // An `auto` width fills the room, but a table, a compressible
+        // replaced box and a button take their own size then; `stretch` fills
+        // it for them too (CSS Sizing 4 §5.1).
+        let stretches = match style.size.width.expand() {
+            ExpandedDimension::Stretch => true,
+            ExpandedDimension::Auto => {
+                !style.item_is_table
+                    && !style.is_compressible_replaced()
+                    && !tree.nodes[usize::from(child)].is_html_button()
+            }
+            _ => false,
+        };
         let natural_stretch = content_width - margin.horizontal_axis_sum();
+        // A `min-width` or `max-width` of `stretch` fills the room the child
+        // finds, which beside a float is the room the float leaves.
+        let stretch_widths = content_limits::stretch_widths(tree, usize::from(child));
         // `Width`: the border-box width the child gets where an `auto` width
         // resolves to `stretch`. `Height`: its border-box height at `width`.
         let mut measure = |probe: BoxProbe| match probe {
             BoxProbe::Width { stretch } => {
-                if let Some(preferred) = child_metrics.preferred.width
-                    && !child_metrics.ratio_width
-                {
-                    return preferred;
-                }
-                if stretches && !child_metrics.ratio_width {
-                    return child_metrics.clamp_width(stretch.max(0.0));
-                }
-                let mut measure = child_input;
-                measure.run_mode = RunMode::ComputeSize;
-                measure.available_space.width = match style.size.width.expand() {
-                    ExpandedDimension::MinContent => AvailableSpace::MinContent,
-                    ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
-                    _ => AvailableSpace::Definite(stretch.max(0.0)),
+                let width = 'width: {
+                    if let Some(preferred) = child_metrics.preferred.width
+                        && !child_metrics.ratio_width
+                    {
+                        break 'width preferred;
+                    }
+                    if stretches && !child_metrics.ratio_width {
+                        break 'width child_metrics.clamp_width(stretch.max(0.0));
+                    }
+                    let mut measure = child_input;
+                    measure.run_mode = RunMode::ComputeSize;
+                    measure.available_space.width = match style.size.width.expand() {
+                        ExpandedDimension::MinContent => AvailableSpace::MinContent,
+                        ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
+                        _ => AvailableSpace::Definite(stretch.max(0.0)),
+                    };
+                    tree.compute_child_layout_with_block_ctx(child, measure, None)
+                        .size
+                        .width
                 };
-                tree.compute_child_layout_with_block_ctx(child, measure, None)
-                    .size
-                    .width
+                if stretch_widths.any() {
+                    stretch_widths.clamp(
+                        width,
+                        (child_metrics.min.width, child_metrics.max.width),
+                        stretch.max(0.0),
+                    )
+                } else {
+                    width
+                }
             }
             BoxProbe::Height { width } => {
                 let mut measure = child_input;
@@ -658,6 +714,9 @@ pub(super) fn layout(
                 adjoining,
             );
         };
+        if held_margins {
+            tree.context.held_margins.pop();
+        }
         ctx.add_child_floated_content_height_contribution(guess + floated_end);
         ctx.merge_adjoining_floats(adjoining);
         if joins && separated {

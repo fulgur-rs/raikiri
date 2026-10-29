@@ -275,6 +275,7 @@ fn stale_animation_ids_are_rejected_by_controls() {
         .animation
         .clone();
     let data = AnimationData {
+        target_owner: super::super::node_gc::NodeRecord::new(0),
         id: usize::MAX,
         animation_id: String::new(),
         ready: None,

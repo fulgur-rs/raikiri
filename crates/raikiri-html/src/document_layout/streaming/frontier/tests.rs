@@ -278,3 +278,13 @@ fn open_inline_layout_boxes_hold_from_the_surrounding_run() {
         "\"prefix \""
     );
 }
+
+mod avoided_chain_tests;
+
+thread_local! {
+    static SIBLING_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn record_sibling_visit() {
+    SIBLING_VISITS.with(|visits| visits.set(visits.get() + 1));
+}

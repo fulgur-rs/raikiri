@@ -50,6 +50,10 @@ pub(crate) struct LayoutContext {
     /// Definite block sizes retained as percentage bases for the direct
     /// children of boxes being measured for intrinsic height limits.
     pub(crate) content_limit_percentage_height_bases: Vec<(usize, f32)>,
+    /// The vertical margins of the block children being laid out that their
+    /// parent holds in, which a `stretch` height limit leaves out of its room
+    /// (see [`crate::layout::dispatch::content_limits::HeldMargins`]).
+    pub(crate) held_margins: Vec<crate::layout::dispatch::content_limits::HeldMargins>,
     /// The width or height each box measured for its keyword sizes, while the
     /// outermost box laying out with them runs, and how many such layouts are
     /// running (see `dispatch::content_limits`).
@@ -72,6 +76,10 @@ pub(crate) struct LayoutContext {
     /// It is a first guess for the next layout of the same root, and a wrong
     /// one is corrected like any other.
     pub(crate) vertical_block_size_seeds: HashMap<(usize, u32), f32>,
+    /// The caches of the boxes that are laid out with a percentage width
+    /// replaced by what it stands for, one for each way it is replaced (see
+    /// [`LayoutSession::with_style_variant`]).
+    pub(crate) variant_caches: super::cache_context::VariantCaches,
     /// The static positions of the boxes hoisted to a containing block on
     /// vertical axes that align `safe` in an axis, which that block aligns
     /// again once the library has positioned them (see
@@ -226,6 +234,7 @@ impl<'doc> LayoutSession<'doc> {
             self.context.taffy_hoisted_children.clear();
             self.context.safe_static_positions.clear();
             self.context.vertical_block_size_seeds.clear();
+            self.context.variant_caches.clear();
             self.document.layout_dirty = false;
         }
     }

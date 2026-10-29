@@ -10,6 +10,11 @@
 //! - <https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-idl-attributes>
 //! - <https://html.spec.whatwg.org/multipage/webappapis.html#report-the-exception>
 
+#[cfg(test)]
+thread_local! {
+    pub(super) static COLLECT_CONTENT_HANDLERS: Cell<bool> = const { Cell::new(false) };
+}
+
 use std::cell::{Cell, RefCell};
 
 use boa_engine::object::JsObject;
@@ -35,11 +40,14 @@ use super::webidl::{guard_active, throw_dom_exception, with_state};
 /// `message`/`filename`/`lineno`/`colno`/`error` are simply unused (left at
 /// their default) on a plain `Event`.
 ///
-/// `target`/`currentTarget` reuse the [`super::State::listeners`] key
+/// `target`/`currentTarget` reuse the [`super::State::window_listeners`] key
 /// convention (`None` is the window, `Some(index)` a node); the outer
 /// `Option` is `None` before the event has ever been dispatched.
 #[derive(Debug, Trace, Finalize, JsData)]
 pub(crate) struct EventData {
+    target_owner: boa_gc::GcRefCell<Option<boa_gc::Gc<super::node_gc::NodeRecord>>>,
+    path_owners: boa_gc::GcRefCell<Vec<boa_gc::Gc<super::node_gc::NodeRecord>>>,
+    related_owner: Option<boa_gc::Gc<super::node_gc::NodeRecord>>,
     #[unsafe_ignore_trace]
     kind: String,
     #[unsafe_ignore_trace]
@@ -131,6 +139,9 @@ fn new_event_data(
     time_stamp: f64,
 ) -> EventData {
     EventData {
+        target_owner: boa_gc::GcRefCell::new(None),
+        path_owners: boa_gc::GcRefCell::new(Vec::new()),
+        related_owner: None,
         kind,
         bubbles,
         cancelable,
@@ -393,6 +404,11 @@ pub(crate) fn focus_event_constructor(
             )?))
         };
     }
+    data.related_owner = with_state(context, |state| {
+        data.related_target
+            .flatten()
+            .map(|index| state.node_record(index))
+    })?;
     data.interface = EventInterface::FocusEvent;
     let proto = protos(context).focus_event.clone();
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
@@ -808,21 +824,22 @@ fn current_listener(
     listener: &Listener,
 ) -> JsResult<Option<Listener>> {
     with_state(context, |s| {
-        let list = s.listeners.get(&node)?;
-        if listener.is_handler {
-            list.iter()
-                .find(|l| l.is_handler && l.kind == listener.kind)
-                .cloned()
-        } else {
-            list.iter()
-                .find(|l| {
-                    !l.is_handler
-                        && l.kind == listener.kind
-                        && JsObject::equals(&l.callback, &listener.callback)
-                        && l.capture == listener.capture
-                })
-                .cloned()
-        }
+        s.with_listeners(node, |list| {
+            if listener.is_handler {
+                list.iter()
+                    .find(|l| l.is_handler && l.kind == listener.kind)
+                    .cloned()
+            } else {
+                list.iter()
+                    .find(|l| {
+                        !l.is_handler
+                            && l.kind == listener.kind
+                            && JsObject::equals(&l.callback, &listener.callback)
+                            && l.capture == listener.capture
+                    })
+                    .cloned()
+            }
+        })
     })
 }
 
@@ -840,9 +857,8 @@ fn invoke(
     capture_filter: Option<bool>,
 ) -> JsResult<()> {
     let kind = event_data(event, |d| d.kind.clone()).unwrap_or_default();
-    let snapshot: Vec<Listener> = with_state(context, |s| {
-        s.listeners.get(&node).cloned().unwrap_or_default()
-    })?;
+    let snapshot: Vec<Listener> =
+        with_state(context, |s| s.with_listeners(node, |list| list.clone()))?;
     let this_value = target_this_value(context, node)?;
     for listener in snapshot {
         if listener.kind != kind {
@@ -865,12 +881,14 @@ fn invoke(
             // it), but `!l.is_handler` keeps this removal from ever
             // touching one regardless.
             let _ = with_state(context, |s| {
-                s.listeners.entry(node).or_default().retain(|l| {
-                    l.is_handler
-                        || !(l.kind == listener.kind
-                            && JsObject::equals(&l.callback, &listener.callback)
-                            && l.capture == listener.capture)
-                });
+                s.with_listeners(node, |list| {
+                    list.retain(|l| {
+                        l.is_handler
+                            || !(l.kind == listener.kind
+                                && JsObject::equals(&l.callback, &listener.callback)
+                                && l.capture == listener.capture)
+                    });
+                })
             });
         }
         if listener.passive {
@@ -990,7 +1008,18 @@ pub(crate) fn dispatch(
     }
     let kind = event_data(event, |d| d.kind.clone()).unwrap_or_default();
     let path = build_path(context, target, &kind)?;
+    let (target_owner, path_owners) = with_state(context, |state| {
+        (
+            target.map(|index| state.node_record(index)),
+            path.iter()
+                .flatten()
+                .map(|&index| state.node_record(index))
+                .collect(),
+        )
+    })?;
     let _ = event_data(event, |d| {
+        *d.target_owner.borrow_mut() = target_owner;
+        *d.path_owners.borrow_mut() = path_owners;
         d.dispatched.set(true);
         d.target.set(Some(target));
         d.stop_propagation.set(false);
@@ -1004,6 +1033,7 @@ pub(crate) fn dispatch(
         d.current_target.set(None);
         d.event_phase.set(NONE_PHASE);
         d.path.borrow_mut().clear();
+        d.path_owners.borrow_mut().clear();
     });
     result?;
     Ok(!default_prevented(event))
@@ -1083,6 +1113,11 @@ pub(crate) fn fire_focus_event(
     data.view_is_window = true;
     data.detail = JsValue::from(0);
     data.related_target = related.map(Some);
+    data.related_owner = with_state(context, |state| {
+        data.related_target
+            .flatten()
+            .map(|index| state.node_record(index))
+    })?;
     data.interface = EventInterface::FocusEvent;
     let proto = protos(context).focus_event.clone();
     let event = JsObject::from_proto_and_data(Some(proto), data);
@@ -1159,7 +1194,7 @@ fn event_handler_get(this: &JsValue, kind: &str, context: &mut Context) -> JsRes
     let key = events::this_event_target(this, context)?;
     let key = resolve_handler_key(context, key, kind)?;
     let callback = with_state(context, |s| {
-        s.listeners.get(&key).and_then(|list| {
+        s.with_listeners(key, |list| {
             list.iter()
                 .find(|l| l.kind == kind && l.is_handler)
                 .map(|l| l.callback.clone())
@@ -1197,21 +1232,22 @@ fn set_handler_callback(
     callback: Option<JsObject>,
 ) -> JsResult<()> {
     with_state(context, |s| {
-        let list = s.listeners.entry(key).or_default();
-        let existing = list.iter_mut().find(|l| l.kind == kind && l.is_handler);
-        match (existing, callback) {
-            (Some(listener), Some(callback)) => listener.callback = callback,
-            (Some(_), None) => list.retain(|l| !(l.kind == kind && l.is_handler)),
-            (None, Some(callback)) => list.push(Listener {
-                kind: kind.to_owned(),
-                callback,
-                capture: false,
-                once: false,
-                passive: false,
-                is_handler: true,
-            }),
-            (None, None) => {}
-        }
+        s.with_listeners(key, |list| {
+            let existing = list.iter_mut().find(|l| l.kind == kind && l.is_handler);
+            match (existing, callback) {
+                (Some(listener), Some(callback)) => listener.callback = callback,
+                (Some(_), None) => list.retain(|l| !(l.kind == kind && l.is_handler)),
+                (None, Some(callback)) => list.push(Listener {
+                    kind: kind.to_owned(),
+                    callback,
+                    capture: false,
+                    once: false,
+                    passive: false,
+                    is_handler: true,
+                }),
+                (None, None) => {}
+            }
+        })
     })
 }
 
@@ -1286,6 +1322,11 @@ fn compile_content_handler(
     value: &str,
     is_window_on_error: bool,
 ) -> JsResult<Option<JsObject>> {
+    #[cfg(test)]
+    if COLLECT_CONTENT_HANDLERS.get() {
+        context.clear_kept_objects();
+        boa_gc::force_collect();
+    }
     let params = if is_window_on_error {
         "event,source,lineno,colno,error"
     } else {

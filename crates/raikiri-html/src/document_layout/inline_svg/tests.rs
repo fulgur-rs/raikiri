@@ -1,4 +1,5 @@
 use super::*;
+mod storage_tests;
 use raikiri_svg::{SvgFontRequest, SvgSceneLimit};
 use raikiri_traits::vector::FontFace;
 

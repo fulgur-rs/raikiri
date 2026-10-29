@@ -5,6 +5,7 @@ use raikiri_dom::NodeKind;
 
 use super::host::HostError;
 use super::interfaces::{Members, wrap, wrap_optional};
+use super::node_gc::NodeObject;
 use super::webidl::{
     dom_string, guard_node_budget, host_failure, host_failure_with_message, this_document,
     this_element, this_node, throw_dom_exception, unreachable_mutation_error, with_state,
@@ -459,11 +460,13 @@ fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
 /// the same object.
 fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    if let Some(existing) = with_state(context, |s| s.class_lists.get(&index).cloned())? {
+    if let Some(existing) = with_state(context, |s| s.node_object(index, NodeObject::ClassList))? {
         return Ok(existing.into());
     }
     let object = super::token_list::token_list(context, index)?;
-    with_state(context, |s| s.class_lists.insert(index, object.clone()))?;
+    with_state(context, |s| {
+        s.set_node_object(index, NodeObject::ClassList, object.clone())
+    })?;
     Ok(object.into())
 }
 
