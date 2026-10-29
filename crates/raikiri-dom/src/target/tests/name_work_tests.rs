@@ -249,3 +249,29 @@ fn resets_after_auto_instantiation_promote_and_restore_outer_scopes() {
         }
     }
 }
+
+#[test]
+fn unrelated_set_does_not_feed_a_calculated_reversed_counter() {
+    let mut doc = Document::new();
+    let scope = doc.append_element(Some(0), "section", Some("counter-reset:reversed(r)"));
+    let first = doc.append_element(
+        Some(scope),
+        "p",
+        Some("counter-increment:r 1;counter-set:unrelated 7"),
+    );
+    let second = doc.append_element(
+        Some(scope),
+        "p",
+        Some("counter-increment:r 2;counter-set:unrelated 9"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let snapshots = counter_snapshots(&doc, &cascade).unwrap();
+    let r = Symbol::new("r");
+    let unrelated = Symbol::new("unrelated");
+    assert_eq!(snapshots[scope][&r], vec![-5]);
+    assert_eq!(snapshots[first][&r], vec![-4]);
+    assert_eq!(snapshots[second][&r], vec![-2]);
+    assert_eq!(snapshots[first][&unrelated], vec![7]);
+    assert_eq!(snapshots[second][&unrelated], vec![9]);
+}
