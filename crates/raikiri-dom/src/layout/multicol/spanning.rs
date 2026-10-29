@@ -128,6 +128,12 @@ pub(super) fn layout(
             let width = tree.nodes[child]
                 .multicol_auto_width
                 .then_some((context.available_width - inline_margin).max(0.0));
+            // A button fits its content within the room its margins leave, not
+            // the width of the container (HTML Standard 15.5.3).
+            let available_width = match width {
+                Some(room) if layout_node(tree, child).is_html_button() => room,
+                _ => context.available_width,
+            };
             let output = tree.compute_child_layout(
                 NodeId::from(child),
                 LayoutInput {
@@ -147,7 +153,7 @@ pub(super) fn layout(
                         height: None,
                     },
                     available_space: Size {
-                        width: AvailableSpace::Definite(context.available_width),
+                        width: AvailableSpace::Definite(available_width),
                         height: AvailableSpace::MaxContent,
                     },
                     vertical_margins_are_collapsible: Line::FALSE,

@@ -344,3 +344,215 @@ fn a_button_with_a_percentage_height_and_a_ratio_in_a_flex_item_overflows_the_st
         ),
     ]);
 }
+
+/// A block-level button that is a direct child of a multicol container takes
+/// the size of its content inside its column, as it does in a block.
+#[test]
+fn a_block_level_button_directly_in_a_multicol_takes_the_width_of_its_content() {
+    let multicol = |style: &str, content: &str| {
+        format!(
+            "<div id=w style='columns: 2; width: 200px; column-gap: 0; {style}'>{content}</div>"
+        )
+    };
+    check_boxes(&[
+        (
+            "text",
+            &multicol("", &format!("<button id=b style='{BUTTON}'>xx</button>")),
+            &[("w", 8.0, 8.0, 200.0, 10.0), ("b", 8.0, 8.0, 20.0, 10.0)],
+        ),
+        (
+            "no content",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} height: 20px'></button>"),
+            ),
+            &[("w", 8.0, 8.0, 200.0, 20.0), ("b", 8.0, 8.0, 0.0, 20.0)],
+        ),
+        (
+            "after a paragraph",
+            &multicol(
+                "",
+                &format!(
+                    "<p id=p style='margin: 0'>aa</p><button id=b style='{BUTTON} height: 20px'>xx</button>"
+                ),
+            ),
+            &[("p", 8.0, 8.0, 100.0, 10.0), ("b", 108.0, 8.0, 20.0, 20.0)],
+        ),
+        (
+            "text that wraps in the column",
+            &multicol(
+                "height: 50px; column-fill: auto",
+                &format!("<button id=b style='{BUTTON}'>xx xx xx xx xx xx xx</button>"),
+            ),
+            &[("w", 8.0, 8.0, 200.0, 50.0), ("b", 8.0, 8.0, 100.0, 30.0)],
+        ),
+        (
+            "text that cannot wrap",
+            &multicol(
+                "",
+                &format!(
+                    "<button id=b style='{BUTTON} white-space: nowrap'>xxxx xxxx xxxx</button>"
+                ),
+            ),
+            &[("b", 8.0, 8.0, 140.0, 10.0)],
+        ),
+        (
+            "padding",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} padding: 5px; height: 30px'>xx</button>"),
+            ),
+            &[("b", 8.0, 8.0, 30.0, 40.0)],
+        ),
+        (
+            "margin auto on both sides",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} margin: 0 auto; height: 20px'>xx</button>"),
+            ),
+            &[("b", 48.0, 8.0, 20.0, 20.0)],
+        ),
+        (
+            "right to left",
+            &multicol(
+                "direction: rtl",
+                &format!("<button id=b style='{BUTTON} height: 20px'>xx</button>"),
+            ),
+            &[("b", 188.0, 8.0, 20.0, 20.0)],
+        ),
+        (
+            "a column width instead of a count",
+            &format!(
+                "<div id=w style='column-width: 90px; width: 200px; column-gap: 0'>\
+                 <button id=b style='{BUTTON} height: 20px'>xx</button></div>"
+            ),
+            &[("b", 8.0, 8.0, 20.0, 20.0)],
+        ),
+        (
+            "two buttons in two columns",
+            &multicol(
+                "",
+                &format!(
+                    "<button id=b style='{BUTTON} height: 20px'>xx</button>\
+                     <button id=c style='{BUTTON} height: 20px'>xxxx</button>"
+                ),
+            ),
+            &[("b", 8.0, 8.0, 20.0, 20.0), ("c", 108.0, 8.0, 40.0, 20.0)],
+        ),
+        (
+            "a fixed height",
+            &multicol(
+                "height: 50px; column-fill: auto",
+                &format!(
+                    "<button id=b style='{BUTTON} height: 20px'>xx</button>\
+                     <button id=c style='{BUTTON} height: 20px'>xxxx</button>"
+                ),
+            ),
+            &[("b", 8.0, 8.0, 20.0, 20.0), ("c", 8.0, 28.0, 40.0, 20.0)],
+        ),
+        (
+            "a spanner",
+            &multicol(
+                "",
+                &format!(
+                    "<button id=b style='{BUTTON} height: 20px; column-span: all'>xx</button>"
+                ),
+            ),
+            &[("b", 8.0, 8.0, 20.0, 20.0)],
+        ),
+    ]);
+    // The margins narrow the room the text wraps in, the column width minus
+    // the margins.
+    let wrapping = "height: 50px; column-fill: auto";
+    let words = "xx xx xx xx xx xx xx";
+    check_boxes(&[
+        (
+            "margins on both sides",
+            &multicol(
+                wrapping,
+                &format!("<button id=b style='{BUTTON} margin: 0 10px'>{words}</button>"),
+            ),
+            &[("b", 18.0, 8.0, 80.0, 30.0)],
+        ),
+        (
+            "a margin on the left only",
+            &multicol(
+                wrapping,
+                &format!("<button id=b style='{BUTTON} margin-left: 10px'>{words}</button>"),
+            ),
+            &[("b", 18.0, 8.0, 90.0, 30.0)],
+        ),
+        (
+            "margins as a percentage of the column",
+            &multicol(
+                wrapping,
+                &format!("<button id=b style='{BUTTON} margin: 0 10%'>{words}</button>"),
+            ),
+            &[("b", 18.0, 8.0, 80.0, 30.0)],
+        ),
+        (
+            "margins and text that fits",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} margin: 0 10px; height: 20px'>xx</button>"),
+            ),
+            &[("b", 18.0, 8.0, 20.0, 20.0)],
+        ),
+        (
+            "margins after a paragraph",
+            &multicol(
+                wrapping,
+                &format!(
+                    "<p style='margin: 0'>xx</p>\
+                     <button id=b style='{BUTTON} margin: 0 10px'>{words}</button>"
+                ),
+            ),
+            &[("b", 18.0, 18.0, 80.0, 30.0)],
+        ),
+        (
+            "margins on a spanner",
+            &multicol(
+                "",
+                &format!(
+                    "<button id=b style='{BUTTON} margin: 0 10px; column-span: all'>{words}</button>"
+                ),
+            ),
+            &[("b", 18.0, 8.0, 180.0, 20.0)],
+        ),
+    ]);
+    // The sizes the button states still apply.
+    check_boxes(&[
+        (
+            "width",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} width: 80px; height: 20px'></button>"),
+            ),
+            &[("b", 8.0, 8.0, 80.0, 20.0)],
+        ),
+        (
+            "width as a percentage of the column",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} width: 100%; height: 20px'>xx</button>"),
+            ),
+            &[("b", 8.0, 8.0, 100.0, 20.0)],
+        ),
+        (
+            "max-width",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} max-width: 10px; height: 20px'>xx</button>"),
+            ),
+            &[("b", 8.0, 8.0, 10.0, 20.0)],
+        ),
+        (
+            "min-width",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} min-width: 60px; height: 20px'>xx</button>"),
+            ),
+            &[("b", 8.0, 8.0, 60.0, 20.0)],
+        ),
+    ]);
+}

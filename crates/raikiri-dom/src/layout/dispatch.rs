@@ -947,7 +947,8 @@ impl LayoutSession<'_> {
                 let inline_shrink_wrap = ifc_table
                     || (tree.nodes[idx].display().is_atomic_inline_level()
                         && tree.nodes[idx].display() != DisplayValue::InlineTable)
-                    || is_floated_flex_or_grid(tree, idx);
+                    || is_floated_flex_or_grid(tree, idx)
+                    || is_button_in_multicol(tree, idx);
                 // Size containment already gave the box its width.
                 let contained_width = tree.nodes[idx].size_containment.width && !empty;
                 if inline_shrink_wrap
@@ -2528,6 +2529,17 @@ fn first_inline_baseline(doc: &LayoutSession<'_>, root: usize) -> Option<f32> {
         }
     }
     last_baseline
+}
+
+/// Whether `idx` is a block-level `<button>` that is a direct child of a
+/// multicol container. A column does not stretch it to its width, as a block
+/// does not (HTML Standard 15.5.3): its `auto` width is the fit-content one,
+/// which the column's width bounds.
+fn is_button_in_multicol(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].is_html_button()
+        && tree
+            .taffy_parent_of(idx)
+            .is_some_and(|parent| tree.nodes[parent].is_multicol_container())
 }
 
 /// Whether element `idx` is a flex or grid container that floats.

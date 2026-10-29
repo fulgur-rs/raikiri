@@ -170,6 +170,14 @@ pub(super) fn layout(
     for &id in chain {
         tree.nodes[id].cache.clear();
     }
+    // A button fits its content within the room its margins leave (HTML
+    // Standard 15.5.3); block flow takes the margins off for a box it
+    // stretches, but not for one that shrinks.
+    let available_width = if layout_node(tree, first).is_html_button() {
+        super::column_room(&style_of(tree, first), context.column_width)
+    } else {
+        context.column_width
+    };
     let output = tree.compute_child_layout(
         NodeId::from(first),
         LayoutInput {
@@ -186,7 +194,7 @@ pub(super) fn layout(
                 height: Some(height),
             },
             available_space: Size {
-                width: AvailableSpace::Definite(context.column_width),
+                width: AvailableSpace::Definite(available_width),
                 height: AvailableSpace::MaxContent,
             },
             vertical_margins_are_collapsible: Line::FALSE,
