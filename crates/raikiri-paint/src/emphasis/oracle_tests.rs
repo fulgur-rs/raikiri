@@ -2,6 +2,46 @@
 
 use shodo::Fragment;
 use shodo::geometry::{Direction, PhysicalConverter, WritingMode};
+use std::cell::Cell;
+
+thread_local! {
+    static HORIZONTAL_REFERENCE: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(super) fn horizontal_reference_enabled() -> bool {
+    HORIZONTAL_REFERENCE.get()
+}
+
+pub(crate) fn with_reference_horizontal<R>(paint: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            HORIZONTAL_REFERENCE.set(self.0);
+        }
+    }
+    let _restore = Restore(HORIZONTAL_REFERENCE.replace(true));
+    paint()
+}
+
+/// The previous horizontal loop, retained only for real paint comparisons.
+pub(super) fn horizontal_span(
+    glyphs: &[raikiri_dom::LineGlyph],
+    range: std::ops::Range<usize>,
+) -> Option<super::glyph_ranges::GlyphSpan> {
+    let mut start = f32::INFINITY;
+    let mut end = f32::NEG_INFINITY;
+    let mut found = false;
+    for glyph in glyphs {
+        super::tests::record_glyph_work(1);
+        if !range.contains(&(glyph.cluster as usize)) {
+            continue;
+        }
+        start = start.min(glyph.x);
+        end = end.max(glyph.x + glyph.advance);
+        found = true;
+    }
+    found.then_some(super::glyph_ranges::GlyphSpan { start, end })
+}
 
 fn slot_index(slot: shodo::EmphasisSlot, reversed: bool) -> u32 {
     if reversed {

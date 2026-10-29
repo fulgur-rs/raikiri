@@ -13,7 +13,7 @@
 //! vertical run's marks are shaped as upright vertical text and centered on
 //! their character's em box.
 
-mod range_min;
+mod glyph_ranges;
 
 use anyrender::PaintScene;
 use peniko::Color;
@@ -110,25 +110,31 @@ pub(crate) fn draw_marks_in(
     else {
         return; // cov:ignore: shaping one character fails only past the engine's limits.
     };
+    let indexed_glyphs = glyphs;
+    #[cfg(test)]
+    let reference = oracle_tests::horizontal_reference_enabled();
+    #[cfg(test)]
+    let indexed_glyphs = if reference { &[] } else { indexed_glyphs };
+    let positions = glyph_ranges::GlyphRanges::new(indexed_glyphs.iter().map(|glyph| {
+        (
+            glyph.cluster,
+            glyph_ranges::GlyphSpan {
+                start: glyph.x,
+                end: glyph.x + glyph.advance,
+            },
+        )
+    }));
     for cluster in run.clusters() {
-        // The cluster spans from its leftmost glyph origin to the end of its
-        // rightmost advance, in either direction.
-        let mut start = f32::INFINITY;
-        let mut end = f32::NEG_INFINITY;
-        let mut found = false;
-        for glyph in glyphs {
-            // A glyph records the text offset of its character, which falls
-            // inside the text range of the cluster it belongs to.
-            if !cluster.text_range.contains(&(glyph.cluster as usize)) {
-                continue;
-            }
-            start = start.min(glyph.x);
-            end = end.max(glyph.x + glyph.advance);
-            found = true;
-        }
-        if !found {
-            continue; // cov:ignore: every cluster of a run has a glyph in that run.
-        }
+        let span = positions.query(cluster.text_range.clone());
+        #[cfg(test)]
+        let span = if reference {
+            oracle_tests::horizontal_span(glyphs, cluster.text_range.clone())
+        } else {
+            span
+        };
+        let Some(glyph_ranges::GlyphSpan { start, end }) = span else {
+            continue;
+        };
         // The mark's line box rests on the edge `offset` from the run's
         // baseline as a ruby annotation's line rests on its base. The run's
         // baseline is used rather than a glyph's origin, which carries the
@@ -335,7 +341,7 @@ pub(crate) fn vertical_mark_centers(
     }
     // Clusters follow the run's text, which bidi reordering can reverse;
     // lay their advances out in the order their glyphs are drawn.
-    let positions = range_min::GlyphPositions::new(
+    let positions = glyph_ranges::GlyphRanges::new(
         run.glyphs()
             .map(|glyph| (glyph.cluster, glyph.inline_position)),
     );
@@ -343,7 +349,7 @@ pub(crate) fn vertical_mark_centers(
         .clusters()
         .filter_map(|cluster| {
             positions
-                .minimum(cluster.text_range.clone())
+                .query(cluster.text_range.clone())
                 .map(|key| (key, cluster))
         })
         .collect();
@@ -368,6 +374,11 @@ pub(crate) fn vertical_mark_centers(
 mod oracle_tests;
 #[cfg(test)]
 pub(crate) use oracle_tests::vertical_mark_centers as reference_vertical_mark_centers;
+#[cfg(test)]
+pub(crate) use oracle_tests::with_reference_horizontal;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::{glyph_work, reset_glyph_work};
