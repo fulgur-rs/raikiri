@@ -59,6 +59,7 @@ pub struct CacheAccountingResult {
     pub svg_entries: usize,
     pub accounted_bytes: u64,
     pub process_bytes: u64,
+    /// Logical cache/ledger map operations; each BTree operation costs O(log N).
     pub work: u64,
     pub ledger_entries: usize,
     pub ledger_accounted_bytes: u64,
@@ -148,15 +149,14 @@ impl CacheAccountingProbe {
     }
 
     pub fn run(&mut self, count_work: bool) {
-        self.cache.accounting_work.set(0);
-        self.cache.count_accounting_work.set(count_work);
+        self.cache.work.begin(count_work);
         for (url, source) in std::mem::take(&mut self.operations) {
             self.attempts += 1;
             if self.cache.insert_source(url, source).is_err() {
                 self.rejected += 1;
             }
         }
-        self.cache.count_accounting_work.set(false);
+        self.cache.work.finish();
     }
 
     pub fn result(&self) -> CacheAccountingResult {
@@ -172,10 +172,9 @@ impl CacheAccountingProbe {
                 .count(),
             accounted_bytes: self.cache.decoded_bytes,
             process_bytes: self.cache.process_budget.retained(),
-            work: self.cache.accounting_work.get(),
-            // The full-scan baseline has no persistent identity ledger.
-            ledger_entries: 0,
-            ledger_accounted_bytes: 0,
+            work: self.cache.work.value(),
+            ledger_entries: self.cache.source_ledger.len(),
+            ledger_accounted_bytes: self.cache.source_ledger.accounted_bytes(),
         }
     }
 }

@@ -1,6 +1,24 @@
 use crate::{CacheAccountingCase, CacheAccountingProbe};
 
 #[test]
+fn incremental_cache_accounting_avoids_full_entry_scans() {
+    for case in CacheAccountingCase::ALL {
+        for count in [16, 32, 64] {
+            let mut probe = CacheAccountingProbe::prepare(case, count);
+            probe.run(true);
+            let result = probe.result();
+            assert!(result.work > 0);
+            assert!(
+                result.work <= 32 * count as u64,
+                "case {} N={count}: {} accounting operations",
+                case.name(),
+                result.work
+            );
+        }
+    }
+}
+
+#[test]
 fn accounting_probe_reports_real_cache_outcomes_with_optional_work_counts() {
     for case in CacheAccountingCase::ALL {
         for count_work in [false, true] {

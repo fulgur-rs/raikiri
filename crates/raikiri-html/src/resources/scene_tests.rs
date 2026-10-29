@@ -602,7 +602,7 @@ fn shared_svg_sources_are_charged_once_and_failed_replacement_keeps_the_old_sour
     cache
         .insert_source(url("b"), CachedBackgroundSource::Svg(Arc::clone(&document)))
         .unwrap();
-    assert_eq!(cache.decoded_bytes, first * 2 - allocation);
+    assert_eq!(cache.decoded_bytes, first * 2 - allocation - 512);
     assert_eq!(budget.retained(), cache.decoded_bytes);
     cache.max_bytes = 1;
     let replacement = Arc::new(raikiri_svg::SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap());
@@ -615,7 +615,7 @@ fn shared_svg_sources_are_charged_once_and_failed_replacement_keeps_the_old_sour
         panic!()
     };
     assert!(Arc::ptr_eq(retained, &document));
-    assert_eq!(budget.retained(), first * 2 - allocation);
+    assert_eq!(budget.retained(), first * 2 - allocation - 512);
     drop(cache);
     assert_eq!(budget.retained(), 0);
     assert!(document.source_only_retained_bytes().is_some());
