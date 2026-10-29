@@ -40,7 +40,10 @@
 //! popped — inert, since a [`CounterScopes`] value never outlives the
 //! single walk that owns it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+
+mod scope_bucket;
+use scope_bucket::CounterScopeBucket;
 use std::mem::size_of;
 
 use raikiri_style::property::DisplayValue;
@@ -403,7 +406,7 @@ impl CounterScopes {
         &mut self,
         cv: &raikiri_style::ComputedValues,
         list_item: bool,
-        mut parent_bucket: Option<&mut HashSet<Symbol>>,
+        mut parent_bucket: Option<&mut CounterScopeBucket>,
     ) {
         // CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>:
         // "If multiple instances of the same <counter-name> occur in the
@@ -448,7 +451,7 @@ impl CounterScopes {
             // whether an ancestor scope for `name` already exists.
             self.push_level(sym.clone(), value, level);
             if let Some(bucket) = parent_bucket.as_deref_mut() {
-                bucket.insert(sym);
+                bucket.register(sym);
             }
         }
         // CSS Lists 3 §4.6: a reversed `list-item` counter is incremented by
@@ -482,7 +485,7 @@ impl CounterScopes {
                     // siblings.
                     self.push_level(sym.clone(), *delta, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
-                        bucket.insert(sym);
+                        bucket.register(sym);
                     }
                 }
             }
@@ -495,7 +498,7 @@ impl CounterScopes {
                 None => {
                     self.push_level(sym.clone(), *value, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
-                        bucket.insert(sym);
+                        bucket.register(sym);
                     }
                 }
             }
@@ -584,9 +587,18 @@ impl CounterScopes {
     /// the walker finishes that bucket's owning element's subtree (the
     /// `Exit` step), which per [`Self::apply`]'s doc is the *parent* of
     /// whichever element(s) originally pushed those levels.
-    fn pop(&mut self, names: &HashSet<Symbol>) {
-        for name in names {
-            self.pop_one(name);
+    fn pop(&mut self, names: &CounterScopeBucket) {
+        match names {
+            CounterScopeBucket::Unindexed(names) => {
+                for name in names {
+                    self.pop_one(name);
+                }
+            }
+            CounterScopeBucket::Indexed(names) => {
+                for name in names.iter() {
+                    self.pop_one(name);
+                }
+            }
         }
     }
 
@@ -949,7 +961,7 @@ fn walk_counter_scopes(
     }
 
     let mut stack = vec![WalkStep::Enter(doc.root)];
-    let mut pending_pops: Vec<HashSet<Symbol>> = Vec::new();
+    let mut pending_pops: Vec<CounterScopeBucket> = Vec::new();
     let mut quote_depth = QuoteDepth::default();
     // The quote depth at which each element that scopes it was entered.
     let mut quote_scopes: Vec<QuoteDepth> = Vec::new();
@@ -987,7 +999,7 @@ fn walk_counter_scopes(
                 // element's real children.
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
-                pending_pops.push(HashSet::new());
+                pending_pops.push(CounterScopeBucket::default());
                 if scopes_quote_depth(doc, cascade, idx) {
                     quote_scopes.push(quote_depth);
                 }

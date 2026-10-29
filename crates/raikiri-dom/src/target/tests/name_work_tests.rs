@@ -171,3 +171,81 @@ fn non_calculated_top_levels_hide_outer_calculated_tallies() {
         assert_eq!(tallies[1].starting_value(), -2);
     }
 }
+
+#[test]
+fn scope_bucket_promotes_once_even_for_a_missing_reset_name() {
+    eprintln!(
+        "scope-bucket-inline bytes={}",
+        std::mem::size_of::<CounterScopeBucket>()
+    );
+    let mut bucket = CounterScopeBucket::default();
+    assert!(!bucket.remove(&Symbol::new("missing")));
+    assert!(matches!(&bucket, CounterScopeBucket::Unindexed(names) if names.capacity() == 0));
+    bucket.register(Symbol::new("a"));
+    bucket.register(Symbol::new("b"));
+    assert!(matches!(&bucket, CounterScopeBucket::Unindexed(names) if names.len() == 2));
+    assert!(!bucket.remove(&Symbol::new("missing")));
+    assert!(matches!(&bucket, CounterScopeBucket::Indexed(names) if names.len() == 2));
+    assert!(bucket.remove(&Symbol::new("a")));
+    bucket.register(Symbol::new("a"));
+    assert!(bucket.remove(&Symbol::new("a")));
+    assert!(bucket.remove(&Symbol::new("b")));
+    assert!(matches!(&bucket, CounterScopeBucket::Indexed(names) if names.is_empty()));
+    bucket.register(Symbol::new("c"));
+    assert!(bucket.remove(&Symbol::new("c")));
+}
+
+#[test]
+fn resets_after_auto_instantiation_promote_and_restore_outer_scopes() {
+    for n in [32, 64, 128] {
+        for overlap in [false, true] {
+            let increments = (0..n)
+                .map(|i| format!("c{i} 1"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let resets = (0..n)
+                .map(|i| format!("{}{i} 10", if overlap { "c" } else { "d" }))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut doc = Document::new();
+            let outer = doc.append_element(Some(0), "section", Some("counter-reset:outer 100"));
+            let group = doc.append_element(Some(outer), "section", None::<&str>);
+            let first = doc.append_element(
+                Some(group),
+                "div",
+                Some(&format!("counter-increment:{increments}")),
+            );
+            let reset = doc.append_element(
+                Some(group),
+                "div",
+                Some(&format!("counter-reset:{resets} outer 5")),
+            );
+            let last = doc.append_element(
+                Some(group),
+                "div",
+                Some(&format!("counter-increment:{increments}")),
+            );
+            let after = doc.append_element(
+                Some(outer),
+                "p",
+                Some(&format!("counter-increment:{increments} outer 1")),
+            );
+            doc.mark_in_document_flags();
+            let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+            COUNTER_NAME_WORK.with(|work| work.set([0; 3]));
+            let snapshots = counter_snapshots(&doc, &cascade).unwrap();
+            let work = COUNTER_NAME_WORK.with(std::cell::Cell::get);
+            assert!(work[0] <= 4 * n, "n={n} overlap={overlap} work={work:?}");
+            assert_eq!(snapshots[reset][&Symbol::new("outer")], vec![100, 5]);
+            assert_eq!(snapshots[after][&Symbol::new("outer")], vec![101]);
+            for i in 0..n {
+                let c = Symbol::new(format!("c{i}"));
+                let name = Symbol::new(format!("{}{i}", if overlap { "c" } else { "d" }));
+                assert_eq!(snapshots[first][&c], vec![1]);
+                assert_eq!(snapshots[reset][&name], vec![10]);
+                assert_eq!(snapshots[last][&c], vec![if overlap { 11 } else { 2 }]);
+                assert_eq!(snapshots[after][&c], vec![1]);
+            }
+        }
+    }
+}
