@@ -903,18 +903,18 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
         paragraphs += 1;
         // Block-edge decoration needs slice geometry for each piece, which the
         // stream gives the lines it places; the planner collapses the adjoining
-        // margins of lengths, which a percentage or `auto` would leave to the
-        // layout of the box; and the line offsets are read as horizontal block
-        // offsets.
+        // margins as numbers, which `auto` would leave to the layout of the box
+        // (a percentage is a share of the column width, which
+        // `column_child_layout` resolves before the planner reads it); and the
+        // line offsets are read as horizontal block offsets.
         node.formatting_context == FormattingContext::Inline
             && !node
                 .authored_writing_mode
                 .is_some_and(WritingMode::is_vertical)
             && matches!(node.display(), DisplayValue::Block)
             && (!block_edges || slices_block_edges(node))
-            && [margin.top, margin.bottom]
-                .into_iter()
-                .all(|edge| style_dimension_length(edge.into()).is_some())
+            && !margin.top.is_auto()
+            && !margin.bottom.is_auto()
             && node.layout_position() != Position::Absolute
             && insets_are_a_relative_offset(tree, child)
             && !style.float().is_floated()

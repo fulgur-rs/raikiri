@@ -7061,12 +7061,13 @@ fn the_margin_below_the_last_paragraph_does_not_count_against_the_column() {
 }
 
 #[test]
-fn a_paragraph_with_a_margin_in_lengths_enters_the_stream() {
+fn a_paragraph_with_a_margin_that_is_not_auto_enters_the_stream() {
     for (css, enters) in [
         ("margin:10px 0", true),
         ("margin:-5px 0", true),
         ("margin:0", true),
-        ("margin:5% 0", false),
+        ("margin:5% 0", true),
+        ("margin:calc(5% + 2px) 0", true),
         ("margin-top:auto", false),
         ("margin-bottom:auto", false),
     ] {
@@ -7143,6 +7144,45 @@ fn the_margin_above_a_paragraph_in_percent_is_a_share_of_the_column_width() {
     let (doc, _, children) =
         boxes_and_paragraphs_in_columns(&[("margin:0", 2), ("margin-top:10%", 2)]);
     assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(0, 30.0)]]);
+}
+
+#[test]
+fn the_margin_above_a_paragraph_in_calc_is_resolved_against_the_column_width() {
+    // 10% of the 100px column and 5px make the margin 15px, so the one line of
+    // the second paragraph starts at 35px, under the two lines above it.
+    let (doc, _, children) =
+        boxes_and_paragraphs_in_columns(&[("margin:0", 2), ("margin-top:calc(10% + 5px)", 1)]);
+    assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(0, 35.0)]]);
+}
+
+#[test]
+fn a_margin_in_percent_above_a_paragraph_is_cut_where_a_column_breaks() {
+    // The first paragraph leaves 10px of the column, which the 10px margin
+    // takes, so the three lines of the second go to the next column, at its
+    // top: a margin that adjoins a break is discarded.
+    let (doc, _, children) = boxes_and_paragraphs_in_container(
+        "orphans:2;widows:2",
+        &[("margin:0", 4), ("margin-top:10%", 3)],
+    );
+    assert_eq!(column_places(&doc, &children), [[(0, 0.0)], [(1, 0.0)]]);
+}
+
+#[test]
+fn a_paragraph_with_a_margin_in_percent_and_padding_splits_between_its_lines() {
+    // The margin takes the top 10px of the first column and the padding below
+    // the fourth line does not fit under the line, so that line goes on in the
+    // next column with the padding, and the paragraph after it starts below.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("margin-top:10%;padding-bottom:5px;background:green", 4),
+        ("margin:0", 2),
+    ]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[0]);
+    assert_eq!(ranges, [(0, 3, 0), (3, 4, 1)]);
+    assert_eq!(
+        boxes.iter().map(|piece| piece.0).collect::<Vec<_>>(),
+        [10.0, 0.0]
+    );
+    assert_eq!(column_places(&doc, &children[1..]), [[(1, 15.0)]]);
 }
 
 /// A document with a container of three 100px columns, 50px high and filled
