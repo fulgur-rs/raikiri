@@ -585,7 +585,7 @@ fn grid_abspos_static_alignment_uses_the_content_box_and_parent_percentage_basis
     let containing_block = doc.append_element(
         Some(body),
         "div",
-        Some("position:relative;width:200px;height:200px"),
+        Some("display:block;position:relative;width:200px;height:200px"),
     );
     let grid = doc.append_element(
         Some(containing_block),

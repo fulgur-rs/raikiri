@@ -1589,9 +1589,22 @@ fn with_group_align(mut line_options: LineOptions, options: &LineOptions) -> Lin
 
 /// Whether `line` is the empty line around an inline closure that sits next
 /// to a block: it has no content, no height, and does not end in a forced
-/// break.
+/// break. A line of inline boxes with no inline extent is empty as well, even
+/// when the boxes have vertical padding or border: shodo counts those edges as
+/// painted content, while only an edge along the line makes a line box in
+/// Chromium.
 fn is_empty_closure(line: &shodo::Line) -> bool {
-    line.is_empty() && line.block_size() == 0.0 && line.break_reason() != shodo::BreakReason::Forced
+    if line.break_reason() == shodo::BreakReason::Forced {
+        return false;
+    }
+    if line.is_empty() && line.block_size() == 0.0 {
+        return true;
+    }
+    line.inline_size() == 0.0
+        && line.fragments().next().is_some()
+        && line
+            .fragments()
+            .all(|fragment| matches!(fragment, shodo::Fragment::InlineBox(_)))
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left

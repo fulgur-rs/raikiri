@@ -177,6 +177,15 @@ impl<'a> LayoutStyleView<'a> {
     #[inline]
     pub(crate) fn base_length(&self, property: LengthProperty) -> LengthValue<'a> {
         use LengthProperty::*;
+        if self.flags().contains(StyleFlags::INLINE_BOX)
+            && let Some(value) = property.inline_box_value()
+        {
+            return LengthValue {
+                value,
+                payload: None,
+                resolved: false,
+            };
+        }
         if property.reads_scalar_directly() {
             let value = self.prepared.scalar(property);
             return self.with_payload(value, property);

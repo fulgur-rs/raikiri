@@ -87,6 +87,30 @@ impl LengthProperty {
                 | Self::MinBlock
         )
     }
+    /// The value a non-atomic inline box in a horizontal writing mode takes
+    /// for a property that does not apply to it, or `None` for one that does.
+    ///
+    /// The sizes are `auto`; the vertical margins, padding and border are
+    /// zero, so they neither move the box nor change the height of the
+    /// lines around it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1).
+    pub(crate) fn inline_box_value(self) -> Option<raikiri_style::ComputedLengthPercentageOrAuto> {
+        use raikiri_style::ComputedLengthPercentageOrAuto as L;
+        match self {
+            Self::Width
+            | Self::Height
+            | Self::MinWidth
+            | Self::MinHeight
+            | Self::MaxWidth
+            | Self::MaxHeight => Some(L::Auto),
+            Self::MarginTop
+            | Self::MarginBottom
+            | Self::PaddingTop
+            | Self::PaddingBottom
+            | Self::BorderTop
+            | Self::BorderBottom => Some(L::Px(0.0)),
+            _ => None,
+        }
+    }
     pub(crate) fn non_negative(self) -> bool {
         !matches!(
             self,
@@ -149,6 +173,10 @@ impl StyleFlags {
     pub const BLOCK_TABLE: Self = Self(1 << 19);
     /// CSS table identity in out-of-flow layout.
     pub const OOF_TABLE: Self = Self(1 << 20);
+    /// A non-atomic inline box in a horizontal writing mode: the sizes, the
+    /// vertical margins and the vertical padding and border do not apply to
+    /// it (CSS 2.1 sections 8.3, 10.3.1 and 10.6.1).
+    pub const INLINE_BOX: Self = Self(1 << 21);
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.

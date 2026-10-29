@@ -3439,7 +3439,11 @@ impl AncestorFacts {
             .is_some_and(WritingMode::is_vertical);
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
         let cv = &cascade.computed[id];
+        // The `width` of a non-atomic inline box does not apply to it, so it
+        // supplies no width to the blocks it holds (CSS 2.1 section 10.3.1).
+        let inline_box = super::style_views::metadata::is_inline_box(doc, cascade, id);
         let authored_width = match cv.width {
+            _ if inline_box => None,
             ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => Some(value),
             ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
                 Some(parent_width * value / 100.0)
@@ -3501,6 +3505,7 @@ impl AncestorFacts {
         } else if doc.nodes[parent].display() == DisplayValue::Contents
             || values.width == ComputedLengthPercentageOrAuto::Auto
             || values.width.is_content_keyword()
+            || super::style_views::metadata::is_inline_box(doc, cascade, parent)
         {
             self.containing_width_ancestor[parent]
         } else {
