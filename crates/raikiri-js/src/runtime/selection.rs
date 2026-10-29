@@ -326,19 +326,21 @@ fn tree_walker_what_to_show(this: &JsValue, _: &[JsValue], _: &mut Context) -> J
 /// allows that), the walk runs to the end of the document and then returns
 /// `None`, as browsers do; the spec's nextNode steps would instead filter
 /// the unchanged node again once no following node is left.
-fn next_tree_node(document: &raikiri_dom::Document, root: usize, current: usize) -> Option<usize> {
+fn next_tree_node(
+    document: &raikiri_dom::Document,
+    order: &mut super::tree::SiblingIndex,
+    root: usize,
+    current: usize,
+) -> Option<usize> {
     if let Some(child) = document.get_node(current)?.children.first() {
         return Some(*child);
     }
     let mut index = current;
     while index != root {
-        let parent = document.parent_of(index)?;
-        let siblings = &document.get_node(parent)?.children;
-        let position = siblings.iter().position(|sibling| *sibling == index)?;
-        if let Some(next) = siblings.get(position + 1) {
-            return Some(*next);
+        if let Some(next) = super::tree::next_sibling_index(document, order, index) {
+            return Some(next);
         }
-        index = parent;
+        index = document.parent_of(index)?;
     }
     None
 }
@@ -357,7 +359,7 @@ fn tree_walker_next_node(
     };
     let next = with_state(context, |state| {
         let document = state.host.document();
-        let mut candidate = next_tree_node(document, root, current);
+        let mut candidate = next_tree_node(document, &mut state.sibling_order, root, current);
         while let Some(index) = candidate {
             let kind = document.get_node(index).map(|node| node.kind());
             let accepted = match kind {
@@ -367,7 +369,7 @@ fn tree_walker_next_node(
             if accepted {
                 return Some(index);
             }
-            candidate = next_tree_node(document, root, index);
+            candidate = next_tree_node(document, &mut state.sibling_order, root, index);
         }
         None
     })?;

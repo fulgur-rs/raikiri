@@ -229,7 +229,7 @@ fn previous_sibling_index(
 
 /// `node`'s next sibling in its current parent's child order, or `None` if
 /// `node` is detached or is its parent's last child.
-fn next_sibling_index(
+pub(super) fn next_sibling_index(
     doc: &raikiri_dom::Document,
     order: &mut SiblingIndex,
     node: usize,
