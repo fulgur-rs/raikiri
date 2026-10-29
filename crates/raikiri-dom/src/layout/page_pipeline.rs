@@ -8,6 +8,7 @@ mod fragment_sources;
 mod leading_margins;
 mod link_events;
 mod pagination_state;
+mod sibling_adjacency;
 mod sibling_shifts;
 mod source_walk;
 mod transposed_flow;
@@ -5786,43 +5787,6 @@ fn definite_content_height(
     definite.then(|| node.layout.content_box_height())
 }
 
-/// Whether only margins separate `previous` from `node_id`: `previous` is
-/// the in-flow box laid out just before `node_id` among its parent's boxes,
-/// or every box between them takes no block space. Collapsed white space and
-/// out-of-flow boxes are skipped. `display: contents` elements generate no
-/// box, so their children stand in their place.
-fn adjoins_previous_sibling(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    previous: usize,
-) -> bool {
-    let mut current = node_id;
-    for parent in document.ancestors(node_id) {
-        let siblings = &document.nodes[parent].children;
-        let Some(index) = siblings.iter().position(|&id| id == current) else {
-            return false;
-        };
-        let mut boxes = Vec::new();
-        for &id in siblings[..index].iter().rev() {
-            push_in_flow_boxes_rev(document, cascade, id, &mut boxes);
-        }
-        for found in boxes {
-            if found == previous {
-                return true;
-            }
-            if !takes_no_block_space(document, found) {
-                return false;
-            }
-        }
-        if document.nodes[parent].display() != DisplayValue::Contents {
-            return false;
-        }
-        current = parent;
-    }
-    false
-}
-
 /// Whether `node_id` is a block box that takes no block space, so that only
 /// margins lie between the boxes on either side of it.
 fn takes_no_block_space(document: &Document, node_id: usize) -> bool {
@@ -5847,39 +5811,15 @@ fn push_in_flow_boxes_rev(
     node_id: usize,
     boxes: &mut Vec<usize>,
 ) {
-    let node = &document.nodes[node_id];
-    // White space that `white-space` preserves still generates lines.
-    let collapse = cascade.computed[node_id].effective_white_space_collapse;
-    let collapsed_text = node.kind() == NodeKind::Text
-        && node.text_content().is_some_and(|text| {
-            text.chars()
-                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
-                && match collapse {
-                    raikiri_style::property::WhiteSpaceCollapse::Collapse
-                    | raikiri_style::property::WhiteSpaceCollapse::Discard => true,
-                    raikiri_style::property::WhiteSpaceCollapse::PreserveBreaks => {
-                        !text.contains(['\n', '\r'])
-                    }
-                    _ => text.is_empty(),
-                }
-        });
-    // Comments and other non-element, non-text nodes generate no box.
-    if !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
-        || collapsed_text
-        || document.nodes[node_id].display() == DisplayValue::None
-        || node.layout_position() == Position::Absolute
-        || is_floating_box_for_pagination(document, cascade, node_id)
-    {
-        return;
-    }
-    if node.kind() != NodeKind::Text && document.nodes[node_id].display() == DisplayValue::Contents
-    {
-        for &id in node.children.iter().rev() {
-            push_in_flow_boxes_rev(document, cascade, id, boxes);
+    match sibling_adjacency::flow_box(document, cascade, node_id) {
+        sibling_adjacency::FlowBox::Skip => {}
+        sibling_adjacency::FlowBox::Contents => {
+            for &id in document.nodes[node_id].children.iter().rev() {
+                push_in_flow_boxes_rev(document, cascade, id, boxes);
+            }
         }
-        return;
+        sibling_adjacency::FlowBox::Box => boxes.push(node_id),
     }
-    boxes.push(node_id);
 }
 
 /// A forced break after a box, kept attached to that box until its
@@ -7354,6 +7294,7 @@ impl ParagraphLineFit {
 /// break inside them truncates.
 #[derive(Default)]
 struct SiblingMargins {
+    adjacency: sibling_adjacency::SiblingAdjacency,
     /// Unpaginated border-box bottom of the last in-flow block-level child
     /// seen for each parent, while no other content followed it. The gap to
     /// the next such sibling is their collapsed margin.
@@ -7400,7 +7341,7 @@ impl SiblingMargins {
     /// falls outside that margin or no margin separates the two. A box that
     /// clears floats is left alone, since its gap may hold clearance.
     fn truncation_at_break(
-        &self,
+        &mut self,
         document: &super::context::LayoutSession<'_>,
         cascade: &CascadeResult,
         page_origins: &PageOrigins,
@@ -7430,7 +7371,7 @@ impl SiblingMargins {
         )
             // Only a margin between adjoining siblings is truncated; a box
             // that is not a candidate may lie between two nested candidates.
-            || !adjoins_previous_sibling(document, cascade, node_id, previous)
+            || !self.adjacency.adjoins(document, cascade, node_id, previous)
         {
             return None;
         }

@@ -5,6 +5,14 @@ use raikiri_layout_style::values::Clear;
 
 thread_local! {
     pub(super) static GEOMETRY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
+    pub(super) static SIBLING_ADJACENCY_WORK: Cell<[usize; 3]> = const { Cell::new([0; 3]) };
+}
+
+pub(super) fn record_sibling_adjacency_work(work: [usize; 3]) {
+    SIBLING_ADJACENCY_WORK.with(|counts| {
+        let old = counts.get();
+        counts.set(std::array::from_fn(|i| old[i] + work[i]));
+    });
 }
 
 mod ancestor_walk_tests;
@@ -21,6 +29,7 @@ mod oof_coordinate_tests;
 mod options_tests;
 mod page_name_storage_tests;
 mod paged_spanning_tests;
+mod sibling_adjacency_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 mod vertical_grid_tests;
@@ -16477,7 +16486,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     doc.nodes[third].layout.margin.top = 30.0;
     let origins = PageOrigins::new(&[], 100.0);
     let truncation = |doc: &mut Document,
-                      margins: &SiblingMargins,
+                      margins: &mut SiblingMargins,
                       cascade: &CascadeResult,
                       at: &MarginBreak| {
         let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
@@ -16498,7 +16507,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     };
 
     // The block moves up to the top of the page.
-    let found = truncation(&mut doc, &margins, &cascade, &at).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &at).unwrap();
     assert_eq!(found.delta, -20.0);
     assert_eq!(found.underflow, None);
 
@@ -16508,7 +16517,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         forced_before: true,
         ..at
     };
-    let found = truncation(&mut doc, &margins, &cascade, &forced).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &forced).unwrap();
     assert_eq!(found.delta, 10.0);
     assert_eq!(found.underflow, None);
     let pulled_up = MarginBreak {
@@ -16516,7 +16525,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         margin_top: -5.0,
         ..at
     };
-    let found = truncation(&mut doc, &margins, &cascade, &pulled_up).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &pulled_up).unwrap();
     assert_eq!(found.delta, -25.0);
     assert_eq!(found.underflow, Some(5.0));
 
@@ -16526,14 +16535,14 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         collapses_with_previous_block: false,
         ..at
     };
-    assert!(truncation(&mut doc, &margins, &cascade, &apart).is_none());
+    assert!(truncation(&mut doc, &mut margins, &cascade, &apart).is_none());
     let first_page = MarginBreak {
         natural_page: 0,
         ..at
     };
-    assert!(truncation(&mut doc, &margins, &cascade, &first_page).is_none());
+    assert!(truncation(&mut doc, &mut margins, &cascade, &first_page).is_none());
     // Nor when no block before it was recorded.
-    assert!(truncation(&mut doc, &SiblingMargins::default(), &cascade, &at).is_none());
+    assert!(truncation(&mut doc, &mut SiblingMargins::default(), &cascade, &at).is_none());
 
     // A box that clears floats keeps the gap, which may hold clearance. The
     // gap above it is judged from the bottom recorded for the block before.
@@ -16545,9 +16554,9 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         natural_page: 2,
         ..at
     };
-    assert!(truncation(&mut doc, &margins, &cascade, &clearing).is_none());
+    assert!(truncation(&mut doc, &mut margins, &cascade, &clearing).is_none());
     cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
-    let found = truncation(&mut doc, &margins, &cascade, &clearing).unwrap();
+    let found = truncation(&mut doc, &mut margins, &cascade, &clearing).unwrap();
     assert_eq!(found.delta, -20.0);
 }
 

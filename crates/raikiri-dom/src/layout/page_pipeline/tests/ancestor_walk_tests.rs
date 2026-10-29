@@ -174,7 +174,7 @@ fn spanning_growth_stops_at_a_fixed_height_parent() {
 #[test]
 fn sibling_adjacency_stops_at_a_node_without_a_parent() {
     let fixture = block_fixture("", |_, _| {});
-    assert!(!adjoins_previous_sibling(
+    assert!(!sibling_adjacency::SiblingAdjacency::default().adjoins(
         &fixture.doc,
         &fixture.cascade,
         0,
