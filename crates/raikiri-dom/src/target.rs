@@ -587,6 +587,7 @@ impl CounterScopes {
     /// the walker finishes that bucket's owning element's subtree (the
     /// `Exit` step), which per [`Self::apply`]'s doc is the *parent* of
     /// whichever element(s) originally pushed those levels.
+    #[inline]
     fn pop(&mut self, names: &CounterScopeBucket) {
         match names {
             CounterScopeBucket::Unindexed(names) => {

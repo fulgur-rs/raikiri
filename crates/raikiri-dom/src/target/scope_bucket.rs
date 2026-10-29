@@ -9,16 +9,20 @@ use std::collections::HashSet;
 #[derive(Debug)]
 pub(super) enum CounterScopeBucket {
     Unindexed(Vec<Symbol>),
+    #[allow(clippy::box_collection)]
+    // Keep each pending bucket at 24 bytes on the pinned toolchain.
     Indexed(Box<HashSet<Symbol>>),
 }
 
 impl Default for CounterScopeBucket {
+    #[inline]
     fn default() -> Self {
         Self::Unindexed(Vec::new())
     }
 }
 
 impl CounterScopeBucket {
+    #[inline]
     pub(super) fn register(&mut self, name: Symbol) {
         match self {
             Self::Unindexed(names) => names.push(name),
