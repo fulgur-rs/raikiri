@@ -64,6 +64,9 @@ pub(crate) struct IfcRoot {
     /// Paint offsets of the relatively positioned inline elements of the
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// First entry of each owner in `offsets`. Keys and order remain fixed
+    /// for this paragraph; percentage resolution only updates the values.
+    offset_index: Option<Arc<HashMap<usize, usize>>>,
     /// The insets of the elements in `offsets` whose offset depends on the
     /// root's size or writing mode, by index in `offsets`, which
     /// [`Self::resolve_percent_offsets`] applies.
@@ -356,6 +359,15 @@ impl IfcRoot {
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
         let Projected { paragraph, meta } = projected;
         let letter_style_index = Arc::new(LetterStyleIndex::new(&meta.letter_styles));
+        let offset_index = (!meta.offsets.is_empty()).then(|| {
+            let mut index = HashMap::with_capacity(meta.offsets.len());
+            for (entry, &(owner, _)) in meta.offsets.iter().enumerate() {
+                #[cfg(test)]
+                super::positioned_runs::tests::offset_tests::note_index_entry();
+                index.entry(owner).or_insert(entry);
+            }
+            Arc::new(index)
+        });
         Self {
             line_paragraph: paragraph.clone(),
             paragraph,
@@ -372,6 +384,7 @@ impl IfcRoot {
             generated_boxes: meta.generated_boxes.into(),
             rtl: meta.rtl,
             offsets: meta.offsets,
+            offset_index,
             percent_insets: meta.percent_insets,
             definite_height: None,
             containing_width: None,
@@ -389,6 +402,14 @@ impl IfcRoot {
             first_line_styles: meta.first_line_styles,
             letter_style_index,
         }
+    }
+
+    /// Read the current relative offset without scanning the paragraph's owners.
+    pub(crate) fn relative_offset(&self, owner: usize) -> Option<(f32, f32)> {
+        #[cfg(test)]
+        super::positioned_runs::tests::offset_tests::note_probe();
+        let index = *self.offset_index.as_ref()?.get(&owner)?;
+        Some(self.offsets[index].1)
     }
 
     /// Resolve the offsets that depend on the root's size against a content
@@ -471,6 +492,7 @@ impl IfcRoot {
             generated_boxes: self.generated_boxes.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
+            offset_index: self.offset_index.clone(),
             percent_insets: self.percent_insets.clone(),
             definite_height: self.definite_height,
             containing_width: self.containing_width,

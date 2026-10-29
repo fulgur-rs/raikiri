@@ -81,3 +81,5 @@ fn column_fragments_move_their_lines_and_drop_the_others() {
 }
 
 mod geometry_tests;
+
+pub(crate) mod offset_tests;
