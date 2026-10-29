@@ -11770,6 +11770,34 @@ fn a_forced_break_after_a_box_that_fills_a_page_exactly_opens_the_next_page() {
 }
 
 #[test]
+fn a_box_avoiding_a_break_inside_it_moves_off_the_page_edge_a_box_before_it_crossed() {
+    // The second box starts on the first page and ends 90px down the second,
+    // so the last box starts there and would cross the edge below it.
+    assert_eq!(
+        page_box_positions(&[
+            "height:40px",
+            "height:150px",
+            "height:60px;break-inside:avoid"
+        ]),
+        (vec![0.0, 40.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_taller_than_a_page_box_avoiding_a_break_inside_it_moves_off_a_page_edge_crossed_before_it() {
+    // Neither avoiding box fits a page, but both start part-way down one, so
+    // each moves to the top of the next.
+    assert_eq!(
+        page_box_positions(&[
+            "height:40px",
+            "height:150px;break-inside:avoid",
+            "height:150px;break-inside:avoid",
+        ]),
+        (vec![0.0, 100.0, 300.0], 5)
+    );
+}
+
+#[test]
 fn a_relative_offset_on_the_first_box_does_not_move_the_page_it_starts_on() {
     // The offset only paints the box lower. It stays on the first page, so
     // the break after it opens the second page for the next box.
@@ -17178,6 +17206,7 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
             flex_item: false,
             grid_item: false,
         },
+        fit_page: 0,
         forced_before: false,
         forced_transition: false,
         margins_collapse_through: false,
@@ -18284,6 +18313,7 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
             flex_item: false,
             grid_item: false,
         },
+        fit_page: 0,
         forced_before: forced,
         forced_transition: forced,
         margins_collapse_through: true,

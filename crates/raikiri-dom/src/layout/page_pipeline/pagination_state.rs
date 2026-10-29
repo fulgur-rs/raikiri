@@ -122,6 +122,9 @@ pub(super) struct BoxBreak {
     pub(super) relative_offset: f32,
     /// How the box would cross the page edge.
     pub(super) overflow: BoxOverflow,
+    /// The page the box fits: the current page, or the later page the flow
+    /// has reached when the box before it ran over a page edge.
+    pub(super) fit_page: u32,
     /// Whether the box has a forced break before it.
     pub(super) forced_before: bool,
     /// Whether a break pending after the previous box, a forced break before
@@ -775,18 +778,25 @@ impl PaginationState {
         let (margin_top, trailing_margin) =
             break_margins(document, cascade, node_id, content_width);
         let page_start = page_origins.origin(self.current_page);
-        let page_end = page_start + page_origins.step_at(self.current_page);
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
         let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
+        // Content before the box that runs over a page edge leaves the page the
+        // box before it started on behind: the box fits the page the flow has
+        // reached.
+        let fit_page = page_origins
+            .page_index_in_flow(effective_y - relative_offset)
+            .filter(|&page| page > self.current_page && self.reach.flow_max >= page)
+            .unwrap_or(self.current_page);
+        let fit_page_start = page_origins.origin(fit_page);
         let fit = BoxFit {
             effective_y,
             flow_y: effective_y - relative_offset,
             margin_top,
             trailing_margin,
-            page_start,
-            page_end,
-            next_page_step: page_origins.step_at(self.current_page.saturating_add(1)),
+            page_start: fit_page_start,
+            page_end: fit_page_start + page_origins.step_at(fit_page),
+            next_page_step: page_origins.step_at(fit_page.saturating_add(1)),
         };
         let mut overflow = avoided_breaks.measure(
             document,
@@ -839,6 +849,7 @@ impl PaginationState {
             margin_top,
             relative_offset,
             overflow,
+            fit_page,
             forced_before,
             forced_transition,
             margins_collapse_through,
@@ -877,6 +888,7 @@ impl PaginationState {
             margin_top,
             relative_offset,
             ref overflow,
+            fit_page,
             forced_before,
             forced_transition,
             margins_collapse_through,
@@ -893,7 +905,12 @@ impl PaginationState {
             self.reach.flow_max,
             forced_transition,
         );
-        let target_page = forced_target_page(self.current_page, natural_page);
+        let mut target_page = forced_target_page(self.current_page, natural_page);
+        if !forced_transition {
+            // A box that moves because it would cross a page edge goes to the
+            // page after the one it lies on.
+            target_page = target_page.max(fit_page.saturating_add(1));
+        }
         reach_page(control, target_page)?;
         // A negative block-start margin can pull a forced-break box
         // back into the preceding page.  Keep the break boundary for
