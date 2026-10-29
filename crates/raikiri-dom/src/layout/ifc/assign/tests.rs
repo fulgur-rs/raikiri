@@ -1431,6 +1431,32 @@ fn a_paragraph_that_fails_to_build_is_a_limit_error() {
 }
 
 #[test]
+fn a_text_run_over_a_limit_fails_the_layout_with_its_root() {
+    // The item budget is spent while the run is projected, before any
+    // shaping: the layout fails with the text node that owns the paragraph, and
+    // nothing is marked.
+    let mut fixture = block_fixture("display:flex", |doc, root| {
+        doc.append_text(root, "aa ");
+        let contents = span(doc, root, "display:contents");
+        doc.append_text(contents, "bb");
+    });
+    fixture.doc.set_font_collection_with_limits(
+        ahem_fonts(),
+        Limits {
+            max_items: Some(0),
+            ..Limits::default()
+        },
+    );
+    let result = assign_ifc_roots(&mut fixture.doc, &fixture.cascade);
+    let owner = fixture.doc.nodes[fixture.root].children[0];
+    assert!(
+        matches!(result, Err(LayoutError::IfcLimitExceeded { node, .. }) if node == owner),
+        "{result:?}"
+    );
+    assert!(!is_root(&fixture, owner));
+}
+
+#[test]
 fn a_paragraph_inside_a_float_of_a_root_is_still_a_root() {
     // The inside of a box is not part of the outer paragraph, so a paragraph
     // there is a root of its own whether or not the outer one is built first.
