@@ -24,7 +24,7 @@ raikiri = { workspace = true }
 criterion = { workspace = true }
 # The cascade_document bench and the cascade_memory test parse a report
 # document and cascade it directly, without layout or painting.
-raikiri-html = { workspace = true }
+raikiri-html = { workspace = true, features = ["streaming-diagnostics"] }
 raikiri-style = { workspace = true }
 triomphe = "0.1.16"
 # Direct stage entry points and the real paint command recorder.

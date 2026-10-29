@@ -7,7 +7,10 @@ use crate::StringFetchMode;
 use crate::layout;
 
 mod avoided_chain_tests;
+#[cfg(feature = "streaming-diagnostics")]
+mod diagnostics_tests;
 mod head_checkpoint_tests;
+mod snapshot_reuse_tests;
 mod xhtml_tests;
 
 const PAGED: &str = "<style>div { break-after: page }</style>\

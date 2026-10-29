@@ -44,6 +44,10 @@ pub(crate) struct NodeArena {
 }
 
 impl NodeArena {
+    pub(crate) fn into_source(self) -> Vec<Node> {
+        self.source
+    }
+
     pub(crate) fn generated_generation(&self) -> u64 {
         self.generated_generation
     }
