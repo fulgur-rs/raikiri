@@ -813,3 +813,38 @@ fn a_resumed_layout_reports_the_resources_of_delivered_pages_as_last_loaded() {
     };
     assert_eq!(image_fallbacks(&summary), ["/broken.png"]);
 }
+
+/// `count` boxes `height` tall, each ended by a page break, in a document
+/// whose pages are 100px tall, under the rules `style`, and with enough
+/// comments between them for the document to arrive in several chunks.
+fn boxes_ending_pages(style: &str, height: u32, count: usize) -> String {
+    let mut boxes = String::new();
+    for index in 0..count {
+        boxes.push_str(&format!(
+            "<div id=p{index}></div><!-- {} -->\n",
+            "x".repeat(900)
+        ));
+    }
+    format!(
+        "<!doctype html><style>@page {{ size: 100px 100px; margin: 0 }} body {{ margin: 0 }} \
+         div {{ height: {height}px; break-after: page }} {style}</style><body>{boxes}</body>"
+    )
+}
+
+#[test]
+fn space_above_the_first_box_costs_no_streamed_pages() {
+    // A relayout after delivered pages begins with a short page that stands
+    // in for the space above the first box. The break after that box has to
+    // open the page after the one it is on, or each relayout loses a page.
+    for style in [
+        "html { margin-top: 5px }",
+        "html { border-top: 5px solid }",
+        "body { padding-top: 5px }",
+    ] {
+        for height in [90, 95] {
+            let html = boxes_ending_pages(style, height, 40);
+            let resumed = assert_streams_like_batch(&html);
+            assert!(resumed > 0, "no layout resumed: {style} {height}");
+        }
+    }
+}

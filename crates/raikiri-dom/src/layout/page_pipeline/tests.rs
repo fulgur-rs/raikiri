@@ -11669,6 +11669,81 @@ fn a_root_margin_crossing_scheduled_pages_breaks_at_the_first_page_origin() {
 }
 
 #[test]
+fn a_forced_break_after_the_first_box_of_a_later_page_opens_the_page_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // A short first page ends where the root's margin does, so the first box
+    // sits at the top of the second page, as in a relayout that resumes after
+    // pages already delivered. The break after it opens the third page, not
+    // the one the box is on.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin-top:5px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let boxes: Vec<_> = (0..4)
+        .map(|_| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Some("display:block;height:90px;break-after:page"),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    let pages = layout_pages_with_options(
+        &mut doc,
+        &cascade,
+        page,
+        crate::PageLayoutOptions {
+            page_steps: &[5.0, 100.0, 100.0, 100.0, 100.0],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let ys: Vec<_> = boxes
+        .iter()
+        .map(|&id| crate::layout::test_support::absolute_rect(&doc, id).1)
+        .collect();
+    assert_eq!(ys, [5.0, 105.0, 205.0, 305.0]);
+    assert_eq!(pages.len(), 5);
+}
+
+#[test]
+fn a_relative_offset_on_the_first_box_does_not_move_the_page_it_starts_on() {
+    // The offset only paints the box lower. It stays on the first page, so
+    // the break after it opens the second page for the next box.
+    assert_eq!(
+        page_box_positions(&[
+            "position:relative;top:100px;height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![100.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn an_absolutely_positioned_first_box_does_not_move_the_flow_to_its_page() {
+    // The tall absolutely positioned box is a candidate, but it takes no part
+    // in the flow: the box after it stays on the first page, and the break
+    // after that opens the second page for the last one.
+    assert_eq!(
+        page_box_positions(&[
+            "position:absolute;top:100px;height:120px",
+            "height:20px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![100.0, 0.0, 100.0], 3)
+    );
+}
+
+#[test]
 fn a_relative_offset_is_not_truncated_as_a_margin() {
     // The offset moves only the box itself; it is not a margin that adjoins
     // the break, and later siblings keep their flow positions.
