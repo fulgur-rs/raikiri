@@ -3796,14 +3796,6 @@ fn table_row_leads(
             .iter()
             .map(|candidate| (candidate.node_id, candidate.raw_y))
             .collect();
-        let table_of = |row: usize| {
-            document.ancestors(row).find(|&id| {
-                matches!(
-                    document.nodes[id].display(),
-                    DisplayValue::Table | DisplayValue::InlineTable
-                )
-            })
-        };
         // Each table's first row in visual order: the table layout places a
         // footer group after the body groups wherever it is in the source.
         let mut table_first_rows = HashMap::<usize, (usize, f32)>::new();
@@ -3811,7 +3803,7 @@ fn table_row_leads(
             .iter()
             .filter(|candidate| candidate.context.is_table_row())
         {
-            if let Some(table) = table_of(candidate.node_id) {
+            if let Some(table) = table_of_row(document, candidate.node_id) {
                 let first = table_first_rows
                     .entry(table)
                     .or_insert((candidate.node_id, candidate.raw_y));
@@ -3821,27 +3813,7 @@ fn table_row_leads(
             }
         }
         for (table, (row, row_y)) in table_first_rows {
-            // A caption above the grid stays on the current page, one inside
-            // a `display: contents` child of the table included; an
-            // absolutely positioned one is out of the table's flow. Content
-            // outside the rows, wrapped in an anonymous row, may come before
-            // the first row.
-            let top_caption = document
-                .children_through_contents(table)
-                .iter()
-                .any(|&child| {
-                    document.nodes[child].display() == DisplayValue::TableCaption
-                        && cascade.computed[child].caption_side
-                            == raikiri_style::property::CaptionSideValue::Top
-                        && document.nodes[child].layout_position() != Position::Absolute
-                });
-            if top_caption
-                || document.nodes[table].children.iter().any(|&child| {
-                    document.nodes[child].display() != DisplayValue::TableRow
-                        && document.anonymous_table_cells(child).next().is_some()
-                })
-                || document.anonymous_table_cells(table).next().is_some()
-            {
+            if !rows_start_the_grid(document, cascade, table) {
                 continue;
             }
             let table_y = candidate_y
@@ -3852,6 +3824,129 @@ fn table_row_leads(
         }
     }
     table_row_leads
+}
+
+/// The table, block or inline, that the row `row` belongs to.
+fn table_of_row(document: &Document, row: usize) -> Option<usize> {
+    document.ancestors(row).find(|&id| {
+        matches!(
+            document.nodes[id].display(),
+            DisplayValue::Table | DisplayValue::InlineTable
+        )
+    })
+}
+
+/// Whether the rows of `table` start the table's grid: nothing comes before
+/// the first row.
+///
+/// A caption above the grid stays on the current page, one inside a
+/// `display: contents` child of the table included; an absolutely positioned
+/// one is out of the table's flow. Content outside the rows, wrapped in an
+/// anonymous row, may come before the first row.
+fn rows_start_the_grid(document: &Document, cascade: &CascadeResult, table: usize) -> bool {
+    let top_caption = document
+        .children_through_contents(table)
+        .iter()
+        .any(|&child| {
+            document.nodes[child].display() == DisplayValue::TableCaption
+                && cascade.computed[child].caption_side
+                    == raikiri_style::property::CaptionSideValue::Top
+                && document.nodes[child].layout_position() != Position::Absolute
+        });
+    !(top_caption
+        || document.nodes[table].children.iter().any(|&child| {
+            document.nodes[child].display() != DisplayValue::TableRow
+                && document.anonymous_table_cells(child).next().is_some()
+        })
+        || document.anonymous_table_cells(table).next().is_some())
+}
+
+/// The block end, before pagination, of the first row of each plain block
+/// table among `candidates` whose rows start its grid and whose header does
+/// not repeat: the part of the table that a box tied to the one before it
+/// cannot be broken away from, since a row moves whole. A first row in a row
+/// group that avoids breaks inside it takes the whole group along
+/// (`row_groups`).
+fn first_row_ends(
+    document: &Document,
+    cascade: &CascadeResult,
+    candidates: &[PageCandidate],
+    table_headers: &HeaderRepeats,
+    row_groups: &HashMap<usize, (f32, f32)>,
+) -> HashMap<usize, f32> {
+    // Each table's first row in visual order, with the block end of the row:
+    // the table layout places a footer group after the body groups wherever
+    // it is in the source.
+    let mut first_rows = HashMap::<usize, (usize, f32)>::new();
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.context.is_table_row())
+    {
+        // The rows of an inline table, nested in a cell or not, are not rows
+        // of a block table: the plain-table filter below drops that table.
+        if let Some(table) = table_of_row(document, candidate.node_id) {
+            let end = candidate.raw_y + candidate.height;
+            first_rows
+                .entry(table)
+                .and_modify(|first| {
+                    if end < first.1 {
+                        *first = (candidate.node_id, end);
+                    }
+                })
+                .or_insert((candidate.node_id, end));
+        }
+    }
+    first_rows
+        .into_iter()
+        .filter(|&(table, (row, end))| {
+            end.is_finite()
+                && is_plain_table_box(document, table)
+                && rows_start_the_grid(document, cascade, table)
+                && !forced_break_before_first_row(document, cascade, table, row)
+                && !document.nodes[table]
+                    .children
+                    .iter()
+                    .any(|child| table_headers.headers.contains_key(child))
+        })
+        .map(|(table, (row, end))| {
+            let group_end = row_groups
+                .get(&row)
+                .map_or(end, |&(group_end, _)| group_end);
+            (table, end.max(group_end))
+        })
+        .collect()
+}
+
+/// Whether a forced page break comes before `row`, the first row of `table`:
+/// its own `break-before`, or that of the row group around it. The page edge
+/// constraint of the table does not look inside it, so the box before the
+/// table would be tied to a row that starts a page of its own.
+fn forced_break_before_first_row(
+    document: &Document,
+    cascade: &CascadeResult,
+    table: usize,
+    row: usize,
+) -> bool {
+    [
+        Some(row),
+        document.parent_of(row).filter(|&group| group != table),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|id| page_break_is_forced(document, id, cascade.computed[id].break_before))
+}
+
+/// Whether `node_id` is a block-level table that stacks in the normal flow of
+/// a horizontal block container.
+fn is_plain_table_box(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.kind() == NodeKind::Element
+        && node.display() == DisplayValue::Table
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative
+        )
+        && !node.used_writing_mode.is_vertical()
 }
 
 /// A table row group with `break-inside: avoid` starts on the next page
@@ -3947,9 +4042,12 @@ fn avoided_run_ends(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     candidates: &[PageCandidate],
+    table_headers: &HeaderRepeats,
+    row_groups: &HashMap<usize, (f32, f32)>,
     body_id: usize,
     content_width: f32,
 ) -> HashMap<usize, f32> {
+    let first_row_ends = first_row_ends(document, cascade, candidates, table_headers, row_groups);
     // The last box of each run, keyed by the run's first box, and the margin
     // below it.
     let mut run_lasts = HashMap::<usize, (&PageCandidate, f32)>::new();
@@ -3987,7 +4085,12 @@ fn avoided_run_ends(
                 document.nodes[candidate.node_id].position(),
                 PositionValue::Running(_)
             );
-        if !eligible {
+        // A table ends the run it joins and starts none: only its first row
+        // stays with the box before it.
+        let ends_run = !eligible
+            && candidate.context.is_direct_body_element()
+            && first_row_ends.contains_key(&candidate.node_id);
+        if !eligible && !ends_run {
             previous = None;
             run_start = None;
             continue;
@@ -4012,14 +4115,27 @@ fn avoided_run_ends(
         } else {
             run_start = None;
         }
-        previous = Some(candidate);
+        if ends_run {
+            previous = None;
+            run_start = None;
+        } else {
+            previous = Some(candidate);
+        }
     }
     run_lasts
         .into_iter()
         .map(|(start, (last, margin_bottom))| {
             // The last box of the run stays with the box before it only as far
             // as the page has to hold of it.
-            let end = match avoided_run_head(document, cascade, body_id, last.node_id) {
+            let head = match first_row_ends.get(&last.node_id) {
+                // A table that avoids breaks inside it stays whole.
+                Some(&row_end) => {
+                    (!avoids_page_break_inside(cascade.computed[last.node_id].break_inside))
+                        .then_some(row_end - last.raw_y)
+                }
+                None => avoided_run_head(document, cascade, body_id, last.node_id),
+            };
+            let end = match head {
                 Some(head) if head < last.height - 0.001 => last.raw_y + head,
                 _ => last.raw_y + last.height + margin_bottom,
             };
@@ -4220,7 +4336,15 @@ impl AvoidedBreaks {
         let row_leads = table_row_leads(document, cascade, candidates, root_flow_offset);
         let row_groups =
             avoided_row_groups(document, cascade, candidates, table_headers, &row_leads);
-        let run_ends = avoided_run_ends(document, cascade, candidates, contents_box, content_width);
+        let run_ends = avoided_run_ends(
+            document,
+            cascade,
+            candidates,
+            table_headers,
+            &row_groups,
+            contents_box,
+            content_width,
+        );
         Self {
             run_ends,
             row_leads,
