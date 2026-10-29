@@ -74,6 +74,8 @@ pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_s
 pub use render::continuation::{Continuation, ContinuationInputs, continue_at_page_widths};
 pub use resources::RenderSvgImages;
 pub use resources::parse_xhtml_with_resources;
+#[cfg(feature = "cache-accounting-diagnostics")]
+pub use resources::{CacheAccountingCase, CacheAccountingProbe, CacheAccountingResult};
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
     ResourceLimits, parse_html_with_resources,

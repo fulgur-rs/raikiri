@@ -11,6 +11,9 @@ use url::Url;
 
 use super::DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES;
 
+#[cfg(feature = "cache-accounting-diagnostics")]
+pub(super) mod probe;
+
 /// Maximum CSS background image decodes that may run at once, process-wide.
 ///
 /// Independent [`RenderResources`](super::RenderResources) instances share this semaphore, so decoder
@@ -101,7 +104,7 @@ impl ProcessImageBudget {
             .clone()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
     pub(crate) fn new(max_retained: u64, max_concurrent: usize) -> Self {
         Self {
             retained: Mutex::new(0),
@@ -117,7 +120,7 @@ impl ProcessImageBudget {
         self.max_retained
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
     pub(crate) fn retained(&self) -> u64 {
         *self
             .retained
@@ -260,6 +263,10 @@ impl BackgroundInflight {
 }
 
 pub(super) struct DecodedImageCache {
+    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+    count_accounting_work: std::cell::Cell<bool>,
+    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+    accounting_work: std::cell::Cell<u64>,
     pub(super) entries: HashMap<Url, CachedBackgroundImage>,
     pub(super) decoded_bytes: u64,
     /// The scenes of SVG images, oldest first. They share the byte budgets of
@@ -276,6 +283,10 @@ pub(super) struct DecodedImageCache {
 impl DecodedImageCache {
     pub(super) fn new(process_budget: Arc<ProcessImageBudget>) -> Self {
         Self {
+            #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+            count_accounting_work: std::cell::Cell::new(false),
+            #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+            accounting_work: std::cell::Cell::new(0),
             entries: HashMap::new(),
             decoded_bytes: 0,
             scenes: Vec::new(),
@@ -314,10 +325,16 @@ impl DecodedImageCache {
     /// Source allocations are counted once per Arc identity; each SVG URL
     /// also pays for its entry and key storage. Backend trees are never kept.
     fn source_bytes<'a>(
+        &self,
         entries: impl Iterator<Item = (&'a Url, &'a CachedBackgroundImage)>,
     ) -> u64 {
         let mut seen = HashSet::new();
         entries.fold(0_u64, |sum, (url, entry)| {
+            #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
+            if self.count_accounting_work.get() {
+                self.accounting_work
+                    .set(self.accounting_work.get().saturating_add(1));
+            }
             let CachedBackgroundSource::Svg(document) = &entry.source else {
                 return sum;
             };
@@ -435,8 +452,8 @@ impl DecodedImageCache {
             source,
             rasters: Vec::new(),
         };
-        let old_sources = Self::source_bytes(self.entries.iter());
-        let new_sources = Self::source_bytes(
+        let old_sources = self.source_bytes(self.entries.iter());
+        let new_sources = self.source_bytes(
             self.entries
                 .iter()
                 .filter(|(key, _)| *key != &url)

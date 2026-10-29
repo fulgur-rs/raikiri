@@ -31,6 +31,8 @@ use crate::{HtmlDocument, ParseOptions};
 
 mod decode;
 mod image_cache;
+#[cfg(feature = "cache-accounting-diagnostics")]
+pub use image_cache::probe::{CacheAccountingCase, CacheAccountingProbe, CacheAccountingResult};
 mod network;
 mod svg_images;
 
