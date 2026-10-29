@@ -41,6 +41,9 @@
 //! single walk that owns it.
 
 use std::collections::HashMap;
+
+mod scope_bucket;
+use scope_bucket::CounterScopeBucket;
 use std::mem::size_of;
 
 use raikiri_style::property::DisplayValue;
@@ -138,13 +141,21 @@ fn counter_directives(
         .counter_increment
         .iter()
         .chain(implicit_list_item)
-        .filter(|(counter, _)| counter.as_str() == name)
+        .filter(|(counter, _)| {
+            #[cfg(test)]
+            tests::record_counter_name_work(2);
+            counter.as_str() == name
+        })
         .fold(0_i32, |total, (_, delta)| total.saturating_add(*delta));
     let set = cv
         .counter_set
         .iter()
         .rev()
-        .find(|(counter, _)| counter.as_str() == name)
+        .find(|(counter, _)| {
+            #[cfg(test)]
+            tests::record_counter_name_work(2);
+            counter.as_str() == name
+        })
         .map(|(_, value)| *value);
     (increment, set)
 }
@@ -395,7 +406,7 @@ impl CounterScopes {
         &mut self,
         cv: &raikiri_style::ComputedValues,
         list_item: bool,
-        mut parent_bucket: Option<&mut Vec<Symbol>>,
+        mut parent_bucket: Option<&mut CounterScopeBucket>,
     ) {
         // CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>:
         // "If multiple instances of the same <counter-name> occur in the
@@ -404,8 +415,8 @@ impl CounterScopes {
         // occurrence's value, via HashMap::insert's overwrite-on-reinsert
         // semantics — before pushing exactly one new scope level per name.
         // `reset_order` preserves first-occurrence order across distinct
-        // names only; it has no bearing on correctness (different names
-        // push into independent stacks), just deterministic iteration.
+        // names, including calculated-level numbering shared by the
+        // collecting and resolved walks.
         let mut reset_values: HashMap<Symbol, CounterResetValue> = HashMap::new();
         let mut reset_order: Vec<Symbol> = Vec::new();
         for (name, value) in cv.counter_reset.iter() {
@@ -420,11 +431,12 @@ impl CounterScopes {
             // level (found in `parent_bucket`) is evicted, not nested
             // inside, by this element's own counter-reset — see this
             // method's own doc.
-            if let Some(bucket) = parent_bucket.as_deref_mut()
-                && let Some(pos) = bucket.iter().position(|pending| *pending == sym)
-            {
-                bucket.remove(pos);
-                self.pop_one(&sym);
+            if let Some(bucket) = parent_bucket.as_deref_mut() {
+                #[cfg(test)]
+                tests::record_counter_name_work(0);
+                if bucket.remove(&sym) {
+                    self.pop_one(&sym);
+                }
             }
             let mut level = CounterLevel {
                 reversed: reset.is_reversed(),
@@ -439,7 +451,7 @@ impl CounterScopes {
             // whether an ancestor scope for `name` already exists.
             self.push_level(sym.clone(), value, level);
             if let Some(bucket) = parent_bucket.as_deref_mut() {
-                bucket.push(sym);
+                bucket.register(sym);
             }
         }
         // CSS Lists 3 §4.6: a reversed `list-item` counter is incremented by
@@ -473,7 +485,7 @@ impl CounterScopes {
                     // siblings.
                     self.push_level(sym.clone(), *delta, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
-                        bucket.push(sym);
+                        bucket.register(sym);
                     }
                 }
             }
@@ -486,7 +498,7 @@ impl CounterScopes {
                 None => {
                     self.push_level(sym.clone(), *value, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
-                        bucket.push(sym);
+                        bucket.register(sym);
                     }
                 }
             }
@@ -527,27 +539,39 @@ impl CounterScopes {
             ReversedStarts::Collect(tallies) if self.live_calculated > 0 => tallies,
             _ => return,
         };
-        let mut seen: Vec<&str> = Vec::new();
-        let names = cv
-            .counter_increment
-            .iter()
-            .chain(implicit_list_item)
-            .chain(cv.counter_set.iter())
-            .map(|(name, _)| name.as_str());
-        for name in names {
-            if seen.contains(&name) {
-                continue;
-            }
-            seen.push(name);
+        let mut directives: HashMap<usize, (i32, Option<i32>)> = HashMap::new();
+        for (name, delta) in cv.counter_increment.iter().chain(implicit_list_item) {
+            #[cfg(test)]
+            tests::record_counter_name_work(1);
+            #[cfg(test)]
+            tests::record_counter_name_work(2);
             let Some(index) = self
                 .levels
-                .get(&Symbol::new(name))
+                .get(&Symbol::new(name.clone()))
                 .and_then(|levels| levels.last())
                 .and_then(|level| level.calculated)
             else {
                 continue;
             };
-            let (increment, set) = counter_directives(cv, implicit_list_item, name);
+            let directive = directives.entry(index).or_default();
+            directive.0 = directive.0.saturating_add(*delta);
+        }
+        for (name, value) in cv.counter_set.iter() {
+            #[cfg(test)]
+            tests::record_counter_name_work(1);
+            #[cfg(test)]
+            tests::record_counter_name_work(2);
+            let Some(index) = self
+                .levels
+                .get(&Symbol::new(name.clone()))
+                .and_then(|levels| levels.last())
+                .and_then(|level| level.calculated)
+            else {
+                continue;
+            };
+            directives.entry(index).or_default().1 = Some(*value);
+        }
+        for (index, (increment, set)) in directives {
             tallies[index].record(increment, set);
         }
     }
@@ -563,9 +587,19 @@ impl CounterScopes {
     /// the walker finishes that bucket's owning element's subtree (the
     /// `Exit` step), which per [`Self::apply`]'s doc is the *parent* of
     /// whichever element(s) originally pushed those levels.
-    fn pop(&mut self, names: &[Symbol]) {
-        for name in names {
-            self.pop_one(name);
+    #[inline]
+    fn pop(&mut self, names: &CounterScopeBucket) {
+        match names {
+            CounterScopeBucket::Unindexed(names) => {
+                for name in names {
+                    self.pop_one(name);
+                }
+            }
+            CounterScopeBucket::Indexed(names) => {
+                for name in names.iter() {
+                    self.pop_one(name);
+                }
+            }
         }
     }
 
@@ -928,7 +962,7 @@ fn walk_counter_scopes(
     }
 
     let mut stack = vec![WalkStep::Enter(doc.root)];
-    let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
+    let mut pending_pops: Vec<CounterScopeBucket> = Vec::new();
     let mut quote_depth = QuoteDepth::default();
     // The quote depth at which each element that scopes it was entered.
     let mut quote_scopes: Vec<QuoteDepth> = Vec::new();
@@ -966,7 +1000,7 @@ fn walk_counter_scopes(
                 // element's real children.
                 visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
-                pending_pops.push(Vec::new());
+                pending_pops.push(CounterScopeBucket::default());
                 if scopes_quote_depth(doc, cascade, idx) {
                     quote_scopes.push(quote_depth);
                 }
