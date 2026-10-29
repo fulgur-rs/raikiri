@@ -1960,12 +1960,8 @@ css/css-backgrounds/background-image-001.html
 css/css-backgrounds/background-image-003.html
 css/css-backgrounds/background-image-005.html
 css/css-backgrounds/background-image-gradient-currentcolor-conic-repaint.html
-css/css-backgrounds/background-origin/origin-border-box.html
-css/css-backgrounds/background-origin/origin-border-box_with_size.html
 css/css-backgrounds/background-origin/origin-content-box_with_position.html
-css/css-backgrounds/background-origin/origin-content-box_with_size.html
 css/css-backgrounds/background-origin/origin-padding-box_with_position.html
-css/css-backgrounds/background-origin/origin-padding-box_with_size.html
 css/css-backgrounds/background-size-021.html
 css/css-backgrounds/background-size-025.html
 css/css-backgrounds/background-size-contain-001.html
@@ -5363,6 +5359,11 @@ css/filter-effects/svg-empty-element-with-filter-001.html
 css/css-break/break-at-end-container-edge-000.html
 css/css-break/break-at-end-container-edge-001.html
 css/css-break/break-at-end-container-edge-002.html
+
+# --- a block with a height and nothing inside it among paragraphs in definite-height columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# An empty block with a height, followed by a padded paragraph in the definite-height columns of a `column-fill: auto` container, takes its place in the column like a one-line paragraph, so the paragraph breaks between its lines under it as in Chromium. The test failed before the change (the paragraph stayed whole in one column) and KEEPs in two audit-vacuous-passes runs.
+css/css-break/break-at-end-container-edge-004.html
+
 # --- repeating conic gradients repeat their periods (WPT pin 97ea26e2, EXACT, Linux, 2026-10-28) ---
 # A `repeating-conic-gradient()` repeats the span from its first stop to its last, from the `from` angle around the turn, instead of padding the last color over the rest of the turn; a span of no length shows the last color, as in Chromium. The degenerate-period test KEEPs in two audit-vacuous-passes runs. The other reports VACUOUS-UNSTYLED because its `background-color: red` is only a fallback that the gradient covers completely and the reference never repeats it; it failed before the fix (the second half of the box was filled with the last color), so it stays as a guard.
 css/css-images/normalization-conic-degenerate.html

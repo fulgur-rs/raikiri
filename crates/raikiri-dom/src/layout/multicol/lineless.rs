@@ -112,6 +112,17 @@ fn supported_with_wrapped_blocks(
     (sized || sized_flex || holds_absolute_boxes).then_some(children)
 }
 
+/// Whether `child` is a plain block with a block size of its own, nothing
+/// rendered inside it and no block margins: a box that a stream of paragraphs
+/// places whole in one column, as it has no lines to break between.
+pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let style = style_of(tree, child);
+    is_plain_block_ignoring_insets(tree, child)
+        && !has_rendered_content(tree, child, false)
+        && has_block_size(&style)
+        && block_margins(&style) == Some((0.0, 0.0))
+}
+
 /// Whether `c` is white space that collapses away, as opposed to the other
 /// characters Unicode counts as white space, such as a no-break space, which
 /// render.

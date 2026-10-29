@@ -835,7 +835,9 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // Whether `node_id` has several child boxes, or one with block-edge padding
 // or border, and every one is an in-flow block of lines whose height comes from
 // its content and whose block edges, if any, its pieces slice, which the custom
-// path breaks between lines in a definite-height container as well.
+// path breaks between lines in a definite-height container as well. A box with
+// a block size of its own and nothing inside it may stand among them, if one of
+// the others holds lines, as the planner places it whole in a column.
 fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize) -> bool {
     let mut children = tree
         .children_through_contents(node_id)
@@ -849,13 +851,18 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
     // existing path.
     let several = children.clone().nth(1).is_some();
     let mut decorated = false;
+    let mut paragraphs = 0usize;
     let plain = children.all(|child| {
+        if lineless::is_sized_leaf(tree, child) {
+            return insets_are_a_relative_offset(tree, child);
+        }
         let zero_margin = LengthPercentageAuto::length(0.0);
         let node = &tree.nodes[child];
         let style = style_of(tree, child);
         let margin = style.margin();
         let block_edges = lineless::has_block_edge_decorations(&style);
         decorated |= block_edges;
+        paragraphs += 1;
         // Block-edge decoration needs slice geometry for each piece, which the
         // stream gives the lines it places; the pieces are stacked without
         // collapsing adjoining margins; and the line offsets are read as
@@ -876,7 +883,7 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
             && style.min_size().height.is_auto()
             && style.max_size().height.is_auto()
     });
-    plain && (several || decorated)
+    plain && paragraphs > 0 && (several || decorated)
 }
 
 /// Whether the insets of `child` can be left to the painter once the columns
