@@ -3780,7 +3780,9 @@ fn css_color_to_dynamic(color: CssColor) -> DynamicColor {
 
 /// Map the style interpolation space to the peniko tag for conic sweeps.
 ///
-/// CSS Images 4 defaults to Oklab when no interpolation clause is present.
+/// When no interpolation clause is present, the style parser has chosen sRGB or
+/// Oklab from the stop colors (`default_gradient_color_interpolation` in
+/// `raikiri-style`), so the space arrives here already decided.
 /// The hsl and hwb spaces have no gradient parser support here, so they
 /// fall back to sRGB rather than failing the whole background.
 fn conic_interpolation_tag(space: MixColorSpace) -> ColorSpaceTag {

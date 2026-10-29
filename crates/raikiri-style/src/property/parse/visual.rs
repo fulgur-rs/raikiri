@@ -1660,14 +1660,73 @@ pub(crate) fn parse_gradient_color_interpolation<'i>(
     })
 }
 
-/// Spec-mandated default for [`GradientColorInterpolation`] when `in ...` is
-/// omitted: CSS Images 4 §3.5.2, "Coloring the Gradient Line", says "the color
-/// space used for gradient interpolation is the default interpolation
-/// color space, Oklab".
-fn default_gradient_color_interpolation() -> GradientColorInterpolation {
+/// Default for [`GradientColorInterpolation`] when `in ...` is omitted: CSS
+/// Images 4 §3.5.2, "Coloring the Gradient Line", says "the color space used
+/// for gradient interpolation is the default interpolation color space, Oklab".
+/// CSS Color 4 ("Interpolation") keeps sRGB for colors written in a legacy
+/// syntax (hex, named, `rgb()`, `hsl()`, `hwb()`), so a gradient whose stops
+/// are all legacy colors keeps the colors it had before `in` existed; browsers
+/// do the same. `all_legacy` tells whether every stop is one.
+fn default_gradient_color_interpolation(all_legacy: bool) -> GradientColorInterpolation {
     GradientColorInterpolation {
-        color_space: MixColorSpace::Oklab,
+        color_space: if all_legacy {
+            MixColorSpace::Srgb
+        } else {
+            MixColorSpace::Oklab
+        },
         hue_method: HueInterpolationMethod::Shorter,
+    }
+}
+
+/// Whether the color at the start of `input` is written in a legacy color
+/// syntax (CSS Color 4 §4: hex, a named color, `rgb()`, `rgba()`, `hsl()`,
+/// `hsla()` and `hwb()`), without consuming it.
+///
+/// The modern syntaxes are `color()`, `lab()`, `lch()`, `oklab()`, `oklch()`,
+/// `color-mix()`, and the relative form or a `none` component of a legacy
+/// function. `light-dark()` is the color of its light branch, and `alpha()`
+/// that of the color it is relative to. `currentcolor` counts as legacy: the
+/// color it stands for is not known where a gradient is parsed.
+fn color_is_legacy_syntax(input: &mut Parser<'_, '_>) -> bool {
+    let start = input.state();
+    let legacy = match input.next().cloned() {
+        Ok(Token::Function(name)) => input
+            .parse_nested_block(|args| {
+                let legacy = function_color_is_legacy(&name, args);
+                // A nested block has to be read to its end.
+                while args.next().is_ok() {}
+                Ok::<_, ParseError<'_, ()>>(legacy)
+            })
+            .unwrap_or(false),
+        Ok(_) | Err(_) => true,
+    };
+    input.reset(&start);
+    legacy
+}
+
+/// [`color_is_legacy_syntax`] for the color function `name` whose arguments
+/// are `args`.
+fn function_color_is_legacy(name: &str, args: &mut Parser<'_, '_>) -> bool {
+    match name.to_ascii_lowercase().as_str() {
+        "rgb" | "rgba" | "hsl" | "hsla" | "hwb" => {
+            // A relative color or a missing component is the modern syntax of
+            // the function.
+            while let Ok(token) = args.next() {
+                if matches!(token, Token::Ident(ident)
+                    if ident.eq_ignore_ascii_case("from") || ident.eq_ignore_ascii_case("none"))
+                {
+                    return false;
+                }
+            }
+            true
+        }
+        "light-dark" => color_is_legacy_syntax(args),
+        "alpha" => {
+            let _ = args.try_parse(|i| i.expect_ident_matching("from"));
+            color_is_legacy_syntax(args)
+        }
+        "contrast-color" => true,
+        _ => false,
     }
 }
 
@@ -1733,8 +1792,22 @@ fn parse_gradient_color_stop<'i>(
 /// One comma-separated entry of a color stop list: a stop, or the transition
 /// hint between two stops.
 enum StopListEntry<Stop, Hint> {
-    Stop(Stop),
+    /// A stop, and whether its color is written in a legacy syntax.
+    Stop(Stop, bool),
     Hint(Hint),
+}
+
+/// The stops of a color stop list, each with the hint in front of it, and
+/// whether the color of every stop is written in a legacy syntax.
+struct StopList<Stop, Hint> {
+    stops: Vec<(Option<Hint>, Stop)>,
+    all_legacy: bool,
+}
+
+/// What the parser of a gradient reads from a color stop list.
+struct ParsedStops<Stop> {
+    stops: Vec<Stop>,
+    all_legacy: bool,
 }
 
 /// A color stop list `<stop> , [ <hint>? , <stop> ]#` (CSS Images 3 §3.4.1):
@@ -1745,19 +1818,24 @@ fn parse_stop_list_with_hints<'i, Stop, Hint>(
     input: &mut Parser<'i, '_>,
     parse_stop: fn(&mut Parser<'i, '_>) -> Result<Stop, ParseError<'i, ()>>,
     parse_hint: fn(&mut Parser<'i, '_>) -> Result<Hint, ParseError<'i, ()>>,
-) -> Result<Vec<(Option<Hint>, Stop)>, ParseError<'i, ()>> {
+) -> Result<StopList<Stop, Hint>, ParseError<'i, ()>> {
     let entries = input.parse_comma_separated(|entry| {
+        let legacy = color_is_legacy_syntax(entry);
         // A hint is a bare position, which no stop can start with.
         match entry.try_parse(parse_stop) {
-            Ok(stop) => Ok(StopListEntry::Stop(stop)),
+            Ok(stop) => Ok(StopListEntry::Stop(stop, legacy)),
             Err(_) => parse_hint(entry).map(StopListEntry::Hint),
         }
     })?;
     let mut stops = Vec::with_capacity(entries.len());
+    let mut all_legacy = true;
     let mut hint = None;
     for entry in entries {
         match entry {
-            StopListEntry::Stop(stop) => stops.push((hint.take(), stop)),
+            StopListEntry::Stop(stop, legacy) => {
+                all_legacy &= legacy;
+                stops.push((hint.take(), stop));
+            }
             // The first entry has no stop before it, and a second hint in a
             // row has no stop after the first.
             StopListEntry::Hint(_) if stops.is_empty() || hint.is_some() => {
@@ -1769,7 +1847,7 @@ fn parse_stop_list_with_hints<'i, Stop, Hint>(
     if stops.is_empty() || hint.is_some() {
         return Err(input.new_custom_error(()));
     }
-    Ok(stops)
+    Ok(StopList { stops, all_legacy })
 }
 
 /// `<color-stop-list>` (see the scope carving in [`GradientColorStop`]: at
@@ -1777,19 +1855,23 @@ fn parse_stop_list_with_hints<'i, Stop, Hint>(
 /// Shared by `linear-gradient()` and `radial-gradient()`.
 fn parse_gradient_color_stop_list<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<Vec<GradientColorStop>, ParseError<'i, ()>> {
-    let stops = parse_stop_list_with_hints(
+) -> Result<ParsedStops<GradientColorStop>, ParseError<'i, ()>> {
+    let list = parse_stop_list_with_hints(
         input,
         parse_gradient_color_stop,
         parse_gradient_stop_position,
     )?;
-    if stops.len() < 2 {
+    if list.stops.len() < 2 {
         return Err(input.new_custom_error(()));
     }
-    Ok(stops
-        .into_iter()
-        .map(|(hint, stop)| GradientColorStop { hint, ..stop })
-        .collect())
+    Ok(ParsedStops {
+        stops: list
+            .stops
+            .into_iter()
+            .map(|(hint, stop)| GradientColorStop { hint, ..stop })
+            .collect(),
+        all_legacy: list.all_legacy,
+    })
 }
 
 /// Authored `<angular-color-stop> = <color> <color-stop-angle>{1,2}?`
@@ -1835,14 +1917,14 @@ fn parse_angular_color_stop_authored<'i>(
 /// first of the two.
 fn parse_angular_color_stop_list<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<Vec<AngularColorStop>, ParseError<'i, ()>> {
+) -> Result<ParsedStops<AngularColorStop>, ParseError<'i, ()>> {
     let authored = parse_stop_list_with_hints(
         input,
         parse_angular_color_stop_authored,
         parse_angle_percentage,
     )?;
-    let mut stops = Vec::with_capacity(authored.len() * 2);
-    for (hint, stop) in authored {
+    let mut stops = Vec::with_capacity(authored.stops.len() * 2);
+    for (hint, stop) in authored.stops {
         match (stop.first, stop.second) {
             (None, None) => stops.push(AngularColorStop {
                 color: stop.color,
@@ -1873,7 +1955,10 @@ fn parse_angular_color_stop_list<'i>(
     if stops.len() < 2 {
         return Err(input.new_custom_error(()));
     }
-    Ok(stops)
+    Ok(ParsedStops {
+        stops,
+        all_legacy: authored.all_legacy,
+    })
 }
 
 /// Spec-mandated default for [`LinearGradientDirection`]: `to bottom` (CSS
@@ -1969,12 +2054,13 @@ fn parse_linear_gradient_body<'i>(
     if direction.is_some() || interpolation.is_some() {
         input.expect_comma()?;
     }
-    let stops = parse_gradient_color_stop_list(input)?;
+    let list = parse_gradient_color_stop_list(input)?;
     Ok(LinearGradient {
         repeating,
         direction: direction.unwrap_or_else(default_linear_gradient_direction),
-        interpolation: interpolation.unwrap_or_else(default_gradient_color_interpolation),
-        stops: Arc::new(stops),
+        interpolation: interpolation
+            .unwrap_or_else(|| default_gradient_color_interpolation(list.all_legacy)),
+        stops: Arc::new(list.stops),
     })
 }
 
@@ -2168,7 +2254,7 @@ fn parse_radial_gradient_body<'i>(
     if any {
         input.expect_comma()?;
     }
-    let stops = parse_gradient_color_stop_list(input)?;
+    let list = parse_gradient_color_stop_list(input)?;
     let (shape, size, position) = group.unwrap_or((None, None, None));
     let (resolved_shape, resolved_size) =
         resolve_radial_shape_and_size(shape, size).ok_or_else(|| input.new_custom_error(()))?;
@@ -2177,8 +2263,9 @@ fn parse_radial_gradient_body<'i>(
         shape: resolved_shape,
         size: resolved_size,
         position: position.unwrap_or_else(default_center_position),
-        interpolation: interpolation.unwrap_or_else(default_gradient_color_interpolation),
-        stops: Arc::new(stops),
+        interpolation: interpolation
+            .unwrap_or_else(|| default_gradient_color_interpolation(list.all_legacy)),
+        stops: Arc::new(list.stops),
     })
 }
 
@@ -2234,14 +2321,15 @@ fn parse_conic_gradient_body<'i>(
     if any {
         input.expect_comma()?;
     }
-    let stops = parse_angular_color_stop_list(input)?;
+    let list = parse_angular_color_stop_list(input)?;
     let (angle, position) = group.unwrap_or((None, None));
     Ok(ConicGradient {
         repeating,
         angle: angle.unwrap_or(Angle(0.0)),
         position: position.unwrap_or_else(default_center_position),
-        interpolation: interpolation.unwrap_or_else(default_gradient_color_interpolation),
-        stops: Arc::new(stops),
+        interpolation: interpolation
+            .unwrap_or_else(|| default_gradient_color_interpolation(list.all_legacy)),
+        stops: Arc::new(list.stops),
     })
 }
 
