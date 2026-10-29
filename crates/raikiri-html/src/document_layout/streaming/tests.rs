@@ -6,6 +6,7 @@ use super::*;
 use crate::StringFetchMode;
 use crate::layout;
 
+mod avoided_chain_tests;
 mod head_checkpoint_tests;
 mod xhtml_tests;
 

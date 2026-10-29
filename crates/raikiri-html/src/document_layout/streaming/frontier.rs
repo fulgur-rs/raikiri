@@ -397,14 +397,17 @@ fn avoids_break(value: BreakBetween) -> bool {
 /// break. A node that starts its parent's content shares the break point
 /// before the parent, so the search climbs through first children and a
 /// `break-before` on any of them counts for that break point.
+/// Each visited parent's prefix is scanned once and then consumed backward;
+/// separate calls can revisit the same prefixes.
 fn join_avoided_breaks(document: &Document, cascade: &CascadeResult, id: usize) -> usize {
     let mut result = id;
     let mut current = id;
     let mut avoid_before = false;
+    let mut preceding = previous_element_siblings(document, current);
     loop {
         avoid_before |=
             computed(cascade, current).is_some_and(|values| avoids_break(values.break_before));
-        match previous_element_sibling(document, current) {
+        match preceding.next() {
             Some(previous) => {
                 let avoid_after = computed(cascade, previous)
                     .is_some_and(|values| avoids_break(values.break_after));
@@ -416,22 +419,41 @@ fn join_avoided_breaks(document: &Document, cascade: &CascadeResult, id: usize) 
                 avoid_before = false;
             }
             None => match document.parent_of(current) {
-                Some(parent) if parent != document.root_index() => current = parent,
+                Some(parent) if parent != document.root_index() => {
+                    current = parent;
+                    preceding = previous_element_siblings(document, current);
+                }
                 _ => return result,
             },
         }
     }
 }
 
-fn previous_element_sibling(document: &Document, id: usize) -> Option<usize> {
-    let parent = document.parent_of(id)?;
-    let siblings = &document.get_node(parent)?.children;
-    let position = siblings.iter().position(|&sibling| sibling == id)?;
-    siblings[..position].iter().rev().copied().find(|&sibling| {
-        document
-            .get_node(sibling)
-            .is_some_and(|node| node.kind() == NodeKind::Element && node.is_in_document())
-    })
+fn previous_element_siblings(document: &Document, id: usize) -> impl Iterator<Item = usize> + '_ {
+    let siblings = document
+        .parent_of(id)
+        .and_then(|parent| document.get_node(parent))
+        .map(|node| node.children.as_slice())
+        .unwrap_or(&[]);
+    let position = siblings
+        .iter()
+        .position(|&sibling| {
+            #[cfg(test)]
+            tests::record_sibling_visit();
+            sibling == id
+        })
+        .unwrap_or(0);
+    siblings[..position]
+        .iter()
+        .rev()
+        .copied()
+        .filter(|&sibling| {
+            #[cfg(test)]
+            tests::record_sibling_visit();
+            document
+                .get_node(sibling)
+                .is_some_and(|node| node.kind() == NodeKind::Element && node.is_in_document())
+        })
 }
 
 #[cfg(test)]
