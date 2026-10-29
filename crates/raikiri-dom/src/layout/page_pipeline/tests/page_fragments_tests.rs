@@ -2889,14 +2889,16 @@ fn a_section_that_a_moved_paragraph_begins_moves_with_it() {
 }
 
 #[test]
-fn a_padded_section_grows_to_hold_its_moved_paragraph() {
-    // The section starts at 15 and its padding stays there; the paragraph
-    // moves from 17 to 40, so the section ends at 70.
+fn a_padded_section_moves_with_its_moved_paragraph() {
+    // The padding above the paragraph is no place to break at: the page
+    // breaks before the section rather than between its padding and the
+    // paragraph, so the section starts page 1 at 40 and the paragraph follows
+    // its 2px of padding.
     let laid_out =
         paragraph_after_a_spacer(Some("padding-top:2px"), 15.0, "orphans:3;widows:2", 40.0);
     assert_eq!(laid_out.fragments, whole_on_page_1());
-    assert_eq!(laid_out.section, (15.0, 55.0));
-    assert_eq!(laid_out.after_top, 70.0);
+    assert_eq!(laid_out.section, (40.0, 32.0));
+    assert_eq!(laid_out.after_top, 72.0);
 }
 
 #[test]

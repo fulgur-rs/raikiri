@@ -1483,11 +1483,15 @@ fn overflow_clip_rectangles_match_across_pages() {
 }
 
 /// A padded overflow box that starts close to the bottom of a page: the part
-/// before the break is shorter than the page margin plus the padding.
+/// before the break is shorter than the page margin plus the padding. The
+/// first line fits after the padding; a box whose first line did not would
+/// move to the next page whole.
 #[test]
 fn overflow_clip_rectangles_match_for_a_box_starting_near_a_page_bottom() {
-    let inner: String = (0..5).map(|i| format!("<p>line {i}</p>")).collect();
-    for spacer in [130, 150] {
+    let inner: String = (0..5)
+        .map(|i| format!("<p style=\"margin: 0\">line {i}</p>"))
+        .collect();
+    for spacer in [110, 120] {
         assert_clip_rects_on_every_page(&format!(
             "<div style=\"height: {spacer}px\"></div>\
              <div style=\"overflow: hidden; padding: 15px; border: 4px solid\">{inner}</div>"

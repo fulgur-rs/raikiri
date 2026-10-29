@@ -12,10 +12,11 @@ use super::{
     block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
     box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
     collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
-    first_line_judged_height, first_owned_line_height, fits_decorated_paper, flex_line_paragraph,
-    follows_flow_content, forced_line_breaks, forced_line_moves, forced_target_page,
-    grow_ancestors_for_shift, has_explicit_positioned_block_ancestor, has_fixed_height,
-    has_footnote_ancestor, in_row_flex_container, is_floating_box_for_pagination,
+    first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
+    fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
+    forced_line_moves, forced_target_page, grow_ancestors_for_shift,
+    has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
+    in_row_flex_container, is_floating_box_for_pagination, lead_below_ancestor, leading_edges_move,
     line_block_parent, lines_between_blocks, lines_can_shift_between_blocks,
     lines_can_shift_inside, make_room_for_table_header, margin_box_starts_page, materialize_y,
     move_box_by_truncated_margin, move_box_for_transition, move_flex_line_siblings,
@@ -829,7 +830,7 @@ impl PaginationState {
             &self.table_headers,
             &mut self.trailing_flex_children,
         );
-        overflow.page |= closing_edges_move(candidate, &fit);
+        overflow.page |= closing_edges_move(candidate, &fit) || leading_edges_move(candidate, &fit);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -1160,6 +1161,7 @@ impl PaginationState {
                     nested,
                     block_effective_y,
                     target_y,
+                    page_origins.origin(self.current_page),
                     &mut self.subtree_shifts,
                     entry.page_before_candidate,
                 );
@@ -1254,7 +1256,7 @@ impl PaginationState {
             loop {
                 let page_start = page_origins.origin(page);
                 let page_step = page_origins.step_at(page);
-                let line_fit = ParagraphLineFit::measure(
+                let mut line_fit = ParagraphLineFit::measure(
                     &line_metrics,
                     text.effective_y,
                     page_start,
@@ -1271,6 +1273,30 @@ impl PaginationState {
                     root_flow_offset,
                     self.flow_shift,
                 );
+                // Lines that start on a later page than the boxes that hold
+                // them leave those boxes' padding and border at the foot of
+                // this page, unless the page breaks before the boxes. Only
+                // the edges of the block may lie above the first line: a box
+                // before it in the block stays on this page.
+                let first_line_top = text.effective_y + line_metrics[0].0;
+                let block_edges = document.nodes[block_id].layout.border.top
+                    + document.nodes[block_id].layout.padding.top;
+                if !line_fit.starts_on_page
+                    && first_line_top >= page_start + page_step - 0.001
+                    && first_line_top - (block_effective_y + block_edges) <= 0.5
+                {
+                    let holder_top = block_effective_y
+                        - if nested {
+                            let holder = first_box_ancestor_at_start(
+                                document, block_id, body_id, page_start,
+                            );
+                            lead_below_ancestor(document, cascade, body_id, block_id, holder)
+                        } else {
+                            0.0
+                        };
+                    line_fit.top_edges_end_page = holder_top > page_start + 0.001
+                        && holder_top < page_start + page_step - 0.001;
+                }
                 // A block taller than a page moves whole only to keep its
                 // orphans, as it fragments on the next page anyway. That
                 // takes content before it on a page it does not start, and a
@@ -1324,6 +1350,7 @@ impl PaginationState {
                             nested,
                             block_effective_y,
                             page_origins.origin(page),
+                            page_start,
                             &mut self.subtree_shifts,
                             entry.page_before_candidate,
                         );

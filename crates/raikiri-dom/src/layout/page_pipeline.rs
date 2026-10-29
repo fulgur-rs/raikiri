@@ -4779,11 +4779,22 @@ fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
     y
 }
 
-/// The outermost box whose top edge is that of `block`, which starts its
-/// ancestors: each of them up to it has no top border or padding, begins
-/// where its child does and renders nothing before it. Moving that box moves `block` without leaving the
-/// ancestors' empty starts behind on the earlier page.
-fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) -> usize {
+/// The outermost box that `block` starts, together with the ancestors that
+/// render nothing before it: moving that box moves `block` without leaving the
+/// ancestors' starts behind on the earlier page.
+///
+/// An ancestor without top border or padding begins where its child does, and
+/// is left with an empty start otherwise. One with a top border or padding is a
+/// plain block box that begins its page below `page_start`: the page breaks
+/// before it rather than between those edges and `block`, which would leave
+/// them alone at the foot of the page (CSS Break 3 §4.1). One that starts at
+/// `page_start` gains nothing by moving, and stops the walk.
+fn first_box_ancestor_at_start(
+    document: &Document,
+    block: usize,
+    body_id: usize,
+    page_start: f32,
+) -> usize {
     let block_top = current_abs_y(document, block);
     let mut child_top = block_top;
     let mut unusual_coordinates = document.oof_coordinates.contains_key(&block)
@@ -4840,16 +4851,20 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
         } else {
             child_top - document.nodes[child].layout.location.y
         };
+        let child_start = child_top;
         child = parent;
         child_top = parent_top;
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }
         let layout = &document.nodes[parent].layout;
-        if layout.border.top != 0.0
-            || layout.padding.top != 0.0
-            || (parent_top - block_top).abs() > 0.01
-        {
+        let has_edges = layout.border.top != 0.0 || layout.padding.top != 0.0;
+        let moves_with_block = if has_edges {
+            is_plain_block_box(document, parent) && parent_top > page_start + 0.001
+        } else {
+            (parent_top - child_start).abs() <= 0.01
+        };
+        if !moves_with_block {
             break;
         }
         moved = parent;
@@ -6126,6 +6141,132 @@ fn unplaced_line_end(document: &Document, cascade: &CascadeResult, node_id: usiz
     Some(layout.border.top + layout.padding.top + line.bottom)
 }
 
+/// The deepest box [`first_piece_end`] looks into.
+const FIRST_PIECE_DEPTH: usize = 8;
+
+/// How far below the border-box top the first piece of the content of the box
+/// `node_id` ends: the least block size from the top of the box that the page
+/// breaks after, with its content as unbreakable as a line is. That is the end
+/// of the first `orphans` lines of a paragraph, the bottom of a box that is
+/// monolithic or avoids breaks inside it, and for a block, a flex container or
+/// a grid, the first piece of its first box or, for the last two, of the item
+/// whose first piece ends first. `None` for a box whose content is not read
+/// this way: one with text of its own beside boxes, a float, generated content,
+/// columns, a table, a vertical flow, or nothing at all, which can be cut
+/// anywhere.
+fn first_piece_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    depth: usize,
+) -> Option<f32> {
+    let node = &document.nodes[node_id];
+    if depth > FIRST_PIECE_DEPTH
+        || node.kind() != NodeKind::Element
+        || node.used_writing_mode.is_vertical()
+        || node.multicol.is_some()
+        || node.has_before_or_after_content
+        || !matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative
+        )
+    {
+        return None;
+    }
+    let computed = &cascade.computed[node_id];
+    let height = node.layout.size.height;
+    if avoids_page_break_inside(computed.break_inside)
+        || is_monolithic_for_pagination_with_transposed_axes(document, cascade, node_id, false)
+    {
+        return Some(height);
+    }
+    if node.is_ifc_root() {
+        let ifc_node = document.ifc_layout_node(node_id)?;
+        let lines = ifc_node.ifc.as_ref()?.lines.as_ref()?;
+        // Block boxes between the lines are places to break at too.
+        if !lines.block_line_starts.is_empty() || lines.lines.is_empty() {
+            return None;
+        }
+        let kept = (computed.orphans.max(1) as usize).min(lines.lines.len()) - 1;
+        let layout = ifc_node.layout;
+        return Some(
+            layout.border.top
+                + layout.padding.top
+                + lines.line_top(kept)
+                + lines.lines[kept].block_size(),
+        );
+    }
+    let stacks_every_box = matches!(node.display(), DisplayValue::Flex | DisplayValue::Grid);
+    if !stacks_every_box
+        && !matches!(
+            node.display(),
+            DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+        )
+    {
+        return None;
+    }
+    let mut boxes = Vec::new();
+    for &child in &node.children {
+        if is_floating_box_for_pagination(document, cascade, child) {
+            return None;
+        }
+        let start = boxes.len();
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+        boxes[start..].reverse();
+        // A block is judged by its first box; what follows it breaks away
+        // from it at a better place.
+        if !stacks_every_box && !boxes.is_empty() {
+            break;
+        }
+    }
+    // A box with nothing in it can be cut anywhere.
+    if boxes.is_empty() {
+        return None;
+    }
+    let examined = if stacks_every_box { boxes.len() } else { 1 };
+    let mut least = f32::INFINITY;
+    for &child in &boxes[..examined] {
+        let end = document.nodes[child].layout.location.y
+            + first_piece_end(document, cascade, child, depth + 1)?;
+        least = least.min(end);
+    }
+    least.is_finite().then_some(least)
+}
+
+/// How far below the border-box top of the flex container or grid `node_id`
+/// the first piece of its content ends, when it has padding or border above
+/// its items (see [`first_piece_end`]).
+fn leading_piece_end(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<f32> {
+    let layout = &document.nodes[node_id].layout;
+    (layout.border.top + layout.padding.top > 0.0)
+        .then(|| first_piece_end(document, cascade, node_id, 0))
+        .flatten()
+}
+
+/// Whether a box with padding or border above its content moves to the next
+/// page, so that those edges do not stay behind alone: the box starts on the
+/// page, but the first piece of its content (see [`first_piece_end`], which
+/// `leading_piece_end` is the end of, from the top of the box) runs past the
+/// page end. A break between the edges and the content is a worse one (class C)
+/// than the break before the box (class A, CSS Break 3 §4.1), as browsers
+/// choose. The next page must hold that piece, or moving the box gains
+/// nothing; a box that its page starts with would break from the edges on any
+/// page.
+fn leading_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
+    let BoxFit {
+        flow_y,
+        margin_top,
+        page_start,
+        page_end,
+        next_page_step,
+        ..
+    } = *fit;
+    candidate.context.leading_piece_end().is_some_and(|end| {
+        end <= next_page_step + 0.001
+            && avoided_box_moves(flow_y, margin_top, flow_y + end, page_start, page_end)
+    })
+}
+
 /// Whether `break_inside` avoids page breaks inside its box.
 fn avoids_page_break_inside(break_inside: raikiri_style::property::BreakInside) -> bool {
     matches!(
@@ -7354,6 +7495,10 @@ struct ParagraphLineFit {
     orphans: usize,
     /// The used `widows`, at least 1.
     widows: usize,
+    /// Whether the first line starts on a later page than the box that holds it,
+    /// which starts below the top of this one: the padding and border above the
+    /// line end the page. Set by the caller, which knows the boxes.
+    top_edges_end_page: bool,
     /// Whether the lines need a break that leaves fewer than `orphans`
     /// lines before it or fewer than `widows` lines after it.
     violates_line_constraints: bool,
@@ -7426,6 +7571,10 @@ impl ParagraphLineFit {
     /// it has lines enough for both constraints and `can_move_lines` allows
     /// it; else the whole block moves when `can_move_block` and the break
     /// violates a constraint; otherwise the natural break stays.
+    ///
+    /// The block also moves when no line starts on the page because the
+    /// padding and border above the lines end it (`top_edges_end_page`): the
+    /// break before the block is the one that leaves them with the lines.
     fn fix(
         &self,
         line_metrics: &[(f32, f32)],
@@ -7435,7 +7584,9 @@ impl ParagraphLineFit {
         can_move_block: bool,
         can_move_lines: impl FnOnce() -> bool,
     ) -> LineBreakFix {
-        let move_block = can_move_block && self.starts_on_page && self.violates_line_constraints;
+        let move_block = can_move_block
+            && (self.starts_on_page || self.top_edges_end_page)
+            && self.violates_line_constraints;
         let moves = if !(move_block && self.leaves_too_few_orphans())
             && self.has_room_for_both_constraints()
             && can_move_lines()
@@ -7485,6 +7636,7 @@ impl ParagraphLineFit {
             lines_before_break,
             orphans,
             widows,
+            top_edges_end_page: false,
             violates_line_constraints,
         }
     }
@@ -7875,12 +8027,31 @@ fn move_paragraph_lines(
     );
 }
 
-/// Moves `block_id`, which sits at `from_y`, so that its flow position starts
-/// at `target_y`, and returns how far it moved. Its relative offsets move
-/// along with it. A `nested` block that begins its ancestors, with no border
-/// or padding between them, takes the ancestors along rather than leaving
-/// them empty on this page; the ancestors above them grow to hold the move,
-/// recorded in `shifts` with `flow_page` as for [`grow_ancestors_for_shift`].
+/// How far below the top of `moved` the block `block` starts in the normal
+/// flow, when `moved` is the box that the walk from the block up chose to move
+/// with it (see [`first_box_ancestor_at_start`]): the edges of the ancestors
+/// above it, without the relative offsets that moved either box.
+fn lead_below_ancestor(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block: usize,
+    moved: usize,
+) -> f32 {
+    let flow_y = |id: usize| {
+        current_abs_y(document, id) - accumulated_relative_offset_y(document, cascade, body_id, id)
+    };
+    (flow_y(block) - flow_y(moved)).max(0.0)
+}
+
+/// Moves `block_id`, which sits at `from_y`, so that the box it moves with
+/// starts at `target_y`, and returns how far it moved. Its relative offsets
+/// move along with it. A `nested` block that begins its ancestors takes the
+/// ancestors along rather than leaving them empty on this page, or leaving
+/// their padding and border alone there when they start below `page_start`
+/// (see [`first_box_ancestor_at_start`]); the ancestors above them grow to hold
+/// the move, recorded in `shifts` with `flow_page` as for
+/// [`grow_ancestors_for_shift`].
 #[allow(clippy::too_many_arguments)]
 fn move_line_block(
     document: &mut super::context::LayoutSession<'_>,
@@ -7890,21 +8061,23 @@ fn move_line_block(
     nested: bool,
     from_y: f32,
     target_y: f32,
+    page_start: f32,
     shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> f32 {
     let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
+    let moved = if nested {
+        first_box_ancestor_at_start(document, block_id, body_id, page_start)
+    } else {
+        block_id
+    };
+    let lead = lead_below_ancestor(document, cascade, body_id, block_id, moved);
     // A negative or undefined move, which a relative offset can produce,
     // leaves the block where it is.
-    let delta = Some(target_y + relative - from_y)
+    let delta = Some(target_y + relative - (from_y - lead))
         .filter(|delta| delta.is_finite() && *delta > 0.0)
         .unwrap_or(0.0);
     if delta > 0.0 {
-        let moved = if nested {
-            first_box_ancestor_at_top(document, block_id, body_id)
-        } else {
-            block_id
-        };
         let moved_y = current_abs_y(document, moved) + delta;
         let followed_ifc_boxes = materialize_y(document, moved, moved_y);
         grow_ancestors_for_shift(
