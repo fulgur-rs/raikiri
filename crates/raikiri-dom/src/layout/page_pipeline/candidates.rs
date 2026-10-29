@@ -6,14 +6,15 @@ use super::super::context::LayoutSession;
 use super::{
     AvoidChain, BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue,
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
-    PositionValue, TextLineIndex, avoid_chain_before_last_box, breaks_only_around,
-    candidate_ancestor_constraints, clears_float_side, closing_edges_of, first_owned_text_line_top,
-    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, lone_box_tail,
-    moves_later_siblings, normal_flow_bottom, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
+    PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head, boxes_are_tied,
+    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
+    first_owned_text_line_top, in_inset_out_of_flow_subtree, is_block_level_flow_box,
+    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
+    is_plain_block_box, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
+    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
+    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -59,6 +60,12 @@ pub(super) struct ElementContext {
     /// the last box of the run, which the edges in `closing_edges` follow. The
     /// run moves to the next page as one when they do not fit after it.
     pub(super) closing_edges_span: f32,
+    /// How far below the border-box top the run of boxes tied by avoided
+    /// breaks ends that the box starts among the boxes of its parent, or that
+    /// it holds at the start of its own boxes. The box moves to the next page
+    /// with the run when the run would cross a page edge (see
+    /// [`super::avoided_run_ends`]).
+    pub(super) avoided_unit: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -148,6 +155,11 @@ impl BoxContext {
     pub(super) fn closing_edges_span(self) -> f32 {
         self.element_attributes()
             .map_or(0.0, |attributes| attributes.closing_edges_span)
+    }
+
+    pub(super) fn avoided_unit(self) -> Option<f32> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.avoided_unit)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -385,6 +397,9 @@ struct CandidateFrame<'name> {
     /// How the node is tied to the boxes around it by avoided breaks, when it
     /// ends its block or starts the run of boxes that does.
     tie: AvoidTie,
+    /// How far below its border-box top the run of boxes tied by avoided
+    /// breaks ends that the node starts among the boxes of its parent.
+    run_unit: Option<f32>,
 }
 
 /// How a box is tied by avoided page breaks to the others of the run that ends
@@ -423,6 +438,7 @@ impl CandidateFrame<'_> {
             previous_box: None,
             lines_closing_edges: 0.0,
             tie: AvoidTie::None,
+            run_unit: None,
         }
     }
 }
@@ -484,6 +500,10 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
     has_named_pages: bool,
+    /// Whether runs of boxes tied by avoided breaks may be looked for inside
+    /// blocks: some box avoids a break before or after it, and no box names a
+    /// page, which would break the flow between boxes of its own.
+    finds_nested_runs: bool,
 }
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
@@ -496,6 +516,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
         text_lines: &'a mut TextLineIndex,
         control: &'a PageLayoutControl<'c>,
     ) -> Self {
+        let has_named_pages = super::super::page::has_named_pages(cascade);
         Self {
             document,
             cascade,
@@ -505,7 +526,19 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             text_lines,
             control,
             named_page_subtree_cache: HashMap::new(),
-            has_named_pages: super::super::page::has_named_pages(cascade),
+            has_named_pages,
+            finds_nested_runs: !has_named_pages
+                && cascade.computed.iter().any(|computed| {
+                    [computed.break_before, computed.break_after]
+                        .into_iter()
+                        .any(|edge| {
+                            matches!(
+                                edge,
+                                raikiri_style::property::BreakBetween::Avoid
+                                    | raikiri_style::property::BreakBetween::AvoidPage
+                            )
+                        })
+                }),
         }
     }
 
@@ -664,6 +697,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         child_frame.closing_edges = 0.0;
                         child_frame.previous_box = None;
                         child_frame.tie = AvoidTie::None;
+                        child_frame.run_unit = None;
                         self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
@@ -925,12 +959,32 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         && !page_edge_constraint(document, cascade, node_id, true).0
                         && !page_edge_constraint(document, cascade, node_id, false).0
                 });
+                // A box that starts a run of boxes tied by avoided breaks among
+                // the boxes of its parent (`frame.run_unit`), or holds one at
+                // the start of its own boxes, moves to the next page with the
+                // run when that crosses a page edge. A box with no box before
+                // it has no break to take before it: the block around it holds
+                // the run and moves for it.
+                let free_to_break_before =
+                    frame.previous_box.map_or(direct_body_child, |previous| {
+                        !boxes_are_tied(document, cascade, previous, node_id)
+                    });
+                let leading_unit =
+                    (self.finds_nested_runs && in_flow_block && !is_body && free_to_break_before)
+                        .then(|| avoided_run_head(document, cascade, body_id, node_id, true))
+                        .filter(|held| held.tied)
+                        .and_then(|held| held.end);
+                let avoided_unit = match (frame.run_unit, leading_unit) {
+                    (Some(run), Some(leading)) => Some(run.max(leading)),
+                    (run, leading) => run.or(leading),
+                };
                 let needs_ancestor_constraints = (nested_candidate_base
                     && ((!inline_level && is_block_flow_box && avoids_break)
                         || is_float
                         || clears_float))
                     || lines_shape
-                    || lone_tail.is_some();
+                    || lone_tail.is_some()
+                    || (avoided_unit.is_some() && !direct_body_child);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         candidate_ancestor_constraints(document, cascade, node_id, body_id)
@@ -946,6 +1000,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let nested_float_candidate =
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
+                let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
@@ -979,6 +1034,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || nested_float_candidate
                         || closing_edges_candidate
                         || lone_box_candidate.is_some()
+                        || avoided_unit.is_some()
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
@@ -1026,6 +1082,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     AvoidTie::RunStart { span } if closing_edges_candidate => span,
                                     _ => 0.0,
                                 },
+                                avoided_unit,
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1186,6 +1243,17 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                     _ => None,
                 };
+                // Where the runs of boxes tied by avoided breaks that start
+                // among the boxes of this block end.
+                let run_units = if self.finds_nested_runs
+                    && in_flow_block
+                    && !is_body
+                    && !flow_flags.is_empty()
+                {
+                    nested_run_units(document, cascade, body_id, &child_order, &flow_flags)
+                } else {
+                    Vec::new()
+                };
                 let mut previous_box = None;
                 for (index, child_id) in child_order.iter().copied().enumerate() {
                     let at_chain_start = chain_run.filter(|&(first, ..)| index == first);
@@ -1261,6 +1329,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             previous_box: child_previous_box,
                             lines_closing_edges,
                             tie,
+                            run_unit: run_units.get(index).copied().flatten(),
                         },
                     )?;
                 }

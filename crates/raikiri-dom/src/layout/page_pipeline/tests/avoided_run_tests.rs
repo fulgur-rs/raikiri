@@ -548,3 +548,312 @@ fn a_heading_stays_before_a_table_whose_first_row_starts_a_page() {
         (85.0, 100.0)
     );
 }
+
+/// `body > [div(spacer px), wrapper > [div(10px, break-after:avoid), box]]` on
+/// 100px pages, `box` being the box `next` builds in the wrapper. Returns the
+/// page-flow y of the heading and of the box.
+fn heading_in_wrapper_then(
+    spacer: u32,
+    wrapper_css: &str,
+    next: impl FnOnce(&mut Document, usize) -> usize,
+) -> (f32, f32) {
+    let (mut heading, mut next_box) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{spacer}px"));
+        let wrapper = block(doc, body, &format!("display:block;{wrapper_css}"));
+        heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+        next_box = next(doc, wrapper);
+    });
+    (page_flow_y(&doc, heading), page_flow_y(&doc, next_box))
+}
+
+/// The page-flow y of the heading and of the paragraph of `lines` lines that
+/// follows it in the wrapper `wrapper_css` after a spacer of `spacer`px, with
+/// `css` on the paragraph.
+fn heading_and_paragraph_in_wrapper(
+    spacer: u32,
+    wrapper_css: &str,
+    css: &str,
+    lines: usize,
+) -> (f32, f32) {
+    heading_in_wrapper_then(spacer, wrapper_css, |doc, wrapper| {
+        paragraph(doc, wrapper, css, lines)
+    })
+}
+
+#[test]
+fn a_heading_at_the_start_of_a_wrapper_moves_with_the_paragraph_after_it() {
+    // The wrapper holds the heading and the paragraph, as the body does in
+    // `a_heading_stays_with_the_lines_that_orphans_keeps_together`.
+    let nested =
+        |spacer, css: &str, lines| heading_and_paragraph_in_wrapper(spacer, "", css, lines);
+    // Two lines fit after the heading, which ends at 80: it stays.
+    assert_eq!(nested(70, "", 6), (70.0, 80.0));
+    // One line fits, which is too few: the heading and the paragraph move.
+    assert_eq!(nested(80, "", 6), (100.0, 110.0));
+    // Nothing fits after the heading.
+    assert_eq!(nested(85, "", 6), (100.0, 110.0));
+    // With `orphans: 1` one line is enough.
+    assert_eq!(nested(80, "orphans:1;widows:1", 6), (80.0, 90.0));
+    // A paragraph too short to break between its lines moves whole.
+    assert_eq!(nested(80, "", 2), (100.0, 110.0));
+    assert_eq!(nested(70, "", 2), (70.0, 80.0));
+    // The same holds in a wrapper inside a wrapper.
+    let deeper = |spacer| {
+        let (mut heading, mut paragraph_id) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let outer = block(doc, body, "display:block");
+            let inner = block(doc, outer, "display:block");
+            heading = block(doc, inner, "display:block;height:10px;break-after:avoid");
+            paragraph_id = paragraph(doc, inner, "", 6);
+        });
+        (page_flow_y(&doc, heading), page_flow_y(&doc, paragraph_id))
+    };
+    assert_eq!(deeper(85), (100.0, 110.0));
+    assert_eq!(deeper(70), (70.0, 80.0));
+}
+
+#[test]
+fn the_edges_of_a_wrapper_move_with_the_heading_at_its_start() {
+    // The wrapper's padding and border are above the heading. The page breaks
+    // before the wrapper, as there is no break between them and the heading.
+    let (mut wrapper, mut heading) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:70px");
+        wrapper = block(
+            doc,
+            body,
+            "display:block;padding-top:5px;border-top:2px solid black",
+        );
+        heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+        paragraph(doc, wrapper, "", 6);
+    });
+    // The heading would end at 87 and no line fits after it.
+    assert_eq!(page_flow_y(&doc, wrapper), 100.0);
+    assert_eq!(page_flow_y(&doc, heading), 107.0);
+}
+
+#[test]
+fn a_heading_in_the_middle_of_a_wrapper_moves_with_the_paragraph_after_it() {
+    let after_a_box = |spacer, lines| {
+        let (mut before, mut heading, mut paragraph_id) = (0, 0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let wrapper = block(doc, body, "display:block");
+            before = block(doc, wrapper, "display:block;height:10px");
+            heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            paragraph_id = paragraph(doc, wrapper, "", lines);
+        });
+        [before, heading, paragraph_id].map(|id| page_flow_y(&doc, id))
+    };
+    // The box before the heading stays: the page breaks between the two.
+    assert_eq!(after_a_box(60, 6), [60.0, 70.0, 80.0]);
+    assert_eq!(after_a_box(70, 6), [70.0, 100.0, 110.0]);
+    assert_eq!(after_a_box(80, 6), [80.0, 100.0, 110.0]);
+    // Two lines fit after the heading, which ends at 80, so nothing moves.
+    assert_eq!(after_a_box(60, 3), [60.0, 70.0, 80.0]);
+}
+
+#[test]
+fn the_headings_before_a_paragraph_move_with_it_wherever_they_are() {
+    let chain = |spacer| {
+        let mut ids = [0; 3];
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let wrapper = block(doc, body, "display:block");
+            ids[0] = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            ids[1] = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            ids[2] = paragraph(doc, wrapper, "", 6);
+        });
+        ids.map(|id| page_flow_y(&doc, id))
+    };
+    assert_eq!(chain(60), [60.0, 70.0, 80.0]);
+    assert_eq!(chain(70), [100.0, 110.0, 120.0]);
+    // A break before the paragraph does the same as a break after the
+    // heading.
+    let break_before = |spacer| {
+        heading_in_wrapper_then(spacer, "", |doc, wrapper| {
+            paragraph(doc, wrapper, "break-before:avoid", 6)
+        })
+    };
+    // The heading in this helper avoids a break after it as well, so use a
+    // plain box before the paragraph here.
+    let plain_heading = |spacer| {
+        let (mut heading, mut paragraph_id) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let wrapper = block(doc, body, "display:block");
+            heading = block(doc, wrapper, "display:block;height:10px");
+            paragraph_id = paragraph(doc, wrapper, "break-before:avoid", 6);
+        });
+        (page_flow_y(&doc, heading), page_flow_y(&doc, paragraph_id))
+    };
+    assert_eq!(break_before(85), (100.0, 110.0));
+    assert_eq!(plain_heading(85), (100.0, 110.0));
+    assert_eq!(plain_heading(70), (70.0, 80.0));
+}
+
+#[test]
+fn a_box_before_a_wrapper_that_starts_with_a_tied_heading_moves_with_them() {
+    // `B` avoids a break after it, the wrapper starts with a heading that does
+    // too, and no line of the paragraph fits after the heading.
+    let ids = |spacer, in_block| {
+        let mut ids = [0; 3];
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let parent = if in_block {
+                block(doc, body, "display:block")
+            } else {
+                body
+            };
+            ids[0] = block(doc, parent, "display:block;height:10px;break-after:avoid");
+            let wrapper = block(doc, parent, "display:block");
+            ids[1] = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            ids[2] = paragraph(doc, wrapper, "", 6);
+        });
+        ids.map(|id| page_flow_y(&doc, id))
+    };
+    for in_block in [false, true] {
+        assert_eq!(ids(70, in_block), [100.0, 110.0, 120.0], "{in_block}");
+        assert_eq!(ids(60, in_block), [60.0, 70.0, 80.0], "{in_block}");
+    }
+}
+
+#[test]
+fn a_float_between_the_heading_and_the_paragraph_does_not_untie_them() {
+    // A float lies in a flow of its own: the heading still moves with the
+    // paragraph.
+    let (mut heading, mut paragraph_id) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:85px");
+        let wrapper = block(doc, body, "display:block");
+        heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+        block(doc, wrapper, "float:right;width:10px;height:10px");
+        paragraph_id = paragraph(doc, wrapper, "", 6);
+    });
+    assert_eq!(page_flow_y(&doc, heading), 100.0);
+    assert_eq!(page_flow_y(&doc, paragraph_id), 110.0);
+    // A forced break before the paragraph wins over the avoided one.
+    assert_eq!(
+        heading_and_paragraph_in_wrapper(85, "", "break-before:page", 6),
+        (85.0, 100.0)
+    );
+}
+
+#[test]
+fn a_wrapper_after_a_paragraph_moves_for_the_heading_at_its_start() {
+    // The lines before the wrapper are a place to break from: the page breaks
+    // between the two, whether the wrapper is in the body or in a block of its
+    // own.
+    let positions = |spacer, in_block| {
+        let (mut heading, mut paragraph_id) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let parent = if in_block {
+                block(doc, body, "display:block")
+            } else {
+                body
+            };
+            paragraph(doc, parent, "", 1);
+            let wrapper = block(doc, parent, "display:block");
+            heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            paragraph_id = paragraph(doc, wrapper, "", 6);
+        });
+        [heading, paragraph_id].map(|id| page_flow_y(&doc, id))
+    };
+    for in_block in [false, true] {
+        // One line fits after the heading: it moves with the paragraph.
+        assert_eq!(positions(70, in_block), [100.0, 110.0], "{in_block}");
+        // Two lines fit.
+        assert_eq!(positions(60, in_block), [70.0, 80.0], "{in_block}");
+    }
+}
+
+#[test]
+fn a_heading_in_a_wrapper_with_closing_edges_moves_once() {
+    // The wrapper ends its parent with padding and border below the
+    // paragraph, which keep the heading and the paragraph together as well.
+    let positions = |spacer, lines| {
+        let (mut heading, mut paragraph_id) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let parent = block(doc, body, "display:block");
+            let wrapper = block(
+                doc,
+                parent,
+                "display:block;padding-bottom:10px;border-bottom:2px solid black",
+            );
+            heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+            paragraph_id = paragraph(doc, wrapper, "", lines);
+        });
+        [heading, paragraph_id].map(|id| page_flow_y(&doc, id))
+    };
+    // Two lines fit after the heading: nothing moves.
+    assert_eq!(positions(65, 5), [65.0, 75.0]);
+    assert_eq!(positions(65, 6), [65.0, 75.0]);
+    // One line fits: the heading moves with the paragraph.
+    assert_eq!(positions(75, 5), [100.0, 110.0]);
+    assert_eq!(positions(75, 6), [100.0, 110.0]);
+}
+
+#[test]
+fn a_document_that_names_pages_ties_a_heading_to_the_first_box_of_a_wrapper_only() {
+    // The wrapper holds a one-line paragraph that avoids a break after it, then
+    // a long paragraph. Without named pages the heading moves with the first
+    // lines of the long paragraph too; named pages break the flow between
+    // boxes of their own, so the heading is tied to the first paragraph alone.
+    let positions = |names_pages| {
+        let (mut heading, mut first) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, "display:block;height:75px");
+            heading = block(doc, body, "display:block;height:10px;break-after:avoid");
+            let wrapper = block(doc, body, "display:block");
+            first = paragraph(doc, wrapper, "break-after:avoid", 1);
+            paragraph(doc, wrapper, "", 6);
+            if names_pages {
+                block(doc, body, "display:block;height:10px;page:chapter");
+            }
+        });
+        [heading, first].map(|id| page_flow_y(&doc, id))
+    };
+    assert_eq!(positions(false), [100.0, 110.0]);
+    assert_eq!(positions(true), [75.0, 85.0]);
+}
+
+#[test]
+fn a_wrapper_that_starts_a_run_and_holds_one_moves_with_the_longer_of_the_two() {
+    // The wrapper avoids a break after it, so it and the box after it move
+    // together; it also starts with a heading tied to its paragraph. The run
+    // of the wrapper and the box is the longer: it crosses the page edge where
+    // the heading and the first lines of the paragraph do not.
+    let (mut wrapper, mut heading, mut after) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        let outer = block(doc, body, "display:block");
+        block(doc, outer, "display:block;height:10px");
+        wrapper = block(doc, outer, "display:block;break-after:avoid");
+        heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+        paragraph(doc, wrapper, "", 6);
+        after = block(doc, outer, "display:block;height:10px");
+    });
+    assert_eq!(
+        [wrapper, heading, after].map(|id| page_flow_y(&doc, id)),
+        [100.0, 100.0, 170.0]
+    );
+}
+
+#[test]
+fn a_heading_in_a_wrapper_that_is_not_a_plain_block_is_left_as_before() {
+    // The items of a row flex container sit side by side: no heading there
+    // ties to the box after it.
+    let (mut heading, mut paragraph_id) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:85px");
+        let wrapper = block(doc, body, "display:flex");
+        heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+        paragraph_id = paragraph(doc, wrapper, "", 6);
+    });
+    assert_eq!(page_flow_y(&doc, heading), 85.0);
+    let _ = paragraph_id;
+}
