@@ -2374,12 +2374,34 @@ fn build_page_fragments(
             .cmp(&right.page_index)
             .then_with(|| left.content_origin_y.total_cmp(&right.content_origin_y))
     });
+    // Stable sorting retains the first input geometry for duplicate indices.
+    // Both streams then advance only forward, including for sparse indices.
+    let mut ordered_geometries: Vec<_> = page_geometries.iter().collect();
+    ordered_geometries.sort_by(|left, right| {
+        #[cfg(test)]
+        tests::GEOMETRY_COMPARISONS.with(|count| count.set(count.get() + 1));
+        left.page_index.cmp(&right.page_index)
+    });
+    let mut remaining_geometries = ordered_geometries.as_slice();
     let mut pages: Vec<PageFragment> = ordered_slices
         .iter()
         .map(|slice| {
-            let geometry = page_geometries
-                .iter()
-                .find(|geometry| geometry.page_index == slice.page_index)
+            while let Some(geometry) = remaining_geometries.first() {
+                #[cfg(test)]
+                tests::GEOMETRY_COMPARISONS.with(|count| count.set(count.get() + 1));
+                if geometry.page_index >= slice.page_index {
+                    break;
+                }
+                remaining_geometries = &remaining_geometries[1..];
+            }
+            let geometry = remaining_geometries
+                .first()
+                .filter(|geometry| {
+                    #[cfg(test)]
+                    tests::GEOMETRY_COMPARISONS.with(|count| count.set(count.get() + 1));
+                    geometry.page_index == slice.page_index
+                })
+                .copied()
                 .copied()
                 .unwrap_or_else(|| fallback_geometry.with_page_index(slice.page_index));
             PageFragment::with_page_geometry(

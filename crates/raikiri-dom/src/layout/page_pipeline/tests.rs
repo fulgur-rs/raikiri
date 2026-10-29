@@ -3,6 +3,10 @@ use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use crate::layout::test_support::{bridged_display, bridged_style, with_pass_view};
 use raikiri_layout_style::values::Clear;
 
+thread_local! {
+    pub(super) static GEOMETRY_COMPARISONS: Cell<usize> = const { Cell::new(0) };
+}
+
 mod ancestor_walk_tests;
 mod avoid_followup_tests;
 mod avoided_run_tests;
@@ -11,6 +15,7 @@ mod candidate_text_tests;
 mod closing_edge_tests;
 mod column_projection_tests;
 mod fragment_sources_tests;
+mod geometry_lookup_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
 mod options_tests;
