@@ -844,6 +844,43 @@ fn a_wrapper_that_starts_a_run_and_holds_one_moves_with_the_longer_of_the_two() 
 }
 
 #[test]
+fn a_wrapper_that_clips_its_content_does_not_move_for_the_run_it_hides() {
+    // The paragraph after the heading lies past the clip of the wrapper: it is
+    // not drawn, so it cannot take the heading to the next page. The wrapper
+    // sits in the body or in a block of its own.
+    for in_block in [false, true] {
+        let positions = |wrapper_css: &str| {
+            let (mut wrapper, mut heading) = (0, 0);
+            let (doc, _) = paged_body_with_ifc(|doc, body| {
+                block(doc, body, "display:block;height:85px");
+                let parent = if in_block {
+                    block(doc, body, "display:block")
+                } else {
+                    body
+                };
+                wrapper = block(doc, parent, &format!("display:block;{wrapper_css}"));
+                heading = block(doc, wrapper, "display:block;height:10px;break-after:avoid");
+                paragraph(doc, wrapper, "", 6);
+            });
+            [wrapper, heading].map(|id| page_flow_y(&doc, id))
+        };
+        assert_eq!(
+            positions("height:10px;overflow:hidden"),
+            [85.0, 85.0],
+            "{in_block}"
+        );
+        // A clip below the end of the run leaves it whole: it moves.
+        assert_eq!(
+            positions("height:80px;overflow:hidden"),
+            [100.0, 100.0],
+            "{in_block}"
+        );
+        // Without a clip the paragraph is drawn past the wrapper.
+        assert_eq!(positions("height:80px"), [100.0, 100.0], "{in_block}");
+    }
+}
+
+#[test]
 fn a_heading_in_a_wrapper_that_is_not_a_plain_block_is_left_as_before() {
     // The items of a row flex container sit side by side: no heading there
     // ties to the box after it.

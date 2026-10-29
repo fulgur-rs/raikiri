@@ -4201,20 +4201,26 @@ fn avoided_run_head(
     // Whether `current` was reached across an avoided break, which then
     // belongs to the run that holds the part, not to the box.
     let mut joined = false;
+    // What a clipped block holds is not drawn past its edge, so the part held
+    // does not reach beyond it.
+    let mut clip_end = f32::INFINITY;
     loop {
+        if element_clips_overflow(document, cascade, current) {
+            clip_end = clip_end.min(offset + clip_block_end(document, cascade, current, 0.0));
+        }
         match held_step(
             document, cascade, body_id, node_id, current, joined, join_ties,
         ) {
             HeldStep::Whole if tied => {
                 return HeldPart {
-                    end: Some(offset + document.nodes[current].layout.size.height),
+                    end: Some((offset + document.nodes[current].layout.size.height).min(clip_end)),
                     tied,
                 };
             }
             HeldStep::Whole => return HeldPart { end: None, tied },
             HeldStep::End(end) => {
                 return HeldPart {
-                    end: Some(offset + end),
+                    end: Some((offset + end).min(clip_end)),
                     tied,
                 };
             }
