@@ -6355,8 +6355,9 @@ fn moves_whole_at_best(
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
+    has_named_pages: bool,
 ) -> bool {
-    breaks_only_around(document, cascade, node_id)
+    breaks_only_around(document, cascade, node_id, has_named_pages)
         || lone_box_tail(document, cascade, body_id, node_id).is_some()
 }
 
@@ -6377,8 +6378,9 @@ enum AvoidChain {
 /// The avoided breaks that tie the last box of a block to the boxes before it.
 /// `children` and `flow_flags` are the children of the block and, for each, its
 /// last box in the flow and whether it floats, and `last` is the index of the
-/// last child that has a box in the flow. `names_page` tells whether a box or
-/// anything in it has a named page. `None` when no break before the last box is
+/// last child that has a box in the flow. `names_page` is `None` when the
+/// document names no page, and otherwise tells whether a box or anything in it
+/// has a named page. The result is `None` when no break before the last box is
 /// avoided, or the boxes around it are not plain blocks in the flow, or a named
 /// page may start between the boxes the avoided breaks tie: that boundary is
 /// mandatory, so the boxes do not move together.
@@ -6395,8 +6397,9 @@ fn avoid_chain_before_last_box(
     children: &[usize],
     flow_flags: &[(Option<usize>, bool)],
     last: usize,
-    mut names_page: impl FnMut(usize) -> bool,
+    mut names_page: Option<impl FnMut(usize) -> bool>,
 ) -> Option<AvoidChain> {
+    let has_named_pages = names_page.is_some();
     // A block box in the flow that takes block space. Anything else between
     // the boxes, such as a float or text, is left to the rules for it.
     let is_box = |index: usize| {
@@ -6433,7 +6436,12 @@ fn avoid_chain_before_last_box(
         // A named page on either side may start a new page between the
         // boxes, avoided break or not. Telling that from one name on both
         // sides is not tried: such boxes keep the placement they had before.
-        if names_page(children[before]) || names_page(children[first]) {
+        let mut names = |index: usize| {
+            names_page
+                .as_mut()
+                .is_some_and(|names_page| names_page(children[index]))
+        };
+        if names(before) || names(first) {
             return None;
         }
         first = before;
@@ -6443,7 +6451,9 @@ fn avoid_chain_before_last_box(
     (first != last
         && (first..=last)
             .filter(|&index| flow_flags[index] != (None, false))
-            .all(|index| moves_whole_at_best(document, cascade, body_id, children[index])))
+            .all(|index| {
+                moves_whole_at_best(document, cascade, body_id, children[index], has_named_pages)
+            }))
     .then_some(if starts_block {
         AvoidChain::Start
     } else {
@@ -6570,6 +6580,7 @@ fn breaks_only_around(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     node_id: usize,
+    has_named_pages: bool,
 ) -> bool {
     let mut current = node_id;
     loop {
@@ -6620,14 +6631,14 @@ fn breaks_only_around(
             // break between them and its edges is no better than the one
             // before the block. Named pages may start a page between boxes
             // whatever ties them.
-            [_, _, ..] if !super::page::has_named_pages(cascade) => {
+            [_, _, ..] if !has_named_pages => {
                 return boxes
                     .windows(2)
                     .all(|pair| boxes_are_tied(document, cascade, pair[0], pair[1]))
                     && boxes.iter().all(|&id| {
                         is_plain_block_box(document, id)
                             && !takes_no_block_space(document, id)
-                            && breaks_only_around(document, cascade, id)
+                            && breaks_only_around(document, cascade, id, has_named_pages)
                     });
             }
             _ => return false,
