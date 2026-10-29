@@ -6151,9 +6151,10 @@ fn avoided_box_moves(
 /// do not, a break between the two would leave the edges alone at the top of
 /// the next page. A break between boxes (a class A break point) is preferred
 /// to that one (class C, CSS Break 3 §4.1), as browsers do, so the last box
-/// moves along with the edges. The next page must hold the box with the
-/// edges, or moving it gains nothing; and a box that its page starts with
-/// would break from the edges on any page.
+/// moves along with the edges, even when the next page cannot hold the box
+/// with all of them: the edges run on past its end as they would anywhere.
+/// The next page must hold the box itself, or moving it gains nothing; and a
+/// box that its page starts with would break from the edges on any page.
 ///
 /// A block that holds one box has the edges at its own end: its last
 /// `closing_edges_inside` of block size follow that box, and the page breaks
@@ -6179,7 +6180,7 @@ fn closing_edges_move(candidate: &PageCandidate, fit: &BoxFit) -> bool {
     let box_end = flow_y + candidate.height + span;
     edges + inside > 0.0
         && box_end - inside <= page_end + 0.001
-        && candidate.height + span + edges <= next_page_step + 0.001
+        && candidate.height + span - inside <= next_page_step + 0.001
         && avoided_box_moves(flow_y, margin_top, box_end + edges, page_start, page_end)
 }
 
@@ -6504,10 +6505,11 @@ fn nested_run_units(
 /// edges (class C) is not taken while one between lines (class B) honors
 /// `orphans` and `widows`, as in [`closing_edges_move`]. A paragraph with no
 /// more lines than `orphans` keeps the orphans it can, down to one line, and
-/// its last line moves. `line_metrics` is as for
-/// [`widows_break_on_next_page`]. `None` when the lines or the edges do not
-/// run past the page end the way that needs, there is only one line, or the
-/// next page cannot hold the lines with the edges.
+/// its last line moves. The edges run on past the end of the next page as
+/// they would anywhere; that page only has to hold the lines. `line_metrics`
+/// is as for [`widows_break_on_next_page`]. `None` when the lines or the edges
+/// do not run past the page end the way that needs, there is only one line,
+/// or the next page cannot hold the lines.
 fn closing_edges_line_move(
     line_metrics: &[(f32, f32)],
     edges: f32,
@@ -6528,10 +6530,14 @@ fn closing_edges_line_move(
     if !fits_lines || last_bottom + edges <= page_end + 0.001 {
         return None;
     }
-    let mut with_edges = line_metrics.to_vec();
-    with_edges.last_mut()?.1 += edges;
     let widows = usable_widows(line_metrics.len(), orphans, widows);
-    widows_break_on_next_page(&with_edges, effective_y, current_page, widows, page_origins)
+    widows_break_on_next_page(
+        line_metrics,
+        effective_y,
+        current_page,
+        widows,
+        page_origins,
+    )
 }
 
 /// Whether the page cannot break inside the block `node_id` at a better place
