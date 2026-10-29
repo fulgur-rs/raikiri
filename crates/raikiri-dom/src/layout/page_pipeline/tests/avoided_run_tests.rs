@@ -347,7 +347,12 @@ fn collapsed_table(doc: &mut Document, parent: usize, css: &str) -> usize {
 /// A row of `parent` with one cell, one 30px Ahem word tall, styled with
 /// `cell_css`. Returns the cell.
 fn row_with_cell(doc: &mut Document, parent: usize, cell_css: &str) -> usize {
-    let tr = block(doc, parent, "display:table-row");
+    row_with_cell_in(doc, parent, "", cell_css)
+}
+
+/// [`row_with_cell`] with `row_css` on the row.
+fn row_with_cell_in(doc: &mut Document, parent: usize, row_css: &str, cell_css: &str) -> usize {
+    let tr = block(doc, parent, &format!("display:table-row;{row_css}"));
     let td = block(
         doc,
         tr,
@@ -520,5 +525,26 @@ fn a_heading_stays_before_a_table_that_does_not_start_with_its_first_row() {
             first
         }),
         (85.0, 110.0)
+    );
+}
+
+#[test]
+fn a_heading_stays_before_a_table_whose_first_row_starts_a_page() {
+    // The forced break sends the row to the next page whatever the heading
+    // does, so the heading has nothing to move with.
+    assert_eq!(
+        heading_then(85, |doc, body| {
+            let table = collapsed_table(doc, body, "");
+            row_with_cell_in(doc, table, "break-before:page", "")
+        }),
+        (85.0, 100.0)
+    );
+    assert_eq!(
+        heading_then(85, |doc, body| {
+            let table = collapsed_table(doc, body, "");
+            let group = block(doc, table, "display:table-row-group;break-before:page");
+            row_with_cell(doc, group, "")
+        }),
+        (85.0, 100.0)
     );
 }

@@ -3898,10 +3898,11 @@ fn first_row_ends(
     }
     first_rows
         .into_iter()
-        .filter(|&(table, (_, end))| {
+        .filter(|&(table, (row, end))| {
             end.is_finite()
                 && is_plain_table_box(document, table)
                 && rows_start_the_grid(document, cascade, table)
+                && !forced_break_before_first_row(document, cascade, table, row)
                 && !document.nodes[table]
                     .children
                     .iter()
@@ -3914,6 +3915,25 @@ fn first_row_ends(
             (table, end.max(group_end))
         })
         .collect()
+}
+
+/// Whether a forced page break comes before `row`, the first row of `table`:
+/// its own `break-before`, or that of the row group around it. The page edge
+/// constraint of the table does not look inside it, so the box before the
+/// table would be tied to a row that starts a page of its own.
+fn forced_break_before_first_row(
+    document: &Document,
+    cascade: &CascadeResult,
+    table: usize,
+    row: usize,
+) -> bool {
+    [
+        Some(row),
+        document.parent_of(row).filter(|&group| group != table),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|id| page_break_is_forced(document, id, cascade.computed[id].break_before))
 }
 
 /// Whether `node_id` is a block-level table that stacks in the normal flow of
