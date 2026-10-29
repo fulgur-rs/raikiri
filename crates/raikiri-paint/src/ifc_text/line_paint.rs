@@ -18,7 +18,26 @@ use raikiri_dom::{
 use raikiri_style::CascadeResult;
 use shodo::geometry::WritingMode;
 use shodo::hit::LineLayout;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+#[cfg(test)]
+mod tests;
+
+fn first_content_image_pieces<const COUNT: bool>(
+    pieces: &[InlineBoxPiece],
+) -> HashMap<usize, usize> {
+    let mut first = HashMap::with_capacity(pieces.len());
+    for (index, piece) in pieces.iter().enumerate() {
+        #[cfg(any(test, feature = "generated-image-diagnostics"))]
+        if COUNT {
+            crate::generated_image_diagnostics::index_visit();
+        }
+        // A later piece can have a different source owner and group. Keep
+        // the first match even when its group is absent.
+        first.entry(piece.node).or_insert(index);
+    }
+    first
+}
 
 /// A box laid out beside the lines, as one piece on its line and as the joined
 /// box it is sliced from.
@@ -457,6 +476,11 @@ impl<'a> LinePaint<'a, '_> {
         line_index: usize,
         position: IfcPosition,
     ) {
+        if images.is_empty() {
+            return;
+        }
+        let line_pieces = &self.pieces.pieces[line_index];
+        let first_pieces = first_content_image_pieces::<COUNT>(line_pieces);
         let Paragraph {
             document, root_id, ..
         } = self.paragraph;
@@ -474,16 +498,9 @@ impl<'a> LinePaint<'a, '_> {
             }
             let pseudo_node =
                 raikiri_dom::generated_content::generated_node_id(image.owner, image.pseudo);
-            let group = self.pieces.pieces[line_index]
-                .iter()
-                .find(|piece| {
-                    #[cfg(any(test, feature = "generated-image-diagnostics"))]
-                    if COUNT {
-                        crate::generated_image_diagnostics::predicate_visit();
-                    }
-                    piece.node == pseudo_node
-                })
-                .and_then(|piece| paint.piece_group(piece));
+            let group = first_pieces
+                .get(&pseudo_node)
+                .and_then(|&index| paint.piece_group(&line_pieces[index]));
             let (dx, dy) = cumulative_offset(document, root_id, self.offsets, pseudo_node);
             let rect = image.rect;
             let (left, top) = (

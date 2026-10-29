@@ -31,9 +31,9 @@ pub(crate) fn enabled() -> bool {
     ACTIVE.get().is_some()
 }
 
-pub(crate) fn predicate_visit() {
+pub(crate) fn index_visit() {
     if let Some(mut work) = ACTIVE.get() {
-        work.predicate_visits += 1;
+        work.index_visits += 1;
         ACTIVE.set(Some(work));
     }
 }
