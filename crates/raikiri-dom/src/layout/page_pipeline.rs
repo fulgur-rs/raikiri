@@ -6597,19 +6597,51 @@ fn is_plain_container_box(document: &Document, node_id: usize) -> bool {
         && !node.used_writing_mode.is_vertical()
 }
 
+/// Whether a box below `node_id` forces a page break or starts a named page, so
+/// that the page breaks inside `node_id` where that box asks it to.
+fn has_mandatory_break_inside(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let mut pending = document.nodes[node_id].children.clone();
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        // Text and elements that generate no box break nothing.
+        if node.kind() != NodeKind::Element
+            || !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || node.display() == DisplayValue::None
+        {
+            continue;
+        }
+        let computed = &cascade.computed[id];
+        if page_break_is_forced(document, id, computed.break_before)
+            || page_break_is_forced(document, id, computed.break_after)
+            || selected_page_name(cascade, id).is_some()
+        {
+            return true;
+        }
+        pending.extend_from_slice(&node.children);
+    }
+    false
+}
+
 /// Whether the flex container, grid or table `node_id` moves whole to the next
 /// page when the closing edges of the blocks around it do not fit after it, as
 /// browsers do: the break before it is the one that keeps those edges from
 /// being left alone, and the page does not break between its items instead.
 ///
 /// That is so of a grid, of a flex container that lays its items out in one
-/// line, and of a table of a single row, whatever their items hold. A flex
-/// container that stacks its items, a column of more than one or rows that
-/// wrap, and a table with a caption, a header or footer group or more than one
-/// row, break between them and are left to the rules for those. A column of one
-/// item stacks it in block flow, so that item has to be as unbreakable as a
-/// block (see [`breaks_only_around`]). A grid whose rows end exactly at the
-/// page end breaks before its last row instead, which is not done.
+/// line, and of a table of a single row, whatever their items hold, unless a
+/// box inside forces a page break or starts a named page: the page breaks there
+/// whichever page the container starts. A flex container that stacks its items,
+/// a column of more than one or rows that wrap, and a table with a caption, a
+/// header or footer group or more than one row, break between them and are left
+/// to the rules for those. A column of one item stacks it in block flow, so that
+/// item has to be as unbreakable as a block (see [`breaks_only_around`]). A grid
+/// whose rows end exactly at the page end breaks before its last row instead,
+/// which is not done.
 fn container_moves_whole(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6623,6 +6655,7 @@ fn container_moves_whole(
         || node.multicol.is_some()
         || node.has_before_or_after_content
         || is_floating_box_for_pagination(document, cascade, node_id)
+        || has_mandatory_break_inside(document, cascade, node_id)
     {
         return false;
     }

@@ -1898,7 +1898,7 @@ fn a_last_box_that_holds_one_row_of_boxes_moves_with_the_edges() {
     // the page cannot break inside, so they move whole as a block does:
     // Chromium sends them to the next page with the padding.
     type Shape = fn(&mut Document, usize) -> Vec<usize>;
-    let shapes: [(&str, Shape); 13] = [
+    let shapes: [(&str, Shape); 14] = [
         ("grid", |doc, card| {
             vec![block(doc, card, "display:grid;height:20px")]
         }),
@@ -1965,6 +1965,12 @@ fn a_last_box_that_holds_one_row_of_boxes_moves_with_the_edges() {
             let wrapper = block(doc, card, "display:block");
             block(doc, wrapper, "float:left;width:10px;height:5px");
             vec![wrapper, block(doc, wrapper, "display:grid;height:20px")]
+        }),
+        // A box that is not rendered forces no break.
+        ("grid with a hidden box that has a break", |doc, card| {
+            let grid = block(doc, card, "display:grid;height:20px");
+            block(doc, grid, "display:none;break-before:page");
+            vec![grid]
         }),
     ];
     for (label, build) in shapes {
@@ -2040,5 +2046,80 @@ fn a_last_box_with_more_than_one_row_or_a_break_to_take_inside_stays() {
         let (ys, height) = card_ending_with(build);
         assert_eq!(ys, vec![70.0], "{label}");
         assert!(height < 150.0, "{label}: {height}");
+    }
+}
+
+#[test]
+fn a_last_box_with_a_forced_break_or_a_page_name_inside_keeps_its_place() {
+    // The page breaks inside the container where the break or the page name
+    // asks it to, so the container starts where it is and its last part opens
+    // the next page, with the padding below it. Moving the container whole
+    // would only add a page.
+    type Shape = fn(&mut Document, usize) -> Vec<usize>;
+    let shapes: [(&str, Shape); 7] = [
+        ("grid rows with a break before the second", |doc, card| {
+            let grid = block(doc, card, "display:grid;grid-template-columns:50px");
+            vec![
+                grid,
+                block(doc, grid, "display:block;height:10px"),
+                block(doc, grid, "display:block;height:10px;break-before:page"),
+            ]
+        }),
+        ("grid rows with a break after the first", |doc, card| {
+            let grid = block(doc, card, "display:grid;grid-template-columns:50px");
+            vec![
+                grid,
+                block(doc, grid, "display:block;height:10px;break-after:page"),
+                block(doc, grid, "display:block;height:10px"),
+            ]
+        }),
+        ("grid rows with another page name", |doc, card| {
+            let grid = block(doc, card, "display:grid;grid-template-columns:50px");
+            vec![
+                grid,
+                block(doc, grid, "display:block;height:10px"),
+                block(doc, grid, "display:block;height:10px;page:foo"),
+            ]
+        }),
+        ("grid item with a break between its boxes", |doc, card| {
+            let grid = block(doc, card, "display:grid");
+            let item = block(doc, grid, "display:block");
+            vec![
+                grid,
+                block(doc, item, "display:block;height:10px"),
+                block(doc, item, "display:block;height:10px;break-before:page"),
+            ]
+        }),
+        ("flex item with a break between its boxes", |doc, card| {
+            let line = block(doc, card, "display:flex");
+            let item = block(doc, line, "display:block;width:40px");
+            vec![
+                line,
+                block(doc, item, "display:block;height:10px"),
+                block(doc, item, "display:block;height:10px;break-before:always"),
+            ]
+        }),
+        ("table cell with a break between its boxes", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 1, 10);
+            let cell = ids[2];
+            vec![
+                ids[0],
+                block(doc, cell, "display:block;height:10px"),
+                block(doc, cell, "display:block;height:10px;break-before:page"),
+            ]
+        }),
+        ("flex column item holding a break", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            let item = block(doc, column, "display:block");
+            vec![
+                column,
+                block(doc, item, "display:block;height:10px"),
+                block(doc, item, "display:block;height:10px;break-after:page"),
+            ]
+        }),
+    ];
+    for (label, build) in shapes {
+        let (ys, _) = card_ending_with(build);
+        assert_eq!(&ys[..2], &[70.0, 70.0], "{label}: {ys:?}");
     }
 }
