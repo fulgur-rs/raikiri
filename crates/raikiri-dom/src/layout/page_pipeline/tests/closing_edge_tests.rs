@@ -1399,3 +1399,233 @@ fn a_last_box_that_holds_a_box_with_generated_boxes_keeps_its_place() {
     assert_eq!(ys(false), [100.0, 125.0, 175.0]);
     assert!(ys(true)[0] < 100.0);
 }
+
+/// `body > [div(prefix px), div(padding-bottom:40px) > [wrapper >] paragraph,
+/// div(10px)]` where the paragraph is `lines` lines of 10px Ahem text, 30px
+/// wide, and the pages are 100px. The wrapper has 10px of padding below it.
+/// Returns the page-flow y of the paragraph, the height of the div and the
+/// page-flow y of the block after it.
+fn card_of_a_paragraph(
+    prefix: u32,
+    lines: usize,
+    paragraph_css: &str,
+    wrapped: bool,
+) -> (f32, f32, f32) {
+    let (mut card, mut paragraph, mut after) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, &format!("display:block;height:{prefix}px"));
+        card = block(doc, body, "display:block;padding-bottom:40px");
+        let parent = if wrapped {
+            block(doc, card, "display:block;padding-bottom:10px")
+        } else {
+            card
+        };
+        paragraph = block(
+            doc,
+            parent,
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
+        );
+        doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert!(doc.nodes[paragraph].is_ifc_root());
+    (
+        page_flow_y(&doc, paragraph),
+        doc.nodes[card].layout.size.height,
+        page_flow_y(&doc, after),
+    )
+}
+
+#[test]
+fn a_card_of_two_lines_sends_its_last_line_with_the_edges() {
+    // The lines end at 70 and the 40px of padding below them do not fit. The
+    // paragraph is the only box in the card, so no break before it is better
+    // than the one between its lines, whatever the orphans and widows say:
+    // the first line stays and the second goes to the next page with the
+    // padding, as Chromium prints it.
+    for css in [
+        "",
+        "orphans:1",
+        "widows:1",
+        "orphans:1;widows:1",
+        "orphans:3;widows:3",
+    ] {
+        assert_eq!(
+            card_of_a_paragraph(50, 2, css, false),
+            (50.0, 100.0, 150.0),
+            "{css}"
+        );
+    }
+    // The edges of a wrapper around the paragraph move with it.
+    assert_eq!(card_of_a_paragraph(50, 2, "", true), (50.0, 110.0, 160.0));
+}
+
+#[test]
+fn a_card_of_a_few_lines_sends_the_lines_that_the_orphans_leave() {
+    // Orphans of three cannot be kept with a last line to move: the first two
+    // lines stay and the last one goes.
+    assert_eq!(
+        card_of_a_paragraph(40, 3, "orphans:3", false),
+        (40.0, 110.0, 150.0)
+    );
+    // Fewer orphans leave room for the widows.
+    assert_eq!(
+        card_of_a_paragraph(40, 3, "orphans:1", false),
+        (40.0, 120.0, 160.0)
+    );
+}
+
+#[test]
+fn a_card_of_two_lines_stays_when_its_edges_fit_or_the_next_page_cannot_hold_them() {
+    // The padding fits below the lines.
+    assert_eq!(card_of_a_paragraph(20, 2, "", false), (20.0, 60.0, 80.0));
+    // Two lines and 95px of padding make more than a page: the next page
+    // cannot hold the last line with the padding, so nothing moves.
+    let (mut card, mut after) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        card = block(doc, body, "display:block;padding-bottom:95px");
+        let paragraph = block(
+            doc,
+            card,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "aaa aaa");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(doc.nodes[card].layout.size.height, 115.0);
+    assert_eq!(page_flow_y(&doc, after), 165.0);
+}
+
+#[test]
+fn a_card_of_two_lines_after_a_box_in_the_card_moves_whole() {
+    // With a box before the paragraph in the card, a break between the two is
+    // a better one: the paragraph moves whole, and orphans of two keep it so.
+    assert_eq!(closed_paragraph(2, ""), (100.0, 160.0));
+    // When the next page cannot hold the paragraph with the edges, it stays:
+    // there is no better break to take, and the lines are not split for it.
+    assert_eq!(closed_paragraph_with(2, 90, ""), (50.0, 160.0));
+}
+
+/// `body > [div(20px), outer > [div(30px), wrapper > paragraph], div(10px)]`
+/// where the paragraph is two lines of 10px Ahem text, 30px wide, on 100px
+/// pages. Returns the height of the paragraph, of the wrapper and the
+/// page-flow y of the block after `outer`.
+fn wrapper_after_a_box(outer_css: &str, wrapper_css: &str) -> (f32, f32, f32) {
+    let (mut paragraph, mut wrapper, mut after) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:20px");
+        let outer = block(doc, body, &format!("display:block;{outer_css}"));
+        block(doc, outer, "display:block;height:30px");
+        wrapper = block(doc, outer, &format!("display:block;{wrapper_css}"));
+        paragraph = block(
+            doc,
+            wrapper,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "aaa aaa");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    (
+        doc.nodes[paragraph].layout.size.height,
+        doc.nodes[wrapper].layout.size.height,
+        page_flow_y(&doc, after),
+    )
+}
+
+#[test]
+fn a_paragraph_after_a_box_inside_the_block_that_the_edges_close_is_not_split() {
+    // The wrapper comes after a box in the card whose padding closes it: a
+    // break before the wrapper is left to the rules for it, and the two lines
+    // are not split for orphans that they cannot keep.
+    assert_eq!(
+        wrapper_after_a_box("padding-bottom:40px", "padding-bottom:10px"),
+        (20.0, 30.0, 120.0)
+    );
+}
+
+#[test]
+fn a_paragraph_after_a_box_outside_the_block_that_the_edges_close_is_split() {
+    // The card has no edges of its own; the wrapper's padding closes it, and
+    // no box comes before the paragraph inside the wrapper. The last line goes
+    // to the next page with the padding, whatever comes before the wrapper.
+    assert_eq!(
+        wrapper_after_a_box("", "padding-bottom:40px"),
+        (60.0, 100.0, 150.0)
+    );
+}
+
+/// `body > [div(50px), div(padding-bottom:40px) > [div(lead_css),
+/// paragraph]]` where the paragraph is two lines of 10px Ahem text, 30px wide,
+/// on 100px pages. Returns the height of the paragraph and the page-flow y of
+/// the paragraph.
+fn card_after_a_lead(lead_css: &str) -> (f32, f32) {
+    let mut paragraph = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        let card = block(doc, body, "display:block;padding-bottom:40px");
+        block(doc, card, &format!("display:block;{lead_css}"));
+        paragraph = block(
+            doc,
+            card,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "aaa aaa");
+    });
+    (
+        doc.nodes[paragraph].layout.size.height,
+        page_flow_y(&doc, paragraph),
+    )
+}
+
+#[test]
+fn a_paragraph_after_an_empty_block_in_the_card_is_not_split() {
+    // An empty block before the paragraph is a box to break from, as it is in
+    // Chromium: a break between the two is a better one than a break between
+    // the lines, so the two lines are not split for orphans that they cannot
+    // keep.
+    assert_eq!(card_after_a_lead(""), (20.0, 50.0));
+}
+
+#[test]
+fn a_paragraph_after_an_out_of_flow_box_in_the_card_is_split() {
+    // An absolutely positioned box is no box in the flow of the card: the
+    // paragraph is still the only one in it, and its last line goes to the
+    // next page with the padding.
+    assert_eq!(
+        card_after_a_lead("position:absolute;width:10px;height:10px"),
+        (60.0, 50.0)
+    );
+}
+
+#[test]
+fn a_card_that_avoids_a_break_inside_keeps_its_paragraph_whole() {
+    // The card cannot break inside: it moves to the next page with the
+    // padding rather than sending a line of the paragraph.
+    let (mut card, mut paragraph, mut after) = (0, 0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        card = block(
+            doc,
+            body,
+            "display:block;padding-bottom:40px;break-inside:avoid",
+        );
+        paragraph = block(
+            doc,
+            card,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "aaa aaa");
+        after = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(
+        (
+            doc.nodes[paragraph].layout.size.height,
+            page_flow_y(&doc, card),
+            page_flow_y(&doc, after)
+        ),
+        (20.0, 100.0, 160.0)
+    );
+}
