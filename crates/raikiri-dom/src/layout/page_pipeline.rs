@@ -6347,8 +6347,9 @@ fn is_plain_block_box(document: &Document, node_id: usize) -> bool {
 }
 
 /// Whether the page breaks inside the box `node_id` at no better place than
-/// before it, even with padding or a border around the box it holds: see
-/// [`breaks_only_around`] and [`lone_box_tail`].
+/// before it, even with padding or a border around the box it holds, or
+/// around boxes that avoided breaks tie together: see [`breaks_only_around`]
+/// and [`lone_box_tail`].
 fn moves_whole_at_best(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6562,7 +6563,9 @@ fn closing_edges_line_move(
 /// Whether the page cannot break inside the block `node_id` at a better place
 /// than before it: it has no box in its flow, or it has no more lines than
 /// `orphans`, so that a break cannot fall between them, or it is a block
-/// without padding or border around one box that is as unbreakable.
+/// without padding or border around one box that is as unbreakable, or it
+/// holds boxes that are as unbreakable and that avoided breaks tie to each
+/// other, so that no break between them is left to take.
 fn breaks_only_around(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6591,19 +6594,19 @@ fn breaks_only_around(
             if is_floating_box_for_pagination(document, cascade, child) {
                 return false;
             }
+            let start = boxes.len();
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+            boxes[start..].reverse();
         }
         let layout = &node.layout;
+        let edges =
+            layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
         match boxes[..] {
             [] => return true,
             // Nothing separates the block from its one box, so it breaks as
             // that box does.
             [only]
-                if layout.padding.top
-                    + layout.padding.bottom
-                    + layout.border.top
-                    + layout.border.bottom
-                    == 0.0
+                if edges == 0.0
                     && document.nodes[only].kind() == NodeKind::Element
                     && matches!(
                         document.nodes[only].display(),
@@ -6611,6 +6614,21 @@ fn breaks_only_around(
                     ) =>
             {
                 current = only;
+            }
+            // The boxes are tied from the first to the last, and the block
+            // breaks only where they do, whatever its padding and border: a
+            // break between them and its edges is no better than the one
+            // before the block. Named pages may start a page between boxes
+            // whatever ties them.
+            [_, _, ..] if !super::page::has_named_pages(cascade) => {
+                return boxes
+                    .windows(2)
+                    .all(|pair| boxes_are_tied(document, cascade, pair[0], pair[1]))
+                    && boxes.iter().all(|&id| {
+                        is_plain_block_box(document, id)
+                            && !takes_no_block_space(document, id)
+                            && breaks_only_around(document, cascade, id)
+                    });
             }
             _ => return false,
         }
