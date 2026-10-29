@@ -21,6 +21,14 @@ pub(super) fn record_glyph_work(work: usize) {
     GLYPH_WORK.with(|count| count.set(count.get() + work));
 }
 
+pub(crate) fn reset_glyph_work() {
+    GLYPH_WORK.set(0);
+}
+
+pub(crate) fn glyph_work() -> usize {
+    GLYPH_WORK.get()
+}
+
 #[test]
 fn long_vertical_runs_have_subquadratic_glyph_work() {
     use super::*;
