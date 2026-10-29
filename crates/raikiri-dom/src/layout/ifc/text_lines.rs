@@ -252,9 +252,9 @@ impl Document {
     }
 }
 
-/// Text ownership for one pagination pass, prepared once per paragraph.
-/// Coordinates are read from the current layout when consuming these line
-/// indices, since pagination can move lines after candidate collection.
+/// Ownership prepared once per paragraph for pagination or a final projection.
+/// Pagination rereads coordinates because it can move collected lines;
+/// continuation prepares after those moves and reads the stored final positions.
 #[derive(Debug, Default)]
 pub(crate) struct TextLineIndex {
     roots: HashSet<usize>,
