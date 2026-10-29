@@ -255,13 +255,17 @@ impl Document {
 /// Text ownership for one pagination pass, prepared once per paragraph.
 /// Coordinates are read from the current layout when consuming these line
 /// indices, since pagination can move lines after candidate collection.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct TextLineIndex {
     roots: HashSet<usize>,
     owners: HashMap<usize, IfcTextLines>,
 }
 
 impl TextLineIndex {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.owners.is_empty()
+    }
+
     pub(crate) fn prepare_for(
         &mut self,
         doc: &Document,

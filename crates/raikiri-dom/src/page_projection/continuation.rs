@@ -14,6 +14,27 @@ use raikiri_style::CascadeResult;
 use raikiri_style::property::{BreakBetween, BreakInside, DisplayValue, PageValue, PositionValue};
 use raikiri_traits::{NodeId, NodeKind};
 
+/// Prepare from the final layout, before publishing the page snapshot.
+pub(super) fn prepare_lines(
+    document: &Document,
+    pages: &[super::records::PageFragment],
+    work: &mut crate::layout::ProjectionWork<'_, '_>,
+) -> Result<
+    Option<std::sync::Arc<crate::layout::ifc::text_lines::TextLineIndex>>,
+    raikiri_traits::LayoutError,
+> {
+    let mut lines = crate::layout::ifc::text_lines::TextLineIndex::default();
+    for page in pages {
+        for item in &page.items {
+            work.check()?;
+            if item.kind == PageFragmentKind::Text {
+                lines.prepare_for(document, item.node_id.0 as usize, || work.check())?;
+            }
+        }
+    }
+    Ok((!lines.is_empty()).then(|| std::sync::Arc::new(lines)))
+}
+
 /// A box that crosses the start of a page: it began on an earlier page.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
@@ -108,7 +129,7 @@ impl Document {
     /// Where projected page `page_index` begins in source order.
     ///
     /// Reads the projection of the most recent
-    /// `Document::project_pages_with_control`. Repeated content, boxes
+    /// [`Document::project_pages_with_control`]. Repeated content, boxes
     /// outside the normal flow and inline-level boxes are skipped. Returns
     /// `None` when the page has no starting content this function can name,
     /// for example a page that only continues one tall box, or one that
@@ -141,11 +162,7 @@ impl Document {
         page_index: u32,
         order: &[u32],
     ) -> Option<PageStart> {
-        let page = self
-            .page_projection
-            .pages
-            .iter()
-            .find(|page| page.page_index == page_index)?;
+        let page = self.page_projection.page(page_index)?;
         let mut start = page
             .items
             .iter()
@@ -197,7 +214,11 @@ impl Document {
                 })
             }
             PageFragmentKind::Text => {
-                let lines = self.ifc_text_lines(node)?;
+                let lines = self
+                    .page_projection
+                    .continuation_lines
+                    .as_deref()?
+                    .get(node)?;
                 let first = lines.lines.first()?;
                 let line = lines.lines.get(item.line_range?.start as usize)?;
                 let token = match line.line {
@@ -230,12 +251,7 @@ impl Document {
         page_index: u32,
         token: PageStartToken,
     ) -> Vec<usize> {
-        let Some(page) = self
-            .page_projection
-            .pages
-            .iter()
-            .find(|page| page.page_index == page_index)
-        else {
+        let Some(page) = self.page_projection.page(page_index) else {
             return Vec::new();
         };
         let order = tree_positions(self);
@@ -265,11 +281,7 @@ impl Document {
     /// A `Line` token is found only when a paragraph line starts at exactly
     /// its text position, which [`Document::set_continuation_break`] ensures.
     pub fn page_token_offset(&self, page_index: u32, token: PageStartToken) -> Option<f32> {
-        let page = self
-            .page_projection
-            .pages
-            .iter()
-            .find(|page| page.page_index == page_index)?;
+        let page = self.page_projection.page(page_index)?;
         let node = token.node();
         page.items
             .iter()
@@ -280,7 +292,11 @@ impl Document {
                 PageStartToken::Node(_) => (item.fragment_index == 0).then_some(item.flow_box_y),
                 PageStartToken::Line { text, offset } => {
                     let range = item.line_range?;
-                    let lines = self.ifc_text_lines(text)?;
+                    let lines = self
+                        .page_projection
+                        .continuation_lines
+                        .as_deref()?
+                        .get(text)?;
                     let first = lines.lines.first()?;
                     lines
                         .lines
