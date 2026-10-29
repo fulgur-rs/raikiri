@@ -16,7 +16,7 @@ use html5ever::tree_builder::{QuirksMode, Tracer, TreeBuilder};
 use markup5ever::ns;
 use raikiri_dom::Document;
 use raikiri_traits::{Dom, Node, NodeId, NodeKind, RenderWarning, WarningKind};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smol_str::SmolStr;
 use xml5ever::tree_builder::XmlTreeBuilder;
 
@@ -28,6 +28,9 @@ use crate::types::UncascadedDocument;
 /// Store QualName / Attribute metadata in an FxHashMap inside a RefCell,
 /// keeping html5ever-specific types out of raikiri-dom::Node.
 pub struct RaikiriTreeSink {
+    /// Source contents and parents changed since the last reusable snapshot.
+    /// TreeChanges separately tracks changed child and template edges.
+    snapshot_dirty: RefCell<Option<FxHashSet<usize>>>,
     /// Whether any body or frameset candidate has ever been created, even
     /// detached or in another namespace. False rules out a reachable body.
     created_body_candidate: Cell<bool>,
@@ -111,6 +114,7 @@ impl RaikiriTreeSink {
     ) -> Self {
         let initial_node_count = 1;
         Self {
+            snapshot_dirty: RefCell::new(None),
             created_body_candidate: Cell::new(false),
             #[cfg(test)]
             snapshot_calls: Cell::new(0),
@@ -236,8 +240,7 @@ impl RaikiriTreeSink {
         #[cfg(test)]
         self.snapshot_calls.update(|calls| calls + 1);
         self.flush_text();
-        let mut qual_names = self.qual_names.borrow().clone();
-        qual_names.remove(&OVERFLOW_HANDLE);
+        let qual_names = self.qual_names.borrow();
         assemble_document(
             self.document.borrow().clone(),
             self.warnings.borrow().clone(),
@@ -245,6 +248,52 @@ impl RaikiriTreeSink {
             &self.attributes.borrow(),
             convert_quirks(self.quirks_mode.get()),
         )
+    }
+
+    /// Reuse only an unmodified uncascaded snapshot from the previous call.
+    /// Missing snapshots start a fresh tracking epoch with a full clone.
+    pub(crate) fn snapshot_reusing(
+        &self,
+        previous: Option<Document>,
+    ) -> (UncascadedDocument, usize) {
+        self.flush_text();
+        let tracking = self.snapshot_dirty.borrow().is_some();
+        let Some(previous) = previous.filter(|_| tracking) else {
+            let parsed = self.snapshot();
+            let copied = parsed.dom.node_count();
+            self.document.borrow_mut().enable_tree_change_tracking();
+            self.snapshot_dirty
+                .borrow_mut()
+                .get_or_insert_with(FxHashSet::default)
+                .clear();
+            return (parsed, copied);
+        };
+        #[cfg(test)]
+        self.snapshot_calls.update(|calls| calls + 1);
+        let mut document = self.document.borrow_mut();
+        let mut changed = document.take_tree_changes();
+        changed.extend(
+            self.snapshot_dirty
+                .borrow_mut()
+                .as_mut()
+                .expect("tracking was enabled")
+                .drain(),
+        );
+        let (document, copied) = document.snapshot_parser_nodes_into(previous, &changed);
+        let parsed = assemble_document(
+            document,
+            self.warnings.borrow().clone(),
+            &self.qual_names.borrow(),
+            &self.attributes.borrow(),
+            convert_quirks(self.quirks_mode.get()),
+        );
+        (parsed, copied)
+    }
+
+    fn note_snapshot_changes(&self, ids: impl IntoIterator<Item = usize>) {
+        if let Some(dirty) = self.snapshot_dirty.borrow_mut().as_mut() {
+            dirty.extend(ids);
+        }
     }
 
     /// Append Text to the parent's last child.
@@ -301,10 +350,12 @@ impl RaikiriTreeSink {
         let mut document = self.document.borrow_mut();
         match target {
             TextTarget::Append(parent) => {
-                document.append_text_coalesced(parent, text);
+                let id = document.append_text_coalesced(parent, text);
+                self.note_snapshot_changes([parent, id]);
             }
             TextTarget::Before { parent, sibling } => {
-                document.insert_text_before_coalesced(parent, sibling, text);
+                let id = document.insert_text_before_coalesced(parent, sibling, text);
+                self.note_snapshot_changes([parent, id]);
             }
         }
     }
@@ -510,6 +561,8 @@ impl TreeSink for RaikiriTreeSink {
         match child {
             NodeOrText::AppendNode(c) => {
                 self.flush_text();
+                // The child can itself be a fragment whose children are drained.
+                self.note_snapshot_changes([*parent, c]);
                 self.document.borrow_mut().attach_child(*parent, c);
             }
             NodeOrText::AppendText(text) => {
@@ -601,6 +654,8 @@ impl TreeSink for RaikiriTreeSink {
         match new_node {
             NodeOrText::AppendNode(c) => {
                 self.flush_text();
+                self.note_snapshot_changes([parent, c]);
+                self.note_snapshot_changes(self.document.borrow().parent_of(c));
                 // Detach if already attached (TreeSink contract: new_node can have an
                 // old parent).
                 self.document.borrow_mut().detach_from_parent(c);
@@ -661,6 +716,7 @@ impl TreeSink for RaikiriTreeSink {
             return;
         }
         self.flush_text();
+        self.note_snapshot_changes(self.document.borrow().parent_of(*target));
         self.document.borrow_mut().detach_from_parent(*target);
     }
 
@@ -669,6 +725,7 @@ impl TreeSink for RaikiriTreeSink {
             return;
         }
         self.flush_text();
+        self.note_snapshot_changes([*node, *new_parent]);
         self.document
             .borrow_mut()
             .reparent_children(*node, *new_parent);
@@ -1142,6 +1199,9 @@ fn wire_side_tables(
     attributes: &FxHashMap<usize, Vec<Attribute>>,
 ) {
     for (idx, name) in qual_names {
+        if *idx == OVERFLOW_HANDLE {
+            continue;
+        }
         // Keep Node.namespace = None for the default HTML namespace (optimized path).
         // Store other svg / mathml / xml / ... namespace URIs as SmolStr.
         let namespace =

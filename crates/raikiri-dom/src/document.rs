@@ -45,6 +45,7 @@ pub(crate) struct OofCoordinate {
 pub(crate) mod ancestors;
 mod mutation;
 mod named_elements;
+mod parser_snapshot;
 mod stylesheet_source;
 mod tree_changes;
 pub use mutation::DomMutationError;

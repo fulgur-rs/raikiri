@@ -6,6 +6,7 @@ mod dom_node_budget_tests;
 mod find_document_base_href_tests;
 mod inline_stylesheet_text_tests;
 mod preloaded_stylesheet_tests;
+mod source_snapshot_tests;
 mod stylesheet_link_tests;
 
 #[test]

@@ -47,6 +47,8 @@ pub use cascade::{
 };
 pub use document::HtmlDocument;
 // cov:ignore: these type/function re-exports have no executable code; API integration tests and rustdoc verify them.
+#[cfg(feature = "streaming-diagnostics")]
+pub use document_layout::StreamingDiagnostics;
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle,
     DeferredGlyph, DeferredSlot, DeferredValue, DocumentLayout, DomView, FontBlob, FontId, FontRef,
