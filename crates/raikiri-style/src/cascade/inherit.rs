@@ -3572,6 +3572,11 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::RowGap(_)
         | PropertyValue::ColumnGap(_)
         | PropertyValue::Gap(_)
+        // `contain-intrinsic-*` lengths resolve against the declaring node's
+        // own font-size in phase 3, like the gaps.
+        | PropertyValue::ContainIntrinsicWidth(_)
+        | PropertyValue::ContainIntrinsicHeight(_)
+        | PropertyValue::ContainIntrinsicSize(_)
         | PropertyValue::PlaceContent(_)
         // `hyphens` (CSS Text 3 §5.3) carries no length (`Hyphens` doc) and
         // does not depend on the inheritance parent — nothing for phase 2
@@ -4243,6 +4248,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::RowGap(rg) => target.row_gap = rg,
         PropertyValue::ColumnGap(cg) => target.column_gap = cg,
         PropertyValue::Gap(g) => expand_gap(g, |v| apply_value(v, target)),
+        PropertyValue::ContainIntrinsicWidth(v) => target.contain_intrinsic_width = v,
+        PropertyValue::ContainIntrinsicHeight(v) => target.contain_intrinsic_height = v,
+        PropertyValue::ContainIntrinsicSize(s) => {
+            target.contain_intrinsic_width = s.width;
+            target.contain_intrinsic_height = s.height;
+        }
         PropertyValue::PlaceContent(p) => expand_place_content(p, |v| apply_value(v, target)),
         PropertyValue::FontVariantCaps(fvc) => target.font_variant_caps = fvc,
         PropertyValue::Quotes(v) => {

@@ -175,14 +175,15 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxShadowItem, CalcLengthPercentage, ComparedPercentage,
-    ConicGradient, CssPosition, CssPositionOffset, FlexBasisValue, Gradient, GradientColorStop,
-    GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LengthPercentageCalc, LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient,
-    Outline, OutlineColor, OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage,
-    RelativeCalcUnit, TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength,
-    TextShadowColor, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
-    VerticalAlign, WordSpacingValue,
+    ConicGradient, ContainIntrinsicSize, CssPosition, CssPositionOffset, FlexBasisValue, Gradient,
+    GradientColorStop, GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks,
+    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
+    Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc, LengthPercentageOrCalc,
+    LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor, OutlineStyle,
+    RadialGradient, RadialSize, RelativeCalcLengthPercentage, RelativeCalcUnit, TabSize,
+    TextDecorationInset, TextDecorationThickness, TextIndentLength, TextShadowColor,
+    TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, VerticalAlign,
+    WordSpacingValue,
 };
 
 // ---------------------------------------------------------------------------
@@ -640,6 +641,29 @@ pub enum ComputedLengthPercentageOrNormal {
     /// A percentage with an absolute-length offset, resolved against the
     /// percentage basis at used-value time and clamped to zero there.
     Calc(CalcLengthPercentage),
+}
+
+/// Computed `contain-intrinsic-width` / `contain-intrinsic-height`.
+///
+/// CSS Box Sizing 4 §5 propdef `contain-intrinsic-width`
+/// (<https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override>):
+/// "Computed value: the keyword `none` or an absolute length, optionally
+/// preceded by the keyword `auto`".
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ComputedContainIntrinsicSize {
+    /// Whether the `auto` keyword is present.
+    pub auto: bool,
+    /// The absolute length, or `None` for the keyword `none`.
+    pub length: Option<ComputedLength>,
+}
+
+impl ComputedContainIntrinsicSize {
+    /// The initial value, `none`.
+    pub const NONE: Self = Self {
+        auto: false,
+        length: None,
+    };
 }
 
 /// Computed `<track-breadth>` / `<inflexible-breadth>` (CSS Grid Layout
@@ -3489,6 +3513,22 @@ pub fn resolve_grid_auto_track_list(
     )
 }
 
+/// Absolutize a specified `contain-intrinsic-width` / `-height` (**phase 3**,
+/// using this node's basis): the length becomes absolute, the keywords stay.
+pub(crate) fn resolve_contain_intrinsic_size(
+    specified: ContainIntrinsicSize,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedContainIntrinsicSize {
+    ComputedContainIntrinsicSize {
+        auto: specified.auto,
+        length: specified
+            .length
+            .map(|length| resolve_length(length, font_size, own_line_height, ctx)),
+    }
+}
+
 /// Absolutize specified `row-gap` / `column-gap` values of
 /// `normal | <length-percentage [0,∞]>` (**phase 3**, using this node's basis).
 ///
@@ -4134,6 +4174,17 @@ pub(crate) fn lift_flex_basis(computed: ComputedFlexBasis) -> FlexBasisValue {
         ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
         ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
         ComputedFlexBasis::Calc(calc) => FlexBasisValue::Calc(calc),
+    }
+}
+
+/// Lift a computed `contain-intrinsic-width` / `-height` back to its specified
+/// form.
+pub(crate) fn lift_contain_intrinsic_size(
+    computed: ComputedContainIntrinsicSize,
+) -> ContainIntrinsicSize {
+    ContainIntrinsicSize {
+        auto: computed.auto,
+        length: computed.length.map(|length| Length::Px(length.px())),
     }
 }
 

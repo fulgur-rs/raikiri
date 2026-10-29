@@ -165,6 +165,8 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         align_self: _,
         row_gap: _,
         column_gap: _,
+        contain_intrinsic_width: _,
+        contain_intrinsic_height: _,
         quotes,
         quotes_auto: _,
         text_shadow,

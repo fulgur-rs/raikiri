@@ -1682,6 +1682,140 @@ fn gap_shorthand_normal() {
     );
 }
 
+// ── contain-intrinsic-size (CSS Box Sizing 4 §5) ────────────────────
+
+fn intrinsic(auto: bool, length: Option<Length>) -> ContainIntrinsicSize {
+    ContainIntrinsicSize { auto, length }
+}
+
+#[test]
+fn contain_intrinsic_longhands_take_none_a_length_or_auto_with_either() {
+    for (source, want) in [
+        ("none", intrinsic(false, None)),
+        ("100px", intrinsic(false, Some(Length::Px(100.0)))),
+        ("0", intrinsic(false, Some(Length::Px(0.0)))),
+        ("3em", intrinsic(false, Some(Length::Em(3.0)))),
+        ("auto 100px", intrinsic(true, Some(Length::Px(100.0)))),
+        ("auto none", intrinsic(true, None)),
+        ("AUTO NONE", intrinsic(true, None)),
+    ] {
+        assert_eq!(
+            parse_entire(source, "contain-intrinsic-width"),
+            Some(PropertyValue::ContainIntrinsicWidth(want)),
+            "contain-intrinsic-width: {source}"
+        );
+        assert_eq!(
+            parse_entire(source, "contain-intrinsic-height"),
+            Some(PropertyValue::ContainIntrinsicHeight(want)),
+            "contain-intrinsic-height: {source}"
+        );
+    }
+}
+
+#[test]
+fn contain_intrinsic_longhands_refuse_what_is_not_a_non_negative_length() {
+    for source in [
+        "",
+        "auto",
+        "-1px",
+        "50%",
+        "10",
+        "100px 50px",
+        "none none",
+        "auto auto 10px",
+        "10px auto",
+        "min-content",
+        "calc(1px + 2%)",
+    ] {
+        for name in ["contain-intrinsic-width", "contain-intrinsic-height"] {
+            assert_eq!(parse_entire(source, name), None, "{name}: {source}");
+        }
+    }
+}
+
+#[test]
+fn contain_intrinsic_size_shorthand_copies_one_value_to_both_axes() {
+    assert_eq!(
+        parse_entire("60px", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(false, Some(Length::Px(60.0))),
+                height: intrinsic(false, Some(Length::Px(60.0))),
+            }
+        ))
+    );
+    assert_eq!(
+        parse_entire("auto 60px", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(true, Some(Length::Px(60.0))),
+                height: intrinsic(true, Some(Length::Px(60.0))),
+            }
+        ))
+    );
+}
+
+#[test]
+fn contain_intrinsic_size_shorthand_takes_the_width_then_the_height() {
+    assert_eq!(
+        parse_entire("100px 50px", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(false, Some(Length::Px(100.0))),
+                height: intrinsic(false, Some(Length::Px(50.0))),
+            }
+        ))
+    );
+    assert_eq!(
+        parse_entire("auto 100px none", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(true, Some(Length::Px(100.0))),
+                height: intrinsic(false, None),
+            }
+        ))
+    );
+    assert_eq!(
+        parse_entire("none auto 2em", "contain-intrinsic-size"),
+        Some(PropertyValue::ContainIntrinsicSize(
+            ContainIntrinsicSizeShorthand {
+                width: intrinsic(false, None),
+                height: intrinsic(true, Some(Length::Em(2.0))),
+            }
+        ))
+    );
+}
+
+#[test]
+fn contain_intrinsic_size_shorthand_refuses_a_bad_axis_or_a_third_value() {
+    for source in [
+        "",
+        "auto",
+        "10px -5px",
+        "10px 50%",
+        "10px 20px 30px",
+        "10px auto",
+        "10px calc(1px + 2%)",
+    ] {
+        assert_eq!(
+            parse_entire(source, "contain-intrinsic-size"),
+            None,
+            "contain-intrinsic-size: {source}"
+        );
+    }
+}
+
+#[test]
+fn contain_intrinsic_properties_keep_css_wide_keywords() {
+    for name in [
+        "contain-intrinsic-width",
+        "contain-intrinsic-height",
+        "contain-intrinsic-size",
+    ] {
+        assert_css_wide_keywords_deferred(name);
+    }
+}
+
 // ── place-content shorthand (CSS Box Alignment Module Level 3 §5.2) ─
 
 #[test]

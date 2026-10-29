@@ -288,6 +288,16 @@ pub(super) const CASES: &[(&str, bool, &[&str])] = &[
     ("flex-basis", false, &["30px", "40%", "calc(10% + 4px)"]),
     ("row-gap", false, &["3px", "5%", "calc(10% + 4px)"]),
     ("column-gap", false, &["3px", "5%", "calc(10% + 4px)"]),
+    (
+        "contain-intrinsic-width",
+        false,
+        &["30px", "auto 40px", "none"],
+    ),
+    (
+        "contain-intrinsic-height",
+        false,
+        &["30px", "auto 40px", "auto none"],
+    ),
     ("column-width", false, &["30px", "50px", "auto"]),
     ("overflow-x", false, &["hidden", "scroll", "auto"]),
     ("overflow-y", false, &["hidden", "scroll", "auto"]),
@@ -417,6 +427,11 @@ pub(super) const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         "gap",
         false,
         &["3px 4px", "5% 6%", "calc(10% + 4px) normal"],
+    ),
+    (
+        "contain-intrinsic-size",
+        false,
+        &["30px 40px", "auto 50px", "none auto 7px"],
     ),
     (
         "place-content",

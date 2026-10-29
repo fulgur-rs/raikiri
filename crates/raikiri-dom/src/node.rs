@@ -631,6 +631,10 @@ pub struct Node {
     /// The physical axes in which size containment sizes this box as if it
     /// had no content (CSS Containment 2 §3.1, §3.2).
     pub(crate) size_containment: Size<bool>,
+    /// The `contain-intrinsic-width` and `contain-intrinsic-height` lengths of
+    /// this box, which stand in for the size of its content in the axes of
+    /// `size_containment` (CSS Box Sizing 4 §5). `None` is the keyword `none`.
+    pub(crate) contain_intrinsic: Size<Option<f32>>,
     /// The `min-*` and `max-*` sizes of this box that are intrinsic sizing
     /// keywords, which Taffy's style cannot hold; layout resolves them to
     /// lengths when it lays the box out.
@@ -814,6 +818,10 @@ impl Node {
             size_containment: Size {
                 width: false,
                 height: false,
+            },
+            contain_intrinsic: Size {
+                width: None,
+                height: None,
             },
             content_limits: crate::layout::dispatch::content_limits::ContentLimits::NONE,
             text_group_align: shodo::style::TextGroupAlign::None,

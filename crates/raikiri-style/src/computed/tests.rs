@@ -551,6 +551,15 @@ fn non_initial_parent() -> ComputedValues {
         // `normal`.
         row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
         column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
+        // CSS Box Sizing 4 §5: differs from the initial `none`.
+        contain_intrinsic_width: ComputedContainIntrinsicSize {
+            auto: true,
+            length: Some(ComputedLength(7.0)),
+        },
+        contain_intrinsic_height: ComputedContainIntrinsicSize {
+            auto: false,
+            length: Some(ComputedLength(9.0)),
+        },
         // CSS Content 3 §2.4.1: `quotes` differs from the initial empty list
         // (as required for every field of non_initial_parent).
         quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
@@ -928,6 +937,15 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     // non-inherited.
     assert_eq!(child.row_gap, initial.row_gap);
     assert_eq!(child.column_gap, initial.column_gap);
+    // CSS Box Sizing 4 §5: contain-intrinsic-width / -height are non-inherited.
+    assert_eq!(
+        child.contain_intrinsic_width,
+        initial.contain_intrinsic_width
+    );
+    assert_eq!(
+        child.contain_intrinsic_height,
+        initial.contain_intrinsic_height
+    );
     // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3: grid-*
     // are all non-inherited.
     assert_eq!(child.grid_template_columns, initial.grid_template_columns);
