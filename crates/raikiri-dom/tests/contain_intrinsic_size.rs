@@ -248,6 +248,102 @@ fn the_longhands_give_one_axis_each_and_none_gives_no_size() {
     ]);
 }
 
+/// A grid container keeps the size its explicit tracks give an empty grid in
+/// an axis that states no length; the axis that states one takes it.
+#[test]
+fn a_grid_keeps_its_tracks_in_the_axis_that_states_no_length() {
+    let grid = |style: &str| {
+        format!(
+            "<div id=b style='display:grid;grid-template-columns:50px 50px;\
+             grid-template-rows:30px 30px;contain:size;{style}'>x y z</div>"
+        )
+    };
+    check(&[
+        (
+            "tracks alone",
+            grid("width:max-content"),
+            vec![("b", 8.0, 8.0, 100.0, 60.0)],
+        ),
+        (
+            "none for both",
+            grid("width:max-content;contain-intrinsic-size:none"),
+            vec![("b", 8.0, 8.0, 100.0, 60.0)],
+        ),
+        (
+            "a width",
+            grid("width:max-content;contain-intrinsic-width:80px"),
+            vec![("b", 8.0, 8.0, 80.0, 60.0)],
+        ),
+        (
+            "a height",
+            grid("width:max-content;contain-intrinsic-height:40px"),
+            vec![("b", 8.0, 8.0, 100.0, 40.0)],
+        ),
+        (
+            "both",
+            grid("width:max-content;contain-intrinsic-size:80px 40px"),
+            vec![("b", 8.0, 8.0, 80.0, 40.0)],
+        ),
+        (
+            "a block grid, width",
+            grid("contain-intrinsic-width:80px"),
+            vec![("b", 8.0, 8.0, 784.0, 60.0)],
+        ),
+        (
+            "a block grid, height",
+            grid("contain-intrinsic-height:40px"),
+            vec![("b", 8.0, 8.0, 784.0, 40.0)],
+        ),
+        (
+            "a float, width",
+            grid("float:left;contain-intrinsic-width:80px"),
+            vec![("b", 8.0, 8.0, 80.0, 60.0)],
+        ),
+        (
+            "padding and border, width",
+            grid("width:max-content;padding:5px;border:3px solid;contain-intrinsic-width:80px"),
+            vec![("b", 8.0, 8.0, 96.0, 76.0)],
+        ),
+        (
+            "padding and border, height",
+            grid("width:max-content;padding:5px;border:3px solid;contain-intrinsic-height:40px"),
+            vec![("b", 8.0, 8.0, 116.0, 56.0)],
+        ),
+        (
+            "min-height",
+            grid("width:max-content;min-height:100px;contain-intrinsic-width:80px"),
+            vec![("b", 8.0, 8.0, 80.0, 100.0)],
+        ),
+        (
+            "inline-size containment",
+            grid("width:max-content;contain:inline-size;contain-intrinsic-width:80px"),
+            vec![("b", 8.0, 8.0, 80.0, 60.0)],
+        ),
+        (
+            "an inline grid, width",
+            "<div id=b style='display:inline-grid;contain:size;contain-intrinsic-width:100px;\
+             grid-template-rows:15px'>x y z</div>"
+                .to_owned(),
+            vec![("b", 8.0, 8.0, 100.0, 15.0)],
+        ),
+        (
+            "an inline grid, height",
+            "<div id=b style='display:inline-grid;contain:size;contain-intrinsic-height:40px;\
+             grid-template-columns:70px'>x y z</div>"
+                .to_owned(),
+            vec![("b", 8.0, 8.0, 70.0, 40.0)],
+        ),
+        (
+            "a flex item, width",
+            format!(
+                "<div style='display:flex;align-items:flex-start'>{}</div>",
+                grid("contain-intrinsic-width:80px")
+            ),
+            vec![("b", 8.0, 8.0, 80.0, 60.0)],
+        ),
+    ]);
+}
+
 /// The lengths are computed like any other: `calc()` and `var()` give them,
 /// `inherit` takes the value of the parent, and the property does not inherit
 /// by itself.
