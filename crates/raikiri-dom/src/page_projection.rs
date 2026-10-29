@@ -37,6 +37,8 @@ pub(crate) struct PageProjection {
     /// on it, so a page's runs do not walk every paragraph of the document.
     text_roots_by_page: Vec<Vec<usize>>,
     text_index: text_index::PageTextIndex,
+    /// Final-layout ownership shared by continuation queries and clones.
+    continuation_lines: Option<std::sync::Arc<crate::layout::ifc::text_lines::TextLineIndex>>,
     /// Column-overlap facts about `text_roots`, shared by every page.
     run_context: text_runs::RunContext,
     /// Sources that keep opacity groups reachable on every page: block
@@ -74,6 +76,7 @@ pub(crate) struct PageProjection {
 impl PageProjection {
     pub(crate) fn clear(&mut self) {
         self.scene_geometry.take();
+        self.continuation_lines = None;
         self.pages.clear();
         self.links.clear();
         self.text_roots.clear();
@@ -315,6 +318,7 @@ impl Document {
             &pages,
             &mut work,
         )?;
+        let continuation_lines = continuation::prepare_lines(self, &pages, &mut work)?;
         let run_context = text_runs::RunContext::new(self, &text_roots, &pages);
         let transform_boxes = paint_transform::transform_boxes(self, cascade, &pages);
         let mut opacity_layers: Vec<_> = cascade
@@ -391,6 +395,7 @@ impl Document {
             text_roots,
             text_roots_by_page,
             text_index,
+            continuation_lines,
             run_context,
             opacity_layers,
             markers,
