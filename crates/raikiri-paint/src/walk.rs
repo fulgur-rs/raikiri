@@ -2272,6 +2272,7 @@ fn paint_image(
     object_fit: ObjectFit,
     object_position: &ComputedCssPosition,
     visible: bool,
+    device_grid: Option<DeviceGrid>,
     node_id: usize,
     warnings: &mut Vec<RenderWarning>,
 ) -> bool {
@@ -2319,6 +2320,8 @@ fn paint_image(
         );
         return true;
     };
+    let ((image_x, image_w), (image_y, image_h)) =
+        snap_replaced_content((image_x, image_w), (image_y, image_h), device_grid);
     let raster_w = decoded.width as f64;
     let raster_h = decoded.height as f64;
     if raster_w <= 0.0 || raster_h <= 0.0 {
@@ -2344,6 +2347,42 @@ fn paint_image(
         &Rect::new(0.0, 0.0, raster_w, raster_h),
     );
     true
+}
+
+/// The `(start, length)` spans of a replaced element's image along both
+/// axes, moved to whole device pixels on a raster output (`device_grid` is
+/// known), and left as they are on a vector output.
+///
+/// Each edge moves to the nearest device pixel on its own, the way a
+/// background tile does (see [`tile_spans`]), so an `object-position` that
+/// falls between device pixels puts the image on the same pixels as the same
+/// position of a background image.
+fn snap_replaced_content(
+    horizontal: (f64, f64),
+    vertical: (f64, f64),
+    device_grid: Option<DeviceGrid>,
+) -> ((f64, f64), (f64, f64)) {
+    let snap = |(start, length): (f64, f64), grid: Option<(f64, f64)>| {
+        tile_spans(
+            &[start],
+            length,
+            raikiri_style::property::BackgroundRepeatKeyword::NoRepeat,
+            grid,
+        )
+        .first()
+        .copied()
+        .unwrap_or((start, length))
+    };
+    (
+        snap(
+            horizontal,
+            device_grid.map(|grid| (grid.scale_x, grid.offset_x)),
+        ),
+        snap(
+            vertical,
+            device_grid.map(|grid| (grid.scale_y, grid.offset_y)),
+        ),
+    )
 }
 
 struct SharedCanvasPixels(std::sync::Arc<raikiri_dom::CanvasBitmap>);
@@ -2377,6 +2416,7 @@ fn paint_canvas(
     object_fit: ObjectFit,
     object_position: &ComputedCssPosition,
     visible: bool,
+    device_grid: Option<DeviceGrid>,
 ) -> bool {
     let bl = border.left.width().px();
     let bt = border.top.width().px();
@@ -2423,6 +2463,8 @@ fn paint_canvas(
     }
     let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
     let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);
+    let ((image_x, image_w), (image_y, image_h)) =
+        snap_replaced_content((image_x, image_w), (image_y, image_h), device_grid);
     let image_data = peniko::ImageData {
         data: peniko::Blob::new(std::sync::Arc::new(SharedCanvasPixels(
             std::sync::Arc::clone(bitmap),

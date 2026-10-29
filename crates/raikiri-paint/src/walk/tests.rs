@@ -5143,6 +5143,155 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
 }
 
 #[test]
+fn replaced_content_edges_move_to_the_nearest_device_pixel() {
+    let unsnapped = ((10.4, 20.0), (7.3, 10.0));
+    // A vector output has no device pixels to move to.
+    assert_eq!(
+        snap_replaced_content(unsnapped.0, unsnapped.1, None),
+        unsnapped
+    );
+    // Each edge moves on its own: 10.4..30.4 to 10..30 and 7.3..17.3 to 7..17.
+    let one = Some(DeviceGrid::uniform(1.0));
+    assert_eq!(
+        snap_replaced_content(unsnapped.0, unsnapped.1, one),
+        ((10.0, 20.0), (7.0, 10.0))
+    );
+    // 7.6..17.6 rounds to 8..18, and a length that is not a whole number of
+    // pixels changes with its edges: 7.6..17.2 gives 8..17.
+    assert_eq!(
+        snap_replaced_content((7.6, 20.0), (7.6, 9.6), one),
+        ((8.0, 20.0), (8.0, 9.0))
+    );
+    // On a grid of two device pixels per CSS pixel the edges fall on halves.
+    let two = Some(DeviceGrid::uniform(2.0));
+    assert_eq!(
+        snap_replaced_content((10.3, 20.0), (0.0, 1.0), two),
+        ((10.5, 20.0), (0.0, 1.0))
+    );
+    // A span thinner than a device pixel stays where it is.
+    assert_eq!(
+        snap_replaced_content((5.2, 0.2), (5.2, 0.2), one),
+        ((5.2, 0.2), (5.2, 0.2))
+    );
+}
+
+/// The origin of the first image fill in `scene`, and its scale.
+fn first_image_fill_placement(scene: &Scene) -> ([f64; 2], [f64; 2]) {
+    let fill = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)) => {
+                Some(fill)
+            }
+            _ => None,
+        })
+        .expect("the content paints an image");
+    let [scale_x, _, _, scale_y, x, y] = fill.transform.as_coeffs();
+    ([x, y], [scale_x, scale_y])
+}
+
+#[test]
+fn canvas_content_sits_on_whole_device_pixels_of_a_raster_output() {
+    // A 16x8 bitmap in a 20x20 box with `object-fit: contain` is 20x10, and
+    // `object-position: 50% 13%` puts it 1.3px below the top of the box.
+    let bitmap = std::sync::Arc::new(raikiri_dom::CanvasBitmap::new(
+        16,
+        8,
+        [255, 0, 0, 255].repeat(16 * 8),
+    ));
+    let (position, _) = background_repeat_fixture("no-repeat", "50% 13%");
+    let border = bordered_sides(0.0, BorderStyle::None, BorderColor::CurrentColor);
+    let padding = Edges {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let place = |device_grid: Option<DeviceGrid>| {
+        let mut scene = Scene::new();
+        assert!(paint_canvas(
+            &mut scene,
+            &bitmap,
+            20.0,
+            20.0,
+            8.0,
+            8.0,
+            &border,
+            &padding,
+            ObjectFit::Contain,
+            &position,
+            true,
+            device_grid,
+        ));
+        first_image_fill_placement(&scene)
+    };
+    // The box starts at y = 8, so the image starts at 9.3 and ends at 19.3. A
+    // raster output moves both edges to 9 and 19.
+    let ([x, y], [scale_x, scale_y]) = place(Some(DeviceGrid::uniform(1.0)));
+    assert_eq!((x, y), (8.0, 9.0));
+    assert_eq!((scale_x, scale_y), (20.0 / 16.0, 10.0 / 8.0));
+    let ([x, y], _) = place(None);
+    assert_eq!(x, 8.0);
+    assert!((y - 9.3).abs() < 1e-5, "{y}");
+}
+
+#[test]
+fn image_content_sits_on_whole_device_pixels_of_a_raster_output() {
+    struct Pixels;
+    impl raikiri_traits::ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage::new(
+                16,
+                8,
+                [255, 0, 0, 255].repeat(16 * 8),
+            )))
+        }
+    }
+    let url = url::Url::parse("https://example.test/red.png").unwrap();
+    let (position, _) = background_repeat_fixture("no-repeat", "50% 13%");
+    let border = bordered_sides(0.0, BorderStyle::None, BorderColor::CurrentColor);
+    let padding = Edges {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let place = |device_grid: Option<DeviceGrid>| {
+        let mut scene = Scene::new();
+        assert!(paint_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &Pixels,
+            &url,
+            ImageIntrinsicSize::new(Some(16.0), Some(8.0), Some(2.0)),
+            20.0,
+            20.0,
+            8.0,
+            8.0,
+            &border,
+            &padding,
+            ObjectFit::Contain,
+            &position,
+            true,
+            device_grid,
+            0,
+            &mut Vec::new(),
+        ));
+        first_image_fill_placement(&scene)
+    };
+    let ([x, y], [scale_x, scale_y]) = place(Some(DeviceGrid::uniform(1.0)));
+    assert_eq!((x, y), (8.0, 9.0));
+    assert_eq!((scale_x, scale_y), (20.0 / 16.0, 10.0 / 8.0));
+    let ([x, y], _) = place(None);
+    assert_eq!(x, 8.0);
+    assert!((y - 9.3).abs() < 1e-5, "{y}");
+}
+
+#[test]
 fn paint_unmaterialized_large_canvas_without_image_pixels() {
     let mut parsed = raikiri_html::parse(
         "<body style='margin:0'><canvas width='3334' height='3000' style='width:2px;height:2px'></canvas>".as_bytes(),
