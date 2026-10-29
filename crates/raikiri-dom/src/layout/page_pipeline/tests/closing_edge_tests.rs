@@ -386,21 +386,6 @@ fn parent_with(build: impl FnOnce(&mut Document, usize)) -> f32 {
 
 #[test]
 fn a_block_that_holds_one_box_with_something_to_break_at_stays() {
-    // A float beside the box is a flow of its own.
-    assert_eq!(
-        parent_with(|doc, parent| {
-            block(doc, parent, "float:left;width:10px;height:5px");
-            block(doc, parent, "display:block;height:30px");
-        }),
-        60.0
-    );
-    // A box that is not a block container.
-    assert_eq!(
-        parent_with(|doc, parent| {
-            block(doc, parent, "display:grid;height:30px");
-        }),
-        60.0
-    );
     // A box with boxes of its own: the last of them moves with the edges, and
     // the block stays where it starts.
     assert_eq!(
@@ -418,6 +403,97 @@ fn a_block_that_holds_one_box_with_something_to_break_at_stays() {
             block(doc, columns, "display:block;height:30px");
         }),
         60.0
+    );
+}
+
+/// A flex container that holds `items` blocks of 30px by 40px, one line.
+fn flex_line(doc: &mut Document, parent: usize, items: usize) -> Vec<usize> {
+    let line = block(doc, parent, "display:flex");
+    let mut ids = vec![line];
+    for _ in 0..items {
+        ids.push(block(doc, line, "display:block;width:40px;height:30px"));
+    }
+    ids
+}
+
+#[test]
+fn a_block_that_holds_one_box_beside_a_float_moves_whole() {
+    // The float lies within the content of the block, so it goes with it and
+    // is no place to break at: before the box, or inside a wrapper around it.
+    assert_eq!(
+        parent_with(|doc, parent| {
+            block(doc, parent, "float:left;width:10px;height:5px");
+            block(doc, parent, "display:block;height:30px");
+        }),
+        100.0
+    );
+    assert_eq!(
+        parent_with(|doc, parent| {
+            let wrapper = block(doc, parent, "display:block");
+            block(doc, wrapper, "float:left;width:10px;height:5px");
+            block(doc, wrapper, "display:block;height:30px");
+        }),
+        100.0
+    );
+}
+
+#[test]
+fn a_block_that_holds_one_box_stays_when_a_float_reaches_past_its_content() {
+    // The float runs into the padding below the box or out of the block, to
+    // where the page ends, and has a break to take of its own.
+    for (float_height, float_first) in [(70, true), (70, false), (40, true)] {
+        assert_eq!(
+            parent_with(|doc, parent| {
+                let float = format!("float:left;width:10px;height:{float_height}px");
+                if float_first {
+                    block(doc, parent, &float);
+                }
+                block(doc, parent, "display:block;height:30px");
+                if !float_first {
+                    block(doc, parent, &float);
+                }
+            }),
+            60.0,
+            "{float_height} {float_first}"
+        );
+    }
+}
+
+#[test]
+fn a_block_that_holds_one_row_of_boxes_moves_whole() {
+    // A flex container, a grid and a table that hold one row of boxes that
+    // the page cannot break inside are the one box of the block, as Chromium
+    // sends them.
+    assert_eq!(
+        parent_with(|doc, parent| {
+            block(doc, parent, "display:grid;height:30px");
+        }),
+        100.0
+    );
+    assert_eq!(
+        parent_with(|doc, parent| {
+            block(doc, parent, "display:flex;height:30px");
+        }),
+        100.0
+    );
+    assert_eq!(
+        parent_with(|doc, parent| {
+            block(doc, parent, "display:table;height:30px");
+        }),
+        100.0
+    );
+    assert_eq!(
+        parent_with(|doc, parent| {
+            let wrapper = block(doc, parent, "display:block");
+            block(doc, wrapper, "display:grid;height:30px");
+        }),
+        100.0
+    );
+    assert_eq!(
+        parent_with(|doc, parent| {
+            flex_line(doc, parent, 2);
+        }),
+        100.0
     );
 }
 
@@ -688,19 +764,43 @@ fn a_run_of_tied_boxes_in_an_inner_block_moves_with_the_edges_of_both_blocks() {
 }
 
 #[test]
-fn an_avoided_break_before_a_last_box_that_is_not_a_plain_block_is_left_alone() {
-    // A last box that is a flex container, a table, or a float has rules of
-    // its own.
-    for third in ["display:flex", "display:table", "display:block;float:left"] {
-        let mut last = 0;
+fn an_avoided_break_ties_a_last_box_that_holds_one_row_of_boxes_to_the_box_before_it() {
+    // A flex container, a grid or a table that the page cannot break inside
+    // is tied to the box before it as a block is: both go to the next page
+    // with the padding.
+    for third in [
+        "display:flex",
+        "display:table",
+        "display:grid",
+        "display:block",
+    ] {
+        let (mut second, mut last) = (0, 0);
         let (doc, _) = paged_body(|doc, body| {
             let parent = block(doc, body, "display:block;padding-bottom:30px");
             block(doc, parent, "display:block;height:40px");
-            block(doc, parent, "display:block;height:30px;break-after:avoid");
+            second = block(doc, parent, "display:block;height:30px;break-after:avoid");
             last = block(doc, parent, &format!("height:20px;{third}"));
         });
-        assert_eq!(page_flow_y(&doc, last), 70.0, "{third}");
+        assert_eq!(
+            (page_flow_y(&doc, second), page_flow_y(&doc, last)),
+            (100.0, 130.0),
+            "{third}"
+        );
     }
+}
+
+#[test]
+fn an_avoided_break_before_a_float_leaves_the_box_before_it_as_the_last_one() {
+    // The float is not a box of the flow: the second box ends the parent, and
+    // its padding fits the page.
+    let mut last = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:30px");
+        block(doc, parent, "display:block;height:40px");
+        block(doc, parent, "display:block;height:30px;break-after:avoid");
+        last = block(doc, parent, "display:block;height:20px;float:left");
+    });
+    assert_eq!(page_flow_y(&doc, last), 70.0);
 }
 
 #[test]
@@ -792,37 +892,36 @@ fn a_multicol_container_breaks_into_its_columns_and_stays() {
 }
 
 #[test]
-fn a_wrapper_that_has_something_to_break_at_stays() {
-    for (css, inner_css) in [
-        // A float beside the box is a flow of its own.
-        ("", "float:left;width:10px;height:5px"),
-        // A wrapper that is not a block container of its own.
-        ("display:flex;flex-direction:column", ""),
-    ] {
-        let (mut wrapper, mut parent) = (0, 0);
-        let (doc, _) = paged_body(|doc, body| {
-            parent = block(doc, body, "display:block;padding-bottom:30px");
-            block(doc, parent, "display:block;height:40px");
-            block(doc, parent, "display:block;height:30px");
-            wrapper = block(doc, parent, &format!("display:block;{css}"));
-            if !inner_css.is_empty() {
-                block(doc, wrapper, inner_css);
-            }
-            block(doc, wrapper, "display:block;height:20px");
-        });
-        assert_eq!(page_flow_y(&doc, wrapper), 70.0, "{css} {inner_css}");
-    }
-    // A box that is not a block container.
-    let (mut wrapper, mut grid) = (0, 0);
+fn a_wrapper_with_a_float_beside_its_box_moves_with_the_edges() {
+    // The float sits within the wrapper, so it goes with it; it is no place
+    // to break at.
+    let (mut wrapper, mut float) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
         let parent = block(doc, body, "display:block;padding-bottom:30px");
         block(doc, parent, "display:block;height:40px");
         block(doc, parent, "display:block;height:30px");
         wrapper = block(doc, parent, "display:block");
-        grid = block(doc, wrapper, "display:grid;height:20px");
+        float = block(doc, wrapper, "float:left;width:10px;height:5px");
+        block(doc, wrapper, "display:block;height:20px");
+    });
+    assert_eq!(page_flow_y(&doc, wrapper), 100.0);
+    assert_eq!(page_flow_y(&doc, float), 100.0);
+}
+
+#[test]
+fn a_wrapper_with_a_float_that_runs_past_it_stays() {
+    // The float reaches below the wrapper, to where the page ends.
+    let (mut wrapper, mut float) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        let parent = block(doc, body, "display:block;padding-bottom:30px");
+        block(doc, parent, "display:block;height:40px");
+        block(doc, parent, "display:block;height:30px");
+        wrapper = block(doc, parent, "display:block");
+        float = block(doc, wrapper, "float:left;width:10px;height:60px");
+        block(doc, wrapper, "display:block;height:20px");
     });
     assert_eq!(page_flow_y(&doc, wrapper), 70.0);
-    assert_eq!(page_flow_y(&doc, grid), 70.0);
+    assert_eq!(page_flow_y(&doc, float), 70.0);
 }
 
 #[test]
@@ -1218,8 +1317,13 @@ fn boxes_that_are_not_in_the_block_flow_of_the_parent_stay() {
         assert_eq!(page_flow_y(&doc, last), 70.0, "{css}");
     }
     // A float and a sticky box are not boxes of the flow that end the parent
-    // or are moved with its edges.
-    for css in ["float:left;width:20px", "position:sticky;top:0"] {
+    // or are moved with its edges, nor is a sticky flex container or grid.
+    for css in [
+        "float:left;width:20px",
+        "position:sticky;top:0",
+        "display:flex;position:sticky;top:0",
+        "display:grid;position:sticky;top:0",
+    ] {
         let (mut first, mut last) = (0, 0);
         let (doc, _) = paged_body(|doc, body| {
             let parent = block(doc, body, "display:block;padding-bottom:30px");
@@ -1298,6 +1402,19 @@ fn a_last_box_that_holds_only_tied_boxes_moves_whole_with_the_closing_edges() {
         ),
         [100.0, 130.0, 180.0]
     );
+    // The last of the tied boxes may be a flex container, a grid or a table
+    // that moves whole.
+    for last in ["display:flex", "display:grid", "display:table"] {
+        assert_eq!(
+            inner_block_of_boxes(
+                "padding-bottom:15px",
+                "",
+                &[(30, "break-after:avoid"), (35, last)]
+            ),
+            [100.0, 130.0, 180.0],
+            "{last}"
+        );
+    }
     // A chain of three.
     assert_eq!(
         inner_block_of_boxes(
@@ -1419,12 +1536,16 @@ fn a_last_box_whose_boxes_are_not_all_tied_by_avoided_breaks_keeps_its_place() {
         ],
         ""
     ));
-    // Neither does a box that is not a plain block box.
+    // Neither does a flex container that stacks its items: the page breaks
+    // between them.
     assert!(keeps_place(
-        &|doc, inner| vec![
-            block(doc, inner, "display:block;height:30px;break-after:avoid"),
-            block(doc, inner, "display:flex;height:35px"),
-        ],
+        &|doc, inner| {
+            let first = block(doc, inner, "display:block;height:30px;break-after:avoid");
+            let column = block(doc, inner, "display:flex;flex-direction:column");
+            block(doc, column, "display:block;height:15px");
+            block(doc, column, "display:block;height:20px");
+            vec![first, column]
+        },
         ""
     ));
     // Nor does a box that has a break to take inside it.
@@ -1724,4 +1845,200 @@ fn a_card_that_avoids_a_break_inside_keeps_its_paragraph_whole() {
         ),
         (20.0, 100.0, 160.0)
     );
+}
+
+/// `body > div(padding-bottom:30px) > [div(40px), div(30px), ...]` on 100px
+/// pages, where `build` adds the last box to the div and returns the boxes to
+/// look at. Returns their page-flow y and the height of the div.
+fn card_ending_with(build: impl FnOnce(&mut Document, usize) -> Vec<usize>) -> (Vec<f32>, f32) {
+    let (mut ids, mut card) = (Vec::new(), 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        card = block(doc, body, "display:block;padding-bottom:30px");
+        block(doc, card, "display:block;height:40px");
+        block(doc, card, "display:block;height:30px");
+        ids = build(doc, card);
+    });
+    (
+        ids.iter().map(|&id| page_flow_y(&doc, id)).collect(),
+        doc.nodes[card].layout.size.height,
+    )
+}
+
+/// A table of `rows` rows with one cell of `height` each, in a row group or
+/// not. Returns the table, then each row and its cell.
+fn table_of_rows(
+    doc: &mut Document,
+    parent: usize,
+    grouped: bool,
+    rows: usize,
+    height: u32,
+) -> Vec<usize> {
+    let table = block(doc, parent, "display:table;border-spacing:0");
+    let holder = if grouped {
+        block(doc, table, "display:table-row-group")
+    } else {
+        table
+    };
+    let mut ids = vec![table];
+    for _ in 0..rows {
+        let row = block(doc, holder, "display:table-row");
+        let cell = block(
+            doc,
+            row,
+            &format!("display:table-cell;padding:0;height:{height}px"),
+        );
+        ids.extend([row, cell]);
+    }
+    ids
+}
+
+#[test]
+fn a_last_box_that_holds_one_row_of_boxes_moves_with_the_edges() {
+    // The flex container, the grid and the table have one row of boxes that
+    // the page cannot break inside, so they move whole as a block does:
+    // Chromium sends them to the next page with the padding.
+    type Shape = fn(&mut Document, usize) -> Vec<usize>;
+    let shapes: [(&str, Shape); 13] = [
+        ("grid", |doc, card| {
+            vec![block(doc, card, "display:grid;height:20px")]
+        }),
+        ("flex container", |doc, card| {
+            vec![block(doc, card, "display:flex;height:20px")]
+        }),
+        ("table", |doc, card| {
+            vec![block(doc, card, "display:table;height:20px")]
+        }),
+        ("grid in a wrapper", |doc, card| {
+            let wrapper = block(doc, card, "display:block");
+            vec![wrapper, block(doc, wrapper, "display:grid;height:20px")]
+        }),
+        ("flex line of two items", |doc, card| {
+            let line = block(doc, card, "display:flex");
+            vec![
+                line,
+                block(doc, line, "display:block;width:40px;height:20px"),
+                block(doc, line, "display:block;width:40px;height:20px"),
+            ]
+        }),
+        ("flex column of one item", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            vec![column, block(doc, column, "display:block;height:20px")]
+        }),
+        ("grid of two rows", |doc, card| {
+            let grid = block(doc, card, "display:grid;grid-template-columns:50px");
+            vec![
+                grid,
+                block(doc, grid, "display:block;height:10px"),
+                block(doc, grid, "display:block;height:10px"),
+            ]
+        }),
+        (
+            "flex line with an item that has boxes to break between",
+            |doc, card| {
+                let line = block(doc, card, "display:flex");
+                let item = block(doc, line, "display:block;width:40px");
+                block(doc, item, "display:block;height:10px");
+                block(doc, item, "display:block;height:10px");
+                vec![line, item]
+            },
+        ),
+        ("grid row of two items", |doc, card| {
+            let grid = block(doc, card, "display:grid;grid-template-columns:40px 40px");
+            vec![
+                grid,
+                block(doc, grid, "display:block;height:20px"),
+                block(doc, grid, "display:block;height:20px"),
+            ]
+        }),
+        ("table row", |doc, card| {
+            table_of_rows(doc, card, false, 1, 20)
+        }),
+        ("table row in a row group", |doc, card| {
+            table_of_rows(doc, card, true, 1, 20)
+        }),
+        ("flex item that holds a grid", |doc, card| {
+            let line = block(doc, card, "display:flex");
+            let item = block(doc, line, "display:block;width:40px");
+            vec![line, item, block(doc, item, "display:grid;height:20px")]
+        }),
+        ("grid of a wrapper with a float", |doc, card| {
+            let wrapper = block(doc, card, "display:block");
+            block(doc, wrapper, "float:left;width:10px;height:5px");
+            vec![wrapper, block(doc, wrapper, "display:grid;height:20px")]
+        }),
+    ];
+    for (label, build) in shapes {
+        let (ys, height) = card_ending_with(build);
+        // The container starts the next page and what it holds follows it.
+        assert_eq!(ys[0], 100.0, "{label}: {ys:?}");
+        assert!(ys.iter().all(|&y| y >= 100.0), "{label}: {ys:?}");
+        assert_eq!(height, 150.0, "{label}");
+    }
+}
+
+#[test]
+fn a_last_box_with_more_than_one_row_or_a_break_to_take_inside_stays() {
+    // The container starts on its page: the page breaks between its rows
+    // (the last of which Chromium sends to the next page with the padding),
+    // inside a caption's table, or in a writing mode left to other rules.
+    type Shape = fn(&mut Document, usize) -> Vec<usize>;
+    let shapes: [(&str, Shape); 8] = [
+        ("flex column of two items", |doc, card| {
+            let column = block(doc, card, "display:flex;flex-direction:column");
+            block(doc, column, "display:block;height:10px");
+            block(doc, column, "display:block;height:10px");
+            vec![column]
+        }),
+        (
+            "flex column of one item that has boxes to break between",
+            |doc, card| {
+                let column = block(doc, card, "display:flex;flex-direction:column");
+                let item = block(doc, column, "display:block");
+                block(doc, item, "display:block;height:10px");
+                block(doc, item, "display:block;height:10px");
+                vec![column]
+            },
+        ),
+        ("flex row that wraps", |doc, card| {
+            let lines = block(doc, card, "display:flex;flex-wrap:wrap");
+            block(doc, lines, "display:block;width:60px;height:10px");
+            block(doc, lines, "display:block;width:60px;height:10px");
+            vec![lines]
+        }),
+        ("table of two rows", |doc, card| {
+            let ids = table_of_rows(doc, card, false, 2, 10);
+            vec![ids[0]]
+        }),
+        ("table of two rows in a row group", |doc, card| {
+            let ids = table_of_rows(doc, card, true, 2, 10);
+            vec![ids[0]]
+        }),
+        ("table with a caption", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            block(doc, table, "display:table-caption;height:10px");
+            let row = block(doc, table, "display:table-row");
+            block(doc, row, "display:table-cell;padding:0;height:10px");
+            vec![table]
+        }),
+        ("table row group with a box that is no row", |doc, card| {
+            let table = block(doc, card, "display:table;border-spacing:0");
+            let group = block(doc, table, "display:table-row-group");
+            block(doc, group, "display:block;height:20px");
+            vec![table]
+        }),
+        ("flex container in a vertical writing mode", |doc, card| {
+            let flex = block(
+                doc,
+                card,
+                "display:flex;writing-mode:vertical-rl;height:20px",
+            );
+            block(doc, flex, "display:block;height:20px;width:10px");
+            vec![flex]
+        }),
+    ];
+    for (label, build) in shapes {
+        let (ys, height) = card_ending_with(build);
+        assert_eq!(ys, vec![70.0], "{label}");
+        assert!(height < 150.0, "{label}: {height}");
+    }
 }

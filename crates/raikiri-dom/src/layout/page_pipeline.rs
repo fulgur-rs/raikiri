@@ -6231,7 +6231,9 @@ fn normal_flow_bottom(
 /// and the margin below the box where it does not collapse out of `node_id`.
 /// `None` unless `node_id` holds one box in its flow, which holds one in turn,
 /// down to a box that the page cannot break inside: one without a box in its
-/// flow, or a paragraph of one line.
+/// flow, a paragraph of one line, or a flex container, grid or table that moves
+/// whole (see [`container_moves_whole`]). A float within the block moves with
+/// it.
 ///
 /// With no box before it in the block, a break that would leave this tail
 /// alone on the next page falls before the block instead (CSS Break 3 §4.1
@@ -6267,7 +6269,11 @@ fn lone_box_tail(
         let mut boxes = Vec::new();
         for &child in &node.children {
             if is_floating_box_for_pagination(document, cascade, child) {
-                return None;
+                // A float beside the box moves along with the block.
+                if !float_within_box(document, node_id, child) {
+                    return None;
+                }
+                continue;
             }
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
             if boxes.len() > 1 {
@@ -6284,6 +6290,18 @@ fn lone_box_tail(
                 // relative offset that layout applied.
                 content_end += normal_flow_y(document, cascade, body_id, only);
                 current = only;
+            }
+            // A flex container, grid or table that moves whole is the box that
+            // ends the chain. Named pages are assumed, as the walk does not
+            // know whether the document has any: a column flex container
+            // then moves whole only if its item holds nothing to break at.
+            [only]
+                if closing_edges_of(document, current, body_id).is_some()
+                    && container_moves_whole(document, cascade, only, true) =>
+            {
+                content_end += normal_flow_y(document, cascade, body_id, only);
+                current = only;
+                break;
             }
             _ => return None,
         }
@@ -6370,7 +6388,7 @@ fn avoid_chain_before_last_box(
         let (in_flow, floated) = flow_flags[index];
         in_flow == Some(id)
             && !floated
-            && is_plain_block_box(document, id)
+            && (is_plain_block_box(document, id) || is_plain_container_box(document, id))
             && !takes_no_block_space(document, id)
     };
     if !is_box(last) {
@@ -6540,12 +6558,136 @@ fn closing_edges_line_move(
     )
 }
 
+/// Whether the float `float` lies within the block-axis extent of the content
+/// of the box `unit` that holds it, margins included. It then moves along with
+/// `unit`, ends where the content does, and reaches no page edge that the
+/// content does not: it is no place to break at. A float that reaches into the
+/// padding or border below the content, or past the box, is not.
+fn float_within_box(document: &Document, unit: usize, float: usize) -> bool {
+    let layout = &document.nodes[float].layout;
+    let top = current_abs_y(document, float) - layout.margin.top;
+    let bottom = current_abs_y(document, float) + layout.size.height + layout.margin.bottom;
+    let unit_layout = &document.nodes[unit].layout;
+    let unit_top = current_abs_y(document, unit);
+    let content_bottom =
+        unit_top + unit_layout.size.height - unit_layout.padding.bottom - unit_layout.border.bottom;
+    top >= unit_top - 0.001 && bottom <= content_bottom + 0.001
+}
+
+/// Whether `display` is that of a flex container, a grid or a table laid out
+/// as a block-level box: the boxes that [`container_moves_whole`] judges.
+fn is_flex_grid_or_table_display(display: DisplayValue) -> bool {
+    matches!(
+        display,
+        DisplayValue::Flex | DisplayValue::Grid | DisplayValue::Table
+    )
+}
+
+/// Whether `node_id` is a block-level flex container, grid or table that
+/// stacks in the normal flow of a horizontal block container: not positioned
+/// away from the flow, and not laid out in another writing mode.
+fn is_plain_container_box(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.kind() == NodeKind::Element
+        && is_flex_grid_or_table_display(node.display())
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative
+        )
+        && !node.used_writing_mode.is_vertical()
+}
+
+/// Whether the flex container, grid or table `node_id` moves whole to the next
+/// page when the closing edges of the blocks around it do not fit after it, as
+/// browsers do: the break before it is the one that keeps those edges from
+/// being left alone, and the page does not break between its items instead.
+///
+/// That is so of a grid, of a flex container that lays its items out in one
+/// line, and of a table of a single row, whatever their items hold. A flex
+/// container that stacks its items, a column of more than one or rows that
+/// wrap, and a table with a caption, a header or footer group or more than one
+/// row, break between them and are left to the rules for those. A column of one
+/// item stacks it in block flow, so that item has to be as unbreakable as a
+/// block (see [`breaks_only_around`]). A grid whose rows end exactly at the
+/// page end breaks before its last row instead, which is not done.
+fn container_moves_whole(
+    document: &super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    node_id: usize,
+    has_named_pages: bool,
+) -> bool {
+    let node = &document.nodes[node_id];
+    // Generated boxes are not among the children, so the container cannot be
+    // judged.
+    if !is_plain_container_box(document, node_id)
+        || node.multicol.is_some()
+        || node.has_before_or_after_content
+        || is_floating_box_for_pagination(document, cascade, node_id)
+    {
+        return false;
+    }
+    match node.display() {
+        DisplayValue::Table => {
+            let elements = |parent: usize| {
+                document
+                    .children_through_contents(parent)
+                    .into_iter()
+                    .filter(|&child| document.nodes[child].kind() == NodeKind::Element)
+            };
+            let mut rows = 0;
+            for child in elements(node_id) {
+                match document.nodes[child].display() {
+                    DisplayValue::TableRow => rows += 1,
+                    DisplayValue::TableRowGroup => {
+                        for row in elements(child) {
+                            if document.nodes[row].display() != DisplayValue::TableRow {
+                                return false;
+                            }
+                            rows += 1;
+                        }
+                    }
+                    _ => return false,
+                }
+                if rows > 1 {
+                    return false;
+                }
+            }
+            true
+        }
+        DisplayValue::Flex => {
+            let computed = &cascade.computed[node_id];
+            let row = matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+            );
+            if row && computed.flex_wrap == FlexWrapValue::NoWrap {
+                return true;
+            }
+            // More than one item is enough to know it stacks them.
+            let mut items = Vec::new();
+            for &child in &node.children {
+                push_in_flow_boxes_rev(document, cascade, child, &mut items);
+                if items.len() > 1 {
+                    return false;
+                }
+            }
+            row || items
+                .iter()
+                .all(|&item| breaks_only_around(document, cascade, item, has_named_pages))
+        }
+        _ => true,
+    }
+}
+
 /// Whether the page cannot break inside the block `node_id` at a better place
 /// than before it: it has no box in its flow, or it has no more lines than
 /// `orphans`, so that a break cannot fall between them, or it is a block
 /// without padding or border around one box that is as unbreakable, or it
 /// holds boxes that are as unbreakable and that avoided breaks tie to each
-/// other, so that no break between them is left to take.
+/// other, so that no break between them is left to take. A flex container, a
+/// grid or a table qualifies when it moves whole (see
+/// [`container_moves_whole`]), and a float within the block does not count as a
+/// place to break at.
 fn breaks_only_around(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -6557,6 +6699,9 @@ fn breaks_only_around(
         let node = &document.nodes[current];
         if node.multicol.is_some() {
             return false;
+        }
+        if is_flex_grid_or_table_display(node.display()) {
+            return container_moves_whole(document, cascade, current, has_named_pages);
         }
         if node.is_ifc_root() {
             let computed = &cascade.computed[current];
@@ -6573,7 +6718,11 @@ fn breaks_only_around(
         let mut boxes = Vec::new();
         for &child in &node.children {
             if is_floating_box_for_pagination(document, cascade, child) {
-                return false;
+                // A float beside the boxes moves along with the block.
+                if !float_within_box(document, node_id, child) {
+                    return false;
+                }
+                continue;
             }
             let start = boxes.len();
             push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
@@ -6589,10 +6738,10 @@ fn breaks_only_around(
             [only]
                 if edges == 0.0
                     && document.nodes[only].kind() == NodeKind::Element
-                    && matches!(
+                    && (matches!(
                         document.nodes[only].display(),
                         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-                    ) =>
+                    ) || is_flex_grid_or_table_display(document.nodes[only].display())) =>
             {
                 current = only;
             }
@@ -6606,7 +6755,7 @@ fn breaks_only_around(
                     .windows(2)
                     .all(|pair| boxes_are_tied(document, cascade, pair[0], pair[1]))
                     && boxes.iter().all(|&id| {
-                        is_plain_block_box(document, id)
+                        (is_plain_block_box(document, id) || is_plain_container_box(document, id))
                             && !takes_no_block_space(document, id)
                             && breaks_only_around(document, cascade, id, has_named_pages)
                     });

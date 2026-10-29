@@ -10,11 +10,11 @@ use super::{
     breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
     first_owned_text_line_top, in_inset_out_of_flow_subtree, is_block_level_flow_box,
     is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
-    is_plain_block_box, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
-    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
-    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
-    takes_no_block_space, unplaced_line_end,
+    is_plain_block_box, is_plain_container_box, lone_box_tail, moves_later_siblings,
+    nested_run_units, normal_flow_bottom, page_applies_to_box, page_break_is_forced,
+    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -908,16 +908,20 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree;
-                // A block box in the flow that is a candidate to move to the
-                // next page, along with the box it holds or the edges it ends.
-                let in_flow_block = participates_in_flow
+                let in_flow_block_level = participates_in_flow
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree
                     && !inside_float
                     && !inline_level
-                    && !is_float
-                    && is_plain_block_box(document, node_id);
+                    && !is_float;
+                // A block box in the flow that is a candidate to move to the
+                // next page, along with the box it holds or the edges it ends.
+                let in_flow_block = in_flow_block_level && is_plain_block_box(document, node_id);
+                // A flex container, grid or table is a box that can end a block
+                // too, and move to the next page for the edges it ends.
+                let in_flow_container =
+                    in_flow_block_level && is_plain_container_box(document, node_id);
                 // A box before it must be there to break from, with no break
                 // avoided between the two, unless every break before it is
                 // avoided: one that gives way is the only one left.
@@ -931,8 +935,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // would break away from it stays with them: it is a nested
                 // candidate that moves to the next page when they do not fit
                 // after it.
-                let closing_edges_base_shape =
-                    in_flow_block && !direct_body_child && frame.closing_edges > 0.0;
+                let closing_edges_base_shape = (in_flow_block || in_flow_container)
+                    && !direct_body_child
+                    && frame.closing_edges > 0.0;
                 let closing_edges_shape = closing_edges_base_shape && break_before_available();
                 // With no box before it in the block, the edges follow its
                 // lines when it is a paragraph that breaks between them.
