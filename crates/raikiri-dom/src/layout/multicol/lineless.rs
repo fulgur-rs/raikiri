@@ -123,6 +123,25 @@ pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
         && block_margins(&style) == Some((0.0, 0.0))
 }
 
+/// Whether `child` is a plain block with nothing inside it, no block size and
+/// no padding or border: a box that takes no room, so that only its margins
+/// count, collapsing through it with the ones around it. Its block margins may
+/// be of either sign; inline margins would narrow it, so it has none.
+pub(super) fn is_margin_only_block(tree: &LayoutSession<'_>, child: usize) -> bool {
+    let style = style_of(tree, child);
+    let margin = style.margin();
+    let zero = LengthPercentageAuto::length(0.0);
+    margin.left == zero
+        && margin.right == zero
+        && [margin.top, margin.bottom]
+            .into_iter()
+            .all(|edge| style_dimension_length(edge.into()).is_some_and(f32::is_finite))
+        && is_plain_block_apart_from_margins(tree, child, false, false)
+        && !has_rendered_content(tree, child, false)
+        && !has_block_size(&style)
+        && !has_block_edge_decorations(&style)
+}
+
 /// Whether `c` is white space that collapses away, as opposed to the other
 /// characters Unicode counts as white space, such as a no-break space, which
 /// render.
@@ -203,6 +222,18 @@ fn is_plain_block_with_display(
     allow_flow_root: bool,
     allow_lines: bool,
 ) -> bool {
+    block_margins(&style_of(tree, child)).is_some()
+        && is_plain_block_apart_from_margins(tree, child, allow_flow_root, allow_lines)
+}
+
+/// [`is_plain_block_with_display`] for a box whose margins the caller has
+/// checked.
+fn is_plain_block_apart_from_margins(
+    tree: &LayoutSession<'_>,
+    child: usize,
+    allow_flow_root: bool,
+    allow_lines: bool,
+) -> bool {
     let node = layout_node(tree, child);
     let style = style_of(tree, child);
     let display = node.display();
@@ -215,7 +246,6 @@ fn is_plain_block_with_display(
             && node.layout_position() != Position::Static
         || style.float().is_floated()
         || style.clear() != Clear::None
-        || block_margins(&style).is_none()
         || style.overflow()
             != (Point {
                 x: TaffyOverflow::Visible,

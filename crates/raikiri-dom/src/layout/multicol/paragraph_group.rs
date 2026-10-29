@@ -278,6 +278,12 @@ fn fill_chunk(
     let mut pending_margin = Margins::default();
     let mut maximum = 0.0f32;
     let mut column_has_content = false;
+    // The margins that adjoin through empty boxes and the paragraph after them
+    // were cut at a break, and stay cut until that paragraph.
+    let mut cut_margins = resume != FlowCursor::default()
+        && paragraphs
+            .get(resume.paragraph)
+            .is_some_and(|resumed| resumed.as_ref().is_some_and(|box_| box_.extents.is_empty()));
     for (paragraph_index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
         placements.push(None);
         let slot = placements.len() - 1;
@@ -293,16 +299,46 @@ fn fill_chunk(
         // so a paragraph resumed from its start has none either.
         let at_resumed_start =
             paragraph_index == resume.paragraph && resume != FlowCursor::default();
-        let adjoining = pending_margin.with(if initial_line == 0 && !at_resumed_start {
-            paragraph.margin_top
+        let mut adjoining = if cut_margins {
+            Margins::default()
         } else {
-            0.0
-        });
+            pending_margin.with(if initial_line == 0 && !at_resumed_start {
+                paragraph.margin_top
+            } else {
+                0.0
+            })
+        };
         let mut top = cursor + adjoining.value();
         if paragraph.extents.is_empty() {
+            // An empty box takes no room, but its margins put it below the
+            // lines before it, and a place past the end of the column is an
+            // unforced break: the box starts the next column, and the margins
+            // adjoining through it are cut.
+            if top > height + f32::EPSILON && column_has_content {
+                maximum = maximum.max(cursor);
+                column = column.checked_add(1)?;
+                if column >= context.column_count {
+                    return Some(Chunk {
+                        group: finish_group(placements, height),
+                        next: Some(FlowCursor {
+                            paragraph: paragraph_index,
+                            line: 0,
+                        }),
+                    });
+                }
+                cursor = 0.0;
+                top = 0.0;
+                column_has_content = false;
+                cut_margins = true;
+                adjoining = Margins::default();
+            }
             // Retain both extrema across empty boxes: collapsing their summed
             // margins again would lose the negative member of the chain.
-            pending_margin = adjoining.with(paragraph.margin_bottom);
+            pending_margin = if cut_margins {
+                Margins::default()
+            } else {
+                adjoining.with(paragraph.margin_bottom)
+            };
             placements[slot] = Some(Placement {
                 first_column: column,
                 first_y: top,
@@ -313,6 +349,7 @@ fn fill_chunk(
             });
             continue;
         }
+        cut_margins = false;
         let mut start = initial_line;
         let mut fragments = Vec::new();
         let mut first_column = column;
