@@ -724,10 +724,10 @@ pub(crate) fn project_ifc_text(
 /// computed values are those inherited values, so they style the paragraph.
 ///
 /// Text nodes that are not siblings can still make one run, since a `display:
-/// contents` element between them generates no box (CSS Display 3, 2.5). As
-/// in the paragraph of a block, such an element is no inline box here: the
-/// text of each node is pushed with the root's style, and the node's own
-/// computed values apply where the lines are painted.
+/// contents` element between them generates no box (CSS Display 3, 2.5). Such
+/// an element is no inline box here; a node whose values shape its text
+/// differently from the root's is wrapped in an inline box of its own, with no
+/// edges, and the rest is pushed with the root's style.
 ///
 /// # Errors
 /// [`IfcError::InvalidNode`] for a run without `text`, or an unknown, detached
@@ -764,13 +764,25 @@ pub(crate) fn project_ifc_text_run_builder(
     // reading `unicode-bidi`.
     let (options, indent) = style::line_options(cv, text, fonts)?;
     let root_style = styled(doc, cascade, cv, text, fonts)?;
-    let mut paragraph_style = style::paragraph_style(cv, text, root_style)?;
+    let mut paragraph_style = style::paragraph_style(cv, text, root_style.clone())?;
     paragraph_style.line_height_quirk = line_height_quirk(doc);
     let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let cleared_breaks = Vec::new();
     let mut text_nowrap = HashMap::new();
     for (member, content, member_cv) in members {
+        // A text node under a `display: contents` element has the values that
+        // element gives it, which can shape the text differently from the
+        // root's. The element is no box here, so the text alone gets an
+        // inline box to carry its own style.
+        let own_style = if member == text {
+            None
+        } else {
+            Some(styled(doc, cascade, member_cv, member, fonts)?).filter(|own| *own != root_style)
+        };
+        if let Some(own) = &own_style {
+            builder.open_inline(NodeId(member as u64), own, InlineEdges::default());
+        }
         builder.push_text(
             TextSource::Dom {
                 node: NodeId(member as u64),
@@ -778,6 +790,9 @@ pub(crate) fn project_ifc_text_run_builder(
             },
             content,
         );
+        if own_style.is_some() {
+            builder.close_inline();
+        }
         text_nowrap.insert(
             member as u64,
             member_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,

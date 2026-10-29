@@ -178,3 +178,47 @@ fn only_a_box_separates_the_runs() {
         ],
     );
 }
+
+/// The text under a `display: contents` element has the values that element
+/// gives it, which shape it in the one paragraph of the item: a larger font
+/// makes its characters wider and its line taller.
+#[test]
+fn the_text_under_a_contents_element_keeps_its_own_style() {
+    check(
+        "display:inline-flex",
+        &[
+            (
+                "larger font",
+                "a<span style='display:contents;font-size:20px'>b</span>c",
+                40.0,
+                13.0,
+            ),
+            (
+                "larger font between spaces",
+                "a <span style='display:contents;font-size:20px'>b</span> c",
+                60.0,
+                13.0,
+            ),
+            (
+                "nested larger fonts",
+                "a<span style='display:contents;font-size:20px'>b\
+                 <i style='display:contents;font-size:30px'>c</i></span>d",
+                70.0,
+                16.0,
+            ),
+            (
+                "the first text has the larger font",
+                "<span style='display:contents;font-size:20px'>b</span>c",
+                30.0,
+                13.0,
+            ),
+            (
+                "white space before the root has a larger font",
+                "<span style='display:contents;font-size:20px'> </span>c\
+                 <span style='display:contents;font-size:20px'>d</span>",
+                30.0,
+                13.0,
+            ),
+        ],
+    );
+}
