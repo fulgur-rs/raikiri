@@ -616,6 +616,13 @@ fn column_definite_margins(
     (resolve(margin.left), resolve(margin.right))
 }
 
+/// The room between the horizontal margins of a box in a column of
+/// `column_width`, where an auto margin counts as zero.
+fn column_room(style: &LayoutStyleView<'_>, column_width: f32) -> f32 {
+    let (left, right) = column_definite_margins(style, column_width);
+    (column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
+}
+
 /// The left and right margins of a box when its border box is `child_width`
 /// wide in a column of `column_width`. Auto margins share the room the width
 /// and the other margin leave (CSS 2, 10.3.3), except on a float, where they
@@ -640,8 +647,8 @@ fn column_horizontal_margins(
 }
 
 /// The input that lays `child` out in a column of `column_width`: at the
-/// width the column imposes on it, if any, and for a float with an auto width
-/// within the room its margins leave.
+/// width the column imposes on it, if any, and for a float or a button with an
+/// auto width within the room its margins leave.
 fn column_child_layout_input(
     tree: &LayoutSession<'_>,
     child: usize,
@@ -659,18 +666,15 @@ fn column_child_layout_input(
     }
     let style = style_of(tree, child);
     let floated = style.float().is_floated();
-    // The room between the horizontal margins, where an auto margin counts as
-    // zero.
-    let room = || {
-        let (left, right) = column_definite_margins(&style, column_width);
-        (column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
-    };
+    let room = || column_room(&style, column_width);
     // An authored width resolves against the column width instead, and a
-    // float with an auto width shrinks to fit its content within the column.
-    let imposed_width = (style.size().width == Dimension::auto() && !floated).then(room);
+    // float or a button with an auto width shrinks to fit its content within
+    // the column (HTML Standard 15.5.3 for the button).
+    let shrinks = floated || layout_node(tree, child).is_html_button();
+    let imposed_width = (style.size().width == Dimension::auto() && !shrinks).then(room);
     let mut input =
         column_child_input(imposed_width, column_width, parent_height, available_height);
-    if input.known_dimensions.width.is_none() && floated {
+    if input.known_dimensions.width.is_none() && shrinks {
         input.available_space.width = AvailableSpace::Definite(room());
     }
     input

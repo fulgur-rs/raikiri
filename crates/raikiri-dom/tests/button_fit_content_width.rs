@@ -461,6 +461,65 @@ fn a_block_level_button_directly_in_a_multicol_takes_the_width_of_its_content() 
             &[("b", 8.0, 8.0, 20.0, 20.0)],
         ),
     ]);
+    // The margins narrow the room the text wraps in, the column width minus
+    // the margins.
+    let wrapping = "height: 50px; column-fill: auto";
+    let words = "xx xx xx xx xx xx xx";
+    check_boxes(&[
+        (
+            "margins on both sides",
+            &multicol(
+                wrapping,
+                &format!("<button id=b style='{BUTTON} margin: 0 10px'>{words}</button>"),
+            ),
+            &[("b", 18.0, 8.0, 80.0, 30.0)],
+        ),
+        (
+            "a margin on the left only",
+            &multicol(
+                wrapping,
+                &format!("<button id=b style='{BUTTON} margin-left: 10px'>{words}</button>"),
+            ),
+            &[("b", 18.0, 8.0, 90.0, 30.0)],
+        ),
+        (
+            "margins as a percentage of the column",
+            &multicol(
+                wrapping,
+                &format!("<button id=b style='{BUTTON} margin: 0 10%'>{words}</button>"),
+            ),
+            &[("b", 18.0, 8.0, 80.0, 30.0)],
+        ),
+        (
+            "margins and text that fits",
+            &multicol(
+                "",
+                &format!("<button id=b style='{BUTTON} margin: 0 10px; height: 20px'>xx</button>"),
+            ),
+            &[("b", 18.0, 8.0, 20.0, 20.0)],
+        ),
+        (
+            "margins after a paragraph",
+            &multicol(
+                wrapping,
+                &format!(
+                    "<p style='margin: 0'>xx</p>\
+                     <button id=b style='{BUTTON} margin: 0 10px'>{words}</button>"
+                ),
+            ),
+            &[("b", 18.0, 18.0, 80.0, 30.0)],
+        ),
+        (
+            "margins on a spanner",
+            &multicol(
+                "",
+                &format!(
+                    "<button id=b style='{BUTTON} margin: 0 10px; column-span: all'>{words}</button>"
+                ),
+            ),
+            &[("b", 18.0, 8.0, 180.0, 20.0)],
+        ),
+    ]);
     // The sizes the button states still apply.
     check_boxes(&[
         (
