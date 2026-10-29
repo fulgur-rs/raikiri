@@ -68,10 +68,12 @@ pub(crate) struct PageProjection {
     placement_overflow_clips: Vec<PlacementOverflowClipSource>,
     /// Layout boxes of the elements whose transforms do more than translate.
     transform_boxes: paint_transform::TransformBoxes,
+    pub(crate) scene_geometry: std::sync::OnceLock<std::sync::Arc<crate::SceneGeometry>>,
 }
 
 impl PageProjection {
     pub(crate) fn clear(&mut self) {
+        self.scene_geometry.take();
         self.pages.clear();
         self.links.clear();
         self.text_roots.clear();
@@ -404,6 +406,7 @@ impl Document {
             overflow_clips,
             placement_overflow_clips,
             transform_boxes,
+            scene_geometry: Default::default(),
         };
         Ok(())
     }

@@ -52,7 +52,7 @@ use crate::entries::{BlockEntry, ParagraphEntry};
 use crate::raster_budget::RasterBufferBudget;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use raikiri_dom::{Document, IfcTextLines, Node};
+use raikiri_dom::{Document, Node};
 use raikiri_style::{CascadeResult, ComputedValues, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox, RenderError};
 use std::collections::{BTreeMap, HashMap};
@@ -387,71 +387,65 @@ pub fn build_page_scene_for_page_named(
     let root_generates_box =
         cascade.root_element_computed().display != raikiri_style::property::DisplayValue::None;
     if let Some(root_idx) = root_arena_idx.filter(|_| root_generates_box) {
-        // DFS from the document element, matching the paint walk. Absolute
-        // y stays in the shared document coordinate space until the fragment
-        // is committed, which makes page intersection independent of nesting.
-        let mut stack = vec![(root_idx, 0.0, 0.0, false, false)];
-        let mut ifc = IfcParagraphs::default();
-        while let Some((idx, parent_abs_x, parent_abs_y, in_viewport_fixed, inside_fixed_cb)) =
-            stack.pop()
-        {
-            let Some(node) = dom.get_node(idx) else {
-                continue; // cov:ignore: DFS stack holds only document-subtree indices, always valid in a well-formed Document
-            };
-            if is_skipped_by_paint(node) {
+        let geometry = dom.scene_geometry();
+        let horizontal = area.axis.is_some();
+        let translation = if horizontal {
+            area.translation.0
+        } else {
+            area.translation.1
+        };
+        let end = if horizontal { area.width } else { area.height };
+        let candidates = geometry.candidates(horizontal, translation, end);
+        let mut flags = HashMap::new();
+        let mut cursor = 0;
+        while cursor < candidates.len() {
+            let (record, _) = geometry.piece(candidates[cursor]);
+            let geometry_node = &geometry.records()[record];
+            let idx = geometry_node.node();
+            let node = dom.get_node(idx).expect("prepared scene node exists");
+            let cv = &cascade.computed[idx];
+            let in_viewport_fixed =
+                scene_fixed_flags(dom, cascade, geometry, record, root_idx, &mut flags).0;
+            let mut rects = Vec::new();
+            while cursor < candidates.len() {
+                let (owner, rect) = geometry.piece(candidates[cursor]);
+                if owner != record {
+                    break;
+                }
+                rects.push(rect);
+                cursor += 1;
+                #[cfg(test)]
+                tests::indexed_tests::count_work(1, 0);
+            }
+            let on_page = area.rects_on_page(rects, in_viewport_fixed);
+            if on_page.is_empty() {
                 continue;
             }
-            let cv = &cascade.computed[idx];
-            let (in_viewport_fixed, child_fixed_cb) = fixed_flags(
-                dom,
-                idx,
-                node,
-                cv,
-                idx == root_idx,
-                (in_viewport_fixed, inside_fixed_cb),
-            );
-            let ((abs_x, abs_y), border_box) =
-                node_border_box(dom, idx, node, (parent_abs_x, parent_abs_y));
-            ifc.enter_root(dom, idx, node, (abs_x, abs_y));
-            let ifc_lines = ifc.lines_of(node, idx);
-            let rects = ifc.node_rects(dom, idx, node, (abs_x, abs_y), border_box, ifc_lines);
-            let on_page = area.rects_on_page(rects, in_viewport_fixed);
-
-            if !on_page.is_empty() {
-                let node_id = NodeId::new(idx as u64);
-                node_ids.push(node_id);
-                fragments
-                    .entry(node_id)
-                    .or_default()
-                    .extend(page_fragments(page_index, on_page));
-
-                // `crate::entries` keeps primitive snapshots; the live DOM is
-                // still the paint truth until drawables become the renderer
-                // input.
-                match node.kind() {
-                    NodeKind::Element => {
-                        let entry = block_entry(dom, cv, node_id, border_box);
-                        drawables.block_styles.insert(node_id, entry);
-                    }
-                    NodeKind::Text => {
-                        let entry = paragraph_entry(ifc_lines);
-                        drawables.paragraphs.insert(node_id, entry);
-                    }
-                    _ => {} // cov:ignore: in-document body descendants via parsing are only Element or Text (Comment/PI bits cleared, template fragments detached, DFS starts at the document element)
+            let node_id = NodeId::new(idx as u64);
+            node_ids.push(node_id);
+            fragments
+                .entry(node_id)
+                .or_default()
+                .extend(page_fragments(page_index, on_page));
+            match node.kind() {
+                NodeKind::Element => {
+                    drawables.block_styles.insert(
+                        node_id,
+                        block_entry(dom, cv, node_id, geometry_node.border_box()),
+                    );
                 }
-            }
-
-            if node.kind() == NodeKind::Element {
-                // The children of an inline element of an inline engine
-                // paragraph are located from the paragraph's root.
-                let (base_x, base_y) = if dom.contributes_layout_offset(idx) {
-                    (abs_x, abs_y)
-                } else {
-                    (parent_abs_x, parent_abs_y)
-                };
-                for &child in node.children.iter().rev() {
-                    stack.push((child, base_x, base_y, in_viewport_fixed, child_fixed_cb));
+                NodeKind::Text => {
+                    #[cfg(test)]
+                    tests::indexed_tests::count_work(0, geometry_node.line_count());
+                    drawables.paragraphs.insert(
+                        node_id,
+                        ParagraphEntry {
+                            line_count: geometry_node.line_count(),
+                            ..ParagraphEntry::default()
+                        },
+                    );
                 }
+                _ => {} // cov:ignore: prepared source nodes are elements or text; skipped node kinds have no boxes
             }
         }
     } // cov:ignore: parse always synthesizes <body>, so the missing-body path is unreachable with a parsed Document
@@ -476,9 +470,6 @@ pub fn build_page_scene_for_page_named(
 
 /// A border box in document coordinates: `(x, y, width, height)`.
 type SceneRect = (Pt, Pt, Pt, Pt);
-
-/// The inline element pieces of one paragraph, by node.
-type PieceRectsByNode = HashMap<usize, Vec<SceneRect>>;
 
 /// Where the content of one page sits.
 struct PageArea {
@@ -588,13 +579,43 @@ fn body_node_id(dom: &Document) -> Option<NodeId> {
         .map(|idx| NodeId::new(idx as u64))
 }
 
-/// Whether paint skips the node and its subtree: outside the document, not
-/// rendered, `display: none`, or removed by a `text-overflow` ellipsis.
-fn is_skipped_by_paint(node: &Node) -> bool {
-    !node.is_in_document()
-        || node.is_non_rendered_html_element()
-        || node.is_display_none()
-        || node.is_hidden_by_text_overflow()
+/// Current style flags for a candidate and its ancestor closure. Only nodes
+/// needed by this page are memoized; publicly mutable computed values are
+/// never retained across calls.
+fn scene_fixed_flags(
+    dom: &Document,
+    cascade: &CascadeResult,
+    geometry: &raikiri_dom::SceneGeometry,
+    record: usize,
+    root: usize,
+    memo: &mut HashMap<usize, (bool, bool)>,
+) -> (bool, bool) {
+    let mut pending = Vec::new();
+    let mut ancestor = Some(record);
+    while let Some(current) = ancestor {
+        if memo.contains_key(&current) {
+            break;
+        }
+        pending.push(current);
+        ancestor = geometry.records()[current].parent();
+    }
+    let mut inherited = ancestor.map_or((false, false), |index| memo[&index]);
+    for current in pending.into_iter().rev() {
+        let idx = geometry.records()[current].node();
+        let node = dom.get_node(idx).expect("prepared scene ancestor exists");
+        inherited = fixed_flags(
+            dom,
+            idx,
+            node,
+            &cascade.computed[idx],
+            idx == root,
+            inherited,
+        );
+        memo.insert(current, inherited);
+        #[cfg(test)]
+        tests::indexed_tests::count_work(1, 0);
+    }
+    memo[&record]
 }
 
 /// Whether a node is fixed to the viewport and whether its descendants have a
@@ -617,155 +638,6 @@ fn fixed_flags(
         inside_fixed_cb
             || (element_box && raikiri_dom::establishes_fixed_containing_block(dom, idx, cv)),
     )
-}
-
-/// The origin of a node and its border box in document coordinates.
-fn node_border_box(
-    dom: &Document,
-    idx: usize,
-    node: &Node,
-    (parent_abs_x, parent_abs_y): (Pt, Pt),
-) -> ((Pt, Pt), SceneRect) {
-    let layout = node.layout();
-    let (abs_x, abs_y) = dom
-        .layout_origin_of(idx)
-        .map(|origin| (origin.x, origin.y))
-        .unwrap_or((
-            parent_abs_x + layout.location.x,
-            parent_abs_y + layout.location.y,
-        ));
-    // Descendants keep the wrapper origin; only the table's own
-    // border box and style snapshot exclude the caption area.
-    let border_box = node.table_grid_box().map_or(
-        (abs_x, abs_y, layout.size.width, layout.size.height),
-        |rect| (abs_x + rect.x, abs_y + rect.y, rect.width, rect.height),
-    );
-    ((abs_x, abs_y), border_box)
-}
-
-/// Content-box origin and inline element pieces of every paragraph laid out
-/// by the inline engine, by root. Its text nodes have no layout of their own,
-/// and its inline elements are recorded as one rectangle per line; both are
-/// measured from the root's content box. A root is visited before its
-/// descendants.
-#[derive(Default)]
-struct IfcParagraphs {
-    /// Where the content box of each paragraph starts.
-    origin: HashMap<usize, (Pt, Pt)>,
-    /// The content width and whether lines stack right to left, for each
-    /// vertical paragraph.
-    vertical: HashMap<usize, (Pt, bool)>,
-    /// The inline element pieces of each paragraph.
-    pieces: HashMap<usize, PieceRectsByNode>,
-    /// The lines each text node of a paragraph shows up on.
-    text_lines: HashMap<usize, IfcTextLines>,
-}
-
-impl IfcParagraphs {
-    /// Record the paragraph that `node` roots, if it roots one; `abs` is
-    /// where the node sits.
-    fn enter_root(&mut self, dom: &Document, idx: usize, node: &Node, (abs_x, abs_y): (Pt, Pt)) {
-        if !node.is_ifc_root() {
-            return;
-        }
-        let layout = node.layout();
-        let origin = (
-            abs_x + layout.border.left + layout.padding.left,
-            abs_y + layout.border.top + layout.padding.top,
-        );
-        self.origin.insert(idx, origin);
-        if let Some(mode) = node.ifc_writing_mode().filter(|mode| mode.is_vertical()) {
-            self.vertical.insert(
-                idx,
-                (
-                    layout.content_box_width(),
-                    matches!(
-                        mode,
-                        shodo::geometry::WritingMode::VerticalRl
-                            | shodo::geometry::WritingMode::SidewaysRl
-                    ),
-                ),
-            );
-        }
-        let mut by_node: PieceRectsByNode = HashMap::new();
-        for piece in node.ifc_inline_boxes().unwrap_or_default() {
-            let rect = piece.border_box;
-            by_node.entry(piece.node).or_default().push((
-                origin.0 + rect.x,
-                origin.1 + rect.y,
-                rect.width,
-                rect.height,
-            ));
-        }
-        self.pieces.insert(idx, by_node);
-        self.text_lines.extend(dom.ifc_text_lines_by_node(idx));
-    }
-
-    /// The lines a text node shows up on in its paragraph.
-    fn lines_of(&self, node: &Node, idx: usize) -> Option<&IfcTextLines> {
-        if node.kind() == NodeKind::Text {
-            self.text_lines.get(&idx)
-        } else {
-            None
-        }
-    }
-
-    /// Border boxes of the node in document coordinates: one for most
-    /// nodes, one per line for an inline element of an ifc paragraph.
-    fn node_rects(
-        &self,
-        dom: &Document,
-        idx: usize,
-        node: &Node,
-        (abs_x, abs_y): (Pt, Pt),
-        border_box: SceneRect,
-        ifc_lines: Option<&IfcTextLines>,
-    ) -> Vec<SceneRect> {
-        if let Some(owned) = ifc_lines {
-            let (root_x, root_y) = self
-                .origin
-                .get(&owned.root)
-                .copied()
-                .unwrap_or((abs_x, abs_y));
-            let first_top = owned.lines.first().map_or(0.0, |l| l.top);
-            let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
-            let block_size = (last_bottom - first_top).max(0.0);
-            if let Some(&(content_width, right_to_left)) = self.vertical.get(&owned.root) {
-                let x = if right_to_left {
-                    root_x + content_width - last_bottom
-                } else {
-                    root_x + first_top
-                };
-                vec![(x, root_y, block_size, owned.width)]
-            } else {
-                vec![(root_x, root_y + first_top, owned.width, block_size)]
-            }
-        } else {
-            let pieces: Vec<SceneRect> = if node.in_ifc_subtree() {
-                ifc_root_of(dom, idx)
-                    .and_then(|root| self.pieces.get(&root))
-                    .and_then(|pieces| pieces.get(&idx))
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            if pieces.is_empty() {
-                vec![border_box]
-            } else {
-                pieces
-            }
-        }
-    }
-}
-
-/// The snapshot of a text node: a text node outside every paragraph has no
-/// lines.
-fn paragraph_entry(ifc_lines: Option<&IfcTextLines>) -> ParagraphEntry {
-    ParagraphEntry {
-        line_count: ifc_lines.map_or(0, |owned| owned.lines.len()),
-        ..ParagraphEntry::default()
-    }
 }
 
 /// One fragment of the page per rectangle.
@@ -805,12 +677,6 @@ fn block_entry(
         layout_size: Some((border_box.2, border_box.3)),
         ..BlockEntry::default()
     }
-}
-
-/// The paragraph root above a node inside an ifc paragraph.
-fn ifc_root_of(dom: &Document, idx: usize) -> Option<usize> {
-    dom.ancestors(idx)
-        .find(|&id| dom.get_node(id).is_some_and(|node| node.is_ifc_root()))
 }
 
 /// Get an Element node's `id` attribute through the

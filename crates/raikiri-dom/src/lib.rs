@@ -148,3 +148,7 @@ pub mod snapshot;
 
 #[cfg(test)]
 mod tests;
+
+mod scene_geometry;
+#[doc(hidden)]
+pub use scene_geometry::{SceneGeometry, SceneGeometryNode};
