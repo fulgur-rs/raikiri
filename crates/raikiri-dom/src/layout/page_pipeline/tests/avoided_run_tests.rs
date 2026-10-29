@@ -881,6 +881,166 @@ fn a_wrapper_that_clips_its_content_does_not_move_for_the_run_it_hides() {
 }
 
 #[test]
+fn a_heading_in_a_wrapper_moves_with_the_first_row_of_the_table_after_it() {
+    // The row is the part of the table the page cannot break away from the
+    // heading, as it is when the heading and the table lie in the body.
+    for (spacer, expected) in [
+        (70, (70.0, 80.0)),
+        (80, (80.0, 90.0)),
+        (85, (100.0, 110.0)),
+        (88, (100.0, 110.0)),
+    ] {
+        assert_eq!(
+            heading_in_wrapper_then(spacer, "", |doc, wrapper| table_of_rows(
+                doc, wrapper, "", 1, ""
+            )),
+            expected,
+            "{spacer}"
+        );
+    }
+    // Rows after the first one are free to go to the next page.
+    assert_eq!(
+        heading_in_wrapper_then(80, "", |doc, wrapper| table_of_rows(
+            doc, wrapper, "", 2, ""
+        )),
+        (80.0, 90.0)
+    );
+    // A tall first row that fits the next page starts it.
+    assert_eq!(
+        heading_in_wrapper_then(70, "", |doc, wrapper| table_of_rows(
+            doc,
+            wrapper,
+            "",
+            1,
+            "height:50px"
+        )),
+        (100.0, 110.0)
+    );
+}
+
+#[test]
+fn a_heading_in_a_wrapper_moves_with_a_table_that_the_page_cannot_break_inside() {
+    assert_eq!(
+        heading_in_wrapper_then(70, "", |doc, wrapper| table_of_rows(
+            doc,
+            wrapper,
+            "break-inside:avoid",
+            3,
+            ""
+        )),
+        (100.0, 110.0)
+    );
+    // The first row alone fits after the heading, but its group moves whole.
+    assert_eq!(
+        heading_in_wrapper_then(70, "", |doc, wrapper| {
+            let table = collapsed_table(doc, wrapper, "");
+            let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+            let first = row_with_cell(doc, group, "");
+            row_with_cell(doc, group, "");
+            row_with_cell(doc, group, "");
+            first
+        }),
+        (100.0, 110.0)
+    );
+    // A forced break between the rows splits the group: the heading goes with
+    // the rows before it, and these fit after the heading.
+    assert_eq!(
+        heading_in_wrapper_then(70, "", |doc, wrapper| {
+            let table = collapsed_table(doc, wrapper, "");
+            let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+            let first = row_with_cell(doc, group, "");
+            row_with_cell_in(doc, group, "break-before:page", "");
+            row_with_cell(doc, group, "");
+            first
+        }),
+        (70.0, 80.0)
+    );
+    assert_eq!(
+        heading_in_wrapper_then(70, "", |doc, wrapper| {
+            let table = collapsed_table(doc, wrapper, "");
+            let group = block(doc, table, "display:table-row-group;break-inside:avoid");
+            let first = row_with_cell_in(doc, group, "break-after:page", "");
+            row_with_cell(doc, group, "");
+            row_with_cell(doc, group, "");
+            first
+        }),
+        (70.0, 80.0)
+    );
+}
+
+#[test]
+fn a_heading_in_a_wrapper_moves_with_the_first_row_of_a_table_in_the_wrapper_after_it() {
+    // The wrapper starts with the table: the heading is tied to its first row.
+    let positions = |spacer, rows| {
+        let (mut heading, mut cell) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            heading = block(doc, body, "display:block;height:10px;break-after:avoid");
+            let wrapper = block(doc, body, "display:block");
+            cell = table_of_rows(doc, wrapper, "", rows, "");
+        });
+        [heading, cell].map(|id| page_flow_y(&doc, id))
+    };
+    assert_eq!(positions(85, 2), [100.0, 110.0]);
+    assert_eq!(positions(80, 2), [80.0, 90.0]);
+}
+
+#[test]
+fn a_heading_among_the_boxes_of_a_block_moves_with_the_first_row_of_the_table_after_it() {
+    let positions = |spacer| {
+        let (mut heading, mut cell) = (0, 0);
+        let (doc, _) = paged_body_with_ifc(|doc, body| {
+            block(doc, body, &format!("display:block;height:{spacer}px"));
+            let outer = block(doc, body, "display:block");
+            block(doc, outer, "display:block;height:10px");
+            heading = block(doc, outer, "display:block;height:10px;break-after:avoid");
+            cell = table_of_rows(doc, outer, "", 2, "");
+        });
+        [heading, cell].map(|id| page_flow_y(&doc, id))
+    };
+    // The first row fits after the heading.
+    assert_eq!(positions(65), [75.0, 85.0]);
+    // The first row would cross the edge: the heading goes with it, and the
+    // box before the heading stays.
+    assert_eq!(positions(75), [100.0, 110.0]);
+}
+
+#[test]
+fn a_heading_in_a_wrapper_stays_before_a_table_that_does_not_start_with_its_first_row() {
+    // A caption above the grid comes before the first row.
+    assert_eq!(
+        heading_in_wrapper_then(85, "", |doc, wrapper| {
+            let table = collapsed_table(doc, wrapper, "");
+            block(doc, table, "display:table-caption;height:5px");
+            row_with_cell(doc, table, "")
+        }),
+        (85.0, 100.0)
+    );
+    // Nor does the first row of a header group repeated on every page.
+    assert_eq!(
+        heading_in_wrapper_then(85, "", |doc, wrapper| {
+            let table = collapsed_table(doc, wrapper, "");
+            let header = block(doc, table, "display:table-header-group");
+            row_with_cell(doc, header, "");
+            let group = block(doc, table, "display:table-row-group");
+            let first = row_with_cell(doc, group, "");
+            row_with_cell(doc, group, "");
+            first
+        }),
+        (85.0, 110.0)
+    );
+    // The forced break sends the row to the next page whatever the heading
+    // does, so the heading has nothing to move with.
+    assert_eq!(
+        heading_in_wrapper_then(85, "", |doc, wrapper| {
+            let table = collapsed_table(doc, wrapper, "");
+            row_with_cell_in(doc, table, "break-before:page", "")
+        }),
+        (85.0, 100.0)
+    );
+}
+
+#[test]
 fn a_heading_in_a_wrapper_that_is_not_a_plain_block_is_left_as_before() {
     // The items of a row flex container sit side by side: no heading there
     // ties to the box after it.
