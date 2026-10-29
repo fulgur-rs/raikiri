@@ -43,7 +43,7 @@ fn coverage_unions_overlaps_and_clips_ranges_without_losing_literal_slots() {
         uncovered_slots(text, 10..22, vec![8..12, 11..17, 15..18, 25..30, 20..20]),
         [19]
     );
-    assert!(uncovered_slots(text, 10..22, vec![0..100]).is_empty());
+    assert!(uncovered_slots(text, 10..22, std::iter::once(0..100).collect()).is_empty());
 }
 
 #[test]
