@@ -6761,3 +6761,173 @@ fn a_padded_paragraph_after_another_follows_it_in_columns_with_gaps_and_containe
         .collect();
     assert_eq!(columns, [(0, 7.0), (1, 107.0)]);
 }
+
+/// A document with a container of three 100px columns, 50px high and filled
+/// one after another, whose children are boxes styled `css`: a box with `lines`
+/// lines of 10px, or one with nothing inside it when `lines` is 0. The
+/// document, the container and the children.
+fn boxes_and_paragraphs_in_columns(children: &[(&str, usize)]) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0;font:10px/10px Ahem"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            "display:block;width:300px;height:50px;columns:3;column-gap:0;column-fill:auto;\
+             orphans:1;widows:1",
+        ),
+    );
+    let ids = children
+        .iter()
+        .map(|&(css, lines)| {
+            let child = doc.append_element(
+                Some(container),
+                "div",
+                Some(format!("display:block;{css}").as_str()),
+            );
+            for line in 0..lines {
+                doc.append_text(child, "x");
+                if line + 1 < lines {
+                    doc.append_element(Some(child), "br", None::<&str>);
+                }
+            }
+            child
+        })
+        .collect();
+    lay_out_in_ahem(&mut doc, 400.0, 300.0);
+    (doc, container, ids)
+}
+
+/// The column, top and height of each fragment of `node`.
+fn fragment_places(doc: &Document, node: usize) -> Vec<(usize, f32, f32)> {
+    doc.fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == node)
+        .map(|fragment| {
+            (
+                fragment.fragmentainer,
+                fragment.rect.y,
+                fragment.rect.height,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_sized_box_before_a_padded_paragraph_shares_its_column() {
+    // The 20px box takes the top of the first column, so three lines of the
+    // paragraph fit under it. The last two lines and the 20px of padding below
+    // them fill the next column, as in a browser.
+    let (doc, container, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:20px;background:green", 0),
+        ("padding-bottom:20px;background:green", 5),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 20.0)]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 3, 0), (3, 5, 1)]);
+    assert_eq!(
+        boxes,
+        [
+            (20.0, 50.0, Some((0.0, 50.0))),
+            (0.0, 40.0, Some((0.0, 50.0)))
+        ]
+    );
+    // The lines are measured from the content box of each piece, which begins
+    // under the sized box in the first column.
+    assert_eq!(line_tops_in_column(&doc, children[1], 0), [0.0, 10.0, 20.0]);
+    assert_eq!(line_tops_in_column(&doc, children[1], 1), [0.0, 10.0]);
+    assert_eq!(fragment_places(&doc, container)[0].2, 50.0);
+}
+
+#[test]
+fn a_paragraph_without_block_edges_breaks_between_its_lines_after_a_sized_box() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:20px;background:green", 0),
+        ("background:green", 6),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 20.0)]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[1]);
+    assert_eq!(ranges, [(0, 3, 0), (3, 6, 1)]);
+    assert_eq!((boxes[0].0, boxes[0].1), (20.0, 30.0));
+    assert_eq!((boxes[1].0, boxes[1].1), (0.0, 30.0));
+}
+
+#[test]
+fn a_sized_box_between_paragraphs_follows_the_first_and_leads_the_second() {
+    // Two lines, the 20px box, and one line of the second paragraph fill the
+    // first column; its other three lines go to the second.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("background:green", 2),
+        ("height:20px;background:green", 0),
+        ("background:green", 4),
+    ]);
+    assert_eq!(fragment_places(&doc, children[1]), [(0, 20.0, 20.0)]);
+    let (ranges, boxes) = paragraph_pieces(&doc, children[2]);
+    assert_eq!(ranges, [(0, 1, 0), (1, 4, 1)]);
+    assert_eq!((boxes[0].0, boxes[0].1), (40.0, 10.0));
+    assert_eq!((boxes[1].0, boxes[1].1), (0.0, 30.0));
+}
+
+#[test]
+fn a_sized_box_that_does_not_fit_under_the_lines_goes_whole_to_the_next_column() {
+    // Ten pixels are left in the first column. The planner does not split the
+    // box between the two columns, so it starts the second.
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("background:green", 4),
+        ("height:20px;background:green", 0),
+    ]);
+    assert_eq!(fragment_places(&doc, children[1]), [(1, 0.0, 20.0)]);
+}
+
+#[test]
+fn a_sized_box_taller_than_a_column_leaves_the_paragraphs_to_the_other_strategies() {
+    let (doc, _, children) = boxes_and_paragraphs_in_columns(&[
+        ("height:60px;background:green", 0),
+        ("background:green", 2),
+    ]);
+    assert_eq!(fragment_places(&doc, children[0]), [(0, 0.0, 60.0)]);
+}
+
+#[test]
+fn a_sized_box_enters_the_stream_only_beside_a_paragraph() {
+    for (leaf, paragraph, enters) in [
+        ("height:20px", Some("background:green"), true),
+        ("height:20px", None, false),
+        ("min-height:20px", Some("background:green"), true),
+        (
+            "height:20px;position:relative;top:5px",
+            Some("background:green"),
+            true,
+        ),
+        (
+            "height:20px;margin-top:5px",
+            Some("background:green"),
+            false,
+        ),
+        ("height:20px;float:left", Some("background:green"), false),
+        (
+            "height:20px;overflow:hidden",
+            Some("background:green"),
+            false,
+        ),
+        (
+            "height:20px;position:absolute",
+            Some("background:green"),
+            false,
+        ),
+        ("", Some("background:green"), false),
+    ] {
+        let mut children = vec![(leaf, 0)];
+        children.extend(paragraph.map(|css| (css, 3)));
+        let (mut doc, container, _) = boxes_and_paragraphs_in_columns(&children);
+        assert_eq!(
+            with_bridged_session(&mut doc, |session| {
+                multicol_has_only_paragraph_children(session, container)
+            }),
+            enters,
+            "{leaf} {paragraph:?}"
+        );
+    }
+}

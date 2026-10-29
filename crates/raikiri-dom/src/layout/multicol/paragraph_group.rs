@@ -43,7 +43,7 @@ pub(super) fn balance(
     context: FragmentationContext,
 ) -> Option<Group> {
     let (paragraphs, paragraph_count, has_empty, mut high) =
-        collect(tree, entries, true, BlockEdges::Refused)?;
+        collect(tree, entries, true, BlockEdges::Refused, false)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
         || !high.is_finite()
@@ -76,7 +76,8 @@ pub(super) fn fill_definite(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) = collect(tree, entries, true, BlockEdges::Sliced)?;
+    let (paragraphs, paragraph_count, _, _) =
+        collect(tree, entries, true, BlockEdges::Sliced, true)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
     }
@@ -96,12 +97,15 @@ pub(super) fn fill_definite(
 /// so they pass `false` and leave such a paragraph to the other strategies.
 /// With `edges` sliced, a paragraph may have padding and border above its
 /// first line and below its last, which its pieces slice; only a stream that
-/// places those edges with the lines passes that.
+/// places those edges with the lines passes that. With `boxes`, a sized box with
+/// nothing inside it may stand between the paragraphs; a column holds it
+/// whole, and only a stream that fills definite-height columns passes that.
 fn collect(
     tree: &LayoutSession<'_>,
     entries: &[Measurement],
     atomics: bool,
     edges: BlockEdges,
+    boxes: bool,
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
     let mut paragraphs = Vec::with_capacity(entries.len());
     let mut paragraph_count = 0;
@@ -112,6 +116,22 @@ fn collect(
         // Source whitespace between block elements has no formatting box.
         if node.kind() == NodeKind::Text && output.size.height == 0.0 && node.ifc.is_none() {
             paragraphs.push(None);
+            continue;
+        }
+        // A box with no lines has nowhere to break, so its block size is the
+        // one extent of a one-line paragraph: it goes whole to a column that
+        // holds it, and the plan fails when none does.
+        if boxes && output.size.height > 0.0 && lineless::is_sized_leaf(tree, child) {
+            high += output.size.height + margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph {
+                extents: vec![(0.0, output.size.height)],
+                margin_top,
+                margin_bottom,
+                orphans: 1,
+                widows: 1,
+                edge_start: 0.0,
+                edge_end: 0.0,
+            }));
             continue;
         }
         let empty = output.size.height == 0.0
@@ -536,7 +556,7 @@ pub(super) fn fill_rows(
     budget: usize,
 ) -> Result<Rows, RowsStop> {
     let (paragraphs, count, _, _) =
-        collect(tree, entries, false, BlockEdges::Refused).ok_or(RowsStop::Unsupported)?;
+        collect(tree, entries, false, BlockEdges::Refused, false).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
         return Err(RowsStop::Unsupported);
     }
@@ -685,7 +705,8 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let Some((paragraphs, count, _, _)) = collect(tree, entries, false, BlockEdges::Refused) else {
+    let Some((paragraphs, count, _, _)) = collect(tree, entries, false, BlockEdges::Refused, false)
+    else {
         return Ok(None);
     };
     if count == 0 || context.column_count == 0 {
