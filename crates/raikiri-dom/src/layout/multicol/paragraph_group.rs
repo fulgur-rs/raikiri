@@ -51,6 +51,7 @@ pub(super) fn balance(
     {
         return None;
     }
+    let divided = divided_height(&paragraphs, context, FlowCursor::default(), high)?;
     // Trial work and storage depend on shaped lines, never the declared count.
     let mut low = 0.0;
     for _ in 0..32 {
@@ -58,13 +59,38 @@ pub(super) fn balance(
             break;
         }
         let trial = (low + high) * 0.5;
-        if fill(&paragraphs, context, trial, true).is_some() {
+        if fill(&paragraphs, context, trial, false).is_some() {
             high = trial;
         } else {
             low = trial;
         }
     }
-    fill(&paragraphs, context, high, true)
+    // The columns are as tall as the content in one column divided among them,
+    // or, when the breaks between the boxes leave no room for that, as the
+    // least height that holds them. The margin below the last box does not
+    // have to fit in the columns, but counts in what is divided.
+    let group = fill(&paragraphs, context, divided.max(high), false)?;
+    let height = divided.max(group.height);
+    Some(finish_group(group.placements, height))
+}
+
+/// The height of the paragraphs from `resume` in one column, with the margins
+/// between them and the one below the last, divided among the columns of
+/// `context`. `ceiling` is a height that holds them in one column.
+fn divided_height(
+    paragraphs: &[Option<Paragraph>],
+    context: FragmentationContext,
+    resume: FlowCursor,
+    ceiling: f32,
+) -> Option<f32> {
+    let one_column = FragmentationContext {
+        column_count: 1,
+        ..context
+    };
+    let stacked = fill_chunk(paragraphs, one_column, ceiling, resume, true)?
+        .group
+        .height;
+    Some(stacked / context.column_count as f32)
 }
 
 /// Place paragraphs in columns of the definite height `height` in source
@@ -599,7 +625,7 @@ pub(super) fn fill_rows(
     later: f32,
     budget: usize,
 ) -> Result<Rows, RowsStop> {
-    let (paragraphs, count, _, _) =
+    let (paragraphs, count, _, ceiling) =
         collect(tree, entries, false, BlockEdges::Refused, false).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
         return Err(RowsStop::Unsupported);
@@ -621,6 +647,7 @@ pub(super) fn fill_rows(
         // balanced row keeps the content the full row would hold.
         let balance = context.column_fill == ColumnFillValue::BalanceAll
             || (context.column_fill != ColumnFillValue::Auto && chunk.next.is_none());
+        let mut divided = 0.0;
         if balance {
             let next = chunk.next;
             let mut low = 0.0;
@@ -630,7 +657,7 @@ pub(super) fn fill_rows(
                     break;
                 }
                 let trial = (low + high) * 0.5;
-                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume, true)
+                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume, false)
                     && candidate.next == next
                 {
                     high = trial;
@@ -639,11 +666,27 @@ pub(super) fn fill_rows(
                     low = trial;
                 }
             }
+            // The last row is as tall as what remains in one column divided
+            // among the columns, if that is more than the least height that
+            // holds it; the margin below its last paragraph is part of what is
+            // divided, and does not have to fit.
+            if next.is_none() {
+                divided = divided_height(&paragraphs, context, resume, ceiling)
+                    .unwrap_or(0.0)
+                    .min(capacity);
+                if divided > chunk.group.height
+                    && let Some(candidate) =
+                        fill_chunk(&paragraphs, context, divided, resume, false)
+                    && candidate.next.is_none()
+                {
+                    chunk = candidate;
+                }
+            }
         }
         let height = if chunk.next.is_some() && !balance {
             capacity
         } else {
-            chunk.group.height
+            chunk.group.height.max(divided)
         };
         for (offset, placement) in chunk.group.placements.into_iter().enumerate() {
             let entry = resume.paragraph + offset;
@@ -749,7 +792,8 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let Some((paragraphs, count, _, _)) = collect(tree, entries, false, BlockEdges::Refused, false)
+    let Some((paragraphs, count, _, ceiling)) =
+        collect(tree, entries, false, BlockEdges::Refused, false)
     else {
         return Ok(None);
     };
@@ -787,6 +831,7 @@ pub(super) fn paginate(
             }
             return Ok(None);
         };
+        let mut divided = 0.0;
         if chunk.next.is_none() && context.column_fill != ColumnFillValue::Auto {
             let mut low = 0.0;
             let mut high = capacity;
@@ -806,11 +851,27 @@ pub(super) fn paginate(
                     low = trial;
                 }
             }
+            // The last page's columns are as tall as what remains in one
+            // column divided among them, if that is more than the least
+            // height that holds it.
+            work.charge(paragraphs.len().saturating_sub(resume.paragraph) + 1)?;
+            divided = divided_height(&paragraphs, context, resume, ceiling)
+                .unwrap_or(0.0)
+                .min(capacity);
+            if divided > chunk.group.height {
+                let filled = fill_chunk(&paragraphs, context, divided, resume, false);
+                work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
+                if let Some(candidate) = filled
+                    && candidate.next.is_none()
+                {
+                    chunk = candidate;
+                }
+            }
         }
         let height = if chunk.next.is_some() {
             capacity
         } else {
-            chunk.group.height
+            chunk.group.height.max(divided)
         };
         let group_y = absolute_y - owner_y;
         let mut occupied = std::collections::BTreeSet::new();

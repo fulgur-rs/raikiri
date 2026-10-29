@@ -3072,6 +3072,24 @@ fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() 
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
 }
 
+#[test]
+fn the_last_paragraph_row_of_a_nested_multicol_holds_the_margin_below_its_paragraph() {
+    // The last row's five lines make 50px, and the 10px margin below the
+    // paragraph is part of what the row's columns divide, which is one column
+    // here, so the row is 60px high.
+    let (mut doc, inner, _) =
+        styled_nested_paragraph_document(2, 0.0, "", "margin-bottom:10px", 25);
+    layout_nested_flex_float_fixture(&mut doc);
+    let heights: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == inner && fragment.fragment_index > 0)
+        .map(|fragment| fragment.rect.height)
+        .collect();
+    assert_eq!(heights, [100.0, 100.0, 60.0]);
+}
+
 /// Lay out `styled_nested_paragraph_document` after a block of `lead` px under a
 /// fragment budget of `limit`.
 fn nested_paragraph_with_limit(
@@ -7256,8 +7274,9 @@ fn the_margins_of_empty_blocks_stay_cut_until_the_next_paragraph() {
 
 #[test]
 fn balanced_columns_send_an_empty_block_past_a_column_s_end_to_the_next_one() {
-    // The first paragraph is the tallest the first column can be, and the box
-    // 30px under it starts the second, with the paragraph after it.
+    // The columns hold the 70px of the boxes and the margin between them in
+    // one column divided by three, and the box 30px under the first paragraph
+    // starts the second column, with the paragraph after it.
     let (doc, container, children) = boxes_and_paragraphs_in_container(
         "height:auto;column-fill:balance",
         &[("margin:0", 2), ("margin:30px 0", 0), ("margin:0", 2)],
@@ -7266,7 +7285,7 @@ fn balanced_columns_send_an_empty_block_past_a_column_s_end_to_the_next_one() {
         column_places(&doc, &children),
         [[(0, 0.0)], [(1, 0.0)], [(1, 0.0)]]
     );
-    assert_eq!(fragment_places(&doc, container)[0].2, 20.0);
+    assert!((fragment_places(&doc, container)[0].2 - 70.0 / 3.0).abs() < 0.001);
 }
 
 #[test]
@@ -7327,4 +7346,51 @@ fn a_block_with_nothing_but_margins_enters_the_stream_only_beside_a_paragraph() 
             "{spacer} {paragraph:?}"
         );
     }
+}
+
+#[test]
+fn balanced_columns_are_as_tall_as_the_content_in_one_column_divided_among_them() {
+    // The height is the content in one column, with the margin below the last
+    // paragraph, divided by the number of columns, or the least height that
+    // holds the paragraphs when that is more. The margin below the last
+    // paragraph is not part of what has to fit, so [4, 4, 4] stays at 135px
+    // though the columns' content reaches 140px with it.
+    for (lines, orphans, widows, height) in [
+        (&[2, 2][..], 2, 2, 50.0),
+        (&[3, 3], 1, 1, 70.0),
+        (&[4, 4], 2, 2, 90.0),
+        (&[2, 2, 2], 1, 1, 75.0),
+        (&[3, 4, 3], 2, 2, 115.0),
+        (&[4, 4, 4], 2, 2, 135.0),
+        // 105px divided does not hold the widows, which stretch the columns to
+        // the least height that does.
+        (&[3, 3, 3], 1, 3, 110.0),
+    ] {
+        let (doc, container, _, below) =
+            balanced_paragraphs_in(&format!("orphans:{orphans};widows:{widows}"), "", lines);
+        assert_eq!(
+            doc.nodes[container].layout.size.height, height,
+            "{lines:?} {orphans}/{widows}"
+        );
+        assert_eq!(doc.nodes[below].layout.location.y, height, "{lines:?}");
+    }
+}
+
+#[test]
+fn balanced_columns_break_between_the_lines_at_the_height_they_are_divided_to() {
+    // Three paragraphs of two lines with 10px between them make 150px, which
+    // gives columns of 75px: the second paragraph has room for one of its two
+    // lines under the first, and its other line tops the second column.
+    let (doc, _, paragraphs, _) = balanced_paragraphs_in("orphans:1;widows:1", "", &[2, 2, 2]);
+    let (ranges, _) = paragraph_pieces(&doc, paragraphs[1]);
+    assert_eq!(ranges, [(0, 1, 0), (1, 2, 1)]);
+    assert_eq!(doc.nodes[paragraphs[2]].layout.location.y, 30.0);
+}
+
+#[test]
+fn the_margin_below_the_last_balanced_paragraph_does_not_add_to_the_columns() {
+    // Two paragraphs of three lines fit 60px columns once each, and their
+    // 10px margins make 140px, which is 70px for each column.
+    let (doc, container, _, _) = balanced_paragraphs_in("", "", &[3, 3]);
+    assert_eq!(doc.nodes[container].layout.size.height, 70.0);
 }

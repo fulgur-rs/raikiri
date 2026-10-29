@@ -1232,6 +1232,8 @@ struct ParagraphBalance {
     fragments: Vec<MulticolTextFragment>,
     /// The height of the tallest column.
     height: f32,
+    /// The height of the paragraph's lines in one column.
+    stacked: f32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1334,11 +1336,14 @@ fn layout_column_group(
         }
         let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
         let (fragments, height) = root_column_fragments(lines, context);
+        let (first, last) = (lines.lines.first()?, lines.lines.last()?);
+        let stacked = last.block_offset() + last.block_size() - first.block_offset();
         (fragments.len() > 1).then_some(ParagraphBalance {
             child: *child,
             leaf,
             fragments,
             height,
+            stacked,
         })
     });
     let mut avoid_column_break_after_previous = false;
@@ -1662,7 +1667,14 @@ fn layout_column_group(
         if let Some(placement) = planned {
             column = placement.last_column;
             cursor = placement.last_y;
-            maximum = maximum.max(group_balance.as_ref().map_or(0.0, |group| group.height));
+            let group_height = group_balance.as_ref().map_or(0.0, |group| group.height);
+            maximum = maximum.max(group_height);
+            // The margin below the last box of balanced columns stays inside
+            // them: it counted in the height divided among the columns, and
+            // does not add to it.
+            if fragment_height.is_none() {
+                cursor = cursor.min(group_height);
+            }
         } else if let Some((last_column, end)) = definite_paragraphs
             .then(|| paragraph_end_in_later_column(tree, child, column))
             .flatten()
@@ -1674,6 +1686,17 @@ fn layout_column_group(
             cursor = end + margin_bottom;
         } else {
             cursor = y - content_origin.y + child_output.size.height + margin_bottom;
+            if let Some(balance) = &paragraph_balance
+                && balance.child == child
+            {
+                // The columns are as tall as the paragraph and its margins in
+                // one column divided among them, or as the tallest piece when
+                // that is more; the margin below the paragraph does not add to
+                // them.
+                let columns = context.column_count.saturating_sub(context.column_index);
+                let divided = (margin_top + balance.stacked + margin_bottom) / columns as f32;
+                cursor = (cursor - margin_bottom).max(divided);
+            }
         }
         if tree.nodes[child].kind() == NodeKind::Element {
             avoid_column_break_after_previous =
