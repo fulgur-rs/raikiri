@@ -694,12 +694,28 @@ pub fn cumulative_offset(
         return (0.0, 0.0);
     }
 
+    // Only the exact root slice uses its index. Independent slices retain
+    // their own values, order and first-match behavior.
+    let indexed = document
+        .ifc_layout_node(root_id)
+        .and_then(|node| node.ifc.as_ref())
+        .filter(|root| std::ptr::eq(offsets, root.offsets.as_slice()));
+    let offset_of = |owner| {
+        if let Some(root) = indexed {
+            return root.relative_offset(owner);
+        }
+        offsets.iter().find_map(|&(id, offset)| {
+            #[cfg(test)]
+            tests::offset_tests::note_probe();
+            (id == owner).then_some(offset)
+        })
+    };
     let (mut dx, mut dy) = (0.0, 0.0);
     // A pseudo-element moves by its own relative offset, and with its
     // element.
     let mut start = node;
     if let Some((element, _)) = generated_origin(node) {
-        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == node) {
+        if let Some((x, y)) = offset_of(node) {
             dx += x;
             dy += y;
         }
@@ -709,7 +725,9 @@ pub fn cumulative_offset(
         .inclusive_ancestors(start)
         .take_while(|&id| id != root_id)
     {
-        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == id) {
+        #[cfg(test)]
+        tests::offset_tests::note_ancestor();
+        if let Some((x, y)) = offset_of(id) {
             dx += x;
             dy += y;
         }
@@ -798,4 +816,4 @@ fn object_text_offsets(line: &shodo::Line) -> Option<Vec<(usize, usize)>> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
