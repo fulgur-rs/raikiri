@@ -337,6 +337,8 @@ fn clones_share_ownership_until_one_side_is_relaid_out() {
         .map(|p| doc.page_start(&cascade, p.page_index))
         .collect();
     let original = doc.page_projection.continuation_lines.clone().unwrap();
+    let diagnostic = format!("{original:?}");
+    assert!(diagnostic.contains("root:") && diagnostic.contains("lines:"));
     let mut cloned = doc.clone();
     assert!(std::sync::Arc::ptr_eq(
         &original,
@@ -615,4 +617,51 @@ fn indexing_existing_lines_does_not_spend_new_fragment_units() {
     assert!(doc.page_projection.continuation_lines.is_some());
     assert_eq!(doc.page_start(&cascade, 1), before);
     assert_owner_index_matches_uncached_records(&doc);
+}
+
+#[test]
+fn diagnostic_counters_separate_linear_construction_from_borrowed_queries() {
+    use crate::continuation_diagnostics::{
+        ContinuationWork, begin_continuation_diagnostics, finish_continuation_diagnostics,
+    };
+    for count in [8, 16, 32] {
+        let mut text = 0;
+        let (mut doc, cascade, _) =
+            ahem_paragraph_with("white-space:pre;orphans:1;widows:1", |doc, root| {
+                text = doc.append_text(root, vec!["a"; count].join("\n"));
+            });
+        let page = page_box(100.0, 10.0);
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).unwrap();
+        let geometries: Vec<_> = slices
+            .iter()
+            .map(|_| {
+                (
+                    page,
+                    crate::PageMargins::default(),
+                    crate::PageContentInsets::default(),
+                )
+            })
+            .collect();
+        begin_continuation_diagnostics();
+        doc.project_pages(&cascade, page, &slices, &geometries)
+            .unwrap();
+        let work = finish_continuation_diagnostics();
+        assert!(work.text_line_visits >= count as u64 && work.text_line_visits <= 3 * count as u64);
+        assert!(
+            work.glyph_owner_calls >= count as u64 && work.glyph_owner_calls <= 3 * count as u64
+        );
+        begin_continuation_diagnostics();
+        for index in 1..count {
+            let token = PageStartToken::Line {
+                text,
+                offset: (2 * index) as u32,
+            };
+            assert_eq!(doc.page_start(&cascade, index as u32).unwrap().token, token);
+            assert_eq!(doc.page_token_offset(index as u32, token), Some(0.0));
+        }
+        assert_eq!(
+            finish_continuation_diagnostics(),
+            ContinuationWork::default()
+        );
+    }
 }
