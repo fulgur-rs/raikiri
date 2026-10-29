@@ -1055,3 +1055,47 @@ fn inherit_from_initial_parent_yields_initial() {
         ComputedValues::initial(),
     );
 }
+
+#[test]
+fn custom_property_lookup_diagnostics_are_optional_and_thread_local() {
+    use super::custom_property_diagnostics::{
+        CustomPropertyLookupWork, begin_custom_property_diagnostics,
+        finish_custom_property_diagnostics,
+    };
+    let root =
+        CustomPropertyEnvironment::from_map(HashMap::from([("--base".into(), "7px".into())]));
+    let child = CustomPropertyEnvironment::from_local(
+        &root,
+        HashMap::from([("--layer".into(), Some("1".into()))]),
+    );
+    assert_eq!(child.get("--base"), Some("7px".into()));
+    assert_eq!(
+        finish_custom_property_diagnostics(),
+        CustomPropertyLookupWork::default()
+    );
+    begin_custom_property_diagnostics();
+    assert_eq!(child.get("--base"), Some("7px".into()));
+    assert_eq!(child.get("--missing"), None);
+    assert_eq!(child.get_local("--base"), None);
+    let work = finish_custom_property_diagnostics();
+    assert!(work.ancestor_visits + work.index_visits > 0);
+    assert_eq!((work.created_nodes, work.ownership_visits), (0, 0));
+    assert_eq!(
+        finish_custom_property_diagnostics(),
+        CustomPropertyLookupWork::default()
+    );
+    begin_custom_property_diagnostics();
+    std::thread::spawn(move || {
+        assert_eq!(child.get("--base"), Some("7px".into()));
+        assert_eq!(
+            finish_custom_property_diagnostics(),
+            CustomPropertyLookupWork::default()
+        );
+    })
+    .join()
+    .unwrap();
+    assert_eq!(
+        finish_custom_property_diagnostics(),
+        CustomPropertyLookupWork::default()
+    );
+}

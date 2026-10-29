@@ -150,6 +150,8 @@ pub(crate) fn medium_font_size_px(family: &[FontFamilyName]) -> f32 {
     }
 }
 
+pub(crate) mod custom_property_diagnostics;
+
 /// Persistent custom-property environment used by computed values.
 ///
 /// CSS Variables 1 §2 makes custom properties inherited. Each environment
@@ -220,8 +222,19 @@ impl CustomPropertyEnvironment {
 
     /// Look up the effective value, walking shared ancestor environments.
     pub(crate) fn get(&self, name: &str) -> Option<SmolStr> {
+        #[cfg(any(test, feature = "custom-property-diagnostics"))]
+        if custom_property_diagnostics::enabled() {
+            return self.get_impl::<true>(name);
+        }
+        self.get_impl::<false>(name)
+    }
+
+    fn get_impl<const COUNT: bool>(&self, name: &str) -> Option<SmolStr> {
         let mut current = Some(self);
         while let Some(environment) = current {
+            if COUNT {
+                custom_property_diagnostics::ancestor_visit();
+            }
             if let Some(value) = environment.local.get(name) {
                 return value.clone();
             }

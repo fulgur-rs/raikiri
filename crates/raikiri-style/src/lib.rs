@@ -649,3 +649,9 @@ pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorIm
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "custom-property-diagnostics")]
+#[doc(hidden)]
+pub use computed::custom_property_diagnostics::{
+    CustomPropertyLookupWork, begin_custom_property_diagnostics, finish_custom_property_diagnostics,
+};
