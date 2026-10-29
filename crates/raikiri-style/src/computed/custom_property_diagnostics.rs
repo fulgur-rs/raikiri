@@ -39,10 +39,28 @@ pub fn finish_custom_property_diagnostics() -> CustomPropertyLookupWork {
 }
 
 #[inline]
-pub(super) fn ancestor_visit() {
+pub(super) fn index_visit() {
     #[cfg(any(test, feature = "custom-property-diagnostics"))]
     if let Some(mut work) = ACTIVE.get() {
-        work.ancestor_visits = work.ancestor_visits.saturating_add(1);
+        work.index_visits = work.index_visits.saturating_add(1);
+        ACTIVE.set(Some(work));
+    }
+}
+
+#[inline]
+pub(super) fn created_node() {
+    #[cfg(any(test, feature = "custom-property-diagnostics"))]
+    if let Some(mut work) = ACTIVE.get() {
+        work.created_nodes = work.created_nodes.saturating_add(1);
+        ACTIVE.set(Some(work));
+    }
+}
+
+#[inline]
+pub(super) fn ownership_visit() {
+    #[cfg(any(test, feature = "custom-property-diagnostics"))]
+    if let Some(mut work) = ACTIVE.get() {
+        work.ownership_visits = work.ownership_visits.saturating_add(1);
         ACTIVE.set(Some(work));
     }
 }
