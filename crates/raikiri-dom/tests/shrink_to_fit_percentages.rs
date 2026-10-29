@@ -359,6 +359,51 @@ fn a_percentage_size_of_a_replaced_element_resolves_against_zero_for_a_min_conte
 }
 
 #[test]
+fn a_percentage_height_of_a_replaced_element_counts_as_auto_for_the_width_of_a_min_content_container()
+ {
+    // A canvas of 25px by 50px. Its container measures the width only, and a
+    // percentage height stays `auto` there, so the width its ratio carries is
+    // the natural one; only a percentage width resolves against zero.
+    for (style, container, canvas) in [
+        ("height:50%", (25.0, 50.0), (8.0, 8.0, 25.0, 50.0)),
+        ("height:100%", (25.0, 50.0), (8.0, 8.0, 25.0, 50.0)),
+        ("max-height:50%", (25.0, 50.0), (8.0, 8.0, 25.0, 50.0)),
+        ("min-height:50%", (25.0, 50.0), (8.0, 8.0, 25.0, 50.0)),
+        (
+            "height:calc(50% + 40px)",
+            (25.0, 50.0),
+            (8.0, 8.0, 25.0, 50.0),
+        ),
+        (
+            "height:50%;min-width:min-content",
+            (25.0, 50.0),
+            (8.0, 8.0, 25.0, 50.0),
+        ),
+        // The width the box states carries its height along the natural ratio.
+        (
+            "height:50%;width:40px",
+            (40.0, 80.0),
+            (8.0, 8.0, 40.0, 80.0),
+        ),
+        // A ratio the box states replaces the natural one.
+        (
+            "height:50%;aspect-ratio:1/1",
+            (25.0, 25.0),
+            (8.0, 8.0, 25.0, 25.0),
+        ),
+        ("width:50%", (0.0, 0.0), (8.0, 8.0, 0.0, 0.0)),
+    ] {
+        check(
+            &format!(
+                "<div id=r style=\"width:min-content\"><canvas id=a width=25 height=50 \
+                 style=\"display:block;{style}\"></canvas></div>"
+            ),
+            &[("r", (8.0, 8.0, container.0, container.1)), ("a", canvas)],
+        );
+    }
+}
+
+#[test]
 fn a_percentage_margin_of_a_replaced_element_counts_as_zero_for_its_container() {
     // The container is as wide as the svg, and the margin then resolves
     // against that width: 10% of 100px.

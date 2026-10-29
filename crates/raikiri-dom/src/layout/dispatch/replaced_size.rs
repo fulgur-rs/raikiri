@@ -54,8 +54,7 @@ pub(super) fn auto_sides_size(
         return None;
     }
     let basis = inputs.parent_size;
-    let is_min_content = inputs.available_space.width == AvailableSpace::MinContent
-        || inputs.available_space.height == AvailableSpace::MinContent;
+    let min_content = min_content_axes(inputs);
     let edges = padding_and_border(style, basis.width);
     let insets = ratio_box_insets(style, edges, content_box_ratio);
     let height_for = |width: f32| height_for_width(width, ratio, insets);
@@ -73,12 +72,12 @@ pub(super) fn auto_sides_size(
         height: resolve_bound(style.min_size.height, basis.height, true),
     });
     let mut max = content(Size {
-        width: resolve_bound(style.max_size.width, basis.width, is_min_content),
-        height: resolve_bound(style.max_size.height, basis.height, is_min_content),
+        width: resolve_bound(style.max_size.width, basis.width, min_content.width),
+        height: resolve_bound(style.max_size.height, basis.height, min_content.height),
     });
     let authored = content(Size {
-        width: resolve_cyclic_size(style.size.width, basis.width, is_min_content),
-        height: resolve_cyclic_size(style.size.height, basis.height, is_min_content),
+        width: resolve_cyclic_size(style.size.width, basis.width, min_content.width),
+        height: resolve_cyclic_size(style.size.height, basis.height, min_content.height),
     });
     let keyword = keyword_bounds(style, inputs, natural, limits, content_box_ratio);
     if let Some(keyword) = keyword {
@@ -294,27 +293,46 @@ pub(super) fn keyword_bounds(
     }
 
     let basis = inputs.parent_size;
-    let is_min_content = inputs.available_space.width == AvailableSpace::MinContent
-        || inputs.available_space.height == AvailableSpace::MinContent;
+    let measuring_min_content = min_content_axes(inputs);
     let edges = padding_and_border(style, basis.width);
     let insets = ratio_box_insets(style, edges, content_box_ratio);
     let min_content = Size {
-        width: resolve_bound(style.min_size.width, basis.width, is_min_content)
-            .map(|size| content_side(style, size, edges.width)),
-        height: resolve_bound(style.min_size.height, basis.height, is_min_content)
-            .map(|size| content_side(style, size, edges.height)),
+        width: resolve_bound(
+            style.min_size.width,
+            basis.width,
+            measuring_min_content.width,
+        )
+        .map(|size| content_side(style, size, edges.width)),
+        height: resolve_bound(
+            style.min_size.height,
+            basis.height,
+            measuring_min_content.height,
+        )
+        .map(|size| content_side(style, size, edges.height)),
     };
     let max_content = Size {
-        width: resolve_bound(style.max_size.width, basis.width, is_min_content)
-            .map(|size| content_side(style, size, edges.width)),
-        height: resolve_bound(style.max_size.height, basis.height, is_min_content)
-            .map(|size| content_side(style, size, edges.height)),
+        width: resolve_bound(
+            style.max_size.width,
+            basis.width,
+            measuring_min_content.width,
+        )
+        .map(|size| content_side(style, size, edges.width)),
+        height: resolve_bound(
+            style.max_size.height,
+            basis.height,
+            measuring_min_content.height,
+        )
+        .map(|size| content_side(style, size, edges.height)),
     };
     let authored = Size {
-        width: resolve_cyclic_size(style.size.width, basis.width, is_min_content)
+        width: resolve_cyclic_size(style.size.width, basis.width, measuring_min_content.width)
             .map(|size| content_side(style, size, edges.width)),
-        height: resolve_cyclic_size(style.size.height, basis.height, is_min_content)
-            .map(|size| content_side(style, size, edges.height)),
+        height: resolve_cyclic_size(
+            style.size.height,
+            basis.height,
+            measuring_min_content.height,
+        )
+        .map(|size| content_side(style, size, edges.height)),
     };
     let clamp = |size: f32, min: Option<f32>, max: Option<f32>| {
         size.min(max.unwrap_or(f32::INFINITY).max(min.unwrap_or(0.0)))
@@ -432,6 +450,19 @@ fn merge_max(left: Option<f32>, right: Option<f32>) -> Option<f32> {
         (Some(left), Some(right)) => Some(left.min(right)),
         (Some(size), None) | (None, Some(size)) => Some(size),
         (None, None) => None,
+    }
+}
+
+/// Whether `inputs` measure each axis for its min-content contribution.
+///
+/// A cyclic percentage of a replaced box resolves against zero only in the
+/// axis that is measured (CSS Sizing 3 §5.2.1). In the other axis it is
+/// treated as `auto`, so `height: 50%` on an image still gives the width its
+/// ratio carries when a container measures that width.
+fn min_content_axes(inputs: &LayoutInput) -> Size<bool> {
+    Size {
+        width: inputs.available_space.width == AvailableSpace::MinContent,
+        height: inputs.available_space.height == AvailableSpace::MinContent,
     }
 }
 
