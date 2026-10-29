@@ -111,6 +111,48 @@ mod accounting {
         }
     }
 
+    fn distinct_missing_reads(result: &CascadeResult, depth: usize, unique: bool, mode: &str) {
+        let Some(reads) = std::env::var("RAIKIRI_PROPERTY_MISSING_READS")
+            .ok()
+            .map(|n| n.parse::<usize>().expect("read count"))
+        else {
+            return;
+        };
+        let names: Vec<_> = (0..reads).map(|i| format!("--unseen-name-{i}")).collect();
+        let values = result.computed.last().expect("leaf values");
+        LIVE.store(0, Relaxed);
+        ALLOC_BYTES.store(0, Relaxed);
+        REALLOC_BYTES.store(0, Relaxed);
+        ALLOC_CALLS.store(0, Relaxed);
+        REALLOC_CALLS.store(0, Relaxed);
+        TRACK_HEAP.store(true, Relaxed);
+        COUNT_REQUESTS.store(true, Relaxed);
+        begin_custom_property_diagnostics();
+        for name in &names {
+            assert!(values.resolved_custom_property(name).is_none());
+        }
+        let work = finish_custom_property_diagnostics();
+        COUNT_REQUESTS.store(false, Relaxed);
+        TRACK_HEAP.store(false, Relaxed);
+        let retained = LIVE.load(Relaxed);
+        let allocated = ALLOC_BYTES.load(Relaxed);
+        let realloc = REALLOC_BYTES.load(Relaxed);
+        assert_eq!(
+            (
+                retained,
+                allocated,
+                realloc,
+                ALLOC_CALLS.load(Relaxed),
+                REALLOC_CALLS.load(Relaxed)
+            ),
+            (0, 0, 0, 0, 0)
+        );
+        println!(
+            "missing-reads depth={depth} unique={unique} mode={mode} reads={reads} ancestor_visits={} index_visits={} created_nodes={} ownership_visits={} allocated_bytes={allocated} realloc_bytes={realloc} retained_heap={retained}",
+            work.ancestor_visits, work.index_visits, work.created_nodes, work.ownership_visits
+        );
+    }
+
     fn measure(depth: usize, unique: bool, mode: &str) {
         let doc = document(depth, unique, mode);
         let rules = build_rule_tree(&doc);
@@ -139,13 +181,17 @@ mod accounting {
             "cascade-owned tracked allocations must be released"
         );
         let mut times = Vec::new();
-        for _ in 0..3 {
+        for sample in 0..3 {
             let start = Instant::now();
             let result = cascade(&doc, &rules).expect("timed cascade fits");
             let ms = start.elapsed().as_secs_f64() * 1000.0;
             check(&result, depth);
             assert_eq!(finish_custom_property_diagnostics(), Default::default());
             times.push(ms);
+            if sample == 0 {
+                // A separate opt-in read probe leaves the timed cascade alone.
+                distinct_missing_reads(&result, depth, unique, mode);
+            }
             drop(result);
         }
         times.sort_by(f64::total_cmp);
