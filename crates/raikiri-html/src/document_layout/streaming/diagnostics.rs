@@ -6,6 +6,7 @@
 /// than heap bytes. Snapshots occur at checkpoints; finishing consumes the
 /// parser's document without taking another snapshot. Resume attempts include
 /// retries caused by late content, and can exceed the number of checkpoints.
+// cov:ignore: value-only declaration; LLVM maps derived operations to their call sites. Counter updates are tested in streaming.rs.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct StreamingDiagnostics {

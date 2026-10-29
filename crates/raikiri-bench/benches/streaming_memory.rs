@@ -7,6 +7,7 @@
 //! bytes are the requested new sizes, not measured bytes copied by the allocator.
 //! The parser retains the full source DOM; a flat streaming heap is not assumed.
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 mod common {
     pub mod workloads;
 }
@@ -18,6 +19,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 use raikiri_html::{
     ConsumerPropertyEvent, ConsumerPropertyRegistration, LayoutConfig, LayoutOptions, LayoutStatus,
     PageDefaults, PageSink, ParseOptions, RenderResources, StreamPage, StreamStatus, StreamSummary,
@@ -28,22 +30,25 @@ struct Counting;
 static MEASURING: AtomicBool = AtomicBool::new(false);
 static LIVE: AtomicIsize = AtomicIsize::new(0);
 static PEAK: AtomicIsize = AtomicIsize::new(0);
-static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
-static REALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
-static ALLOC_CALLS: AtomicU64 = AtomicU64::new(0);
-static REALLOC_CALLS: AtomicU64 = AtomicU64::new(0);
+static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
+static REALLOC_BYTES: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
+static ALLOC_CALLS: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
+static REALLOC_CALLS: AtomicU64 = AtomicU64::new(0); // cov:ignore: benchmark-only allocator counter.
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn record(delta: isize) {
     let live = LIVE.fetch_add(delta, Relaxed).saturating_add(delta);
     PEAK.fetch_max(live, Relaxed);
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn size(layout: Layout) -> isize {
     isize::try_from(layout.size()).unwrap_or(isize::MAX)
 }
 
 // SAFETY: every call forwards the allocator contract unchanged to System;
 // counters do not allocate or affect the returned pointer.
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 #[allow(unsafe_code)]
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -91,6 +96,7 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 #[derive(Debug)]
 struct Heap {
     peak: isize,
@@ -101,6 +107,7 @@ struct Heap {
     realloc_calls: u64,
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn measure<T>(f: impl Fn() -> T) -> (T, Heap, Duration) {
     LIVE.store(0, Relaxed);
     PEAK.store(0, Relaxed);
@@ -124,6 +131,7 @@ fn measure<T>(f: impl Fn() -> T) -> (T, Heap, Duration) {
     (value, heap, start.elapsed())
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn text_document(sections: usize) -> String {
     const WORDS: [&str; 5] = ["lorem ", "ipsum ", "dolor ", "sit ", "amet "];
     let mut html = String::from(
@@ -143,6 +151,7 @@ fn text_document(sections: usize) -> String {
     html
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 #[derive(Default)]
 struct Output {
     pages: u32,
@@ -152,12 +161,14 @@ struct Output {
     diagnostics: StreamingDiagnostics,
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 struct Discard {
     output: Output,
     verify: bool,
     fed: Rc<Cell<Option<usize>>>,
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 impl PageSink for Discard {
     type Output = Output;
 
@@ -190,6 +201,7 @@ impl PageSink for Discard {
     }
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn stream(html: &str, resources: &RenderResources<'_>, verify: bool) -> Output {
     let fed = Rc::new(Cell::new(None));
     let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
@@ -217,6 +229,7 @@ fn stream(html: &str, resources: &RenderResources<'_>, verify: bool) -> Output {
     result
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn batch(html: &str, resources: &RenderResources<'_>, verify: bool) -> Output {
     let document = parse_html_with_resources(html.as_bytes(), resources).expect("batch parse");
     let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
@@ -260,6 +273,7 @@ fn batch(html: &str, resources: &RenderResources<'_>, verify: bool) -> Output {
     }
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn print_row(
     sections: usize,
     input: usize,
@@ -284,6 +298,7 @@ fn print_row(
     );
 }
 
+// cov:ignore: benchmark harness; workspace coverage does not build this target.
 fn main() {
     if !std::env::args().any(|arg| arg == "--bench") {
         return;
