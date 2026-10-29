@@ -52,7 +52,7 @@ pub(crate) struct LayoutContext {
     pub(crate) content_limit_percentage_height_bases: Vec<(usize, f32)>,
     /// The vertical margins of the block children being laid out that their
     /// parent holds in, which a `stretch` height limit leaves out of its room
-    /// (see `dispatch::content_limits`).
+    /// (see [`crate::layout::dispatch::content_limits::HeldMargins`]).
     pub(crate) held_margins: Vec<crate::layout::dispatch::content_limits::HeldMargins>,
     /// The width or height each box measured for its keyword sizes, while the
     /// outermost box laying out with them runs, and how many such layouts are
