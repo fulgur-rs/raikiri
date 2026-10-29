@@ -1685,7 +1685,10 @@ fn gap_shorthand_normal() {
 // ── contain-intrinsic-size (CSS Box Sizing 4 §5) ────────────────────
 
 fn intrinsic(auto: bool, length: Option<Length>) -> ContainIntrinsicSize {
-    ContainIntrinsicSize { auto, length }
+    ContainIntrinsicSize {
+        auto,
+        length: length.map(ContainIntrinsicLength::Length),
+    }
 }
 
 #[test]
@@ -1803,6 +1806,63 @@ fn contain_intrinsic_size_shorthand_refuses_a_bad_axis_or_a_third_value() {
             "contain-intrinsic-size: {source}"
         );
     }
+}
+
+/// The value `source` has under the property grammar, which is what the
+/// cascade reads a `calc()` through once it cannot fold to one dimension.
+fn grammar(source: &str, name: &str) -> Option<PropertyValue> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let value = parse_property_grammar(name, &mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(value)
+}
+
+#[test]
+fn contain_intrinsic_size_keeps_a_mixed_unit_calc_until_the_font_size_is_known() {
+    // `calc(2em + 10px)` cannot fold to one dimension: the `em` term waits for
+    // the element's computed font size.
+    let Some(PropertyValue::ContainIntrinsicWidth(ContainIntrinsicSize {
+        auto: false,
+        length: Some(ContainIntrinsicLength::Calc(calc)),
+    })) = grammar("calc(2em + 10px)", "contain-intrinsic-width")
+    else {
+        panic!("expected a kept calc() for the width");
+    };
+    assert_eq!(calc.px, 10.0);
+    assert_eq!(calc.percent, 0.0);
+    assert_eq!(
+        calc.relative_terms().collect::<Vec<_>>(),
+        [(RelativeCalcUnit::Em, 2.0)]
+    );
+
+    // Each axis of the shorthand keeps its own, with `auto` and `none` around.
+    let Some(PropertyValue::ContainIntrinsicSize(shorthand)) = grammar(
+        "auto calc(1rem + 4px) calc(100vh - 2em)",
+        "contain-intrinsic-size",
+    ) else {
+        panic!("expected the shorthand");
+    };
+    assert!(shorthand.width.auto && !shorthand.height.auto);
+    assert!(matches!(
+        shorthand.width.length,
+        Some(ContainIntrinsicLength::Calc(_))
+    ));
+    assert!(matches!(
+        shorthand.height.length,
+        Some(ContainIntrinsicLength::Calc(_))
+    ));
+}
+
+#[test]
+fn contain_intrinsic_size_refuses_a_calc_with_a_percentage() {
+    for name in ["contain-intrinsic-width", "contain-intrinsic-height"] {
+        assert_eq!(grammar("calc(2em + 10%)", name), None, "{name}");
+    }
+    assert_eq!(
+        grammar("10px calc(2em + 10%)", "contain-intrinsic-size"),
+        None
+    );
 }
 
 #[test]

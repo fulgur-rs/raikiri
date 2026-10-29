@@ -4196,7 +4196,21 @@ pub struct ContainIntrinsicSize {
     /// Whether the `auto` keyword is present.
     pub auto: bool,
     /// The length, or `None` for the keyword `none`.
-    pub length: Option<Length>,
+    pub length: Option<ContainIntrinsicLength>,
+}
+
+/// The `<length [0,∞]>` of a [`ContainIntrinsicSize`]: a plain length, or a
+/// mixed-unit `calc()` whose font-relative and viewport terms wait for
+/// computed-value time. The property takes no percentage, so a calculation
+/// with a percentage term never reaches this type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ContainIntrinsicLength {
+    /// A plain authored length.
+    Length(Length),
+    /// A `calc()` sum kept until the element's font size is known; a negative
+    /// result is clamped to zero when computed (CSS Values 4 §10.7).
+    Calc(RelativeCalcLengthPercentage),
 }
 
 impl ContainIntrinsicSize {

@@ -175,13 +175,13 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxShadowItem, CalcLengthPercentage, ComparedPercentage,
-    ConicGradient, ContainIntrinsicSize, CssPosition, CssPositionOffset, FlexBasisValue, Gradient,
-    GradientColorStop, GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc, LengthPercentageOrCalc,
-    LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor, OutlineStyle,
-    RadialGradient, RadialSize, RelativeCalcLengthPercentage, RelativeCalcUnit, TabSize,
-    TextDecorationInset, TextDecorationThickness, TextIndentLength, TextShadowColor,
+    ConicGradient, ContainIntrinsicLength, ContainIntrinsicSize, CssPosition, CssPositionOffset,
+    FlexBasisValue, Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc,
+    LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor,
+    OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage, RelativeCalcUnit,
+    TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength, TextShadowColor,
     TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, VerticalAlign,
     WordSpacingValue,
 };
@@ -3523,9 +3523,18 @@ pub(crate) fn resolve_contain_intrinsic_size(
 ) -> ComputedContainIntrinsicSize {
     ComputedContainIntrinsicSize {
         auto: specified.auto,
-        length: specified
-            .length
-            .map(|length| resolve_length(length, font_size, own_line_height, ctx)),
+        length: specified.length.map(|length| match length {
+            ContainIntrinsicLength::Length(length) => {
+                resolve_length(length, font_size, own_line_height, ctx)
+            }
+            // A sum is clamped to `[0,∞]`; the percentage term was rejected
+            // when parsed, and an `lh` term without a basis, like a sum that
+            // overflows, falls back to zero as the other length properties do.
+            ContainIntrinsicLength::Calc(calc) => ComputedLength(
+                resolve_relative_calc_against_basis(calc, font_size, own_line_height, ctx)
+                    .unwrap_or(0.0),
+            ),
+        }),
     }
 }
 
@@ -4184,7 +4193,9 @@ pub(crate) fn lift_contain_intrinsic_size(
 ) -> ContainIntrinsicSize {
     ContainIntrinsicSize {
         auto: computed.auto,
-        length: computed.length.map(|length| Length::Px(length.px())),
+        length: computed
+            .length
+            .map(|length| ContainIntrinsicLength::Length(Length::Px(length.px()))),
     }
 }
 

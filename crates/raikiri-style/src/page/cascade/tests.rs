@@ -26,13 +26,13 @@ use crate::property::{
     BackgroundRepeatKeyword, BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BoxDecorationBreak, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath,
-    ColumnCountValue, ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContainIntrinsicSize,
-    ContainIntrinsicSizeShorthand, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
-    CssPositionOffset, CssWideKeyword, CustomProperty, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand, FlexWrapValue,
-    FloatValue, FontFeatureSetting, FontFeatureSettings, FontKerning, FontLanguageOverride,
-    FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize, FontStyle,
-    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    ColumnCountValue, ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContainIntrinsicLength,
+    ContainIntrinsicSize, ContainIntrinsicSizeShorthand, ContentAlignmentValue, ContentComponent,
+    CssColor, CssPosition, CssPositionOffset, CssWideKeyword, CustomProperty, Direction,
+    DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow,
+    FlexShorthand, FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSetting,
     FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox, GridAreaShorthand,
     GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount,
@@ -5103,16 +5103,16 @@ property_key_samples! {
     // value passes through unchanged, as the `Contain` sample does.
     ContainIntrinsicWidth => PropertyValue::ContainIntrinsicWidth(ContainIntrinsicSize {
         auto: true,
-        length: Some(Length::Em(2.0)),
+        length: Some(ContainIntrinsicLength::Length(Length::Em(2.0))),
     }),
     ContainIntrinsicHeight => PropertyValue::ContainIntrinsicHeight(ContainIntrinsicSize {
         auto: false,
-        length: Some(Length::Rem(3.0)),
+        length: Some(ContainIntrinsicLength::Length(Length::Rem(3.0))),
     }),
     ContainIntrinsicSize => PropertyValue::ContainIntrinsicSize(ContainIntrinsicSizeShorthand {
         width: ContainIntrinsicSize {
             auto: true,
-            length: Some(Length::Em(2.0)),
+            length: Some(ContainIntrinsicLength::Length(Length::Em(2.0))),
         },
         height: ContainIntrinsicSize {
             auto: false,

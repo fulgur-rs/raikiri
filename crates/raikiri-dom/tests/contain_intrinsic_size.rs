@@ -366,6 +366,39 @@ fn functions_and_css_wide_keywords_give_the_lengths() {
             vec![("b", 8.0, 8.0, 100.0, 50.0)],
         ),
         (
+            "calc of mixed units, longhands",
+            alone(
+                "font-size:10px;contain-intrinsic-width:calc(2em + 10px);\
+                 contain-intrinsic-height:calc(1em + 5px)",
+            ),
+            vec![("b", 8.0, 8.0, 30.0, 15.0)],
+        ),
+        (
+            "calc of mixed units, shorthand",
+            alone("font-size:10px;contain-intrinsic-size:calc(2em + 10px) calc(1em + 5px)"),
+            vec![("b", 8.0, 8.0, 30.0, 15.0)],
+        ),
+        (
+            "calc of mixed units after auto",
+            alone("font-size:10px;contain-intrinsic-size:auto calc(2em + 10px) none"),
+            vec![("b", 8.0, 8.0, 30.0, 0.0)],
+        ),
+        (
+            "calc of rem and viewport units",
+            alone("contain-intrinsic-size:calc(1rem + 4px) calc(10vw + 20px)"),
+            vec![("b", 8.0, 8.0, 20.0, 100.0)],
+        ),
+        (
+            "a negative calc is clamped",
+            alone("font-size:10px;contain-intrinsic-size:calc(10px - 3em) 20px"),
+            vec![("b", 8.0, 8.0, 0.0, 20.0)],
+        ),
+        (
+            "calc of mixed units through var",
+            alone("font-size:10px;--w:2em;contain-intrinsic-size:calc(var(--w) + 10px) 50px"),
+            vec![("b", 8.0, 8.0, 30.0, 50.0)],
+        ),
+        (
             "calc with a percentage",
             alone("contain-intrinsic-size:100px 50px;contain-intrinsic-width:calc(10px + 50%)"),
             vec![("b", 8.0, 8.0, 100.0, 50.0)],

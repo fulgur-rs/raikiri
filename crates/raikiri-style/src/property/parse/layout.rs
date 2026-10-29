@@ -469,10 +469,19 @@ pub(crate) fn parse_contain_intrinsic_size(
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(ContainIntrinsicSize { auto, length: None });
     }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. Percentages are not
+    // allowed, even inside the calculation.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return (calc.percent == 0.0).then_some(ContainIntrinsicSize {
+            auto,
+            length: Some(ContainIntrinsicLength::Calc(calc)),
+        });
+    }
     let length = parse_length_value(input, false)?;
     (length.payload() >= 0.0).then_some(ContainIntrinsicSize {
         auto,
-        length: Some(length),
+        length: Some(ContainIntrinsicLength::Length(length)),
     })
 }
 

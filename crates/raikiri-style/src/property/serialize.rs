@@ -711,10 +711,13 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
 /// Serializes a `contain-intrinsic-width` or `-height` value: the optional `auto`, then the
 /// length or `none`.
 fn serialize_contain_intrinsic_size(size: &ContainIntrinsicSize) -> String {
-    let length = size
-        .length
-        .as_ref()
-        .map_or_else(|| "none".to_owned(), serialize_length);
+    let length = size.length.as_ref().map_or_else(
+        || "none".to_owned(),
+        |length| match length {
+            ContainIntrinsicLength::Length(length) => serialize_length(length),
+            ContainIntrinsicLength::Calc(calc) => serialize_relative_calc_length_percentage(calc),
+        },
+    );
     if size.auto {
         format!("auto {length}")
     } else {
