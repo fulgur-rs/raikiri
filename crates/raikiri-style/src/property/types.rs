@@ -8674,7 +8674,9 @@ pub struct LinearGradient {
     /// subsection defines interpolation for all 3 gradient shapes, not just
     /// linear — "If no `<color-interpolation-method>` is specified in the
     /// gradient function, the color space used for gradient interpolation
-    /// is the default interpolation color space, Oklab").
+    /// is the default interpolation color space, Oklab"), or to `Srgb` when
+    /// every stop is a color in a legacy syntax (hex, named, `rgb()`,
+    /// `hsl()`, `hwb()`), as CSS Color 4 requires for those.
     pub interpolation: GradientColorInterpolation,
     /// Color stop list. Contains at least 2 stops (see the scope-carving
     /// section of [`BackgroundImage`] docs). `Arc` follows the same cheap-clone
@@ -8759,7 +8761,7 @@ pub struct RadialGradient {
     /// Center of the gradient. Defaults to `center` if omitted.
     pub position: CssPosition,
     /// `in <color-space> <hue-interpolation-method>?` clause. Defaults to
-    /// `Oklab` if omitted, as in [`LinearGradient::interpolation`].
+    /// `Oklab` (or `Srgb`) if omitted, as in [`LinearGradient::interpolation`].
     pub interpolation: GradientColorInterpolation,
     /// Color stop list (same shape as [`LinearGradient::stops`]).
     pub stops: Arc<Vec<GradientColorStop>>,
@@ -8845,7 +8847,7 @@ pub struct ConicGradient {
     /// `at <position>`. Defaults to `center` if omitted.
     pub position: CssPosition,
     /// `in <color-space> <hue-interpolation-method>?` clause. Defaults to
-    /// `Oklab` if omitted, as in [`LinearGradient::interpolation`].
+    /// `Oklab` (or `Srgb`) if omitted, as in [`LinearGradient::interpolation`].
     pub interpolation: GradientColorInterpolation,
     /// Angular color stop list (same shape as [`LinearGradient::stops`],
     /// but with [`AngularColorStop`] as the position type).

@@ -60,3 +60,14 @@ fn background_longhand_texts_reject_invalid_values() {
     assert_eq!(texts("none none"), None);
     assert_eq!(texts(""), None);
 }
+
+#[test]
+fn background_longhand_texts_reject_a_gradient_stop_nested_far_deeper_than_colors_may_be() {
+    // The helper reads the gradient directly, so the deep color must be
+    // refused before anything recurses through it.
+    let depth = 10_000;
+    for (open, close) in [("alpha(from ", ")"), ("light-dark(", ", red)")] {
+        let stop = format!("{}red{}", open.repeat(depth), close.repeat(depth));
+        assert_eq!(texts(&format!("linear-gradient({stop}, blue)")), None);
+    }
+}

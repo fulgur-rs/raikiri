@@ -273,7 +273,7 @@ fn single_tiles_keep_a_subpixel_size() {
 #[test]
 fn radial_stops_before_the_center_are_cut_at_zero() {
     let rgba = raster_layer(
-        "background-image: radial-gradient(circle 20px, red -20px, blue 20px)",
+        "background-image: radial-gradient(circle 20px in oklab, red -20px, blue 20px)",
         40,
         40,
     );
@@ -1707,9 +1707,58 @@ fn a_transition_hint_in_the_middle_draws_the_plain_ramp() {
     assert_eq!(hinted, plain);
 }
 
+/// Rasterize a linear, radial or conic gradient layer over a 100 by 20 box.
+fn raster_gradient(style: &str) -> Vec<u8> {
+    if style.contains("conic-gradient") {
+        raster_conic(style, 100, 20)
+    } else {
+        raster_layer(style, 100, 20)
+    }
+}
+
+/// A linear, a radial and a conic gradient over `stops`, each with the
+/// interpolation `clause` (empty for none).
+fn gradient_values(stops: &str, clause: &str) -> [String; 3] {
+    [
+        format!("background-image: linear-gradient(to right{clause}, {stops})"),
+        format!(
+            "background-image: radial-gradient(circle farthest-side at 0 50%{clause}, {stops} 100px)"
+        ),
+        format!("background-image: conic-gradient(from 90deg at 50% 100%{clause}, {stops})"),
+    ]
+}
+
+#[test]
+fn a_gradient_of_legacy_colors_is_drawn_in_srgb_without_a_given_space() {
+    let stops = "#e53935, #1e88e5";
+    let default = gradient_values(stops, "");
+    let srgb = gradient_values(stops, " in srgb");
+    let oklab = gradient_values(stops, " in oklab");
+    for ((default, srgb), oklab) in default.iter().zip(&srgb).zip(&oklab) {
+        let drawn = raster_gradient(default);
+        assert_eq!(drawn, raster_gradient(srgb), "{default}");
+        assert_ne!(drawn, raster_gradient(oklab), "{default}");
+    }
+}
+
+#[test]
+fn a_gradient_with_a_modern_color_is_drawn_in_oklab_without_a_given_space() {
+    let stops = "#e53935, oklch(0.6 0.15 250)";
+    let default = gradient_values(stops, "");
+    let oklab = gradient_values(stops, " in oklab");
+    for (default, oklab) in default.iter().zip(&oklab) {
+        assert_eq!(
+            raster_gradient(default),
+            raster_gradient(oklab),
+            "{default}"
+        );
+    }
+}
+
 #[test]
 fn a_transition_hint_gets_the_middle_color_in_the_default_interpolation_space() {
-    // Oklab: the hint position holds the same color as the plain ramp's middle.
+    // sRGB, as red and blue are legacy colors: the hint position holds the same
+    // color as the plain ramp's middle.
     let hinted = raster_layer(
         "background-image: linear-gradient(to right, red, 25%, blue)",
         100,
