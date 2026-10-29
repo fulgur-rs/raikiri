@@ -180,10 +180,9 @@ impl FlowAxes {
         }
     }
 
-    /// The computed values of `idx` with their physical sizes and sides on
-    /// transposed axes.
-    fn computed(self, cascade: &CascadeResult, idx: usize) -> ComputedValues {
-        let mut values = cascade.computed[idx].clone();
+    /// Transpose the already cloned values of `idx` in place. Size mapping
+    /// reads the original cascade, before any of its values are transposed.
+    fn transpose_computed(self, cascade: &CascadeResult, idx: usize, values: &mut ComputedValues) {
         // A box on vertical axes has its physical sizes in its vertical
         // mapping; every other box has them in `width` and `height`.
         if let Some(size) = crate::layout::bridge::vertical_logical_size(cascade, idx) {
@@ -203,7 +202,6 @@ impl FlowAxes {
         values.right = right;
         values.bottom = bottom;
         values.left = left;
-        values
     }
 
     /// The page box on transposed axes.
@@ -373,8 +371,8 @@ impl TransposedDocument {
     /// The computed values of `cascade` on transposed axes.
     pub(super) fn cascade(&self, cascade: &CascadeResult) -> CascadeResult {
         let mut transposed = cascade.clone();
-        for idx in 0..transposed.computed.len() {
-            transposed.computed[idx] = self.axes.computed(cascade, idx);
+        for (idx, values) in transposed.computed.iter_mut().enumerate() {
+            self.axes.transpose_computed(cascade, idx, values);
         }
         transposed
     }
