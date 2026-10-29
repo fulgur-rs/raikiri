@@ -5418,3 +5418,8 @@ css/css-sizing/stretch/block-height-009.html
 css/css-sizing/stretch/block-height-010.html
 css/css-sizing/stretch/bfc-next-to-float-2.html
 css/css-sizing/stretch/replaced-next-to-float-2.html
+
+# --- an image or canvas is drawn on whole device pixels (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# On a raster output the image of a replaced element (an `img` or a `canvas`) is drawn between device pixel edges: each edge of its `object-fit` and `object-position` rectangle moves to the nearest device pixel, as the tile of a background image does. A canvas drawn with `object-fit: contain` and a fractional `object-position` differed by 440 pixels from the same picture drawn as a background. The `img` versions already in this file passed only in the run that does not load images; with images they differed by the same 440 pixels and now match. Both tests were expected failures before the change and KEEP in two audit-vacuous-passes runs.
+css/css-images/object-position-png-001c.html
+css/css-images/object-position-png-002c.html

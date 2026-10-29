@@ -597,6 +597,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cv.object_fit,
                 &cv.object_position,
                 !raikiri_dom::paint_rules::hides_own_box(cv),
+                image_cache.device_grid(scene.transform),
             )
         } else if let Some(source) = pixel_source
             && let Some(src_url) = img_src_url(document, node_id)
@@ -617,6 +618,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cv.object_fit,
                 &cv.object_position,
                 !raikiri_dom::paint_rules::hides_own_box(cv),
+                image_cache.device_grid(scene.transform),
                 node_id,
                 warnings,
             )
