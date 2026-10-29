@@ -165,6 +165,7 @@ pub(crate) fn layout_with_boxes_in(
         return IfcLines {
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
+            object_text_prefixes: Default::default(),
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
@@ -372,6 +373,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         return IfcLines {
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
+            object_text_prefixes: Default::default(),
             oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
@@ -552,6 +554,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut result = IfcLines {
         width: geometry.width,
         lines: lines.clone(),
+        object_text_prefixes: Default::default(),
         oof_candidates,
         height: max_height,
         beside_floats,
@@ -1263,6 +1266,7 @@ fn run_boxes_segment(
             width,
             height,
             lines: std::sync::Arc::new(lines),
+            object_text_prefixes: Default::default(),
             oof_candidates,
             beside_floats: beside,
             escaping_margin,
