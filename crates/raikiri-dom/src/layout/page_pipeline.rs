@@ -1637,23 +1637,24 @@ impl PageOrigins {
     ///
     /// Preceding content that overflowed past the current page (a tall box,
     /// or floats it contains) may have put the box partway down a later page,
-    /// which the flow has reached by `flow_max`. A page-type change sits after
-    /// all of that content, so it opens the page after the one the box's
-    /// margin box starts on, below its block-start `margin_top`, unless that
-    /// margin box is already at the top of a page.
+    /// which the flow has reached by `flow_max`. A forced break or a page-type
+    /// change (`forced_transition`) sits after all of that content, so it opens
+    /// the page after the one the box's margin box starts on, below its
+    /// block-start `margin_top`, unless that margin box is already at the top
+    /// of a page.
     fn transition_natural_page(
         &self,
         effective_y: f32,
         margin_top: f32,
         current_page: u32,
         flow_max: u32,
-        named_page_change: bool,
+        forced_transition: bool,
     ) -> u32 {
         let Some(page) = self.page_index_in_flow(effective_y) else {
             return current_page;
         };
         let margin_box_y = effective_y - margin_top.max(0.0);
-        if named_page_change && page > current_page && flow_max >= page && margin_box_y.is_finite()
+        if forced_transition && page > current_page && flow_max >= page && margin_box_y.is_finite()
         {
             self.page_starting_at_or_after(margin_box_y)
         } else {
@@ -5564,15 +5565,17 @@ impl PrecedingFlexItems {
     }
 }
 
-/// Whether a box whose margin box starts at `margin_box_y` falls on a page
-/// after `current_page`, or at `page_start`, the start of `current_page`.
+/// Whether a box whose margin box starts at `margin_box_y` starts a page after
+/// `current_page`, or at `page_start`, the start of `current_page`.
 ///
 /// This matters when the page height changes after page zero: the
 /// fixed-height pass may have considered the box to be on the current page,
 /// while the scheduled pass places it exactly at the next page origin. A
 /// border box that lands exactly on a page origin only because the preceding
 /// collapsed margin filled the previous page has not opened that page: the
-/// break still moves it, and the margin after the forced break is kept.
+/// break still moves it, and the margin after the forced break is kept. A
+/// margin box that starts part-way down a later page follows content that
+/// runs on to that page, so it has not opened the page either.
 fn margin_box_starts_page(
     page_origins: &PageOrigins,
     margin_box_y: f32,
@@ -5582,7 +5585,8 @@ fn margin_box_starts_page(
     let margin_box_page = page_origins
         .page_index_in_flow(margin_box_y)
         .unwrap_or(current_page);
-    margin_box_page > current_page
+    (margin_box_page > current_page
+        && (margin_box_y - page_origins.origin(margin_box_page)).abs() <= 0.001)
         || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
 }
 

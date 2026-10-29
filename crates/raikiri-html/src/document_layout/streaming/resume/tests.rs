@@ -841,7 +841,7 @@ fn space_above_the_first_box_costs_no_streamed_pages() {
         "html { border-top: 5px solid }",
         "body { padding-top: 5px }",
     ] {
-        for height in [90, 95] {
+        for height in [90, 95, 100] {
             let html = boxes_ending_pages(style, height, 40);
             let resumed = assert_streams_like_batch(&html);
             assert!(resumed > 0, "no layout resumed: {style} {height}");
