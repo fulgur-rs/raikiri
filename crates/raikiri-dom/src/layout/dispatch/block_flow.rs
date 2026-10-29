@@ -25,10 +25,13 @@ use raikiri_layout_style::values::{
 use shodo::style::TextGroupAlign;
 pub(crate) use sizing::Metrics;
 
-/// Whether a block child's normal flow shares its parent's float context.
+/// Whether a block child's normal flow shares its parent's float context. A
+/// table and a replaced box do not: their border boxes keep clear of the
+/// margin boxes of the floats in the context they sit in (CSS 2.1 §9.5).
 fn shares_context(style: &Style) -> bool {
     style.is_block()
         && !style.item_is_table
+        && !style.item_is_replaced
         && style.float == Float::None
         && style.position != Position::Absolute
         && !style.overflow.x.is_scroll_container()

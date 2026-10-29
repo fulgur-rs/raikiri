@@ -5405,3 +5405,7 @@ css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-014.html
 css/css-display/display-contents-dynamic-inline-flex-001-inline.html
 css/css-display/display-contents-dynamic-inline-flex-001-none.html
 css/css-display/display-contents-inline-flex-001.html
+
+# --- a block-level replaced element keeps clear of floats (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# A block-level replaced element (a canvas or an image) does not share the float context of its parent: its border box lies beside the floats that leave it room and below them when it does not fit (CSS 2.1 section 9.5), where it was drawn over the float. The `width: stretch` canvas fills the room beside the float. This test failed before the change (the canvas covered the float, 11600 pixels differ) and KEEPs in two audit-vacuous-passes runs.
+css/css-sizing/stretch/replaced-next-to-float-1.html
