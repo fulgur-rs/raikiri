@@ -1694,12 +1694,11 @@ fn background_image_parses_linear_gradient_color_interpolation_method() {
 /// The color space a gradient written as `function(<stops>)` interpolates in.
 fn default_interpolation_space(function: &str, stops: &str) -> MixColorSpace {
     let value = parse(&format!("{function}({stops})"), "background-image");
-    match background_gradient(&value) {
-        Some(Gradient::Linear(g)) => g.interpolation.color_space,
-        Some(Gradient::Radial(g)) => g.interpolation.color_space,
-        Some(Gradient::Conic(g)) => g.interpolation.color_space,
-        // cov:ignore: the callers pass gradients that parse.
-        other => panic!("expected a gradient for {function}({stops}), got {other:?}"),
+    let gradient = background_gradient(&value).expect("the callers pass gradients that parse");
+    match gradient {
+        Gradient::Linear(g) => g.interpolation.color_space,
+        Gradient::Radial(g) => g.interpolation.color_space,
+        Gradient::Conic(g) => g.interpolation.color_space,
     }
 }
 
