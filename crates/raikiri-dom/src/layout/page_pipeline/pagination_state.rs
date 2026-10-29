@@ -128,8 +128,6 @@ pub(super) struct BoxBreak {
     /// the box that is not at a page edge, or a change of the page type opens
     /// a page for the box.
     pub(super) forced_transition: bool,
-    /// Whether the box names another page type than the flow it follows.
-    pub(super) named_page_change: bool,
     /// Whether the margins of the box collapse through it.
     pub(super) margins_collapse_through: bool,
     /// Whether the margins of the box collapse with those of the previous
@@ -843,7 +841,6 @@ impl PaginationState {
             overflow,
             forced_before,
             forced_transition,
-            named_page_change,
             margins_collapse_through,
             collapses_with_previous_block,
             pending_break_applies,
@@ -882,7 +879,6 @@ impl PaginationState {
             ref overflow,
             forced_before,
             forced_transition,
-            named_page_change,
             margins_collapse_through,
             pending_break_applies,
             ..
@@ -895,7 +891,7 @@ impl PaginationState {
             margin_top,
             self.current_page,
             self.reach.flow_max,
-            named_page_change,
+            forced_transition,
         );
         let target_page = forced_target_page(self.current_page, natural_page);
         reach_page(control, target_page)?;

@@ -762,6 +762,8 @@ fn margin_box_starts_page_on_a_later_page_or_at_the_page_start() {
     assert!(margin_box_starts_page(&origins, 100.0, 0, 0.0));
     assert!(margin_box_starts_page(&origins, 100.0, 1, 100.0));
     assert!(!margin_box_starts_page(&origins, 150.0, 1, 100.0));
+    // Part-way down a later page, the margin box follows content that runs on.
+    assert!(!margin_box_starts_page(&origins, 105.0, 0, 0.0));
     assert!(!margin_box_starts_page(&origins, 50.0, 0, 0.0));
     // Positions outside the flow stay on the current page.
     assert!(!margin_box_starts_page(&origins, -10.0, 0, 0.0));
@@ -11716,6 +11718,58 @@ fn a_forced_break_after_the_first_box_of_a_later_page_opens_the_page_after_it() 
 }
 
 #[test]
+fn a_forced_break_after_a_box_crossing_a_page_edge_opens_the_page_it_ends_on_next() {
+    // The second box runs from 5 to 105, over the edge at 100. The break after
+    // it opens the page after the one it ends on, so the last box starts on the
+    // fourth page rather than overlapping the second box's tail on the second.
+    assert_eq!(
+        page_box_positions(&["height:5px", "height:100px;break-after:page", "height:20px",]),
+        (vec![0.0, 5.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_forced_break_before_a_box_after_one_crossing_a_page_edge_opens_the_page_after_it() {
+    // The break before the last box sits after the second box, which ends on
+    // the second page.
+    assert_eq!(
+        page_box_positions(&[
+            "height:5px",
+            "height:100px",
+            "height:20px;break-before:page",
+        ]),
+        (vec![0.0, 5.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_chain_of_forced_breaks_after_boxes_crossing_page_edges_opens_a_page_after_each() {
+    // Every 100px box starts 5px down its page and runs 5px onto the next.
+    assert_eq!(
+        page_box_positions(&[
+            "height:5px",
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+        ]),
+        (vec![0.0, 5.0, 200.0, 300.0, 400.0], 5)
+    );
+}
+
+#[test]
+fn a_forced_break_after_a_box_that_fills_a_page_exactly_opens_the_next_page() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:100px;break-after:page",
+            "height:100px;break-after:page",
+            "height:20px",
+        ]),
+        (vec![0.0, 100.0, 200.0], 3)
+    );
+}
+
+#[test]
 fn a_relative_offset_on_the_first_box_does_not_move_the_page_it_starts_on() {
     // The offset only paints the box lower. It stays on the first page, so
     // the break after it opens the second page for the next box.
@@ -17126,7 +17180,6 @@ fn box_meeting_no_break() -> pagination_state::BoxBreak {
         },
         forced_before: false,
         forced_transition: false,
-        named_page_change: false,
         margins_collapse_through: false,
         collapses_with_previous_block: false,
         pending_break_applies: false,
@@ -17214,7 +17267,7 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
         &candidate(body, 30.0, None),
         &entry(true, None, false),
     );
-    assert!(!page_break.forced_before && !page_break.named_page_change);
+    assert!(!page_break.forced_before);
     assert!(!page_break.forced_transition && !page_break.pending_break_applies);
     assert!(!page_break.is_page_transition());
     let (page_break, _) = meet(
@@ -17222,7 +17275,7 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
         &candidate(body, 30.0, Some("b")),
         &entry(true, Some("a"), false),
     );
-    assert!(!page_break.forced_before && page_break.named_page_change);
+    assert!(!page_break.forced_before && !page_break.pending_break_applies);
     assert!(page_break.forced_transition && page_break.is_page_transition());
 
     // A box that follows its containing box through positioned insets starts
@@ -18233,7 +18286,6 @@ fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
         },
         forced_before: forced,
         forced_transition: forced,
-        named_page_change: false,
         margins_collapse_through: true,
         collapses_with_previous_block: true,
         pending_break_applies: forced,

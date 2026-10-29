@@ -250,30 +250,53 @@ fn a_block_that_holds_one_box_stays_when_a_break_before_it_is_avoided() {
     }
 }
 
+/// The page count of a 60px block, a block with `padding` below the one box
+/// styled with `only_css`, and a 10px block.
+fn pages_around_a_block_that_holds_one_box(only_css: &str, padding: u32) -> usize {
+    paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let parent = block(
+            doc,
+            body,
+            &format!("display:block;padding-bottom:{padding}px"),
+        );
+        block(
+            doc,
+            parent,
+            &format!("display:block;height:30px;{only_css}"),
+        );
+        block(doc, body, "display:block;height:10px");
+    })
+    .1
+}
+
 #[test]
 fn a_forced_break_or_a_page_name_in_a_block_that_holds_one_box_is_left_to_its_own_rules() {
     // The break already puts the block on the page it asks for; moving the
     // block as well for its padding would add a page.
-    for only_css in ["break-before:always", "break-after:always", "page:foo"] {
-        let pages = |padding: u32| {
-            paged_body(|doc, body| {
-                block(doc, body, "display:block;height:60px");
-                let parent = block(
-                    doc,
-                    body,
-                    &format!("display:block;padding-bottom:{padding}px"),
-                );
-                block(
-                    doc,
-                    parent,
-                    &format!("display:block;height:30px;{only_css}"),
-                );
-                block(doc, body, "display:block;height:10px");
-            })
-            .1
-        };
-        assert_eq!(pages(30), pages(0), "{only_css}");
+    for only_css in ["break-before:always", "page:foo"] {
+        assert_eq!(
+            pages_around_a_block_that_holds_one_box(only_css, 30),
+            pages_around_a_block_that_holds_one_box(only_css, 0),
+            "{only_css}"
+        );
     }
+}
+
+#[test]
+fn a_forced_break_after_the_box_of_a_block_whose_padding_runs_over_a_page_edge_follows_the_padding()
+{
+    // The padding below the box runs from 90 to 120, over the edge at 100. The
+    // break after the box sits after the padding, so the next block opens the
+    // page after the one the padding ends on.
+    assert_eq!(
+        pages_around_a_block_that_holds_one_box("break-after:always", 0),
+        2
+    );
+    assert_eq!(
+        pages_around_a_block_that_holds_one_box("break-after:always", 30),
+        3
+    );
 }
 
 /// The page-flow y of the div with 30px of padding below it, after a 60px
