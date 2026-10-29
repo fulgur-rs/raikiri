@@ -85,7 +85,7 @@ fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> 
         )
 }
 
-fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> bool {
+pub(super) fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 
     let node = &tree.nodes[usize::from(child)];

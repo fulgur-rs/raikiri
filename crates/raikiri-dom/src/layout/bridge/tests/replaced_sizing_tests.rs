@@ -2259,7 +2259,7 @@ fn an_image_with_an_authored_height_takes_the_same_width_in_any_parent() {
             (20.0, 50.0),
         ),
         (
-            Some("height:200px"),
+            Some("display:block;height:200px"),
             "display:block;height:50%;padding-right:80px",
             (120.0, 100.0),
         ),
