@@ -1765,6 +1765,24 @@ fn a_gradient_with_a_color_in_a_modern_syntax_interpolates_in_oklab_when_no_spac
 }
 
 #[test]
+fn a_gradient_stop_nested_deeper_than_colors_may_be_is_rejected() {
+    // The stop is classified before it is parsed, and neither follows a color
+    // past the depth the color parser reads.
+    for (open, close) in [("alpha(from ", ")"), ("light-dark(", ", red)")] {
+        let depth = MAX_COLOR_MIX_NESTING_DEPTH + 1;
+        let stop = format!("{}red{}", open.repeat(depth), close.repeat(depth));
+        assert_eq!(
+            parse(
+                &format!("linear-gradient({stop}, blue)"),
+                "background-image"
+            ),
+            None,
+            "{open}"
+        );
+    }
+}
+
+#[test]
 fn a_space_given_in_a_gradient_wins_over_the_color_syntax_of_its_stops() {
     assert_eq!(
         default_interpolation_space("linear-gradient", "in oklab, #e53935, #1e88e5"),

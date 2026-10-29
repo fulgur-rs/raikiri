@@ -1687,12 +1687,15 @@ fn default_gradient_color_interpolation(all_legacy: bool) -> GradientColorInterp
 /// function. `light-dark()` is the color of its light branch, and `alpha()`
 /// that of the color it is relative to. `currentcolor` counts as legacy: the
 /// color it stands for is not known where a gradient is parsed.
-fn color_is_legacy_syntax(input: &mut Parser<'_, '_>) -> bool {
+fn color_is_legacy_syntax(input: &mut Parser<'_, '_>, depth: usize) -> bool {
     let start = input.state();
     let legacy = match input.next().cloned() {
+        // A color nested deeper than the color parser reads is invalid
+        // whatever its syntax, so the classification does not follow it.
+        Ok(Token::Function(_)) if depth >= MAX_COLOR_MIX_NESTING_DEPTH => false,
         Ok(Token::Function(name)) => input
             .parse_nested_block(|args| {
-                let legacy = function_color_is_legacy(&name, args);
+                let legacy = function_color_is_legacy(&name, args, depth);
                 // A nested block has to be read to its end.
                 while args.next().is_ok() {}
                 Ok::<_, ParseError<'_, ()>>(legacy)
@@ -1705,8 +1708,8 @@ fn color_is_legacy_syntax(input: &mut Parser<'_, '_>) -> bool {
 }
 
 /// [`color_is_legacy_syntax`] for the color function `name` whose arguments
-/// are `args`.
-fn function_color_is_legacy(name: &str, args: &mut Parser<'_, '_>) -> bool {
+/// are `args`, `depth` functions below the stop's color.
+fn function_color_is_legacy(name: &str, args: &mut Parser<'_, '_>, depth: usize) -> bool {
     match name.to_ascii_lowercase().as_str() {
         "rgb" | "rgba" | "hsl" | "hsla" | "hwb" => {
             // A relative color or a missing component is the modern syntax of
@@ -1720,10 +1723,10 @@ fn function_color_is_legacy(name: &str, args: &mut Parser<'_, '_>) -> bool {
             }
             true
         }
-        "light-dark" => color_is_legacy_syntax(args),
+        "light-dark" => color_is_legacy_syntax(args, depth + 1),
         "alpha" => {
             let _ = args.try_parse(|i| i.expect_ident_matching("from"));
-            color_is_legacy_syntax(args)
+            color_is_legacy_syntax(args, depth + 1)
         }
         "contrast-color" => true,
         _ => false,
@@ -1820,7 +1823,7 @@ fn parse_stop_list_with_hints<'i, Stop, Hint>(
     parse_hint: fn(&mut Parser<'i, '_>) -> Result<Hint, ParseError<'i, ()>>,
 ) -> Result<StopList<Stop, Hint>, ParseError<'i, ()>> {
     let entries = input.parse_comma_separated(|entry| {
-        let legacy = color_is_legacy_syntax(entry);
+        let legacy = color_is_legacy_syntax(entry, 0);
         // A hint is a bare position, which no stop can start with.
         match entry.try_parse(parse_stop) {
             Ok(stop) => Ok(StopListEntry::Stop(stop, legacy)),
