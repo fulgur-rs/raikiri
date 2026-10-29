@@ -126,16 +126,17 @@ pub(super) fn is_sized_leaf(tree: &LayoutSession<'_>, child: usize) -> bool {
 /// Whether `child` is a plain block with nothing inside it, no block size and
 /// no padding or border: a box that takes no room, so that only its margins
 /// count, collapsing through it with the ones around it. Its block margins may
-/// be of either sign; inline margins would narrow it, so it has none.
+/// be of either sign, and a percentage of the column width, which the columns
+/// resolve before the stream reads them; inline margins would narrow it, so it
+/// has none.
 pub(super) fn is_margin_only_block(tree: &LayoutSession<'_>, child: usize) -> bool {
     let style = style_of(tree, child);
     let margin = style.margin();
     let zero = LengthPercentageAuto::length(0.0);
     margin.left == zero
         && margin.right == zero
-        && [margin.top, margin.bottom]
-            .into_iter()
-            .all(|edge| style_dimension_length(edge.into()).is_some_and(f32::is_finite))
+        && !margin.top.is_auto()
+        && !margin.bottom.is_auto()
         && is_plain_block_apart_from_margins(tree, child, false, false)
         && !has_rendered_content(tree, child, false)
         && !has_block_size(&style)
