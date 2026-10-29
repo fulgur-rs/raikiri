@@ -302,6 +302,32 @@ fn an_absolutely_positioned_block_in_an_inline_keeps_its_containing_block() {
     )]);
 }
 
+/// The document element is blockified even when it computes to `display:
+/// inline` or `contents`, so it is the percentage base of the body, not a
+/// transparent inline.
+#[test]
+fn a_document_element_with_an_inline_display_is_still_a_percentage_base() {
+    let root = |display: &str| {
+        format!(
+            "<style>html {{ display: {display}; height: 200px }} \
+             body {{ margin: 0; height: 100% }}</style>\
+             <div id=b style='height:100%'></div>"
+        )
+    };
+    check(&[
+        (
+            "inline root",
+            root("inline"),
+            vec![("b", 0.0, 0.0, 800.0, 200.0)],
+        ),
+        (
+            "contents root",
+            root("contents"),
+            vec![("b", 0.0, 0.0, 800.0, 200.0)],
+        ),
+    ]);
+}
+
 /// Lays out each case and compares the elements it names with the boxes
 /// Chromium gives.
 fn check(cases: &[OwnedCase<'_>]) {
