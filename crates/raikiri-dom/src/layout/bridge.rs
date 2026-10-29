@@ -501,6 +501,10 @@ fn apply_computed_to_style_in_session_inner(
         let cv = &*values;
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
+        doc.nodes[idx].contain_intrinsic = Size {
+            width: cv.contain_intrinsic_width.length.map(|length| length.px()),
+            height: cv.contain_intrinsic_height.length.map(|length| length.px()),
+        };
         doc.nodes[idx].text_group_align = shodo_group_align(cv.text_group_align);
         // Size containment removes the natural size and aspect ratio of
         // replaced content, so only an `aspect-ratio` of the box itself can

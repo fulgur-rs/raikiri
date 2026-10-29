@@ -10,7 +10,10 @@ use crate::property::{
     TextTransform, TextWrapMode, TextWrapStyle, WhiteSpaceCollapse, WordBreak,
     property_key_for_name,
 };
-use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal};
+use crate::resolve::{
+    ComputedContainIntrinsicSize, ComputedLength, ComputedLengthPercentageOrAuto,
+    ComputedLengthPercentageOrNormal,
+};
 
 /// A property, whether it is inherited, and values that compute apart: the
 /// first is the parent's, the second the user agent's, and a box `before`
@@ -288,6 +291,16 @@ pub(super) const CASES: &[(&str, bool, &[&str])] = &[
     ("flex-basis", false, &["30px", "40%", "calc(10% + 4px)"]),
     ("row-gap", false, &["3px", "5%", "calc(10% + 4px)"]),
     ("column-gap", false, &["3px", "5%", "calc(10% + 4px)"]),
+    (
+        "contain-intrinsic-width",
+        false,
+        &["30px", "auto 40px", "none"],
+    ),
+    (
+        "contain-intrinsic-height",
+        false,
+        &["30px", "auto 40px", "auto none"],
+    ),
     ("column-width", false, &["30px", "50px", "auto"]),
     ("overflow-x", false, &["hidden", "scroll", "auto"]),
     ("overflow-y", false, &["hidden", "scroll", "auto"]),
@@ -417,6 +430,11 @@ pub(super) const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
         "gap",
         false,
         &["3px 4px", "5% 6%", "calc(10% + 4px) normal"],
+    ),
+    (
+        "contain-intrinsic-size",
+        false,
+        &["30px 40px", "auto 50px", "none auto 7px"],
     ),
     (
         "place-content",
@@ -986,6 +1004,86 @@ fn the_legacy_grid_gap_names_take_var_and_math_values_like_the_gap_properties() 
             "{alias}: {value} is applied"
         );
     }
+}
+
+#[test]
+fn the_contain_intrinsic_properties_take_var_values() {
+    let length = |auto, px| ComputedContainIntrinsicSize {
+        auto,
+        length: Some(ComputedLength(px)),
+    };
+    let none = ComputedContainIntrinsicSize::NONE;
+    // The declaration, then the computed width and height it gives.
+    for (declaration, width, height) in [
+        (
+            "contain-intrinsic-size: var(--s)",
+            length(false, 7.0),
+            length(false, 9.0),
+        ),
+        (
+            "contain-intrinsic-size: var(--w) var(--h)",
+            length(false, 7.0),
+            length(false, 9.0),
+        ),
+        (
+            "contain-intrinsic-size: auto var(--w)",
+            length(true, 7.0),
+            length(true, 7.0),
+        ),
+        (
+            "contain-intrinsic-width: var(--w)",
+            length(false, 7.0),
+            none,
+        ),
+        (
+            "contain-intrinsic-height: var(--h)",
+            none,
+            length(false, 9.0),
+        ),
+    ] {
+        let style = child(
+            "",
+            &[],
+            &format!("#target {{ --s: 7px 9px; --w: 7px; --h: 9px; {declaration} }}"),
+        );
+        assert_eq!(style.contain_intrinsic_width, width, "{declaration}");
+        assert_eq!(style.contain_intrinsic_height, height, "{declaration}");
+    }
+}
+
+#[test]
+fn the_contain_intrinsic_properties_apply_to_the_computed_style() {
+    let length = |px| ComputedContainIntrinsicSize {
+        auto: false,
+        length: Some(ComputedLength(px)),
+    };
+    let style = child("", &[], "#target { contain-intrinsic-size: 7px 9px }");
+    assert_eq!(style.contain_intrinsic_width, length(7.0));
+    assert_eq!(style.contain_intrinsic_height, length(9.0));
+    let style = child(
+        "",
+        &[],
+        "#target { contain-intrinsic-size: 7px 9px; contain-intrinsic-height: auto none; \
+         contain-intrinsic-width: 2em }",
+    );
+    assert_eq!(style.contain_intrinsic_width, length(32.0));
+    assert_eq!(
+        style.contain_intrinsic_height,
+        ComputedContainIntrinsicSize {
+            auto: true,
+            length: None,
+        }
+    );
+    // A `calc()` that mixes units resolves against the font size and is
+    // clamped to zero.
+    let style = child(
+        "",
+        &[],
+        "#target { font-size: 10px; contain-intrinsic-width: calc(2em + 10px); \
+         contain-intrinsic-height: calc(10px - 3em) }",
+    );
+    assert_eq!(style.contain_intrinsic_width, length(30.0));
+    assert_eq!(style.contain_intrinsic_height, length(0.0));
 }
 
 /// The `page` values of a parent styled `parent` and of its child `p`

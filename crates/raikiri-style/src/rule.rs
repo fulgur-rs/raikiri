@@ -331,6 +331,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         Columns => &[ColumnWidth, ColumnCount],
         ColumnRule => &[ColumnRuleWidth, ColumnRuleStyle, ColumnRuleColor],
         Gap => &[RowGap, ColumnGap],
+        ContainIntrinsicSize => &[ContainIntrinsicWidth, ContainIntrinsicHeight],
         PlaceContent => &[AlignContent, JustifyContent],
         GridArea => &[GridRowStart, GridColumnStart, GridRowEnd, GridColumnEnd],
         GridRow => &[GridRowStart, GridRowEnd],
@@ -525,6 +526,8 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | MinInlineSize
         | MaxInlineSize
         | MaxBlockSize
+        | ContainIntrinsicWidth
+        | ContainIntrinsicHeight
         | TextUnderlineOffset
         | HangingPunctuation
         | TextAutospace
@@ -975,6 +978,8 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::AlignSelf(_)
         | PropertyValue::RowGap(_)
         | PropertyValue::ColumnGap(_)
+        | PropertyValue::ContainIntrinsicWidth(_)
+        | PropertyValue::ContainIntrinsicHeight(_)
         // `hyphens` (CSS Text Module Level 3 §5.3) has no shorthand form.
         | PropertyValue::Hyphens(_)
         // `hyphenate-character` / `hyphenate-limit-chars` (CSS Text 4) are
@@ -1103,6 +1108,10 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::Flex(f) => expand_flex(f, push_longhand),
         PropertyValue::FlexFlow(f) => expand_flex_flow(f, push_longhand),
         PropertyValue::Gap(g) => expand_gap(g, push_longhand),
+        PropertyValue::ContainIntrinsicSize(s) => {
+            push_longhand(PropertyValue::ContainIntrinsicWidth(s.width));
+            push_longhand(PropertyValue::ContainIntrinsicHeight(s.height));
+        }
         PropertyValue::PlaceContent(p) => expand_place_content(p, push_longhand),
         // `GridLineShorthand` contains `SmolStr` and is not `Copy`. Unlike other
         // shorthand payload (`Sides<..>` / `FlexShorthand` / `GapShorthand`

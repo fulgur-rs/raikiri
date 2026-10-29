@@ -451,6 +451,8 @@ pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
         PropertyKey::FlexWrap => "flex-wrap",
         PropertyKey::RowGap => "row-gap",
         PropertyKey::ColumnGap => "column-gap",
+        PropertyKey::ContainIntrinsicWidth => "contain-intrinsic-width",
+        PropertyKey::ContainIntrinsicHeight => "contain-intrinsic-height",
         PropertyKey::AlignContent => "align-content",
         PropertyKey::JustifyContent => "justify-content",
         PropertyKey::AlignItems => "align-items",
@@ -1027,6 +1029,15 @@ pub(crate) fn project_deferred_value(
         PropertyValue::Gap(shorthand) => match key {
             crate::property::PropertyKey::RowGap => PropertyValue::RowGap(shorthand.row),
             crate::property::PropertyKey::ColumnGap => PropertyValue::ColumnGap(shorthand.column),
+            _ => return None,
+        },
+        PropertyValue::ContainIntrinsicSize(shorthand) => match key {
+            PropertyKey::ContainIntrinsicWidth => {
+                PropertyValue::ContainIntrinsicWidth(shorthand.width)
+            }
+            PropertyKey::ContainIntrinsicHeight => {
+                PropertyValue::ContainIntrinsicHeight(shorthand.height)
+            }
             _ => return None,
         },
         PropertyValue::PlaceContent(shorthand) => match key {

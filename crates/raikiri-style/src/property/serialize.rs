@@ -75,6 +75,10 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         )),
         PropertyValue::ColumnSpan(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::AspectRatio(value) => Some(serialize_aspect_ratio(*value)),
+        PropertyValue::ContainIntrinsicWidth(size)
+        | PropertyValue::ContainIntrinsicHeight(size) => {
+            Some(serialize_contain_intrinsic_size(size))
+        }
         PropertyValue::PaddingTop(l)
         | PropertyValue::PaddingRight(l)
         | PropertyValue::PaddingBottom(l)
@@ -620,6 +624,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::RowGap(..)
         | PropertyValue::ColumnGap(..)
         | PropertyValue::Gap(..)
+        | PropertyValue::ContainIntrinsicSize(..)
         | PropertyValue::PlaceContent(..)
         | PropertyValue::TabSize(..)
         | PropertyValue::TextAlignAll(..)
@@ -700,6 +705,23 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TextSpacingShorthand(..)
         | PropertyValue::TextEmphasisColor(..)
         | PropertyValue::TextEmphasis(..) => None,
+    }
+}
+
+/// Serializes a `contain-intrinsic-width` or `-height` value: the optional `auto`, then the
+/// length or `none`.
+fn serialize_contain_intrinsic_size(size: &ContainIntrinsicSize) -> String {
+    let length = size.length.as_ref().map_or_else(
+        || "none".to_owned(),
+        |length| match length {
+            ContainIntrinsicLength::Length(length) => serialize_length(length),
+            ContainIntrinsicLength::Calc(calc) => serialize_relative_calc_length_percentage(calc),
+        },
+    );
+    if size.auto {
+        format!("auto {length}")
+    } else {
+        length
     }
 }
 

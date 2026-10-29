@@ -118,10 +118,11 @@ pub mod computed_api;
 pub mod resolve;
 pub use resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
-    ComputedBoxShadowItem, ComputedColumnWidth, ComputedCssPosition, ComputedCssPositionOffset,
-    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
-    ComputedGridTrackListComponent, ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+    ComputedBoxShadowItem, ComputedColumnWidth, ComputedContainIntrinsicSize, ComputedCssPosition,
+    ComputedCssPositionOffset, ComputedFlexBasis, ComputedGridTemplateTracks,
+    ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
+    ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
     ComputedLengthPercentageOrNormal, ComputedLetterSpacing, ComputedLineHeight, ComputedOutline,
     ComputedTabSize, ComputedTextDecorationInset, ComputedTextDecorationThickness,
     ComputedTextIndent, ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,

@@ -45,6 +45,43 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
         .map(|(width, height)| Size { width, height })
 }
 
+/// The natural size that `contain-intrinsic-width` and `-height` give a
+/// size-contained box measured as if it had no content (CSS Box Sizing 4 §5):
+/// the box is sized as a leaf of that size. An axis without a length has no
+/// size, as for `none`, which is the size of an empty box in that axis for
+/// everything but a grid container: its explicit tracks keep their size where
+/// no length is stated, so a grid that states one length only is not a leaf
+/// (see [`grid_with_one_intrinsic_length`]). `None` when the box is not sized
+/// as a leaf.
+fn contain_intrinsic_natural(node: &crate::node::Node) -> Option<Size<f32>> {
+    let lengths = node.contain_intrinsic;
+    let sized_as_leaf = match (lengths.width, lengths.height) {
+        (None, None) => false,
+        (Some(_), Some(_)) => true,
+        _ => !is_grid_container(node),
+    };
+    sized_as_leaf.then(|| Size {
+        width: lengths.width.unwrap_or(0.0),
+        height: lengths.height.unwrap_or(0.0),
+    })
+}
+
+fn is_grid_container(node: &crate::node::Node) -> bool {
+    node.formatting_context == FormattingContext::Grid
+}
+
+/// The natural size of a size-contained grid container that states a
+/// `contain-intrinsic-*` length in one axis only. The axis without a length
+/// keeps the size its explicit tracks give an empty grid, so the grid is laid
+/// out as without the length and only the axis that states one is replaced.
+fn grid_with_one_intrinsic_length(node: &crate::node::Node) -> Option<Size<f32>> {
+    let lengths = node.contain_intrinsic;
+    (is_grid_container(node) && lengths.width.is_some() != lengths.height.is_some()).then(|| Size {
+        width: lengths.width.unwrap_or(0.0),
+        height: lengths.height.unwrap_or(0.0),
+    })
+}
+
 /// Apply sizing entries to a local clone without publishing session state.
 /// Callers keep calc owners alive for every read of the clone.
 fn apply_local_sizing(style: &mut Style, entries: &[OwnedPropertyOverride]) {
@@ -954,25 +991,33 @@ impl LayoutSession<'_> {
                 && leaf_intrinsic_size(&tree.nodes[idx]).is_none()
                 && !tree.nodes[idx].is_inline_svg_root()
                 && tree.physical_style(idx).aspect_ratio().is_some();
-            let is_leaf = (tree.nodes[idx].children.is_empty()
-                && !ratio_block
-                && (!matches!(
-                    formatting_context,
-                    FormattingContext::Flex | FormattingContext::Grid
-                ) || item_is_replaced))
+            // The size of its contents is what a size-contained box gives up,
+            // and `contain-intrinsic-*` names the size it takes instead.
+            let contain_natural = contain_intrinsic_natural(&tree.nodes[idx]).filter(|_| empty);
+            let is_leaf = contain_natural.is_some()
+                || (tree.nodes[idx].children.is_empty()
+                    && !ratio_block
+                    && (!matches!(
+                        formatting_context,
+                        FormattingContext::Flex | FormattingContext::Grid
+                    ) || item_is_replaced))
                 || tree.nodes[idx].is_inline_svg_root();
             if empty && is_leaf {
                 // Replaced content with size containment has no natural size
                 // or aspect ratio; the style bridge left only the ratio the
                 // box states itself.
                 let style = tree.physical_style(idx);
+                let natural = contain_natural.unwrap_or(Size {
+                    width: 0.0,
+                    height: 0.0,
+                });
                 return compute_leaf_layout(
                     inputs,
                     &TaffyStyle::new(style),
                     resolve_calc,
                     |known, _| Size {
-                        width: known.width.unwrap_or(0.0),
-                        height: known.height.unwrap_or(0.0),
+                        width: known.width.unwrap_or(natural.width),
+                        height: known.height.unwrap_or(natural.height),
                     },
                 );
             }
@@ -2542,14 +2587,16 @@ fn compute_inline_block_shrink_wrap(
     let display = tree.nodes[idx].display();
     // An empty flex or grid container still runs its layout algorithm:
     // explicit grid tracks contribute even when there are no items.
-    let is_leaf = tree.nodes[idx].children.is_empty()
-        && !matches!(
-            display,
-            DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-        );
+    let contain_natural = contain_intrinsic_natural(&tree.nodes[idx]).filter(|_| empty);
+    let is_leaf = contain_natural.is_some()
+        || (tree.nodes[idx].children.is_empty()
+            && !matches!(
+                display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            ));
     let limits = tree.nodes[idx].content_limits;
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = block_flow::style_input::physical(tree, idx);
@@ -2572,7 +2619,9 @@ fn compute_inline_block_shrink_wrap(
             &[OwnedPropertyOverride::aspect_ratio(None)],
         );
     }
-    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]).filter(|_| !empty);
+    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx])
+        .filter(|_| !empty)
+        .or(contain_natural);
     // A replaced leaf with an `auto` side is sized by its ratio and its
     // min/max sizes, not by Taffy's ratio floor, before any width is fixed.
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
@@ -2837,7 +2886,7 @@ fn size_contained_inputs(
         return inputs;
     }
     tree.context.size_contained_measure.push(idx);
-    let empty = tree
+    let mut empty = tree
         .compute_child_layout(
             node_id,
             LayoutInput {
@@ -2848,6 +2897,30 @@ fn size_contained_inputs(
         )
         .size;
     tree.context.size_contained_measure.pop();
+    if let Some(natural) = grid_with_one_intrinsic_length(&tree.nodes[idx]) {
+        // A leaf of the stated length gives the size of that axis with the
+        // padding, the border and the limits of the box around it.
+        let stated = tree.nodes[idx].contain_intrinsic;
+        let leaf = compute_leaf_layout(
+            LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                axis: RequestedAxis::Both,
+                ..inputs
+            },
+            &TaffyStyle::new(tree.physical_style(idx)),
+            resolve_calc,
+            |known, _| Size {
+                width: known.width.unwrap_or(natural.width),
+                height: known.height.unwrap_or(natural.height),
+            },
+        );
+        if stated.width.is_some() {
+            empty.width = leaf.size.width;
+        }
+        if stated.height.is_some() {
+            empty.height = leaf.size.height;
+        }
+    }
     let mut inputs = inputs;
     if width {
         inputs.known_dimensions.width = Some(empty.width);

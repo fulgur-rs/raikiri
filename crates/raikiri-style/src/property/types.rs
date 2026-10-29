@@ -4181,6 +4181,62 @@ pub struct GapShorthand {
     pub column: LengthOrNormal,
 }
 
+/// The specified value of `contain-intrinsic-width` and `-height`.
+///
+/// CSS Box Sizing 4 §5 "Intrinsic Size Override: the contain-intrinsic-size
+/// properties" propdef `contain-intrinsic-width`
+/// <https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override>: value
+/// grammar `auto? [ none | <length [0,∞]> ]`; initial `none`; not inherited.
+/// With `auto`, the box uses the size it last had while its contents were
+/// skipped, and the length (or `none`) only when there is no such size. A
+/// page has no skipped contents, so layout takes the length either way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ContainIntrinsicSize {
+    /// Whether the `auto` keyword is present.
+    pub auto: bool,
+    /// The length, or `None` for the keyword `none`.
+    pub length: Option<ContainIntrinsicLength>,
+}
+
+/// The `<length [0,∞]>` of a [`ContainIntrinsicSize`]: a plain length, or a
+/// mixed-unit `calc()` whose font-relative and viewport terms wait for
+/// computed-value time. The property takes no percentage, so a calculation
+/// with a percentage term never reaches this type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ContainIntrinsicLength {
+    /// A plain authored length.
+    Length(Length),
+    /// A `calc()` sum kept until the element's font size is known; a negative
+    /// result is clamped to zero when computed (CSS Values 4 §10.7).
+    Calc(RelativeCalcLengthPercentage),
+}
+
+impl ContainIntrinsicSize {
+    /// The initial value, `none`.
+    pub const NONE: Self = Self {
+        auto: false,
+        length: None,
+    };
+}
+
+/// The specified value of the `contain-intrinsic-size` shorthand.
+///
+/// CSS Box Sizing 4 §5.1 propdef `contain-intrinsic-size`
+/// <https://drafts.csswg.org/css-sizing-4/#propdef-contain-intrinsic-size>:
+/// value grammar `[ auto? [ none | <length> ] ]{1,2}`. The first component is
+/// the width and the second the height; when the second is omitted it copies
+/// the first, `auto` included.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ContainIntrinsicSizeShorthand {
+    /// The `contain-intrinsic-width` component.
+    pub width: ContainIntrinsicSize,
+    /// The `contain-intrinsic-height` component — equals `width` when omitted.
+    pub height: ContainIntrinsicSize,
+}
+
 /// The specified value of the `place-content` shorthand.
 ///
 /// CSS Box Alignment Module Level 3 §5.2 "Content-Distribution Shorthand:
@@ -8083,6 +8139,7 @@ impl PropertyKey {
                 | PropertyKey::Flex
                 | PropertyKey::FlexFlow
                 | PropertyKey::Gap
+                | PropertyKey::ContainIntrinsicSize
                 | PropertyKey::PlaceContent
                 | PropertyKey::PlaceItems
                 | PropertyKey::PlaceSelf
@@ -12037,6 +12094,16 @@ pub enum PropertyValue {
     /// `background-position-y`, the vertical counterpart of
     /// [`Self::BackgroundPositionX`].
     BackgroundPositionY(Arc<[CssPositionOffset]>),
+    /// `contain-intrinsic-width` — **non-inherited**, initial:
+    /// [`ContainIntrinsicSize::NONE`] (CSS Box Sizing 4 §5; see
+    /// [`ContainIntrinsicSize`]).
+    ContainIntrinsicWidth(ContainIntrinsicSize),
+    /// `contain-intrinsic-height`; see [`Self::ContainIntrinsicWidth`].
+    ContainIntrinsicHeight(ContainIntrinsicSize),
+    /// `contain-intrinsic-size: [ auto? [ none | <length> ] ]{1,2}` shorthand;
+    /// [`crate::rule::expand_shorthand_into`] expands it into
+    /// [`Self::ContainIntrinsicWidth`] and [`Self::ContainIntrinsicHeight`].
+    ContainIntrinsicSize(ContainIntrinsicSizeShorthand),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12684,6 +12751,12 @@ pub enum PropertyKey {
     // slots. Each writes its own new field.
     BackgroundPositionX,
     BackgroundPositionY,
+    // CSS Box Sizing 4 contain-intrinsic-size longhands and shorthand
+    // (semantics on the matching PropertyValue variants); appended to preserve
+    // existing key slots. The shorthand follows its longhands.
+    ContainIntrinsicWidth,
+    ContainIntrinsicHeight,
+    ContainIntrinsicSize,
 }
 
 impl PropertyValue {
@@ -12839,6 +12912,9 @@ impl PropertyValue {
             PropertyValue::MaxBlockSize(_) => PropertyKey::MaxBlockSize,
             PropertyValue::BackgroundPositionX(_) => PropertyKey::BackgroundPositionX,
             PropertyValue::BackgroundPositionY(_) => PropertyKey::BackgroundPositionY,
+            PropertyValue::ContainIntrinsicWidth(_) => PropertyKey::ContainIntrinsicWidth,
+            PropertyValue::ContainIntrinsicHeight(_) => PropertyKey::ContainIntrinsicHeight,
+            PropertyValue::ContainIntrinsicSize(_) => PropertyKey::ContainIntrinsicSize,
             PropertyValue::TextUnderlineOffset(_) => PropertyKey::TextUnderlineOffset,
             PropertyValue::TextAutospace(_) => PropertyKey::TextAutospace,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
@@ -14109,6 +14185,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-position" => PropertyKey::BackgroundPosition,
         "background-position-x" => PropertyKey::BackgroundPositionX,
         "background-position-y" => PropertyKey::BackgroundPositionY,
+        "contain-intrinsic-width" => PropertyKey::ContainIntrinsicWidth,
+        "contain-intrinsic-height" => PropertyKey::ContainIntrinsicHeight,
+        "contain-intrinsic-size" => PropertyKey::ContainIntrinsicSize,
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,
         "border-image-source" => PropertyKey::BorderImageSource,

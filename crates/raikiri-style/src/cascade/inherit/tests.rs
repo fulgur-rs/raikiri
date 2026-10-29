@@ -10,7 +10,8 @@ use crate::property::CssColor;
 use crate::property::DisplayValue;
 use crate::property::LengthPercentageOrCalc;
 use crate::property::{
-    Border, BorderColor, BorderStyle, CalcLengthPercentage, ColumnFillValue, ContentComponent,
+    Border, BorderColor, BorderStyle, CalcLengthPercentage, ColumnFillValue,
+    ContainIntrinsicLength, ContainIntrinsicSize, ContainIntrinsicSizeShorthand, ContentComponent,
     GridAreaShorthand, GridAutoFlowValue, GridLineValue, GridShorthand, GridTemplateAreasValue,
     GridTemplateTracks, HyphenateLimitChars, HyphenateLimitCharsValue, Length, LengthOrAuto,
     ListStylePosition, ListStyleType, Outline, OutlineColor, OutlineStyle, OverflowValue,
@@ -8710,6 +8711,36 @@ fn apply_value_direct_position_sticky_and_fixed() {
     assert_eq!(cv.position, PositionValue::Sticky);
     apply_value(PropertyValue::Position(PositionValue::Fixed), &mut cv);
     assert_eq!(cv.position, PositionValue::Fixed);
+}
+
+#[test]
+fn apply_value_direct_contain_intrinsic_size_sets_both_axes() {
+    let size = |auto, px| ContainIntrinsicSize {
+        auto,
+        length: Some(ContainIntrinsicLength::Length(Length::Px(px))),
+    };
+    let mut cv = SpecifiedValues::initial();
+    apply_value(
+        PropertyValue::ContainIntrinsicSize(ContainIntrinsicSizeShorthand {
+            width: size(true, 3.0),
+            height: size(false, 4.0),
+        }),
+        &mut cv,
+    );
+    assert_eq!(cv.contain_intrinsic_width, size(true, 3.0));
+    assert_eq!(cv.contain_intrinsic_height, size(false, 4.0));
+    // A longhand after the shorthand replaces one axis only.
+    apply_value(
+        PropertyValue::ContainIntrinsicWidth(size(false, 5.0)),
+        &mut cv,
+    );
+    assert_eq!(cv.contain_intrinsic_width, size(false, 5.0));
+    assert_eq!(cv.contain_intrinsic_height, size(false, 4.0));
+    apply_value(
+        PropertyValue::ContainIntrinsicHeight(size(true, 6.0)),
+        &mut cv,
+    );
+    assert_eq!(cv.contain_intrinsic_height, size(true, 6.0));
 }
 
 #[test]

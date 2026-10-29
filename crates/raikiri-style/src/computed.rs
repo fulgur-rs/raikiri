@@ -39,9 +39,10 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
-    ComputedBoxShadowItem, ComputedColumnWidth, ComputedCssPosition, ComputedCssPositionOffset,
-    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+    ComputedBoxShadowItem, ComputedColumnWidth, ComputedContainIntrinsicSize, ComputedCssPosition,
+    ComputedCssPositionOffset, ComputedFlexBasis, ComputedGridTemplateTracks,
+    ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
     ComputedLengthPercentageOrNormal, ComputedLetterSpacing, ComputedLineHeight, ComputedOutline,
     ComputedOverflowClipMargin, ComputedTabSize, ComputedTextDecorationInset,
     ComputedTextDecorationThickness, ComputedTextIndent, ComputedTextShadow,
@@ -1694,6 +1695,15 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-align-3/#propdef-column-gap>, "Inherited:
     /// no"). Same shape as [`Self::row_gap`].
     pub column_gap: ComputedLengthPercentageOrNormal,
+    /// `contain-intrinsic-width`. **non-inherited**, initial:
+    /// [`ComputedContainIntrinsicSize::NONE`] (CSS Box Sizing 4 §5
+    /// <https://drafts.csswg.org/css-sizing-4/#intrinsic-size-override>,
+    /// "Inherited: no"). The size a box with size containment takes in the
+    /// width axis in place of the size of its contents.
+    pub contain_intrinsic_width: ComputedContainIntrinsicSize,
+    /// `contain-intrinsic-height`. **non-inherited**; same shape as
+    /// [`Self::contain_intrinsic_width`].
+    pub contain_intrinsic_height: ComputedContainIntrinsicSize,
     /// `quotes` — nesting-level `(open, close)` string pairs. **inherited**.
     /// CSS Content Module Level 3 §2.4.1
     /// <https://www.w3.org/TR/css-content-3/#quotes-property>, legacy CSS2
@@ -2373,6 +2383,10 @@ impl ComputedValues {
             // both initially are `normal`.
             row_gap: ComputedLengthPercentageOrNormal::Normal,
             column_gap: ComputedLengthPercentageOrNormal::Normal,
+            // CSS Box Sizing 4 §5: contain-intrinsic-width and -height are
+            // initially `none`.
+            contain_intrinsic_width: ComputedContainIntrinsicSize::NONE,
+            contain_intrinsic_height: ComputedContainIntrinsicSize::NONE,
             // CSS Content 3 §2.4.1 leaves the initial quotes value to the
             // user agent. This independent implementation represents it with an
             // empty list (the same shared empty Arc slot as `none`; see the

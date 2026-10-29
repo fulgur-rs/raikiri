@@ -582,6 +582,14 @@ fn deferred_projection_covers_supported_shorthands() {
             vec![PropertyKey::RowGap, PropertyKey::ColumnGap],
         ),
         (
+            "contain-intrinsic-size",
+            "auto 1px 2px",
+            vec![
+                PropertyKey::ContainIntrinsicWidth,
+                PropertyKey::ContainIntrinsicHeight,
+            ],
+        ),
+        (
             "place-content",
             "center space-between",
             vec![PropertyKey::AlignContent, PropertyKey::JustifyContent],

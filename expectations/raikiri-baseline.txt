@@ -5395,3 +5395,7 @@ css/css-sizing/stretch/cache-miss-002.html
 css/css-sizing/stretch/fixed-table-1.html
 css/css-sizing/stretch/positioned-replaced-2.html
 css/css-sizing/stretch/positioned-replaced-3.html
+
+# --- `contain-intrinsic-size` for a box with size containment (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# `contain-intrinsic-width`, `contain-intrinsic-height` and the `contain-intrinsic-size` shorthand give a box with size containment the size it takes in place of the size of its contents (CSS Box Sizing 4 section 5), so a `width: max-content` fieldset with `contain: size` is the stated 111px by 222px instead of 0x0. It was an expected failure before the change (the test matched only while the fieldset ignored its width) and KEEPs in two audit-vacuous-passes runs.
+css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-014.html
