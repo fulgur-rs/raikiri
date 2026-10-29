@@ -233,3 +233,15 @@ fn sibling_adjacency_rejects_a_parent_link_missing_from_the_child_list() {
         .retain(|&id| id != ids[1]);
     assert!(!SiblingAdjacency::default().adjoins(&fixture.doc, &fixture.cascade, ids[1], ids[0]));
 }
+
+#[test]
+fn sibling_adjacency_does_not_cross_an_ordinary_parent_boundary() {
+    let mut ids = [0; 2];
+    let fixture = block_fixture("", |doc, root| {
+        ids[0] = doc.append_element(Some(root), "div", Some("display:block"));
+        let ordinary = doc.append_element(Some(root), "div", Some("display:block"));
+        ids[1] = doc.append_element(Some(ordinary), "div", Some("display:block"));
+    });
+    // The earlier box is a sibling of the parent, not of its first child.
+    assert!(!SiblingAdjacency::default().adjoins(&fixture.doc, &fixture.cascade, ids[1], ids[0]));
+}
