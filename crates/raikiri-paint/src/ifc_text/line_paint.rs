@@ -443,6 +443,20 @@ impl<'a> LinePaint<'a, '_> {
         line_index: usize,
         position: IfcPosition,
     ) {
+        #[cfg(any(test, feature = "generated-image-diagnostics"))]
+        if crate::generated_image_diagnostics::enabled() {
+            return self.paint_content_images_counted::<true>(paint, images, line_index, position);
+        }
+        self.paint_content_images_counted::<false>(paint, images, line_index, position);
+    }
+
+    fn paint_content_images_counted<const COUNT: bool>(
+        &self,
+        paint: &mut TypographicPaint,
+        images: &[PositionedContentImage],
+        line_index: usize,
+        position: IfcPosition,
+    ) {
         let Paragraph {
             document, root_id, ..
         } = self.paragraph;
@@ -454,11 +468,21 @@ impl<'a> LinePaint<'a, '_> {
                 .map(|pixels| (image, pixels))
         });
         for (image, pixels) in pixel_images {
+            #[cfg(any(test, feature = "generated-image-diagnostics"))]
+            if COUNT {
+                crate::generated_image_diagnostics::image_lookup();
+            }
             let pseudo_node =
                 raikiri_dom::generated_content::generated_node_id(image.owner, image.pseudo);
             let group = self.pieces.pieces[line_index]
                 .iter()
-                .find(|piece| piece.node == pseudo_node)
+                .find(|piece| {
+                    #[cfg(any(test, feature = "generated-image-diagnostics"))]
+                    if COUNT {
+                        crate::generated_image_diagnostics::predicate_visit();
+                    }
+                    piece.node == pseudo_node
+                })
                 .and_then(|piece| paint.piece_group(piece));
             let (dx, dy) = cumulative_offset(document, root_id, self.offsets, pseudo_node);
             let rect = image.rect;

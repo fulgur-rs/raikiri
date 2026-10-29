@@ -4259,4 +4259,5 @@ fn emphasis_marks_split_a_ligature_among_its_characters() {
 mod emphasis_scaling_tests;
 
 mod emphasis_oracle_tests;
+mod generated_image_piece_tests;
 mod horizontal_emphasis_tests;

@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+generated-image-diagnostics = []
+
 [dependencies]
 cssparser      = { workspace = true }
 raikiri-traits = { workspace = true }
@@ -49,6 +52,11 @@ anyrender_vello_cpu  = { workspace = true }
 [[bench]]
 name = "walk"
 harness = false
+
+[[bench]]
+name = "content_image_pieces"
+harness = false
+required-features = ["generated-image-diagnostics"]
 
 [lints]
 workspace = true

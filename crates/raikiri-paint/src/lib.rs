@@ -50,6 +50,9 @@ mod column_rules;
     reason = "no caller until the paint walk dispatches ifc roots"
 )]
 mod emphasis;
+#[cfg(any(test, feature = "generated-image-diagnostics"))]
+#[doc(hidden)]
+pub mod generated_image_diagnostics;
 mod ifc_text;
 mod page_layers;
 mod standalone_text;
