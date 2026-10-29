@@ -3821,27 +3821,7 @@ fn table_row_leads(
             }
         }
         for (table, (row, row_y)) in table_first_rows {
-            // A caption above the grid stays on the current page, one inside
-            // a `display: contents` child of the table included; an
-            // absolutely positioned one is out of the table's flow. Content
-            // outside the rows, wrapped in an anonymous row, may come before
-            // the first row.
-            let top_caption = document
-                .children_through_contents(table)
-                .iter()
-                .any(|&child| {
-                    document.nodes[child].display() == DisplayValue::TableCaption
-                        && cascade.computed[child].caption_side
-                            == raikiri_style::property::CaptionSideValue::Top
-                        && document.nodes[child].layout_position() != Position::Absolute
-                });
-            if top_caption
-                || document.nodes[table].children.iter().any(|&child| {
-                    document.nodes[child].display() != DisplayValue::TableRow
-                        && document.anonymous_table_cells(child).next().is_some()
-                })
-                || document.anonymous_table_cells(table).next().is_some()
-            {
+            if !rows_start_the_grid(document, cascade, table) {
                 continue;
             }
             let table_y = candidate_y
@@ -3852,6 +3832,83 @@ fn table_row_leads(
         }
     }
     table_row_leads
+}
+
+/// Whether the rows of `table` start the table's grid: nothing comes before
+/// the first row.
+///
+/// A caption above the grid stays on the current page, one inside a
+/// `display: contents` child of the table included; an absolutely positioned
+/// one is out of the table's flow. Content outside the rows, wrapped in an
+/// anonymous row, may come before the first row.
+fn rows_start_the_grid(document: &Document, cascade: &CascadeResult, table: usize) -> bool {
+    let top_caption = document
+        .children_through_contents(table)
+        .iter()
+        .any(|&child| {
+            document.nodes[child].display() == DisplayValue::TableCaption
+                && cascade.computed[child].caption_side
+                    == raikiri_style::property::CaptionSideValue::Top
+                && document.nodes[child].layout_position() != Position::Absolute
+        });
+    !(top_caption
+        || document.nodes[table].children.iter().any(|&child| {
+            document.nodes[child].display() != DisplayValue::TableRow
+                && document.anonymous_table_cells(child).next().is_some()
+        })
+        || document.anonymous_table_cells(table).next().is_some())
+}
+
+/// The block end, before pagination, of the first row of each plain block
+/// table among `candidates` whose rows start its grid and whose header does
+/// not repeat: the part of the table that a box tied to the one before it
+/// cannot be broken away from, since a row moves whole.
+fn first_row_ends(
+    document: &Document,
+    cascade: &CascadeResult,
+    candidates: &[PageCandidate],
+    table_headers: &HeaderRepeats,
+) -> HashMap<usize, f32> {
+    let mut first_row_ends = HashMap::<usize, f32>::new();
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.context.is_table_row())
+    {
+        // The rows of an inline table have no block table to tie to.
+        if let Some(table) = document
+            .ancestors(candidate.node_id)
+            .find(|&id| document.nodes[id].display() == DisplayValue::Table)
+        {
+            let end = candidate.raw_y + candidate.height;
+            first_row_ends
+                .entry(table)
+                .and_modify(|first| *first = first.min(end))
+                .or_insert(end);
+        }
+    }
+    first_row_ends.retain(|&table, end| {
+        end.is_finite()
+            && is_plain_table_box(document, table)
+            && rows_start_the_grid(document, cascade, table)
+            && !document.nodes[table]
+                .children
+                .iter()
+                .any(|child| table_headers.headers.contains_key(child))
+    });
+    first_row_ends
+}
+
+/// Whether `node_id` is a block-level table that stacks in the normal flow of
+/// a horizontal block container.
+fn is_plain_table_box(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.kind() == NodeKind::Element
+        && node.display() == DisplayValue::Table
+        && matches!(
+            node.position(),
+            PositionValue::Static | PositionValue::Relative
+        )
+        && !node.used_writing_mode.is_vertical()
 }
 
 /// A table row group with `break-inside: avoid` starts on the next page
@@ -3947,9 +4004,11 @@ fn avoided_run_ends(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     candidates: &[PageCandidate],
+    table_headers: &HeaderRepeats,
     body_id: usize,
     content_width: f32,
 ) -> HashMap<usize, f32> {
+    let first_row_ends = first_row_ends(document, cascade, candidates, table_headers);
     // The last box of each run, keyed by the run's first box, and the margin
     // below it.
     let mut run_lasts = HashMap::<usize, (&PageCandidate, f32)>::new();
@@ -3987,7 +4046,12 @@ fn avoided_run_ends(
                 document.nodes[candidate.node_id].position(),
                 PositionValue::Running(_)
             );
-        if !eligible {
+        // A table ends the run it joins and starts none: only its first row
+        // stays with the box before it.
+        let ends_run = !eligible
+            && candidate.context.is_direct_body_element()
+            && first_row_ends.contains_key(&candidate.node_id);
+        if !eligible && !ends_run {
             previous = None;
             run_start = None;
             continue;
@@ -4012,16 +4076,24 @@ fn avoided_run_ends(
         } else {
             run_start = None;
         }
-        previous = Some(candidate);
+        if ends_run {
+            previous = None;
+            run_start = None;
+        } else {
+            previous = Some(candidate);
+        }
     }
     run_lasts
         .into_iter()
         .map(|(start, (last, margin_bottom))| {
             // The last box of the run stays with the box before it only as far
             // as the page has to hold of it.
-            let end = match avoided_run_head(document, cascade, body_id, last.node_id) {
-                Some(head) if head < last.height - 0.001 => last.raw_y + head,
-                _ => last.raw_y + last.height + margin_bottom,
+            let end = match first_row_ends.get(&last.node_id) {
+                Some(&row_end) => row_end,
+                None => match avoided_run_head(document, cascade, body_id, last.node_id) {
+                    Some(head) if head < last.height - 0.001 => last.raw_y + head,
+                    _ => last.raw_y + last.height + margin_bottom,
+                },
             };
             (start, end)
         })
@@ -4220,7 +4292,14 @@ impl AvoidedBreaks {
         let row_leads = table_row_leads(document, cascade, candidates, root_flow_offset);
         let row_groups =
             avoided_row_groups(document, cascade, candidates, table_headers, &row_leads);
-        let run_ends = avoided_run_ends(document, cascade, candidates, contents_box, content_width);
+        let run_ends = avoided_run_ends(
+            document,
+            cascade,
+            candidates,
+            table_headers,
+            contents_box,
+            content_width,
+        );
         Self {
             run_ends,
             row_leads,

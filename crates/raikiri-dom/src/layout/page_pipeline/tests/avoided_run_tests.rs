@@ -334,3 +334,107 @@ fn a_heading_moves_with_a_paragraph_that_cannot_move_its_lines_down_inside_it() 
         (100.0, 110.0)
     );
 }
+
+/// A collapsed-border table of `rows` rows with one cell each, the cells being
+/// one 30px Ahem word of `lines` lines tall and styled with `cell_css`.
+/// Returns the first cell.
+fn table_of_rows(
+    doc: &mut Document,
+    parent: usize,
+    css: &str,
+    rows: usize,
+    cell_css: &str,
+) -> usize {
+    let table = block(
+        doc,
+        parent,
+        &format!("display:table;border-collapse:collapse;border-spacing:0;{css}"),
+    );
+    let mut first_cell = 0;
+    for row in 0..rows {
+        let tr = block(doc, table, "display:table-row");
+        let td = block(
+            doc,
+            tr,
+            &format!(
+                "display:table-cell;padding:0;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{cell_css}"
+            ),
+        );
+        doc.append_text(td, "aaa");
+        if row == 0 {
+            first_cell = td;
+        }
+    }
+    first_cell
+}
+
+#[test]
+fn a_heading_moves_with_the_first_row_of_the_table_after_it() {
+    // The row is the part of the table the page cannot break away from the
+    // heading: it moves whole, so the heading moves with it.
+    for (spacer, expected) in [
+        (70, (70.0, 80.0)),
+        (80, (80.0, 90.0)),
+        (85, (100.0, 110.0)),
+        (88, (100.0, 110.0)),
+    ] {
+        assert_eq!(
+            heading_then(spacer, |doc, body| table_of_rows(doc, body, "", 1, "")),
+            expected,
+            "{spacer}"
+        );
+    }
+}
+
+#[test]
+fn a_heading_moves_with_a_tall_first_row_that_fits_the_next_page() {
+    // The row would cross the edge, so it starts the next page.
+    assert_eq!(
+        heading_then(70, |doc, body| table_of_rows(
+            doc,
+            body,
+            "",
+            1,
+            "height:50px"
+        )),
+        (100.0, 110.0)
+    );
+}
+
+#[test]
+fn a_heading_stays_when_the_first_row_of_the_table_after_it_fits() {
+    assert_eq!(
+        heading_then(80, |doc, body| table_of_rows(doc, body, "", 2, "")),
+        (80.0, 90.0)
+    );
+}
+
+#[test]
+fn a_heading_stays_when_the_first_row_of_the_table_after_it_fills_no_page() {
+    // The heading and the row together are taller than a page, so no page
+    // could hold both and the avoided break is given up.
+    assert_eq!(
+        heading_then(70, |doc, body| table_of_rows(
+            doc,
+            body,
+            "",
+            1,
+            "height:120px"
+        )),
+        (70.0, 80.0)
+    );
+}
+
+#[test]
+fn a_table_avoiding_a_break_before_it_takes_the_box_before_it_to_the_next_page() {
+    let (mut before, mut cell) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:85px");
+        before = block(doc, body, "display:block;height:10px");
+        cell = table_of_rows(doc, body, "break-before:avoid", 1, "");
+    });
+    assert_eq!(
+        (page_flow_y(&doc, before), page_flow_y(&doc, cell)),
+        (100.0, 110.0)
+    );
+}
