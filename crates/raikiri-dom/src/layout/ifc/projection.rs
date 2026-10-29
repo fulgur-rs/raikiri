@@ -101,6 +101,11 @@ pub(crate) struct ProjectedMeta {
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, Clear)>,
+    /// The text nodes after the root in the anonymous flex or grid item the
+    /// root starts: one item holds a run of text nodes, which `display:
+    /// contents` elements between them can keep from being siblings. Empty
+    /// for any other paragraph.
+    pub(crate) run_tail: Vec<usize>,
     /// The root is a fixed box: its containing block is the page area.
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
@@ -696,7 +701,7 @@ pub(crate) fn project_ifc(
 /// its own: the walk and the shaping in one call.
 ///
 /// # Errors
-/// The errors of [`project_ifc_text_builder`] and [`ProjectedBuilder::build`].
+/// The errors of [`project_ifc_text_run_builder`] and [`ProjectedBuilder::build`].
 #[cfg(test)]
 pub(crate) fn project_ifc_text(
     doc: &Document,
@@ -706,36 +711,55 @@ pub(crate) fn project_ifc_text(
     fonts: &FontCollection,
     limits: &Limits,
 ) -> Result<ProjectedIfc, IfcError> {
-    project_ifc_text_builder(doc, cascade, text, fonts, limits)?.build(cx, fonts)
+    project_ifc_text_run_builder(doc, cascade, text, &[text], fonts, limits)?.build(cx, fonts)
 }
 
-/// Fill a paragraph builder with the text node `text` alone.
+/// Fill a paragraph builder with the text nodes of `run`, in order: the
+/// contents of one anonymous flex or grid item. The node `text` of the run is
+/// the root of the paragraph and styles it.
 ///
 /// A flex or grid container wraps each run of its text in an anonymous item
 /// (CSS Flexbox 1, 4; CSS Grid 1, 6), whose box has no edges of its own and
 /// whose inherited properties come from the container. The text node's own
 /// computed values are those inherited values, so they style the paragraph.
 ///
+/// Text nodes that are not siblings can still make one run, since a `display:
+/// contents` element between them generates no box (CSS Display 3, 2.5). As
+/// in the paragraph of a block, such an element is no inline box here: the
+/// text of each node is pushed with the root's style, and the node's own
+/// computed values apply where the lines are painted.
+///
 /// # Errors
-/// [`IfcError::InvalidNode`] for an unknown, detached or non-text node,
-/// [`IfcError::Unsupported`] for a style the inline engine does not map, and
-/// [`IfcError::Limit`] when a shodo resource limit is exceeded.
-pub(crate) fn project_ifc_text_builder(
+/// [`IfcError::InvalidNode`] for a run without `text`, or an unknown, detached
+/// or non-text node in it, [`IfcError::Unsupported`] for a style the inline
+/// engine does not map, and [`IfcError::Limit`] when a shodo resource limit
+/// is exceeded.
+pub(crate) fn project_ifc_text_run_builder(
     doc: &Document,
     cascade: &CascadeResult,
     text: usize,
+    run: &[usize],
     fonts: &FontCollection,
     limits: &Limits,
 ) -> Result<ProjectedBuilder, IfcError> {
-    let node = doc.get_node(text).ok_or(IfcError::InvalidNode(text))?;
-    let cv = cascade
-        .computed
-        .get(text)
-        .ok_or(IfcError::InvalidNode(text))?;
-    if !node.is_in_document() || node.kind() != NodeKind::Text {
-        return Err(IfcError::InvalidNode(text));
+    let mut members = Vec::with_capacity(run.len());
+    for &member in run {
+        let node = doc.get_node(member).ok_or(IfcError::InvalidNode(member))?;
+        let member_cv = cascade
+            .computed
+            .get(member)
+            .ok_or(IfcError::InvalidNode(member))?;
+        if !node.is_in_document() || node.kind() != NodeKind::Text {
+            return Err(IfcError::InvalidNode(member));
+        }
+        let content = node.text_content().ok_or(IfcError::InvalidNode(member))?;
+        members.push((member, content, member_cv));
     }
-    let content = node.text_content().ok_or(IfcError::InvalidNode(text))?;
+    let cv = members
+        .iter()
+        .find(|(member, ..)| *member == text)
+        .map(|(.., member_cv)| *member_cv)
+        .ok_or(IfcError::InvalidNode(text))?;
     // As for an element root: right-to-left content is ordered without
     // reading `unicode-bidi`.
     let (options, indent) = style::line_options(cv, text, fonts)?;
@@ -745,13 +769,20 @@ pub(crate) fn project_ifc_text_builder(
     let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let cleared_breaks = Vec::new();
-    builder.push_text(
-        TextSource::Dom {
-            node: NodeId(text as u64),
-            offset: 0,
-        },
-        content,
-    );
+    let mut text_nowrap = HashMap::new();
+    for (member, content, member_cv) in members {
+        builder.push_text(
+            TextSource::Dom {
+                node: NodeId(member as u64),
+                offset: 0,
+            },
+            content,
+        );
+        text_nowrap.insert(
+            member as u64,
+            member_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        );
+    }
     if let Some(error) = builder.error() {
         return Err(IfcError::Limit(error));
     }
@@ -770,14 +801,16 @@ pub(crate) fn project_ifc_text_builder(
             offsets: Vec::new(),
             percent_insets: Vec::new(),
             cleared_breaks,
+            run_tail: run
+                .iter()
+                .copied()
+                .filter(|&member| member != text)
+                .collect(),
             fixed: false,
             // An anonymous flex or grid item has no overflow of its own.
             ellipsis: false,
             nowrap: cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
-            text_nowrap: Arc::new(HashMap::from([(
-                text as u64,
-                cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
-            )])),
+            text_nowrap: Arc::new(text_nowrap),
             letter_styles: Vec::new(),
             // An anonymous item has no first formatted line of an element.
             first_line_opacity: None,
@@ -1395,6 +1428,7 @@ fn project_children_builder(
                 offsets
             },
             cleared_breaks,
+            run_tail: Vec::new(),
             fixed: anonymous_children.is_none()
                 && super::super::fixed::is_page_fixed(doc, cascade, root),
             ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),

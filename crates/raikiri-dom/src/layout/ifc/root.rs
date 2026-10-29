@@ -82,6 +82,9 @@ pub(crate) struct IfcRoot {
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
+    /// The text nodes after the root in the anonymous flex or grid item it
+    /// starts, which the paragraph holds too.
+    pub(crate) run_tail: Vec<usize>,
     /// The root is a fixed box: its containing block is the page area.
     pub(crate) fixed: bool,
     /// Line ranges of the last performed lines and where each range is drawn
@@ -374,6 +377,7 @@ impl IfcRoot {
             containing_width: None,
             vertical_width: None,
             cleared_breaks: meta.cleared_breaks.into_iter().collect(),
+            run_tail: meta.run_tail,
             fixed: meta.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
@@ -472,6 +476,7 @@ impl IfcRoot {
             containing_width: self.containing_width,
             vertical_width: self.vertical_width,
             cleared_breaks: self.cleared_breaks.clone(),
+            run_tail: self.run_tail.clone(),
             fixed: self.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,

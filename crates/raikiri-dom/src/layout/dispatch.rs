@@ -419,6 +419,9 @@ pub(crate) struct TaffyChildIter<'a> {
     /// Whether the children are those of a source box, among which an
     /// anonymous table stands in for the rows it wraps.
     wrap_tables: bool,
+    /// Whether the children are those of a flex or grid container, whose
+    /// anonymous items of text each stand for a run of text nodes.
+    wraps_text_runs: bool,
     current: core::slice::Iter<'a, usize>,
     stack: Vec<core::slice::Iter<'a, usize>>,
 }
@@ -437,6 +440,7 @@ impl<'a> TaffyChildIter<'a> {
             doc,
             flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
             wrap_tables: !doc.is_anonymous_table(parent),
+            wraps_text_runs: node.display().is_flex_or_grid_container(),
             current: if hidden {
                 [].iter()
             } else {
@@ -456,8 +460,16 @@ impl<'a> TaffyChildIter<'a> {
             && !node.flags.contains(NodeFlags::IS_ROOT_ELEMENT)
     }
 
-    fn includes(doc: &Document, child: usize) -> bool {
+    fn includes(doc: &Document, child: usize, wraps_text_runs: bool) -> bool {
         if !doc.nodes[child].is_in_document() {
+            return false;
+        }
+        // A text node after the first of a run is laid out with it, by the
+        // paragraph of that first node: the run makes one anonymous item.
+        if wraps_text_runs
+            && doc.nodes[child].kind() == raikiri_traits::NodeKind::Text
+            && doc.nodes[child].in_ifc_subtree()
+        {
             return false;
         }
         // Whitespace-only text generates no box of its own:
@@ -602,7 +614,7 @@ impl Iterator for TaffyChildIter<'_> {
                 self.current = self.stack.pop()?;
                 continue;
             };
-            if !Self::includes(doc, child) {
+            if !Self::includes(doc, child, self.wraps_text_runs) {
                 continue;
             }
             if self.flatten && Self::is_flattened(doc, child) {

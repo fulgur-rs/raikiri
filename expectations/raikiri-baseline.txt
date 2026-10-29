@@ -5399,3 +5399,9 @@ css/css-sizing/stretch/positioned-replaced-3.html
 # --- `contain-intrinsic-size` for a box with size containment (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
 # `contain-intrinsic-width`, `contain-intrinsic-height` and the `contain-intrinsic-size` shorthand give a box with size containment the size it takes in place of the size of its contents (CSS Box Sizing 4 section 5), so a `width: max-content` fieldset with `contain: size` is the stated 111px by 222px instead of 0x0. It was an expected failure before the change (the test matched only while the fieldset ignored its width) and KEEPs in two audit-vacuous-passes runs.
 css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-014.html
+
+# --- text on both sides of a `display: contents` element in a flex container is one anonymous item (WPT pin 97ea26e2, EXACT, Linux, 2026-10-29) ---
+# A flex or grid container wraps each run of text that no box separates in one anonymous item (CSS Flexbox 1 section 4), and a `display: contents` element generates no box, so `a <b style="display: contents">b</b> c` is one item. It was laid out as three, which dropped the spaces between the runs. These were expected failures before the change and KEEP in two audit-vacuous-passes runs.
+css/css-display/display-contents-dynamic-inline-flex-001-inline.html
+css/css-display/display-contents-dynamic-inline-flex-001-none.html
+css/css-display/display-contents-inline-flex-001.html
