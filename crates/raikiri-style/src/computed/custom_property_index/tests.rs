@@ -179,3 +179,33 @@ fn heap_text_buffers_are_shared_through_path_copies_and_tombstone_redeclaration(
     verify_owned(&hidden, &restored, bytes);
     assert_eq!(restored.get::<false>(&name), Some(value));
 }
+
+#[test]
+fn retained_byte_budget_is_independent_of_local_hash_iteration_order() {
+    let mut expected = None;
+    for _ in 0..32 {
+        let local: HashMap<_, _> = (0..128)
+            .map(|i| {
+                (
+                    SmolStr::from(format!("--name{i:04}")),
+                    Some(SmolStr::from("old")),
+                )
+            })
+            .collect();
+        let (parent, _) =
+            CustomPropertyIndex::with_local(&CustomPropertyIndex::default(), &local, 1);
+        let (_, bytes) = CustomPropertyIndex::with_local(
+            &parent,
+            &HashMap::from([("--name0064".into(), Some("updated".into()))]),
+            2,
+        );
+        if let Some(expected) = expected {
+            assert_eq!(
+                bytes, expected,
+                "equal binding sets must have the same output-byte budget"
+            );
+        } else {
+            expected = Some(bytes);
+        }
+    }
+}

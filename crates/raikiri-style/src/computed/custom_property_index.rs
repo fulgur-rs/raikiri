@@ -229,8 +229,19 @@ impl CustomPropertyIndex {
         generation: u64,
     ) -> (Self, u64) {
         let mut root = parent.root.clone();
-        for (name, value) in local {
-            root = Some(insert::<COUNT>(&root, name, value, generation));
+        if local.len() <= 1 {
+            for (name, value) in local {
+                root = Some(insert::<COUNT>(&root, name, value, generation));
+            }
+        } else {
+            // Hash iteration must not change tree shape or subsequent byte
+            // budgets for the same input. Sort this local delta only; never
+            // collect inherited bindings. Single declarations need no buffer.
+            let mut bindings: Vec<_> = local.iter().collect();
+            bindings.sort_unstable_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
+            for (name, value) in bindings {
+                root = Some(insert::<COUNT>(&root, name, value, generation));
+            }
         }
         let bytes = owned_nodes::<COUNT>(&root, generation) * NODE_BYTES;
         (Self { root }, bytes)
