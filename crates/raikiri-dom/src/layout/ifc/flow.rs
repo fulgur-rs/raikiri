@@ -288,6 +288,7 @@ pub(crate) fn place_lines(
         width: first_width.unwrap_or(0.0),
         height: lines.iter().map(|line| line.block_size()).sum(),
         lines: std::sync::Arc::new(lines),
+        object_text_prefixes: Default::default(),
         oof_candidates: OofCandidates::new(),
         beside_floats: false,
         escaping_margin: CollapsibleMarginSet::ZERO,

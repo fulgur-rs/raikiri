@@ -4,6 +4,7 @@
 use super::boxes::IfcBox;
 use super::clear_breaks::ClearBreakIndex;
 use super::first_letter::LetterStyle;
+use super::positioned_runs::objects::ObjectTextPrefixes;
 use super::projection::{Projected, ProjectedIfc};
 use crate::layout::protocol::{CollapsibleMarginSet, OofCandidates};
 use raikiri_style::ComputedTextIndent;
@@ -14,8 +15,8 @@ use shodo::style::LineOptions;
 use shodo::{LayoutContext, Line, Paragraph};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, OnceLock};
 
 /// How many paragraphs resolved for earlier percentage bases a root keeps.
 const MAX_EDGE_PARAGRAPHS: usize = 3;
@@ -162,6 +163,9 @@ pub(crate) struct IfcLines {
     pub(crate) width: f32,
     /// Shared, so cloning a root or a document does not copy them.
     pub(crate) lines: Arc<Vec<Line>>,
+    /// Lazily prepared bidi states for these retained text datasets. Warm
+    /// clones share the states; cold clones initialize independently.
+    pub(crate) object_text_prefixes: OnceLock<Arc<ObjectTextPrefixes>>,
     /// Out-of-flow candidates bubbled from in-flow child layouts.
     pub(crate) oof_candidates: OofCandidates,
     /// Sum of the line advances.

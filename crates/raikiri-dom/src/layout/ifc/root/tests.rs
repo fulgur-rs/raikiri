@@ -8,6 +8,7 @@ fn debug_reports_fragment_box_placement_count() {
     let lines = IfcLines {
         width: 100.0,
         lines: std::sync::Arc::new(Vec::new()),
+        object_text_prefixes: Default::default(),
         oof_candidates: OofCandidates::new(),
         height: 0.0,
         beside_floats: false,
