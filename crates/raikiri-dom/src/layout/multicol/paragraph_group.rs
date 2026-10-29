@@ -58,13 +58,13 @@ pub(super) fn balance(
             break;
         }
         let trial = (low + high) * 0.5;
-        if fill(&paragraphs, context, trial).is_some() {
+        if fill(&paragraphs, context, trial, true).is_some() {
             high = trial;
         } else {
             low = trial;
         }
     }
-    fill(&paragraphs, context, high)
+    fill(&paragraphs, context, high, true)
 }
 
 /// Place paragraphs in columns of the definite height `height` in source
@@ -87,7 +87,7 @@ pub(super) fn fill_definite(
     };
     // A piece broken at a column's end runs to that end, as the columns
     // share the container's height.
-    let group = fill(&paragraphs, unbounded, height)?;
+    let group = fill(&paragraphs, unbounded, height, false)?;
     Some(finish_group(group.placements, height))
 }
 
@@ -250,8 +250,15 @@ fn fill(
     paragraphs: &[Option<Paragraph>],
     context: FragmentationContext,
     height: f32,
+    trailing_margin: bool,
 ) -> Option<Group> {
-    let chunk = fill_chunk(paragraphs, context, height, FlowCursor::default(), true)?;
+    let chunk = fill_chunk(
+        paragraphs,
+        context,
+        height,
+        FlowCursor::default(),
+        trailing_margin,
+    )?;
     chunk.next.is_none().then_some(chunk.group)
 }
 

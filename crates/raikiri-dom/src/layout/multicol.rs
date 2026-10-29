@@ -856,7 +856,6 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
         if lineless::is_sized_leaf(tree, child) {
             return insets_are_a_relative_offset(tree, child);
         }
-        let zero_margin = LengthPercentageAuto::length(0.0);
         let node = &tree.nodes[child];
         let style = style_of(tree, child);
         let margin = style.margin();
@@ -864,9 +863,10 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
         decorated |= block_edges;
         paragraphs += 1;
         // Block-edge decoration needs slice geometry for each piece, which the
-        // stream gives the lines it places; the pieces are stacked without
-        // collapsing adjoining margins; and the line offsets are read as
-        // horizontal block offsets.
+        // stream gives the lines it places; the planner collapses the adjoining
+        // margins of lengths, which a percentage or `auto` would leave to the
+        // layout of the box; and the line offsets are read as horizontal block
+        // offsets.
         node.formatting_context == FormattingContext::Inline
             && !node
                 .authored_writing_mode
@@ -875,7 +875,7 @@ fn multicol_has_only_paragraph_children(tree: &LayoutSession<'_>, node_id: usize
             && (!block_edges || slices_block_edges(node))
             && [margin.top, margin.bottom]
                 .into_iter()
-                .all(|edge| edge == zero_margin)
+                .all(|edge| style_dimension_length(edge.into()).is_some())
             && node.layout_position() != Position::Absolute
             && insets_are_a_relative_offset(tree, child)
             && !style.float().is_floated()
