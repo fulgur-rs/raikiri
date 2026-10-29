@@ -113,12 +113,14 @@ fn generated_image_piece_lookup_has_a_linear_work_bound() {
 
 #[test]
 fn generated_images_keep_parent_and_typographic_opacity_groups() {
+    let mut atomic_positions = Vec::new();
     for (css, expected) in [
         ("", 1.0),
         ("span{opacity:.5}", 0.5),
         ("span::before{opacity:.5}", 0.5),
         ("div::first-line{opacity:.5}", 0.5),
         ("div::first-letter{opacity:.5}", 1.0),
+        ("span::before{display:inline-block}", 1.0),
         (
             "div::first-line{opacity:.5}div::first-letter{opacity:.5}",
             0.5,
@@ -155,6 +157,14 @@ fn generated_images_keep_parent_and_typographic_opacity_groups() {
             "{css}"
         );
         assert_eq!(alphas, [1.0]);
+        if css == "span::before{display:inline-block}" {
+            atomic_positions = image_positions;
+        } else if css.contains("translateX") {
+            assert_eq!(
+                image_positions,
+                atomic_positions.iter().map(|x| x + 3.0).collect::<Vec<_>>()
+            );
+        }
     }
 }
 
@@ -177,6 +187,15 @@ fn multiple_images_of_one_pseudo_share_its_first_piece_and_group() {
         .unwrap();
     assert_eq!(work.index_visits, pieces.len() as u64);
     assert_eq!(work.predicate_visits, 0);
+    let layers: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => Some(layer.alpha),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(layers, vec![0.5; 4]);
 }
 
 #[test]
