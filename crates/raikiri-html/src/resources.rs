@@ -31,6 +31,8 @@ use crate::{HtmlDocument, ParseOptions};
 
 mod decode;
 mod image_cache;
+#[cfg(feature = "cache-accounting-diagnostics")]
+pub use image_cache::probe::{CacheAccountingCase, CacheAccountingProbe, CacheAccountingResult};
 mod network;
 mod svg_images;
 
@@ -414,11 +416,15 @@ impl<'a> RenderResources<'a> {
         self.process_budget.acquire()
     }
 
-    fn cache_image_source(&self, url: Url, source: CachedBackgroundSource) {
+    fn cache_image_source(
+        &self,
+        url: Url,
+        source: CachedBackgroundSource,
+    ) -> Result<(), (u64, u64)> {
         self.image_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert_source(url, source);
+            .insert_source(url, source)
     }
 
     fn cache_image_raster(
@@ -975,8 +981,18 @@ impl<'a> RenderResources<'a> {
                 if self.decode_timed_out(start.elapsed()) {
                     return Some(self.timeout_warning(&url));
                 }
-                self.cache_image_source(url, CachedBackgroundSource::Svg(Arc::new(document)));
-                None
+                self.cache_image_source(url, CachedBackgroundSource::Svg(Arc::new(document)))
+                    .err()
+                    .map(|(limit, actual)| {
+                        RenderWarning::new(
+                            WarningKind::ResourceLimitExceeded {
+                                kind: ResourceKind::Image,
+                                limit,
+                                actual,
+                            },
+                            "SVG background source exceeded its cache byte budget".into(),
+                        )
+                    })
             }
             Err(_) => Some(RenderWarning::new(
                 WarningKind::ResourceFallback {

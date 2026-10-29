@@ -326,7 +326,9 @@ fn a_zero_decode_budget_builds_no_scene() {
     let resources = RenderResources::new().network_policy(&policy);
     let url = svg_url(RED_SQUARE);
     let document = raikiri_svg::SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap();
-    resources.cache_image_source(url.clone(), CachedBackgroundSource::Svg(Arc::new(document)));
+    resources
+        .cache_image_source(url.clone(), CachedBackgroundSource::Svg(Arc::new(document)))
+        .unwrap();
 
     assert!(resources.get_vector(&url, &request(8.0, 4.0)).is_none());
     assert!(
@@ -511,10 +513,15 @@ fn a_source_cached_again_drops_the_scenes_of_the_one_before() {
     cache.insert_scene(url("a"), size(1.0, 1.0), scene_of(1));
     cache.insert_scene(url("b"), size(1.0, 1.0), scene_of(1));
     let document = raikiri_svg::SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap();
-    cache.insert_source(url("a"), CachedBackgroundSource::Svg(Arc::new(document)));
+    cache
+        .insert_source(url("a"), CachedBackgroundSource::Svg(Arc::new(document)))
+        .unwrap();
     assert!(cache.scene(&url("a"), size(1.0, 1.0)).is_none());
     assert!(cache.scene(&url("b"), size(1.0, 1.0)).is_some());
-    assert_eq!(budget.retained(), bytes_of(&scene_of(1)));
+    assert_eq!(
+        budget.retained(),
+        cache.decoded_bytes + bytes_of(&scene_of(1))
+    );
 }
 
 #[test]
@@ -524,7 +531,9 @@ fn what_is_learned_of_an_image_is_forgotten_when_its_source_is_cached_again() {
     assert!(cache.is_raster_only(&url("a")));
     assert!(!cache.is_raster_only(&url("b")));
     let document = raikiri_svg::SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap();
-    cache.insert_source(url("a"), CachedBackgroundSource::Svg(Arc::new(document)));
+    cache
+        .insert_source(url("a"), CachedBackgroundSource::Svg(Arc::new(document)))
+        .unwrap();
     assert!(!cache.is_raster_only(&url("a")));
 }
 
@@ -535,4 +544,151 @@ fn dropping_the_cache_gives_the_scene_bytes_back() {
     assert!(budget.retained() > 0);
     drop(cache);
     assert_eq!(budget.retained(), 0);
+}
+
+#[test]
+fn svg_sources_charge_the_document_and_process_cache_budgets() {
+    let budget = Arc::new(ProcessImageBudget::new(u64::MAX, 4));
+    let resources = RenderResources::new().with_test_process_budget(Arc::clone(&budget));
+    let warning = resources.decode_svg_background(
+        url("source.svg"),
+        RED_SQUARE.as_bytes(),
+        std::time::Instant::now(),
+    );
+    assert!(warning.is_none());
+    let bytes = resources.image_cache.lock().unwrap().decoded_bytes;
+    assert!(bytes >= RED_SQUARE.len() as u64);
+    assert_eq!(budget.retained(), bytes);
+    drop(resources);
+    assert_eq!(budget.retained(), 0);
+}
+
+#[test]
+fn svg_source_admission_respects_both_cache_limits() {
+    for process_limited in [false, true] {
+        let budget = Arc::new(ProcessImageBudget::new(
+            if process_limited { 1 } else { u64::MAX },
+            4,
+        ));
+        let resources = RenderResources::new().with_test_process_budget(Arc::clone(&budget));
+        if !process_limited {
+            resources.image_cache.lock().unwrap().max_bytes = 1;
+        }
+        let warning = resources.decode_svg_background(
+            url("denied.svg"),
+            RED_SQUARE.as_bytes(),
+            std::time::Instant::now(),
+        );
+        assert!(warning.is_some());
+        assert!(
+            resources
+                .cached_background_image(&url("denied.svg"))
+                .is_none()
+        );
+        assert_eq!(budget.retained(), 0);
+    }
+}
+
+#[test]
+fn shared_svg_sources_are_charged_once_and_failed_replacement_keeps_the_old_source() {
+    let (mut cache, budget) = cache_with(u64::MAX);
+    let document = Arc::new(raikiri_svg::SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap())
+        .into_source_only();
+    let allocation = document.source_only_retained_bytes().unwrap();
+    cache
+        .insert_source(url("a"), CachedBackgroundSource::Svg(Arc::clone(&document)))
+        .unwrap();
+    let first = cache.decoded_bytes;
+    cache
+        .insert_source(url("b"), CachedBackgroundSource::Svg(Arc::clone(&document)))
+        .unwrap();
+    assert_eq!(cache.decoded_bytes, first * 2 - allocation - 512);
+    assert_eq!(budget.retained(), cache.decoded_bytes);
+    cache.max_bytes = 1;
+    let replacement = Arc::new(raikiri_svg::SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap());
+    assert!(
+        cache
+            .insert_source(url("a"), CachedBackgroundSource::Svg(replacement))
+            .is_err()
+    );
+    let CachedBackgroundSource::Svg(retained) = &cache.entries[&url("a")].source else {
+        panic!()
+    };
+    assert!(Arc::ptr_eq(retained, &document));
+    assert_eq!(budget.retained(), first * 2 - allocation - 512);
+    drop(cache);
+    assert_eq!(budget.retained(), 0);
+    assert!(document.source_only_retained_bytes().is_some());
+}
+
+#[test]
+fn replacing_a_large_source_with_a_small_source_releases_the_difference() {
+    let (mut cache, budget) = cache_with(u64::MAX);
+    let large_source = RED_SQUARE.replace("</svg>", &format!("<!--{}--></svg>", "x".repeat(4096)));
+    cache
+        .insert_source(
+            url("a"),
+            CachedBackgroundSource::Svg(Arc::new(
+                raikiri_svg::SvgDocument::parse(large_source.as_bytes()).unwrap(),
+            )),
+        )
+        .unwrap();
+    let before = budget.retained();
+    cache
+        .insert_source(
+            url("a"),
+            CachedBackgroundSource::Svg(Arc::new(
+                raikiri_svg::SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap(),
+            )),
+        )
+        .unwrap();
+    assert!(budget.retained() < before);
+    assert_eq!(budget.retained(), cache.decoded_bytes);
+    let image = Arc::new(raikiri_traits::DecodedImage::new(1, 1, vec![0; 4]));
+    cache
+        .insert_source(url("a"), CachedBackgroundSource::Raster(image))
+        .unwrap();
+    assert_eq!(budget.retained(), 4);
+    assert_eq!(cache.decoded_bytes, 4);
+    drop(cache);
+    assert_eq!(budget.retained(), 0);
+}
+
+#[test]
+fn expanded_svg_preloads_charge_source_storage_for_one_eight_and_thirty_two_urls() {
+    let source = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\" color=\"red\"><defs><path id=\"p\" d=\"M0 0H20V20H0Z\" fill=\"red\"/></defs>{}</svg>",
+        "<use href=\"#p\"/>".repeat(500)
+    );
+    for count in [1, 8, 32] {
+        let budget = Arc::new(ProcessImageBudget::new(u64::MAX, 4));
+        let resources = RenderResources::new().with_test_process_budget(Arc::clone(&budget));
+        for at in 0..count {
+            let url = Url::parse(&format!("https://svg.test/{at}.svg")).unwrap();
+            assert!(
+                resources
+                    .decode_svg_background(url, source.as_bytes(), std::time::Instant::now())
+                    .is_none()
+            );
+        }
+        let cache = resources.image_cache.lock().unwrap();
+        assert_eq!(cache.entries.len(), count);
+        assert!(cache.decoded_bytes >= source.len() as u64 * count as u64);
+        for entry in cache.entries.values() {
+            let CachedBackgroundSource::Svg(document) = &entry.source else {
+                panic!()
+            };
+            assert!(document.source_only_retained_bytes().is_some());
+        }
+        assert_eq!(budget.retained(), cache.decoded_bytes);
+        eprintln!(
+            "SVG_ACCOUNTING urls={count} source_bytes={} decoded_bytes={} process_bytes={}",
+            source.len(),
+            cache.decoded_bytes,
+            budget.retained()
+        );
+        drop(cache);
+        drop(resources);
+        assert_eq!(budget.retained(), 0);
+    }
 }

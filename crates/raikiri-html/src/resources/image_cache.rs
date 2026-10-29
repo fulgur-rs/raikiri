@@ -11,6 +11,18 @@ use url::Url;
 
 use super::DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES;
 
+mod accounting_work;
+mod source_accounting;
+
+use accounting_work::AccountingWork;
+use source_accounting::{SourceChange, SourceLedger};
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(feature = "cache-accounting-diagnostics")]
+pub(super) mod probe;
+
 /// Maximum CSS background image decodes that may run at once, process-wide.
 ///
 /// Independent [`RenderResources`](super::RenderResources) instances share this semaphore, so decoder
@@ -18,11 +30,11 @@ use super::DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES;
 /// Unrelated images proceed concurrently up to this bound instead of sharing
 /// one exclusive mutex; only work beyond the bound waits.
 pub(super) const PROCESS_MAX_CONCURRENT_IMAGE_DECODES: usize = 4;
-/// Maximum decoded CSS background raster bytes retained, process-wide.
+/// Maximum accounted CSS background cache bytes retained, process-wide.
 ///
 /// Each resource set keeps its own 128 MiB cache, but the sum across all live
-/// sets is additionally capped here so independent contexts cannot grow the
-/// process peak without bound. Inserts that would exceed the process cap fail
+/// sets is additionally capped here. This bounds cache ownership, not
+/// allocations still held by callers after cache eviction or drop. Inserts that would exceed the process cap fail
 /// with the same per-image limit warning the per-set cap produces.
 pub(super) const PROCESS_MAX_RETAINED_DECODED_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -73,8 +85,9 @@ fn image_bytes(image: &DecodedImage) -> u64 {
 /// their sum plus concurrent decoder slots process-wide. Reconfigured
 /// [`RenderResources`](super::RenderResources) clones keep sharing the same budget object while their
 /// caches, provider budgets, and in-flight maps are replaced, so cache and
-/// policy isolation holds while decoder concurrency and retained peak stay
-/// bounded across independent contexts.
+/// policy isolation holds while decoder concurrency and cache reservations stay
+/// bounded across independent contexts. Caller-held allocations after eviction
+/// or cache drop are outside this accounting.
 #[derive(Debug)]
 pub(crate) struct ProcessImageBudget {
     retained: Mutex<u64>,
@@ -100,7 +113,7 @@ impl ProcessImageBudget {
             .clone()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
     pub(crate) fn new(max_retained: u64, max_concurrent: usize) -> Self {
         Self {
             retained: Mutex::new(0),
@@ -116,7 +129,7 @@ impl ProcessImageBudget {
         self.max_retained
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "cache-accounting-diagnostics"))]
     pub(crate) fn retained(&self) -> u64 {
         *self
             .retained
@@ -138,7 +151,9 @@ impl ProcessImageBudget {
             .retained
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let next = retained.saturating_add(delta);
+        let Some(next) = retained.checked_add(delta) else {
+            return false;
+        };
         if next > self.max_retained {
             return false;
         }
@@ -259,6 +274,8 @@ impl BackgroundInflight {
 }
 
 pub(super) struct DecodedImageCache {
+    work: AccountingWork,
+    source_ledger: SourceLedger,
     pub(super) entries: HashMap<Url, CachedBackgroundImage>,
     pub(super) decoded_bytes: u64,
     /// The scenes of SVG images, oldest first. They share the byte budgets of
@@ -275,6 +292,8 @@ pub(super) struct DecodedImageCache {
 impl DecodedImageCache {
     pub(super) fn new(process_budget: Arc<ProcessImageBudget>) -> Self {
         Self {
+            work: AccountingWork::default(),
+            source_ledger: SourceLedger::default(),
             entries: HashMap::new(),
             decoded_bytes: 0,
             scenes: Vec::new(),
@@ -394,28 +413,75 @@ impl DecodedImageCache {
         self.process_budget.release(removed.bytes);
     }
 
-    pub(super) fn insert_source(&mut self, url: Url, source: CachedBackgroundSource) {
-        // What was learned of an image that was cached before belongs to its
-        // old source.
-        self.raster_only.remove(&url);
-        while let Some(at) = self.scenes.iter().position(|cached| cached.url == url) {
-            self.release_scene(at);
+    pub(super) fn insert_source(
+        &mut self,
+        url: Url,
+        source: CachedBackgroundSource,
+    ) -> Result<(), (u64, u64)> {
+        let source = match source {
+            CachedBackgroundSource::Svg(document) => {
+                CachedBackgroundSource::Svg(document.into_source_only())
+            }
+            raster => raster,
+        };
+        self.work.record(1);
+        let previous = self.entries.get(&url);
+        let change = self
+            .source_ledger
+            .plan(
+                previous.map(|entry| &entry.source),
+                &source,
+                &url,
+                &self.work,
+            )
+            .ok_or((self.max_bytes, u64::MAX))?;
+        let replacement = CachedBackgroundImage {
+            source,
+            rasters: Vec::new(),
+        };
+        let next = self
+            .decoded_bytes
+            .checked_sub(previous.map(Self::raster_bytes).unwrap_or(0))
+            .and_then(|base| change.apply_to(base))
+            .and_then(|base| base.checked_add(Self::raster_bytes(&replacement)))
+            .ok_or((self.max_bytes, u64::MAX))?;
+        let limit = self.max_bytes.saturating_sub(self.scene_bytes);
+        if next > limit {
+            return Err((limit, next));
         }
-        let previous = self.entries.remove(&url);
-        if let Some(previous) = previous {
-            let prior = Self::raster_bytes(&previous);
-            if prior > 0 {
-                self.decoded_bytes = self.decoded_bytes.saturating_sub(prior);
-                self.process_budget.release(prior);
+        if !self.reserve_decoded(next) {
+            return Err((self.process_budget.available_for(self.decoded_bytes), next));
+        }
+        self.commit_entry(url, replacement, change, next, true);
+        Ok(())
+    }
+
+    fn reserve_decoded(&self, next: u64) -> bool {
+        next <= self.decoded_bytes || self.process_budget.try_reserve(next - self.decoded_bytes)
+    }
+
+    fn commit_entry(
+        &mut self,
+        url: Url,
+        replacement: CachedBackgroundImage,
+        change: SourceChange,
+        next: u64,
+        invalidate: bool,
+    ) {
+        // Remove old identities before replacing the entry drops its Arc.
+        self.source_ledger.apply(change, &self.work);
+        if next < self.decoded_bytes {
+            self.process_budget.release(self.decoded_bytes - next);
+        }
+        self.decoded_bytes = next;
+        if invalidate {
+            self.raster_only.remove(&url);
+            while let Some(at) = self.scenes.iter().position(|cached| cached.url == url) {
+                self.release_scene(at);
             }
         }
-        self.entries.insert(
-            url,
-            CachedBackgroundImage {
-                source,
-                rasters: Vec::new(),
-            },
-        );
+        self.work.record(1);
+        self.entries.insert(url, replacement);
     }
 
     /// Cache `image` as the raster of `url` at `size`, next to the rasters
@@ -429,17 +495,42 @@ impl DecodedImageCache {
         size: ImageRasterSize,
         image: Arc<DecodedImage>,
     ) -> Result<(), (u64, u64)> {
-        let actual = image_bytes(&image);
-        let prior = self.prior_bytes(&url);
-        let per_available = self.remaining_for(&url);
+        self.work.record(1);
         let previous = self.entries.get(&url);
-        let svg = matches!(
-            previous.map_or(&source, |entry| &entry.source),
-            CachedBackgroundSource::Svg(_)
-        );
+        let invalidate = previous.is_none() && matches!(source, CachedBackgroundSource::Svg(_));
+        let source = match previous {
+            Some(entry) => entry.source.clone(),
+            None => match source {
+                CachedBackgroundSource::Svg(document) => {
+                    CachedBackgroundSource::Svg(document.into_source_only())
+                }
+                raster => raster,
+            },
+        };
+        let change = self
+            .source_ledger
+            .plan(
+                previous.map(|entry| &entry.source),
+                &source,
+                &url,
+                &self.work,
+            )
+            .ok_or((self.max_bytes, u64::MAX))?;
+        let base = self
+            .decoded_bytes
+            .checked_sub(previous.map(Self::raster_bytes).unwrap_or(0))
+            .and_then(|base| change.apply_to(base))
+            .ok_or((self.max_bytes, u64::MAX))?;
+        let per_available = self
+            .max_bytes
+            .saturating_sub(self.scene_bytes)
+            .saturating_sub(base);
+        let actual = image_bytes(&image);
         // A decoded raster image has one size; only SVG keeps several.
-        let mut rasters: Vec<_> = match previous {
-            Some(entry) if svg => entry.rasters.clone(),
+        let mut rasters = match previous {
+            Some(entry) if matches!(source, CachedBackgroundSource::Svg(_)) => {
+                entry.rasters.clone()
+            }
             _ => Vec::new(),
         };
         rasters.retain(|(cached, _)| *cached != size);
@@ -447,43 +538,32 @@ impl DecodedImageCache {
         let excess = rasters.len().saturating_sub(MAX_RASTER_SIZES);
         rasters.drain(..excess);
         loop {
-            let total = rasters.iter().fold(0, |sum: u64, (_, image)| {
-                sum.saturating_add(image_bytes(image))
-            });
-            let fits = total <= per_available
-                && (total <= prior || self.process_budget.try_reserve(total - prior));
-            if fits {
-                if prior > total {
-                    self.process_budget.release(prior - total);
-                }
-                self.decoded_bytes = self
-                    .decoded_bytes
-                    .saturating_sub(prior)
-                    .saturating_add(total);
-                break;
+            let total = rasters
+                .iter()
+                .try_fold(0_u64, |sum, (_, image)| sum.checked_add(image_bytes(image)));
+            let next = total.and_then(|total| base.checked_add(total));
+            if let Some(next) = next
+                && next <= self.max_bytes.saturating_sub(self.scene_bytes)
+                && self.reserve_decoded(next)
+            {
+                self.commit_entry(
+                    url,
+                    CachedBackgroundImage { source, rasters },
+                    change,
+                    next,
+                    invalidate,
+                );
+                return Ok(());
             }
             if rasters.len() == 1 {
-                let limit = if actual > per_available {
-                    per_available
-                } else {
-                    self.process_budget.available_for(prior).min(per_available)
-                };
+                let limit = self
+                    .process_budget
+                    .available_for(self.decoded_bytes)
+                    .saturating_sub(base)
+                    .min(per_available);
                 return Err((limit, actual));
             }
             rasters.remove(0);
         }
-        let retained_source = self
-            .entries
-            .remove(&url)
-            .map(|entry| entry.source)
-            .unwrap_or(source);
-        self.entries.insert(
-            url,
-            CachedBackgroundImage {
-                source: retained_source,
-                rasters,
-            },
-        );
-        Ok(())
     }
 }
