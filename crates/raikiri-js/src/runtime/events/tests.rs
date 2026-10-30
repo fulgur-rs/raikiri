@@ -204,8 +204,10 @@ fn listener_storage_is_lazy_and_pointer_sized() {
     assert_eq!(sizes.list_field, std::mem::size_of::<usize>());
     assert!(sizes.node_record > sizes.node_state);
     assert!(sizes.list_data > 0 && sizes.entry_data > 0);
-    rt.evaluate("function f(){}t.addEventListener('x',f);t.removeEventListener('x',f);")
-        .unwrap();
+    rt.evaluate(
+        "function f(){}t.addEventListener('x',f);t.onclick=null;t.removeEventListener('x',f);",
+    )
+    .unwrap();
     let list = with_state(rt.context_mut(), |s| s.listeners(Some(index)))
         .unwrap()
         .unwrap();
@@ -239,4 +241,38 @@ fn engine_abort_finishes_once_snapshot_and_drops_removed_callback() {
     assert_eq!(list.depth.get(), 0);
     assert!(!list.dirty.get());
     assert!(list.entries.borrow().is_empty());
+}
+
+#[test]
+fn active_list_roots_removed_callbacks_until_finish() {
+    let mut rt = rt();
+    let callback = rt
+        .evaluate("globalThis.f=()=>{};globalThis.weak=new WeakRef(f);f")
+        .unwrap()
+        .as_object()
+        .unwrap();
+    let list = boa_gc::Gc::new(super::ListenerList::default());
+    list.add(super::Listener {
+        removed: false,
+        kind: "x".into(),
+        callback: callback.clone(),
+        capture: false,
+        once: false,
+        passive: false,
+        is_handler: false,
+    });
+    let mut work = crate::listener_diagnostics::Work::default();
+    let snapshot = list.begin::<true>("x", None, &mut work);
+    assert_eq!(snapshot, vec![0]);
+    list.remove("x", &callback, false);
+    rt.evaluate("f=null").unwrap();
+    drop(callback);
+    rt.context_mut().clear_kept_objects();
+    boa_gc::force_collect();
+    ok(&mut rt, "weak.deref()!==undefined");
+    drop(snapshot);
+    list.finish();
+    rt.context_mut().clear_kept_objects();
+    boa_gc::force_collect();
+    ok(&mut rt, "weak.deref()===undefined");
 }
