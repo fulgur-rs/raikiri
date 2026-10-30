@@ -498,7 +498,10 @@ impl Document {
         siblings.get(position + 1).copied()
     }
 
-    /// Iterative DFS over `node`'s subtree (`node` included) checking
+    /// Finish immediately for self or an ordinary-parentless Element
+    /// destination. With the arena's parent/children invariant, a distinct
+    /// node cannot reach that Element: template host edges end at fragments.
+    /// Otherwise, use iterative DFS over `node`'s subtree (including `node`), checking
     /// whether `parent` is reachable -- the direction-reversed form of
     /// "`node` is a host-including inclusive ancestor of `parent`" (walk
     /// `node`'s descendants instead of `parent`'s ancestors and their
@@ -513,20 +516,63 @@ impl Document {
     /// method would miss e.g. inserting a `<template>` element (or one of
     /// its ancestors) into its own contents fragment.
     fn is_inclusive_ancestor(&self, node: usize, parent: usize) -> bool {
+        #[cfg(any(test, feature = "insertion-diagnostics"))]
+        if crate::insertion_diagnostics::enabled() {
+            return self.is_inclusive_ancestor_impl::<true>(node, parent);
+        }
+        self.is_inclusive_ancestor_impl::<false>(node, parent)
+    }
+
+    fn is_inclusive_ancestor_impl<const COUNT: bool>(&self, node: usize, parent: usize) -> bool {
+        let mut meter = crate::insertion_diagnostics::Meter::<COUNT>::new();
+        if node == parent {
+            return true;
+        }
+        if self.is_element(parent) {
+            if COUNT {
+                meter.work.parent_reads += 1;
+            }
+            if self.parent_of(parent).is_none() {
+                if COUNT {
+                    meter.work.fast_paths += 1;
+                }
+                return false;
+            }
+        }
+        if COUNT {
+            meter.work.dfs_searches += 1;
+            meter.work.scratch_growths += 1;
+        }
         let mut stack = vec![node];
         let mut visited = std::collections::HashSet::new();
         while let Some(current) = stack.pop() {
+            if COUNT {
+                meter.work.dfs_visits += 1;
+            }
             if current == parent {
                 return true;
             }
-            if visited.insert(current)
-                && let Some(current_node) = self.nodes.get(current)
-            {
+            let old_visited_capacity = visited.capacity();
+            let fresh = visited.insert(current);
+            if COUNT {
+                meter.work.visited_inserts += u64::from(fresh);
+                meter.work.scratch_growths += u64::from(visited.capacity() != old_visited_capacity);
+            }
+            if fresh && let Some(current_node) = self.nodes.get(current) {
+                let old_stack_capacity = stack.capacity();
                 stack.extend(current_node.children.iter().copied());
+                if COUNT {
+                    meter.work.scratch_growths += u64::from(stack.capacity() != old_stack_capacity);
+                }
                 if let NodeData::Element(element) = &current_node.data
                     && let Some(contents) = element.template_contents
                 {
+                    let old_stack_capacity = stack.capacity();
                     stack.push(contents);
+                    if COUNT {
+                        meter.work.scratch_growths +=
+                            u64::from(stack.capacity() != old_stack_capacity);
+                    }
                 }
             }
         }

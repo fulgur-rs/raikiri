@@ -174,3 +174,11 @@ mod running_index_diagnostics;
 pub use running_index_diagnostics::{
     RunningIndexWork, begin_running_index_diagnostics, finish_running_index_diagnostics,
 };
+
+mod insertion_diagnostics;
+#[cfg(feature = "insertion-diagnostics")]
+#[doc(hidden)]
+// cov:ignore: public re-exports have no executable coverage mapping.
+pub use insertion_diagnostics::{
+    InsertionWork, begin_insertion_diagnostics, finish_insertion_diagnostics,
+};
