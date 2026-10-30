@@ -1,6 +1,7 @@
 use super::*;
 
 mod attach_child_fragment_tests;
+mod canvas_clone_tests;
 mod canvas_tests;
 mod element_attribute_mutation_tests;
 mod element_attribute_ns_tests;
