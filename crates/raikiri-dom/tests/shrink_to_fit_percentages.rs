@@ -403,6 +403,200 @@ fn a_percentage_height_of_a_replaced_element_counts_as_auto_for_the_width_of_a_m
     }
 }
 
+/// A canvas of 25px by 50px with the id `a` and `style`.
+fn canvas_25_by_50(style: &str) -> String {
+    format!("<canvas id=a width=25 height=50 style=\"{style}\"></canvas>")
+}
+
+#[test]
+fn a_calc_with_a_percentage_of_a_replaced_element_contributes_nothing_to_a_min_content_container() {
+    // A size with a percentage anywhere in it makes the canvas compressible, so
+    // the container is as wide as the canvas contributes, whatever length the
+    // percentage is added to; the canvas then resolves the whole `calc()`
+    // against that width. The canvas is inline, so a line holds it.
+    for (style, container, canvas) in [
+        (
+            "width:calc(50% + 10px)",
+            (0.0, 22.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        (
+            "width:calc(100% + 10px)",
+            (0.0, 22.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        // A negative width is zero.
+        ("width:calc(50% - 10px)", (0.0, 10.0), (8.0, 16.0, 0.0, 0.0)),
+        // The maximum clamps the canvas, not its contribution.
+        (
+            "width:calc(50% + 10px);max-width:5px",
+            (0.0, 12.0),
+            (8.0, 8.0, 5.0, 10.0),
+        ),
+        // The minimum counts.
+        (
+            "width:calc(50% + 10px);min-width:20px",
+            (20.0, 42.0),
+            (8.0, 8.0, 20.0, 40.0),
+        ),
+        // The border is part of the contribution, the content is not.
+        (
+            "width:calc(50% + 10px);border:3px solid",
+            (6.0, 34.0),
+            (8.0, 8.0, 19.0, 32.0),
+        ),
+        (
+            "width:calc(50% + 10px);height:30px",
+            (0.0, 32.0),
+            (8.0, 8.0, 10.0, 30.0),
+        ),
+        // A `calc()` in the maximum is a limit of zero for the contribution,
+        // whatever it comes to for the canvas, and whether the width is
+        // `auto` or not.
+        (
+            "max-width:calc(50% + 10px)",
+            (0.0, 22.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        (
+            "max-width:calc(50% + 40px)",
+            (0.0, 52.0),
+            (8.0, 8.0, 25.0, 50.0),
+        ),
+        (
+            "width:40px;max-width:calc(50% + 10px)",
+            (0.0, 22.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        // The length of a `calc()` in the minimum is part of it.
+        (
+            "min-width:calc(50% + 40px)",
+            (40.0, 122.0),
+            (8.0, 8.0, 60.0, 120.0),
+        ),
+        (
+            "width:calc(50% + 10px);min-width:calc(50% + 40px)",
+            (40.0, 122.0),
+            (8.0, 8.0, 60.0, 120.0),
+        ),
+    ] {
+        check(
+            &format!(
+                "<div id=r style=\"width:min-content\">{}</div>",
+                canvas_25_by_50(style)
+            ),
+            &[("r", (8.0, 8.0, container.0, container.1)), ("a", canvas)],
+        );
+    }
+}
+
+#[test]
+fn a_calc_with_a_percentage_of_a_block_replaced_element_contributes_nothing_to_a_min_content_container()
+ {
+    for (style, container, canvas) in [
+        (
+            "width:calc(50% + 10px)",
+            (0.0, 20.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        (
+            "width:calc(100% + 10px)",
+            (0.0, 20.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        (
+            "max-width:calc(50% + 10px)",
+            (0.0, 20.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+    ] {
+        check(
+            &format!(
+                "<div id=r style=\"width:min-content\">{}</div>",
+                canvas_25_by_50(&format!("display:block;{style}"))
+            ),
+            &[("r", (8.0, 8.0, container.0, container.1)), ("a", canvas)],
+        );
+    }
+}
+
+#[test]
+fn a_calc_with_a_percentage_of_a_replaced_grid_item_contributes_nothing_to_a_min_content_container()
+{
+    for (style, container, canvas) in [
+        (
+            "width:calc(50% + 10px)",
+            (0.0, 20.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        (
+            "max-width:calc(50% + 10px)",
+            (0.0, 20.0),
+            (8.0, 8.0, 10.0, 20.0),
+        ),
+        ("width:50%", (0.0, 0.0), (8.0, 8.0, 0.0, 0.0)),
+    ] {
+        check(
+            &format!(
+                "<div id=r style=\"display:grid;width:min-content\">{}</div>",
+                canvas_25_by_50(style)
+            ),
+            &[("r", (8.0, 8.0, container.0, container.1)), ("a", canvas)],
+        );
+    }
+}
+
+#[test]
+fn a_calc_with_a_percentage_of_a_replaced_element_keeps_its_length_in_a_max_content_container() {
+    // A container that shrinks to fit takes the canvas as it is without the
+    // percentage, then resolves the `calc()` against the width it ends up with:
+    // half of 25px and 10px.
+    for container in ["float:left", "display:inline-block", "width:fit-content"] {
+        check(
+            &format!(
+                "<div id=r style=\"{container}\">{}</div>",
+                canvas_25_by_50("width:calc(50% + 10px)")
+            ),
+            &[("r", (8.0, 8.0, 25.0, 47.0)), ("a", (8.0, 8.0, 22.5, 45.0))],
+        );
+    }
+}
+
+#[test]
+fn a_calc_with_a_percentage_of_an_svg_contributes_nothing_to_a_min_content_container() {
+    // An svg with a `viewBox` and no size of its own: inline in a line, and
+    // alone as a block.
+    let svg = |style: &str| {
+        format!(
+            "<svg id=a xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" \
+             style=\"{style}\"><rect width=\"100\" height=\"50\"/></svg>"
+        )
+    };
+    for (style, container, svg_box) in [
+        (
+            "width:calc(50% + 10px)",
+            (0.0, 10.0),
+            (8.0, 11.0, 10.0, 5.0),
+        ),
+        ("width:50%", (0.0, 10.0), (8.0, 16.0, 0.0, 0.0)),
+        (
+            "max-width:calc(50% + 10px)",
+            (0.0, 10.0),
+            (8.0, 16.0, 0.0, 0.0),
+        ),
+        (
+            "display:block;width:calc(50% + 10px)",
+            (0.0, 5.0),
+            (8.0, 8.0, 10.0, 5.0),
+        ),
+    ] {
+        check(
+            &format!("<div id=r style=\"width:min-content\">{}</div>", svg(style)),
+            &[("r", (8.0, 8.0, container.0, container.1)), ("a", svg_box)],
+        );
+    }
+}
+
 #[test]
 fn a_percentage_margin_of_a_replaced_element_counts_as_zero_for_its_container() {
     // The container is as wide as the svg, and the margin then resolves
