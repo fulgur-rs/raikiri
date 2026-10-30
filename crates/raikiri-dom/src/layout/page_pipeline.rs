@@ -2767,7 +2767,7 @@ fn clear_floats_at_forced_breaks<'name>(
         let mut last_block = None;
         // Generated `::before` content is not an arena child; like text, it
         // takes the parent's page.
-        let mut previous_page_name = crate::generated_content::is_in_flow_generated_text(
+        let mut previous_page_name = crate::generated_content::is_line_making_generated_text(
             cascade,
             parent,
             raikiri_style::PseudoElem::Before,

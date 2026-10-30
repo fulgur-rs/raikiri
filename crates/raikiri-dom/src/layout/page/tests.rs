@@ -575,7 +575,12 @@ fn first_page_name_is_unnamed_when_generated_content_leads_the_body() {
 
     // Generated content before the first box is the first content of the
     // body, which has no page name, so the box does not name the first page.
-    for (sheet, expected) in [("", Some("b")), (r#"body::before { content: "x" }"#, None)] {
+    // Empty generated content makes no line, so it is not content.
+    for (sheet, expected) in [
+        ("", Some("b")),
+        (r#"body::before { content: "" }"#, Some("b")),
+        (r#"body::before { content: "x" }"#, None),
+    ] {
         let fixture = sheet_fixture(sheet, "page:b", |doc, root| {
             doc.append_text(root, "b");
         });
@@ -595,6 +600,7 @@ fn first_page_name_is_the_page_of_a_box_whose_generated_content_leads() {
     // the wrapper that starts the first page, on the page of the body.
     for (sheet, expected) in [
         ("", Some("b")),
+        (r#"[data-wrapper]::before { content: "" }"#, Some("b")),
         (r#"[data-wrapper]::before { content: "x" }"#, None),
     ] {
         let fixture = sheet_fixture(sheet, "", |doc, root| {
