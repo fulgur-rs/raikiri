@@ -11,10 +11,10 @@ use super::{
     TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
     block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
     box_sets_page_name, break_margins, closing_edges_line_move, closing_edges_move,
-    collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
-    first_box_ancestor_at_start, first_line_judged_height, first_owned_line_height,
-    fits_decorated_paper, flex_line_paragraph, follows_flow_content, forced_line_breaks,
-    forced_line_moves, forced_target_page, grow_ancestors_for_shift,
+    collapsed_start_margin_gain, collapses_through, collapses_with_previous_block,
+    content_overflow_end, current_abs_y, first_box_ancestor_at_start, first_line_judged_height,
+    first_owned_line_height, fits_decorated_paper, flex_line_paragraph, follows_flow_content,
+    forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, is_floating_box_for_pagination, lead_below_ancestor, leading_edges_move,
     line_block_parent, lines_between_blocks, lines_can_shift_between_blocks,
@@ -27,6 +27,11 @@ use super::{
     text_changes_page_name, text_sets_page_name,
 };
 use crate::layout::context::LayoutSession;
+
+/// How far, in px, the margin that an earlier layout kept above a box may
+/// differ from the one a relayout computes for it. A page start closer to the
+/// top of its page than this is at the top, with no margin kept.
+const CONTINUATION_MARGIN_TOLERANCE: f32 = 0.01;
 
 /// What is the same for every candidate of the flow.
 pub(super) struct FlowEnv<'a> {
@@ -158,6 +163,10 @@ pub(super) struct BoxBreak {
     pub(super) collapses_with_previous_block: bool,
     /// Whether a break pending after the previous box applies to the box.
     pub(super) pending_break_applies: bool,
+    /// Whether a relayout starts the box on a page after a break that an
+    /// earlier layout made forced: the margin above the box is kept, as at a
+    /// forced break.
+    pub(super) keeps_continuation_margin: bool,
 }
 
 impl BoxBreak {
@@ -799,8 +808,53 @@ impl PaginationState {
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
         let margins_collapse_through = collapses_through(document, cascade, node_id, height);
-        let (margin_top, trailing_margin) =
+        let (own_margin_top, trailing_margin) =
             break_margins(document, cascade, node_id, content_width);
+        let collapses_with_previous_block =
+            collapses_with_previous_block(document, candidate, participates_in_margin_adjacency);
+        let pending_break_applies = self.pending_break.applies_to(document, node_id);
+        // A named page requested by a class-A box starts a new page when it
+        // differs from the current named page. `auto` leaves the current page
+        // type in place; it does not manufacture a second break boundary.
+        // Any non-empty class-A box with a different page name starts a new
+        // page.  `None` is the anonymous/unnamed page type, so an anonymous
+        // box after a named one is a transition too.  Named boxes that start
+        // at the coordinate of a preceding zero-height named box join its
+        // transition: no block-size has been consumed on that page yet, so a
+        // break there would only leave the zero-height boxes alone on a page.
+        // This matters for chains of empty named boxes with overflowing text,
+        // including the first non-empty box that follows the chain.
+        let named_page_change = box_changes_page_name(
+            name_context_seen,
+            &candidate.page_name,
+            comparison_page_name,
+            self.last_named.joins_transition(candidate),
+        );
+        let continuation_offset = document
+            .continuation_margin
+            .filter(|&(node, offset)| node == node_id && offset > CONTINUATION_MARGIN_TOLERANCE)
+            .map(|(_, offset)| offset);
+        // A box that starts a page after a forced break keeps its block-start
+        // margin, and the margins of its first children that adjoin its own
+        // collapse into that one margin, which sits above its border box. So
+        // does a box the break reaches through an empty box or a float, and a
+        // box in a relayout, which stands in for the break of an earlier
+        // layout without a forced break of its own.
+        let keeps_margin_at_break = forced_before
+            || pending_break_applies
+            || named_page_change
+            || self
+                .sibling_margins
+                .forced_break_reaches(document, cascade, node_id, raw_y)
+            || continuation_offset.is_some();
+        let margin_top = if keeps_margin_at_break
+            && collapses_with_previous_block
+            && !document.nodes[node_id].used_writing_mode.is_vertical()
+        {
+            own_margin_top + collapsed_start_margin_gain(document, cascade, node_id)
+        } else {
+            own_margin_top
+        };
         let page_start = page_origins.origin(self.current_page);
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
@@ -831,23 +885,6 @@ impl PaginationState {
             &mut self.trailing_flex_children,
         );
         overflow.page |= closing_edges_move(candidate, &fit) || leading_edges_move(candidate, &fit);
-        // A named page requested by a class-A box starts a new page when it
-        // differs from the current named page. `auto` leaves the current page
-        // type in place; it does not manufacture a second break boundary.
-        // Any non-empty class-A box with a different page name starts a new
-        // page.  `None` is the anonymous/unnamed page type, so an anonymous
-        // box after a named one is a transition too.  Named boxes that start
-        // at the coordinate of a preceding zero-height named box join its
-        // transition: no block-size has been consumed on that page yet, so a
-        // break there would only leave the zero-height boxes alone on a page.
-        // This matters for chains of empty named boxes with overflowing text,
-        // including the first non-empty box that follows the chain.
-        let named_page_change = box_changes_page_name(
-            name_context_seen,
-            &candidate.page_name,
-            comparison_page_name,
-            self.last_named.joins_transition(candidate),
-        );
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
         // page. The forced break sits before the box's margin box, so the
@@ -860,9 +897,6 @@ impl PaginationState {
                 page_start,
             );
 
-        let collapses_with_previous_block =
-            collapses_with_previous_block(document, candidate, participates_in_margin_adjacency);
-        let pending_break_applies = self.pending_break.applies_to(document, node_id);
         // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
         // truncated, while a forced break keeps the block-start margin of the
         // box after it.
@@ -879,6 +913,8 @@ impl PaginationState {
             margins_collapse_through,
             collapses_with_previous_block,
             pending_break_applies,
+            keeps_continuation_margin: continuation_offset
+                .is_some_and(|offset| (offset - margin_top).abs() <= CONTINUATION_MARGIN_TOLERANCE),
         };
         let position = BoxPosition {
             effective_y,
@@ -1045,6 +1081,7 @@ impl PaginationState {
             forced_before,
             margins_collapse_through,
             collapses_with_previous_block,
+            keeps_continuation_margin,
             ..
         } = *page_break;
         let node_id = candidate.node_id;
@@ -1054,7 +1091,8 @@ impl PaginationState {
         let flow_y = position.effective_y - relative_offset;
         let mut natural_page = page_origins.start_page(flow_y, candidate.height);
         // A forced break that coincides with a page edge also starts
-        // that page.
+        // that page, and so does the break a relayout stands in it for.
+        let forced_before = forced_before || keeps_continuation_margin;
         if forced_before {
             self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
             position.starts_after_forced_break = true;

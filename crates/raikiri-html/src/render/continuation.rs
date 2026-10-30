@@ -160,6 +160,14 @@ impl PageAxis {
 const WIDTH_TOLERANCE: f32 = 0.01;
 /// Where a relayout's page start may land from where the earlier layout had it.
 const POSITION_TOLERANCE: f32 = 0.5;
+/// A page start this close to the top of its page, in px, is at the top.
+const OFFSET_EPSILON: f32 = 0.01;
+/// How far, in px, the lead page of a relayout reaches below where the page
+/// start's offset puts its end, when the page start is below the top of its
+/// page. The earlier layout's offset and the copy's differ by rounding, and a
+/// lead page that ended above the bottom of its last box would cut a sliver
+/// off that box onto the resumed page. Rounding beyond this still does.
+const LEAD_SLACK: f32 = 2.0e-3;
 /// The room the page the relayout is first measured on leaves beyond where
 /// the earlier layout placed the page start.
 const MEASURE_HEIGHT: f32 = 1.0e6;
@@ -388,11 +396,17 @@ struct Schedule {
 impl Schedule {
     /// The schedule for a copy whose page start lies `token_y` from its
     /// first measuring page, when the earlier layout had it `offset` down its
-    /// page.
+    /// page. A page start below its page's top edge leaves the lead page a
+    /// little [`LEAD_SLACK`] taller.
     fn new(token_y: f32, offset: f32) -> Self {
         let lead = token_y - offset;
+        let slack = if offset > OFFSET_EPSILON {
+            LEAD_SLACK
+        } else {
+            0.0
+        };
         Self {
-            lead: (lead > POSITION_TOLERANCE).then_some(lead),
+            lead: (lead > POSITION_TOLERANCE).then_some(lead + slack),
         }
     }
 
@@ -484,8 +498,13 @@ impl<'a> Relayout<'a> {
         let mut cascade = (inputs.cascade_for_page)(&slices[resume.page]);
         let mut document = inputs.pristine.clone();
         document.skip_layout(&mut cascade, inputs.skipped);
-        if let PageStartToken::Line { text, offset } = resume.start.token {
-            document.set_continuation_break(Some((text, offset)));
+        match resume.start.token {
+            PageStartToken::Line { text, offset } => {
+                document.set_continuation_break(Some((text, offset)));
+            }
+            // The copy breaks before the token without a forced break, which
+            // would cut the margin above it that a forced break kept.
+            token => document.set_continuation_margin(Some((token.node(), resume.start.offset))),
         }
         document.prepare_continuation_cascade(&mut cascade, resume.start.token);
         Self {
