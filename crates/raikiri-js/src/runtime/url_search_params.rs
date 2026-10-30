@@ -32,6 +32,23 @@ fn params_entries(this: &JsValue) -> JsResult<Vec<(String, String)>> {
         })
 }
 
+/// Read entries without taking a snapshot, returning an owned result.
+/// Convert names before calling this helper; build context-owned arrays
+/// after it returns so no context operation runs under the data borrow.
+fn with_params<R>(this: &JsValue, read: impl FnOnce(&[(String, String)]) -> R) -> JsResult<R> {
+    this.as_object()
+        .and_then(|object| {
+            object
+                .downcast_ref::<UrlSearchParamsData>()
+                .map(|data| read(&data.entries))
+        })
+        .ok_or_else(|| {
+            JsNativeError::typ()
+                .with_message("'this' is not a URLSearchParams")
+                .into()
+        })
+}
+
 fn required_name(args: &[JsValue], context: &mut Context) -> JsResult<String> {
     let value = args
         .first()
@@ -77,8 +94,9 @@ fn url_search_params_has(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let name = required_name(args, context)?;
-    let entries = params_entries(this)?;
-    Ok(JsValue::from(entries.iter().any(|(key, _)| key == &name)))
+    with_params(this, |entries| {
+        JsValue::from(entries.iter().any(|(key, _)| key == &name))
+    })
 }
 
 fn url_search_params_get(
@@ -87,13 +105,14 @@ fn url_search_params_get(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let name = required_name(args, context)?;
-    let entries = params_entries(this)?;
-    Ok(entries
-        .iter()
-        .find(|(key, _)| key == &name)
-        .map_or_else(JsValue::null, |(_, value)| {
-            JsString::from(value.as_str()).into()
-        }))
+    with_params(this, |entries| {
+        entries
+            .iter()
+            .find(|(key, _)| key == &name)
+            .map_or_else(JsValue::null, |(_, value)| {
+                JsString::from(value.as_str()).into()
+            })
+    })
 }
 
 fn url_search_params_get_all(
@@ -102,11 +121,13 @@ fn url_search_params_get_all(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let name = required_name(args, context)?;
-    let entries = params_entries(this)?;
-    let values = entries
-        .iter()
-        .filter(|(key, _)| key == &name)
-        .map(|(_, value)| JsValue::from(JsString::from(value.as_str())));
+    let values = with_params(this, |entries| {
+        entries
+            .iter()
+            .filter(|(key, _)| key == &name)
+            .map(|(_, value)| JsValue::from(JsString::from(value.as_str())))
+            .collect::<Vec<_>>()
+    })?;
     Ok(JsArray::from_iter(values, context).into())
 }
 
@@ -159,3 +180,6 @@ pub(crate) fn install(context: &mut Context) -> JsResult<JsObject> {
     )?;
     Ok(prototype)
 }
+
+#[cfg(test)]
+mod tests;
