@@ -44,7 +44,7 @@ use crate::property::{
 use crate::resolve::{ComputedLengthPercentageOrAuto, ResolveContext};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
-use crate::{PseudoElem, PseudoValueArc};
+use crate::{ALL_PSEUDO_ELEMENTS, PseudoElem, PseudoValueArc};
 
 static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
@@ -504,6 +504,13 @@ impl CascadeResult {
     /// result is node `old_of_new[i]` of this one. Every index in
     /// `old_of_new` must be in range.
     ///
+    /// Repeated old indices duplicate vector values; sparse metadata and root
+    /// mappings use the last new index for that old node. Per-node metadata
+    /// work is bounded by retained nodes: source maps are scanned only when
+    /// their capacity fits the corresponding lookup budget, including every
+    /// [`PseudoElem`] variant. Document-wide page, counter and highlight
+    /// metadata is cloned unchanged.
+    ///
     /// This pairs with a document copy that keeps only some nodes; the
     /// result gets a fresh `Self::generation`. When the `@page` inheritance
     /// parent is not kept, the new result's is its first node.
@@ -538,7 +545,6 @@ impl CascadeResult {
             .enumerate()
             .map(|(new, &old)| (old as u64, new as u64))
             .collect();
-        let node = |id: &StyleNodeId| new_of_old.get(&id.0).map(|&new| StyleNodeId(new));
         let root_kept = new_of_old.contains_key(&(*root_element_index as u64));
         let new_root = new_of_old
             .get(&(*root_element_index as u64))
@@ -547,26 +553,18 @@ impl CascadeResult {
         Self {
             generation,
             element_generation: generation,
-            svg_style_properties: svg_style_properties
-                .iter()
-                .filter_map(|(id, value)| Some((node(id)?, value.clone())))
-                .collect(),
-            svg_relative_presentation_attributes: svg_relative_presentation_attributes
-                .iter()
-                .filter_map(|(id, value)| Some((node(id)?, value.clone())))
-                .collect(),
-            first_letter_inputs: first_letter_inputs
-                .iter()
-                .filter_map(|(id, value)| Some((node(id)?, value.clone())))
-                .collect(),
-            first_line_contexts: first_line_contexts
-                .iter()
-                .filter_map(|(id, context)| Some((node(id)?, *context)))
-                .collect(),
-            typographic_inheritance: typographic_inheritance
-                .iter()
-                .filter_map(|((id, pseudo), value)| Some(((node(id)?, *pseudo), value.clone())))
-                .collect(),
+            svg_style_properties: extract::node_map(svg_style_properties, &new_of_old),
+            svg_relative_presentation_attributes: extract::node_map(
+                svg_relative_presentation_attributes,
+                &new_of_old,
+            ),
+            first_letter_inputs: extract::node_map(first_letter_inputs, &new_of_old),
+            first_line_contexts: extract::node_map(first_line_contexts, &new_of_old),
+            typographic_inheritance: extract::pseudo_map(
+                typographic_inheritance,
+                &new_of_old,
+                std::iter::once(None).chain(ALL_PSEUDO_ELEMENTS.into_iter().map(Some)),
+            ),
             root_element_index: new_root,
             // A root that is kept keeps the flow it was given, whether or not
             // the principal element is kept with it, and stands in for it
@@ -588,10 +586,7 @@ impl CascadeResult {
             page: page.clone(),
             counter_styles: counter_styles.clone(),
             page_values: renumber(page_values, old_of_new),
-            pseudo: pseudo
-                .iter()
-                .filter_map(|((id, kind), value)| Some(((node(id)?, *kind), value.clone())))
-                .collect(),
+            pseudo: extract::pseudo_map(pseudo, &new_of_old, ALL_PSEUDO_ELEMENTS.into_iter()),
             normal_line_height: normal_line_height.clone(),
             border_width_device_scale: *border_width_device_scale,
         }
@@ -902,6 +897,7 @@ mod collect;
 pub(crate) mod rollback;
 pub(crate) use collect::*;
 mod directionality;
+mod extract;
 pub(crate) mod lang;
 mod query;
 mod rule_index;
