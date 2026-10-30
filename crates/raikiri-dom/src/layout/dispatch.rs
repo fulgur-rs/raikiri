@@ -22,8 +22,8 @@ use crate::layout::taffy_adapter::{GridInfo, RowSizing};
 use raikiri_layout_geometry::{BoxLayout, Edges, Line, MaybeMath, Point, Size};
 use raikiri_layout_style::BoxStyle as Style;
 use raikiri_layout_style::values::{
-    AlignContentKeyword, AlignItems, AlignSelf, BoxGenerationMode, BoxSizing, CalcRef, Direction,
-    Display, ExpandedDimension, ExpandedLengthPercentageAuto, Float, LengthPercentage,
+    AlignContentKeyword, AlignItems, AlignSelf, BoxGenerationMode, BoxSizing, CalcRef, Dimension,
+    Direction, Display, ExpandedDimension, ExpandedLengthPercentageAuto, Float, LengthPercentage,
     LengthPercentageAuto, MaybeResolve, Overflow, Position, ResolveOrZero,
 };
 
@@ -90,6 +90,57 @@ fn apply_local_sizing(style: &mut Style, entries: &[OwnedPropertyOverride]) {
             .apply_physical_sizing(style)
             .expect("local physical sizing override");
     }
+}
+
+/// A replaced box that a paragraph measures for its min-content contribution
+/// is given a zero basis for the percentages of its sizes, as the width they
+/// refer to is what the contributions decide. A `width` or `max-width` that is
+/// a `calc()` with a percentage would then still add its length to the
+/// contribution, but a percentage anywhere in such a size makes the box
+/// compressible, and a compressible box contributes nothing, whatever length
+/// the percentage is added to (CSS Sizing 3 §5.2.2). The sizes are measured as
+/// zero, along each axis that is measured for its min-content size.
+fn zero_cyclic_calc_sizes(style: &mut Style, inputs: &LayoutInput, replaced: bool) {
+    if !replaced {
+        return;
+    }
+    let measured = |available: AvailableSpace, basis: Option<f32>| {
+        available == AvailableSpace::MinContent && basis.is_none_or(|basis| basis == 0.0)
+    };
+    let width = measured(inputs.available_space.width, inputs.parent_size.width);
+    let height = measured(inputs.available_space.height, inputs.parent_size.height);
+    let size_has_percentage = |size: Dimension| matches!(size.expand(), ExpandedDimension::Calc(calc) if calc.has_percentage());
+    let max_has_percentage = |size: LengthPercentageAuto| matches!(size.expand(), ExpandedLengthPercentageAuto::Calc(calc) if calc.has_percentage());
+    let zeroed: Vec<_> = [
+        (
+            LengthProperty::Width,
+            width && size_has_percentage(style.size.width),
+        ),
+        (
+            LengthProperty::Height,
+            height && size_has_percentage(style.size.height),
+        ),
+        (
+            LengthProperty::MaxWidth,
+            width && max_has_percentage(style.max_size.width),
+        ),
+        (
+            LengthProperty::MaxHeight,
+            height && max_has_percentage(style.max_size.height),
+        ),
+    ]
+    .into_iter()
+    .filter(|&(_, percentage)| percentage)
+    .map(|(property, _)| {
+        OwnedPropertyOverride::length(
+            property,
+            raikiri_style::ComputedLengthPercentageOrAuto::Px(0.0),
+            false,
+        )
+        .expect("local zero size")
+    })
+    .collect();
+    apply_local_sizing(style, &zeroed);
 }
 
 /// The preferred ratio a replaced leaf can use for size transfer.
@@ -1050,6 +1101,7 @@ impl LayoutSession<'_> {
                 let ratio = tree.nodes[idx].preferred_aspect_ratio.unwrap_or(ratio);
                 let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
                 let mut resolver_style = block_flow::style_input::physical(tree, idx);
+                zero_cyclic_calc_sizes(&mut resolver_style, &inputs, true);
                 apply_local_sizing(
                     &mut resolver_style,
                     &[OwnedPropertyOverride::aspect_ratio(Some(ratio))],
@@ -1150,6 +1202,7 @@ impl LayoutSession<'_> {
             }
             if is_leaf {
                 let mut style = block_flow::style_input::physical(tree, idx);
+                zero_cyclic_calc_sizes(&mut style, &inputs, item_is_replaced);
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
                 let limits = tree.nodes[idx].content_limits;
                 // Natural ratios resolve intrinsic limits; without them,
@@ -2627,6 +2680,11 @@ fn compute_inline_block_shrink_wrap(
     let limits = tree.nodes[idx].content_limits;
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = block_flow::style_input::physical(tree, idx);
+    zero_cyclic_calc_sizes(
+        &mut leaf_style,
+        &inputs,
+        tree.physical_style(idx).is_replaced(),
+    );
     if limits != content_limits::ContentLimits::NONE
         && !empty
         && !tree.nodes[idx].size_containment.width
