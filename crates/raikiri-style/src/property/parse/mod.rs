@@ -1104,6 +1104,16 @@ pub(crate) fn parse_property_grammar(
         "contain-intrinsic-height" => {
             parse_contain_intrinsic_size(input).map(PropertyValue::ContainIntrinsicHeight)
         }
+        // The flow-relative `contain-intrinsic-inline-size` / `-block-size` are parsed into the
+        // physical longhand each maps to in `horizontal-tb`, like the margin and padding
+        // flow-relative longhands; the cascade moves them by the element's writing mode (see
+        // `crate::logical`).
+        "contain-intrinsic-inline-size" => {
+            parse_contain_intrinsic_size(input).map(PropertyValue::ContainIntrinsicWidth)
+        }
+        "contain-intrinsic-block-size" => {
+            parse_contain_intrinsic_size(input).map(PropertyValue::ContainIntrinsicHeight)
+        }
         "contain-intrinsic-size" => {
             parse_contain_intrinsic_size_shorthand(input).map(PropertyValue::ContainIntrinsicSize)
         }
@@ -1499,6 +1509,8 @@ fn is_percentage_free_length_property(name: &str) -> bool {
             | "border-spacing"
             | "contain-intrinsic-width"
             | "contain-intrinsic-height"
+            | "contain-intrinsic-inline-size"
+            | "contain-intrinsic-block-size"
             | "contain-intrinsic-size"
     )
 }

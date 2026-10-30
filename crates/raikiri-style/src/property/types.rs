@@ -12107,7 +12107,10 @@ pub enum PropertyValue {
     BackgroundPositionY(Arc<[CssPositionOffset]>),
     /// `contain-intrinsic-width` — **non-inherited**, initial:
     /// [`ContainIntrinsicSize::NONE`] (CSS Box Sizing 4 §5; see
-    /// [`ContainIntrinsicSize`]).
+    /// [`ContainIntrinsicSize`]). `contain-intrinsic-inline-size` is parsed into this
+    /// variant, and `contain-intrinsic-block-size` into [`Self::ContainIntrinsicHeight`]:
+    /// the cascade moves them to the axis they name under the element's writing mode (see
+    /// `crate::logical`).
     ContainIntrinsicWidth(ContainIntrinsicSize),
     /// `contain-intrinsic-height`; see [`Self::ContainIntrinsicWidth`].
     ContainIntrinsicHeight(ContainIntrinsicSize),
@@ -14198,6 +14201,11 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-position-y" => PropertyKey::BackgroundPositionY,
         "contain-intrinsic-width" => PropertyKey::ContainIntrinsicWidth,
         "contain-intrinsic-height" => PropertyKey::ContainIntrinsicHeight,
+        // CSS Box Sizing 4 §5 contain-intrinsic-inline-size / -block-size: keyed by the
+        // {width, height} longhand they map to in horizontal-tb; the cascade moves them by
+        // the element's writing mode, like the margin and padding flow-relative longhands.
+        "contain-intrinsic-inline-size" => PropertyKey::ContainIntrinsicWidth,
+        "contain-intrinsic-block-size" => PropertyKey::ContainIntrinsicHeight,
         "contain-intrinsic-size" => PropertyKey::ContainIntrinsicSize,
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,

@@ -5463,3 +5463,8 @@ css/css-images/image-set/image-set-type-rendering-3.html
 css/css-images/image-set/image-set-type-rendering.html
 css/css-images/image-set/image-set-type-skip-unsupported-rendering.html
 css/css-images/image-set/image-set-unordered-res-rendering.html
+
+# --- `contain-intrinsic-inline-size` and `contain-intrinsic-block-size` (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# The flow-relative `contain-intrinsic-inline-size` and `contain-intrinsic-block-size` share their computed value with the `contain-intrinsic-width` or `-height` on the axis they name under the element's own writing mode (CSS Box Sizing 4 section 5, CSS Logical Properties 1 section 4), so a `contain: size` box with an inline size of 100px and a block size of 50px is 100px by 50px, and 50px by 100px in `vertical-lr`. Both were dropped as unknown properties before the change (the 100x50 box was missing) and KEEP in two audit-vacuous-passes runs.
+css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-logical-001.html
+css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-logical-002.html
