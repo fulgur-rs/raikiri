@@ -6419,6 +6419,10 @@ fn lone_box_tail(
         if node.multicol.is_some() || node.has_before_or_after_content {
             return None;
         }
+        // A box that avoids breaks inside moves whole, whatever it holds.
+        if current != node_id && avoids_page_break_inside(cascade.computed[current].break_inside) {
+            break;
+        }
         if current != node_id && node.is_ifc_root() {
             let lines = document
                 .ifc_layout_node(current)
