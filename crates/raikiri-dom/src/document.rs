@@ -982,6 +982,8 @@ impl Document {
         self.reset_stylesheet_source(parent);
         let kids = &mut self.nodes[parent].children;
         if let Some(pos) = kids.iter().position(|&c| c == child) {
+            #[cfg(test)]
+            tests::DETACH_SHIFT_WORK.set(tests::DETACH_SHIFT_WORK.get() + kids.len() - pos - 1);
             kids.remove(pos);
         }
         if let Some(node) = self.nodes.get_mut(child) {
@@ -995,6 +997,46 @@ impl Document {
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         Some(parent)
+    }
+
+    /// Detach the given direct children of `parent`, preserving the order
+    /// of all remaining children. Duplicate, invalid, or non-child indices
+    /// are ignored. Returns the number of detached children.
+    ///
+    /// Unlike repeated [`Self::detach_from_parent`] calls, this compacts only
+    /// this parent's child list, once. Work is proportional to the input and
+    /// that child list, plus the removed subtrees' change notifications.
+    pub fn detach_children(
+        &mut self,
+        parent: usize,
+        children: impl IntoIterator<Item = usize>,
+    ) -> usize {
+        let mut removed = 0;
+        for child in children {
+            #[cfg(test)]
+            tests::BULK_CHILD_VISITS.set(tests::BULK_CHILD_VISITS.get() + 1);
+            if let Some(node) = self.nodes.get_mut(child)
+                && node.parent == Some(parent)
+            {
+                node.parent = None;
+                self.note_tree_change(child);
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            self.reset_stylesheet_source(parent);
+            let mut kept = std::mem::take(&mut self.nodes[parent].children);
+            kept.retain(|&child| {
+                #[cfg(test)]
+                tests::BULK_CHILD_VISITS.set(tests::BULK_CHILD_VISITS.get() + 1);
+                self.parent_of(child) == Some(parent)
+            });
+            self.nodes[parent].children = kept;
+            self.fix_up_focus();
+            self.invalidate_layout_cache();
+            self.flags_dirty = true;
+        }
+        removed
     }
 
     /// Move all children of `from` to the end of `to`'s children, leaving
