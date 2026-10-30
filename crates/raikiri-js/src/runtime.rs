@@ -123,7 +123,7 @@ pub(crate) struct State {
     pub custom_highlights: HashMap<String, JsObject>,
     /// Listeners belonging to the permanent window root. Node listeners live
     /// in the traced node ownership graph.
-    pub window_listeners: Option<boa_gc::Gc<events::ListenerList>>,
+    window_listeners: Option<boa_gc::Gc<events::ListenerList>>,
     /// Task and microtask queues, timers, and the virtual clock.
     pub event_loop: event_loop::EventLoop,
     /// Set while [`dispatch::report_exception`] is dispatching its own

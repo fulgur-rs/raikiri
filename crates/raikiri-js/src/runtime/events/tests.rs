@@ -214,7 +214,7 @@ fn listener_storage_is_lazy_and_pointer_sized() {
 }
 
 #[test]
-fn engine_abort_finishes_once_snapshot_and_releases_removed_callback_cycle() {
+fn engine_abort_finishes_once_snapshot_and_drops_removed_callback() {
     use crate::runtime::{Abort, Limits, RunOptions};
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::with_options(
@@ -224,7 +224,6 @@ fn engine_abort_finishes_once_snapshot_and_releases_removed_callback_cycle() {
                 max_loop_iterations: 10,
                 ..Default::default()
             },
-            ..Default::default()
         },
     )
     .unwrap();
