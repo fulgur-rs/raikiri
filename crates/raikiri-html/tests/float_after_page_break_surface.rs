@@ -330,3 +330,71 @@ fn the_margin_is_kept_whichever_box_carries_it() {
         assert_eq!(nested, expected, "{before}");
     }
 }
+
+#[test]
+fn the_break_after_a_float_is_ignored() {
+    // The float and the text beside it stay on the page of the block before
+    // them, and the third line starts the next page.
+    let lead = "<div style='height:40px'>a</div>";
+    for (side, css) in [
+        ("left", "break-after:page"),
+        ("left", "break-after:always"),
+        ("left", ""),
+    ] {
+        let body = format!(
+            "{lead}<div style='float:{side};width:40px;height:50px;{css}'></div><div>{TEXT}</div>"
+        );
+        assert_eq!(
+            lines(&body),
+            [(0, 40.0, 45.0), (0, 40.0, 75.0), (1, 0.0, 5.0)],
+            "{side} {css}"
+        );
+    }
+    let right = format!(
+        "{lead}<div style='float:right;width:40px;height:50px;break-after:page'></div>\
+         <div>{TEXT}</div>"
+    );
+    assert_eq!(
+        lines(&right),
+        [(0, 0.0, 45.0), (0, 0.0, 75.0), (1, 0.0, 5.0)]
+    );
+    // After a forced break, the float that names one starts the page the break
+    // opened and does not open another.
+    for side in ["left", "right"] {
+        let x = if side == "left" { 40.0 } else { 0.0 };
+        let body = format!(
+            "{BREAK}<div style='float:{side};width:40px;height:50px;break-after:page'></div>\
+             <div>{TEXT}</div>"
+        );
+        assert_eq!(
+            lines(&body),
+            [(1, x, 5.0), (1, x, 35.0), (1, 0.0, 65.0)],
+            "{side}"
+        );
+    }
+}
+
+#[test]
+fn a_box_that_breaks_before_it_sits_beside_the_page_start_float() {
+    // The break before the box is the one the block before the float forced,
+    // so it does not open another page.
+    for (side, x) in [("left", 40.0), ("right", 0.0)] {
+        for break_before in ["page", "always"] {
+            let body = format!(
+                "{BREAK}{}<div style='break-before:{break_before}'>{TEXT}</div>",
+                float(side, 40, 50)
+            );
+            assert_eq!(
+                lines(&body),
+                [(1, x, 5.0), (1, x, 35.0), (1, 0.0, 65.0)],
+                "{side} {break_before}"
+            );
+        }
+    }
+    // Its margin stays above it, as for a box with no break of its own.
+    let margin = lines(&format!(
+        "{BREAK}{}<div style='break-before:page;margin-top:10px'>{TEXT}</div>",
+        float("left", 40, 50)
+    ));
+    assert_eq!(margin, [(1, 40.0, 15.0), (1, 40.0, 45.0), (1, 0.0, 75.0)]);
+}
