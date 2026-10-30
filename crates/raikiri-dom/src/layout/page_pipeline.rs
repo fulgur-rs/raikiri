@@ -2748,8 +2748,8 @@ fn clear_floats_at_forced_breaks<'name>(
     let changes_page = |previous: &Option<Option<&str>>, name: &Option<&str>| {
         previous.as_ref().is_some_and(|previous| previous != name)
     };
-    // Walk the boxes with the page value each inherits. Floats take their
-    // parent's page, and their insides are not walked.
+    // Walk the boxes with the page value each inherits. Floats are no part of
+    // the page flow, and their insides are not walked.
     let mut cleared = Vec::new();
     let mut cleared_lines = Vec::new();
     let mut cleared_to_float_floor = Vec::new();
@@ -2830,13 +2830,12 @@ fn clear_floats_at_forced_breaks<'name>(
                 // the next in-flow box, which pagination would otherwise leave
                 // on the earlier page. A float's own forced break before it
                 // moves it and the boxes after it to the next page the same
-                // way, and so does a change of named page: pagination puts a
-                // float on its parent's page. Its break after it is ignored.
-                let named_break = changes_page(&previous_page_name, &inherited);
-                previous_page_name = Some(inherited);
-                if named_break
-                    || page_break_is_forced(document, child, cascade.computed[child].break_before)
-                {
+                // way. Its break after it is ignored. A float is no part of the
+                // page flow (CSS Page 3, section 4.1): its page name changes no
+                // page and is not the page before the box after it, which is
+                // compared with the box before the float, or names the first
+                // page when there is none.
+                if page_break_is_forced(document, child, cascade.computed[child].break_before) {
                     after_forced_break = true;
                     float_after_break = false;
                     float_own_break = true;
