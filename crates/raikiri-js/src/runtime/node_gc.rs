@@ -163,11 +163,14 @@ impl NodeGraph {
         record.state.borrow_mut().template_contents = contents;
     }
 
-    fn synchronize(&mut self, document: &mut Document) {
+    /// Synchronize ownership edges and report native topology notifications.
+    /// New detached arena slots alone do not change existing membership.
+    fn synchronize(&mut self, document: &mut Document) -> bool {
         let previous_count = self.records.len();
         let count = document.node_count();
         self.records.resize(count, None);
         let mut changed = document.take_tree_changes();
+        let topology_changed = !changed.is_empty();
         changed.extend(previous_count..count);
         // Unlinking an old edge must not collect another changed record
         // before the batch has reconnected it to its final parent.
@@ -182,6 +185,7 @@ impl NodeGraph {
                 self.restore_subtree(document, index);
             }
         }
+        topology_changed
     }
 }
 
@@ -200,7 +204,8 @@ impl State {
     }
 
     pub(super) fn synchronize_node_graph(&mut self) {
-        self.node_graph.synchronize(self.host.document_mut());
+        // Preserve a notification across the empty sync after a read.
+        self.image_topology_changed |= self.node_graph.synchronize(self.host.document_mut());
     }
 
     pub(super) fn node_record(&mut self, index: usize) -> Gc<NodeRecord> {

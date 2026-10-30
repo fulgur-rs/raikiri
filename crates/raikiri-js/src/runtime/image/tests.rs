@@ -592,3 +592,5 @@ fn image_subclasses_keep_their_own_prototype() {
 }
 
 mod base_url_tests;
+
+mod adoption_tests;

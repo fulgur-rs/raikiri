@@ -21,11 +21,11 @@ pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
         s.generation = s.generation.wrapping_add(1);
         // A focused element that left the document loses focus for good.
         s.host.document_mut().fix_up_focus();
-        !s.inert_images.is_empty() || !s.active_images.is_empty()
+        // Consume even without images, before settlement can observe new changes.
+        let topology_changed = std::mem::take(&mut s.image_topology_changed);
+        topology_changed && (!s.inert_images.is_empty() || !s.active_images.is_empty())
     })?;
-    // Every tree mutation marks the document dirty, so this is where an
-    // image moved into template contents turns inert and one moved out of
-    // them updates its image data again.
+    // Attribute and character data updates cannot move images between trees.
     if images {
         super::image::settle_moved_images(context)?;
     }
