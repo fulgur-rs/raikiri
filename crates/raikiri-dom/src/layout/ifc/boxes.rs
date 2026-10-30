@@ -1593,9 +1593,11 @@ fn with_group_align(mut line_options: LineOptions, options: &LineOptions) -> Lin
 /// Whether `line` is the empty line around an inline closure that sits next
 /// to a block: it has no content, no height, and does not end in a forced
 /// break. In a horizontal root a line of inline boxes none of which has a
-/// margin, padding or border on its left or right is empty as well, even when
-/// a box has vertical padding or border: shodo counts those edges as painted
-/// content, while only an edge along the line makes a line box in Chromium.
+/// margin, padding or border on its left or right is empty as well when shodo
+/// keeps it only for the vertical padding or border of a box on it: shodo
+/// counts those edges as painted content, while only an edge along the line
+/// makes a line box in Chromium. Text without a visible glyph, such as a hidden
+/// soft hyphen, keeps its line.
 fn is_empty_closure(
     tree: &LayoutSession<'_>,
     root: &IfcRoot,
@@ -1608,16 +1610,36 @@ fn is_empty_closure(
     if line.is_empty() && line.block_size() == 0.0 {
         return true;
     }
-    root.writing_mode == WritingMode::HorizontalTb
-        && line.fragments().next().is_some()
-        && line.fragments().all(|fragment| match fragment {
-            shodo::Fragment::InlineBox(piece) => {
-                !has_edge_along_the_line(tree, piece.node.0 as usize, basis)
-            }
-            // An out-of-flow box takes no room on the line.
-            shodo::Fragment::OutOfFlowAnchor(_) => true,
-            _ => false,
-        })
+    if root.writing_mode != WritingMode::HorizontalTb {
+        return false;
+    }
+    let mut vertical_edge = false;
+    let only_boxes = line.fragments().all(|fragment| match fragment {
+        shodo::Fragment::InlineBox(piece) => {
+            let node = piece.node.0 as usize;
+            vertical_edge |= has_edge_across_the_line(tree, node);
+            !has_edge_along_the_line(tree, node, basis)
+        }
+        // An out-of-flow box takes no room on the line.
+        shodo::Fragment::OutOfFlowAnchor(_) => true,
+        _ => false,
+    });
+    only_boxes && vertical_edge
+}
+
+/// Whether the inline box `node` has a padding or border on its top or bottom
+/// side, as authored: the style view of an inline box that holds a block reads
+/// none.
+fn has_edge_across_the_line(tree: &LayoutSession<'_>, node: usize) -> bool {
+    if crate::generated_content::generated_origin(node).is_some() {
+        return false;
+    }
+    let cv = &tree.style_views.cascade().computed[node];
+    let padded = |padding: raikiri_style::ComputedLengthPercentageOrCalc| !matches!(padding, raikiri_style::ComputedLengthPercentageOrCalc::Px(px) if px == 0.0);
+    padded(cv.padding.top)
+        || padded(cv.padding.bottom)
+        || cv.border.top.width().px() != 0.0
+        || cv.border.bottom.width().px() != 0.0
 }
 
 /// Whether the inline box `node` has a margin, padding or border on its left

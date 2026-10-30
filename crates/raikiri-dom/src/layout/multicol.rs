@@ -3338,7 +3338,10 @@ fn refresh_paragraph_boxes(
 }
 
 /// Visit every node of the arena once, each parent before its children.
-fn visit_top_down(doc: &Document, mut visit: impl FnMut(Option<usize>, usize)) {
+pub(in crate::layout) fn visit_top_down(
+    doc: &Document,
+    mut visit: impl FnMut(Option<usize>, usize),
+) {
     let mut resolved = vec![false; doc.nodes.len()];
     let mut chain = Vec::new();
     for start in 0..doc.nodes.len() {
@@ -3402,6 +3405,9 @@ pub(crate) struct AncestorFacts {
     /// The node or an ancestor has a `min-content`, `max-content` or
     /// `fit-content` width.
     intrinsic_width: Vec<bool>,
+    /// The node is an inline box that holds a block, whose `width` applies to
+    /// neither of them.
+    inline_box: Vec<bool>,
 }
 
 impl AncestorFacts {
@@ -3416,6 +3422,7 @@ impl AncestorFacts {
             containing_width_ancestor: vec![None; count],
             projected_auto_width: vec![false; count],
             intrinsic_width: vec![false; count],
+            inline_box: super::style_views::metadata::inline_boxes_holding_blocks(doc, cascade),
         };
         visit_top_down(doc, |parent, id| {
             facts.resolve(doc, cascade, parent, id, fallback_width);
@@ -3441,7 +3448,7 @@ impl AncestorFacts {
         let cv = &cascade.computed[id];
         // The `width` of a non-atomic inline box does not apply to it, so it
         // supplies no width to the blocks it holds (CSS 2.1 section 10.3.1).
-        let inline_box = super::style_views::metadata::is_inline_box(doc, cascade, id);
+        let inline_box = self.inline_box[id];
         let authored_width = match cv.width {
             _ if inline_box => None,
             ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => Some(value),
@@ -3505,7 +3512,7 @@ impl AncestorFacts {
         } else if doc.nodes[parent].display() == DisplayValue::Contents
             || values.width == ComputedLengthPercentageOrAuto::Auto
             || values.width.is_content_keyword()
-            || super::style_views::metadata::is_inline_box(doc, cascade, parent)
+            || self.inline_box[parent]
         {
             self.containing_width_ancestor[parent]
         } else {

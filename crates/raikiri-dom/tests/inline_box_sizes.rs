@@ -258,6 +258,33 @@ fn an_absolute_box_in_a_relative_inline_box_keeps_the_padding_box_with_its_verti
 }
 
 #[test]
+fn a_line_of_text_without_a_visible_glyph_keeps_its_line() {
+    // A soft hyphen that is not shown is still text on its line.
+    check(
+        r#"<div id=o style="width:100px"><span>&shy;</span></div><div id=c style="height:10px"></div>"#,
+        &[
+            ("o", (8.0, 8.0, 100.0, 10.0)),
+            ("c", (8.0, 18.0, 784.0, 10.0)),
+        ],
+    );
+    check(
+        r#"<div id=o style="width:100px">x<br><span>&shy;</span></div><div id=c style="height:10px"></div>"#,
+        &[
+            ("o", (8.0, 8.0, 100.0, 20.0)),
+            ("c", (8.0, 28.0, 784.0, 10.0)),
+        ],
+    );
+    check(
+        r#"<div id=o style="width:100px"><span>x<div id=b style="height:10px"></div>&shy;</span></div><div id=c style="height:10px"></div>"#,
+        &[
+            ("o", (8.0, 8.0, 100.0, 30.0)),
+            ("b", (8.0, 18.0, 100.0, 10.0)),
+            ("c", (8.0, 38.0, 784.0, 10.0)),
+        ],
+    );
+}
+
+#[test]
 fn a_last_line_of_inline_boxes_with_only_vertical_edges_makes_no_line() {
     for style in [
         "padding-top:20px",

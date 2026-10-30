@@ -183,6 +183,7 @@ impl<'a> StyleViews<'a> {
     fn prepare_foundations(&mut self, doc: &mut Document) {
         // Every live box needs a foundation even when Taffy never queries its view.
         // The range iterator owns indices; source values stay externally borrowed.
+        let inline_boxes = metadata::inline_boxes_holding_blocks(doc, self.cascade);
         for idx in doc.nodes.layout_keys() {
             let key = doc.nodes.box_key(idx).expect("foundation key is live");
             if doc.box_style_data.get(key).is_none()
@@ -215,7 +216,12 @@ impl<'a> StyleViews<'a> {
                     );
                     if let LayoutBase::Source(source) = &record.base {
                         let source = *source;
-                        let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
+                        let metadata = metadata::prepare_metadata(
+                            doc,
+                            self.cascade,
+                            idx,
+                            inline_boxes.get(idx).copied().unwrap_or(false),
+                        );
                         let valid = PreparedStyle::from_data(
                             &self.cascade.computed[source],
                             metadata,
@@ -254,7 +260,12 @@ impl<'a> StyleViews<'a> {
                         raikiri_style::property::DisplayValue::Contents,
                         "neutralized source must publish its explicit recipe before binding"
                     );
-                    let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
+                    let metadata = metadata::prepare_metadata(
+                        doc,
+                        self.cascade,
+                        idx,
+                        inline_boxes.get(idx).copied().unwrap_or(false),
+                    );
                     let prepared = self.prepare_data(doc, &self.cascade.computed[source]);
                     doc.box_style_data.insert(
                         key,
