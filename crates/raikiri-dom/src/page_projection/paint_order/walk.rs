@@ -276,16 +276,22 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         match layer.close {
             LayerClose::Paint => {}
             LayerClose::Merge(owner) => {
-                for (frames, into) in [
-                    (layer.pending, &mut outer.pending),
-                    (layer.positioned, &mut outer.positioned),
-                ] {
-                    if !frames.is_empty() {
-                        into.push(Frame::PushClip(owner));
-                        into.extend(frames);
-                        into.push(Frame::PopClip);
-                    }
+                if !layer.pending.is_empty() {
+                    outer.pending.push(Frame::PushClip(owner));
+                    outer.pending.extend(layer.pending);
+                    outer.pending.push(Frame::PopClip);
                 }
+                // The clip does not cut a box whose containing block is
+                // outside the block.
+                outer.positioned.extend(paint_rules::clip_contained_frames(
+                    self.document,
+                    self.cascade,
+                    owner,
+                    layer.positioned,
+                    positioned_frame,
+                    || Frame::PushClip(owner),
+                    || Frame::PopClip,
+                ));
             }
             // A box the enclosing layer lists at its end hands on its boxes
             // to wait with the boxes still to list.

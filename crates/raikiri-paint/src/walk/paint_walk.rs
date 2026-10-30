@@ -218,20 +218,30 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     {
                         pending.extend(self.stack.pop());
                     }
-                    for (frames, into) in [
-                        (pending, &mut outer.pending),
-                        (layer.positioned, &mut outer.positioned),
-                    ] {
-                        if !frames.is_empty() {
-                            into.push(PaintFrame::PushClip {
-                                node_id,
-                                clip,
-                                transform,
-                            });
-                            into.extend(frames);
-                            into.push(PaintFrame::PopClip);
-                        }
+                    if !pending.is_empty() {
+                        outer.pending.push(PaintFrame::PushClip {
+                            node_id,
+                            clip,
+                            transform,
+                        });
+                        outer.pending.extend(pending);
+                        outer.pending.push(PaintFrame::PopClip);
                     }
+                    // The clip does not cut a box whose containing block is
+                    // outside the block.
+                    outer.positioned.extend(paint_rules::clip_contained_frames(
+                        document,
+                        cascade,
+                        node_id,
+                        layer.positioned,
+                        positioned_frame,
+                        || PaintFrame::PushClip {
+                            node_id,
+                            clip,
+                            transform,
+                        },
+                        || PaintFrame::PopClip,
+                    ));
                 }
                 // A box the enclosing layer paints at its end hands on
                 // its boxes to wait with the boxes still to paint.
