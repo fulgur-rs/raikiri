@@ -19,9 +19,11 @@ struct UrlSearchParamsData {
 fn params_entries(this: &JsValue) -> JsResult<Vec<(String, String)>> {
     this.as_object()
         .and_then(|object| {
-            object
-                .downcast_ref::<UrlSearchParamsData>()
-                .map(|data| data.entries.clone())
+            object.downcast_ref::<UrlSearchParamsData>().map(|data| {
+                #[cfg(any(test, feature = "url-params-diagnostics"))]
+                crate::url_params_diagnostics::snapshot(data.entries.len());
+                data.entries.clone()
+            })
         })
         .ok_or_else(|| {
             JsNativeError::typ()
