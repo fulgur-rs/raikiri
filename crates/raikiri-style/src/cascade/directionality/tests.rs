@@ -452,10 +452,9 @@ fn dir_auto_with_sharada_vowel_sign_ooe_before_arabic_text_resolves_ltr() {
     // failure, which doesn't happen while this test passes.
     assert_eq!(
         r.computed[span].background_color, BLUE,
-        "leading Sharada vowel sign (strong L, despite not being \
-         is_alphabetic() under this workspace's pinned rustc) must \
-         resolve ltr on its own, not fall through to the later Arabic \
-         text"
+        "leading Sharada vowel sign (strong L, even where std's \
+         is_alphabetic() predates Unicode 17.0.0) must resolve ltr on \
+         its own, not fall through to the later Arabic text"
     );
 }
 
@@ -601,17 +600,36 @@ fn strong_bidi_range_tables_preserve_classification_invariants() {
             );
         }
     }
+    // Alphabetic=Yes under Unicode 17.0.0, but not under the Unicode 16.0.0
+    // that `char::is_alphabetic` carries before Rust 1.95. The crate still
+    // supports Rust 1.89.0, so these entries stay in the table: they are
+    // redundant on the pinned toolchain and load-bearing on older ones.
+    const ALPHABETIC_ONLY_SINCE_UNICODE_17: [u32; 3] = [0x11B61, 0x11B65, 0x11B67];
+    for cp in ALPHABETIC_ONLY_SINCE_UNICODE_17 {
+        // Removing an entry would pass every other check here on the pinned
+        // toolchain while regressing `dir=auto` for consumers building with
+        // Rust before 1.95, so assert the presence directly.
+        assert!(
+            STRONG_L_NON_ALPHABETIC_RANGES
+                .iter()
+                .any(|&(lo, hi)| (lo..=hi).contains(&cp)),
+            "U+{cp:04X} needs its STRONG_L_NON_ALPHABETIC_RANGES entry while \
+             the declared rust-version predates Rust 1.95 (std Unicode 16.0.0)"
+        );
+    }
     for &(lo, hi) in STRONG_L_NON_ALPHABETIC_RANGES {
         for cp in lo..=hi {
             let character = char::from_u32(cp).expect("range is a Unicode scalar");
-            // cov:ignore: the failure-message branch of this `assert!` only
-            // executes for a deliberately broken generated const table;
-            // constructing one here would test the fixture instead of the
-            // invariant, while the checked-in table is immutable.
-            assert!(
-                !character.is_alphabetic(),
-                "STRONG_L_NON_ALPHABETIC_RANGES contains alphabetic U+{cp:04X}"
-            );
+            if !ALPHABETIC_ONLY_SINCE_UNICODE_17.contains(&cp) {
+                // cov:ignore: the failure-message branch of this `assert!` only
+                // executes for a deliberately broken generated const table;
+                // constructing one here would test the fixture instead of the
+                // invariant, while the checked-in table is immutable.
+                assert!(
+                    !character.is_alphabetic(),
+                    "STRONG_L_NON_ALPHABETIC_RANGES contains alphabetic U+{cp:04X}"
+                );
+            }
             // cov:ignore: the failure-message branch of this `assert_eq!` only
             // executes for a deliberately broken generated const table;
             // constructing one here would test the fixture instead of the

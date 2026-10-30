@@ -1196,10 +1196,10 @@ fn resolved_margin_content(
                 text.push_str(quote_depth.apply(*keyword, quotes, quotes_auto));
             }
             // An image goes in the line of the text where it is listed.
-            ContentComponent::Image { url } => {
-                if images.len() < crate::generated_content::MAX_GENERATED_IMAGES {
-                    images.push((text.len(), url.clone()));
-                }
+            ContentComponent::Image { url }
+                if images.len() < crate::generated_content::MAX_GENERATED_IMAGES =>
+            {
+                images.push((text.len(), url.clone()));
             }
             // Attributes and target-dependent content need a document-wide
             // generated-content pass. They remain absent rather than leaking

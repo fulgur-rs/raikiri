@@ -166,6 +166,9 @@ pub fn diff(before: &[Row], after: &[Row]) -> Diff {
             result.missing.push(row.id.clone());
             continue;
         };
+        // Moving the `if` into a guard would send a PASS row that is not
+        // weakened to the `(Status::Pass, _)` arm and report a regression.
+        #[allow(clippy::collapsible_match)]
         match (row.status, now.status) {
             (Status::Pass, Status::Pass) => {
                 if row.detail != FALLBACK_NOTE && now.detail == FALLBACK_NOTE {

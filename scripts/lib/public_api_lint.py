@@ -196,10 +196,11 @@ PUBLISHED_CRATE_IDENTIFIERS = frozenset(crate.replace("-", "_") for crate in PUB
 FORBIDDEN_CRATE = "taffy"
 # `format_version` of the rustdoc JSON of the pinned toolchain. Change it
 # together with SEMVER_CHECKS_VERSION, which must read the same format.
-KNOWN_FORMAT_VERSIONS = frozenset({56})
-# The cargo-semver-checks release that reads KNOWN_FORMAT_VERSIONS (0.50 and
-# later dropped format 56). scripts/semver-checks.sh and .github/workflows/ci.yml
-# name it too; a test keeps the three equal.
+KNOWN_FORMAT_VERSIONS = frozenset({57})
+# The cargo-semver-checks release that reads KNOWN_FORMAT_VERSIONS (0.49
+# enables the rustdoc formats 56, 57 and 60 in its trustfall_rustdoc
+# dependency). scripts/semver-checks.sh and .github/workflows/ci.yml name it
+# too; a test keeps the three equal.
 SEMVER_CHECKS_VERSION = "0.49.0"
 
 RUSTDOC_FLAGS = "-Z unstable-options --output-format json --document-hidden-items --cap-lints allow"

@@ -449,12 +449,10 @@ impl Document {
                         ));
                     }
                 }
-                NodeData::Element(_) => {
-                    if self.has_element_child_excluding(parent, exclude) {
-                        return Err(DomMutationError::HierarchyRequest(
-                            "a Document may only have one Element child".into(),
-                        ));
-                    }
+                NodeData::Element(_) if self.has_element_child_excluding(parent, exclude) => {
+                    return Err(DomMutationError::HierarchyRequest(
+                        "a Document may only have one Element child".into(),
+                    ));
                 }
                 _ => {}
             }
