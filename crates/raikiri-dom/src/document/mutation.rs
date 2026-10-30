@@ -33,6 +33,11 @@ pub enum DomMutationError {
     NotFound(String),
 }
 
+enum CharacterDataEdit<'a> {
+    Set(&'a str),
+    Append(&'a str),
+}
+
 impl Document {
     /// DOM §4.2.3 "pre-insert node into parent before child": move `node` to
     /// become a child of `parent`, immediately before `before` (`None`
@@ -144,46 +149,61 @@ impl Document {
     /// pass must lay its paragraph out again from the new string instead of
     /// reusing lines shaped from the old one.
     pub fn set_character_data(&mut self, id: usize, data: &str) -> Result<(), String> {
-        self.write_character_data(id, |slot| *slot = SmolStr::new(data))
+        self.write_character_data(id, CharacterDataEdit::Set(data))
     }
 
     /// Append `data` to a Text / Comment / ProcessingInstruction node's
     /// character data. Errs for an out-of-range `id` or any other node kind.
     ///
-    /// The result is the same as `set_character_data(id, old + data)`, with
-    /// the same effects on the layout cache and the parent style element's
-    /// sheet source, but the new string is built in one buffer from the
-    /// stored text instead of being rebuilt by the caller. An empty `data`
-    /// leaves the stored string untouched: a write that changes nothing
-    /// still counts as a write, but costs nothing in proportion to the
-    /// length of the text.
+    /// Text nodes keep their prefix shared and grow a suffix, amortizing
+    /// consecutive appends. The first borrowed read through
+    /// [`Self::character_data`] joins a contiguous view, retained alongside
+    /// the buffered data until the next nonempty write. Alternating appends
+    /// and reads still join the whole text.
+    ///
+    /// An empty `data` leaves storage untouched. Every successful call still
+    /// invalidates the layout cache and the parent style element's sheet
+    /// source, as does [`Self::set_character_data`].
     pub fn append_character_data(&mut self, id: usize, data: &str) -> Result<(), String> {
-        self.write_character_data(id, |slot| {
-            if !data.is_empty() {
-                let mut joined = String::with_capacity(slot.len() + data.len());
-                joined.push_str(slot);
-                joined.push_str(data);
-                *slot = SmolStr::new(joined);
-            }
-        })
+        self.write_character_data(id, CharacterDataEdit::Append(data))
     }
 
-    /// Runs `write` on the string a Text / Comment / ProcessingInstruction
-    /// node keeps its character data in, then invalidates what a write to it
+    /// Edits a Text / Comment / ProcessingInstruction node's character data,
+    /// then invalidates what a write to it
     /// affects: the sheet source of the style element a Text node sits in,
     /// and the layout cache.
     fn write_character_data(
         &mut self,
         id: usize,
-        write: impl FnOnce(&mut SmolStr),
+        edit: CharacterDataEdit<'_>,
     ) -> Result<(), String> {
         let Some(node) = self.nodes.get_mut(id) else {
             return Err(format!("character data target index {id} is out of range"));
         };
-        match &mut node.data {
-            NodeData::Text(text) => write(&mut text.text_content),
-            NodeData::Comment(value) => write(value),
-            NodeData::ProcessingInstruction { data, .. } => write(data),
+        match (&mut node.data, edit) {
+            (NodeData::Text(text), CharacterDataEdit::Set(data)) => {
+                text.text_content = SmolStr::new(data).into();
+            }
+            (NodeData::Text(text), CharacterDataEdit::Append(data)) => {
+                text.text_content.append(data);
+            }
+            (
+                NodeData::Comment(value) | NodeData::ProcessingInstruction { data: value, .. },
+                CharacterDataEdit::Set(data),
+            ) => {
+                *value = SmolStr::new(data);
+            }
+            (
+                NodeData::Comment(value) | NodeData::ProcessingInstruction { data: value, .. },
+                CharacterDataEdit::Append(data),
+            ) => {
+                if !data.is_empty() {
+                    let mut joined = String::with_capacity(value.len() + data.len());
+                    joined.push_str(value.as_str());
+                    joined.push_str(data);
+                    *value = SmolStr::new(joined);
+                }
+            }
             _ => {
                 return Err(format!(
                     "character data target index {id} is not a Text, Comment, or \
@@ -326,7 +346,7 @@ impl Document {
                 }
                 copy
             }
-            NodeData::Text(text) => Node::new_text(text.text_content.clone()),
+            NodeData::Text(text) => Node::new_text_content(text.text_content.clone()),
             NodeData::Comment(value) => Node::new_comment(value.clone()),
             NodeData::ProcessingInstruction { target, data } => {
                 Node::new_processing_instruction(target.clone(), data.clone())

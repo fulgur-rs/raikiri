@@ -6,6 +6,8 @@
 //! traits.
 
 mod box_properties;
+mod text_content;
+pub(crate) use text_content::TextContent;
 
 use box_properties::BoxProperties;
 pub(crate) use box_properties::BoxPropertiesRef;
@@ -394,7 +396,7 @@ pub struct MulticolTextFragment {
 #[doc(hidden)]
 pub struct TextData {
     /// Character data.
-    pub(crate) text_content: SmolStr,
+    pub(crate) text_content: TextContent,
 }
 
 /// How a box lays out its contents (CSS Display 3, 2: the inner display
@@ -866,6 +868,10 @@ impl Node {
 
     /// Construct a Text node with its character data.
     pub(crate) fn new_text(text: SmolStr) -> Self {
+        Self::new_text_content(text.into())
+    }
+
+    pub(crate) fn new_text_content(text: TextContent) -> Self {
         Self::with_data(NodeData::Text(TextData { text_content: text }))
     }
 
@@ -1372,6 +1378,9 @@ impl Node {
     }
 
     /// Return the raw character data for a text node.
+    ///
+    /// Buffered appends are joined on the first borrow; later borrows reuse
+    /// that view until the text changes.
     ///
     /// Paint-side generated-content resolution uses this accessor while
     /// walking an element's descendant string value.

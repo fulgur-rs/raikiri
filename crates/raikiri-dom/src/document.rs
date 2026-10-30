@@ -30,7 +30,9 @@ use raikiri_layout_geometry::Point;
 use raikiri_traits::{QuirksMode, StylesheetKind};
 
 use crate::fragment::FragmentTree;
-use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData};
+use crate::node::{
+    Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, TextContent,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OofCoordinate {
@@ -629,8 +631,12 @@ impl Document {
     ///
     /// Returns: the arena index of the added node.
     pub fn append_text(&mut self, parent: usize, text: impl Into<SmolStr>) -> usize {
+        self.append_text_content(parent, text.into().into())
+    }
+
+    fn append_text_content(&mut self, parent: usize, text: TextContent) -> usize {
         let id = self.nodes.len();
-        self.nodes.push(Node::new_text(text.into()));
+        self.nodes.push(Node::new_text_content(text));
         self.nodes[parent].children.push(id);
         self.nodes[id].parent = Some(parent);
         self.note_tree_change(id);
@@ -649,10 +655,7 @@ impl Document {
         if let Some(&last) = self.nodes[parent].children.last()
             && let NodeData::Text(data) = &mut self.nodes[last].data
         {
-            let mut merged = String::with_capacity(data.text_content.len() + text.len());
-            merged.push_str(data.text_content.as_str());
-            merged.push_str(text.as_str());
-            data.text_content = SmolStr::new(merged);
+            data.text_content.append(text.as_str());
             self.reset_stylesheet_source(parent);
             self.invalidate_layout_cache();
             self.flags_dirty = true;
@@ -685,10 +688,7 @@ impl Document {
         if let Some(previous) = previous
             && let NodeData::Text(data) = &mut self.nodes[previous].data
         {
-            let mut merged = String::with_capacity(data.text_content.len() + text.len());
-            merged.push_str(data.text_content.as_str());
-            merged.push_str(text.as_str());
-            data.text_content = SmolStr::new(merged);
+            data.text_content.append(text.as_str());
             self.reset_stylesheet_source(parent);
             self.invalidate_layout_cache();
             self.flags_dirty = true;
@@ -1633,7 +1633,7 @@ impl Document {
                     pending.extend(source_children.iter().rev().map(|&child| (child, new_id)));
                 }
                 NodeData::Text(text) => {
-                    let new_id = self.append_text(target_parent, text.text_content.clone());
+                    let new_id = self.append_text_content(target_parent, text.text_content.clone());
                     pending.extend(source_children.iter().rev().map(|&child| (child, new_id)));
                 }
                 NodeData::Comment(text) => {
