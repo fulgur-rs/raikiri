@@ -963,12 +963,16 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // run was. So does a paragraph after a box to break from whose
                 // lines are too few for its orphans and widows: the break
                 // before it is the one between boxes, which beats one between
-                // lines that leaves too few at either end.
+                // lines that leaves too few at either end. Not one with
+                // padding or a border of its own below its lines: its box may
+                // run past the page edge where the lines fit and could not
+                // move whole, and browsers then split the lines.
                 let unbreakable = lines_shape
                     && (matches!(frame.tie, AvoidTie::RunStart { .. })
                         || breaks_only_around(document, cascade, node_id, self.has_named_pages)
                         || (closing_edges_shape
                             && node.is_ifc_root()
+                            && node.layout.padding.bottom + node.layout.border.bottom == 0.0
                             && paragraph_lines_keep_together(document, cascade, node_id)));
                 let closing_edges_base = closing_edges_shape && unbreakable;
                 // A block that holds one box moves whole with the edges that

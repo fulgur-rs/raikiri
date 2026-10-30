@@ -1165,6 +1165,32 @@ fn a_paragraph_too_short_for_both_constraints_moves_whole_with_the_edges() {
 }
 
 #[test]
+fn a_paragraph_whose_own_padding_runs_past_the_page_is_split_between_its_lines() {
+    // The lines end at 70, and 40px of padding of the paragraph itself end at
+    // 110: its box does not fit the page, so it cannot move whole to a better
+    // break. The last line goes to the next page with that padding and the
+    // padding of the div, as Chromium prints three lines and 80px of padding
+    // of their own on a page of 200px. Before the last line moves, the
+    // paragraph spans its lines and the 40px of padding; moving the line adds
+    // the 40px between the page end and the top of the next page.
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        parent = block(doc, body, "display:block;padding-bottom:40px");
+        block(doc, parent, "display:block;height:40px");
+        paragraph = block(
+            doc,
+            parent,
+            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;\
+             padding-bottom:40px",
+        );
+        doc.append_text(paragraph, "aaa aaa aaa");
+    });
+    assert_eq!(page_flow_y(&doc, paragraph), 40.0);
+    assert_eq!(doc.nodes[paragraph].layout.size.height, 110.0);
+    assert_eq!(doc.nodes[parent].layout.size.height, 190.0);
+}
+
+#[test]
 fn lines_enough_for_both_constraints_are_split_between_them_after_a_box() {
     // Orphans plus widows is as many lines as there are: one break is left, and
     // it keeps its lines apart.
