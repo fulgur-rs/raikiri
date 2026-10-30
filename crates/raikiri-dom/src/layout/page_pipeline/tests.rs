@@ -33,6 +33,7 @@ mod paged_spanning_tests;
 mod sibling_adjacency_tests;
 mod source_walk_tests;
 mod table_follow_tests;
+mod top_edge_tests;
 mod vertical_grid_tests;
 
 fn element_candidate_context(attributes: candidates::ElementContext) -> candidates::BoxContext {
@@ -3693,6 +3694,37 @@ fn layout_pages_places_footnote_at_page_bottom_without_flow_footprint() {
         "following flow content should not be pushed below the footnote: following y={following_y}, note y={note_y}"
     );
     assert!(doc.nodes[lead].layout.size.height > 0.0);
+}
+
+#[test]
+fn layout_pages_keeps_a_footnote_with_a_forced_break_after_it_on_its_page() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    doc.append_element(Some(body), "div", Some("height:20px"));
+    let note = doc.append_element(
+        Some(body),
+        "aside",
+        Some("float:footnote;height:10px;width:50px;break-after:page"),
+    );
+    doc.append_text(note, "note");
+    doc.append_element(Some(body), "div", Some("height:10px"));
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // A footnote leaves the flow, so the break it names after it opens no
+    // page.
+    assert_eq!(slices.len(), 1);
+    let note_y = doc.nodes[note].layout.location.y;
+    assert!((note_y - 40.0).abs() < 0.01, "note y={note_y}");
 }
 
 #[test]
@@ -9982,6 +10014,37 @@ fn review_page_child_edges_respect_context_and_text_barriers() {
 }
 
 #[test]
+fn review_page_edges_of_a_float_force_no_break_after_it() {
+    let (mut doc, body, _) = review_body_boundary_document("");
+    let float = doc.append_element(
+        Some(body),
+        "div",
+        Some("float:left;width:20px;height:20px;break-after:always"),
+    );
+    // A flex item is not floated, so its break after it still applies.
+    let flex = doc.append_element(Some(body), "div", Some("display:flex"));
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Some("float:left;width:20px;height:20px;break-after:always"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    for before in [false, true] {
+        assert_eq!(
+            page_edge_constraint(&doc, &cascade, float, before),
+            (false, false)
+        );
+    }
+    assert_eq!(
+        page_edge_constraint(&doc, &cascade, item, false),
+        (true, false)
+    );
+}
+
+#[test]
 fn review_page_child_edges_elide_contents_and_skip_parallel_children() {
     let (mut doc, body, _) = review_body_boundary_document("");
     let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
@@ -13491,24 +13554,43 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
 fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
     use raikiri_style::{build_rule_tree, cascade};
 
-    // (style of the parent, style of the box after the float, whether it
-    // only clears up to the float that starts the page)
-    for (parent, style, floor) in [
-        ("display:block", "display:block;height:10px", true),
+    // (style of the parent, style of the float that starts the page, style of
+    // the box after the float, whether it only clears up to the float that
+    // starts the page)
+    for (parent, float_style, style, floor) in [
+        ("display:block", "", "display:block;height:10px", true),
         (
             "display:block",
+            "",
             "display:block;height:10px;clear:right",
             true,
         ),
-        // Its own break starts a page of its own, clear of that float too.
+        // Its own break coincides with the one the float started the page
+        // after, so the box sits beside that float too.
         (
             "display:block",
+            "",
+            "display:block;height:10px;break-before:page",
+            true,
+        ),
+        // A float that took a break of its own starts the page by that
+        // break, and a break before the box is another one.
+        (
+            "display:block",
+            "break-before:page",
             "display:block;height:10px;break-before:page",
             false,
+        ),
+        (
+            "display:block",
+            "break-before:page",
+            "display:block;height:10px",
+            true,
         ),
         // A vertical paragraph places its boxes along another axis.
         (
             "display:block;writing-mode:vertical-rl",
+            "",
             "display:block;height:10px",
             false,
         ),
@@ -13529,7 +13611,9 @@ fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
         let started = doc.append_element(
             Some(body),
             "div",
-            Some("display:block;float:left;width:10px;height:20px"),
+            Some(&format!(
+                "display:block;float:left;width:10px;height:20px;{float_style}"
+            )),
         );
         let after = doc.append_element(Some(body), "div", Some(style));
         let rules = build_rule_tree(&doc);
@@ -13544,10 +13628,13 @@ fn the_box_after_a_page_start_float_clears_the_floats_before_it_only() {
         assert_eq!(
             doc.forced_break_float_floor.contains(&after),
             floor,
-            "{style}"
+            "{float_style} {style}"
         );
-        assert_eq!(cleared_by_pass, !floor, "{style}");
-        assert!(doc.forced_break_clearance.contains(&started), "{style}");
+        assert_eq!(cleared_by_pass, !floor, "{float_style} {style}");
+        assert!(
+            doc.forced_break_clearance.contains(&started),
+            "{float_style} {style}"
+        );
 
         // A single page has no break to clear at, so no box keeps a floor and
         // the cached paged layout is not reused.

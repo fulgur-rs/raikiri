@@ -6,15 +6,16 @@ use super::super::context::LayoutSession;
 use super::{
     AvoidChain, BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue,
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
-    PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head, boxes_are_tied,
-    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    first_owned_text_line_top, in_inset_out_of_flow_subtree, is_block_level_flow_box,
-    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
-    is_plain_block_box, is_plain_container_box, lone_box_tail, moves_later_siblings,
-    nested_run_units, normal_flow_bottom, page_applies_to_box, page_break_is_forced,
-    page_edge_constraint, page_name_to_owned, pagination_child_order, pagination_child_parent_y,
-    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
-    push_in_flow_boxes_rev, selected_page_name, takes_no_block_space, unplaced_line_end,
+    PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head,
+    box_forces_break_after, boxes_are_tied, breaks_only_around, candidate_ancestor_constraints,
+    clears_float_side, closing_edges_of, first_owned_text_line_top, in_inset_out_of_flow_subtree,
+    is_block_level_flow_box, is_floating_box_for_pagination,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
+    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
+    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
+    takes_no_block_space, unplaced_line_end,
 };
 use std::collections::HashMap;
 
@@ -66,6 +67,11 @@ pub(super) struct ElementContext {
     /// with the run when the run would cross a page edge (see
     /// [`super::avoided_run_ends`]).
     pub(super) avoided_unit: Option<f32>,
+    /// For a flex container or grid with padding or border above its items:
+    /// how far below the border-box top the first piece of its content ends.
+    /// The box moves to the next page when that crosses a page edge, so that
+    /// the edges do not stay behind alone (see [`super::leading_edges_move`]).
+    pub(super) leading_piece_end: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -160,6 +166,11 @@ impl BoxContext {
     pub(super) fn avoided_unit(self) -> Option<f32> {
         self.element_attributes()
             .and_then(|attributes| attributes.avoided_unit)
+    }
+
+    pub(super) fn leading_piece_end(self) -> Option<f32> {
+        self.element_attributes()
+            .and_then(|attributes| attributes.leading_piece_end)
     }
 
     pub(super) fn lines_closing_edges(self) -> f32 {
@@ -990,13 +1001,28 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     (Some(run), Some(leading)) => Some(run.max(leading)),
                     (run, leading) => run.or(leading),
                 };
+                // A flex container or grid whose padding or border above its
+                // items would be left alone at the foot of a page, because
+                // the first piece of its content does not fit after them,
+                // moves to the next page whole.
+                let leading_piece = (in_flow_container
+                    && !is_body
+                    && free_to_break_before
+                    && matches!(
+                        document.nodes[node_id].display(),
+                        DisplayValue::Flex | DisplayValue::Grid
+                    )
+                    && !document.context.pagination_on_transposed_axes)
+                    .then(|| leading_piece_end(document, cascade, body_id, node_id))
+                    .flatten();
                 let needs_ancestor_constraints = (nested_candidate_base
                     && ((!inline_level && is_block_flow_box && avoids_break)
                         || is_float
                         || clears_float))
                     || lines_shape
                     || lone_tail.is_some()
-                    || (avoided_unit.is_some() && !direct_body_child);
+                    || (avoided_unit.is_some() && !direct_body_child)
+                    || (leading_piece.is_some() && !direct_body_child);
                 let (side_by_side_ancestor, bounded_clipping_ancestor) =
                     if needs_ancestor_constraints {
                         candidate_ancestor_constraints(document, cascade, node_id, body_id)
@@ -1013,6 +1039,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let closing_edges_candidate = closing_edges_base && can_move_nested;
                 let avoided_unit = avoided_unit.filter(|_| direct_body_child || can_move_nested);
+                let leading_piece = leading_piece.filter(|_| direct_body_child || can_move_nested);
                 // A box that sticks out below its parent has no tail to keep.
                 let lone_box_candidate = lone_tail
                     .filter(|_| can_move_nested)
@@ -1038,7 +1065,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let sets_page_flow = deferred_named_break_after
                     || own_page_name.is_some()
                     || page_break_is_forced(document, node_id, computed.break_before)
-                    || page_break_is_forced(document, node_id, computed.break_after);
+                    || box_forces_break_after(document, cascade, node_id, computed.break_after);
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
@@ -1050,6 +1077,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         || closing_edges_candidate
                         || lone_box_candidate.is_some()
                         || avoided_unit.is_some()
+                        || leading_piece.is_some()
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
@@ -1098,6 +1126,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                     _ => 0.0,
                                 },
                                 avoided_unit,
+                                leading_piece_end: leading_piece,
                             },
                         ),
                         page_name: page_name_to_owned(page_name),
@@ -1306,11 +1335,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     let child_box_before = box_before;
                     box_before |= matches!(flow_flags.get(index), Some((Some(_), _)));
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
-                        // A box that takes no block space is no box to break
-                        // from, and breaking after it may be avoided.
-                        previous_box = (document.nodes[last_box].kind() == NodeKind::Element
-                            && !takes_no_block_space(document, last_box))
-                        .then_some(last_box);
+                        previous_box = Some(last_box);
                     }
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);

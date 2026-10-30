@@ -196,7 +196,8 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
         .any(|tag| tag_name.eq_ignore_ascii_case(tag))
 }
 
-// Cloning invalidates this cache because cloned Vec capacities can change.
+// Each document rebuilds its own capacity cache after cloning. Shared buffers
+// are charged in full, and a copy-on-write can change only the writer's capacity.
 #[derive(Debug)]
 struct CanvasBitmapByteCount(Option<usize>);
 
@@ -982,6 +983,8 @@ impl Document {
         self.reset_stylesheet_source(parent);
         let kids = &mut self.nodes[parent].children;
         if let Some(pos) = kids.iter().position(|&c| c == child) {
+            #[cfg(test)]
+            tests::DETACH_SHIFT_WORK.set(tests::DETACH_SHIFT_WORK.get() + kids.len() - pos - 1);
             kids.remove(pos);
         }
         if let Some(node) = self.nodes.get_mut(child) {
@@ -995,6 +998,46 @@ impl Document {
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         Some(parent)
+    }
+
+    /// Detach the given direct children of `parent`, preserving the order
+    /// of all remaining children. Duplicate, invalid, or non-child indices
+    /// are ignored. Returns the number of detached children.
+    ///
+    /// Unlike repeated [`Self::detach_from_parent`] calls, this compacts only
+    /// this parent's child list, once. Work is proportional to the input and
+    /// that child list, plus the removed subtrees' change notifications.
+    pub fn detach_children(
+        &mut self,
+        parent: usize,
+        children: impl IntoIterator<Item = usize>,
+    ) -> usize {
+        let mut removed = 0;
+        for child in children {
+            #[cfg(test)]
+            tests::BULK_CHILD_VISITS.set(tests::BULK_CHILD_VISITS.get() + 1);
+            if let Some(node) = self.nodes.get_mut(child)
+                && node.parent == Some(parent)
+            {
+                node.parent = None;
+                self.note_tree_change(child);
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            self.reset_stylesheet_source(parent);
+            let mut kept = std::mem::take(&mut self.nodes[parent].children);
+            kept.retain(|&child| {
+                #[cfg(test)]
+                tests::BULK_CHILD_VISITS.set(tests::BULK_CHILD_VISITS.get() + 1);
+                self.parent_of(child) == Some(parent)
+            });
+            self.nodes[parent].children = kept;
+            self.fix_up_focus();
+            self.invalidate_layout_cache();
+            self.flags_dirty = true;
+        }
+        removed
     }
 
     /// Move all children of `from` to the end of `to`'s children, leaving
@@ -2360,8 +2403,10 @@ impl Document {
     ///
     /// Later writes, replacement, and resizing preserve the snapshot. Keeping
     /// snapshots alive can retain old pixel buffers beyond the current canvas
-    /// storage charged to this document's bitmap budget. Cloning a document
-    /// still copies its pixels independently.
+    /// storage charged to this document's bitmap budget. Cloned documents share
+    /// immutable pixels until a write separates them. Each document charges
+    /// the full retained capacity, including shared spare capacity, to its
+    /// own bitmap budget.
     pub fn canvas_bitmap_snapshot(&self, id: usize) -> Option<Arc<CanvasBitmap>> {
         let NodeData::Element(element) = &self.nodes.get(id)?.data else {
             return None;
@@ -2725,8 +2770,8 @@ impl Document {
 
     /// Remove and return materialized canvas bitmaps in tree order.
     ///
-    /// Unique pixel storage is moved; storage retained by a snapshot is
-    /// copied to preserve that snapshot. This is intended for
+    /// Unique pixel storage is moved; storage retained by another document or
+    /// snapshot is copied to preserve those readers. This is intended for
     /// consumers that serialize a live document and then discard or replace
     /// it, such as the WPT reftest paint path.
     pub fn take_canvases_in_tree_order(&mut self) -> Vec<crate::node::CanvasBitmap> {

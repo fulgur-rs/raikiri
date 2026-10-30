@@ -103,7 +103,7 @@ class DocBuilder:
         }
         return self.add(key, name, {"function": {"sig": sig, "generics": {"params": [], "where_predicates": []}}}, **extra)
 
-    def doc(self, format_version: int = 56, includes_private: bool = False, root: str | None = None) -> dict:
+    def doc(self, format_version: int = 57, includes_private: bool = False, root: str | None = None) -> dict:
         index = self.index
         if root is not None:
             # A root module, named `root`, that lists the items declared at the top level.
@@ -560,7 +560,7 @@ class ReachTests(unittest.TestCase):
 
     def test_a_public_extern_crate_counts_as_naming_the_crate(self) -> None:
         b = DocBuilder()
-        # rustdoc 1.91 writes the exported name to `name` and the crate to `rename`.
+        # rustdoc 1.95 writes the exported name to `name` and the crate to `rename`.
         b.add(1, "renamed", {"extern_crate": {"name": "renamed", "rename": "serde"}})
         b.add(2, "raikiri_traits", {"extern_crate": {"name": "raikiri_traits", "rename": None}})
         b.add(3, "alias", {"extern_crate": {"name": "alias", "rename": "core"}})

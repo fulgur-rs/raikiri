@@ -78,8 +78,8 @@ pub(crate) struct State {
     pub live_walks: usize,
     /// First host failure seen during the current evaluation.
     pub host_failure: Option<String>,
-    /// Animation effects in creation order; the vector index is their stable ID.
-    pub animations: Vec<animation::AnimationEffect>,
+    /// Animation effects indexed by stable creation ID and target.
+    pub animations: animation::AnimationEffects,
     /// The live `document.styleSheets` list.
     pub style_sheet_list: Option<JsObject>,
     css_sheet_index: stylesheet::SheetList,
@@ -362,7 +362,7 @@ impl DomRuntime {
             #[cfg(test)]
             live_walks: 0,
             host_failure: None,
-            animations: Vec::new(),
+            animations: animation::AnimationEffects::default(),
             style_sheet_list: None,
             css_sheet_index: stylesheet::SheetList::default(),
             css_style_rules: HashMap::new(),

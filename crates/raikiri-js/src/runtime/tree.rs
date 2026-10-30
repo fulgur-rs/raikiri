@@ -134,15 +134,15 @@ fn nodes_into_a_node(context: &mut Context, items: Vec<NodeOrText>) -> JsResult<
 }
 
 /// DOM §4.2.3 "replace all with node within parent": detach every child of
-/// `parent` other than `node` itself, then insert `node` (already built,
-/// e.g. by [`nodes_into_a_node`]), or nothing for `None`.
+/// `parent` other than `node` itself, keeping the replacement `node`
+/// (already built, e.g. by [`nodes_into_a_node`]), or nothing for `None`.
 ///
-/// `node` is excluded from the detach loop because it can already be one
+/// `node` is excluded from bulk removal because it can already be one
 /// of `parent`'s current children (e.g. `b.replaceChildren(existingChild)`)
 /// -- `pre_insert`'s move (detach, then reattach at the end) leaves it
 /// attached, and an unconditional detach loop over the *pre-insert*
 /// snapshot of `parent`'s children would immediately detach it right back
-/// out, losing it instead of keeping it. The detach loop only runs *after*
+/// out, losing it instead of keeping it. Bulk removal only runs *after*
 /// `pre_insert`'s own validity check, which runs against `parent`'s
 /// children as they stand before this call -- exactly the "ensure
 /// pre-insertion validity of node into this before null" step that precedes
@@ -166,11 +166,12 @@ pub(crate) fn replace_all(
         if let Some(node) = node {
             doc.pre_insert(parent, node, None)?;
         }
-        for child in previous_children {
-            if Some(child) != node {
-                doc.detach_from_parent(child);
-            }
-        }
+        doc.detach_children(
+            parent,
+            previous_children
+                .into_iter()
+                .filter(|child| Some(*child) != node),
+        );
         super::stylesheet::note_child_list_change(s, parent, &moved);
         Ok(())
     })?;

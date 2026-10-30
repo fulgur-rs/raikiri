@@ -86,7 +86,7 @@ jobs:
           swap-storage: false
 
       - name: Setup Rust toolchain
-        # Respect rust-toolchain.toml (1.91.0 + rustfmt + clippy) and install
+        # Respect rust-toolchain.toml (1.95.0 + rustfmt + clippy) and install
         # before the first cargo call. An explicit version in dtolnay/rust-toolchain
         # would create two sources of truth. Since rustup 1.28, `show` no longer
         # installs implicitly; fall back to `rustup toolchain install` (idempotent
@@ -230,8 +230,8 @@ jobs:
           prefix-key: v1-rust
 
       - name: Install cargo-semver-checks
-        # 0.49.x is the last release that reads the rustdoc JSON of the
-        # pinned 1.91.0 toolchain (format 56). Change it together with
+        # 0.49.x reads the rustdoc JSON of the pinned 1.95.0 toolchain
+        # (format 57). Change it together with
         # KNOWN_FORMAT_VERSIONS in scripts/lib/public_api_lint.py.
         uses: taiki-e/install-action@v2
         with:

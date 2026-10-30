@@ -16,8 +16,8 @@
 #   scripts/semver-checks.sh --base REV      # base: REV (a branch, tag or commit)
 #   scripts/semver-checks.sh --strict        # exit 1 when a breaking change is found
 #
-# Needs cargo-semver-checks 0.49.x, the last release that reads the rustdoc
-# JSON of the pinned toolchain (format 56, see KNOWN_FORMAT_VERSIONS in
+# Needs cargo-semver-checks 0.49.x, which reads the rustdoc
+# JSON of the pinned toolchain (format 57, see KNOWN_FORMAT_VERSIONS in
 # scripts/lib/public_api_lint.py; change them together when the toolchain
 # moves):
 #

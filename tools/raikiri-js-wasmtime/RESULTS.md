@@ -1,6 +1,8 @@
 # Wasmtime WPT integration trial — 実測結果
 
 2026-09-27。Linux x86_64 / 4KiB pages、Rust 1.91.0、Boa 0.22.0、Wasmtime 43.0.2。
+
+> 注: 以下は上の構成で測定した記録で、再測定していない。その後ツールは Rust 1.95.0 と Wasmtime 48.0.8 に更新したため、AOT 成果物のハッシュと測定値は現在のビルドとは一致しない。
 WPT: `97ea26e26a2aac3eec7e770650b25e7049ed4a4e`。検証はローカル試験として実施。実装完了後のユーザー指示によりdraft PRとして公開する。mergeは未実施。
 
 ## 結果

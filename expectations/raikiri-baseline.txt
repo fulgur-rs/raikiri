@@ -5428,3 +5428,38 @@ css/css-images/object-position-png-002c.html
 # An absolutely positioned box whose `width` or `height` is `stretch` and whose insets are `auto` begins at its static position and fills the containing block from there to its far edge (CSS Position 3 section 5.2, CSS Sizing 4 section 5.1). In a 150px containing block a box whose static position is 50px in is 100px wide; it was 150px wide and ran 50px past the edge. Both tests failed before the change (12500 pixels differ: a 150px green square instead of 100px) and KEEP in two audit-vacuous-passes runs. The text row differs from Chromium only by anti-aliasing (largest channel difference 64, no pixel above it).
 css/css-sizing/stretch/positioned-non-replaced-1.html
 css/css-sizing/stretch/positioned-replaced-1.html
+
+# --- a flex item with a `stretch` cross size has the base size and automatic minimum its ratio gives (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A canvas with `width: stretch` in a column flex container (or `height: stretch` in a row one) and `align-self: start` has its cross size filled, so the ratio gives it the main size: a 200px square in a 200px container. Taffy took the cross size only from the item's own `width` or `height` or from `align-self: stretch`, so the box was 100px by 200px, the size of its natural one. All four tests failed before the change (20000 pixels differ) and KEEP in two audit-vacuous-passes runs.
+css/css-sizing/stretch/flexbox-flex-base-size-001.html
+css/css-sizing/stretch/flexbox-flex-base-size-002.html
+css/css-sizing/stretch/flexbox-auto-minimum-001.html
+css/css-sizing/stretch/flexbox-auto-minimum-002.html
+
+# --- `image-set()` as a background image (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# `background-image` and the other properties that take an `<image>` accept `image-set()` and `-webkit-image-set()` (CSS Images 4 section 2.4): the option with the smallest resolution of at least 1x is drawn, or the largest when every option is below 1x, the first written of equal ones; a bare `<string>` is a URL, an option with an unsupported `type()` or a `0x` resolution is never chosen, and a negative resolution drops the declaration. All 25 failed before the change (the whole declaration was dropped; 10000 pixels differ in each) and KEEP in two audit-vacuous-passes runs. The two negative-resolution tests already in this file pass because the declaration is dropped, and guard that rule. The zero-resolution, unsupported-type and `image-set-resolution-001` tests also pass, but their references match an empty document, so they are not listed. `image-set-resolution-002`/`003` and `image-set-content-rendering` stay out: a selected image is still drawn at its natural size whatever its resolution, and `list-style-image` and `content` do not take `image-set()`.
+css/css-images/image-set/image-set-calc-x-rendering-2.html
+css/css-images/image-set/image-set-calc-x-rendering.html
+css/css-images/image-set/image-set-conic-gradient-rendering.html
+css/css-images/image-set/image-set-dpcm-rendering.html
+css/css-images/image-set/image-set-dpi-rendering-2.html
+css/css-images/image-set/image-set-dpi-rendering.html
+css/css-images/image-set/image-set-dppx-rendering.html
+css/css-images/image-set/image-set-empty-url-rendering.html
+css/css-images/image-set/image-set-first-match-rendering.html
+css/css-images/image-set/image-set-linear-gradient-rendering.html
+css/css-images/image-set/image-set-no-res-rendering-2.html
+css/css-images/image-set/image-set-no-res-rendering.html
+css/css-images/image-set/image-set-no-url-rendering.html
+css/css-images/image-set/image-set-radial-gradient-rendering.html
+css/css-images/image-set/image-set-rendering-2.html
+css/css-images/image-set/image-set-rendering.html
+css/css-images/image-set/image-set-repeating-conic-gradient-rendering.html
+css/css-images/image-set/image-set-repeating-linear-gradient-rendering.html
+css/css-images/image-set/image-set-repeating-radial-gradient-rendering.html
+css/css-images/image-set/image-set-type-first-match-rendering.html
+css/css-images/image-set/image-set-type-rendering-2.html
+css/css-images/image-set/image-set-type-rendering-3.html
+css/css-images/image-set/image-set-type-rendering.html
+css/css-images/image-set/image-set-type-skip-unsupported-rendering.html
+css/css-images/image-set/image-set-unordered-res-rendering.html

@@ -6,4 +6,4 @@ edition = "2024"
 publish = false
 [dependencies]
 anyhow = "1"
-wasmtime = { version = "=43.0.2", default-features = false, features = ["runtime", "std", "anyhow", "cranelift"] }
+wasmtime = { version = "=48.0.8", default-features = false, features = ["runtime", "std", "anyhow", "cranelift"] }

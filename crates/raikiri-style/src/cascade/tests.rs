@@ -804,3 +804,17 @@ fn box_decoration_break_takes_the_css_wide_keywords() {
         assert_eq!(result.computed[node].box_decoration_break, expected);
     }
 }
+
+mod extract_tests;
+
+thread_local! {
+    static EXTRACT_WORK: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+pub(super) fn record_extract_work(kind: usize) {
+    EXTRACT_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += 1;
+        work.set(counts);
+    });
+}

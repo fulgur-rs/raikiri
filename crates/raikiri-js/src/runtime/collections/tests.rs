@@ -704,3 +704,91 @@ fn numeric_names_use_indexed_access_not_named() {
     // GetOwnProperty ignores it for array indices.
     ok(&mut rt, "Reflect.ownKeys(c).join() === '0,1,5'");
 }
+
+thread_local! {
+    pub(super) static NAME_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn hidden_reads_do_not_compare_collection_names() {
+    for count in [16, 32, 64] {
+        let mut rt = rt();
+        rt.evaluate(&format!(
+            "var root = document.createElement('div'); var refs = [];              for (var i = 0; i < {count}; i++) {{                  var e = document.createElement('div'); e.id = 'k' + i;                  root.appendChild(e); refs.push(e);              }} var c = root.children; c.extra = 42; c.length;"
+        )).unwrap();
+        NAME_COMPARISONS.set(0);
+        ok(
+            &mut rt,
+            &format!(
+                "var visits = 0; var valid = true;              for (var i = 0; i < c.length; i++) {{                  valid = valid && c[i] === refs[i]; visits++;                  valid = valid && typeof c.item === 'function'                      && typeof c.namedItem === 'function' && c.extra === 42;              }} valid && visits === {count}"
+            ),
+        );
+        assert_eq!(NAME_COMPARISONS.get(), 0);
+        // Prove the counter observes real named lookup, including a last-node hit.
+        ok(
+            &mut rt,
+            &format!("c.k{} === refs[{}]", count - 1, count - 1),
+        );
+        assert_eq!(NAME_COMPARISONS.get(), count);
+    }
+}
+
+#[test]
+fn ordinary_getters_keep_receiver_and_can_unhide_names() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var e = document.createElement('div'); e.id = 'length';          document.body.appendChild(e); var c = document.body.children;          var hits = 0; var proto = { get length() {              if (this !== c) throw Error('receiver'); hits++;              delete proto.length; return 17;          }}; Object.setPrototypeOf(c, proto);"
+    ).unwrap();
+    NAME_COMPARISONS.set(0);
+    ok(&mut rt, "c.length === 17 && hits === 1");
+    assert_eq!(NAME_COMPARISONS.get(), 0);
+    ok(&mut rt, "c.length === e && hits === 1");
+    rt.evaluate("Object.setPrototypeOf(c, HTMLCollection.prototype);")
+        .unwrap();
+    ok(&mut rt, "c.length === 1 && c.namedItem('length') === e");
+}
+
+#[test]
+fn proxy_visibility_preserves_lookup_order_and_unsupported_names() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var first = document.createElement('div'); first.id = 'x';          var second = document.createElement('div'); second.id = 'y';          document.body.append(first, second); var c = document.body.children;          var seen = []; var p = new Proxy({}, {              getOwnPropertyDescriptor(t, key) {                  seen.push(key); first.id = 'old'; second.id = 'x'; return undefined;              }          }); Object.setPrototypeOf(c, p);"
+    ).unwrap();
+    // Name lookup happens before a Proxy can change the matching element.
+    ok(&mut rt, "c.x === first && seen.join() === 'x'");
+    ok(&mut rt, "c.x === second && seen.join() === 'x,x'");
+    ok(&mut rt, "c.missing === undefined && seen.join() === 'x,x'");
+    rt.evaluate(
+        "var boom = new Error('visibility');          Object.setPrototypeOf(c, new Proxy({}, {              getOwnPropertyDescriptor() { throw boom; }          }));"
+    ).unwrap();
+    ok(&mut rt, "c.missing === undefined");
+    ok(&mut rt, "try { c.x; false } catch (e) { e === boom }");
+}
+
+#[test]
+#[ignore = "manual release-mode scaling measurement; no wall-time assertion"]
+fn hidden_length_scaling_probe() {
+    use std::time::Instant;
+    for count in [1000, 2000, 4000, 8000] {
+        let mut rt = rt();
+        rt.evaluate(&format!(
+            "var root = document.createElement('div'); var refs = [];              for (var i = 0; i < {count}; i++) {{                  var e = document.createElement('div'); e.id = 'k' + i;                  root.appendChild(e); refs.push(e);              }} var c = root.children; c.length;"
+        )).unwrap();
+        for cached in [false, true] {
+            let script = format!(
+                "var valid = true; var visits = 0; var limit = c.length;                  for (var i = 0; i < {}; i++) {{                      valid = valid && c[i] === refs[i]; visits++;                  }} valid && visits === {count}",
+                if cached { "limit" } else { "c.length" }
+            );
+            for sample in 0..6 {
+                let start = Instant::now();
+                ok(&mut rt, &script);
+                if sample > 0 {
+                    println!(
+                        "hidden_length,{count},{cached},{sample},{}",
+                        start.elapsed().as_nanos()
+                    );
+                }
+            }
+        }
+    }
+}

@@ -6,7 +6,7 @@ Backend selection is compile-time only: native is the WPT default; use
 `--no-default-features --features js-wasmtime` for the trial.
 
 Build explicitly with `bash tools/raikiri-js-wasmtime/scripts/build.sh`.
-The trusted AOT compiler and runtime use Wasmtime 43.0.2 and identical fuel,
+The trusted AOT compiler and runtime use Wasmtime 48.0.8 and identical fuel,
 512KiB stack, 128MiB reservation and 64KiB guard settings. The script writes
 artifact hashes/configuration beside the AOT file and embeds it with the
 `RAIKIRI_JS_AOT` compile-time environment variable. There are no Cargo or compiler

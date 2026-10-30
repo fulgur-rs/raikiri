@@ -377,32 +377,51 @@ pub(super) fn layout(
         crate::layout::dispatch::content_limits::resolve_width_in_style(
             tree, child, &mut style, &room,
         );
-        let child_metrics = Metrics::resolve(
-            &style,
-            tree.nodes[usize::from(child)].svg_width_follows_available,
-            tree.nodes[usize::from(child)].ratio_in_content_box,
-            child_input,
-        );
-        // A size that only follows from the aspect ratio is left for the child
-        // to resolve, since its content may raise it.
-        child_input.known_dimensions.height = child_metrics
-            .preferred
-            .height
-            .filter(|_| !child_metrics.ratio_height);
         // `height: stretch` fills the content box of a parent whose height is
         // definite, less the margins that do not escape it (CSS Sizing 4
         // §5.1). A float's margins never escape. Without a definite room it
         // sizes like `auto`.
-        if let (Some(room), ExpandedDimension::Stretch) =
-            (parent.height, style.size.height.expand())
-        {
+        let stretch_room = parent.height.map(|height| {
             let floated = style.float != Float::None;
             let held = |holds: bool, margin: f32| if holds || floated { margin } else { 0.0 };
             let taken =
                 held(holds_margin.start, margin.top) + held(holds_margin.end, margin.bottom);
-            child_input.known_dimensions.height =
-                Some(child_metrics.clamp_height((room - taken).max(0.0)));
-        }
+            (height - taken).max(0.0)
+        });
+        // A box with an aspect ratio carries a `stretch` limit of its height
+        // across to its width.
+        content_limits::resolve_stretch_height_limits_in_style(
+            tree,
+            child,
+            &mut style,
+            stretch_room,
+            content_width,
+        );
+        // The height a `stretch` one gives is known before the box is
+        // measured, so an `auto` width follows from it through the aspect
+        // ratio as it does from a height the box states, and no bound carried
+        // across the ratio overrides it.
+        let stretched_height = stretch_room
+            .filter(|_| matches!(style.size.height.expand(), ExpandedDimension::Stretch));
+        child_input.known_dimensions.height = stretched_height;
+        // The width `stretch` fills is the room the parent offers.
+        let mut metrics_input = child_input;
+        metrics_input.available_space.width = room.available_space.width;
+        let child_metrics = Metrics::resolve(
+            &style,
+            tree.nodes[usize::from(child)].svg_width_follows_available,
+            tree.nodes[usize::from(child)].ratio_in_content_box,
+            metrics_input,
+        );
+        // A size that only follows from the aspect ratio is left for the child
+        // to resolve, since its content may raise it.
+        child_input.known_dimensions.height = match stretched_height {
+            Some(height) => Some(child_metrics.clamp_height(height)),
+            None => child_metrics
+                .preferred
+                .height
+                .filter(|_| !child_metrics.ratio_height),
+        };
         if style.float != Float::None {
             child_input.known_dimensions.width = child_metrics
                 .preferred

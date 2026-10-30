@@ -3370,12 +3370,16 @@ fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
     !is_zero(cv.margin.left) || !is_zero(cv.margin.right)
 }
 
-/// Whether `id` has an `auto` width that follows from a definite height through
-/// a preferred aspect ratio, so the box does not stretch to its container.
+/// Whether `id` has an `auto` width that follows from its height through a
+/// preferred aspect ratio, so the box does not stretch to its container: from
+/// a definite height, or from a `min-height` or `max-height` that the ratio
+/// carries across to the width.
 fn width_follows_height(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let cv = &cascade.computed[id];
     matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
-        && !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        && [cv.height, cv.min_height, cv.max_height]
+            .iter()
+            .any(|size| !matches!(size, ComputedLengthPercentageOrAuto::Auto))
         && AuthoredBox::new(doc, cascade, id).has_preferred_aspect_ratio()
 }
 

@@ -1,6 +1,7 @@
 use super::*;
 
 mod attach_child_fragment_tests;
+mod canvas_clone_tests;
 mod canvas_tests;
 mod element_attribute_mutation_tests;
 mod element_attribute_ns_tests;
@@ -22,3 +23,10 @@ mod stylesheet_source_tests;
 mod stylesheets_tests;
 mod template_in_document_tests;
 mod tree_changes_tests;
+
+mod bulk_detach_tests;
+
+thread_local! {
+    pub(super) static BULK_CHILD_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static DETACH_SHIFT_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}

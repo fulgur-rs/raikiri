@@ -234,16 +234,11 @@ impl ElementData {
     }
 }
 
-/// Internal ownership of current canvas pixels. Cloning a node keeps the
-/// historical deep-copy behavior; painting shares only explicit snapshots.
-#[derive(Debug)]
+/// Internal ownership of current canvas pixels. Cloned nodes share immutable
+/// pixels until a write separates their storage. Owned [`CanvasBitmap`] clones
+/// still copy their pixels.
+#[derive(Debug, Clone)]
 pub(crate) struct CanvasBitmapStorage(pub(crate) std::sync::Arc<CanvasBitmap>);
-
-impl Clone for CanvasBitmapStorage {
-    fn clone(&self) -> Self {
-        Self(std::sync::Arc::new((*self.0).clone()))
-    }
-}
 
 impl From<CanvasBitmap> for CanvasBitmapStorage {
     fn from(bitmap: CanvasBitmap) -> Self {

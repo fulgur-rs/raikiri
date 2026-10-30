@@ -611,15 +611,6 @@ impl LayoutSession<'_> {
             .is_some_and(|parent| !self.physical_style(parent).flex_direction_is_row())
     }
 
-    /// Whether box `node` is an item of a flex container that wraps its items
-    /// onto lines with a vertical main axis.
-    pub(crate) fn in_wrapping_column_flex_container(&self, node: usize) -> bool {
-        self.taffy_parent_of(node)
-            .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)
-            .map(|parent| self.physical_style(parent))
-            .is_some_and(|container| !container.flex_direction_is_row() && container.flex_wraps())
-    }
-
     /// Whether `known` is only the cross size that a flex container stretches
     /// its item `node`, with the box style `style`, to while the item's main
     /// size is measured.
@@ -962,7 +953,7 @@ impl LayoutSession<'_> {
             let idx = usize::from(node_id);
             let inputs = with_fit_content_room(tree, idx, inputs);
             let inputs = with_column_flex_keyword_room(tree, idx, inputs);
-            let inputs = with_wrapping_column_stretch_width(tree, idx, inputs);
+            let inputs = with_stretch_cross_size(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
             // Size containment may give the box a width the request did not
             // have; whether the request stretched it is read before that.
@@ -2739,6 +2730,29 @@ fn compute_inline_block_shrink_wrap(
     let sizing_mode = inputs.sizing_mode;
     let known_height = inputs.known_dimensions.height;
     let avail_height = inputs.available_space.height;
+    // The height that `height: stretch` gave an empty box is as good as one it
+    // states, so the width follows from it through the aspect ratio: it is put
+    // in the style the box is sized with.
+    let stretched_height = known_height.filter(|_| {
+        leaf_style.aspect_ratio.is_some()
+            && matches!(leaf_style.size.height.expand(), ExpandedDimension::Stretch)
+    });
+    if let Some(height) = stretched_height {
+        let adjustment = crate::layout::ifc::boxes::box_sizing_height_adjustment(
+            tree,
+            idx,
+            inputs.parent_size.width.unwrap_or(0.0),
+        );
+        apply_local_sizing(
+            &mut leaf_style,
+            &[OwnedPropertyOverride::length(
+                LengthProperty::Height,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px((height - adjustment).max(0.0)),
+                true,
+            )
+            .expect("resolved pixel height")],
+        );
+    }
 
     // Taffy's ratio floor is off for a leaf the helper above sizes.
     let mut ratio_free_style = leaf_style.clone();
@@ -3362,26 +3376,55 @@ fn with_column_flex_keyword_room(
     inputs
 }
 
-/// Give an item of a wrapping column flex container with a `stretch` width the
-/// width of its container while Taffy measures it.
+/// Give an item of a flex container with a `stretch` cross size the size the
+/// container gives it while Taffy measures the item, where the size does not
+/// depend on the line the item lands in.
 ///
-/// A flex line is as wide as its widest item, and the width of an item that
-/// stretches counts as the width of the container there (CSS Sizing 4 §5.1).
-/// Taffy leaves the keyword open until the item stretches to its line, so a
-/// line of stretching items alone would be as wide as their contents. The line
-/// still gives the item its final width.
-fn with_wrapping_column_stretch_width(
+/// An item of a wrapping column container: a flex line is as wide as its
+/// widest item, and the width of an item that stretches counts as the width of
+/// the container there (CSS Sizing 4 §5.1). Taffy leaves the keyword open until
+/// the item stretches to its line, so a line of stretching items alone would be
+/// as wide as their contents. The line still gives the item its final width.
+///
+/// An item with an aspect ratio, of a container that keeps its items on one
+/// line: the cross size the keyword stands for is definite when the flex base
+/// size and the automatic minimum size are found, and they follow from it
+/// through the ratio. Taffy takes the cross size from the item's own `width`
+/// or `height` or from `align-self: stretch`, not from the keyword.
+fn with_stretch_cross_size(
     tree: &LayoutSession<'_>,
     idx: usize,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
+    let Some(container) = tree
+        .taffy_parent_of(idx)
+        .filter(|&parent| tree.nodes[parent].layout_display() == Display::Flex)
+        .map(|parent| tree.physical_style(parent))
+    else {
+        return inputs;
+    };
+    let item = tree.physical_style(idx);
+    let ratio = item.stated_aspect_ratio().is_some();
+    if container.flex_direction_is_row() {
+        if !ratio
+            || container.flex_wraps()
+            || inputs.known_dimensions.height.is_some()
+            || inputs.parent_size.height.is_none()
+            || item.size().height.expand() != ExpandedDimension::Stretch
+        {
+            return inputs;
+        }
+        inputs.known_dimensions.height = content_limits::stretch_fit_height(tree, idx, &inputs);
+        inputs.known_dimensions_are_definite.height = true;
+        return inputs;
+    }
     let AvailableSpace::Definite(room) = inputs.available_space.width else {
         return inputs;
     };
     if inputs.known_dimensions.width.is_some()
         || inputs.parent_size.width.is_none()
-        || tree.physical_style(idx).size().width.expand() != ExpandedDimension::Stretch
-        || !tree.in_wrapping_column_flex_container(idx)
+        || item.size().width.expand() != ExpandedDimension::Stretch
+        || !(container.flex_wraps() || ratio)
     {
         return inputs;
     }

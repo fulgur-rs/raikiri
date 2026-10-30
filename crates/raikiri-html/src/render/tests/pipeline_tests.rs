@@ -2091,9 +2091,8 @@ fn pipeline_clears_a_float_with_its_own_break_before() {
 }
 
 #[test]
-fn pipeline_clears_the_box_after_a_float_with_break_after() {
-    // The box after the float starts the new page and does not shorten
-    // beside the earlier page's floats.
+fn pipeline_ignores_a_floats_own_break_after() {
+    // The box after the float stays on the same page, beside both floats.
     let doc = parse(
         "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
          .f { float: right; width: 100px; height: 100px }</style>\
@@ -2102,13 +2101,20 @@ fn pipeline_clears_the_box_after_a_float_with_break_after() {
          <div style='height:50px; display:flow-root'>b</div>",
     );
     let out = run(&doc);
-    assert_eq!(out.slices.len(), 2);
-    let (document, _) = out.layout_for_page(1);
-    let block = document
-        .page_fragments(1)
-        .find(|fragment| fragment.rect().height == 50.0)
-        .expect("the block is on the new page");
-    assert_eq!(block.rect().width, 400.0);
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    // The body is as tall as the block, so look for the 50px box that is
+    // narrowed by the two floats at the top of the page.
+    let boxes: Vec<(f32, f32, f32, f32)> = document
+        .page_fragments(0)
+        .map(|fragment| {
+            let rect = fragment.rect();
+            (rect.x, rect.y, rect.width, rect.height)
+        })
+        .collect();
+    assert!(boxes.contains(&(300.0, 0.0, 100.0, 100.0)));
+    assert!(boxes.contains(&(200.0, 0.0, 100.0, 100.0)));
+    assert!(boxes.contains(&(0.0, 0.0, 200.0, 50.0)));
 }
 
 #[test]

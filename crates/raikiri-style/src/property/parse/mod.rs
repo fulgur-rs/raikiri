@@ -1563,14 +1563,11 @@ pub(crate) fn contains_function_in_source(input: &str, wanted: &str) -> bool {
                     }
                 }
                 Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
-                    if parser
+                    found |= parser
                         .parse_nested_block(|nested| {
                             Ok::<_, ParseError<'_, ()>>(scan(nested, wanted))
                         })
-                        .unwrap_or(false)
-                    {
-                        found = true;
-                    }
+                        .unwrap_or(false);
                 }
                 _ => {}
             }

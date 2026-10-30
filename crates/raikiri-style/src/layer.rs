@@ -9,6 +9,7 @@ use cssparser::{Parser, Token};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 static NEXT_LAYER_TABLE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -100,6 +101,14 @@ pub(crate) struct LayerTable {
     nodes: Vec<LayerNode>,
     named: HashMap<(usize, Option<LayerId>, SmolStr), LayerId>,
     mentions: Vec<LayerMention>,
+    // Retain only the most recently requested context. Returned orders can
+    // independently keep older immutable ranks alive after eviction.
+    order_cache: Mutex<Option<CachedLayerOrder>>,
+}
+
+struct CachedLayerOrder {
+    context: Option<MediaContext>,
+    ranks: Arc<[u32]>,
 }
 
 impl Default for LayerTable {
@@ -109,6 +118,7 @@ impl Default for LayerTable {
             nodes: Vec::new(),
             named: HashMap::new(),
             mentions: Vec::new(),
+            order_cache: Mutex::new(None),
         }
     }
 }
@@ -127,6 +137,12 @@ impl LayerTable {
         origin: Origin,
         condition: Option<&MediaCondition>,
     ) -> LayerId {
+        // Reopening an existing name adds a mention too, and can change its
+        // first active position without increasing the number of nodes.
+        *self
+            .order_cache
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner()) = None;
         let origin = match origin {
             Origin::UserAgent => 0,
             Origin::User => 1,
@@ -178,10 +194,40 @@ impl LayerTable {
 
     /// `None` excludes conditional declarations for compatibility registry views.
     pub(crate) fn order(&self, context: Option<&MediaContext>) -> LayerOrder<'_> {
+        let mut cache = self
+            .order_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let key = context.copied();
+        let ranks = if let Some(cached) = cache.as_ref().filter(|cached| cached.context == key) {
+            Arc::clone(&cached.ranks)
+        } else {
+            // Build before publishing so even a poisoned lock cannot expose a
+            // partially constructed rank array. Keeping the lock here also
+            // makes concurrent requests for the same context build only once.
+            let ranks = self.build_order(context);
+            *cache = Some(CachedLayerOrder {
+                context: key,
+                ranks: Arc::clone(&ranks),
+            });
+            ranks
+        };
+        LayerOrder {
+            owner: self.owner,
+            ranks,
+            nodes: &self.nodes,
+        }
+    }
+
+    fn build_order(&self, context: Option<&MediaContext>) -> Arc<[u32]> {
+        #[cfg(test)]
+        tests::record_build(self.nodes.len());
         let mut seen = vec![false; self.nodes.len()];
         let mut children = vec![Vec::new(); self.nodes.len()];
         let mut roots: [Vec<LayerId>; 5] = std::array::from_fn(|_| Vec::new());
         for mention in &self.mentions {
+            #[cfg(test)]
+            tests::record_mention();
             let active = match (&mention.condition, context) {
                 (None, _) => true,
                 (Some(condition), Some(context)) => condition.matches(context),
@@ -212,17 +258,13 @@ impl LayerTable {
                 }
             }
         }
-        LayerOrder {
-            owner: self.owner,
-            ranks,
-            nodes: &self.nodes,
-        }
+        ranks.into()
     }
 }
 
 pub(crate) struct LayerOrder<'a> {
     owner: u64,
-    ranks: Vec<u32>,
+    ranks: Arc<[u32]>,
     nodes: &'a [LayerNode],
 }
 impl LayerOrder<'_> {
@@ -270,3 +312,6 @@ impl LayerPosition {
         )
     }
 }
+
+#[cfg(test)]
+mod tests;

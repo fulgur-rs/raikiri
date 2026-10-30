@@ -426,6 +426,19 @@ pub enum PseudoElem {
     FileSelectorButton,
 }
 
+/// Every variant, including native pseudos that do not generate boxes.
+/// Keep this list in sync with [`PseudoElem`]: metadata maps can contain
+/// variants that the cascade itself does not currently generate.
+pub(crate) const ALL_PSEUDO_ELEMENTS: [PseudoElem; 7] = [
+    PseudoElem::Before,
+    PseudoElem::After,
+    PseudoElem::Marker,
+    PseudoElem::FirstLine,
+    PseudoElem::FirstLetter,
+    PseudoElem::Backdrop,
+    PseudoElem::FileSelectorButton,
+];
+
 impl ToCss for PseudoElem {
     fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
         dest.write_str(match self {
