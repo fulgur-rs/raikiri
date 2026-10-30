@@ -4343,7 +4343,7 @@ fn held_step(
     // A block whose box is followed by closing edges alone moves whole
     // rather than leave them on the next page (see `lone_box_tail`), and
     // takes the box before it along.
-    if lone_box_tail(document, cascade, body_id, current).is_some_and(|tail| tail > 0.001) {
+    if lone_box_tail(document, cascade, body_id, current, false).is_some_and(|tail| tail > 0.001) {
         return HeldStep::End(node.layout.size.height);
     }
     if node.is_ifc_root() {
@@ -6417,7 +6417,8 @@ fn normal_flow_bottom(
 /// and the margin below the box where it does not collapse out of `node_id`.
 /// `None` unless `node_id` holds one box in its flow, which holds one in turn,
 /// down to a box that the page cannot break inside: one without a box in its
-/// flow, a paragraph of one line, a box that avoids breaks inside (unless a
+/// flow, a paragraph of one line (or of too few for its orphans and widows
+/// where `ancestor_edges_follow`), a box that avoids breaks inside (unless a
 /// forced break or a page name below it breaks the page there anyway), or a
 /// flex container, grid or table that moves whole (see
 /// [`container_moves_whole`]). A float within the block moves with it.
@@ -6426,12 +6427,16 @@ fn normal_flow_bottom(
 /// alone on the next page falls before the block instead (CSS Break 3 §4.1
 /// prefers a break between boxes to one between a box and the edges of its
 /// parent), as browsers do. A paragraph of more lines breaks between them and
-/// leaves the tail to its last lines, which is not this block's to move.
+/// leaves the tail to its last lines, which is not this block's to move; but
+/// when `ancestor_edges_follow`, the edges of the blocks around this one close
+/// after it, a paragraph with too few lines for its orphans and widows cannot
+/// be split without breaking them, and the block moves.
 fn lone_box_tail(
     document: &super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     node_id: usize,
+    ancestor_edges_follow: bool,
 ) -> Option<f32> {
     let mut current = node_id;
     // Where the box ends, from the top of `node_id`.
@@ -6457,7 +6462,20 @@ fn lone_box_tail(
                 .ifc_layout_node(current)
                 .and_then(|node| node.ifc.as_ref())
                 .and_then(|ifc| ifc.lines.as_ref())?;
-            if !lines.block_line_starts.is_empty() || lines.lines.len() > 1 {
+            // Lines too few to leave the orphans before a break and the
+            // widows after it keep together, when the closing edges of the
+            // blocks around the box are what the page breaks away from: the
+            // break before the block that holds them is the one between
+            // boxes, as browsers take it. Alone in a block with edges of its
+            // own, such lines are split between them instead, as browsers
+            // print it.
+            let computed = &cascade.computed[current];
+            let together = if ancestor_edges_follow {
+                (computed.orphans.max(1) as usize + computed.widows.max(1) as usize - 1).max(1)
+            } else {
+                1
+            };
+            if !lines.block_line_starts.is_empty() || lines.lines.len() > together {
                 return None;
             }
             break;
@@ -6535,7 +6553,7 @@ fn moves_whole_at_best(
     has_named_pages: bool,
 ) -> bool {
     breaks_only_around(document, cascade, node_id, has_named_pages)
-        || lone_box_tail(document, cascade, body_id, node_id).is_some()
+        || lone_box_tail(document, cascade, body_id, node_id, false).is_some()
 }
 
 /// How the last box of a block is tied to the boxes before it by avoided page

@@ -1732,6 +1732,17 @@ fn a_card_of_two_lines_after_a_box_in_the_card_moves_whole() {
 /// pages. Returns the height of the paragraph, of the wrapper and the
 /// page-flow y of the block after `outer`.
 fn wrapper_after_a_box(outer_css: &str, wrapper_css: &str) -> (f32, f32, f32) {
+    wrapper_after_a_box_with(outer_css, wrapper_css, "", "aaa aaa")
+}
+
+/// [`wrapper_after_a_box`] with `paragraph_css` on the paragraph and `text` in
+/// it, which is one line for each word.
+fn wrapper_after_a_box_with(
+    outer_css: &str,
+    wrapper_css: &str,
+    paragraph_css: &str,
+    text: &str,
+) -> (f32, f32, f32) {
     let (mut paragraph, mut wrapper, mut after) = (0, 0, 0);
     let (doc, _) = paged_body_with_ifc(|doc, body| {
         block(doc, body, "display:block;height:20px");
@@ -1741,9 +1752,11 @@ fn wrapper_after_a_box(outer_css: &str, wrapper_css: &str) -> (f32, f32, f32) {
         paragraph = block(
             doc,
             wrapper,
-            "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px",
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
         );
-        doc.append_text(paragraph, "aaa aaa");
+        doc.append_text(paragraph, text);
         after = block(doc, body, "display:block;height:10px");
     });
     (
@@ -1754,14 +1767,60 @@ fn wrapper_after_a_box(outer_css: &str, wrapper_css: &str) -> (f32, f32, f32) {
 }
 
 #[test]
-fn a_paragraph_after_a_box_inside_the_block_that_the_edges_close_is_not_split() {
-    // The wrapper comes after a box in the card whose padding closes it: a
-    // break before the wrapper is left to the rules for it, and the two lines
-    // are not split for orphans that they cannot keep.
+fn a_wrapper_of_a_paragraph_after_a_box_moves_whole_with_the_edges_that_close_the_card() {
+    // The wrapper comes after a box in the card whose padding closes it. The
+    // two lines of the paragraph cannot be split for orphans, so the page
+    // breaks before the wrapper, which moves to the next page with its own
+    // padding and that of the card.
     assert_eq!(
         wrapper_after_a_box("padding-bottom:40px", "padding-bottom:10px"),
-        (20.0, 30.0, 120.0)
+        (20.0, 30.0, 170.0)
     );
+}
+
+#[test]
+fn a_wrapper_of_lines_that_orphans_and_widows_keep_together_moves_whole_with_the_edges() {
+    // Three lines cannot have two orphans and two widows, and a break between
+    // two lines of fewer than the two together leaves too few at one end. The
+    // page breaks before the wrapper in each case, as it does in browsers.
+    // The wrapper is 20px of lines and 10px of padding, or 30px of lines and
+    // 10px of padding, and the 40px of padding of the card follow it to the
+    // next page: the block after the card starts at 100, plus the two.
+    for (paragraph_css, text, wrapper, after) in [
+        ("", "aaa aaa aaa", 40.0, 180.0),
+        ("orphans:1", "aaa aaa", 30.0, 170.0),
+        ("widows:1", "aaa aaa", 30.0, 170.0),
+    ] {
+        assert_eq!(
+            wrapper_after_a_box_with(
+                "padding-bottom:40px",
+                "padding-bottom:10px",
+                paragraph_css,
+                text
+            ),
+            (wrapper - 10.0, wrapper, after),
+            "{paragraph_css} {text}"
+        );
+    }
+    // The block around the paragraph needs no padding of its own.
+    assert_eq!(
+        wrapper_after_a_box("padding-bottom:40px", ""),
+        (20.0, 20.0, 160.0)
+    );
+}
+
+#[test]
+fn a_wrapper_of_lines_that_can_be_split_keeps_its_place() {
+    // Four lines break between the second and third, so the wrapper stays and
+    // the last two go to the next page with the padding: the paragraph spans
+    // its 40px of lines and the 30px that the page end cuts out.
+    let (paragraph, _, _) = wrapper_after_a_box_with(
+        "padding-bottom:40px",
+        "padding-bottom:10px",
+        "",
+        "aaa aaa aaa aaa",
+    );
+    assert_eq!(paragraph, 70.0);
 }
 
 #[test]
