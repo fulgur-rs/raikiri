@@ -167,6 +167,7 @@ mod measurement {
         }
     }
 }
+// cov:ignore: standalone benchmark entry point is not built by cargo test.
 fn main() {
     measurement::run();
 }
