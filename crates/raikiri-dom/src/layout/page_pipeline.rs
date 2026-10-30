@@ -2757,6 +2757,10 @@ fn clear_floats_at_forced_breaks<'name>(
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
         let mut float_after_break = false;
+        // Whether the float that started the page took its own break-before
+        // or a change of named page there, and not just the break of the box
+        // before it.
+        let mut float_own_break = false;
         // The last in-flow block among the parent's boxes: when the parent
         // is a paragraph of the inline engine, the lines after it are laid
         // out from its bottom.
@@ -2782,6 +2786,7 @@ fn clear_floats_at_forced_breaks<'name>(
                 }
                 after_forced_break = false;
                 float_after_break = false;
+                float_own_break = false;
                 previous_page_name = Some(inherited);
                 continue;
             };
@@ -2823,27 +2828,21 @@ fn clear_floats_at_forced_breaks<'name>(
                 // page, so it clears the earlier page's floats too; the floats
                 // after it line up beside it. The break still carries on to
                 // the next in-flow box, which pagination would otherwise leave
-                // on the earlier page. A float's own forced breaks move it
-                // and the boxes after it to the next page the same way, and so
-                // does a change of named page: pagination puts a float on its
-                // parent's page.
+                // on the earlier page. A float's own forced break before it
+                // moves it and the boxes after it to the next page the same
+                // way, and so does a change of named page: pagination puts a
+                // float on its parent's page. Its break after it is ignored.
                 let named_break = changes_page(&previous_page_name, &inherited);
                 previous_page_name = Some(inherited);
-                let forced_after =
-                    page_break_is_forced(document, child, cascade.computed[child].break_after);
                 if named_break
                     || page_break_is_forced(document, child, cascade.computed[child].break_before)
                 {
                     after_forced_break = true;
                     float_after_break = false;
-                }
-                // A break of the float's own is not right after the block
-                // before it, so the lines after that block stay where they
-                // are.
-                if named_break
-                    || forced_after
-                    || page_break_is_forced(document, child, cascade.computed[child].break_before)
-                {
+                    float_own_break = true;
+                    // The page change is at the float, not right after the
+                    // block before it, so the lines after that block stay where
+                    // they are.
                     last_block = None;
                 }
                 if after_forced_break && !float_after_break {
@@ -2854,15 +2853,12 @@ fn clear_floats_at_forced_breaks<'name>(
                     cleared.push(child);
                     float_after_break = true;
                 }
-                if forced_after {
-                    after_forced_break = true;
-                    float_after_break = false;
-                }
                 continue;
             }
             // A float right after the break started the new page, so the box
             // after it lines up beside that float instead of below it.
             let beside_page_start_float = std::mem::take(&mut float_after_break);
+            let float_took_own_break = std::mem::take(&mut float_own_break);
             last_block = Some(child);
             let start_page_name = if has_named_pages {
                 match propagated_start_page_name_with_transposed_axes(
@@ -2879,8 +2875,9 @@ fn clear_floats_at_forced_breaks<'name>(
                 None
             };
             let named_break = changes_page(&previous_page_name, &start_page_name);
-            let own_break = named_break
-                || page_break_is_forced(document, child, cascade.computed[child].break_before);
+            let breaks_before =
+                page_break_is_forced(document, child, cascade.computed[child].break_before);
+            let own_break = named_break || breaks_before;
             let forced = after_forced_break || own_break;
             // A break after the last box inside this one is carried out to
             // the next box, as the paginator does.
@@ -2899,10 +2896,13 @@ fn clear_floats_at_forced_breaks<'name>(
                 pending.push((child, own_page_name));
             }
             // Floats on either side belong to the earlier page, so a
-            // one-sided clear is widened too.
+            // one-sided clear is widened too. A break before the box
+            // coincides with the break of the box before the float that
+            // started the page, but not with the float's own break.
             if forced
                 && beside_page_start_float
-                && !own_break
+                && !named_break
+                && !(breaks_before && float_took_own_break)
                 && !document.nodes[parent].used_writing_mode.is_vertical()
             {
                 // Layout clears the floats before the one that starts the
@@ -2940,6 +2940,22 @@ fn clear_floats_at_forced_breaks<'name>(
         document.forced_break_float_floor = cleared_to_float_floor;
         document.layout_dirty = true;
     }
+}
+
+/// Whether `value`, the `break-after` of the box `node_id`, forces a page
+/// break after it. A float has no break after it: Chromium keeps the content
+/// after a float with it whatever the float names. The `break-before` of a
+/// float still applies, as the reftests for floats under CSS2 pagination
+/// (`float-page-break-inside-avoid-5-print.html` and its siblings) expect.
+fn box_forces_break_after(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    value: BreakBetween,
+) -> bool {
+    page_break_is_forced(document, node_id, value)
+        && (matches!(cascade.computed[node_id].float, FloatValue::None)
+            || !is_floating_box_for_pagination(document, cascade, node_id))
 }
 
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
@@ -3024,7 +3040,11 @@ fn page_edge_constraint(
             } else {
                 computed.break_after
             };
-            forced |= page_break_is_forced(document, id, edge);
+            forced |= if before {
+                page_break_is_forced(document, id, edge)
+            } else {
+                box_forces_break_after(document, cascade, id, edge)
+            };
             avoided |= matches!(edge, BreakBetween::Avoid | BreakBetween::AvoidPage);
         }
         if node.has_before_or_after_content
@@ -5883,9 +5903,12 @@ impl PendingBreak {
         node_id: usize,
         deferred_named_break_after: bool,
     ) {
-        let breaks_after =
-            page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
-                || deferred_named_break_after;
+        let breaks_after = box_forces_break_after(
+            document,
+            cascade,
+            node_id,
+            cascade.computed[node_id].break_after,
+        ) || deferred_named_break_after;
         let source_is_ancestor = self
             .source
             .is_some_and(|source| is_descendant_or_self(document, node_id, source));
@@ -6780,7 +6803,7 @@ fn has_mandatory_break_inside(
         }
         let computed = &cascade.computed[id];
         if page_break_is_forced(document, id, computed.break_before)
-            || page_break_is_forced(document, id, computed.break_after)
+            || box_forces_break_after(document, cascade, id, computed.break_after)
             || selected_page_name(cascade, id).is_some()
         {
             return true;

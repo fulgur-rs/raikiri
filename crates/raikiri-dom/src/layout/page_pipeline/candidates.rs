@@ -6,14 +6,14 @@ use super::super::context::LayoutSession;
 use super::{
     AvoidChain, BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue,
     FloatValue, FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl,
-    PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head, boxes_are_tied,
-    breaks_only_around, candidate_ancestor_constraints, clears_float_side, closing_edges_of,
-    first_owned_text_line_top, in_inset_out_of_flow_subtree, is_block_level_flow_box,
-    is_floating_box_for_pagination, is_monolithic_for_pagination_with_transposed_axes,
-    is_plain_block_box, is_plain_container_box, leading_piece_end, lone_box_tail,
-    moves_later_siblings, nested_run_units, normal_flow_bottom, page_applies_to_box,
-    page_break_is_forced, page_edge_constraint, page_name_to_owned, pagination_child_order,
-    pagination_child_parent_y, positioned_owned_text_line_bounds,
+    PositionValue, TextLineIndex, avoid_chain_before_last_box, avoided_run_head,
+    box_forces_break_after, boxes_are_tied, breaks_only_around, candidate_ancestor_constraints,
+    clears_float_side, closing_edges_of, first_owned_text_line_top, in_inset_out_of_flow_subtree,
+    is_block_level_flow_box, is_floating_box_for_pagination,
+    is_monolithic_for_pagination_with_transposed_axes, is_plain_block_box, is_plain_container_box,
+    leading_piece_end, lone_box_tail, moves_later_siblings, nested_run_units, normal_flow_bottom,
+    page_applies_to_box, page_break_is_forced, page_edge_constraint, page_name_to_owned,
+    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, push_in_flow_boxes_rev, selected_page_name,
     takes_no_block_space, unplaced_line_end,
 };
@@ -1065,7 +1065,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let sets_page_flow = deferred_named_break_after
                     || own_page_name.is_some()
                     || page_break_is_forced(document, node_id, computed.break_before)
-                    || page_break_is_forced(document, node_id, computed.break_after);
+                    || box_forces_break_after(document, cascade, node_id, computed.break_after);
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
