@@ -299,7 +299,8 @@ pub(crate) fn with_state<T>(context: &mut Context, f: impl FnOnce(&mut State) ->
 /// Run an update between ownership synchronizations, then observe its result.
 /// The observer can consume runtime notifications, but must not access the
 /// host, change document edges, or invoke script: it runs after the final sync.
-/// Neither callback runs after abort; borrow failures retain normal reporting.
+/// If the runtime is already aborted on entry, neither callback runs. Borrow
+/// failures retain normal reporting.
 pub(crate) fn with_state_after_sync<T, R>(
     context: &mut Context,
     f: impl FnOnce(&mut State) -> T,
