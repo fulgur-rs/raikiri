@@ -50,19 +50,8 @@ mod measurement {
     }
     #[global_allocator]
     static ALLOC: Counting = Counting;
-    // The same harness compiles against the parent revision. The inherent method
-    // takes precedence after the cache limit is implemented.
-    #[allow(dead_code)]
-    trait ParentOptions {
-        fn max_running_layout_entries(self, limit: usize) -> Self;
-    }
-    impl ParentOptions for LayoutOptions<'_, '_> {
-        fn max_running_layout_entries(self, _limit: usize) -> Self {
-            self
-        }
-    }
     pub fn run() {
-        let after = std::env::args().any(|arg| arg == "--after");
+        let after = !std::env::args().any(|arg| arg == "--before");
         let fonts = FontCollectionBuilder::new()
             .font_bytes(
                 "Ahem",
@@ -106,8 +95,14 @@ mod measurement {
                             black_box(value);
                             admitted += 1;
                         }
-                        Err(raikiri_traits::RenderError::LimitExceeded { .. })
-                            if after && admitted == limit => {}
+                        Err(raikiri_traits::RenderError::LimitExceeded {
+                            kind: raikiri_traits::LimitKind::RunningLayoutEntries,
+                            limit: configured,
+                            actual,
+                        }) if after
+                            && admitted == limit
+                            && configured == limit as u64
+                            && actual == limit as u64 + 1 => {}
                         other => panic!("unexpected admission: {other:?}"),
                     }
                 }
@@ -122,6 +117,7 @@ mod measurement {
                 let mut last_ms = Vec::new();
                 for _ in 0..3 {
                     for (width, times) in [(200., &mut first_ms), (last, &mut last_ms)] {
+                        let live_before = LIVE.load(Relaxed);
                         let t = Instant::now();
                         for _ in 0..10000 {
                             black_box(
@@ -130,7 +126,9 @@ mod measurement {
                                     .unwrap(),
                             );
                         }
-                        times.push(t.elapsed().as_secs_f64() * 1000.);
+                        let elapsed = t.elapsed().as_secs_f64() * 1000.;
+                        assert_eq!(LIVE.load(Relaxed), live_before);
+                        times.push(elapsed);
                     }
                 }
                 first_ms.sort_by(f64::total_cmp);
@@ -144,6 +142,11 @@ mod measurement {
                     );
                 }
                 let work = raikiri_html::finish_running_cache_diagnostics();
+                assert_eq!(work.make_calls, 0);
+                assert_eq!(work.admitted_entries, 0);
+                if after {
+                    assert!(work.width_comparisons <= 33 * 10000);
+                }
                 for i in 0..admitted {
                     let value = out
                         .layout_running_element(node, 200. + i as f32 / 16.)
