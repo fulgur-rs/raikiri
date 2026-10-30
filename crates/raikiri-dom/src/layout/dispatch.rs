@@ -3914,12 +3914,16 @@ fn auto_grid_abspos_axis_alignment(
     })
 }
 
-/// Align auto-placed out-of-flow children to this grid's content box.
+/// Align auto-placed out-of-flow children to this grid's padding box.
 ///
 /// Taffy's static-position fallback uses the grid's border edge. CSS Grid 2
-/// §10.2 instead aligns the margin box within the content box using the
+/// §10.2 instead aligns the margin box within the area of the grid using the
 /// child's `justify-self` and `align-self`, which fall back to the grid's
-/// `justify-items` and `align-items`.
+/// `justify-items` and `align-items`. Every line of the child is `auto` and
+/// the grid is its containing block, so the area runs to the padding edges
+/// of the grid, as in Chromium; a grid that is not the containing block
+/// aligns the child within its content box (see
+/// [`align_hoisted_grid_abspos_children`]).
 fn align_auto_grid_abspos_children(
     tree: &mut LayoutSession<'_>,
     idx: usize,
@@ -3932,10 +3936,7 @@ fn align_auto_grid_abspos_children(
     }
 
     let parent_style = tree.physical_style(idx);
-    // Percentage padding resolves against the containing block's width, not
-    // this grid's used width.
     let border = parent_style.border().resolve_or_zero(percent_basis);
-    let padding = parent_style.padding().resolve_or_zero(percent_basis);
 
     let placed: Vec<(usize, BoxLayout)> = tree
         .context
@@ -3945,8 +3946,18 @@ fn align_auto_grid_abspos_children(
         .flatten()
         .filter_map(|child| {
             let child = usize::from(*child);
-            auto_grid_abspos_aligned_layout(tree, idx, child, size, border, padding, Point::ZERO)
-                .map(|layout| (child, layout))
+            // This grid is the containing block of the children it hoists, so
+            // they are aligned in its padding box.
+            auto_grid_abspos_aligned_layout(
+                tree,
+                idx,
+                child,
+                size,
+                border,
+                Edges::ZERO,
+                Point::ZERO,
+            )
+            .map(|layout| (child, layout))
         })
         .collect();
 
@@ -3982,6 +3993,8 @@ pub(super) fn align_hoisted_grid_abspos_children(
                 x: grid_origin.x - owner_origin.x,
                 y: grid_origin.y - owner_origin.y,
             };
+            // An outer box is the containing block, so the grid aligns the child
+            // in its content box.
             auto_grid_abspos_aligned_layout(
                 tree,
                 grid,
@@ -4000,13 +4013,18 @@ pub(super) fn align_hoisted_grid_abspos_children(
     }
 }
 
+/// The layout of the out-of-flow `child` of `grid`, aligned in the area that
+/// lies `area_inset` inside the padding box of the grid, whose border box is
+/// `size` large with `border` edges: the padding of the grid to align `child`
+/// in its content box, as when `grid` is not the containing block of `child`,
+/// or no inset to align it in its padding box, as when it is.
 fn auto_grid_abspos_aligned_layout(
     tree: &LayoutSession<'_>,
     grid: usize,
     child: usize,
     size: Size<f32>,
     border: Edges<f32>,
-    padding: Edges<f32>,
+    area_inset: Edges<f32>,
     grid_to_owner: Point<f32>,
 ) -> Option<BoxLayout> {
     if tree.nodes[child].is_display_none() || tree.taffy_parent_of(child) != Some(grid) {
@@ -4040,12 +4058,12 @@ fn auto_grid_abspos_aligned_layout(
             layout.margin.bottom
         },
     };
-    let content_width =
-        (size.width - border.left - border.right - padding.left - padding.right).max(0.0);
-    let content_height =
-        (size.height - border.top - border.bottom - padding.top - padding.bottom).max(0.0);
-    let free_width = content_width - layout.size.width - margin.left - margin.right;
-    let free_height = content_height - layout.size.height - margin.top - margin.bottom;
+    let area_width =
+        (size.width - border.left - border.right - area_inset.left - area_inset.right).max(0.0);
+    let area_height =
+        (size.height - border.top - border.bottom - area_inset.top - area_inset.bottom).max(0.0);
+    let free_width = area_width - layout.size.width - margin.left - margin.right;
+    let free_height = area_height - layout.size.height - margin.top - margin.bottom;
     let overflows = Size {
         width: free_width < 0.0,
         height: free_height < 0.0,
@@ -4056,10 +4074,13 @@ fn auto_grid_abspos_aligned_layout(
         }
         None => auto_grid_abspos_static_alignment(&style, &parent_style, overflows)?,
     };
-    layout.location.x =
-        grid_to_owner.x + border.left + padding.left + margin.left + alignment.width * free_width;
+    layout.location.x = grid_to_owner.x
+        + border.left
+        + area_inset.left
+        + margin.left
+        + alignment.width * free_width;
     layout.location.y =
-        grid_to_owner.y + border.top + padding.top + margin.top + alignment.height * free_height;
+        grid_to_owner.y + border.top + area_inset.top + margin.top + alignment.height * free_height;
     Some(layout)
 }
 
