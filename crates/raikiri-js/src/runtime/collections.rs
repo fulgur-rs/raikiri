@@ -361,6 +361,8 @@ fn html_collection_item(
 /// Whether element `node` is named `name` in the `namedItem` sense: its
 /// `id` is `name`, or it is an HTML element whose `name` attribute is.
 fn has_name(doc: &Document, node: usize, name: &str) -> bool {
+    #[cfg(test)]
+    tests::NAME_COMPARISONS.with(|count| count.set(count.get() + 1));
     doc.element_attribute(node, "id") == Some(name)
         || (doc.element_namespace_uri(node) == Some(HTML_NS)
             && doc.element_attribute(node, "name") == Some(name))
