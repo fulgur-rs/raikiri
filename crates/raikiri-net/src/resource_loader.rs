@@ -5,9 +5,10 @@
 //! replaced-element adapter and leaves the decoder independent of URLs and
 //! providers.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
 use raikiri_traits::vector::VectorImage;
@@ -23,6 +24,7 @@ use crate::image_decoder::ImageDecoder;
 pub(crate) const MAX_SVG_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_CACHE_ENTRIES: usize = 256;
+const MAX_CONCURRENT_LOADS: usize = 4;
 /// SVG rasters kept per source, one per paint size, so that an image painted
 /// at a few sizes in turn is not rasterized again at every switch. SVG scenes
 /// are kept the same way.
@@ -43,6 +45,47 @@ fn cache_limit_error() -> ResolverError {
     ResolverError::Decode("image cache resource limit exceeded".to_owned())
 }
 
+#[derive(Default)]
+struct LoadState {
+    cache: HashMap<Url, Arc<ImageSource>>,
+    loading: HashSet<Url>,
+}
+
+enum Admission<'a> {
+    Cached(Arc<ImageSource>),
+    Pending(PendingSource<'a>),
+}
+
+struct PendingSource<'a> {
+    state: &'a Mutex<LoadState>,
+    budget: &'a Mutex<CacheBudget>,
+    changed: &'a Condvar,
+    url: &'a Url,
+    key_bytes: u64,
+    active: bool,
+}
+
+impl Drop for PendingSource<'_> {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        // Only release this guard's reservation. Poison remains set, so normal
+        // admission still fails closed even if an unrelated operation panicked.
+        let mut budget = self
+            .budget
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.loading.remove(self.url) {
+            budget.used = budget.used.saturating_sub(self.key_bytes);
+        }
+        drop(state);
+        drop(budget);
+        self.changed.notify_all();
+    }
+}
+
 /// Loads and caches decoded image resources.
 ///
 /// `ResourceLoader` owns provider dispatch, `data:` URL decoding, request
@@ -51,10 +94,11 @@ fn cache_limit_error() -> ResolverError {
 pub(crate) struct ResourceLoader<N> {
     network: N,
     decoder: ImageDecoder,
-    cache: Mutex<HashMap<Url, Arc<ImageSource>>>,
-    admission: Mutex<()>,
+    state: Mutex<LoadState>,
+    changed: Condvar,
     budget: Arc<Mutex<CacheBudget>>,
     max_entries: usize,
+    max_in_flight: usize,
 }
 
 pub(crate) struct ImageSource {
@@ -267,16 +311,26 @@ impl<N: NetworkProvider> ResourceLoader<N> {
     }
 
     fn with_limits(network: N, max_bytes: u64, max_entries: usize) -> Self {
+        Self::with_limits_and_concurrency(network, max_bytes, max_entries, MAX_CONCURRENT_LOADS)
+    }
+
+    fn with_limits_and_concurrency(
+        network: N,
+        max_bytes: u64,
+        max_entries: usize,
+        max_in_flight: usize,
+    ) -> Self {
         Self {
             network,
             decoder: ImageDecoder,
-            cache: Mutex::new(HashMap::new()),
-            admission: Mutex::new(()),
+            state: Mutex::new(LoadState::default()),
+            changed: Condvar::new(),
             budget: Arc::new(Mutex::new(CacheBudget {
                 used: 0,
                 limit: max_bytes,
             })),
             max_entries,
+            max_in_flight: max_in_flight.max(1),
         }
     }
 
@@ -299,34 +353,128 @@ impl<N: NetworkProvider> ResourceLoader<N> {
     }
 
     pub(crate) fn cached_source(&self, url: &Url) -> Option<Arc<ImageSource>> {
-        self.cache.lock().ok()?.get(url).cloned()
+        self.state.lock().ok()?.cache.get(url).cloned()
+    }
+
+    fn wait_for_change(&self, state: MutexGuard<'_, LoadState>) -> Result<(), ResolverError> {
+        drop(self.changed.wait(state).map_err(|_| cache_limit_error())?);
+        Ok(())
+    }
+
+    fn admit<'a>(&'a self, url: &'a Url) -> Result<Admission<'a>, ResolverError> {
+        if let Some(cached) = self.cached_source(url) {
+            return Ok(Admission::Cached(cached));
+        }
+        let key_bytes = url.as_str().len() as u64;
+        loop {
+            // Budget precedes State everywhere they are held together. Cache
+            // hits take State alone; provider calls hold neither mutex.
+            let mut budget = self.budget.lock().map_err(|_| cache_limit_error())?;
+            let mut state = self.state.lock().map_err(|_| cache_limit_error())?;
+            if let Some(cached) = state.cache.get(url) {
+                return Ok(Admission::Cached(cached.clone()));
+            }
+            // A duplicate waits for its owner even when that reservation fills
+            // the entry or byte budget. It consumes no additional permit/key.
+            if state.loading.contains(url) {
+                drop(budget);
+                self.wait_for_change(state)?;
+                continue;
+            }
+            if state.cache.len() >= self.max_entries {
+                return Err(cache_limit_error());
+            }
+            if state.loading.len() >= self.max_in_flight
+                || state.cache.len() + state.loading.len() >= self.max_entries
+            {
+                drop(budget);
+                self.wait_for_change(state)?;
+                continue;
+            }
+            if key_bytes > budget.remaining() {
+                return Err(cache_limit_error());
+            }
+            // Prepare allocations before charging the key. Reserve room for
+            // every pending source's eventual cache insertion, too.
+            let key = url.clone();
+            let pending = state.loading.len();
+            state.cache.reserve(pending + 1);
+            state.loading.reserve(1);
+            budget.used += key_bytes;
+            state.loading.insert(key);
+            return Ok(Admission::Pending(PendingSource {
+                state: &self.state,
+                budget: &self.budget,
+                changed: &self.changed,
+                url,
+                key_bytes,
+                active: true,
+            }));
+        }
     }
 
     pub(crate) fn load_source(&self, url: &Url) -> Result<Arc<ImageSource>, ResolverError> {
-        if let Some(cached) = self.cached_source(url) {
-            return Ok(cached);
-        }
-        // Bound concurrent misses and coalesce duplicate fetches without
-        // blocking cache-hit lookups for the duration of a network request.
-        let _admission = self.admission.lock().map_err(|_| cache_limit_error())?;
-        if let Some(cached) = self.cached_source(url) {
-            return Ok(cached);
-        }
-        if self.cache.lock().map_err(|_| cache_limit_error())?.len() >= self.max_entries {
-            return Err(cache_limit_error());
-        }
-        let key_bytes = url.as_str().len() as u64;
-        if key_bytes
-            > self
-                .budget
-                .lock()
-                .map_err(|_| cache_limit_error())?
-                .remaining()
-        {
-            return Err(cache_limit_error());
-        }
+        self.load_source_with(url, |bytes, is_data_url, is_svg, available| {
+            self.build_source(bytes, is_data_url, is_svg, available)
+        })
+    }
 
-        let (bytes, is_data_url, is_svg) = if url.scheme() == "data" {
+    fn load_source_with(
+        &self,
+        url: &Url,
+        build: impl FnOnce(Vec<u8>, bool, bool, u64) -> Result<Arc<ImageSource>, ResolverError>,
+    ) -> Result<Arc<ImageSource>, ResolverError> {
+        let mut admission = match self.admit(url)? {
+            Admission::Cached(source) => return Ok(source),
+            Admission::Pending(admission) => admission,
+        };
+        // Keep the permit until decode and publication finish, bounding the
+        // number of fetched buffers waiting for the serialized decoder.
+        let (bytes, is_data_url, is_svg) = self.fetch_bytes(url)?;
+        let source_bytes = if is_svg { bytes.len() as u64 } else { 0 };
+        let mut budget = self.budget.lock().map_err(|_| cache_limit_error())?;
+        let available = budget
+            .remaining()
+            .checked_sub(source_bytes)
+            .ok_or_else(cache_limit_error)?;
+        // The builder only constructs an uncommitted source. Catch its unwind
+        // inside this guard's lifetime so the shared budget is not poisoned.
+        let built = catch_unwind(AssertUnwindSafe(|| {
+            build(bytes, is_data_url, is_svg, available)
+        }));
+        let source = match built {
+            Ok(source) => source?,
+            Err(panic) => {
+                drop(budget);
+                resume_unwind(panic);
+            }
+        };
+        let charge = source_bytes
+            .checked_add(source.decoded_byte_len().unwrap_or(0))
+            .ok_or_else(cache_limit_error)?;
+        let used = budget
+            .used
+            .checked_add(charge)
+            .filter(|&used| used <= budget.limit)
+            .ok_or_else(cache_limit_error)?;
+        let mut state = self.state.lock().map_err(|_| cache_limit_error())?;
+        // The entry and its capacity were reserved before fetching. Move the
+        // charged key directly into the cache and disarm cleanup atomically.
+        let key = state
+            .loading
+            .take(url)
+            .expect("pending source owns its key");
+        state.cache.insert(key, source.clone());
+        budget.used = used;
+        admission.active = false;
+        drop(state);
+        drop(budget);
+        self.changed.notify_all();
+        Ok(source)
+    }
+
+    fn fetch_bytes(&self, url: &Url) -> Result<(Vec<u8>, bool, bool), ResolverError> {
+        let result = if url.scheme() == "data" {
             let is_svg = data_url_media_type(url.as_str()).is_some_and(is_svg_media_type);
             (decode_data_url(url.as_str())?, true, is_svg)
         } else {
@@ -343,31 +491,25 @@ impl<N: NetworkProvider> ResourceLoader<N> {
                 || url.path().to_ascii_lowercase().ends_with(".svg");
             (fetched.bytes.to_vec(), false, is_svg)
         };
-        if bytes.len() > MAX_SVG_BYTES {
+        if result.0.len() > MAX_SVG_BYTES {
             return Err(ResolverError::Decode(
                 "image input exceeds byte limit".to_owned(),
             ));
         }
+        Ok(result)
+    }
 
-        // Charge retained URL keys (including data URLs) and SVG source bytes
-        // as well as pixels; otherwise tiny or unrasterized images evade the
-        // aggregate byte limit. Entry count also bounds per-source overhead.
-        let source_bytes = key_bytes
-            .checked_add(if is_svg { bytes.len() as u64 } else { 0 })
-            .ok_or_else(cache_limit_error)?;
-        let mut budget = self.budget.lock().map_err(|_| cache_limit_error())?;
-        let available = budget
-            .remaining()
-            .checked_sub(source_bytes)
-            .ok_or_else(cache_limit_error)?;
+    fn build_source(
+        &self,
+        bytes: Vec<u8>,
+        is_data_url: bool,
+        is_svg: bool,
+        available: u64,
+    ) -> Result<Arc<ImageSource>, ResolverError> {
         let source = if is_svg {
             let document = SvgDocument::parse(&bytes)
                 .map_err(|error| ResolverError::Decode(format!("SVG parse failed: {error}")))?;
-            Arc::new(ImageSource::svg(
-                document,
-                bytes.into(),
-                self.budget.clone(),
-            ))
+            ImageSource::svg(document, bytes.into(), self.budget.clone())
         } else {
             let decoded = self.decoder.decode(&bytes, available).map_err(|error| {
                 if is_data_url {
@@ -376,12 +518,9 @@ impl<N: NetworkProvider> ResourceLoader<N> {
                     ResolverError::Decode(error)
                 }
             })?;
-            Arc::new(ImageSource::raster(Arc::new(decoded), self.budget.clone()))
+            ImageSource::raster(Arc::new(decoded), self.budget.clone())
         };
-        let mut cache = self.cache.lock().map_err(|_| cache_limit_error())?;
-        budget.used += source_bytes + source.decoded_byte_len().unwrap_or(0);
-        cache.insert(url.clone(), source.clone());
-        Ok(source)
+        Ok(Arc::new(source))
     }
 
     fn fetch(&self, url: &Url) -> Result<FetchedResource, ResolverError> {

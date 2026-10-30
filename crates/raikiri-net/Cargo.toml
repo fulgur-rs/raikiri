@@ -32,3 +32,7 @@ http-ureq = ["dep:ureq"]
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "image_admission"
+harness = false
