@@ -417,6 +417,37 @@ fn is_named_visible<S: IndexedSource>(
     Ok(true)
 }
 
+/// Reject a hidden named read without invoking any script. Only ordinary
+/// prototypes are inspected here: an exotic prototype may run code during
+/// visibility checks, so its checks must stay after the named lookup in
+/// [`get_trap`]. An ordinary accessor descriptor is safe to inspect; its
+/// getter still runs exactly once through the subsequent `Reflect.get`.
+fn named_read_is_hidden<S: IndexedSource>(
+    target: &JsObject,
+    source: &S,
+    name: &str,
+    context: &mut Context,
+) -> JsResult<bool> {
+    let key = JsString::from(name);
+    if target.has_own_property(key.clone(), context)? {
+        return Ok(true);
+    }
+    if source.legacy_override_built_ins() {
+        return Ok(false);
+    }
+    let mut prototype = target.prototype();
+    while let Some(object) = prototype {
+        if !object.is_ordinary() {
+            break;
+        }
+        if object.has_own_property(key.clone(), context)? {
+            return Ok(true);
+        }
+        prototype = object.prototype();
+    }
+    Ok(false)
+}
+
 fn call(function: &JsObject, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     function.call(&JsValue::undefined(), args, context)
 }
@@ -475,6 +506,7 @@ fn get_trap<S: IndexedSource>(
         return forward(|i| &i.reflect_get, args, context);
     }
     if let Some(name) = string_name(args, context)?
+        && !named_read_is_hidden(&target, source.as_ref(), &name, context)?
         && let Some(value) = source.named_property(&name, context)?
         && is_named_visible(&target, source.as_ref(), &name, context)?
     {
@@ -682,3 +714,6 @@ fn is_extensible_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> J
 fn prevent_extensions_trap(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
     Ok(false.into())
 }
+
+#[cfg(test)]
+mod tests;
