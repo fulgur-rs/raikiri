@@ -7589,3 +7589,228 @@ fn the_margin_below_the_last_balanced_paragraph_does_not_add_to_the_columns() {
     let (doc, container, _, _) = balanced_paragraphs_in("", "", &[3, 3]);
     assert_eq!(doc.nodes[container].layout.size.height, 70.0);
 }
+
+/// A 300px container of `columns` columns with no gap, and `container_css`
+/// besides, that holds one block of each of `styles`, a float or not, 20px high
+/// with no margin unless the style says otherwise. Returns the document, the
+/// container and the blocks.
+fn floats_in_columns(
+    columns: usize,
+    container_css: &str,
+    styles: &[&str],
+) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some(
+            format!("display:block;width:300px;columns:{columns};column-gap:0;{container_css}")
+                .as_str(),
+        ),
+    );
+    let children = styles
+        .iter()
+        .map(|style| {
+            doc.append_element(
+                Some(container),
+                "div",
+                Some(format!("display:block;height:20px;{style}").as_str()),
+            )
+        })
+        .collect();
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    (doc, container, children)
+}
+
+#[test]
+fn floats_of_opposite_sides_share_a_line_in_a_column() {
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:right;width:100px",
+            "float:left;width:100px",
+        ],
+    );
+    let at = |index: usize| {
+        let location = doc.nodes[floats[index]].layout.location;
+        (location.x, location.y)
+    };
+    assert_eq!(at(0), (0.0, 0.0));
+    assert_eq!(at(1), (200.0, 0.0));
+    // The third float shares the line too, beside the first.
+    assert_eq!(at(2), (100.0, 0.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 20.0);
+}
+
+#[test]
+fn a_float_that_does_not_fit_beside_the_floats_before_it_goes_below_them() {
+    let (doc, container, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:200px",
+            "float:left;width:200px",
+            "float:right;width:50px",
+        ],
+    );
+    let at = |index: usize| {
+        let location = doc.nodes[floats[index]].layout.location;
+        (location.x, location.y)
+    };
+    assert_eq!(at(0), (0.0, 0.0));
+    assert_eq!(at(1), (0.0, 20.0));
+    // The right float joins the line of the second float.
+    assert_eq!(at(2), (250.0, 20.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 40.0);
+}
+
+#[test]
+fn a_float_that_clears_goes_below_the_floats_before_it() {
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "float:right;width:100px;clear:left",
+        ],
+    );
+    let location = doc.nodes[floats[1]].layout.location;
+    assert_eq!((location.x, location.y), (200.0, 20.0));
+
+    // Clearing both sides is cleared by a float of either side.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:right;width:100px",
+            "float:left;width:100px;clear:both",
+        ],
+    );
+    assert_eq!(locations(&doc, &floats)[1].1, 20.0);
+}
+
+#[test]
+fn floats_that_fit_one_column_stay_in_it_beside_each_other() {
+    // Balancing would send the second of two blocks stacked in a column to the
+    // next one, but the two floats take one line of the first column.
+    let (doc, container, floats) =
+        floats_in_columns(2, "", &["float:left;width:60px", "float:left;width:60px"]);
+    let at = |index: usize| {
+        let location = doc.nodes[floats[index]].layout.location;
+        (location.x, location.y)
+    };
+    assert_eq!(at(0), (0.0, 0.0));
+    assert_eq!(at(1), (60.0, 0.0));
+    assert_eq!(doc.nodes[container].layout.size.height, 20.0);
+}
+
+#[test]
+fn white_space_between_floats_does_not_end_their_line() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Some("display:block;width:300px;columns:1;column-gap:0"),
+    );
+    let style = "display:block;height:20px;width:100px";
+    let left = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("{style};float:left").as_str()),
+    );
+    doc.append_text(container, " ");
+    let right = doc.append_element(
+        Some(container),
+        "div",
+        Some(format!("{style};float:right").as_str()),
+    );
+    lay_out_in_ahem(&mut doc, 400.0, 400.0);
+    assert_eq!(doc.nodes[left].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[right].layout.location.y, 0.0);
+    assert_eq!(doc.nodes[right].layout.location.x, 200.0);
+}
+
+#[test]
+fn an_empty_block_between_floats_ends_their_line_only_when_it_clears() {
+    // An empty block has no block size, so a float after it is no lower than the
+    // float before it. Clearing puts the block below that float, and the float
+    // after it below the block.
+    let (doc, _, blocks) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "height:0",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(locations(&doc, &blocks)[2], (100.0, 0.0));
+    let (doc, _, blocks) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px",
+            "height:0;clear:both",
+            "float:left;width:100px",
+        ],
+    );
+    assert_eq!(doc.nodes[blocks[2]].layout.location.y, 20.0);
+}
+
+/// The location of each of `blocks` in the document `doc`.
+fn locations(doc: &Document, blocks: &[usize]) -> Vec<(f32, f32)> {
+    blocks
+        .iter()
+        .map(|&block| {
+            let location = doc.nodes[block].layout.location;
+            (location.x, location.y)
+        })
+        .collect()
+}
+
+#[test]
+fn a_clear_of_the_other_side_does_not_end_the_line_and_the_margins_count_in_it() {
+    // The right float clears the right side, where there is no float, so it
+    // stays on the line of the left floats. Their margins take room too: the
+    // second left float starts after the margin box of the first.
+    let (doc, _, floats) = floats_in_columns(
+        1,
+        "",
+        &[
+            "float:left;width:100px;margin:0 10px",
+            "float:left;width:100px;margin:0 10px",
+            "float:right;width:50px;clear:right",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(10.0, 0.0), (130.0, 0.0), (250.0, 0.0)]
+    );
+}
+
+#[test]
+fn balanced_columns_count_floats_that_share_a_line_once() {
+    // Four floats make two lines of two, so the columns are 20px high, not
+    // 40px, and the second line stands in the second column.
+    let (doc, container, floats) = floats_in_columns(
+        2,
+        "",
+        &[
+            "float:left;width:60px",
+            "float:left;width:60px",
+            "float:left;width:60px",
+            "float:left;width:60px",
+        ],
+    );
+    assert_eq!(
+        locations(&doc, &floats),
+        [(0.0, 0.0), (60.0, 0.0), (150.0, 0.0), (210.0, 0.0)]
+    );
+    assert_eq!(doc.nodes[container].layout.size.height, 20.0);
+}

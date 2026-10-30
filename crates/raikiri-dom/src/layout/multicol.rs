@@ -1274,6 +1274,133 @@ struct ParagraphBalance {
     stacked: f32,
 }
 
+/// The slack that lets floats whose widths add up to the column width share a
+/// line, whatever rounding the widths carry.
+const LINE_EPSILON: f32 = 0.01;
+
+/// The line of floats in a column that the last child placed belongs to.
+///
+/// A float that does not fit beside the floats on the line goes below the
+/// lowest of them, which is the least that CSS 2 section 9.5.1 asks for: it
+/// does not move up beside a shorter float of the line to fill a gap.
+#[derive(Clone, Copy)]
+struct FloatLine {
+    /// The column of the line.
+    column: usize,
+    /// The block offset of the top of the line from the top of the group.
+    top: f32,
+    /// The width the left floats take, their margins included.
+    left: f32,
+    /// The width the right floats take, their margins included.
+    right: f32,
+}
+
+impl FloatLine {
+    /// A line in `column` at `top` with no float on it yet.
+    fn at(column: usize, top: f32) -> Self {
+        Self {
+            column,
+            top,
+            left: 0.0,
+            right: 0.0,
+        }
+    }
+
+    /// Whether `float` shares the line: it clears none of the floats on it and
+    /// fits in the room they leave in a column of `column_width`. A float that
+    /// clears the floats of one side while the other side has some goes below
+    /// the whole line, though it could sit beside the other side's floats when
+    /// they are taller; the line keeps no bottom per side.
+    fn admits(self, float: ColumnFloat, column_width: f32) -> bool {
+        let clears = match float.clear {
+            Clear::Left => self.left > 0.0,
+            Clear::Right => self.right > 0.0,
+            Clear::Both => self.left + self.right > 0.0,
+            Clear::None => false,
+        };
+        !clears && self.left + self.right + float.margin_box_width <= column_width + LINE_EPSILON
+    }
+
+    /// The line with `float` on it.
+    fn with(self, float: ColumnFloat) -> Self {
+        if float.right {
+            Self {
+                right: self.right + float.margin_box_width,
+                ..self
+            }
+        } else {
+            Self {
+                left: self.left + float.margin_box_width,
+                ..self
+            }
+        }
+    }
+}
+
+/// A float child of a column container: the side it floats to, the floats it
+/// clears, and the width of its margin box in a column.
+#[derive(Clone, Copy)]
+struct ColumnFloat {
+    right: bool,
+    clear: Clear,
+    margin_box_width: f32,
+}
+
+impl ColumnFloat {
+    /// The float `child` is, when it is one, `width` wide in a column of
+    /// `column_width`.
+    fn of(tree: &LayoutSession<'_>, child: usize, column_width: f32, width: f32) -> Option<Self> {
+        let style = style_of(tree, child);
+        style.float().is_floated().then(|| {
+            let (left, right) = column_horizontal_margins(&style, column_width, width);
+            Self {
+                right: matches!(style.float(), Float::Right),
+                clear: style.clear(),
+                margin_box_width: left + width + right,
+            }
+        })
+    }
+}
+
+/// Whether `child`, `needed` high in its column, leaves the line of floats
+/// before it open: the white space between two floats, or an empty block, has
+/// no block size and clears nothing, so a float after it is no lower than the
+/// floats before it (CSS 2, 9.5.1).
+fn keeps_float_line(tree: &LayoutSession<'_>, child: usize, needed: f32) -> bool {
+    needed == 0.0 && style_of(tree, child).clear() == Clear::None
+}
+
+/// The block size `entries`, the measured children of a column container,
+/// take one below the other in a column of `column_width`, where floats that
+/// share a line count once.
+fn stacked_height(
+    tree: &LayoutSession<'_>,
+    entries: &[(usize, LayoutOutput, BoxLayout, f32, f32, f32)],
+    column_width: f32,
+) -> f32 {
+    let mut total = 0.0;
+    // The line of the last float, and the block size of its lowest float.
+    let mut line: Option<(FloatLine, f32)> = None;
+    for (child, output, _, _, _, needed) in entries {
+        match ColumnFloat::of(tree, *child, column_width, output.size.width) {
+            Some(float) => {
+                let (shared, height) = line
+                    .filter(|(line, _)| line.admits(float, column_width))
+                    .unwrap_or((FloatLine::at(0, 0.0), 0.0));
+                total += (needed - height).max(0.0);
+                line = Some((shared.with(float), height.max(*needed)));
+            }
+            None => {
+                total += needed;
+                if !keeps_float_line(tree, *child, *needed) {
+                    line = None;
+                }
+            }
+        }
+    }
+    total
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_column_group(
     tree: &mut LayoutSession<'_>,
@@ -1331,7 +1458,7 @@ fn layout_column_group(
             let needed = margin_top + output.size.height + margin_bottom;
             measurements.push((child, output, layout, margin_top, margin_bottom, needed));
         }
-        let total = measurements.iter().map(|entry| entry.5).sum::<f32>();
+        let total = stacked_height(tree, &measurements, context.column_width);
         let largest = measurements.iter().map(|entry| entry.5).fold(0.0, f32::max);
         let target = (total / context.column_count as f32).max(largest);
         Some((measurements, target))
@@ -1386,6 +1513,8 @@ fn layout_column_group(
     });
     let mut avoid_column_break_after_previous = false;
     let mut occupied = std::collections::BTreeSet::new();
+    // The line of floats the last child belongs to, if it is a float.
+    let mut float_line: Option<FloatLine> = None;
     for (local_order, &child) in children.iter().enumerate() {
         let order = source_order + local_order;
         let measured = auto_measurements
@@ -1507,14 +1636,26 @@ fn layout_column_group(
         if let Some(plan) = &continuation {
             child_output.size.height = plan.first_height;
         }
+        // A float that fits in the room the floats before it leave on their
+        // line shares the line, instead of going below them like a block
+        // (CSS 2, 9.5.1).
+        let column_float =
+            ColumnFloat::of(tree, child, context.column_width, child_output.size.width);
+        let mut beside = float_line.filter(|line| {
+            line.column == column
+                && planned.is_none()
+                && continuation.is_none()
+                && column_float.is_some_and(|float| line.admits(float, context.column_width))
+        });
         // Content past the last column of a container with a definite
         // height continues in overflow columns (CSS Multi-column 1, 8.2).
+        let from = beside.map_or(cursor, |line| line.top);
         if let Some(height) = break_height
             && continuation.is_none()
             && group_balance.is_none()
             && (column + 1 < context.column_count || fragment_height.is_some())
-            && cursor > 0.0
-            && cursor + needed > height
+            && from > 0.0
+            && from + needed > height
             && !avoid_column_break
         {
             maximum = maximum.max(cursor);
@@ -1526,12 +1667,14 @@ fn layout_column_group(
                 });
             column += 1;
             cursor = 0.0;
+            beside = None;
         }
+        let top = beside.map_or(cursor, |line| line.top);
 
         let column_context = context.in_column(
             column,
             context.origin_x + context.column_offset_x(column),
-            context.origin_y + cursor,
+            context.origin_y + top,
         );
         // Block flow resolved the margins against the whole container; they
         // resolve against the column the child ends up in.
@@ -1549,9 +1692,16 @@ fn layout_column_group(
                 Float::Right => true,
                 Float::None => context.rtl,
             };
+            let shared = beside.unwrap_or(FloatLine::at(column, 0.0));
             let x = if flush_right {
                 content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
                     - margin_right
+                    - shared.right
+            } else if float.is_floated() && float_line.is_some() {
+                // Block flow placed a float after another against the floats
+                // it saw at the width of the whole container, so it is placed
+                // from the edge of the column here.
+                content_origin.x + context.column_offset_x(column) + shared.left + margin_left
             } else {
                 // Block flow placed the child with its `position: relative`
                 // inset. The painter adds that inset to a box placed in a
@@ -1569,7 +1719,11 @@ fn layout_column_group(
             };
             (margin_left, margin_right, x)
         };
-        let y = content_origin.y + cursor + margin_top;
+        let y = content_origin.y + top + margin_top;
+        if !keeps_float_line(tree, child, needed) {
+            float_line =
+                column_float.map(|float| beside.unwrap_or(FloatLine::at(column, top)).with(float));
+        }
         child_layout.order = order as u32;
         child_layout.margin.left = margin_left;
         child_layout.margin.right = margin_right;
@@ -1723,7 +1877,13 @@ fn layout_column_group(
             column = last_column;
             cursor = end + margin_bottom;
         } else {
-            cursor = y - content_origin.y + child_output.size.height + margin_bottom;
+            let bottom = y - content_origin.y + child_output.size.height + margin_bottom;
+            // The floats of a line end where the lowest of them does.
+            cursor = if beside.is_some() {
+                cursor.max(bottom)
+            } else {
+                bottom
+            };
             if let Some(balance) = &paragraph_balance
                 && balance.child == child
             {
