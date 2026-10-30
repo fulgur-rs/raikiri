@@ -201,3 +201,121 @@ fn element_text_content_is_still_a_structural_change() {
         }
     );
 }
+
+struct ScheduledHost {
+    inner: crate::runtime::test_host::StubHost,
+    image: usize,
+    destination: std::rc::Rc<std::cell::Cell<usize>>,
+    remaining: std::rc::Rc<std::cell::Cell<Option<usize>>>,
+    loads: std::rc::Rc<std::cell::Cell<usize>>,
+}
+impl crate::runtime::DocumentHost for ScheduledHost {
+    fn document(&self) -> &raikiri_dom::Document {
+        &self.inner.document
+    }
+    fn document_mut(&mut self) -> &mut raikiri_dom::Document {
+        match self.remaining.get() {
+            Some(0) => {
+                self.remaining.set(None);
+                self.inner
+                    .document
+                    .append_child(self.destination.get(), self.image)
+                    .unwrap();
+            }
+            Some(n) => self.remaining.set(Some(n - 1)),
+            None => {}
+        }
+        &mut self.inner.document
+    }
+    fn flush(&mut self) -> Result<(), crate::runtime::HostError> {
+        self.inner.flush()
+    }
+    fn box_geometry(
+        &mut self,
+        n: usize,
+    ) -> Result<Option<crate::runtime::BoxGeometry>, crate::runtime::HostError> {
+        self.inner.box_geometry(n)
+    }
+    fn computed_value(
+        &mut self,
+        n: usize,
+        p: &str,
+    ) -> Result<Option<String>, crate::runtime::HostError> {
+        self.inner.computed_value(n, p)
+    }
+    fn parse_fragment(
+        &mut self,
+        h: &str,
+        t: &str,
+        n: &str,
+    ) -> Result<raikiri_dom::Document, crate::runtime::HostError> {
+        self.inner.parse_fragment(h, t, n)
+    }
+    fn document_url(&self) -> Option<String> {
+        self.inner.document_url.clone()
+    }
+    fn load_image(&mut self, url: &str) -> Result<(), crate::runtime::HostError> {
+        self.loads.set(self.loads.get() + 1);
+        self.inner.load_image(url)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
+}
+
+fn host_move_during_dirty_access(skip: usize) {
+    use std::{cell::Cell, rc::Rc};
+    let (mut inner, body) = host();
+    let d = &mut inner.document;
+    let template = d.create_detached_element("template").unwrap();
+    d.append_child(body, template).unwrap();
+    let contents = d.allocate_template_fragment_root(template);
+    let image = d.create_detached_element("img").unwrap();
+    d.append_child(body, image).unwrap();
+    d.mark_in_document_flags();
+    let destination = Rc::new(Cell::new(contents));
+    let remaining = Rc::new(Cell::new(None));
+    let loads = Rc::new(Cell::new(0));
+    let mut runtime = DomRuntime::new(ScheduledHost {
+        inner,
+        image,
+        destination: destination.clone(),
+        remaining: remaining.clone(),
+        loads: loads.clone(),
+    })
+    .unwrap();
+    expose(&mut runtime, "img", image);
+    let report = runtime.run_document();
+    assert!(report.aborted.is_none());
+    runtime
+        .evaluate("globalThis.log=[];img.onload=img.onerror=e=>log.push(e.type);img.src='ok.png';")
+        .unwrap();
+    remaining.set(Some(skip));
+    crate::runtime::node::mark_dirty(runtime.context_mut()).unwrap();
+    assert_eq!(remaining.get(), None);
+    runtime.run_until_idle().unwrap();
+    assert_eq!(loads.get(), 0);
+    ok(&mut runtime, "log.length===0");
+    destination.set(body);
+    remaining.set(Some(skip));
+    crate::runtime::node::mark_dirty(runtime.context_mut()).unwrap();
+    assert_eq!(remaining.get(), None);
+    runtime.run_until_idle().unwrap();
+    assert_eq!(loads.get(), 1);
+    ok(&mut runtime, "log.join(',')==='load'");
+}
+
+#[test]
+fn host_move_during_focus_access_is_settled_before_return() {
+    host_move_during_dirty_access(1);
+}
+#[test]
+fn host_move_during_post_sync_access_is_settled_before_return() {
+    host_move_during_dirty_access(2);
+}

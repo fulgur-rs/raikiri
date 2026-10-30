@@ -293,12 +293,28 @@ pub(crate) fn take_host_failure(context: &mut Context) -> Option<String> {
 /// thrown as an `Error` rather than panicking. After a resource abort,
 /// refuse the operation before calling `f`.
 pub(crate) fn with_state<T>(context: &mut Context, f: impl FnOnce(&mut State) -> T) -> JsResult<T> {
-    with_state_unchecked(context, |state| {
-        if let Some(reason) = &state.event_loop.aborted {
-            return Err(event_loop::abort_error(reason.clone()));
-        }
-        Ok(f(state))
-    })?
+    with_state_after_sync(context, f, |_, result| result)
+}
+
+/// Run an update between ownership synchronizations, then observe its result.
+/// The observer can consume runtime notifications, but must not access the
+/// host, change document edges, or invoke script: it runs after the final sync.
+/// Neither callback runs after abort; borrow failures retain normal reporting.
+pub(crate) fn with_state_after_sync<T, R>(
+    context: &mut Context,
+    f: impl FnOnce(&mut State) -> T,
+    observe: impl FnOnce(&mut State, T) -> R,
+) -> JsResult<R> {
+    with_state_unchecked_after_sync(
+        context,
+        |state| {
+            if let Some(reason) = &state.event_loop.aborted {
+                return Err(event_loop::abort_error(reason.clone()));
+            }
+            Ok(f(state))
+        },
+        |state, result| result.map(|result| observe(state, result)),
+    )?
 }
 
 /// Reject a native boundary after abort without keeping the state borrowed.
@@ -314,6 +330,14 @@ pub(crate) fn with_state_unchecked<T>(
     context: &mut Context,
     f: impl FnOnce(&mut State) -> T,
 ) -> JsResult<T> {
+    with_state_unchecked_after_sync(context, f, |_, result| result)
+}
+
+fn with_state_unchecked_after_sync<T, R>(
+    context: &mut Context,
+    f: impl FnOnce(&mut State) -> T,
+    observe: impl FnOnce(&mut State, T) -> R,
+) -> JsResult<R> {
     let shared = shared(context);
     let Ok(mut state) = shared.0.try_borrow_mut() else {
         const MESSAGE: &str = "re-entrant DOM runtime access";
@@ -323,7 +347,7 @@ pub(crate) fn with_state_unchecked<T>(
     state.synchronize_node_graph();
     let result = f(&mut state);
     state.synchronize_node_graph();
-    Ok(result)
+    Ok(observe(&mut state, result))
 }
 
 /// The shared guard every node-creation binding
@@ -353,3 +377,6 @@ pub(crate) fn guard_node_budget_for(context: &mut Context, additional: usize) ->
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

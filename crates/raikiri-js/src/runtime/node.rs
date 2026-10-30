@@ -9,6 +9,7 @@ use super::node_gc::NodeObject;
 use super::webidl::{
     dom_string, guard_node_budget, host_failure, host_failure_with_message, this_document,
     this_element, this_node, throw_dom_exception, unreachable_mutation_error, with_state,
+    with_state_after_sync,
 };
 
 /// Record that the DOM changed so the next layout-dependent read flushes,
@@ -16,15 +17,20 @@ use super::webidl::{
 /// `dirty` alone cannot serve live collections: a successful flush clears it
 /// while the DOM stays changed.
 pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
-    let images = with_state(context, |s| {
-        s.dirty = true;
-        s.generation = s.generation.wrapping_add(1);
-        // A focused element that left the document loses focus for good.
-        s.host.document_mut().fix_up_focus();
-        // Consume even without images, before settlement can observe new changes.
-        let topology_changed = std::mem::take(&mut s.image_topology_changed);
-        topology_changed && (!s.inert_images.is_empty() || !s.active_images.is_empty())
-    })?;
+    let images = with_state_after_sync(
+        context,
+        |s| {
+            s.dirty = true;
+            s.generation = s.generation.wrapping_add(1);
+            // A focused element that left the document loses focus for good.
+            s.host.document_mut().fix_up_focus();
+        },
+        |s, ()| {
+            // Include host changes from the final sync, and consume before settlement.
+            let topology_changed = std::mem::take(&mut s.image_topology_changed);
+            topology_changed && (!s.inert_images.is_empty() || !s.active_images.is_empty())
+        },
+    )?;
     // Attribute and character data updates cannot move images between trees.
     if images {
         super::image::settle_moved_images(context)?;
