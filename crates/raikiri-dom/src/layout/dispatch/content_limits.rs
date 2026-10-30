@@ -629,6 +629,43 @@ pub(super) fn resolve_width_in_style(
     }
 }
 
+/// Put the lengths a `stretch` `min-height` and `max-height` of the block child
+/// `child` stand for in `style`, when its parent, whose content box is `basis`
+/// wide, offers it `room` for a `stretch` height (see [`stretch_fit_height`]).
+///
+/// The box lays itself out with these lengths in its style; a parent that
+/// sizes an `auto` width through the aspect ratio of the box needs them too,
+/// as the ratio carries a bound across to the width (CSS Sizing 4 §5.1).
+pub(crate) fn resolve_stretch_height_limits_in_style(
+    tree: &LayoutSession<'_>,
+    child: NodeId,
+    style: &mut Style,
+    room: Option<f32>,
+    basis: f32,
+) {
+    let idx = usize::from(child);
+    let limits = tree.nodes[idx].content_limits;
+    let Some(room) = room else {
+        return;
+    };
+    if style.aspect_ratio.is_none()
+        || !(is_stretch(limits.min.height) || is_stretch(limits.max.height))
+        || !applies(tree, idx, &limits)
+    {
+        return;
+    }
+    let bounds = Bounds {
+        min: is_stretch(limits.min.height).then_some(room),
+        max: is_stretch(limits.max.height).then_some(room),
+    };
+    let adjustment = box_sizing_height_adjustment(tree, idx, basis);
+    for entry in bounds.overrides(false, adjustment) {
+        entry
+            .apply_physical_sizing(style)
+            .expect("local sizing bound");
+    }
+}
+
 /// Run `f` with the lengths the keyword `min-width` and `max-width` of the
 /// block child `node` stand for in its style, when its parent, whose content
 /// box `parent_size` describes, offers it `room` for an `auto` width.
@@ -1477,6 +1514,23 @@ fn intrinsic_replaced_bounds(
             )],
         );
     }
+    // A `stretch` height whose room is definite is a stated height, which the
+    // ratio carries across to the width the keywords stand for.
+    if matches!(style.size.height.expand(), ExpandedDimension::Stretch)
+        && let Some(room) = stretch_fit_height(tree, idx, inputs)
+    {
+        let adjustment =
+            box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+        super::apply_local_sizing(
+            &mut style,
+            &[OwnedPropertyOverride::length(
+                LengthProperty::Height,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px((room - adjustment).max(0.0)),
+                true,
+            )
+            .expect("resolved pixel height")],
+        );
+    }
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
     let Some(bounds) =
         super::replaced_size::keyword_bounds(&style, inputs, natural, *limits, content_box_ratio)
@@ -1766,7 +1820,11 @@ pub(super) fn stretch_fit_width(
 /// its margins out of the room; a block child keeps those its parent holds in
 /// (see [`HeldMargins`]). Without a definite height the keyword has no effect.
 /// An out-of-flow box stretches to the room between its insets instead.
-fn stretch_fit_height(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+pub(super) fn stretch_fit_height(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+) -> Option<f32> {
     // The room of an out-of-flow box is what its containing block leaves it
     // between its insets and margins, which is the space it is offered.
     if is_oof_box(tree, idx) {

@@ -5428,3 +5428,10 @@ css/css-images/object-position-png-002c.html
 # An absolutely positioned box whose `width` or `height` is `stretch` and whose insets are `auto` begins at its static position and fills the containing block from there to its far edge (CSS Position 3 section 5.2, CSS Sizing 4 section 5.1). In a 150px containing block a box whose static position is 50px in is 100px wide; it was 150px wide and ran 50px past the edge. Both tests failed before the change (12500 pixels differ: a 150px green square instead of 100px) and KEEP in two audit-vacuous-passes runs. The text row differs from Chromium only by anti-aliasing (largest channel difference 64, no pixel above it).
 css/css-sizing/stretch/positioned-non-replaced-1.html
 css/css-sizing/stretch/positioned-replaced-1.html
+
+# --- a flex item with a `stretch` cross size has the base size and automatic minimum its ratio gives (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# A canvas with `width: stretch` in a column flex container (or `height: stretch` in a row one) and `align-self: start` has its cross size filled, so the ratio gives it the main size: a 200px square in a 200px container. Taffy took the cross size only from the item's own `width` or `height` or from `align-self: stretch`, so the box was 100px by 200px, the size of its natural one. All four tests failed before the change (20000 pixels differ) and KEEP in two audit-vacuous-passes runs.
+css/css-sizing/stretch/flexbox-flex-base-size-001.html
+css/css-sizing/stretch/flexbox-flex-base-size-002.html
+css/css-sizing/stretch/flexbox-auto-minimum-001.html
+css/css-sizing/stretch/flexbox-auto-minimum-002.html

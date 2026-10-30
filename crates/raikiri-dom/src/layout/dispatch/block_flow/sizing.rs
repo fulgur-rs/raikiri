@@ -1,6 +1,6 @@
 //! Resolve the physical box constraints used by project block flow.
 
-use crate::layout::protocol::{LayoutInput, SizingMode};
+use crate::layout::protocol::{AvailableSpace, LayoutInput, SizingMode};
 use raikiri_layout_geometry::MaybeMath;
 use raikiri_layout_geometry::{Edges, Size};
 use raikiri_layout_style::BoxStyle as Style;
@@ -92,6 +92,16 @@ impl Metrics {
                     .maybe_add(ratio_edges)
             }
         };
+        // A `stretch` size that is definite fills its room whatever the other
+        // axis states (CSS Sizing 4 §5.1), so it is no `auto` size for the
+        // bounds the ratio carries across: the room is the one the width is
+        // offered and the one the parent settled for the height.
+        let stretched = Size {
+            width: matches!(style.size.width.expand(), ExpandedDimension::Stretch)
+                && matches!(inputs.available_space.width, AvailableSpace::Definite(_)),
+            height: matches!(style.size.height.expand(), ExpandedDimension::Stretch)
+                && inputs.known_dimensions.height.is_some(),
+        };
         // A minimum or maximum carries across the aspect ratio only into an
         // axis whose preferred size is `auto`. Under `ContentSize` the
         // authored size is ignored, so every axis is `auto`. A width that
@@ -102,12 +112,14 @@ impl Metrics {
                 stands_in || inputs.sizing_mode != SizingMode::InherentSize || preferred.is_none()
             };
             Size {
-                width: across
-                    .width
-                    .filter(|_| own.width.is_none() && auto(specified.width, width_stands_in)),
-                height: across
-                    .height
-                    .filter(|_| own.height.is_none() && auto(specified.height, false)),
+                width: across.width.filter(|_| {
+                    own.width.is_none()
+                        && !stretched.width
+                        && auto(specified.width, width_stands_in)
+                }),
+                height: across.height.filter(|_| {
+                    own.height.is_none() && !stretched.height && auto(specified.height, false)
+                }),
             }
         };
         let own_min = style.min_size.maybe_resolve(inputs.parent_size);
