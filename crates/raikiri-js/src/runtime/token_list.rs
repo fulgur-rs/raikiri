@@ -21,14 +21,42 @@ const CLASS_ATTR: &str = "class";
 /// every access rather than cached, so the list stays live as `class`
 /// changes through `setAttribute` or anything else.
 fn token_set(context: &mut Context, index: usize) -> JsResult<Vec<String>> {
+    if crate::token_list_diagnostics::enabled() {
+        token_set_counted::<true>(context, index)
+    } else {
+        token_set_counted::<false>(context, index)
+    }
+}
+
+fn token_set_counted<const COUNT: bool>(
+    context: &mut Context,
+    index: usize,
+) -> JsResult<Vec<String>> {
+    let raw = attribute(context, index, CLASS_ATTR)?.unwrap_or_default();
+    let mut work = crate::token_list_diagnostics::Work::default();
+    if COUNT {
+        work.sets = 1;
+        work.attribute_bytes_cloned = raw.len() as u64;
+    }
     let mut out: Vec<String> = Vec::new();
-    for token in attribute(context, index, CLASS_ATTR)?
-        .unwrap_or_default()
-        .split_ascii_whitespace()
-    {
-        if !out.iter().any(|t| t == token) {
+    for token in raw.split_ascii_whitespace() {
+        if COUNT {
+            work.tokens += 1;
+        }
+        if !out.iter().any(|t| {
+            if COUNT {
+                work.dedup_comparisons += 1;
+            }
+            t == token
+        }) {
+            if COUNT {
+                work.owned_tokens += 1;
+            }
             out.push(token.to_owned());
         }
+    }
+    if COUNT {
+        crate::token_list_diagnostics::record(work);
     }
     Ok(out)
 }
@@ -138,9 +166,30 @@ fn token_list_contains(
 ) -> JsResult<JsValue> {
     let index = this_source(this, context)?.0;
     let token = dom_string(args, 0, context)?;
-    Ok(JsValue::from(
-        token_set(context, index)?.iter().any(|t| t == &token),
-    ))
+    let found = if crate::token_list_diagnostics::enabled() {
+        contains_counted::<true>(context, index, &token)?
+    } else {
+        contains_counted::<false>(context, index, &token)?
+    };
+    Ok(JsValue::from(found))
+}
+
+fn contains_counted<const COUNT: bool>(
+    context: &mut Context,
+    index: usize,
+    token: &str,
+) -> JsResult<bool> {
+    let mut work = crate::token_list_diagnostics::Work::default();
+    let found = token_set(context, index)?.iter().any(|part| {
+        if COUNT {
+            work.contains_comparisons += 1;
+        }
+        part == token
+    });
+    if COUNT {
+        crate::token_list_diagnostics::record(work);
+    }
+    Ok(found)
 }
 
 /// `add(...tokens)` (DOM §7.1): every argument is `DOMString`-converted and
