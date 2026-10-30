@@ -557,4 +557,10 @@ cases! {
     abspos_stretch_centered_in_a_flex_containing_block_less_margins:
         r#"<div style="display:flex;justify-content:center;align-items:center;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:5px"></div></div>"# =>
         [("t", (13.0, 13.0, 140.0, 140.0))];
+    abspos_stretch_aligned_safe_to_the_end_keeps_its_end_edge_when_it_overflows:
+        r#"<div style="margin-top:100px"><div style="display:flex;align-items:safe end;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch;min-height:200px"></div></div></div>"# =>
+        [("t", (8.0, 50.0, 150.0, 200.0))];
+    abspos_stretch_aligned_safe_to_the_end_without_overflow:
+        r#"<div style="display:flex;align-items:safe end;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 150.0, 150.0))];
 }

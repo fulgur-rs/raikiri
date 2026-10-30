@@ -243,9 +243,11 @@ pub(super) fn layout_candidates(
 /// that position, is sized and placed as the box with `auto` insets would be
 /// by the rule, so each qualifying box gets that inset: the left or top one for
 /// a box aligned to the start of its static area, the right or bottom one for
-/// a box aligned to its end. A box centered in its static area keeps its
-/// insets. A grid container places its boxes in the grid area they name, which
-/// is not the area the static position is measured in.
+/// a box aligned to its end. A box that overflows stays anchored to that edge
+/// whatever the overflow position of the alignment says, as in Chromium. A box
+/// centered in its static area keeps its insets. A grid container places its
+/// boxes in the grid area they name, which is not the area the static position
+/// is measured in.
 fn static_position_insets(
     tree: &LayoutSession<'_>,
     owner: NodeId,
