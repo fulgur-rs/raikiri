@@ -3,6 +3,7 @@ use raikiri_traits::{FetchOutcome, Method, NetworkError, NetworkProvider};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod admission_tests;
+mod fragment_tests;
 
 struct RejectingProvider;
 

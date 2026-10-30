@@ -1,3 +1,5 @@
+mod fragment_tests;
+
 use super::*;
 use raikiri_traits::{ReplacedResolver, ResolverRequest};
 
