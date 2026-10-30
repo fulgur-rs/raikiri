@@ -1076,9 +1076,9 @@ fn substring_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     Ok(JsValue::from(boa_engine::JsString::from(&units[..])))
 }
 
-/// DOM §4.10 "append data": "replace data" with the offset at the end of
-/// the data, so nothing is read, converted, or rebuilt beyond the text
-/// being added.
+/// DOM §4.10 "append data": "replace data" at the end of the stored data.
+/// Only the addition is converted from JavaScript to UTF-8 here; native
+/// storage owns the append and any later contiguous-view materialization.
 ///
 /// The stored data is valid UTF-8, so it never ends in half a surrogate
 /// pair, and nothing follows the offset: a lone surrogate in `data` cannot

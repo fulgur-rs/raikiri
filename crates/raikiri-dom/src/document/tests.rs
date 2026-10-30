@@ -22,6 +22,7 @@ mod serialize_inner_html_tests;
 mod stylesheet_source_tests;
 mod stylesheets_tests;
 mod template_in_document_tests;
+mod text_append_tests;
 mod tree_changes_tests;
 
 mod bulk_detach_tests;
