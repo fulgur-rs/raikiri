@@ -1,4 +1,5 @@
-use crate::runtime::style::{attribute_names, inline_style_value, with_inline_style_property};
+use super::{declaration_lookup_name, find_declaration, validated_inline_declarations};
+use crate::runtime::style::{attribute_names, with_inline_style_property};
 use crate::runtime::test_host::StubHost;
 use crate::runtime::{DomRuntime, RuntimeError};
 
@@ -2633,4 +2634,15 @@ fn style_sheet_delete_rule_detaches_page_rule_margin_objects() {
         "sheet.cssRules.length === 0 && margin.name === 'top-left' && \
          margin.style.content === '\"a\"' && el.textContent === 'p {} @page { @top-left { content: \"a\" } }'",
     );
+}
+
+mod declaration_cache_tests;
+
+fn inline_style_value(style_attr: Option<&str>, property: &str, page: bool) -> String {
+    let Some(lookup) = declaration_lookup_name(property) else {
+        return String::new();
+    };
+    find_declaration(&validated_inline_declarations(style_attr, page), &lookup)
+        .map(|(value, _)| value)
+        .unwrap_or_default()
 }

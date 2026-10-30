@@ -1905,6 +1905,18 @@ impl Document {
         e.inline_style = inline_style;
     }
 
+    /// Clone the element's immutable inline-style source, preserving an absent
+    /// attribute separately from an explicitly empty one. Heap strings share
+    /// storage with the document, so readers can retain and compare snapshots
+    /// without copying the full source on every read. Returns `None` for a
+    /// missing node, a non-element, or an absent `style` attribute.
+    pub fn element_inline_style_snapshot(&self, id: usize) -> Option<SmolStr> {
+        let NodeData::Element(element) = &self.nodes.get(id)?.data else {
+            return None;
+        };
+        element.inline_style.clone()
+    }
+
     /// Update an Element's sampled animation declarations without changing
     /// its authored `style` attribute.
     ///
