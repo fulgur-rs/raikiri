@@ -15,8 +15,8 @@
 //! `none`.
 
 use raikiri_layout_style::values::{
-    BoxSizing, Dimension, Display, ExpandedDimension, LengthIdentity, LengthPercentage,
-    LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
+    BoxSizing, Dimension, Display, ExpandedDimension, ExpandedLengthPercentageAuto, LengthIdentity,
+    LengthPercentage, LengthPercentageAuto, MaybeResolve, Position, ResolveOrZero,
 };
 use std::collections::HashMap;
 
@@ -1316,6 +1316,110 @@ fn probe(
     size
 }
 
+/// Whether the box `idx` is a flex container that wraps its items onto lines
+/// of a vertical main axis, on the axes of a horizontal writing mode.
+pub(super) fn is_wrapping_column_flex(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    if tree.nodes[idx].formatting_context != FormattingContext::Flex
+        || tree.has_vertical_writing_mode(idx)
+    {
+        return false;
+    }
+    let style = tree.physical_style(idx);
+    !style.flex_direction_is_row() && style.flex_wraps()
+}
+
+/// The border-box min-content width of the flex container `node_id` when it
+/// wraps its items onto lines of a vertical main axis, which `inputs` ask for.
+///
+/// Taffy answers a min-content request with the sum of the widths of the
+/// lines, which are as many as the height of the container makes them. A line
+/// of such a container is as wide as its widest item, and the min-content
+/// width of the container is the widest item of all, as if the height left
+/// room for a single line (Chromium: a container of two 26px items in a 100px
+/// height is 26px wide at min-content and 52px at max-content). The container
+/// is measured with its height and its width limits left open, and the caller
+/// clamps the width by the limits. A container whose width, or the width of an
+/// item, follows its height (see [`width_follows_container_height`]) keeps the
+/// sum of its lines, which is measured with the height.
+pub(super) fn wrapping_column_min_content_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: &LayoutInput,
+) -> Option<f32> {
+    let idx = usize::from(node_id);
+    if inputs.run_mode != RunMode::ComputeSize
+        || inputs.axis == RequestedAxis::Vertical
+        || !matches!(inputs.available_space.width, AvailableSpace::MinContent)
+        || inputs.known_dimensions.width.is_some()
+        || tree.context.content_limit_probes.contains(&idx)
+        || !is_wrapping_column_flex(tree, idx)
+    {
+        return None;
+    }
+    // A length is the width of the box whatever its items ask for, and
+    // `max-content` is the sum of the lines; the other widths (`auto`, a
+    // percentage, `fit-content`, `stretch`, `min-content`) take the widest
+    // item into account.
+    if matches!(
+        tree.physical_style(idx).size().width.expand(),
+        ExpandedDimension::Length(_) | ExpandedDimension::Calc(_) | ExpandedDimension::MaxContent
+    ) || width_follows_container_height(tree, node_id)
+    {
+        return None;
+    }
+    let mut along = *inputs;
+    along.axis = RequestedAxis::Horizontal;
+    along.known_dimensions.height = None;
+    along.known_dimensions_are_definite.height = false;
+    along.available_space.height = AvailableSpace::MaxContent;
+    let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
+    use LengthProperty::*;
+    Some(probe(
+        tree,
+        node_id,
+        key,
+        along,
+        neutral_size_overrides(&[Width, MinWidth, MaxWidth, Height, MinHeight, MaxHeight]),
+    ))
+}
+
+/// Whether the width of the flex container `node_id` or of one of its items
+/// can follow the height of the container: the container has a ratio, or an
+/// item takes a percentage of the height (or all of it), as a box with a ratio
+/// and a percentage height does.
+///
+/// [`wrapping_column_min_content_width`] leaves the height of the container
+/// open, so such a width would be measured without what it follows. An item
+/// that grows to the height does not count: Chromium leaves the grown height
+/// out of the min-content contribution of the item as well.
+fn width_follows_container_height(tree: &LayoutSession<'_>, node_id: NodeId) -> bool {
+    let takes_height = |idx: usize| {
+        let style = tree.physical_style(idx);
+        matches!(
+            style.size().height.expand(),
+            ExpandedDimension::Percent(_)
+                | ExpandedDimension::Calc(_)
+                | ExpandedDimension::FitContentPercent(_)
+                | ExpandedDimension::FitContentCalc(_)
+                | ExpandedDimension::Stretch
+        ) || [style.min_size().height, style.max_size().height]
+            .into_iter()
+            .any(|limit| {
+                matches!(
+                    limit.expand(),
+                    ExpandedLengthPercentageAuto::Percent(_)
+                        | ExpandedLengthPercentageAuto::Calc(_)
+                )
+            })
+    };
+    tree.physical_style(usize::from(node_id))
+        .stated_aspect_ratio()
+        .is_some()
+        || tree
+            .child_ids(node_id)
+            .any(|item| takes_height(usize::from(item)))
+}
+
 /// The border-box widths the keyword `min-width` and `max-width` of `node_id`
 /// stand for in the room `inputs` offers it.
 fn replaced_keyword_bounds(
@@ -1640,7 +1744,12 @@ fn stretch_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput) -> 
 /// offers it: the width of its containing block less its margins, an `auto`
 /// margin counting for nothing, and no more than the `room` the parent leaves
 /// it (CSS Sizing 3 §3.1.1). Without a containing block width, that room.
-fn stretch_fit_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput, room: f32) -> f32 {
+pub(super) fn stretch_fit_width(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+    room: f32,
+) -> f32 {
     let Some(basis) = inputs.parent_size.width else {
         return room.max(0.0);
     };

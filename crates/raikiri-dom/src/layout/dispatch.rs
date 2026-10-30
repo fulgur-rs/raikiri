@@ -611,6 +611,15 @@ impl LayoutSession<'_> {
             .is_some_and(|parent| !self.physical_style(parent).flex_direction_is_row())
     }
 
+    /// Whether box `node` is an item of a flex container that wraps its items
+    /// onto lines with a vertical main axis.
+    pub(crate) fn in_wrapping_column_flex_container(&self, node: usize) -> bool {
+        self.taffy_parent_of(node)
+            .filter(|&parent| self.nodes[parent].layout_display() == Display::Flex)
+            .map(|parent| self.physical_style(parent))
+            .is_some_and(|container| !container.flex_direction_is_row() && container.flex_wraps())
+    }
+
     /// Whether `known` is only the cross size that a flex container stretches
     /// its item `node`, with the box style `style`, to while the item's main
     /// size is measured.
@@ -953,6 +962,7 @@ impl LayoutSession<'_> {
             let idx = usize::from(node_id);
             let inputs = with_fit_content_room(tree, idx, inputs);
             let inputs = with_column_flex_keyword_room(tree, idx, inputs);
+            let inputs = with_wrapping_column_stretch_width(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
             // Size containment may give the box a width the request did not
             // have; whether the request stretched it is read before that.
@@ -2609,21 +2619,23 @@ fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
 }
 
 /// The border-box `min-width` and `max-width` of element `idx` that resolve
-/// against `parent_width`, the maximum no smaller than the minimum.
+/// against `parent_width`, the maximum no smaller than the minimum and neither
+/// smaller than the padding and border.
 fn border_box_width_bounds(
     tree: &LayoutSession<'_>,
     idx: usize,
     parent_width: Option<f32>,
 ) -> (f32, f32) {
     let style = tree.physical_style(idx);
-    let adjustment =
-        crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
+    let basis = parent_width.unwrap_or(0.0);
+    let adjustment = crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, basis);
+    let edges = crate::layout::ifc::boxes::horizontal_padding_border(tree, idx, basis);
     let resolve = |value, auto: f32| {
         crate::layout::resolve_length_percentage_auto(value, parent_width)
             .filter(|resolved| resolved.is_finite())
             .map_or(auto, |resolved| resolved + adjustment)
     };
-    let min = resolve(style.min_size().width, 0.0);
+    let min = resolve(style.min_size().width, 0.0).max(edges);
     let max = resolve(style.max_size().width, f32::INFINITY);
     (min, max.max(min))
 }
@@ -3216,6 +3228,10 @@ fn flex_layout_sized(
             }
         },
     );
+    if let Some(width) = content_limits::wrapping_column_min_content_width(tree, node_id, &inputs) {
+        let (min, max) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+        output.size.width = width.clamp(min, max);
+    }
     let in_flow_overflow = output.scrollable_overflow_rect;
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);
@@ -3346,6 +3362,35 @@ fn with_column_flex_keyword_room(
     inputs
 }
 
+/// Give an item of a wrapping column flex container with a `stretch` width the
+/// width of its container while Taffy measures it.
+///
+/// A flex line is as wide as its widest item, and the width of an item that
+/// stretches counts as the width of the container there (CSS Sizing 4 §5.1).
+/// Taffy leaves the keyword open until the item stretches to its line, so a
+/// line of stretching items alone would be as wide as their contents. The line
+/// still gives the item its final width.
+fn with_wrapping_column_stretch_width(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let AvailableSpace::Definite(room) = inputs.available_space.width else {
+        return inputs;
+    };
+    if inputs.known_dimensions.width.is_some()
+        || inputs.parent_size.width.is_none()
+        || tree.physical_style(idx).size().width.expand() != ExpandedDimension::Stretch
+        || !tree.in_wrapping_column_flex_container(idx)
+    {
+        return inputs;
+    }
+    inputs.known_dimensions.width =
+        Some(content_limits::stretch_fit_width(tree, idx, &inputs, room));
+    inputs.known_dimensions_are_definite.width = true;
+    inputs
+}
+
 /// Give a flex container with a `fit-content` width, or a
 /// `fit-content(<length-percentage>)` one whose limit [`with_fit_content_room`]
 /// made the room, the width CSS Sizing 3 §3.1.1 defines for it: the room
@@ -3430,7 +3475,10 @@ fn with_clamped_keyword_width(
                 style.max_size().width.expand(),
                 ExpandedLengthPercentageAuto::Auto
             )
-    } || tree.nodes[idx].content_limits != content_limits::ContentLimits::NONE;
+    } || tree.nodes[idx].content_limits != content_limits::ContentLimits::NONE
+        // Taffy reads the `min-content` width of a container that wraps its
+        // items onto vertical lines as the sum of the lines.
+        || (space == AvailableSpace::MinContent && content_limits::is_wrapping_column_flex(tree, idx));
     if clamped {
         let mut probe = inputs;
         probe.run_mode = RunMode::ComputeSize;
