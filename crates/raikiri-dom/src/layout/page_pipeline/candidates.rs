@@ -973,7 +973,15 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let lone_tail = (in_flow_block
                     && frame.previous_box.is_some()
                     && !matches!(frame.tie, AvoidTie::RunStart { .. }))
-                .then(|| lone_box_tail(document, cascade, body_id, node_id))
+                .then(|| {
+                    lone_box_tail(
+                        document,
+                        cascade,
+                        body_id,
+                        node_id,
+                        frame.closing_edges > 0.0,
+                    )
+                })
                 .flatten()
                 .filter(|&tail| {
                     tail + frame.closing_edges > 0.001
