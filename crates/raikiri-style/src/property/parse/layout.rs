@@ -1,6 +1,7 @@
 //! Layout property parsers: display, float/clear, flexbox, grid, alignment,
 //! multi-column, fragmentation breaks, tables and lists.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cssparser::{ParseError, Parser, Token};
@@ -1301,6 +1302,19 @@ fn build_grid_template_areas(
     rows: Vec<Vec<Option<SmolStr>>>,
     row_strings: Vec<SmolStr>,
 ) -> Option<GridTemplateAreas> {
+    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+    if crate::grid_area_diagnostics::enabled() {
+        return build_grid_template_areas_impl::<true>(rows, row_strings);
+    }
+    build_grid_template_areas_impl::<false>(rows, row_strings)
+}
+
+fn build_grid_template_areas_impl<const COUNT: bool>(
+    rows: Vec<Vec<Option<SmolStr>>>,
+    row_strings: Vec<SmolStr>,
+) -> Option<GridTemplateAreas> {
+    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+    let mut work = crate::grid_area_diagnostics::Work::default();
     let row_count = rows.len();
     let column_count = rows[0].len();
     // The spec says (verbatim): "All strings must define the same number
@@ -1309,34 +1323,85 @@ fn build_grid_template_areas(
     if column_count == 0 || rows.iter().any(|r| r.len() != column_count) {
         return None;
     }
-    // (name, row_min, row_max, col_min, col_max), in first-seen order.
-    // Use a linear scan because a realistic grid has few distinct area names;
-    // there is no need for a HashMap.
-    let mut bounds: Vec<(SmolStr, usize, usize, usize, usize)> = Vec::new();
+    // Keep first-seen output order independently of the lookup index. Both
+    // collections borrow names from immutable rows, never from the growing Vec.
+    let mut bounds: Vec<(&SmolStr, usize, usize, usize, usize)> = Vec::new();
+    let mut indexed: Option<HashMap<&str, usize>> = None;
     for (r, row) in rows.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             let Some(name) = cell else { continue };
-            match bounds.iter_mut().find(|(n, ..)| n == name) {
-                Some((_, r0, r1, c0, c1)) => {
-                    *r0 = (*r0).min(r);
-                    *r1 = (*r1).max(r);
-                    *c0 = (*c0).min(c);
-                    *c1 = (*c1).max(c);
+            let index = if let Some(indexed) = &indexed {
+                #[cfg(any(test, feature = "grid-area-diagnostics"))]
+                if COUNT {
+                    work.indexed_lookups += 1;
                 }
-                None => bounds.push((name.clone(), r, r, c, c)),
+                indexed.get(name.as_str()).copied()
+            } else {
+                bounds.iter().position(|(n, ..)| {
+                    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+                    if COUNT {
+                        work.linear_comparisons += 1;
+                    }
+                    *n == name
+                })
+            };
+            if let Some(index) = index {
+                let (_, r0, r1, c0, c1) = &mut bounds[index];
+                *r0 = (*r0).min(r);
+                *r1 = (*r1).max(r);
+                *c0 = (*c0).min(c);
+                *c1 = (*c1).max(c);
+            } else {
+                // Avoid hashing and allocation for up to eight distinct names.
+                // Beyond that fixed prefix, randomized hashing gives expected
+                // linear lookup work in named cells (plus string byte costs).
+                if bounds.len() == 8 && indexed.is_none() {
+                    indexed = Some(
+                        bounds
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (n, ..))| (n.as_str(), i))
+                            .collect(),
+                    );
+                    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+                    if COUNT {
+                        work.indexed_insertions += bounds.len() as u64;
+                    }
+                }
+                if let Some(indexed) = &mut indexed {
+                    indexed.insert(name.as_str(), bounds.len());
+                    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+                    if COUNT {
+                        work.indexed_insertions += 1;
+                    }
+                }
+                bounds.push((name, r, r, c, c));
             }
         }
     }
+    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+    if COUNT {
+        crate::grid_area_diagnostics::record(work);
+    }
     let mut areas = Vec::with_capacity(bounds.len());
     for (name, r0, r1, c0, c1) in bounds {
-        let is_filled_rectangle = rows[r0..=r1]
-            .iter()
-            .all(|row| row[c0..=c1].iter().all(|cell| cell.as_ref() == Some(&name)));
+        let is_filled_rectangle = rows[r0..=r1].iter().all(|row| {
+            row[c0..=c1].iter().all(|cell| {
+                #[cfg(any(test, feature = "grid-area-diagnostics"))]
+                if COUNT {
+                    crate::grid_area_diagnostics::record(crate::grid_area_diagnostics::Work {
+                        rectangle_cells: 1,
+                        ..Default::default()
+                    });
+                }
+                cell.as_ref() == Some(name)
+            })
+        });
         if !is_filled_rectangle {
             return None;
         }
         areas.push(GridTemplateAreaEntry {
-            name,
+            name: name.clone(),
             row_start: r0 as u32 + 1,
             row_end: r1 as u32 + 2,
             column_start: c0 as u32 + 1,
@@ -1758,3 +1823,6 @@ pub(super) fn parse_list_style(input: &mut Parser<'_, '_>) -> Option<ListStyleSh
         image: image.unwrap_or(BackgroundImage::None),
     })
 }
+
+#[cfg(test)]
+mod tests;

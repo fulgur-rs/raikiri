@@ -655,3 +655,7 @@ mod tests;
 pub use computed::custom_property_diagnostics::{
     CustomPropertyLookupWork, begin_custom_property_diagnostics, finish_custom_property_diagnostics,
 };
+
+#[cfg(any(test, feature = "grid-area-diagnostics"))]
+#[doc(hidden)]
+pub mod grid_area_diagnostics;
