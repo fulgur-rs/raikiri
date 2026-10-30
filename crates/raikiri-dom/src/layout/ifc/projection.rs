@@ -638,9 +638,38 @@ pub(crate) fn box_kind_in(
                 | DisplayValue::BlockRuby
         )
     {
-        return Some(IfcBoxKind::Block);
+        // A block-level box in ruby content is inlinized: it is an atomic
+        // inline in the line (CSS Ruby 1 §2.2).
+        let in_ruby = is_inlinized_in_ruby(boxes, id);
+        return Some(if in_ruby {
+            IfcBoxKind::Atomic
+        } else {
+            IfcBoxKind::Block
+        });
     }
     None
+}
+
+/// How many inline boxes between a block-level box and a ruby box are looked
+/// through for [`is_inlinized_in_ruby`].
+const MAX_INLINIZE_DEPTH: usize = 64;
+
+/// Whether the block-level box `id` is in ruby content: the nearest box around
+/// it that is not an inline box is a ruby container or a ruby internal box.
+/// Ruby content is inline-level, so such a box is inlinized (CSS Ruby 1 §2.2).
+fn is_inlinized_in_ruby(boxes: crate::layout::box_tree::BoxTree<'_>, id: usize) -> bool {
+    let mut current = id;
+    for _ in 0..MAX_INLINIZE_DEPTH {
+        let Some(parent) = boxes.parent(current, crate::layout::BoxParentScope::LayoutRoot) else {
+            return false;
+        };
+        match boxes.display(parent) {
+            Some(display) if display.is_ruby() => return true,
+            Some(DisplayValue::Inline) => current = parent,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// A physical `clear` side; `None` for `none` and the logical sides, which
