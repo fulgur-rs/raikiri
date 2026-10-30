@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn native_row_indices_accept_65535_and_reject_65536_without_wrapping() {
+    let mut doc = Document::new();
+    let row = doc.append_element(Some(0), "tr", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "td", Some("display:table-cell"));
+    doc.mark_in_document_flags();
+    with_layout_session(&mut doc, |session| {
+        let mut rows = vec![row; usize::from(u16::MAX)];
+        let mut cells = Vec::new();
+        let mut columns = 0;
+        super::super::push_row(session, row, [cell], &mut rows, &mut cells, &mut columns)
+            .expect("the last representable row index is supported");
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].row, u16::MAX);
+        let error =
+            super::super::push_row(session, row, [cell], &mut rows, &mut cells, &mut columns)
+                .expect_err("the next row must not wrap to zero");
+        assert_eq!(
+            format!("{error:?}"),
+            format!("{:?}", super::super::table_column_error())
+        );
+        assert_eq!(cells.len(), 1);
+        assert_eq!(columns, 1);
+    });
+}
+
+#[test]
 fn rowspan_clamps_after_parsing_a_wide_integer() {
     for (value, expected) in [
         ("1", 1),
