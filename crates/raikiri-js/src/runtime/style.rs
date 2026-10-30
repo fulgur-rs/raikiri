@@ -707,10 +707,7 @@ fn split_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str, 
 /// `""` -- including when `property` is not declared at all, is unsupported,
 /// or holds an unparseable value (all dropped from the validated view).
 fn property_priority(declarations: &[ValidatedDeclaration], property: &str) -> &'static str {
-    let Some(lookup) = declaration_lookup_name(property) else {
-        return "";
-    };
-    match find_declaration(declarations, &lookup) {
+    match find_declaration(declarations, property) {
         Some((_, true)) => "important",
         _ => "",
     }
@@ -1294,12 +1291,14 @@ fn style_get_property_priority(
     let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
     let priority = if source.computed {
         String::new()
-    } else {
+    } else if let Some(lookup) = declaration_lookup_name(&name) {
         with_state(context, |s| {
             source.with_declarations(s, |declarations| {
-                property_priority(declarations, &name).to_owned()
+                property_priority(declarations, &lookup).to_owned()
             })
         })?
+    } else {
+        String::new()
     };
     Ok(JsValue::from(JsString::from(priority)))
 }

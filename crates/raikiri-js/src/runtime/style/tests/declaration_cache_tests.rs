@@ -347,3 +347,33 @@ fn page_descriptor_cache_tracks_page_and_margin_rule_updates() {
         "p.length===1 && p.getPropertyValue('size')==='letter' && m.length===1 && m.getPropertyValue('content')==='\"y\"'",
     );
 }
+
+#[test]
+fn invalid_lookup_names_do_not_validate_and_shorthand_work_is_counted() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.document
+        .set_element_inline_style(body, Some(custom_text(32).into()));
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s=document.body.style;").unwrap();
+    diagnostics::begin();
+    ok(
+        &mut rt,
+        "['','   ','--',' -- '].every(name=>s.getPropertyValue(name)==='' && s.getPropertyPriority(name)==='')",
+    );
+    assert_eq!(diagnostics::finish().validation_calls, 0);
+    let text = "background-color:red;background:none;background-image:none;background:var(--bg);";
+    diagnostics::begin();
+    let declarations = validated_inline_declarations(Some(text), false);
+    let work = diagnostics::finish();
+    assert_eq!(work.validation_calls, 1);
+    assert_eq!(work.raw_declarations, 4);
+    assert!(work.index_removals > 0);
+    assert!(work.index_insertions > 0);
+    assert_eq!(
+        declaration_tuples(declarations),
+        reference_validation(text, false)
+    );
+    diagnostics::begin();
+    diagnostics::begin();
+    assert_eq!(diagnostics::finish(), Default::default());
+}
