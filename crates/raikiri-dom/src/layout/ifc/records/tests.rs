@@ -151,13 +151,16 @@ fn membership_covers_all_box_kinds_duplicates_and_a_root_entry() {
         IfcBoxKind::Block,
         IfcBoxKind::OutOfFlow,
     ] {
-        ifc.boxes.push(IfcBox { node: pruned, kind });
+        ifc.boxes = vec![
+            IfcBox { node: pruned, kind },
+            IfcBox { node: pruned, kind },
+            IfcBox {
+                node: fixture.root,
+                kind: IfcBoxKind::Atomic,
+            },
+        ];
+        reset_membership_work();
+        assert_eq!(inline_elements(&fixture.doc, fixture.root, &ifc), [kept]);
+        assert_eq!(membership_work(), (3, 2));
     }
-    ifc.boxes.push(IfcBox {
-        node: fixture.root,
-        kind: IfcBoxKind::Atomic,
-    });
-    reset_membership_work();
-    assert_eq!(inline_elements(&fixture.doc, fixture.root, &ifc), [kept]);
-    assert_eq!(membership_work(), (5, 2));
 }
