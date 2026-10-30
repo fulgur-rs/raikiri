@@ -32,6 +32,8 @@ stacker = { workspace = true }
 raikiri-dom = { workspace = true, features = ["logical-snapshot"] }
 
 [features]
+# Optional logical work counts for UTF-16 substring reads.
+substring-diagnostics = []
 # Optional logical work counts for class token reads.
 token-list-diagnostics = []
 # Optional counts of full URLSearchParams snapshots.
@@ -70,3 +72,8 @@ required-features = ["url-params-diagnostics"]
 name = "token_contains"
 harness = false
 required-features = ["token-list-diagnostics"]
+
+[[bench]]
+name = "substring_data"
+harness = false
+required-features = ["substring-diagnostics"]
