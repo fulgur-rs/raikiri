@@ -5,7 +5,7 @@ use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
     OpenBlockEdges, box_intersects_page, element_transform, fixed_position_px,
-    generated_flow_height, paintable_border_radius, snap_column_clip_outward,
+    generated_flow_height, outline_outset, paintable_border_radius, snap_column_clip_outward,
     transform_translation, translation_only, used_padding_for_paint, vertical_align_shift_px,
 };
 use anyrender::PaintScene;
@@ -548,12 +548,29 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_height = paint_height.min(clip_height);
             paint_background_height = paint_background_height.min(clip_height);
             let clip_origin_y = paint_y.floor();
+            // The columns cut the content of the box, not its outline, which
+            // reaches beyond the edges of the box. The clip grows by as much,
+            // so content of the box that overflows it by that much shows too.
+            // A box they cut off at the bottom has no bottom edge for the
+            // outline to follow, and a box with no area paints no outline.
+            let cv = &self.cascade.computed[node_id];
+            let outset = f64::from(outline_outset(
+                layout.size.width,
+                layout.size.height,
+                &cv.outline,
+                cv.outline_offset,
+            ));
+            let bottom_outset = if layout.size.height <= clip_height {
+                outset
+            } else {
+                0.0
+            };
             let clip = snap_column_clip_outward(
                 Rect::new(
-                    paint_x as f64,
-                    clip_origin_y as f64,
-                    (paint_x + layout.size.width) as f64,
-                    (clip_origin_y + clip_height) as f64,
+                    paint_x as f64 - outset,
+                    clip_origin_y as f64 - outset,
+                    (paint_x + layout.size.width) as f64 + outset,
+                    (clip_origin_y + clip_height) as f64 + bottom_outset,
                 ),
                 image_cache.device_grid(scene.transform),
                 // The column clip of a box that fills the columns: its
