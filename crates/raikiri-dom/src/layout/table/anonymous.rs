@@ -322,36 +322,35 @@ fn rows(
     reorder: bool,
     row_count: &mut usize,
 ) -> Result<Vec<Row>, LayoutError> {
-    let mut ids = children(doc, cascade, owner, objects);
+    let ids = children(doc, cascade, owner, objects);
     objects.content_by_owner.insert(owner, ids.clone());
-    if reorder {
-        let first_head = ids.iter().copied().find(|&id| {
-            matches!(id, Content::Node(_))
-                && doc.nodes[id.node()].display() == DisplayValue::TableHeaderGroup
-        });
-        let first_foot = ids.iter().copied().find(|&id| {
-            matches!(id, Content::Node(_))
-                && doc.nodes[id.node()].display() == DisplayValue::TableFooterGroup
-        });
-        ids.sort_by_key(|&id| {
-            if Some(id) == first_head {
-                0
-            } else if Some(id) == first_foot {
-                2
-            } else {
-                1
-            }
-        });
-    }
-    let mut out = Vec::new();
+    let first_of = |display| {
+        ids.iter()
+            .copied()
+            .find(|&id| matches!(id, Content::Node(_)) && doc.nodes[id.node()].display() == display)
+    };
+    let (first_head, first_foot) = if reorder {
+        (
+            first_of(DisplayValue::TableHeaderGroup),
+            first_of(DisplayValue::TableFooterGroup),
+        )
+    } else {
+        (None, None)
+    };
+    // Anonymous rows form in source order (CSS 2 §17.2.1), so bare cells on
+    // either side of a row group stay in separate rows. The first header
+    // group then moves to the top of the table and the first footer group to
+    // the bottom (CSS 2 §17.2); everything else keeps its source order.
+    let mut sections: Vec<(u8, Vec<Row>)> = Vec::new();
     let mut pending = Vec::new();
     let flush = |pending: &mut Vec<Content>,
-                 out: &mut Vec<Row>,
+                 sections: &mut Vec<(u8, Vec<Row>)>,
                  objects: &mut TableObjects,
                  row_count: &mut usize|
      -> Result<(), LayoutError> {
         if pending.iter().any(|&id| !whitespace(doc, id)) {
-            out.push(row(doc, cascade, objects, owner, pending, None, row_count)?);
+            let anonymous = row(doc, cascade, objects, owner, pending, None, row_count)?;
+            sections.push((1, vec![anonymous]));
         }
         pending.clear();
         Ok(())
@@ -364,34 +363,36 @@ fn rows(
         }
         match doc.nodes[id].display() {
             DisplayValue::TableRow => {
-                flush(&mut pending, &mut out, objects, row_count)?;
+                flush(&mut pending, &mut sections, objects, row_count)?;
                 let content = children(doc, cascade, id, objects);
-                out.push(row(
-                    doc,
-                    cascade,
-                    objects,
-                    id,
-                    &content,
-                    Some(id),
-                    row_count,
-                )?);
+                let explicit = row(doc, cascade, objects, id, &content, Some(id), row_count)?;
+                sections.push((1, vec![explicit]));
             }
             DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup => {
-                flush(&mut pending, &mut out, objects, row_count)?;
-                out.extend(rows(doc, cascade, objects, id, false, row_count)?);
+                flush(&mut pending, &mut sections, objects, row_count)?;
+                let place = if Some(entry) == first_head {
+                    0
+                } else if Some(entry) == first_foot {
+                    2
+                } else {
+                    1
+                };
+                let group = rows(doc, cascade, objects, id, false, row_count)?;
+                sections.push((place, group));
             }
             DisplayValue::TableCaption
             | DisplayValue::TableColumn
             | DisplayValue::TableColumnGroup => {
-                flush(&mut pending, &mut out, objects, row_count)?;
+                flush(&mut pending, &mut sections, objects, row_count)?;
             }
             _ => pending.push(entry),
         }
     }
-    flush(&mut pending, &mut out, objects, row_count)?;
-    Ok(out)
+    flush(&mut pending, &mut sections, objects, row_count)?;
+    sections.sort_by_key(|&(place, _)| place);
+    Ok(sections.into_iter().flat_map(|(_, rows)| rows).collect())
 }
 
 fn is_row_or_group(display: DisplayValue) -> bool {
