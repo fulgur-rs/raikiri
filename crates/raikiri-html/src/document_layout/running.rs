@@ -7,12 +7,12 @@
 //! a [`Page`] read through the same accessors as a document page, so a
 //! painter draws it with the code it already has.
 
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::sync::Arc;
 
 use raikiri_dom::{Document, RunningElementPage, RunningIndex};
 use raikiri_style::CascadeResult;
-use raikiri_traits::{NodeId, RenderError};
+use raikiri_traits::{LimitKind, NodeId, RenderError};
 
 use super::Page;
 use crate::svg_fonts::FaceCache;
@@ -22,28 +22,41 @@ use crate::svg_rendering::SvgSettings;
 /// so that later requests borrow them instead of laying the element out
 /// again.
 ///
-/// Each running element has an append-only chain of layouts, one per width
-/// it was laid out at. A link is never removed or replaced once set, so a
-/// layout handed out stays valid while the cache lives.
+/// Each element has an append-only digital search tree, keyed by the exact
+/// normalized width bits. Set boxes never move, preserving borrowed layouts.
 pub(crate) struct LayoutCache {
-    /// One chain per running element, sorted by node. A boxed slice keeps
-    /// the document layout, which is returned by value, under the size
-    /// clippy allows for the variant of [`crate::LayoutStatus`] holding it.
+    /// A boxed slice keeps the document layout enum small.
     chains: Box<[(NodeId, OnceCell<Box<CachedLayout>>)]>,
-    /// The faces handed out to the SVG text of the document's layouts.
     faces: Arc<FaceCache>,
+    budget: Box<EntryBudget>,
+}
+
+struct EntryBudget {
+    limit: usize,
+    reserved: Cell<usize>,
+}
+
+struct Reservation<'a> {
+    budget: &'a EntryBudget,
+    committed: bool,
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.budget.reserved.set(self.budget.reserved.get() - 1);
+        }
+    }
 }
 
 struct CachedLayout {
     width_bits: u32,
     layout: RunningElementLayout,
-    next: OnceCell<Box<CachedLayout>>,
+    children: [OnceCell<Box<CachedLayout>>; 2],
 }
 
 impl LayoutCache {
-    /// An empty cache for the running elements of `index`. The layouts it
-    /// makes hand out SVG text faces from `faces`.
-    pub(crate) fn new(index: &RunningIndex, faces: Arc<FaceCache>) -> Self {
+    pub(crate) fn new(index: &RunningIndex, faces: Arc<FaceCache>, limit: usize) -> Self {
         let mut nodes: Vec<NodeId> = index.nodes().collect();
         nodes.sort_unstable_by_key(|node| node.0);
         Self {
@@ -52,6 +65,10 @@ impl LayoutCache {
                 .map(|node| (node, OnceCell::new()))
                 .collect(),
             faces,
+            budget: Box::new(EntryBudget {
+                limit,
+                reserved: Cell::new(0),
+            }),
         }
     }
 
@@ -60,28 +77,53 @@ impl LayoutCache {
         &self.faces
     }
 
-    /// The layout of running element `node` at `width`, made with `make` the
-    /// first time it is asked for. `None` when `node` is not a running
-    /// element or `make` gives no layout; neither that nor an error is kept.
-    pub(crate) fn get_or_try_make<E>(
-        &self,
-        node: NodeId,
-        width: f32,
-        make: impl FnOnce() -> Result<Option<RunningElementLayout>, E>,
-    ) -> Result<Option<&RunningElementLayout>, E> {
-        #[cfg(any(test, feature = "running-cache-diagnostics"))]
-        if crate::running_cache_diagnostics::enabled() {
-            return self.get_or_try_make_impl::<true, E>(node, width, make);
+    /// Return an exact hit or its vacant slot, in at most 33 comparisons.
+    fn slot<'a, const COUNT: bool>(
+        mut slot: &'a OnceCell<Box<CachedLayout>>,
+        bits: u32,
+        meter: &mut crate::running_cache_diagnostics::Meter<COUNT>,
+    ) -> &'a OnceCell<Box<CachedLayout>> {
+        if COUNT {
+            meter.work.lookups += 1;
         }
-        self.get_or_try_make_impl::<false, E>(node, width, make)
+        let mut depth = 0;
+        while let Some(link) = slot.get() {
+            if COUNT {
+                meter.work.width_comparisons += 1;
+            }
+            if link.width_bits == bits {
+                return slot;
+            }
+            // At depth d the subtree shares d leading bits. At depth 32
+            // equality is therefore certain, before this shift is reached.
+            let branch = ((bits >> (31 - depth)) & 1) as usize;
+            slot = &link.children[branch];
+            depth += 1;
+        }
+        slot
     }
 
-    fn get_or_try_make_impl<const COUNT: bool, E>(
+    /// Unknown nodes and failed/absent layouts consume no entry. A new
+    /// node-width pair reserves capacity before invoking the builder.
+    pub(crate) fn get_or_try_make(
         &self,
         node: NodeId,
         width: f32,
-        make: impl FnOnce() -> Result<Option<RunningElementLayout>, E>,
-    ) -> Result<Option<&RunningElementLayout>, E> {
+        make: impl FnOnce() -> Result<Option<RunningElementLayout>, RenderError>,
+    ) -> Result<Option<&RunningElementLayout>, RenderError> {
+        #[cfg(any(test, feature = "running-cache-diagnostics"))]
+        if crate::running_cache_diagnostics::enabled() {
+            return self.get_or_try_make_impl::<true>(node, width, make);
+        }
+        self.get_or_try_make_impl::<false>(node, width, make)
+    }
+
+    fn get_or_try_make_impl<const COUNT: bool>(
+        &self,
+        node: NodeId,
+        width: f32,
+        make: impl FnOnce() -> Result<Option<RunningElementLayout>, RenderError>,
+    ) -> Result<Option<&RunningElementLayout>, RenderError> {
         let mut meter = crate::running_cache_diagnostics::Meter::<COUNT>::new();
         let Ok(position) = self
             .chains
@@ -89,39 +131,53 @@ impl LayoutCache {
         else {
             return Ok(None);
         };
+        let root = &self.chains[position].1;
         let width_bits = width.to_bits();
-        if COUNT {
-            meter.work.lookups = meter.work.lookups.saturating_add(1);
+        if let Some(link) = Self::slot(root, width_bits, &mut meter).get() {
+            return Ok(Some(&link.layout));
         }
-        let mut slot = &self.chains[position].1;
-        while let Some(link) = slot.get() {
+        let reserved = self.budget.reserved.get();
+        if reserved >= self.budget.limit {
             if COUNT {
-                meter.work.width_comparisons = meter.work.width_comparisons.saturating_add(1);
+                meter.work.budget_denials += 1;
             }
-            if link.width_bits == width_bits {
-                return Ok(Some(&link.layout));
-            }
-            slot = &link.next;
+            return Err(RenderError::LimitExceeded {
+                kind: LimitKind::RunningLayoutEntries,
+                limit: self.budget.limit as u64,
+                actual: (reserved as u64).saturating_add(1),
+            });
         }
-        if COUNT {
-            meter.work.make_calls = meter.work.make_calls.saturating_add(1);
-        }
-        let Some(layout) = make()? else {
-            return Ok(None); // cov:ignore: a document with a body always emits a page slice.
+        self.budget.reserved.set(reserved + 1);
+        let mut reservation = Reservation {
+            budget: &self.budget,
+            committed: false,
         };
         if COUNT {
-            meter.work.created_layouts = meter.work.created_layouts.saturating_add(1);
+            meter.work.max_reserved_entries = reserved + 1;
+            meter.work.make_calls += 1;
         }
-        let fresh = slot.get().is_none();
-        let link = slot.get_or_init(|| {
-            Box::new(CachedLayout {
-                width_bits,
-                layout,
-                next: OnceCell::new(),
-            })
+        let Some(layout) = make()? else {
+            return Ok(None);
+        };
+        if COUNT {
+            meter.work.created_layouts += 1;
+        }
+        let completed = Box::new(CachedLayout {
+            width_bits,
+            layout,
+            children: [OnceCell::new(), OnceCell::new()],
         });
-        if COUNT && fresh {
-            meter.work.admitted_entries = meter.work.admitted_entries.saturating_add(1);
+        // The builder or allocator may have reentered. Re-search only after
+        // allocating the complete box. Publication itself runs no user code
+        // and allocates nothing; OnceCell makes this cache single-threaded.
+        let slot = Self::slot(root, width_bits, &mut meter);
+        if let Some(link) = slot.get() {
+            return Ok(Some(&link.layout));
+        }
+        let link = slot.get_or_init(|| completed);
+        reservation.committed = true;
+        if COUNT {
+            meter.work.admitted_entries += 1;
         }
         Ok(Some(&link.layout))
     }
