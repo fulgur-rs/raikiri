@@ -627,3 +627,5 @@ fn a_running_element_too_deep_to_lay_out_is_an_error() {
         Err(LayoutError::TreeDepthLimitExceeded { .. })
     ));
 }
+
+mod index_tests;

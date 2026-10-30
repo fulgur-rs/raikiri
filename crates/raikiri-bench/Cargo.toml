@@ -28,7 +28,7 @@ raikiri-html = { workspace = true, features = ["streaming-diagnostics", "cache-a
 raikiri-style = { workspace = true, features = ["custom-property-diagnostics"] }
 triomphe = "0.1.16"
 # Direct stage entry points and the real paint command recorder.
-raikiri-dom = { workspace = true, features = ["continuation-diagnostics", "table-reservation-diagnostics"] }
+raikiri-dom = { workspace = true, features = ["continuation-diagnostics", "table-reservation-diagnostics", "running-index-diagnostics"] }
 raikiri-traits = { workspace = true }
 raikiri-paint = { workspace = true }
 anyrender = { workspace = true }
@@ -90,4 +90,8 @@ harness = false
 
 [[bench]]
 name = "rowspan_reservations"
+harness = false
+
+[[bench]]
+name = "running_index"
 harness = false
