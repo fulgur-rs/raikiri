@@ -616,6 +616,10 @@ fn compute_table_layout_checked(
                     }
                 })
             };
+            // A caption is at least as wide as its min-content size whatever
+            // the table states, and a table with no cells is as wide as the
+            // caption it holds (CSS Tables 3 §3, CAPMIN).
+            width = width.max(caption_minimum);
             let specified_h = resolve_dimension(table_size.height, inputs.parent_size.height);
             let mut height = specified_h.unwrap_or_else(|| {
                 effective_known
@@ -629,11 +633,7 @@ fn compute_table_layout_checked(
             let (caption_size, mut caption_candidates) = layout_table_caption(
                 doc,
                 table_idx,
-                if specified_w.is_some() || effective_known.width.is_some() {
-                    width
-                } else {
-                    inputs.parent_size.width.unwrap_or(width).max(width)
-                },
+                width,
                 if vertical_writing {
                     Some(height)
                 } else {
