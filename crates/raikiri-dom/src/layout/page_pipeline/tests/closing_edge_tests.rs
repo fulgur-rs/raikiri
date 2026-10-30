@@ -973,9 +973,10 @@ fn a_box_inside_a_contents_element_before_the_box_is_a_box_to_break_from() {
 }
 
 #[test]
-fn a_box_that_takes_no_space_before_the_box_is_no_box_to_break_from() {
-    // Only an empty block precedes the last box, so a break before the last
-    // box would be one inside the parent, at its start.
+fn a_box_that_takes_no_space_before_the_box_is_a_box_to_break_from() {
+    // The empty block is a box in the parent: the page breaks after it, so the
+    // last box moves to the next page with the padding, as browsers do. A
+    // break before the empty block would not be one between boxes.
     let mut last = 0;
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:70px");
@@ -983,7 +984,7 @@ fn a_box_that_takes_no_space_before_the_box_is_no_box_to_break_from() {
         block(doc, parent, "display:block");
         last = block(doc, parent, "display:block;height:20px");
     });
-    assert_eq!(page_flow_y(&doc, last), 70.0);
+    assert_eq!(page_flow_y(&doc, last), 100.0);
 }
 
 #[test]
@@ -1798,12 +1799,12 @@ fn card_after_a_lead(lead_css: &str) -> (f32, f32) {
 }
 
 #[test]
-fn a_paragraph_after_an_empty_block_in_the_card_is_not_split() {
+fn a_paragraph_after_an_empty_block_in_the_card_moves_whole_with_the_edges() {
     // An empty block before the paragraph is a box to break from, as it is in
     // Chromium: a break between the two is a better one than a break between
     // the lines, so the two lines are not split for orphans that they cannot
-    // keep.
-    assert_eq!(card_after_a_lead(""), (20.0, 50.0));
+    // keep, and the padding that does not fit after them goes with them.
+    assert_eq!(card_after_a_lead(""), (20.0, 100.0));
 }
 
 #[test]
@@ -2256,6 +2257,86 @@ fn a_block_that_avoids_breaks_but_holds_a_forced_break_leaves_its_parent_in_plac
             }),
             60.0,
             "{label}"
+        );
+    }
+}
+
+/// `body > [div(50px), div(padding-bottom:40px) > [lead, paragraph]]` where the
+/// paragraph is `lines` lines of 10px Ahem text, 30px wide, and `lead` fills
+/// the div before it. The lines end at `50 + 10 * lines`. Returns the page-flow
+/// y of the div and of the paragraph.
+fn paragraph_after_lead(
+    lead: impl FnOnce(&mut Document, usize),
+    lines: usize,
+    paragraph_css: &str,
+) -> (f32, f32) {
+    let (mut parent, mut paragraph) = (0, 0);
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:50px");
+        parent = block(
+            doc,
+            body,
+            "display:block;padding-bottom:40px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        lead(doc, parent);
+        paragraph = block(
+            doc,
+            parent,
+            &format!(
+                "display:block;width:30px;font-family:Ahem;font-size:10px;line-height:10px;{paragraph_css}"
+            ),
+        );
+        doc.append_text(paragraph, ["aaa"; 8][..lines].join(" "));
+    });
+    (page_flow_y(&doc, parent), page_flow_y(&doc, paragraph))
+}
+
+#[test]
+fn an_empty_block_before_a_paragraph_is_a_box_to_break_from() {
+    // The lines end at 70 and the padding below them does not fit. The empty
+    // block is a box in the div, so the page breaks after it and the paragraph
+    // moves to the next page with the padding. Browsers do the same.
+    let empty = |doc: &mut Document, parent: usize| {
+        block(doc, parent, "display:block");
+    };
+    assert_eq!(paragraph_after_lead(empty, 2, ""), (50.0, 100.0));
+    // Four lines end at 90: the last two move with the padding, as they do
+    // after a box that takes up space.
+    assert_eq!(paragraph_after_lead(empty, 4, ""), (50.0, 50.0));
+    // Margins around the empty block do not make it any less a box. The one
+    // below it collapses through it and the div, which starts a pixel lower.
+    assert_eq!(
+        paragraph_after_lead(
+            |doc, parent| {
+                block(doc, parent, "display:block;margin-bottom:1px");
+            },
+            2,
+            ""
+        ),
+        (51.0, 100.0)
+    );
+}
+
+#[test]
+fn an_empty_block_tied_to_the_paragraph_by_an_avoided_break_leaves_its_lines_to_break() {
+    // The break between the empty block and the paragraph is avoided, so the
+    // paragraph is left with the breaks between its own lines, as when it comes
+    // first: its last two lines go to the next page with the padding.
+    for (lead_css, paragraph_css) in [
+        ("break-after:avoid", ""),
+        ("", "break-before:avoid"),
+        ("break-after:avoid-page", ""),
+    ] {
+        assert_eq!(
+            paragraph_after_lead(
+                |doc, parent| {
+                    block(doc, parent, &format!("display:block;{lead_css}"));
+                },
+                4,
+                paragraph_css
+            ),
+            (50.0, 50.0),
+            "{lead_css} {paragraph_css}"
         );
     }
 }

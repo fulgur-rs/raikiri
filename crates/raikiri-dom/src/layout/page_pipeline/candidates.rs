@@ -1335,11 +1335,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     let child_box_before = box_before;
                     box_before |= matches!(flow_flags.get(index), Some((Some(_), _)));
                     if let Some(&(Some(last_box), _)) = flow_flags.get(index) {
-                        // A box that takes no block space is no box to break
-                        // from, and breaking after it may be avoided.
-                        previous_box = (document.nodes[last_box].kind() == NodeKind::Element
-                            && !takes_no_block_space(document, last_box))
-                        .then_some(last_box);
+                        previous_box = Some(last_box);
                     }
                     let child_parent_y =
                         pagination_child_parent_y(document, node_id, child_id, raw_y);
