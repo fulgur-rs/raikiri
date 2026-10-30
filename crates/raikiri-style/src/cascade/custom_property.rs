@@ -1443,7 +1443,7 @@ pub(crate) fn absolute_length_factor(unit: &str) -> Option<f32> {
 /// The canonical unit of `unit` and how many of it one `unit` is, for the units that convert
 /// into one another: absolute lengths (`px`), angles (`deg`), times (`s`), frequencies (`hz`)
 /// and resolutions (`dppx`), per the canonical units of CSS Values 4 §6.
-fn canonical_unit(unit: &str) -> Option<(&'static str, f32)> {
+pub(crate) fn canonical_unit(unit: &str) -> Option<(&'static str, f32)> {
     if let Some(factor) = absolute_length_factor(unit) {
         return Some(("px", factor));
     }
