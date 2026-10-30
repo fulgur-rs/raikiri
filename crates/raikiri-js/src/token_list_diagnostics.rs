@@ -28,17 +28,15 @@ pub(crate) fn enabled() -> bool {
         false
     }
 }
-pub(crate) fn record(work: Work) {
+pub(crate) fn record(_work: Work) {
     #[cfg(any(test, feature = "token-list-diagnostics"))]
     if let Some(mut total) = ACTIVE.get() {
-        total.sets += work.sets;
-        total.tokens += work.tokens;
-        total.dedup_comparisons += work.dedup_comparisons;
-        total.owned_tokens += work.owned_tokens;
-        total.attribute_bytes_cloned += work.attribute_bytes_cloned;
-        total.contains_comparisons += work.contains_comparisons;
+        total.sets += _work.sets;
+        total.tokens += _work.tokens;
+        total.dedup_comparisons += _work.dedup_comparisons;
+        total.owned_tokens += _work.owned_tokens;
+        total.attribute_bytes_cloned += _work.attribute_bytes_cloned;
+        total.contains_comparisons += _work.contains_comparisons;
         ACTIVE.set(Some(total));
     }
-    #[cfg(not(any(test, feature = "token-list-diagnostics")))]
-    let _ = work;
 }
