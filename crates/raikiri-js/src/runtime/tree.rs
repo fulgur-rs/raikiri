@@ -17,7 +17,7 @@ mod sibling_order;
 pub(super) use sibling_order::SiblingIndex;
 
 use boa_engine::{Context, JsError, JsResult, JsValue};
-use raikiri_dom::{DomMutationError, NodeKind};
+use raikiri_dom::{Document, DomMutationError, NodeKind};
 
 use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{Members, wrap, wrap_optional};
@@ -943,15 +943,23 @@ fn data_units(context: &mut Context, index: usize) -> JsResult<Vec<u16>> {
     })
 }
 
-/// A required `DOMString` argument as UTF-16 code units; a missing argument
-/// is a `TypeError`.
-fn arg_dom_string_units(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<Vec<u16>> {
+/// A required `DOMString` argument; a missing argument is a `TypeError`.
+fn arg_required_string(
+    args: &[JsValue],
+    i: usize,
+    context: &mut Context,
+) -> JsResult<boa_engine::JsString> {
     let value = args.get(i).ok_or_else(|| {
         JsError::from(
             boa_engine::JsNativeError::typ().with_message("a required argument is missing"),
         )
     })?;
-    Ok(value.to_string(context)?.to_vec())
+    value.to_string(context)
+}
+
+/// A required `DOMString` argument as UTF-16 code units.
+fn arg_dom_string_units(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<Vec<u16>> {
+    Ok(arg_required_string(args, i, context)?.to_vec())
 }
 
 fn offset_error(context: &mut Context) -> JsError {
@@ -985,18 +993,29 @@ fn replace_data_at(
     updated.extend_from_slice(data);
     updated.extend_from_slice(&units[end..]);
     let updated = String::from_utf16_lossy(&updated);
-    let result = with_state(context, |s| {
-        let result = s.host.document_mut().set_character_data(index, &updated);
+    write_character_data(context, index, |document| {
+        document.set_character_data(index, &updated)
+    })
+}
+
+/// Runs `write` on the document and does what any write to the character
+/// data of `index` must: tell the CSSOM when it sits in a style element, and
+/// mark the document dirty.
+fn write_character_data(
+    context: &mut Context,
+    index: usize,
+    write: impl FnOnce(&mut Document) -> Result<(), String>,
+) -> JsResult<()> {
+    with_state(context, |s| {
+        let result = write(s.host.document_mut());
         if result.is_ok() {
             super::stylesheet::note_character_data_change(s, index);
         }
         result
-    })?;
-    if result.is_err() {
-        // cov:ignore: every caller passes an index its brand check already
-        // confirmed as a Text, Comment, or ProcessingInstruction.
-        return Err(unreachable_mutation_error());
-    }
+    })?
+    // Every caller passes an index its brand check already confirmed as a
+    // Text, Comment, or ProcessingInstruction.
+    .map_err(|_| unreachable_mutation_error())?;
     mark_dirty(context)
 }
 
@@ -1057,16 +1076,20 @@ fn substring_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     Ok(JsValue::from(boa_engine::JsString::from(&units[..])))
 }
 
+/// DOM §4.10 "append data": "replace data" with the offset at the end of
+/// the data, so nothing is read, converted, or rebuilt beyond the text
+/// being added.
+///
+/// The stored data is valid UTF-8, so it never ends in half a surrogate
+/// pair, and nothing follows the offset: a lone surrogate in `data` cannot
+/// pair with a neighbor and is stored as U+FFFD, the same as converting the
+/// whole text.
 fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_character_data(this, context)?;
-    let addition = arg_dom_string_units(args, 0, context)?;
-    let length = with_state(context, |s| {
-        s.host
-            .document()
-            .character_data(index)
-            .map_or(0, |d| d.encode_utf16().count())
+    let addition = arg_required_string(args, 0, context)?.to_std_string_lossy();
+    write_character_data(context, index, |document| {
+        document.append_character_data(index, &addition)
     })?;
-    replace_data_at(context, index, length, 0, &addition)?;
     Ok(JsValue::undefined())
 }
 
