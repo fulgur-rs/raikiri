@@ -590,3 +590,5 @@ fn image_subclasses_keep_their_own_prototype() {
          && Object.getPrototypeOf(p) === HTMLImageElement.prototype",
     );
 }
+
+mod base_url_tests;

@@ -97,6 +97,7 @@ pub(crate) struct State {
     /// The pending image request of each `<img>` that has one, by arena
     /// index; a queued request whose number is no longer here is stale.
     pub image_requests: HashMap<usize, u64>,
+    image_base: image::BaseUrlCache,
     /// The number given to the last image request.
     pub next_image_request: u64,
     /// `<img>` elements in template contents whose request waits until they
@@ -368,6 +369,7 @@ impl DomRuntime {
             next_detached_rule: 0,
             css_cache_sweep_at: 64,
             image_requests: HashMap::new(),
+            image_base: Default::default(),
             next_image_request: 0,
             inert_images: HashSet::new(),
             active_images: HashSet::new(),

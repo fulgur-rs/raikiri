@@ -80,7 +80,7 @@ pub mod paint_rules;
 pub mod text_decoration;
 pub use text_decoration::{DecorationKind, DecorationLine, DecorationStyle};
 
-pub use document::{Document, DomMutationError};
+pub use document::{BaseUrlVersion, Document, DomMutationError};
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{
     BundledFace, FontError, FontFaceApplyReport, FontFaceLoader, FontWarn,
