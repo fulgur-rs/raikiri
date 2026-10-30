@@ -9,6 +9,8 @@
 //! Nothing here opens a file or a connection on its own.
 
 use std::collections::HashSet;
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
@@ -48,6 +50,9 @@ pub struct RenderSvgImages<'r, 'a> {
     state: Mutex<State>,
 }
 
+// Direct comparisons avoid hashing overhead for small candidate sets.
+const LINEAR_DATA_CACHE_ENTRIES: usize = 16;
+
 #[derive(Default)]
 struct State {
     /// The URLs already requested, without fragment.
@@ -57,12 +62,64 @@ struct State {
     /// The `data:` pictures that passed the byte checks, whether they decoded
     /// or not: asking again must not charge the page's budget again.
     data: Vec<DataPicture>,
+    data_hash: RandomState,
 }
 
 struct DataPicture {
+    fingerprint: u64,
     mime: String,
     bytes: Vec<u8>,
     image: Option<Arc<DecodedImage>>,
+}
+
+impl DataPicture {
+    fn matches(&self, mime: &str, bytes: &[u8]) -> bool {
+        if self.bytes.len() != bytes.len() || self.mime != mime {
+            return false;
+        }
+        #[cfg(test)]
+        tests::record_comparison(bytes.len());
+        self.bytes == bytes
+    }
+}
+
+impl State {
+    fn cached_data(&self, mime: &str, bytes: &[u8]) -> Option<&DataPicture> {
+        if self.data.len() <= LINEAR_DATA_CACHE_ENTRIES {
+            return self.data.iter().find(|known| known.matches(mime, bytes));
+        }
+        // Preserve first-entry hits without hashing the encoded payload.
+        let first = self.data.first()?;
+        if first.matches(mime, bytes) {
+            return Some(first);
+        }
+        let mut fingerprint = None;
+        self.data.iter().skip(1).find(|known| {
+            // Avoid hashing a large impossible candidate, and avoid comparing
+            // a long MIME string against every entry before filtering.
+            if known.bytes.len() != bytes.len() || known.mime.len() != mime.len() {
+                return false;
+            }
+            let requested = *fingerprint.get_or_insert_with(|| self.fingerprint(mime, bytes));
+            known.fingerprint == requested && known.matches(mime, bytes)
+        })
+    }
+
+    fn fingerprint(&self, mime: &str, bytes: &[u8]) -> u64 {
+        #[cfg(test)]
+        tests::record_hash(mime.len() + bytes.len());
+        self.data_hash.hash_one((mime, bytes))
+    }
+
+    fn remember_data(&mut self, mime: &str, bytes: &[u8], image: Option<Arc<DecodedImage>>) {
+        let fingerprint = self.fingerprint(mime, bytes);
+        self.data.push(DataPicture {
+            fingerprint,
+            mime: mime.to_owned(),
+            bytes: bytes.to_vec(),
+            image,
+        });
+    }
 }
 
 impl<'a> RenderResources<'a> {
@@ -173,11 +230,7 @@ impl RenderSvgImages<'_, '_> {
         self.keep(&warnings);
         // The budget has been charged: remember the outcome, so that a second
         // scene with the same picture neither charges nor decodes again.
-        self.state().data.push(DataPicture {
-            mime: mime.to_owned(),
-            bytes: bytes.to_vec(),
-            image: image.clone(),
-        });
+        self.state().remember_data(mime, bytes, image.clone());
         image
     }
 }
@@ -214,11 +267,7 @@ impl SvgImageSource for RenderSvgImages<'_, '_> {
     fn data(&self, mime: &str, bytes: &[u8]) -> Option<Arc<DecodedImage>> {
         {
             let mut state = self.state();
-            if let Some(known) = state
-                .data
-                .iter()
-                .find(|known| known.mime == mime && known.bytes == bytes)
-            {
+            if let Some(known) = state.cached_data(mime, bytes) {
                 return known.image.clone();
             }
             if state.attempts >= MAX_BACKGROUND_IMAGE_ATTEMPTS {
@@ -243,3 +292,6 @@ impl SvgImageSource for RenderSvgImages<'_, '_> {
         self.decode_data(mime, bytes)
     }
 }
+
+#[cfg(test)]
+mod tests;
