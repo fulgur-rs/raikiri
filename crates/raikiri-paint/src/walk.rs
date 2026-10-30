@@ -3586,6 +3586,29 @@ fn fill_rounded_border_ring(
     }
 }
 
+/// How far the outline of a box `width` by `height` reaches beyond its border
+/// box; 0 when it paints none, as `paint_element_outline` does for a box with
+/// no area.
+pub(crate) fn outline_outset(
+    width: f32,
+    height: f32,
+    outline: &raikiri_style::ComputedOutline,
+    outline_offset: ComputedLength,
+) -> f32 {
+    let (outline_width, offset) = (outline.width().px(), outline_offset.px());
+    if width > 0.0
+        && height > 0.0
+        && matches!(outline.style(), OutlineStyle::Solid)
+        && outline_width > 0.0
+        && outline_width.is_finite()
+        && offset.is_finite()
+    {
+        (outline_width + offset).max(0.0)
+    } else {
+        0.0
+    }
+}
+
 /// Paint a basic solid element outline without changing layout geometry.
 ///
 /// The first visual tranche intentionally handles square block outlines only.

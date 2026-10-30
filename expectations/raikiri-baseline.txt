@@ -5472,3 +5472,7 @@ css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-logical-002.html
 # --- Floats that share a line in a column (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
 # A multicol column group placed each float below the one before it, so a left and a right float that fit side by side stood on two lines on either side of a `column-span: all` block. A float that fits in the room the floats before it leave now shares their line (CSS 2, section 9.5.1). The test was FAIL before the change and KEEP in two audit-vacuous-passes runs.
 css/css-multicol/multicol-span-float-002.html
+
+# --- Outline of a grid or a table in columns (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# The columns cut the content of a grid or a table child of a multicol container to its box, but not its outline, which reaches beyond the box (CSS UI 4 section 3, an outline does not affect layout and is not clipped by the box). The outline of the grid and the table spanners lost its top and sides before the change, and KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-span-all-005.html

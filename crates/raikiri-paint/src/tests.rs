@@ -3234,6 +3234,100 @@ fn solid_fill_bounds(scene: &Scene, rgb: (u8, u8, u8)) -> Vec<kurbo::Rect> {
         .collect()
 }
 
+/// The part of each solid fill of `rgb` that its enclosing clips leave
+/// visible, with the fill itself beside it.
+fn visible_fill_bounds(scene: &Scene, rgb: (u8, u8, u8)) -> Vec<(kurbo::Rect, kurbo::Rect)> {
+    let color = anyrender::Paint::Solid(peniko::color::AlphaColor::from_rgb8(rgb.0, rgb.1, rgb.2));
+    let mut clips: Vec<kurbo::Rect> = Vec::new();
+    let mut fills = Vec::new();
+    for command in &scene.commands {
+        match command {
+            RenderCommand::PushClipLayer(clip) => clips.push(kurbo::Shape::bounding_box(
+                &(clip.transform * clip.clip.clone()),
+            )),
+            RenderCommand::PushLayer(layer) => clips.push(kurbo::Shape::bounding_box(
+                &(layer.transform * layer.clip.clone()),
+            )),
+            RenderCommand::PopLayer => {
+                clips.pop();
+            }
+            RenderCommand::Fill(fill) if fill.brush == color => {
+                let bounds = kurbo::Shape::bounding_box(&(fill.transform * fill.shape.clone()));
+                let visible = clips
+                    .iter()
+                    .fold(bounds, |visible, clip| visible.intersect(*clip));
+                fills.push((visible, bounds));
+            }
+            _ => {}
+        }
+    }
+    fills
+}
+
+/// The columns cut the content of a grid or a table in them, not its outline,
+/// which reaches beyond the box on every side.
+#[test]
+fn the_outline_of_a_grid_or_a_table_in_columns_is_not_cut_by_them() {
+    for (child, outline) in [
+        (
+            r#"<div style="column-span:all;display:grid">spanner</div>"#,
+            "outline:3px solid blue",
+        ),
+        (
+            r#"<table style="column-span:all"><tr><td>spanner</td></tr></table>"#,
+            "outline:3px solid blue",
+        ),
+        (
+            r#"<div style="display:grid">in a column</div>"#,
+            "outline:3px solid blue;outline-offset:2px",
+        ),
+    ] {
+        let html = format!(
+            "<html><head><style>body{{margin:0}} article{{column-count:3;width:400px}} article>:nth-child(2){{{outline}}}</style></head><body><article><div>block1</div>{child}<div>block2</div></article></body></html>"
+        );
+        let scene = painted_html(html.as_bytes());
+        let fills = visible_fill_bounds(&scene, (0, 0, 255));
+        assert_eq!(fills.len(), 4, "{child}: {fills:?}");
+        // The clip of a table is as wide as its wrapper box, which can be a
+        // fraction of a pixel narrower than the grid box its outline follows.
+        for (visible, bounds) in fills {
+            assert!(
+                (visible.x0 - bounds.x0).abs() < 0.5
+                    && (visible.y0 - bounds.y0).abs() < 0.5
+                    && (visible.x1 - bounds.x1).abs() < 0.5
+                    && (visible.y1 - bounds.y1).abs() < 0.5,
+                "{child}: {visible:?} of {bounds:?}"
+            );
+        }
+    }
+}
+
+/// A grid in columns without an outline keeps the clip of its box.
+#[test]
+fn a_grid_in_columns_without_an_outline_is_clipped_to_its_box() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{column-count:3;width:400px} article>:nth-child(2){display:grid;background:blue}</style></head><body><article><div>block1</div><div>grid</div><div>block2</div></article></body></html>"#,
+    );
+    let fills = visible_fill_bounds(&scene, (0, 0, 255));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert_eq!(fills[0].0, fills[0].1);
+}
+
+/// A grid that the columns cut off at the bottom has no bottom edge for its
+/// outline to follow.
+#[test]
+fn a_grid_cut_off_by_the_columns_loses_its_bottom_outline() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} article{column-count:3;width:400px;height:20px} article>div{display:grid;height:50px;outline:3px solid blue}</style></head><body><article><div>grid</div></article></body></html>"#,
+    );
+    let mut fills = visible_fill_bounds(&scene, (0, 0, 255));
+    fills.sort_by(|a, b| a.1.y0.total_cmp(&b.1.y0));
+    assert_eq!(fills.len(), 4, "{fills:?}");
+    let (top, bottom) = (fills[0], fills[3]);
+    assert_eq!(top.0, top.1, "{fills:?}");
+    assert!(bottom.0.height() == 0.0, "{fills:?}");
+}
+
 #[test]
 fn absolute_box_paints_from_its_containing_block_through_static_wrappers() {
     use raikiri_html::{ParseOptions, parse};
