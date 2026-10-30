@@ -2079,6 +2079,7 @@ fn collect_cells_in_row(
 
 /// Append row `row_id` and place `row_cells` in it left to right, each
 /// starting where the one before it ends.
+/// Reject unrepresentable row indices before appending any cell placements.
 fn push_row(
     doc: &LayoutSession<'_>,
     row_id: usize,
@@ -2088,7 +2089,7 @@ fn push_row(
     n_cols: &mut u16,
 ) -> Result<(), raikiri_traits::LayoutError> {
     rows.push(row_id);
-    let row_ix = (rows.len() - 1) as u16;
+    let row_ix = u16::try_from(rows.len() - 1).map_err(|_| table_column_error())?;
     let mut col: u16 = 0;
     for cell_id in row_cells {
         let col_span = get_colspan(doc, cell_id);

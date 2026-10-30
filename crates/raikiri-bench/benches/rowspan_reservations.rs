@@ -123,7 +123,7 @@ mod accounting {
                     Some("display:table-cell;height:1px"),
                 );
                 document
-                    .set_element_attribute(cell, "colspan", &span.to_string())
+                    .set_element_attribute(cell, "colspan", span.to_string())
                     .unwrap();
                 document
                     .set_element_attribute(
