@@ -115,3 +115,16 @@ fn entries_and_symbol_iterator_keep_independent_snapshots() {
         "iterator.next().value[1]==='one'&&iterator.next().value[1]==='two'&&iterator.next().done&&symbolic.next().value[1]==='one'&&p.get('a')==='changed'",
     );
 }
+
+#[test]
+fn iterator_operations_reject_invalid_receivers_without_argument_conversion() {
+    let mut rt = runtime();
+    crate::url_params_diagnostics::begin();
+    ok(
+        &mut rt,
+        "(()=>{let conversions=0;let argument={toString(){++conversions;throw'argument';}};for(let method of [URLSearchParams.prototype.entries,URLSearchParams.prototype[Symbol.iterator]]){for(let receiver of [null,undefined,true,{},new URL('https://example.test/')]){try{method.call(receiver,argument);return false;}catch(e){if(!(e instanceof TypeError)||!String(e).includes('not a URLSearchParams'))return false;}}}return conversions===0;})()",
+    );
+    let work = crate::url_params_diagnostics::finish();
+    assert_eq!(work.snapshots, 0);
+    assert_eq!(work.pairs_cloned, 0);
+}
