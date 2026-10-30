@@ -180,12 +180,21 @@ fn contains_counted<const COUNT: bool>(
     token: &str,
 ) -> JsResult<bool> {
     let mut work = crate::token_list_diagnostics::Work::default();
-    let found = token_set(context, index)?.iter().any(|part| {
-        if COUNT {
-            work.contains_comparisons += 1;
-        }
-        part == token
-    });
+    // Argument conversion has finished; only native comparisons run while borrowed.
+    let found = with_state(context, |state| {
+        state
+            .host
+            .document()
+            .element_attribute(index, CLASS_ATTR)
+            .is_some_and(|raw| {
+                raw.split_ascii_whitespace().any(|part| {
+                    if COUNT {
+                        work.contains_comparisons += 1;
+                    }
+                    part == token
+                })
+            })
+    })?;
     if COUNT {
         crate::token_list_diagnostics::record(work);
     }

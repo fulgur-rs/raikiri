@@ -280,3 +280,5 @@ fn brand_mismatch_on_prototype_methods_is_a_type_error() {
         "{err:?}"
     );
 }
+
+mod contains_tests;
