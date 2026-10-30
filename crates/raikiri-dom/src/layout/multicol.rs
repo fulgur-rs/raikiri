@@ -1293,6 +1293,11 @@ struct FloatLine {
     left: f32,
     /// The width the right floats take, their margins included.
     right: f32,
+    /// Whether a float is on the left of the line, whatever its width: a
+    /// float with no width still has to be cleared.
+    has_left: bool,
+    /// Whether a float is on the right of the line.
+    has_right: bool,
 }
 
 impl FloatLine {
@@ -1303,6 +1308,8 @@ impl FloatLine {
             top,
             left: 0.0,
             right: 0.0,
+            has_left: false,
+            has_right: false,
         }
     }
 
@@ -1313,9 +1320,9 @@ impl FloatLine {
     /// they are taller; the line keeps no bottom per side.
     fn admits(self, float: ColumnFloat, column_width: f32) -> bool {
         let clears = match float.clear {
-            Clear::Left => self.left > 0.0,
-            Clear::Right => self.right > 0.0,
-            Clear::Both => self.left + self.right > 0.0,
+            Clear::Left => self.has_left,
+            Clear::Right => self.has_right,
+            Clear::Both => self.has_left || self.has_right,
             Clear::None => false,
         };
         !clears && self.left + self.right + float.margin_box_width <= column_width + LINE_EPSILON
@@ -1326,11 +1333,13 @@ impl FloatLine {
         if float.right {
             Self {
                 right: self.right + float.margin_box_width,
+                has_right: true,
                 ..self
             }
         } else {
             Self {
                 left: self.left + float.margin_box_width,
+                has_left: true,
                 ..self
             }
         }

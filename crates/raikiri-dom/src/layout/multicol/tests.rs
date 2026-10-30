@@ -7694,6 +7694,20 @@ fn a_float_that_clears_goes_below_the_floats_before_it() {
 }
 
 #[test]
+fn a_float_with_no_room_on_the_line_is_still_cleared() {
+    // A float whose margin box has no width, by its width or by a negative
+    // margin, is on the line all the same, so a float that clears it goes below.
+    for first in [
+        "float:left;width:0",
+        "float:left;width:100px;margin-right:-100px",
+    ] {
+        let (doc, _, floats) =
+            floats_in_columns(1, "", &[first, "float:left;clear:left;width:100px"]);
+        assert_eq!(locations(&doc, &floats)[1].1, 20.0, "{first}");
+    }
+}
+
+#[test]
 fn floats_that_fit_one_column_stay_in_it_beside_each_other() {
     // Balancing would send the second of two blocks stacked in a column to the
     // next one, but the two floats take one line of the first column.
