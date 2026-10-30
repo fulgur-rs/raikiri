@@ -1011,7 +1011,7 @@ fn paint_rects_follow_the_body_margin_like_the_painter() {
     assert_eq!(abs.rect().x, content.x + 30.0);
 
     // The painter fills both backgrounds exactly at their paint rects.
-    let fills = filled(&page, result.page_count() as u32);
+    let fills = filled(&page, result.page_count());
     for (name, fragment) in [("flow", flow), ("abs", abs)] {
         let r = fragment.paint_rect();
         let expected = (

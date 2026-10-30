@@ -699,6 +699,10 @@ fn nested_block_is_valid(input: &mut Parser<'_, '_>, depth: usize) -> bool {
 
 fn block_tokens_are_valid(input: &mut Parser<'_, '_>, depth: usize) -> bool {
     while let Ok(token) = input.next() {
+        // Moving the `if` into a guard does not compile: `token` borrows
+        // `input`, and the next arm still reads `token` after the guard has
+        // used `input` again.
+        #[allow(clippy::collapsible_match)]
         match token {
             Token::Function(_)
             | Token::ParenthesisBlock

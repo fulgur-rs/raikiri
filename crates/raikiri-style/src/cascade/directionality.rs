@@ -876,13 +876,18 @@ pub(crate) const NON_STRONG_ALPHABETIC_RANGES: &[(u32, u32)] = &[
 // doc for why each of these shapes is included and what is deliberately
 // left out. None of these ranges overlaps `AL_RANGES`/`R_RANGES` above
 // (verified against this crate's actual `AL_RANGES`/`R_RANGES` tables at
-// derivation time); none is `Alphabetic=Yes` under this workspace's
-// pinned `char::is_alphabetic` (verified at derivation time) — except
-// the three Sharada Vowel Signs Supplement entries noted at their own
-// site below, which are `Alphabetic=Yes` under UCD 17.0.0 itself and
-// need an entry here for exactly that reason (see their comment). Those
-// three are individually-fixed instances of a much larger toolchain-lag
-// class this table does not attempt to cover in full — see this
+// derivation time); none is `Alphabetic=Yes` under a
+// `char::is_alphabetic` that tracks Unicode 16.0.0 (verified at
+// derivation time; every toolchain before Rust 1.95, including the
+// declared `rust-version` of 1.89.0) — except the three Sharada Vowel
+// Signs Supplement entries noted at their own site below, which are
+// `Alphabetic=Yes` under UCD 17.0.0 itself and need an entry here for
+// exactly that reason (see their comment). The pinned 1.95.0 toolchain
+// already carries Unicode 17.0.0, so on it those three are redundant
+// but harmless, and the invariant test exempts them from the
+// non-alphabetic check. Those three are individually-fixed instances of
+// a much larger toolchain-lag class this table does not attempt to
+// cover in full — see this
 // function's doc, "`is_alphabetic()` fallback" section, case 2's second
 // paragraph, for the fuller picture and why the rest is out of scope
 // here. None overlaps `NON_STRONG_ALPHABETIC_RANGES` above — true by
@@ -1206,12 +1211,15 @@ pub(crate) const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
     // Dives Akuru
     (0x1193D, 0x1193D), // Mc
     // Sharada Vowel Signs Supplement (new in Unicode 17.0.0). Excluded
-    // from this workspace's pinned rustc 1.89.0 `char::is_alphabetic()`
-    // tables, which predate this block's assignment, even though UCD
-    // 17.0.0 marks these `Alphabetic=Yes` like the other vowel signs in
-    // this script — so unlike most `Mc` vowel signs, these three still
-    // need an explicit entry here rather than relying on the
-    // `is_alphabetic()` branch.
+    // from the `char::is_alphabetic()` tables of every toolchain before
+    // Rust 1.95 (std carries Unicode 16.0.0 there, and this crate still
+    // supports Rust 1.89.0), which predate this block's assignment, even
+    // though UCD 17.0.0 marks these `Alphabetic=Yes` like the other vowel
+    // signs in this script — so unlike most `Mc` vowel signs, these three
+    // still need an explicit entry here rather than relying on the
+    // `is_alphabetic()` branch. From Rust 1.95 on the entries are
+    // redundant; keep them until the declared `rust-version` moves past
+    // that.
     (0x11B61, 0x11B61), // Mc
     (0x11B65, 0x11B65), // Mc
     (0x11B67, 0x11B67), // Mc
@@ -1388,8 +1396,8 @@ pub(crate) const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
 ///    table's `Nd`/punctuation/`Mc` category filter, but listed
 ///    individually because they are the three code points this table's
 ///    own derivation verified as affected. They are not the only code
-///    points this mechanism affects. Checking this workspace's pinned rustc 1.89.0
-///    (`rust-toolchain.toml`) against the same `Bidi_Class=L` ∧
+///    points this mechanism affects. Checking rustc 1.89.0 (the
+///    workspace's declared `rust-version`) against the same `Bidi_Class=L` ∧
 ///    `Alphabetic=Yes` (Unicode 17.0.0) intersection finds 4620 such code
 ///    points failing `char::is_alphabetic()`, not 3 — dominated by CJK
 ///    Unified Ideographs Extension J alone (4298 code points,
@@ -1410,14 +1418,16 @@ pub(crate) const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
 ///    overwhelming majority — would be exactly the kind
 ///    of exhaustive per-code-point enumeration this function's tables
 ///    otherwise avoid, and it would go silently stale (redundant, not
-///    merely unneeded) the moment the pinned toolchain is updated past
-///    17.0.0, since `char::is_alphabetic` would then cover these code
-///    points on its own. Closing this class of gap for good would mean
-///    either updating the pinned rustc toolchain or deriving the
+///    merely unneeded) the moment the oldest supported toolchain is
+///    updated past 17.0.0 (the repository's pinned 1.95.0 already is, so
+///    only consumers building with an older rustc see the gap), since
+///    `char::is_alphabetic` would then cover these code points on its
+///    own. Closing this class of gap for good would mean either raising
+///    the declared `rust-version` or deriving the
 ///    `Alphabetic` check directly from UCD data instead of
 ///    `char::is_alphabetic` — both out of scope for this table. Left as
 ///    a known, open-ended limitation whose size tracks how far the
-///    pinned toolchain lags the newest Unicode data, unlike the closed,
+///    oldest supported toolchain lags the newest Unicode data, unlike the closed,
 ///    version-independent `Nd`/punctuation/`Mc` categories above.
 ///
 ///    Separately from version drift, a residual is deliberately left

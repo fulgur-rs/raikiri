@@ -160,11 +160,7 @@ fn needs_ifc_layout(
             continue;
         }
         match node.kind() {
-            NodeKind::Text => {
-                if text_makes_a_line(doc, cascade, id) {
-                    return Ok(true);
-                }
-            }
+            NodeKind::Text if text_makes_a_line(doc, cascade, id) => return Ok(true),
             NodeKind::Element => match box_kind(cascade, doc, id) {
                 Some(IfcBoxKind::Atomic) => return Ok(true),
                 Some(IfcBoxKind::Block) if vertical_block_children => {

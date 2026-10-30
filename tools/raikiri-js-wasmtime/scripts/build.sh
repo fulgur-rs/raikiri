@@ -14,7 +14,7 @@ python3 - "$trial_guest" "$trial_aot" <<'PY'
 import hashlib,json,platform,sys
 from pathlib import Path
 wasm,aot=map(Path,sys.argv[1:])
-meta={'wasmtime':'43.0.2','guest_sha256':hashlib.sha256(wasm.read_bytes()).hexdigest(),'aot_sha256':hashlib.sha256(aot.read_bytes()).hexdigest(),
+meta={'wasmtime':'48.0.8','guest_sha256':hashlib.sha256(wasm.read_bytes()).hexdigest(),'aot_sha256':hashlib.sha256(aot.read_bytes()).hexdigest(),
       'host_target':'x86_64-unknown-linux-gnu','platform':platform.platform(),'page_size':4096,'meter':'fuel','fuel_default':10000000000,
       'memory_limit_default':134217728,'wasm_stack':524288,'memory_reservation':134217728,'guard_size':65536}
 aot.with_suffix('.json').write_text(json.dumps(meta,indent=2)+'\n')
