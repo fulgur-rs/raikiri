@@ -69,6 +69,20 @@ impl LayoutCache {
         width: f32,
         make: impl FnOnce() -> Result<Option<RunningElementLayout>, E>,
     ) -> Result<Option<&RunningElementLayout>, E> {
+        #[cfg(any(test, feature = "running-cache-diagnostics"))]
+        if crate::running_cache_diagnostics::enabled() {
+            return self.get_or_try_make_impl::<true, E>(node, width, make);
+        }
+        self.get_or_try_make_impl::<false, E>(node, width, make)
+    }
+
+    fn get_or_try_make_impl<const COUNT: bool, E>(
+        &self,
+        node: NodeId,
+        width: f32,
+        make: impl FnOnce() -> Result<Option<RunningElementLayout>, E>,
+    ) -> Result<Option<&RunningElementLayout>, E> {
+        let mut meter = crate::running_cache_diagnostics::Meter::<COUNT>::new();
         let Ok(position) = self
             .chains
             .binary_search_by_key(&node.0, |(node, _)| node.0)
@@ -76,16 +90,29 @@ impl LayoutCache {
             return Ok(None);
         };
         let width_bits = width.to_bits();
+        if COUNT {
+            meter.work.lookups = meter.work.lookups.saturating_add(1);
+        }
         let mut slot = &self.chains[position].1;
         while let Some(link) = slot.get() {
+            if COUNT {
+                meter.work.width_comparisons = meter.work.width_comparisons.saturating_add(1);
+            }
             if link.width_bits == width_bits {
                 return Ok(Some(&link.layout));
             }
             slot = &link.next;
         }
+        if COUNT {
+            meter.work.make_calls = meter.work.make_calls.saturating_add(1);
+        }
         let Some(layout) = make()? else {
             return Ok(None); // cov:ignore: a document with a body always emits a page slice.
         };
+        if COUNT {
+            meter.work.created_layouts = meter.work.created_layouts.saturating_add(1);
+        }
+        let fresh = slot.get().is_none();
         let link = slot.get_or_init(|| {
             Box::new(CachedLayout {
                 width_bits,
@@ -93,6 +120,9 @@ impl LayoutCache {
                 next: OnceCell::new(),
             })
         });
+        if COUNT && fresh {
+            meter.work.admitted_entries = meter.work.admitted_entries.saturating_add(1);
+        }
         Ok(Some(&link.layout))
     }
 }
