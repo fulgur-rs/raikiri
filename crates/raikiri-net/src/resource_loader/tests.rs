@@ -2,6 +2,8 @@ use super::*;
 use raikiri_traits::{FetchOutcome, Method, NetworkError, NetworkProvider};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod admission_tests;
+
 struct RejectingProvider;
 
 impl NetworkProvider for RejectingProvider {
@@ -597,7 +599,7 @@ fn concurrent_distinct_misses_cannot_exceed_the_byte_budget() {
     });
     assert_eq!(successes.load(Ordering::Relaxed), 2);
     assert_eq!(resolver.budget.lock().unwrap().used, 2 * cost);
-    assert_eq!(resolver.cache.lock().unwrap().len(), 2);
+    assert_eq!(resolver.state.lock().unwrap().cache.len(), 2);
 }
 
 struct OversizedImageProvider;
