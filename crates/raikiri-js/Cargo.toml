@@ -32,6 +32,8 @@ stacker = { workspace = true }
 raikiri-dom = { workspace = true, features = ["logical-snapshot"] }
 
 [features]
+# Optional counts of full URLSearchParams snapshots.
+url-params-diagnostics = []
 # Optional native work counters for the image base-URL benchmark.
 image-base-diagnostics = ["raikiri-dom/base-url-diagnostics"]
 # Optional logical work counters for declaration parsing and cached reads.
@@ -56,3 +58,8 @@ workspace = true
 name = "image_base"
 harness = false
 required-features = ["image-base-diagnostics"]
+
+[[bench]]
+name = "url_params"
+harness = false
+required-features = ["url-params-diagnostics"]

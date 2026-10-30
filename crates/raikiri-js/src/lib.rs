@@ -21,3 +21,7 @@ pub mod runtime;
 #[cfg(any(test, feature = "css-declaration-diagnostics"))]
 #[doc(hidden)]
 pub mod css_declaration_diagnostics;
+
+#[cfg(any(test, feature = "url-params-diagnostics"))]
+#[doc(hidden)]
+pub mod url_params_diagnostics;
