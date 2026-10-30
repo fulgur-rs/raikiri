@@ -24,6 +24,17 @@ impl OwnedPropertyOverride {
         }
     }
 
+    /// Whether the entry sets a physical inset. A positioning pass holds such
+    /// an entry in a scope to put a box where its static position is; it is
+    /// not a sizing override, and [`Self::apply_physical_sizing`] rejects it.
+    pub fn is_physical_inset(&self) -> bool {
+        use LengthProperty::*;
+        matches!(
+            self.as_borrowed().0,
+            OverrideKind::Length(Top | Right | Bottom | Left, _)
+        )
+    }
+
     /// Write one physical sizing override into a `BoxStyle` snapshot.
     ///
     /// Only the affected field is replaced, and the previous value is not

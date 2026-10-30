@@ -8,16 +8,21 @@ use super::grid_oof;
 use crate::document::OofCoordinate;
 use crate::layout::context::LayoutSession;
 use crate::layout::protocol::{
-    AvailableSpace, AxisStaticPosition, LayoutOutput, NodeId, OofCandidate, OofCandidates,
-    OofLayoutResult, OofPosition, OofPositioningArea, StaticAlignSafety,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, LayoutOutput, NodeId, OofCandidate,
+    OofCandidates, OofLayoutResult, OofPosition, OofPositioningArea, StaticAlignSafety,
 };
 use crate::layout::style_views::ReadRole;
 use crate::layout::taffy_adapter::algorithms::{
     claims_position, compute_oof_layout_for_area, compute_root_layout,
 };
 use crate::layout::taffy_adapter::{GridInfo, OofBatch, OofSpan};
+use crate::node::FormattingContext;
+use crate::node::arena::BoxKey;
 use raikiri_layout_geometry::{Point, Size};
-use raikiri_layout_style::values::{BaselineSet, ContainingBlockClaims, Direction};
+use raikiri_layout_style::values::{
+    BaselineSet, ContainingBlockClaims, Direction, ExpandedDimension,
+};
+use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 
 impl LayoutSession<'_> {
     /// Forget the hoisted children recorded for `node` by an earlier layout.
@@ -206,7 +211,16 @@ pub(super) fn layout_candidates(
                 Some(axes) => {
                     grid_oof::compute_oof_layout(tree, owner, span, area, direction, claims, axes)
                 }
-                None => compute_oof_layout_for_area(tree, owner, span, area, direction, claims),
+                None => {
+                    let insets = static_position_insets(tree, owner, candidates, area, claims);
+                    if insets.is_empty() {
+                        compute_oof_layout_for_area(tree, owner, span, area, direction, claims)
+                    } else {
+                        tree.with_overrides(insets, |tree| {
+                            compute_oof_layout_for_area(tree, owner, span, area, direction, claims)
+                        })
+                    }
+                }
             }
         })
     });
@@ -216,6 +230,87 @@ pub(super) fn layout_candidates(
         record_safe_static_positions(tree, candidates, &result.hoisted);
     }
     result
+}
+
+/// The insets that make Taffy size a `stretch` box from its static position.
+///
+/// A box whose insets are both `auto` in an axis sits at its static position,
+/// and the room it can fill reaches from that position to the far edge of the
+/// containing block (CSS Position 3 §5.2, CSS Sizing 4 §5.1). Taffy resolves
+/// `stretch` against the containing block less the insets that are not `auto`,
+/// so it fills the whole block and the box overflows by the offset of its
+/// static position. A box with an inset on the side it is aligned to, equal to
+/// that position, is sized and placed as the box with `auto` insets would be
+/// by the rule, so each qualifying box gets that inset: the left or top one for
+/// a box aligned to the start of its static area, the right or bottom one for
+/// a box aligned to its end. A box that overflows stays anchored to that edge
+/// whatever the overflow position of the alignment says, as in Chromium. A box
+/// centered in its static area keeps its insets. A grid container places its
+/// boxes in the grid area they name, which is not the area the static position
+/// is measured in.
+fn static_position_insets(
+    tree: &LayoutSession<'_>,
+    owner: NodeId,
+    candidates: &OofBatch,
+    area: OofPositioningArea,
+    claims: ContainingBlockClaims,
+) -> Vec<(BoxKey, OwnedPropertyOverride)> {
+    if tree.nodes[usize::from(owner)].formatting_context == FormattingContext::Grid {
+        return Vec::new();
+    }
+    let mut entries = Vec::new();
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| claims_position(claims, candidate.position))
+    {
+        let idx = usize::from(candidate.node);
+        let style = tree.query_style(idx, ReadRole::Oof);
+        let (size, inset) = (style.size(), style.inset());
+        let key = tree
+            .nodes
+            .box_key(idx)
+            .expect("an out-of-flow candidate has a box key");
+        let axes = [
+            (
+                size.width.expand() == ExpandedDimension::Stretch
+                    && inset.left.is_auto()
+                    && inset.right.is_auto(),
+                candidate.static_position.x,
+                area.offset.x,
+                area.size.width,
+                (LengthProperty::Left, LengthProperty::Right),
+            ),
+            (
+                size.height.expand() == ExpandedDimension::Stretch
+                    && inset.top.is_auto()
+                    && inset.bottom.is_auto(),
+                candidate.static_position.y,
+                area.offset.y,
+                area.size.height,
+                (LengthProperty::Top, LengthProperty::Bottom),
+            ),
+        ];
+        for (qualifies, position, offset, extent, (start, end)) in axes {
+            if !qualifies {
+                continue;
+            }
+            let (property, value) = match position.align.keyword {
+                AxisStaticEdge::Start => (start, position.area.start - offset),
+                AxisStaticEdge::End => (end, extent - (position.area.end - offset)),
+                AxisStaticEdge::Center => continue,
+            };
+            entries.push((
+                key,
+                OwnedPropertyOverride::length(
+                    property,
+                    raikiri_style::ComputedLengthPercentageOrAuto::Px(value),
+                    false,
+                )
+                .expect("static position inset"),
+            ));
+        }
+    }
+    entries
 }
 
 /// Remember the static positions of the `hoisted` boxes among `candidates`

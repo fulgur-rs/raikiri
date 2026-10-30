@@ -10,6 +10,12 @@
 //! leaves over is shared by the auto margins. The same holds for an
 //! absolutely positioned box between its insets.
 //!
+//! An absolutely positioned box with `auto` insets in an axis sits at its
+//! static position, and `stretch` there fills the room from that position to
+//! the far edge of the containing block, not the whole block (which the box
+//! would overflow by the offset of its static position). Where the static
+//! position is centered in the containing block, the box fills it.
+//!
 //! The expected border boxes are the ones Chromium computes for the same
 //! markup in an 800px by 600px viewport, with the body margin of 8px.
 
@@ -476,4 +482,85 @@ cases! {
     abspos_auto_margins_min_width_stretch:
         r#"<div style="position:relative;width:200px;height:200px"><div id=a style="position:absolute;margin:auto;inset:0;min-width:stretch;width:50px;height:50px"></div></div>"# =>
         [("a", (8.0, 83.0, 200.0, 50.0))];
+    abspos_stretch_fills_from_the_static_position:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 100.0, 100.0))];
+    abspos_stretch_from_the_static_position_less_margins:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:5px"></div></div></div>"# =>
+        [("t", (63.0, 63.0, 90.0, 90.0))];
+    abspos_width_stretch_from_the_static_position:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:20px"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 100.0, 20.0))];
+    abspos_height_stretch_from_the_static_position:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:20px;height:stretch"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 20.0, 100.0))];
+    abspos_stretch_fills_toward_the_start_of_a_right_to_left_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;direction:rtl"><div style="margin-right:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 58.0, 100.0, 100.0))];
+    abspos_stretch_from_the_static_position_with_padding_and_border:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;padding:5px;border:3px solid"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 100.0, 100.0))];
+    abspos_stretch_from_the_static_position_in_a_padded_containing_block:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;padding:7px;border:4px solid"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (69.0, 69.0, 85.0, 85.0))];
+    abspos_stretch_from_the_static_position_between_min_and_max:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;min-width:120px;max-height:30px"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 120.0, 30.0))];
+    abspos_stretch_from_the_start_of_a_flex_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (28.0, 28.0, 130.0, 130.0))];
+    abspos_stretch_toward_the_end_of_a_flex_container_aligned_to_the_end:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="display:flex;justify-content:flex-end;align-items:flex-end;width:100px;height:100px;margin:20px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 120.0, 120.0))];
+    abspos_replaced_stretch_from_the_static_position:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><canvas id=t width=50 height=25 style="position:absolute;width:stretch;height:stretch"></canvas></div></div>"# =>
+        [("t", (58.0, 58.0, 100.0, 100.0))];
+    abspos_stretch_from_the_static_position_after_a_line:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px">xx<div id=t style="position:absolute;width:stretch;height:stretch"></div>yy</div></div>"# =>
+        [("t", (58.0, 68.0, 100.0, 90.0))];
+    abspos_stretch_from_the_static_position_in_vertical_rl:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-rl"><div style="margin-right:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (8.0, 58.0, 100.0, 100.0))];
+    abspos_stretch_from_the_static_position_in_vertical_lr:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;writing-mode:vertical-lr"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 100.0, 100.0))];
+    abspos_stretch_from_the_static_position_clamped_by_max_size:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;max-width:40px;max-height:40px"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 40.0, 40.0))];
+    abspos_stretch_from_the_static_position_of_an_inline_box:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="padding-left:30px;padding-top:20px">ab<span id=t style="position:absolute;width:stretch;height:stretch"></span></div></div>"# =>
+        [("t", (58.0, 28.0, 100.0, 130.0))];
+    abspos_stretch_from_the_static_position_two_blocks_down:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:20px;margin-top:20px"><div style="margin-left:30px;margin-top:30px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div></div>"# =>
+        [("t", (58.0, 38.0, 100.0, 120.0))];
+    abspos_stretch_in_a_flex_containing_block:
+        r#"<div style="display:flex;position:relative;width:150px;height:150px;padding:10px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (18.0, 18.0, 140.0, 140.0))];
+    abspos_stretch_from_the_static_position_in_a_scroll_container:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px;overflow:auto"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div></div>"# =>
+        [("t", (58.0, 58.0, 100.0, 100.0))];
+    abspos_stretch_with_right_and_bottom_insets_and_a_static_offset:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;right:10px;bottom:10px"></div></div></div>"# =>
+        [("t", (8.0, 8.0, 140.0, 140.0))];
+    abspos_stretch_with_left_and_top_insets_and_a_static_offset:
+        r#"<div style="display:flow-root;position:relative;width:150px;height:150px"><div style="margin-left:50px;margin-top:50px"><div id=t style="position:absolute;width:stretch;height:stretch;left:10px;top:10px"></div></div></div>"# =>
+        [("t", (18.0, 18.0, 140.0, 140.0))];
+    abspos_stretch_centered_in_a_flex_containing_block:
+        r#"<div style="display:flex;justify-content:center;align-items:center;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 150.0, 150.0))];
+    abspos_stretch_centered_in_the_inline_axis_of_a_flex_containing_block:
+        r#"<div style="display:flex;justify-content:center;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 150.0, 150.0))];
+    abspos_stretch_centered_in_the_block_axis_of_a_flex_containing_block:
+        r#"<div style="display:flex;align-items:center;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 150.0, 150.0))];
+    abspos_stretch_centered_in_a_flex_containing_block_less_margins:
+        r#"<div style="display:flex;justify-content:center;align-items:center;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch;margin:5px"></div></div>"# =>
+        [("t", (13.0, 13.0, 140.0, 140.0))];
+    abspos_stretch_aligned_safe_to_the_end_keeps_its_end_edge_when_it_overflows:
+        r#"<div style="margin-top:100px"><div style="display:flex;align-items:safe end;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch;min-height:200px"></div></div></div>"# =>
+        [("t", (8.0, 50.0, 150.0, 200.0))];
+    abspos_stretch_aligned_safe_to_the_end_without_overflow:
+        r#"<div style="display:flex;align-items:safe end;position:relative;width:150px;height:150px"><div id=t style="position:absolute;width:stretch;height:stretch"></div></div>"# =>
+        [("t", (8.0, 8.0, 150.0, 150.0))];
 }

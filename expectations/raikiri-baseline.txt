@@ -5423,3 +5423,8 @@ css/css-sizing/stretch/replaced-next-to-float-2.html
 # On a raster output the image of a replaced element (an `img` or a `canvas`) is drawn between device pixel edges: each edge of its `object-fit` and `object-position` rectangle moves to the nearest device pixel, as the tile of a background image does. A canvas drawn with `object-fit: contain` and a fractional `object-position` differed by 440 pixels from the same picture drawn as a background. The `img` versions already in this file passed only in the run that does not load images; with images they differed by the same 440 pixels and now match. Both tests were expected failures before the change and KEEP in two audit-vacuous-passes runs.
 css/css-images/object-position-png-001c.html
 css/css-images/object-position-png-002c.html
+
+# --- a `stretch` box lies from its static position (WPT pin 97ea26e2, EXACT, Linux, 2026-10-30) ---
+# An absolutely positioned box whose `width` or `height` is `stretch` and whose insets are `auto` begins at its static position and fills the containing block from there to its far edge (CSS Position 3 section 5.2, CSS Sizing 4 section 5.1). In a 150px containing block a box whose static position is 50px in is 100px wide; it was 150px wide and ran 50px past the edge. Both tests failed before the change (12500 pixels differ: a 150px green square instead of 100px) and KEEP in two audit-vacuous-passes runs. The text row differs from Chromium only by anti-aliasing (largest channel difference 64, no pixel above it).
+css/css-sizing/stretch/positioned-non-replaced-1.html
+css/css-sizing/stretch/positioned-replaced-1.html
