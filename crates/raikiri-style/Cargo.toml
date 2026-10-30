@@ -13,6 +13,8 @@ repository.workspace = true
 [features]
 # Optional thread-local counters used by the external lookup benchmark.
 custom-property-diagnostics = []
+# Optional work counters for named grid-area parsing.
+grid-area-diagnostics = []
 
 [dependencies]
 # NB: this crate is the leaf of raikiri's Stylo-pattern DOM abstraction.
@@ -51,6 +53,11 @@ criterion = { workspace = true }
 [[bench]]
 name = "cascade"
 harness = false
+
+[[bench]]
+name = "grid_areas"
+harness = false
+required-features = ["grid-area-diagnostics"]
 
 [lints]
 workspace = true

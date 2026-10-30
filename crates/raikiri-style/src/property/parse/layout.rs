@@ -1301,6 +1301,19 @@ fn build_grid_template_areas(
     rows: Vec<Vec<Option<SmolStr>>>,
     row_strings: Vec<SmolStr>,
 ) -> Option<GridTemplateAreas> {
+    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+    if crate::grid_area_diagnostics::enabled() {
+        return build_grid_template_areas_impl::<true>(rows, row_strings);
+    }
+    build_grid_template_areas_impl::<false>(rows, row_strings)
+}
+
+fn build_grid_template_areas_impl<const COUNT: bool>(
+    rows: Vec<Vec<Option<SmolStr>>>,
+    row_strings: Vec<SmolStr>,
+) -> Option<GridTemplateAreas> {
+    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+    let mut work = crate::grid_area_diagnostics::Work::default();
     let row_count = rows.len();
     let column_count = rows[0].len();
     // The spec says (verbatim): "All strings must define the same number
@@ -1316,7 +1329,13 @@ fn build_grid_template_areas(
     for (r, row) in rows.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             let Some(name) = cell else { continue };
-            match bounds.iter_mut().find(|(n, ..)| n == name) {
+            match bounds.iter_mut().find(|(n, ..)| {
+                #[cfg(any(test, feature = "grid-area-diagnostics"))]
+                if COUNT {
+                    work.linear_comparisons += 1;
+                }
+                n == name
+            }) {
                 Some((_, r0, r1, c0, c1)) => {
                     *r0 = (*r0).min(r);
                     *r1 = (*r1).max(r);
@@ -1327,11 +1346,24 @@ fn build_grid_template_areas(
             }
         }
     }
+    #[cfg(any(test, feature = "grid-area-diagnostics"))]
+    if COUNT {
+        crate::grid_area_diagnostics::record(work);
+    }
     let mut areas = Vec::with_capacity(bounds.len());
     for (name, r0, r1, c0, c1) in bounds {
-        let is_filled_rectangle = rows[r0..=r1]
-            .iter()
-            .all(|row| row[c0..=c1].iter().all(|cell| cell.as_ref() == Some(&name)));
+        let is_filled_rectangle = rows[r0..=r1].iter().all(|row| {
+            row[c0..=c1].iter().all(|cell| {
+                #[cfg(any(test, feature = "grid-area-diagnostics"))]
+                if COUNT {
+                    crate::grid_area_diagnostics::record(crate::grid_area_diagnostics::Work {
+                        rectangle_cells: 1,
+                        ..Default::default()
+                    });
+                }
+                cell.as_ref() == Some(&name)
+            })
+        });
         if !is_filled_rectangle {
             return None;
         }
