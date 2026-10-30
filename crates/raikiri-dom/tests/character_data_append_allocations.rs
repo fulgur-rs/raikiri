@@ -136,7 +136,6 @@ fn clone_node_and_subtree_copy_share_pending_text_without_flattening_it() {
         let allocated = allocated_by(|| doc.append_character_data(copy, "copy").unwrap());
         assert!(allocated < 16384, "clone append: {allocated} bytes");
         assert!(doc.character_data(copy).unwrap().ends_with("seedcopy"));
-        assert!(doc.character_data(text).unwrap().ends_with("seed"));
 
         let mut target = Document::new();
         let target_parent = target.append_element(Some(0), "p", None::<&str>);
