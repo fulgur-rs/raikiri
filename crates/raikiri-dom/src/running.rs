@@ -125,6 +125,19 @@ impl RunningIndex {
         cascade: &CascadeResult,
         rendered_pages: &HashMap<usize, (u32, u32)>,
     ) -> Self {
+        #[cfg(any(test, feature = "running-index-diagnostics"))]
+        if crate::running_index_diagnostics::enabled() {
+            return Self::from_rendered_pages_impl::<true>(document, cascade, rendered_pages);
+        }
+        Self::from_rendered_pages_impl::<false>(document, cascade, rendered_pages)
+    }
+
+    fn from_rendered_pages_impl<const COUNT: bool>(
+        document: &Document,
+        cascade: &CascadeResult,
+        rendered_pages: &HashMap<usize, (u32, u32)>,
+    ) -> Self {
+        let mut work = crate::running_index_diagnostics::RunningIndexWork::default();
         let mut index = Self::default();
         let order = preorder(document);
         // Positions before this one lie inside a `display: none` subtree.
@@ -147,11 +160,22 @@ impl RunningIndex {
             }
             let next = order[subtree_end..]
                 .iter()
+                .inspect(|_| {
+                    if COUNT {
+                        work.next_candidate_visits = work.next_candidate_visits.saturating_add(1);
+                    }
+                })
                 .find_map(|(id, _)| rendered_pages.get(id).map(|(first, _)| *first));
             // Ancestors of the element enclose it; they do not precede it.
             let previous = order[..position]
                 .iter()
                 .rev()
+                .inspect(|_| {
+                    if COUNT {
+                        work.previous_candidate_visits =
+                            work.previous_candidate_visits.saturating_add(1);
+                    }
+                })
                 .filter(|(_, end)| *end <= position)
                 .find_map(|(id, _)| rendered_pages.get(id).map(|(_, last)| *last));
             let place = |page: u32| Placement {
@@ -171,6 +195,11 @@ impl RunningIndex {
             if sets_strings {
                 let own = order[position..subtree_end]
                     .iter()
+                    .inspect(|_| {
+                        if COUNT {
+                            work.own_candidate_visits = work.own_candidate_visits.saturating_add(1);
+                        }
+                    })
                     .find_map(|(id, _)| rendered_pages.get(id).map(|(first, _)| *first));
                 let placement = place(own.or(next).or(previous).unwrap_or(0));
                 for (name, _) in computed.string_set.iter() {
@@ -185,6 +214,9 @@ impl RunningIndex {
         }
         for pool in index.pools.values_mut().chain(index.strings.values_mut()) {
             pool.by_page = pool.placements.is_sorted_by_key(|placement| placement.page);
+        }
+        if COUNT {
+            crate::running_index_diagnostics::record(work);
         }
         index
     }

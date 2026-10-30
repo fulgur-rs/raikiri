@@ -166,3 +166,11 @@ pub mod table_reservation_diagnostics; // cov:ignore: module declaration has no 
 pub use continuation_diagnostics::{
     ContinuationWork, begin_continuation_diagnostics, finish_continuation_diagnostics,
 };
+
+mod running_index_diagnostics;
+#[cfg(feature = "running-index-diagnostics")]
+#[doc(hidden)]
+// cov:ignore: public re-exports have no executable coverage mapping.
+pub use running_index_diagnostics::{
+    RunningIndexWork, begin_running_index_diagnostics, finish_running_index_diagnostics,
+};
