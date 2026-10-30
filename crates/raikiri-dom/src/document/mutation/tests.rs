@@ -385,6 +385,37 @@ fn character_data_covers_comments_and_processing_instructions() {
 }
 
 #[test]
+fn append_character_data_joins_onto_every_character_data_kind() {
+    let (mut d, _, _, body) = doc_with_html_body();
+    let t = d.create_detached_text("hi");
+    d.append_character_data(t, "!").unwrap();
+    assert_eq!(d.character_data(t), Some("hi!"));
+    let comment = d.create_detached_comment("note");
+    d.append_character_data(comment, " 2").unwrap();
+    assert_eq!(d.character_data(comment), Some("note 2"));
+    let pi = d.append_processing_instruction(Some(body), "xml-stylesheet", "href=\"a");
+    d.append_character_data(pi, ".css\"").unwrap();
+    assert_eq!(d.character_data(pi), Some("href=\"a.css\""));
+
+    assert!(d.append_character_data(body, "x").is_err());
+    assert_eq!(d.character_data(body), None);
+    assert!(d.append_character_data(usize::MAX, "x").is_err());
+}
+
+#[test]
+fn appending_nothing_keeps_the_stored_string() {
+    let (mut d, ..) = doc_with_html_body();
+    let t = d.create_detached_text(&"x".repeat(64));
+    let stored = d.character_data(t).unwrap().as_ptr();
+    d.append_character_data(t, "").unwrap();
+    assert_eq!(d.character_data(t).unwrap().as_ptr(), stored);
+    assert_eq!(d.character_data(t).unwrap().len(), 64);
+    d.append_character_data(t, "y").unwrap();
+    assert_eq!(d.character_data(t).unwrap().len(), 65);
+    assert!(d.character_data(t).unwrap().ends_with("xy"));
+}
+
+#[test]
 fn element_attribute_names_is_empty_for_non_elements_and_missing_ids() {
     let (mut d, _, _, _) = doc_with_html_body();
     let t = d.create_detached_text("hi");
