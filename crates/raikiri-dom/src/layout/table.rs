@@ -593,22 +593,72 @@ fn compute_table_layout_checked(
             height: pad.top + pad.bottom + collapsed.outer_top + collapsed.outer_bottom,
         };
 
+        // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
+        // min-height-table-*, min-max-size-table-content-box). Percentages
+        // resolve against the parent (containing block); unresolvable/Auto
+        // values are ignored. With `box-sizing: content-box` (the initial value, and the
+        // content-box test's authored value) min/max apply to the content box;
+        // with `border-box` they apply to the outer box. The engine clamps and
+        // distributes in outer sizes below, so content-box values are lifted by
+        // the padding+border extents. Lifting both the natural size and the max
+        // by the same insets keeps the max-never-shrinks gate (`mx >= v`,
+        // csswg-drafts#5336 / Mozilla bug 1651530) in the same domain, so
+        // max-height/max-width keep leaving sub-intrinsic tables at natural
+        // size. min still wins over max on direct conflict.
+        let (authored_min, authored_max, box_sizing) = {
+            let st = doc.table_style(table_idx);
+            (st.min_size(), st.max_size(), st.box_sizing())
+        };
+        let specified_height = resolve_dimension(table_size.height, inputs.parent_size.height);
+        let min_w = resolve_dimension(authored_min.width.into(), inputs.parent_size.width);
+        let max_w = resolve_dimension(authored_max.width.into(), inputs.parent_size.width);
+        let min_h = resolve_dimension(authored_min.height.into(), inputs.parent_size.height);
+        let max_h = resolve_dimension(authored_max.height.into(), inputs.parent_size.height);
+        let is_content_box = box_sizing == BoxSizing::ContentBox;
+        let lift_w = if is_content_box {
+            padding_border_size.width
+        } else {
+            0.0
+        };
+        let lift_h = if is_content_box {
+            padding_border_size.height
+        } else {
+            0.0
+        };
+        let min_w_outer = min_w.map(|m| m + lift_w);
+        let max_w_outer = max_w.map(|m| m + lift_w);
+        let min_h_outer = min_h.map(|m| m + lift_h);
+        let max_h_outer = max_h.map(|m| m + lift_h);
+
         if grid.n_cols == 0 || grid.rows.is_empty() {
             // Empty tables shrink-wrap like the main path below: a specified
             // width wins; otherwise the container width is only a cap over the
             // padding/border extents (never stretch-to-fill).
             let specified_w = stated_table_width(table_size.width, &inputs);
+            // The outer width the table states: the width the caller resolved
+            // or, without one, the stated length plus the padding and border
+            // that a content-box table keeps outside it (a `stretch` room is
+            // outer already). A `max-width` that took the resolved width below
+            // the padding and border does not take the table below them.
+            let stated_w = specified_w.map(|stated| {
+                let is_length =
+                    resolve_dimension(table_size.width, inputs.parent_size.width).is_some();
+                let outer = if is_length { stated + lift_w } else { stated };
+                f32_max_compat(
+                    inputs.known_dimensions.width.unwrap_or(outer),
+                    padding_border_size.width,
+                )
+            });
             // A flex/grid parent supplies the table item's used main size after
             // flexing/tracking. It must override the table's percentage width
             // (which is only the item's hypothetical basis); otherwise a
             // shrinking table item snaps back to its pre-flex percentage width.
             let mut width = if parent_is_flex_or_grid {
-                effective_known
-                    .width
-                    .or(specified_w)
+                stated_w
+                    .or(inputs.known_dimensions.width)
                     .unwrap_or(padding_border_size.width)
             } else {
-                specified_w.unwrap_or_else(|| {
+                stated_w.unwrap_or_else(|| {
                     let natural = padding_border_size.width;
                     match effective_known.width {
                         Some(container) => f32_max_compat(natural.min(container), 0.0),
@@ -616,17 +666,33 @@ fn compute_table_layout_checked(
                     }
                 })
             };
+            // The columns and rows of a table with cells are sized before
+            // `min-*` and `max-*` apply to the table; an empty one has none, so
+            // they apply to the width and height it would have taken.
+            width =
+                clamp_empty_table_size(width, padding_border_size.width, min_w_outer, max_w_outer);
             // A caption is at least as wide as its min-content size whatever
             // the table states, and a table with no cells is as wide as the
             // caption it holds (CSS Tables 3 §3, CAPMIN).
             width = width.max(caption_minimum);
-            let specified_h = resolve_dimension(table_size.height, inputs.parent_size.height);
-            let mut height = specified_h.unwrap_or_else(|| {
+            let stated_h = specified_height.map(|stated| {
+                f32_max_compat(
+                    inputs.known_dimensions.height.unwrap_or(stated + lift_h),
+                    padding_border_size.height,
+                )
+            });
+            let mut height = stated_h.unwrap_or_else(|| {
                 effective_known
                     .height
                     .unwrap_or(0.0)
                     .max(padding_border_size.height)
             });
+            height = clamp_empty_table_size(
+                height,
+                padding_border_size.height,
+                min_h_outer,
+                max_h_outer,
+            );
             if vertical_writing {
                 height = height.max(caption_inline_minimum);
             }
@@ -900,43 +966,6 @@ fn compute_table_layout_checked(
         } else {
             resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
         };
-
-        // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
-        // min-height-table-*, min-max-size-table-content-box). Percentages
-        // resolve against the parent (containing block); unresolvable/Auto
-        // Freeman. With `box-sizing: content-box` (the initial value, and the
-        // content-box test's authored value) min/max apply to the content box;
-        // with `border-box` they apply to the outer box. The engine clamps and
-        // distributes in outer sizes below, so content-box values are lifted by
-        // the padding+border extents. Lifting both the natural size and the max
-        // by the same insets keeps the max-never-shrinks gate (`mx >= v`,
-        // csswg-drafts#5336 / Mozilla bug 1651530) in the same domain, so
-        // max-height/max-width keep leaving sub-intrinsic tables at natural
-        // size. min still wins over max on direct conflict.
-        let (authored_min, authored_max, box_sizing) = {
-            let st = doc.table_style(table_idx);
-            (st.min_size(), st.max_size(), st.box_sizing())
-        };
-        let specified_height = resolve_dimension(table_size.height, inputs.parent_size.height);
-        let min_w = resolve_dimension(authored_min.width.into(), inputs.parent_size.width);
-        let max_w = resolve_dimension(authored_max.width.into(), inputs.parent_size.width);
-        let min_h = resolve_dimension(authored_min.height.into(), inputs.parent_size.height);
-        let max_h = resolve_dimension(authored_max.height.into(), inputs.parent_size.height);
-        let is_content_box = box_sizing == BoxSizing::ContentBox;
-        let lift_w = if is_content_box {
-            padding_border_size.width
-        } else {
-            0.0
-        };
-        let lift_h = if is_content_box {
-            padding_border_size.height
-        } else {
-            0.0
-        };
-        let min_w_outer = min_w.map(|m| m + lift_w);
-        let max_w_outer = max_w.map(|m| m + lift_w);
-        let min_h_outer = min_h.map(|m| m + lift_h);
-        let max_h_outer = max_h.map(|m| m + lift_h);
 
         // Extra min-width grows columns (mirrors the min-height→rows path
         // below, and the definite-width distribution above). Must run before
@@ -2308,6 +2337,22 @@ struct ColumnPass {
     wrapper_maximum: Option<f32>,
     inputs: LayoutInput,
     border_spacing_x: f32,
+}
+
+/// The used size of a table with no rows or cells along one axis, from the size
+/// it states or would shrink-wrap to. `maximum` caps it, but never below the
+/// padding and border (`floor`), the extents that a table with rows keeps around
+/// its tracks; `minimum` grows it and wins over the cap. Unlike `clamp_min_max`
+/// in the main path, which only trims what `minimum` added, the cap applies to a
+/// stated size too: an empty table has no tracks whose size it could cut into.
+fn clamp_empty_table_size(
+    size: f32,
+    floor: f32,
+    minimum: Option<f32>,
+    maximum: Option<f32>,
+) -> f32 {
+    let capped = maximum.map_or(size, |maximum| size.min(f32_max_compat(maximum, floor)));
+    minimum.map_or(capped, |minimum| f32_max_compat(capped, minimum))
 }
 
 fn apply_wrapper_width_bounds(width: f32, minimum: Option<f32>, maximum: Option<f32>) -> f32 {
