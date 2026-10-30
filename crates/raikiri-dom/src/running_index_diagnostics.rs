@@ -38,8 +38,8 @@ pub fn finish_running_index_diagnostics() -> RunningIndexWork {
     ACTIVE.replace(None).unwrap_or_default()
 }
 
+#[cfg(any(test, feature = "running-index-diagnostics"))]
 pub(crate) fn record(work: RunningIndexWork) {
-    #[cfg(any(test, feature = "running-index-diagnostics"))]
     if let Some(mut total) = ACTIVE.get() {
         total.next_candidate_visits = total
             .next_candidate_visits
@@ -57,6 +57,4 @@ pub(crate) fn record(work: RunningIndexWork) {
         total.scratch_bytes = total.scratch_bytes.max(work.scratch_bytes);
         ACTIVE.set(Some(total));
     }
-    #[cfg(not(any(test, feature = "running-index-diagnostics")))]
-    let _ = work;
 }
