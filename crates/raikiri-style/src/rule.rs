@@ -112,8 +112,9 @@ pub struct Declaration {
     /// How `value` rolls the cascade back (`revert`, `revert-layer`), computed
     /// once from it.
     pub(crate) rollback: Rollback,
-    /// The flow-relative side a margin or padding declaration was written
-    /// for. `value` and `key` hold the physical side it maps to in
+    /// The flow-relative side a margin, padding, inset or intrinsic size
+    /// declaration was written for. `value` and `key` hold the physical side
+    /// (or, for an intrinsic size, the physical axis) it maps to in
     /// `horizontal-tb` with `direction: ltr`; the cascade moves it to the side
     /// it maps to under the element's own writing mode (see [`crate::logical`]).
     pub(crate) logical: Option<LogicalSide>,
@@ -200,8 +201,9 @@ impl fmt::Debug for Declaration {
 pub(crate) struct ParsedDeclaration {
     pub(crate) value: PropertyValue,
     pub(crate) important: bool,
-    /// The flow-relative side of a margin or padding longhand, whose `value`
-    /// the parser stored under its `horizontal-tb`, `ltr` physical side.
+    /// The flow-relative side of a margin, padding, inset or intrinsic size
+    /// longhand, whose `value` the parser stored under its `horizontal-tb`,
+    /// `ltr` physical side.
     pub(crate) logical: Option<LogicalSide>,
 }
 

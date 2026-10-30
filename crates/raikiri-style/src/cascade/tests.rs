@@ -770,6 +770,7 @@ fn hanging_punctuation_important_wins_cascade_and_is_inherited() {
 
 mod all_tests;
 mod box_css_wide_tests;
+mod contain_intrinsic_logical_tests;
 mod css_wide_tests;
 mod flow_css_wide_tests;
 mod keyword_default_tests;

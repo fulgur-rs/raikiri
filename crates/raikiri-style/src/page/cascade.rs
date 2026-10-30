@@ -1178,10 +1178,10 @@ fn used_flow_mapping(
             writing_mode,
             WritingMode::VerticalRl | WritingMode::VerticalLr
         );
-    FlowMapping {
+    FlowMapping::new(
         writing_mode,
-        direction: if upright { Direction::Ltr } else { direction },
-    }
+        if upright { Direction::Ltr } else { direction },
+    )
 }
 
 /// The writing mode and used direction of the page context: its own winning
