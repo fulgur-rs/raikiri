@@ -2221,3 +2221,41 @@ fn a_block_that_avoids_breaks_but_does_not_fit_the_page_leaves_its_parent_in_pla
         (60.0, 100.0)
     );
 }
+
+#[test]
+fn a_block_that_avoids_breaks_but_holds_a_forced_break_leaves_its_parent_in_place() {
+    // A forced break goes through `break-inside:avoid`: the page breaks inside
+    // the block where the break asks it to, whichever page the block starts. The
+    // last part of the block opens the next page with the padding below it, so
+    // moving the parent whole would only add a page.
+    type Shape = fn(&mut Document, usize);
+    let shapes: [(&str, Shape); 4] = [
+        ("break before the second box", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px");
+            block(doc, avoided, "display:block;height:20px;break-before:page");
+        }),
+        ("break after the first box", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px;break-after:always");
+            block(doc, avoided, "display:block;height:20px");
+        }),
+        ("break deeper down", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px");
+            let inner = block(doc, avoided, "display:block");
+            block(doc, inner, "display:block;height:20px;break-before:page");
+        }),
+        ("another page name", |doc, avoided| {
+            block(doc, avoided, "display:block;height:20px");
+            block(doc, avoided, "display:block;height:20px;page:foo");
+        }),
+    ];
+    for (label, build) in shapes {
+        assert_eq!(
+            parent_with(|doc, parent| {
+                let avoided = block(doc, parent, "display:block;break-inside:avoid");
+                build(doc, avoided);
+            }),
+            60.0,
+            "{label}"
+        );
+    }
+}

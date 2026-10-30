@@ -6394,9 +6394,10 @@ fn normal_flow_bottom(
 /// and the margin below the box where it does not collapse out of `node_id`.
 /// `None` unless `node_id` holds one box in its flow, which holds one in turn,
 /// down to a box that the page cannot break inside: one without a box in its
-/// flow, a paragraph of one line, or a flex container, grid or table that moves
-/// whole (see [`container_moves_whole`]). A float within the block moves with
-/// it.
+/// flow, a paragraph of one line, a box that avoids breaks inside (unless a
+/// forced break or a page name below it breaks the page there anyway), or a
+/// flex container, grid or table that moves whole (see
+/// [`container_moves_whole`]). A float within the block moves with it.
 ///
 /// With no box before it in the block, a break that would leave this tail
 /// alone on the next page falls before the block instead (CSS Break 3 §4.1
@@ -6419,8 +6420,13 @@ fn lone_box_tail(
         if node.multicol.is_some() || node.has_before_or_after_content {
             return None;
         }
-        // A box that avoids breaks inside moves whole, whatever it holds.
-        if current != node_id && avoids_page_break_inside(cascade.computed[current].break_inside) {
+        // A box that avoids breaks inside moves whole, whatever it holds, but
+        // for a forced break or a page name below it: the page breaks there
+        // whichever page the box starts.
+        if current != node_id
+            && avoids_page_break_inside(cascade.computed[current].break_inside)
+            && !has_mandatory_break_inside(document, cascade, current)
+        {
             break;
         }
         if current != node_id && node.is_ifc_root() {
